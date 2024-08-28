@@ -1,0 +1,16 @@
+.coverage
+coverage.xml
+*junit*
+**/*.pyc
+*.env
+script.py
+**/*.local.*
+.vscode/settings.json
+node_modules/*
+**/.DS_Store
+.python-version
+**/.ruff_cache
+**/.idea/**
+.direnv/
+.envrc
+dist/
