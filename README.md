@@ -28,7 +28,7 @@ Requirements
 - The two latest Infrahub releases
 - Python >=3.9, <3.13
 - Python modules:
-  - infrahub-sdk >= 0.9.0
+  - infrahub-sdk >= 0.12.0
 
 ## Documentation
 
@@ -38,58 +38,134 @@ Please refer to the [Infrahub Sync](https://docs.infrahub.app/integrations/sync/
 
 ```bash
 .
+├── LICENSE.txt
 ├── README.md
 ├── examples
-│   ├── nautobot-v1_to_infrahub
-│   │   ├── config.yml
-│   │   ├── infrahub
-│   │   │   ├── __init__.py
-│   │   │   ├── sync_adapter.py
-│   │   │   └── sync_models.py
-│   │   └── nautobot
-│   │       ├── __init__.py
-│   │       ├── sync_adapter.py
-│   │       └── sync_models.py
-│   ├── nautobot-v2_to_infrahub
-│   │   ├── config.yml
-│   │   ├── infrahub
-│   │   │   ├── __init__.py
-│   │   │   ├── sync_adapter.py
-│   │   │   └── sync_models.py
-│   │   └── nautobot
-│   │       ├── __init__.py
-│   │       ├── sync_adapter.py
-│   │       └── sync_models.py
-│   └── netbox_to_infrahub
-│       ├── config.yml
-│       ├── infrahub
-│       │   ├── __init__.py
-│       │   ├── sync_adapter.py
-│       │   └── sync_models.py
-│       └── netbox
-│           ├── __init__.py
-│           ├── sync_adapter.py
-│           └── sync_models.py
+│   ├── infrahub_to_peering-manager
+│   │   ├── config.yml
+│   │   ├── infrahub
+│   │   │   ├── __init__.py
+│   │   │   ├── sync_adapter.py
+│   │   │   └── sync_models.py
+│   │   │
+│   │   └── peeringmanager
+│   │       ├── __init__.py
+│   │       ├── sync_adapter.py
+│   │       └── sync_models.py
+│   │
+│   ├── ipfabric_to_infrahub
+│   │   ├── config.yml
+│   │   ├── infrahub
+│   │   │   ├── __init__.py
+│   │   │   ├── sync_adapter.py
+│   │   │   └── sync_models.py
+│   │   │
+│   │   └── ipfabricsync
+│   │       ├── __init__.py
+│   │       ├── sync_adapter.py
+│   │       └── sync_models.py
+│   │
+│   ├── librenms_to_infrahub
+│   │   ├── config.yml
+│   │   ├── infrahub
+│   │   │   ├── __init__.py
+│   │   │   ├── sync_adapter.py
+│   │   │   └── sync_models.py
+│   │   │
+│   │   └── librenms
+│   │       ├── __init__.py
+│   │       ├── sync_adapter.py
+│   │       └── sync_models.py
+│   │
+│   ├── nautobot-v1_to_infrahub
+│   │   ├── config.yml
+│   │   ├── infrahub
+│   │   │   ├── __init__.py
+│   │   │   ├── sync_adapter.py
+│   │   │   └── sync_models.py
+│   │   │
+│   │   └── nautobot
+│   │       ├── __init__.py
+│   │       ├── sync_adapter.py
+│   │       └── sync_models.py
+│   │
+│   ├── nautobot-v2_to_infrahub
+│   │   ├── config.yml
+│   │   ├── infrahub
+│   │   │   ├── __init__.py
+│   │   │   ├── sync_adapter.py
+│   │   │   └── sync_models.py
+│   │   │
+│   │   └── nautobot
+│   │       ├── __init__.py
+│   │       ├── sync_adapter.py
+│   │       └── sync_models.py
+│   ├── netbox_to_infrahub
+│   │   ├── config.yml
+│   │   ├── infrahub
+│   │   │   ├── __init__.py
+│   │   │   ├── sync_adapter.py
+│   │   │   └── sync_models.py
+│   │   │
+│   │   └── netbox
+│   │       ├── __init__.py
+│   │       ├── sync_adapter.py
+│   │       └── sync_models.py
+│   │
+│   ├── observium_to_infrahub
+│   │   ├── config.yml
+│   │   ├── infrahub
+│   │   │   ├── __init__.py
+│   │   │   ├── sync_adapter.py
+│   │   │   └── sync_models.py
+│   │   │
+│   │   └── observium
+│   │       ├── __init__.py
+│   │       ├── sync_adapter.py
+│   │       └── sync_models.py
+│   │
+│   └── peering-manager_to_infrahub
+│       ├── config.yml
+│       ├── infrahub
+│       │   ├── __init__.py
+│       │   ├── sync_adapter.py
+│       │   └── sync_models.py
+│       │
+│       └── peeringmanager
+│           ├── __init__.py
+│           ├── sync_adapter.py
+│           └── sync_models.py
+│
 ├── infrahub-sync
-│   ├── infrahub_sync
-│   │   ├── __init__.py
-│   │   ├── adapters
-│   │   │   ├── infrahub.py
-│   │   │   ├── nautobot.py
-│   │   │   └── netbox.py
-│   │   ├── cli.py
-│   │   ├── generator
-│   │   │   ├── __init__.py
-│   │   │   ├── templates
-│   │   │   │   ├── diffsync_adapter.j2
-│   │   │   │   └── diffsync_models.j2
-│   │   │   └── utils.py
-│   │   └── utils.py
-│   └── tests
-│       └── __init__.py
+│   ├── infrahub_sync
+│   │   ├── __init__.py
+│   │   ├── adapters
+│   │   │   ├── infrahub.py
+│   │   │   ├── ipfabricsync.py
+│   │   │   ├── librenms.py
+│   │   │   ├── nautobot.py
+│   │   │   ├── netbox.py
+│   │   │   ├── observium.py
+│   │   │   ├── peeringmanager.py
+│   │   │   ├── rest_api_client.py
+│   │   │   └── utils.py
+│   │   │
+│   │   ├── cli.py
+│   │   ├── generator
+│   │   │   ├── __init__.py
+│   │   │   └── templates
+│   │   │       ├── diffsync_adapter.j2
+│   │   │       └── diffsync_models.j2
+│   │   │
+│   │   └── utils.py
+│   │
+│   └── tests
+│       └── __init__.py
+│
 ├── poetry.lock
 ├── potenda
-│   └── potenda
-│       └── __init__.py
+│   └── potenda
+│       └── __init__.py
+│
 └── pyproject.toml
 ```
