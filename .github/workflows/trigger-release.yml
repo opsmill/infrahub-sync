@@ -1,6 +1,6 @@
 ---
 # yamllint disable rule:truthy
-name: "Deploy Collection"
+name: "New Release"
 
 # Trigger the workflow however you prefer
 on:
