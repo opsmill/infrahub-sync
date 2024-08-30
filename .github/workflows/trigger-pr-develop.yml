@@ -1,0 +1,22 @@
+---
+# yamllint disable rule:truthy
+name: "Pull Request on develop"
+
+on:
+  push:
+    branches:
+      - "renovate/**"
+  pull_request:
+    branches:
+      - develop
+
+jobs:
+  linter:
+    uses: ./.github/workflows/workflow-linter.yml
+
+  poetry-checker:
+    uses: ./.github/workflows/workflow-poetry-check.yml
+
+  tests:
+    needs: ["linter", "poetry-checker"]
+    uses: ./.github/workflows/workflow-tests.yml

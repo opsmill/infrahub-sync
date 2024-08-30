@@ -1,0 +1,33 @@
+---
+python_all: &python_all
+  - "**/*.py"
+
+doc_files: &doc_files
+  - "docs/**"
+
+markdown_all: &markdown_all
+  - "**/*.{md,mdx}"
+
+sync_files: &sync_files
+  - "sync/**"
+
+yaml_all: &yaml_all
+  - "**/*.{yml,yaml}"
+
+development_files: &development_files
+  - "tasks/**"
+
+github_workflows: &github_workflows
+  - ".github/workflows/*.yml"
+
+poetry_files: &poetry_files
+  - "pyproject.toml"
+  - "poetry.lock"
+
+sync_all:
+  - *sync_files
+  - *development_files
+
+documentation_all:
+  - *doc_files
+  - *markdown_all

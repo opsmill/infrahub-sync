@@ -1,0 +1,97 @@
+---
+# yamllint disable rule:truthy
+name: "Run linter"
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: "The OS to run the job on"
+        required: false
+        default: "ubuntu-22.04"
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  files-changed:
+    name: Detect which file has changed
+    runs-on: "ubuntu-22.04"
+    timeout-minutes: 5
+    outputs:
+      python: ${{ steps.changes.outputs.python_all }}
+      yaml: ${{ steps.changes.outputs.yaml_all }}
+      documentation: ${{ steps.changes.outputs.documentation_all }}
+      sync: ${{ steps.changes.outputs.sync_all }}
+      github_workflows: ${{ steps.changes.outputs.github_workflows }}
+    steps:
+      - name: "Check out repository code"
+        uses: "actions/checkout@v4"
+      - name: Check for file changes
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          token: ${{ github.token }}
+          filters: .github/file-filters.yml
+
+  yaml-lint:
+    if: needs.files-changed.outputs.yaml == 'true'
+    needs: ["files-changed"]
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    steps:
+      - name: "Check out repository code"
+        uses: "actions/checkout@v4"
+      - name: "Setup environment"
+        run: "pip install yamllint==1.35.1"
+      - name: "Linting: yamllint"
+        run: "yamllint -s ."
+
+  python-lint:
+    if: needs.files-changed.outputs.python == 'true'
+    needs: ["files-changed"]
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    steps:
+      - name: "Check out repository code"
+        uses: "actions/checkout@v4"
+      - name: "Setup environment"
+        run: "pip install ruff==0.6.2"
+      - name: "Linting: ruff check"
+        run: "ruff check ."
+      - name: "Linting: ruff format"
+        run: "ruff format --check --diff ."
+
+  markdown-lint:
+    if: needs.files-changed.outputs.documentation == 'true'
+    needs: ["files-changed"]
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    steps:
+      - name: "Check out repository code"
+        uses: "actions/checkout@v4"
+      - name: "Linting: markdownlint"
+        uses: DavidAnson/markdownlint-cli2-action@v16
+        with:
+          config: .markdownlint.yaml
+          globs: |
+            **/*.{md,mdx}
+            !changelog/*.md
+            !python_sdk/changelog/*.md
+
+  action-lint:
+    if: needs.files-changed.outputs.github_workflows == 'true'
+    needs: ["files-changed"]
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    steps:
+      - name: "Check out repository code"
+        uses: "actions/checkout@v4"
+      - name: Check workflow files
+        run: |
+          bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color
+        shell: bash
+        env:
+          SHELLCHECK_OPTS: --exclude=SC2086 --exclude=SC2046 --exclude=SC2004

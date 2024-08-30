@@ -1,0 +1,19 @@
+---
+# yamllint disable rule:truthy
+name: "Pull Request on stable"
+
+on:
+  pull_request:
+    branches:
+      - stable
+
+jobs:
+  linter:
+    uses: ./.github/workflows/workflow-linter.yml
+
+  poetry-checker:
+    uses: ./.github/workflows/workflow-poetry-check.yml
+
+  tests:
+    needs: ["linter", "poetry-checker"]
+    uses: ./.github/workflows/workflow-tests.yml
