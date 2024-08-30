@@ -2,44 +2,59 @@
 
 from invoke import Collection, Context, task
 
-from . import backend, demo, dev, docs, main, performance, schema, sdk, sync
+from . import docs, linter, tests
 
-ns = Collection()
-ns.add_collection(sdk)
-ns.add_collection(dev)
+ns = Collection("infrahub_sync")
+ns.configure(
+    {
+        "infrahub_sync": {
+            "project_name": "infrahub_sync",
+            "python_ver": "3.10",
+            "local": False,
+        }
+    }
+)
+ns.add_collection(linter)
 ns.add_collection(docs)
-ns.add_collection(performance)
-ns.add_collection(backend)
-ns.add_collection(demo)
-ns.add_collection(main)
-ns.add_collection(schema)
-ns.add_collection(sync)
-
-
-@task
-def yamllint(context: Context):
-    """This will run yamllint to validate formatting of all yaml files."""
-
-    exec_cmd = "yamllint -s ."
-    context.run(exec_cmd, pty=True)
-
-
-@task(name="format")
-def format_all(context: Context):
-    main.format_all(context)
-    sdk.format_all(context)
-    backend.format_all(context)
-    sync.format_all(context)
+ns.add_collection(tests)
 
 
 @task(name="lint")
-def lint_all(context: Context):
-    yamllint(context)
-    sdk.lint(context)
-    backend.lint(context)
-    sync.lint(context)
+def lint_all(context: Context) -> None:
+    docs.lint(context)
+    linter.lint_all(context)
 
 
-ns.add_task(format_all)
+@task(name="format")
+def format_all(context: Context) -> None:
+    docs.format(context)
+    linter.format_all(context)
+
+
+@task(name="tests-all")
+def test_all(context: Context) -> None:
+    tests.tests_unit(context)
+    tests.tests_integration(context)
+
+
+@task(name="tests-unit")
+def tests_unit(context: Context) -> None:
+    tests.tests_unit(context)
+
+
+@task(name="tests-integration")
+def tests_integration(context: Context) -> None:
+    tests.tests_integration(context)
+
+
+@task(name="generate-doc")
+def generate_doc(context: Context) -> None:
+    docs.generate_doc(context)
+
+
 ns.add_task(lint_all)
-ns.add_task(yamllint)
+ns.add_task(format_all)
+ns.add_task(test_all)
+ns.add_task(tests_unit)
+ns.add_task(tests_integration)
+ns.add_task(generate_doc)
