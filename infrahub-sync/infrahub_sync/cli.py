@@ -112,6 +112,7 @@ def generate(
     name: str = typer.Option(default=None, help="Name of the sync to use"),
     config_file: str = typer.Option(default=None, help="File path to the sync configuration YAML file"),
     directory: str = typer.Option(None, help="Base directory to search for sync configurations"),
+    branch: str = typer.Option(default=None, help="Branch to use for the sync."),
 ):
     """Generate all the python files for a given sync based on the configuration."""
 
@@ -136,7 +137,7 @@ def generate(
     client = InfrahubClientSync(address=infrahub_address)
 
     try:
-        schema = client.schema.all()
+        schema = client.schema.all(branch=branch)
     except ServerNotResponsiveError as exc:
         print_error_and_abort(str(exc))
 
