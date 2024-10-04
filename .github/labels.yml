@@ -6,30 +6,30 @@
 # the GitHub Action https://github.com/marketplace/actions/github-labeler.
 
 # ----------------------------------
-# CHANGES
+# TYPE (default)
 # ----------------------------------
-- name: "changes/major"
-  description: "Breaking Changes"
-  color: "bfd4f2"
-
-- name: "changes/minor"
-  description: "Feature Enhancements"
-  color: "fef2c0"
-
-- name: "changes/patch"
-  description: "Maintenance tasks"
-  color: "0366d6"
-
-# ----------------------------------
-# TYPE
-# ----------------------------------
-- name: "type/refactoring"
-  description: "Refactoring"
-  color: "ef67c4"
+- name: "type/feature"
+  description: "New feature or request"
+  color: "a2eeef"
 
 - name: "type/bug"
-  description: "Something isn't working"
+  description: "Something isn't working as expected"
   color: "d73a4a"
+
+- name: "type/housekeeping"
+  description: "Maintenance task"
+  color: "fef2c0"
+
+- name: "type/tech-debt"
+  description: "Item we know we need to improve way it is implemented"
+  color: "73FA20"
+
+# ----------------------------------
+# TYPE ALL
+# ----------------------------------
+- name: "type/question"
+  description: "Question or discussion"
+  color: "d876e3"
 
 - name: "type/documentation"
   description: "Improvements or additions to documentation"
@@ -39,17 +39,25 @@
   description: "This issue or pull request already exists"
   color: "cfd3d7"
 
-- name: "type/feature"
-  description: "New feature or request"
-  color: "a2eeef"
+- name: "type/epic"
+  description: "Large body of work composed of multiple tasks and/or features"
+  color: "fbd39c"
 
-- name: "type/question"
-  description: "Further information is requested"
-  color: "d876e3"
+- name: "type/task"
+  description: "Body of work related to an epic"
+  color: "0b8e92"
 
-- name: "type/deprecated"
-  description: "Removals and deprecations"
-  color: "d876e3"
+- name: "type/brainstorming"
+  description: "Topic for brainstorming, discussions"
+  color: "e19e0f"
+
+- name: "type/user-centric"
+  description: "Issue that would improve the overall experience of our users"
+  color: "ff8c00"
+
+- name: "type/newcomers"
+  description: "Good for newcomers"
+  color: "309c56"
 
 # ----------------------------------
 # EFFORT
