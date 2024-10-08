@@ -1,0 +1,186 @@
+---
+name: from-slurpit
+source:
+  name: slurpitsync
+  settings:
+    url: "http://localhost"
+    api_key: "<API_KEY>"
+
+destination:
+  name: infrahub
+  settings:
+    url: "http://localhost:8000"
+    token: "06438eb2-8019-4776-878c-0941b1f1d1ec"
+
+order: [
+  "OrganizationGeneric",
+  "LocationGeneric",
+  "TemplateDeviceType",
+  "InfraPlatform",
+  "InfraDevice",
+  "InfraHardwareInfo",
+  "InfraVersion",
+  "InfraVLAN",
+  "InfraVRF",
+  "InfraInterface",
+  "InfraPrefix", 
+  "InfraIPAddress"
+]
+
+schema_mapping:
+  - name: OrganizationGeneric
+    mapping: unique_vendors
+    fields:
+      - name: name
+        mapping: brand
+      - name: type
+        static: "Vendor"
+
+  - name: LocationGeneric
+    mapping: site.get_sites
+    identifiers: ['name']
+    fields:
+      - name: name
+        mapping: sitename
+      - name: description
+        mapping: description
+      - name: street
+        mapping: street
+      - name: number
+        mapping: number
+      - name: zipcode
+        mapping: zipcode
+      - name: country
+        mapping: country
+      - name: phonenumber
+        mapping: phonenumber
+
+  - name: TemplateDeviceType
+    mapping: unique_device_type
+    fields:
+      - name: name
+        mapping: device_type
+      - name: manufacturer
+        mapping: brand
+        reference: OrganizationGeneric
+
+  - name: InfraPlatform
+    mapping: unique_device_type
+    fields:
+      - name: name
+        mapping: device_os
+
+  - name: InfraDevice
+    identifiers: ["hostname"]
+    mapping: device.get_devices
+    fields:
+      - name: hostname
+        mapping: hostname
+      - name: fqdn
+        mapping: fqdn
+      - name: manufacturer
+        mapping: brand
+        reference: OrganizationGeneric
+      - name: device_type
+        mapping: device_type
+        reference: TemplateDeviceType
+      - name: platform
+        mapping: device_os
+        reference: InfraPlatform
+      - name: location
+        mapping: site
+        reference: LocationGeneric
+
+  - name: InfraHardwareInfo
+    filters:
+      - field: Name
+        operation: is_not_empty
+    identifiers: ['device', 'serial']
+    mapping: planning_results.hardware-info
+    fields:
+      - name: name
+        mapping: Name
+      - name: description
+        mapping: Descr
+      - name: product
+        mapping: Product
+      - name: serial
+        mapping: Serial
+      - name: version
+        mapping: Version
+      - name: device
+        mapping: hostname
+        reference: InfraDevice
+
+  - name: InfraVersion
+    identifiers: ['version']
+    filters:
+      - field: Version
+        operation: is_not_empty
+    mapping: planning_results.software-versions
+    fields:
+      - name: version
+        mapping: Version
+      - name: file
+        mapping: File
+
+  - name: InfraVLAN
+    identifiers: ['vlan_id', "name"]
+    mapping: planning_results.vlans
+    fields:
+      - name: name
+        mapping: Name
+      - name: vlan_id
+        mapping: Vlan
+
+  - name: InfraVRF
+    identifiers: ["name"]
+    filters: 
+      - field: Vrf
+        operation: is_not_empty
+    mapping: planning_results.routing-table
+    fields:
+      - name: name
+        mapping: Vrf
+
+  - name: InfraInterface
+    identifiers: ["device", "name"]
+    mapping: planning_results.interfaces
+    fields: 
+      - name: name
+        mapping: Interface
+      - name: description
+        mapping: Description
+      - name: mac_address
+        mapping: MAC_normalized
+      - name: device
+        mapping: hostname
+        reference: InfraDevice
+      
+  - name: InfraPrefix
+    identifiers: ['vrf', 'prefix']
+    mapping: filter_networks
+    fields:
+      - name: prefix
+        mapping: normalized_prefix
+      - name: vrf
+        mapping: Vrf
+        reference: InfraVRF
+
+  - name: InfraIPAddress
+    identifiers: ["address", 'prefix']
+    mapping: filter_interfaces
+    transforms:
+      - field: dev_int
+        expression: "{{hostname}}__{{Interface}}"
+      - field: vrf_prefix
+        expression: "{% if prefix and vrf is defined %}{{ vrf }}__{{ prefix }}{% elif prefix %}{{ prefix }}{% endif %}"
+    fields:
+      - name: address
+        mapping: normalized_address
+      - name: interface
+        mapping: dev_int
+        reference: InfraInterface
+      - name: prefix
+        mapping: vrf_prefix
+        reference: InfraPrefix
