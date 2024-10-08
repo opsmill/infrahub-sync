@@ -196,7 +196,6 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             if plan.slug == planning_name:
                 planning = plan.to_dict()
         if not planning:
-            # breakpoint()
             raise IndexError(f"No planning found for name: {planning_name}")
 
         # Search for results using the planning ID
