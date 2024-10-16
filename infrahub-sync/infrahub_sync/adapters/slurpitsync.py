@@ -35,6 +35,10 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
     def _create_slurpit_client(self, adapter):
         settings = adapter.settings or {}
         client = slurpit.api(**settings)
+        try:
+            self.run_async(client.device.get_devices())
+        except Exception as e:
+            raise ValueError(f"Unable to connect to Slurpit API: {e}")
         return client
 
     # Utility to run asynchronous coroutines synchronously
@@ -148,6 +152,12 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                 # If no IP field is present, return None (optional error handling)
                 return None
 
+            # Validate the normalized address as some textFSM templates may return invalid addresses
+            try:
+                ipaddress.ip_network(entry["normalized_address"], strict=False)
+            except ValueError as e:
+                print(f"Invalid IP address or prefix: {e}")
+                return None
             return entry
 
         # Get Prefix for IP Address
