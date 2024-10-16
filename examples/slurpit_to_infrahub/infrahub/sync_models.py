@@ -109,14 +109,17 @@ class InfraVersion(InfrahubModel):
 class LocationGeneric(InfrahubModel):
     _modelname = "LocationGeneric"
     _identifiers = ("name",)
-    _attributes = ("description", "number", "street", "zipcode", "country", "phonenumber")
-    name: str
-    description: Optional[str] = None
+    _attributes = ("city", "county", "state", "country", "phonenumber", "number", "street", "zipcode", "description")
+    city: Optional[str] = None
+    county: Optional[str] = None
+    state: Optional[str] = None
+    country: Optional[str] = None
+    phonenumber: Optional[str] = None
     number: Optional[str] = None
     street: Optional[str] = None
     zipcode: Optional[str] = None
-    country: Optional[str] = None
-    phonenumber: Optional[str] = None
+    description: Optional[str] = None
+    name: str
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None

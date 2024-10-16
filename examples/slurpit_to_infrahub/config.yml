@@ -48,6 +48,12 @@ schema_mapping:
         mapping: street
       - name: number
         mapping: number
+      - name: city
+        mapping: city
+      - name: county
+        mapping: county
+      - name: state
+        mapping: state
       - name: zipcode
         mapping: zipcode
       - name: country
@@ -174,7 +180,7 @@ schema_mapping:
       - field: dev_int
         expression: "{{hostname}}__{{Interface}}"
       - field: vrf_prefix
-        expression: "{% if prefix and vrf is defined %}{{ vrf }}__{{ prefix }}{% elif prefix %}{{ prefix }}{% endif %}"
+        expression: "{% if prefix %}{{ vrf if vrf else 'None' }}__{{ prefix }}{% endif %}"
     fields:
       - name: address
         mapping: normalized_address
