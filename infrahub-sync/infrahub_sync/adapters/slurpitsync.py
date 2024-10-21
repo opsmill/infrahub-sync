@@ -23,15 +23,14 @@ loop = asyncio.new_event_loop()
 class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
     type = "Slurpitsync"
 
-    # Constructor to initialize the adapter with the target, slurpit client, and config
     def __init__(self, *args, target: str, adapter: SyncAdapter, config: SyncConfig, **kwargs):
         super().__init__(*args, **kwargs)
         self.target = target
         self.client = self._create_slurpit_client(adapter)
         self.config = config
         self.filtered_networks = []
+        self.skipped = []
 
-    # Create a slurpit client based on the adapter's settings
     def _create_slurpit_client(self, adapter):
         settings = adapter.settings or {}
         client = slurpit.api(**settings)
@@ -41,31 +40,32 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             raise ValueError(f"Unable to connect to Slurpit API: {e}")
         return client
 
-    # Utility to run asynchronous coroutines synchronously
     def run_async(self, coroutine):
-        data = loop.run_until_complete(coroutine)
-        return data
+        """Utility to run asynchronous coroutines synchronously"""
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_closed():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            return loop.run_until_complete(coroutine)
+        except RuntimeError:
+            # If no event loop exists, create a new one
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(coroutine)
 
-    # Retrieve unique device vendors
     def unique_vendors(self):
         devices = self.run_async(self.client.device.get_devices())
-        vendors = set()  # Use a set to eliminate duplicates
-        for device in devices:
-            vendors.add(device.brand)
+        vendors = {device.brand for device in devices}
         return [{"brand": item} for item in vendors]
 
-    # Retrieve unique device types based on brand, device type, and OS
     def unique_device_type(self):
         devices = self.run_async(self.client.device.get_devices())
-        device_types = set()
-        for device in devices:
-            device_types.add((device.brand, device.device_type, device.device_os))
+        device_types = {(device.brand, device.device_type, device.device_os) for device in devices}
         return [{"brand": item[0], "device_type": item[1], "device_os": item[2]} for item in device_types]
 
-    # Filter and normalize network entries while ignoring certain network prefixes
     def filter_networks(self):
         """Filter out networks based on ignore prefixes and normalize network/mask fields."""
-        # Prefixes to be ignored (reserved, broadcast, loopback, etc.)
         ignore_prefixes = [
             "0.0.0.0/0",
             "0.0.0.0/32",
@@ -79,143 +79,84 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             "::1/128",
         ]
 
-        # Normalize network and mask fields into CIDR notation
         def normalize_network(entry):
-            """Normalize the network/mask fields and add a 'normalized_prefix' key to the entry."""
             network = entry.get("Network", "")
             mask = entry.get("Mask", "")
-
-            # If network already has CIDR notation, use it
             if "/" in network:
                 entry["normalized_prefix"] = network
             elif mask:
-                # Combine network and mask if both are available
                 entry["normalized_prefix"] = f"{network}/{mask}"
             else:
-                # Otherwise, just use the network as is
                 entry["normalized_prefix"] = network
-
             return entry
 
-        # Check if a network is in the ignore list or is a /32 (IPv4) or /128 (IPv6) network
         def should_ignore(network):
-            """Check if the given network is in the ignore list or is a /32 (IPv4) or /128 (IPv6) network."""
             try:
                 net = ipaddress.ip_network(network, strict=False)
-
-                # Ignore single-host networks (IPv4 /32 and IPv6 /128)
                 if net.prefixlen in {32, 128}:
                     return True
-
-                # Check if the network exactly matches any prefix in the ignore list
                 return any(net == ipaddress.ip_network(ignore, strict=False) for ignore in ignore_prefixes)
             except ValueError:
-                # If the network is invalid, skip it
                 return False
 
-        # Get the list of networks from the planning results
         network_list = self.planning_results("routing-table")
+        self.filtered_networks = [
+            normalize_network(entry)
+            for entry in network_list
+            if not should_ignore(normalize_network(entry)["normalized_prefix"])
+        ]
+        return self.filtered_networks
 
-        # Initialize an empty list for filtered networks
-        filtered_networks = []
+    async def filter_interfaces(self, interfaces):
+        precomputed_filtered_networks = [
+            {"network": ipaddress.ip_network(prefix["normalized_prefix"], strict=False), "Vrf": prefix.get("Vrf", None)}
+            for prefix in self.filtered_networks
+        ]
 
-        # Iterate over the network list, normalize, and filter each entry
-        for entry in network_list:
-            normalized_data = normalize_network(entry)  # Normalize network and mask
-
-            # Only include networks that should not be ignored
-            if not should_ignore(normalized_data["normalized_prefix"]):
-                filtered_networks.append(normalized_data)
-
-        self.filtered_networks = filtered_networks
-        return filtered_networks
-
-    def filter_interfaces(self):
-        # Get the list of interfaces from the planning results
-        interfaces = self.planning_results("interfaces")
-
-        # Normalize IP addresses into CIDR notation
-        def normalize_address(entry):
-            """Normalize the IP field and add a 'normalized_address' key to the entry."""
+        async def normalize_and_find_prefix(entry):
             address = entry.get("IP", "")
-
             if address:
                 if isinstance(address, list):
                     address = address[0]
-                # If the IP already has CIDR notation, keep it as is
-                if "/" in address:
-                    entry["normalized_address"] = address
-                else:
-                    # Otherwise, treat it as a /32 host address
-                    entry["normalized_address"] = f"{address}/32"
+                if "/" not in address:
+                    address = f"{address}/32"
             else:
-                # If no IP field is present, return None (optional error handling)
                 return None
 
-            # Validate the normalized address as some textFSM templates may return invalid addresses
             try:
-                ipaddress.ip_network(entry["normalized_address"], strict=False)
-            except ValueError as e:
-                print(f"Invalid IP address or prefix: {e}")
+                network = ipaddress.ip_network(address, strict=False)
+                entry["normalized_address"] = address
+            except ValueError:
                 return None
+
+            for prefix in precomputed_filtered_networks:
+                if network.subnet_of(prefix["network"]):
+                    entry["prefix"] = str(prefix["network"])
+                    entry["vrf"] = prefix["Vrf"]
+                    break
+
             return entry
 
-        # Get Prefix for IP Address
-        def get_prefix(address):
-            """
-            Check if the given address falls within any prefix from filtered_networks.
-            :param address: The IP address in CIDR format.
-            :return: The matching prefix or None if no match is found.
-            """
-            try:
-                # Convert the address to an ip_network object
-                network = ipaddress.ip_network(address, strict=False)
+        # Concurrent execution of tasks
+        tasks = [normalize_and_find_prefix(entry) for entry in interfaces if entry.get("IP")]
 
-                # Iterate over the filtered networks to find the matching prefix
-                for prefix in self.filtered_networks:
-                    prefix_network = ipaddress.ip_network(prefix["normalized_prefix"], strict=False)
-                    if network.subnet_of(prefix_network):
-                        return prefix
+        # Run tasks concurrently
+        filtered_interfaces = await asyncio.gather(*tasks)
 
-            except ValueError as e:
-                print(f"Invalid IP address or prefix: {e}")
-                return None
+        results = [entry for entry in filtered_interfaces if entry]
 
-            return None
+        # Filter out None values and return results
+        return results
 
-        # Normalize addresses for all interfaces
-        interfaces = [normalize_address(entry) for entry in interfaces if normalize_address(entry)]
-        # Initialize an empty list for filtered interfaces
-        filtered_interfaces = []
-
-        # Iterate over the interfaces, normalize, and filter based on prefixes
-        for entry in interfaces:
-            if prefix := get_prefix(entry["normalized_address"]):
-                entry["prefix"] = prefix["normalized_prefix"]
-                entry["vrf"] = prefix.get("Vrf", None)
-            filtered_interfaces.append(entry)
-
-        return filtered_interfaces
-
-    # Retrieve planning results for a specific planning name
     def planning_results(self, planning_name):
-        # Convert the planning name to match the format used by the API
         plannings = self.run_async(self.client.planning.get_plannings())
-        planning = None
-        for plan in plannings:
-            if plan.slug == planning_name:
-                planning = plan.to_dict()
+        planning = next((plan.to_dict() for plan in plannings if plan.slug == planning_name), None)
         if not planning:
             raise IndexError(f"No planning found for name: {planning_name}")
 
-        # Search for results using the planning ID
-        search_data = {"planning_id": planning["id"], "unique_results": True, "offset": 0, "limit": 1000}
-
-        results = self.run_async(self.client.planning.search_plannings(search_data))
-        if not results:
-            return []
-
-        return results
+        search_data = {"planning_id": planning["id"], "unique_results": True}
+        results = self.run_async(self.client.planning.search_plannings(search_data, limit=30000))
+        return results if results else []
 
     def model_loader(self, model_name: str, model: SlurpitsyncModel):
         for element in self.config.schema_mapping:
@@ -230,6 +171,9 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                 slurpit_app = getattr(self.client, app_name)
                 slurpit_model = getattr(slurpit_app, resource_name)
                 nodes = self.run_async(slurpit_model())
+            elif element.mapping == "filter_interfaces":
+                interfaces = self.planning_results("interfaces")
+                nodes = self.run_async(self.filter_interfaces(interfaces))
             else:
                 slurpit_model = getattr(self, element.mapping)
                 nodes = slurpit_model()
@@ -253,12 +197,38 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                 transformed_objs = list_obj
 
             for obj in transformed_objs:
-                data = self.slurpit_obj_to_diffsync(obj=obj, mapping=element, model=model)
-                item = model(**data)
-                try:
-                    self.add(item)
-                except Exception:  # noqa: S110
-                    pass
+                if data := self.slurpit_obj_to_diffsync(obj=obj, mapping=element, model=model):
+                    item = model(**data)
+                    try:
+                        self.add(item)
+                    except Exception:  # noqa: S110
+                        pass
+
+        if self.skipped:
+            print(f"{self.type}: skipped syncing {len(self.skipped)} models")
+
+    # Reuse mapping from another adapter
+    def build_mapping(self, reference, obj):
+        # Get object class and model name from the store
+        object_class, modelname = self.store._get_object_class_and_model(model=reference)
+
+        # Find the schema element matching the model name
+        schema_element = next((element for element in self.config.schema_mapping if element.name == modelname), None)
+
+        # Collect all relevant field mappings for identifiers
+        new_identifiers = []
+
+        # Convert schema_element.fields to a dictionary for fast lookup
+        field_dict = {field.name: field.mapping for field in schema_element.fields}
+
+        # Loop through object_class._identifiers to find corresponding field mappings
+        for identifier in object_class._identifiers:
+            if identifier in field_dict:
+                new_identifiers.append(field_dict[identifier])
+
+        # Construct the unique identifier, using a fallback if a key isn't found
+        unique_id = "__".join(str(obj.get(key, "")) for key in new_identifiers)
+        return unique_id
 
     def slurpit_obj_to_diffsync(
         self, obj: dict[str, Any], mapping: SchemaMappingModel, model: SlurpitsyncModel
@@ -288,33 +258,18 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                         f" The available models are {self.store.get_all_model_names()}"
                     )
                 if not field_is_list:
-                    if node := get_value(obj, field.mapping):
-                        if isinstance(node, dict):
-                            matching_nodes = []
-                            node_id = node.get("id", None)
-                            matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
-                            if len(matching_nodes) == 0:
-                                raise IndexError(f"Unable to locate the node {field.name} {node_id}")
-                            node = matching_nodes[0]
-                            data[field.name] = node.get_unique_id()
-                        else:
-                            data[field.name] = node
-                else:
-                    data[field.name] = []
-                    for node in get_value(obj, field.mapping):
-                        if not node:
-                            continue
-                        node_id = node.get("id", None)
-                        if not node_id:
-                            if isinstance(node, tuple):
-                                node_id = node[1] if node[0] == "id" else None
-                                if not node_id:
-                                    continue
-                        matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
+                    if node := obj[field.mapping]:
+                        matching_nodes = []
+                        node_id = self.build_mapping(reference=field.reference, obj=obj)
+                        matching_nodes = [item for item in nodes if str(item) == node_id]
                         if len(matching_nodes) == 0:
-                            raise IndexError(f"Unable to locate the node {field.reference} {node_id}")
-                        data[field.name].append(matching_nodes[0].get_unique_id())
-                    data[field.name] = sorted(data[field.name])
+                            self.skipped.append(node)
+                            return None
+                            # Ideally we should raise an IndexError but there are some instances where Slurpit
+                            # data has no dependencies so skipping is required.
+                            # raise IndexError(f"Unable to locate the node {field.reference} {node_id}")
+                        node = matching_nodes[0]
+                        data[field.name] = node.get_unique_id()
         return data
 
 
