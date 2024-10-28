@@ -2,10 +2,12 @@ from infrahub_sync.adapters.infrahub import InfrahubAdapter
 
 from .sync_models import (
     InfraDevice,
+    InfraIPAddress,
     InfraInterfaceL3,
     InfraNOSVersion,
     InfraPartNumber,
     InfraPlatform,
+    InfraPrefix,
     InfraVLAN,
     InfraVRF,
     LocationGeneric,
@@ -21,10 +23,12 @@ from .sync_models import (
 # -------------------------------------------------------
 class InfrahubSync(InfrahubAdapter):
     InfraDevice = InfraDevice
+    InfraIPAddress = InfraIPAddress
     InfraInterfaceL3 = InfraInterfaceL3
     InfraNOSVersion = InfraNOSVersion
     InfraPartNumber = InfraPartNumber
     InfraPlatform = InfraPlatform
+    InfraPrefix = InfraPrefix
     InfraVLAN = InfraVLAN
     InfraVRF = InfraVRF
     LocationGeneric = LocationGeneric
