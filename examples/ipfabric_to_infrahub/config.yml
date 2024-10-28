@@ -37,7 +37,6 @@ schema_mapping:
       - name: type
         static: "Site"
 
-  # Device (manufacturer, device types, devices, interfaces)
   - name: OrganizationGeneric
     mapping: tables/inventory/summary/vendors
     fields:
@@ -205,8 +204,6 @@ schema_mapping:
     transforms:
       - field: address
         expression: "{{ ip }}/{{ net.split('/')[1] }}"
-      # - field: interface
-      #   expression: "{{ hostname }}__{{ intName }}"
     mapping: tables/addressing/managed-devs
     fields:
       - name: address
