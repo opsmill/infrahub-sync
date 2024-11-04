@@ -6,11 +6,11 @@ from diffsync import Adapter, DiffSyncModel
 from infrahub_sdk import (
     Config,
     InfrahubClientSync,
-    InfrahubNodeSync,
-    NodeSchema,
-    NodeStoreSync,
 )
 from infrahub_sdk.exceptions import NodeNotFoundError
+from infrahub_sdk.node import InfrahubNodeSync
+from infrahub_sdk.schema import NodeSchema
+from infrahub_sdk.store import NodeStoreSync
 from infrahub_sdk.utils import compare_lists
 from infrahub_sync import (
     DiffSyncMixin,

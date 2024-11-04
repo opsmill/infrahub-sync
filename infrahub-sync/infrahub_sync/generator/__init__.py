@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Union
 
 import jinja2
-from infrahub_sdk import (
+from infrahub_sdk.schema import (
     AttributeSchema,
     NodeSchema,
     RelationshipKind,

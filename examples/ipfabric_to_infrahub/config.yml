@@ -22,8 +22,8 @@ order: [
   "InfraVLAN",
   "InfraVRF",
   "InfraInterfaceL3",
-  # "InfraPrefix",
-  # "InfraIPAddress",
+  "InfraPrefix",
+  "InfraIPAddress",
 ]
 
 schema_mapping:
@@ -37,7 +37,6 @@ schema_mapping:
       - name: type
         static: "Site"
 
-  # Device (manufacturer, device types, devices, interfaces)
   - name: OrganizationGeneric
     mapping: tables/inventory/summary/vendors
     fields:
@@ -68,6 +67,9 @@ schema_mapping:
 
   - name: InfraNOSVersion
     identifiers: ["manufacturer", "model", "version"]
+    filters:
+      - field: version
+        operation: is_not_empty
     mapping: tables/management/osver-consistency
     fields:
       - name: version
@@ -83,7 +85,7 @@ schema_mapping:
         reference: TemplateDeviceType
 
   - name: InfraDevice
-    identifiers: ["location", "hostname"]
+    identifiers: ["hostname"]
     mapping: tables/inventory/devices
     fields:
       - name: hostname
@@ -165,7 +167,7 @@ schema_mapping:
         mapping: hostname
         reference: InfraDevice
       - name: name
-        mapping: nameOriginal
+        mapping: intName
       - name: description
         mapping: dscr
       - name: speed
@@ -175,33 +177,42 @@ schema_mapping:
       - name: mac_address
         mapping: mac
 
-  # - name: InfraPrefix
-  #   identifiers: ["vrf", "prefix"]
-  #   mapping: tables/networks
-  #   fields:
-  #     - name: prefix
-  #       mapping: net
-  #     - name: vrf
-  #       mapping: vrf
-  #       reference: InfraVRF
-  #     - name: vlan
-  #       mapping: vlanId
-  #       reference: InfraVLAN
-  #     - name: location
-  #       mapping: siteName
-  #       reference: LocationGeneric
+  - name: InfraPrefix
+    identifiers: ["vrf", "prefix"]
+    filters:
+      - field: net
+        operation: is_not_empty
+    mapping: tables/networks
+    fields:
+      - name: prefix
+        mapping: net
+      - name: vrf
+        mapping: vrf
+        reference: InfraVRF
+      - name: vlan
+        mapping: vlanId
+        reference: InfraVLAN
+      - name: location
+        mapping: siteName
+        reference: LocationGeneric
 
-  # - name: InfraIPAddress
-  #   identifiers: ["address"]
-  #   mapping: tables/addressing/managed-devs
-  #   fields:
-  #     - name: address
-  #       mapping: net
-  #     - name: description
-  #       mapping: dscr
-  #     - name: prefix
-  #       mapping: net
-  #       reference: InfraPrefix
-  #     - name: interface
-  #       mapping: intName
-  #       reference: InfraInterfaceL3
+  - name: InfraIPAddress
+    identifiers: ["interface", "address"]
+    filters:
+      - field: net
+        operation: is_not_empty
+    transforms:
+      - field: address
+        expression: "{{ ip }}/{{ net.split('/')[1] }}"
+    mapping: tables/addressing/managed-devs
+    fields:
+      - name: address
+        mapping: address
+      - name: description
+        mapping: dscr
+      - name: prefix
+        mapping: net
+        reference: InfraPrefix
+      - name: interface
+        mapping: intName
+        reference: InfraInterfaceL3
