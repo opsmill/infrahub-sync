@@ -1,6 +1,7 @@
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 from infrahub_sync.adapters.infrahub import InfrahubModel
+
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -21,6 +22,7 @@ class InfraDevice(InfrahubModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
+
 class InfraHardwareInfo(InfrahubModel):
     _modelname = "InfraHardwareInfo"
     _identifiers = ("device", "serial")
@@ -35,6 +37,7 @@ class InfraHardwareInfo(InfrahubModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
+
 class InfraIPAddress(InfrahubModel):
     _modelname = "InfraIPAddress"
     _identifiers = ("address", "prefix")
@@ -45,6 +48,7 @@ class InfraIPAddress(InfrahubModel):
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
+
 
 class InfraInterface(InfrahubModel):
     _modelname = "InfraInterface"
@@ -58,6 +62,7 @@ class InfraInterface(InfrahubModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
+
 class InfraPlatform(InfrahubModel):
     _modelname = "InfraPlatform"
     _identifiers = ("name",)
@@ -66,6 +71,7 @@ class InfraPlatform(InfrahubModel):
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
+
 
 class InfraPrefix(InfrahubModel):
     _modelname = "InfraPrefix"
@@ -77,6 +83,7 @@ class InfraPrefix(InfrahubModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
+
 class InfraVLAN(InfrahubModel):
     _modelname = "InfraVLAN"
     _identifiers = ("vlan_id", "name")
@@ -87,6 +94,7 @@ class InfraVLAN(InfrahubModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
+
 class InfraVRF(InfrahubModel):
     _modelname = "InfraVRF"
     _identifiers = ("name",)
@@ -95,6 +103,7 @@ class InfraVRF(InfrahubModel):
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
+
 
 class InfraVersion(InfrahubModel):
     _modelname = "InfraVersion"
@@ -105,6 +114,7 @@ class InfraVersion(InfrahubModel):
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
+
 
 class LocationGeneric(InfrahubModel):
     _modelname = "LocationGeneric"
@@ -124,6 +134,7 @@ class LocationGeneric(InfrahubModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
+
 class OrganizationGeneric(InfrahubModel):
     _modelname = "OrganizationGeneric"
     _identifiers = ("name",)
@@ -133,6 +144,7 @@ class OrganizationGeneric(InfrahubModel):
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
+
 
 class TemplateDeviceType(InfrahubModel):
     _modelname = "TemplateDeviceType"

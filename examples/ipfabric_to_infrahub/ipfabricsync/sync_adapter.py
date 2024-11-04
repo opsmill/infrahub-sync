@@ -2,8 +2,8 @@ from infrahub_sync.adapters.ipfabricsync import IpfabricsyncAdapter
 
 from .sync_models import (
     InfraDevice,
-    InfraIPAddress,
     InfraInterfaceL3,
+    InfraIPAddress,
     InfraNOSVersion,
     InfraPartNumber,
     InfraPlatform,
