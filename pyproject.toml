@@ -26,8 +26,8 @@ python = ">=3.9, < 3.13"
 infrahub-sdk = {version = "^1", extras = ["all"]}
 structlog = "^22.3.0"
 diffsync = { version = ">=1.10,<2.0 || >=2.0", extras = ["redis"] }
-netutils = "^1.9.1"
-tqdm = "^4.66.5"
+netutils = ">=1.9"
+tqdm = ">=4.66"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"
@@ -47,7 +47,7 @@ types-pyyaml = "*"
 typer-cli = "*"
 ruff = "0.7.2"
 pytest-xdist = "^3.3.1"
-types-python-slugify = "^8.0.0.3"
+types-python-slugify = ">=8.0.0.3"
 
 [tool.poetry.scripts]
 infrahub-sync = "infrahub_sync.cli:app"
