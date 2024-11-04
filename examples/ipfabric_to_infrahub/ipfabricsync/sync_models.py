@@ -1,6 +1,7 @@
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 from infrahub_sync.adapters.ipfabricsync import IpfabricsyncModel
+
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -23,6 +24,7 @@ class InfraDevice(IpfabricsyncModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
+
 class InfraIPAddress(IpfabricsyncModel):
     _modelname = "InfraIPAddress"
     _identifiers = ("interface", "address")
@@ -34,6 +36,7 @@ class InfraIPAddress(IpfabricsyncModel):
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
+
 
 class InfraInterfaceL3(IpfabricsyncModel):
     _modelname = "InfraInterfaceL3"
@@ -49,6 +52,7 @@ class InfraInterfaceL3(IpfabricsyncModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
+
 class InfraNOSVersion(IpfabricsyncModel):
     _modelname = "InfraNOSVersion"
     _identifiers = ("manufacturer", "model", "version")
@@ -60,6 +64,7 @@ class InfraNOSVersion(IpfabricsyncModel):
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
+
 
 class InfraPartNumber(IpfabricsyncModel):
     _modelname = "InfraPartNumber"
@@ -77,6 +82,7 @@ class InfraPartNumber(IpfabricsyncModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
+
 class InfraPlatform(IpfabricsyncModel):
     _modelname = "InfraPlatform"
     _identifiers = ("name",)
@@ -86,6 +92,7 @@ class InfraPlatform(IpfabricsyncModel):
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
+
 
 class InfraPrefix(IpfabricsyncModel):
     _modelname = "InfraPrefix"
@@ -99,6 +106,7 @@ class InfraPrefix(IpfabricsyncModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
+
 class InfraVLAN(IpfabricsyncModel):
     _modelname = "InfraVLAN"
     _identifiers = ("location", "vlan_id")
@@ -111,6 +119,7 @@ class InfraVLAN(IpfabricsyncModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
+
 class InfraVRF(IpfabricsyncModel):
     _modelname = "InfraVRF"
     _identifiers = ("name",)
@@ -120,6 +129,7 @@ class InfraVRF(IpfabricsyncModel):
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
+
 
 class LocationGeneric(IpfabricsyncModel):
     _modelname = "LocationGeneric"
@@ -132,6 +142,7 @@ class LocationGeneric(IpfabricsyncModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
+
 class OrganizationGeneric(IpfabricsyncModel):
     _modelname = "OrganizationGeneric"
     _identifiers = ("name",)
@@ -141,6 +152,7 @@ class OrganizationGeneric(IpfabricsyncModel):
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
+
 
 class TemplateDeviceType(IpfabricsyncModel):
     _modelname = "TemplateDeviceType"

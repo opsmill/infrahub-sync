@@ -553,13 +553,13 @@ files = [
 
 [[package]]
 name = "infrahub-sdk"
-version = "0.12.4"
+version = "1.0.0"
 description = "Python Client to interact with Infrahub"
 optional = false
 python-versions = "<4.0,>=3.9"
 files = [
-    {file = "infrahub_sdk-0.12.4-py3-none-any.whl", hash = "sha256:5a7235baf000368dc13dfafb01e268753887d3a21f7a7a0298fcace421fb9af7"},
-    {file = "infrahub_sdk-0.12.4.tar.gz", hash = "sha256:ea1b9b241f1433f1f9023d7351a035610d67fb3d3599c06e7014358eea52d01c"},
+    {file = "infrahub_sdk-1.0.0-py3-none-any.whl", hash = "sha256:70eb8b5ef5839fed0faa8ee0f3aae074a616ac9311eb5bfe9f335cb775aa7856"},
+    {file = "infrahub_sdk-1.0.0.tar.gz", hash = "sha256:8b2ca6fe04ecc5c0364c444dcc94647eef3e261629b49430a32edc3d07620149"},
 ]
 
 [package.dependencies]
@@ -585,12 +585,12 @@ pytest = {version = "*", optional = true, markers = "extra == \"tests\" or extra
 pyyaml = {version = ">=6,<7", optional = true, markers = "extra == \"ctl\" or extra == \"tests\" or extra == \"all\""}
 rich = {version = ">=13,<14", optional = true, markers = "extra == \"ctl\" or extra == \"tests\" or extra == \"all\""}
 toml = {version = ">=0.10,<0.11", optional = true, markers = "extra == \"ctl\" or extra == \"all\""}
-typer = {version = ">=0,<1", optional = true, markers = "extra == \"ctl\" or extra == \"all\""}
+typer = {version = ">=0.12.3,<0.13.0", optional = true, markers = "extra == \"ctl\" or extra == \"all\""}
 ujson = ">=5,<6"
 
 [package.extras]
-all = ["Jinja2 (>=3,<4)", "numpy (>=1.24.2,<2.0.0)", "numpy (>=1.26.2,<2.0.0)", "pyarrow (>=14,<15)", "pytest", "pyyaml (>=6,<7)", "rich (>=13,<14)", "toml (>=0.10,<0.11)", "typer (>=0,<1)"]
-ctl = ["Jinja2 (>=3,<4)", "numpy (>=1.24.2,<2.0.0)", "numpy (>=1.26.2,<2.0.0)", "pyarrow (>=14,<15)", "pyyaml (>=6,<7)", "rich (>=13,<14)", "toml (>=0.10,<0.11)", "typer (>=0,<1)"]
+all = ["Jinja2 (>=3,<4)", "numpy (>=1.24.2,<2.0.0)", "numpy (>=1.26.2,<2.0.0)", "pyarrow (>=14,<15)", "pytest", "pyyaml (>=6,<7)", "rich (>=13,<14)", "toml (>=0.10,<0.11)", "typer (>=0.12.3,<0.13.0)"]
+ctl = ["Jinja2 (>=3,<4)", "numpy (>=1.24.2,<2.0.0)", "numpy (>=1.26.2,<2.0.0)", "pyarrow (>=14,<15)", "pyyaml (>=6,<7)", "rich (>=13,<14)", "toml (>=0.10,<0.11)", "typer (>=0.12.3,<0.13.0)"]
 tests = ["Jinja2 (>=3,<4)", "pytest", "pyyaml (>=6,<7)", "rich (>=13,<14)"]
 
 [[package]]
@@ -2175,4 +2175,4 @@ dev = ["doc8", "flake8", "flake8-import-order", "rstcheck[sphinx]", "sphinx"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9, < 3.13"
-content-hash = "50f6db363f65635393946309be7a434e1e20bf10433ae65872a62157aacdf27f"
+content-hash = "990ece6c87626a56afe86e0f67801126e5738a6aafbf0237afa5fdec3cf9ff16"
