@@ -139,45 +139,45 @@ def get_potenda_from_instance(
             else:
                 source_store = RedisStore(name=sync_instance.source.name)
                 destination_store = RedisStore(name=sync_instance.destination.name)
-
     try:
         if sync_instance.source.name == "infrahub":
-            settings_branch = sync_instance.source.settings["branch"] or None
-            if settings_branch or branch:
-                src = source(
+            settings_branch = sync_instance.source.settings["branch"] or branch
+            if settings_branch:
+                print(f"SOURCE setting branch found {settings_branch}")
+                src: SyncInstance = source(
                     config=sync_instance,
                     target="source",
                     adapter=sync_instance.source,
-                    branch=branch,
+                    branch=settings_branch,
                     internal_storage_engine=source_store,
                 )
-            else:
-                src = source(
-                    config=sync_instance,
-                    target="source",
-                    adapter=sync_instance.source,
-                    internal_storage_engine=source_store,
-                )
+        else:
+            src: SyncInstance = source(
+                config=sync_instance,
+                target="source",
+                adapter=sync_instance.source,
+                internal_storage_engine=source_store,
+            )
     except ValueError as exc:
         raise ValueError(f"{sync_instance.source.name.title()}Adapter - {exc}") from exc
     try:
         if sync_instance.destination.name == "infrahub":
-            settings_branch = sync_instance.destination.settings["branch"] or None
-            if settings_branch or branch:
-                dst = destination(
+            settings_branch = sync_instance.destination.settings["branch"] or branch
+            if settings_branch:
+                dst: SyncInstance = destination(
                     config=sync_instance,
                     target="destination",
                     adapter=sync_instance.destination,
-                    branch=branch,
+                    branch=settings_branch,
                     internal_storage_engine=destination_store,
                 )
-            else:
-                dst = destination(
-                    config=sync_instance,
-                    target="destination",
-                    adapter=sync_instance.destination,
-                    internal_storage_engine=destination_store,
-                )
+        else:
+            dst: SyncInstance = destination(
+                config=sync_instance,
+                target="destination",
+                adapter=sync_instance.destination,
+                internal_storage_engine=destination_store,
+            )
     except ValueError as exc:
         raise ValueError(f"{sync_instance.destination.name.title()}Adapter - {exc}") from exc
 
