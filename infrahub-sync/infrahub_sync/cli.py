@@ -2,7 +2,7 @@ import logging
 from timeit import default_timer as timer
 
 import typer
-from infrahub_sdk import InfrahubClientSync
+from infrahub_sdk import Config, InfrahubClientSync
 from infrahub_sdk.exceptions import ServerNotResponsiveError
 from rich.console import Console
 
@@ -123,21 +123,36 @@ def generate(
     if not sync_instance:
         print_error_and_abort(f"Unable to find the sync {name}. Use the list command to see the sync available")
 
-    # TODO
-    # - Do not use the env variable token here if token is present in settings
-    # - Do not use `main` if the branch is indicated in the file
-    infrahub_address = None
+    # Check if the destination is infrahub
     if sync_instance.destination.name == "infrahub":
-        if sync_instance.destination.settings and isinstance(sync_instance.source.settings, dict):
-            infrahub_address = sync_instance.destination.settings["url"]
+        if sync_instance.destination.settings and isinstance(sync_instance.destination.settings, dict):
+            infrahub_address = sync_instance.destination.settings.get("url")
+            infrahub_token = sync_instance.destination.settings.get("token", None)
+            infrahub_branch = sync_instance.destination.settings.get("branch", None)
+            if not infrahub_branch and branch:
+                infrahub_branch = branch
+            elif not infrahub_branch and not branch:
+                infrahub_branch = "main"
+
+            sdk_config = Config(default_branch=infrahub_branch, api_token=infrahub_token)
+
+    # Check if the source is infrahub
     elif sync_instance.source.name == "infrahub":
         if sync_instance.source.settings and isinstance(sync_instance.source.settings, dict):
-            infrahub_address = sync_instance.source.settings["url"]
+            infrahub_address = sync_instance.source.settings.get("url")
+            infrahub_token = sync_instance.source.settings.get("token", None)
+            infrahub_branch = sync_instance.source.settings.get("branch", None)
+            if not infrahub_branch and branch:
+                infrahub_branch = branch
+            elif not infrahub_branch and not branch:
+                infrahub_branch = "main"
 
-    client = InfrahubClientSync(address=infrahub_address)
+        sdk_config = Config(default_branch=infrahub_branch, api_token=infrahub_token)
+
+    client = InfrahubClientSync(address=infrahub_address, config=sdk_config)
 
     try:
-        schema = client.schema.all(branch=branch)
+        schema = client.schema.all()
     except ServerNotResponsiveError as exc:
         print_error_and_abort(str(exc))
 
