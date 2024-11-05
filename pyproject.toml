@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "infrahub-sync"
-version = "0.5.0"
+version = "0.6.0"
 description = "Infrahub-Sync is a versatile Python package that synchronizes data between a source and a destination system"
 authors = ["OpsMill <info@opsmill.com>"]
 readme = "README.md"
@@ -23,16 +23,16 @@ classifiers = [
 
 [tool.poetry.dependencies]
 python = ">=3.9, < 3.13"
-infrahub-sdk = {version = "^0,>=0.12", extras = ["all"]}
+infrahub-sdk = {version = "^1", extras = ["all"]}
 structlog = "^22.3.0"
 diffsync = { version = ">=1.10,<2.0 || >=2.0", extras = ["redis"] }
-netutils = "^1.9.1"
-tqdm = "^4.66.5"
+netutils = ">=1.9"
+tqdm = ">=4.66"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"
 pytest-clarity = "^1.0.1"
-pytest-cov = "^4.0.0"
+pytest-cov = ">=4,<7"
 pytest-httpx = "*"
 yamllint = "*"
 pylint = "*"
@@ -40,14 +40,14 @@ mypy = "*"
 ipython = "*"
 pytest-asyncio = "*"
 requests = "*"
-pre-commit = "^2.20.0"
+pre-commit = ">=2.20,<5.0"
 types-toml = "*"
 types-ujson = "*"
 types-pyyaml = "*"
 typer-cli = "*"
-ruff = "0.6.2"
+ruff = "0.7.2"
 pytest-xdist = "^3.3.1"
-types-python-slugify = "^8.0.0.3"
+types-python-slugify = ">=8.0.0.3"
 
 [tool.poetry.scripts]
 infrahub-sync = "infrahub_sync.cli:app"

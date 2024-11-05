@@ -6,11 +6,11 @@ from diffsync import Adapter, DiffSyncModel
 from infrahub_sdk import (
     Config,
     InfrahubClientSync,
-    InfrahubNodeSync,
-    NodeSchema,
-    NodeStoreSync,
 )
 from infrahub_sdk.exceptions import NodeNotFoundError
+from infrahub_sdk.node import InfrahubNodeSync
+from infrahub_sdk.schema import NodeSchema
+from infrahub_sdk.store import NodeStoreSync
 from infrahub_sdk.utils import compare_lists
 from infrahub_sync import (
     DiffSyncMixin,
@@ -101,18 +101,19 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         self.config = config
 
         settings = adapter.settings or {}
-        url = os.environ.get("INFRAHUB_ADDRESS") or os.environ.get("INFRAHUB_URL") or settings.get("url")
-        token = os.environ.get("INFRAHUB_API_TOKEN") or settings.get("token")
+        infrahub_url = os.environ.get("INFRAHUB_ADDRESS") or os.environ.get("INFRAHUB_URL") or settings.get("url")
+        infrahub_token = os.environ.get("INFRAHUB_API_TOKEN") or settings.get("token")
+        infrahub_branch = settings.get("branch") or branch
 
-        if not url or not token:
+        if not infrahub_url or not infrahub_token:
             raise ValueError("Both url and token must be specified!")
 
-        if branch:
-            sdk_config = Config(timeout=60, default_branch=branch, api_token=token)
+        if infrahub_branch:
+            sdk_config = Config(timeout=60, default_branch=infrahub_branch, api_token=infrahub_token)
         else:
-            sdk_config = Config(timeout=60, api_token=token)
+            sdk_config = Config(timeout=60, api_token=infrahub_token)
 
-        self.client = InfrahubClientSync(address=url, config=sdk_config)
+        self.client = InfrahubClientSync(address=infrahub_url, config=sdk_config)
 
         # We need to identify with an account until we have some auth in place
         remote_account = config.source.name

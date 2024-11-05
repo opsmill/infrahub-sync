@@ -24,7 +24,7 @@ ipf_filters = {
 
 
 class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
-    type = "IPFabric"
+    type = "IPFabricsync"
 
     def __init__(self, *args, target: str, adapter: SyncAdapter, config: SyncConfig, **kwargs):
         super().__init__(*args, **kwargs)
@@ -79,9 +79,19 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
             table = self.client.fetch_all(element.mapping, filters=ipf_filters.get(element.mapping))
             print(f"{self.type}: Loading {len(table)} from `{element.mapping}`")
 
-            # TODO Filter records
-            # TODO Transform records
-            for obj in table:
+            total = len(table)
+
+            if self.config.source.name.title() == self.type.title():
+                # Filter records
+                filtered_objs = model.filter_records(records=table, schema_mapping=element)
+                print(f"{self.type}: Loading {len(filtered_objs)}/{total} {element.mapping}")
+                # Transform records
+                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
+            else:
+                print(f"{self.type}: Loading all {total} {element.mapping}")
+                transformed_objs = table
+
+            for obj in transformed_objs:
                 data = self.ipfabric_dict_to_diffsync(obj=obj, mapping=element, model=model)
                 item = model(**data)
                 self.update_or_add_model_instance(item)
@@ -126,7 +136,6 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
                         else:
                             node = matching_nodes[0]
                             data[field.name] = node.get_unique_id()
-
         return data
 
 

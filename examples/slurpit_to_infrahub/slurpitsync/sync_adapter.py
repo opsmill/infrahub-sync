@@ -1,13 +1,13 @@
-from infrahub_sync.adapters.ipfabricsync import IpfabricsyncAdapter
+from infrahub_sync.adapters.slurpitsync import SlurpitsyncAdapter
 
 from .sync_models import (
     InfraDevice,
-    InfraInterfaceL3,
+    InfraHardwareInfo,
+    InfraInterface,
     InfraIPAddress,
-    InfraNOSVersion,
-    InfraPartNumber,
     InfraPlatform,
     InfraPrefix,
+    InfraVersion,
     InfraVLAN,
     InfraVRF,
     LocationGeneric,
@@ -21,16 +21,16 @@ from .sync_models import (
 #  This file has been generated with the command `infrahub-sync generate`
 #  All modifications will be lost the next time you reexecute this command
 # -------------------------------------------------------
-class IpfabricsyncSync(IpfabricsyncAdapter):
+class SlurpitsyncSync(SlurpitsyncAdapter):
     InfraDevice = InfraDevice
+    InfraHardwareInfo = InfraHardwareInfo
     InfraIPAddress = InfraIPAddress
-    InfraInterfaceL3 = InfraInterfaceL3
-    InfraNOSVersion = InfraNOSVersion
-    InfraPartNumber = InfraPartNumber
+    InfraInterface = InfraInterface
     InfraPlatform = InfraPlatform
     InfraPrefix = InfraPrefix
     InfraVLAN = InfraVLAN
     InfraVRF = InfraVRF
+    InfraVersion = InfraVersion
     LocationGeneric = LocationGeneric
     OrganizationGeneric = OrganizationGeneric
     TemplateDeviceType = TemplateDeviceType
