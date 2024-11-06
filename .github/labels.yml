@@ -6,6 +6,13 @@
 # the GitHub Action https://github.com/marketplace/actions/github-labeler.
 
 # ----------------------------------
+# GROUP
+# ----------------------------------
+- name: "group/ci"
+  description: "Issue related to the CI pipeline"
+  color: "f25009"
+
+# ----------------------------------
 # TYPE (default)
 # ----------------------------------
 - name: "type/breaking-change"
