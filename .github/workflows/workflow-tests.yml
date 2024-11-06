@@ -20,10 +20,6 @@ jobs:
     runs-on: "ubuntu-22.04"
     timeout-minutes: 5
     outputs:
-      documentation: ${{ steps.changes.outputs.documentation_all }}
-      yaml: ${{ steps.changes.outputs.yaml_all }}
-      poetry_files: ${{ steps.changes.outputs.poetry_files }}
-      github_workflows: ${{ steps.changes.outputs.github_workflows }}
       sync: ${{ steps.changes.outputs.sync_all }}
     steps:
       - name: "Check out repository code"
@@ -34,85 +30,6 @@ jobs:
         with:
           token: ${{ github.token }}
           filters: .github/file-filters.yml
-
-  yaml-lint:
-    if: needs.files-changed.outputs.yaml == 'true'
-    needs: ["files-changed"]
-    runs-on: "ubuntu-latest"
-    timeout-minutes: 5
-    steps:
-      - name: "Check out repository code"
-        uses: "actions/checkout@v4"
-        with:
-          submodules: true
-      - name: "Setup environment"
-        run: "pip install yamllint==1.35.1"
-      - name: "Linting: yamllint"
-        run: "yamllint -s ."
-
-  python-lint:
-    if: needs.files-changed.outputs.python == 'true'
-    needs: ["files-changed"]
-    runs-on: "ubuntu-latest"
-    timeout-minutes: 5
-    steps:
-      - name: "Check out repository code"
-        uses: "actions/checkout@v4"
-        with:
-          submodules: true
-      - name: "Setup environment"
-        run: "pip install ruff==0.7.2"
-      - name: "Linting: ruff check"
-        run: "ruff check . --exclude python_sdk"
-      - name: "Linting: ruff format"
-        run: "ruff format --check --diff --exclude python_sdk ."
-
-  markdown-lint:
-    if: needs.files-changed.outputs.documentation == 'true'
-    needs: ["files-changed"]
-    runs-on: "ubuntu-latest"
-    timeout-minutes: 5
-    steps:
-      - name: "Check out repository code"
-        uses: "actions/checkout@v4"
-        with:
-          submodules: true
-      - name: "Linting: markdownlint"
-        uses: DavidAnson/markdownlint-cli2-action@v17
-        with:
-          config: .markdownlint.yaml
-          globs: |
-            **/*.{md,mdx}
-            !changelog/*.md
-
-  action-lint:
-    if: needs.files-changed.outputs.github_workflows == 'true'
-    needs: ["files-changed"]
-    runs-on: "ubuntu-latest"
-    timeout-minutes: 5
-    steps:
-      - name: "Check out repository code"
-        uses: "actions/checkout@v4"
-        with:
-          submodules: true
-      - name: Check workflow files
-        run: |
-          bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
-          ./actionlint -color
-        shell: bash
-        env:
-          SHELLCHECK_OPTS: --exclude=SC2086 --exclude=SC2046 --exclude=SC2004
-
-  poetry-check:
-    if: |
-      needs.files-changed.outputs.poetry_files == 'true' ||
-      github.ref_name == 'stable' ||
-      github.ref_name == 'develop'
-    needs:
-      - "files-changed"
-    uses: "./.github/workflows/workflow-poetry-check.yml"
-    with:
-      directory: "./"
 
   # TODO: Create the unit tests...
   # unit-tests:
@@ -125,7 +42,6 @@ jobs:
   #         - "3.11"
   #         - "3.12"
   #   if: needs.files-changed.outputs.sync == 'true'
-  #   needs: ["files-changed", "python-lint", "poetry-check"]
   #   runs-on: ubuntu-latest
   #   timeout-minutes: 30
   #   defaults:
