@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional, Self
 
 from diffsync import Adapter, DiffSyncModel
+
 from infrahub_sync import (
     DiffSyncMixin,
     DiffSyncModelMixin,
@@ -19,7 +20,7 @@ from .utils import derive_identifier_key, get_value
 class ObserviumAdapter(DiffSyncMixin, Adapter):
     type = "Observium"
 
-    def __init__(self, *args, target: str, adapter: SyncAdapter, config: SyncConfig, **kwargs):
+    def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
         self.target = target
@@ -49,7 +50,7 @@ class ObserviumAdapter(DiffSyncMixin, Adapter):
             timeout=timeout,
         )
 
-    def model_loader(self, model_name: str, model: ObserviumModel):
+    def model_loader(self, model_name: str, model: ObserviumModel) -> None:
         """
         Load and process models using schema mapping filters and transformations.
 
@@ -110,7 +111,7 @@ class ObserviumAdapter(DiffSyncMixin, Adapter):
 
             elif field.mapping and field.reference:
                 all_nodes_for_reference = self.store.get_all(model=field.reference)
-                nodes = [item for item in all_nodes_for_reference]  # noqa: C416
+                nodes = [item for item in all_nodes_for_reference]
                 if not nodes and all_nodes_for_reference:
                     raise IndexError(
                         f"Unable to get '{field.mapping}' with '{field.reference}' reference from store."
@@ -157,10 +158,10 @@ class ObserviumModel(DiffSyncModelMixin, DiffSyncModel):
         adapter: Adapter,
         ids: Mapping[Any, Any],
         attrs: Mapping[Any, Any],
-    ):
+    ) -> Optional[Self]:
         # TODO
         return super().create(adapter=adapter, ids=ids, attrs=attrs)
 
-    def update(self, attrs):
+    def update(self, attrs: dict) -> Optional[Self]:
         # TODO
         return super().update(attrs)

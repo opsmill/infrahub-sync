@@ -8,10 +8,7 @@ license = "Apache-2.0"
 homepage = "https://opsmill.com"
 repository = "https://github.com/opsmill/infrahub"
 documentation = "https://docs.infrahub.app/integrations/sync/"
-packages = [
-    { include = "infrahub_sync", from = "infrahub-sync"},
-    { include = "potenda", from = "potenda"},
-]
+packages = [{ include = "infrahub_sync" }]
 classifiers = [
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
@@ -260,7 +257,7 @@ max-complexity = 33
 
 [tool.ruff.lint.per-file-ignores]
 
-"infrahub-sync/infrahub_sync/**.py" = [
+"infrahub_sync/**.py" = [
     ##################################################################################################
     # Review and change the below later                                                              #
     ##################################################################################################
@@ -275,22 +272,7 @@ max-complexity = 33
     "ANN401", # Dynamically typed expressions (typing.Any) are disallowed
 ]
 
-"potenda/**.py" = [
-    ##################################################################################################
-    # Review and change the below later                                                              #
-    ##################################################################################################
-    "ANN001", # Missing type annotation for function argument
-    "ANN002", # Missing type annotation for `*args`
-    "ANN003", # Missing type annotation for `**kwargs`
-    "ANN201", # Missing return type annotation for public function
-    "ANN202", # Missing return type annotation for private function
-    "ANN204", # Missing return type annotation for special method
-    "ANN205", # Missing return type annotation for staticmethod
-    "ANN206", # Missing return type annotation for classmethod
-    "ANN401", # Dynamically typed expressions (typing.Any) are disallowed
-]
-
-"infrahub-sync/infrahub_sync/adapters/**.py" = [
+"infrahub_sync/adapters/**.py" = [
     "INP001", # Is part of an implicit namespace package
     ##################################################################################################
     # Review and change the below later                                                              #

@@ -1,18 +1,19 @@
 from typing import List, Optional
 
-from diffsync import DiffSync
+from diffsync import Adapter
 from diffsync.diff import Diff
 from diffsync.enum import DiffSyncFlags
 from diffsync.logging import enable_console_logging
-from infrahub_sync import SyncInstance
 from tqdm import tqdm
+
+from infrahub_sync import SyncInstance
 
 
 class Potenda:
     def __init__(
         self,
-        source: DiffSync,
-        destination: DiffSync,
+        source: Adapter,
+        destination: Adapter,
         config: SyncInstance,
         top_level: List[str],
         partition=None,

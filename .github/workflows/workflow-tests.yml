@@ -31,35 +31,35 @@ jobs:
           token: ${{ github.token }}
           filters: .github/file-filters.yml
 
-  unit-tests:
-    name: Unit Tests (py${{  matrix.python-version }})
-    strategy:
-      matrix:
-        python-version:
-          - "3.9"
-          - "3.10"
-          - "3.11"
-          - "3.12"
-    if: needs.files-changed.outputs.sync == 'true'
-    needs: ["files-changed", "yaml-lint", "python-lint"]
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: sync/
-    steps:
-      - name: "Check out repository code"
-        uses: "actions/checkout@v4"
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: "Setup environment"
-        run: |
-          pipx install poetry
-          poetry config virtualenvs.prefer-active-python true
-          pip install toml invoke
-      - name: "Install Package"
-        run: "poetry install"
-      - name: "Pylint Tests"
-        run: "poetry run pylint infrahub_sync/"
+  # TODO: Create the unit tests...
+  # unit-tests:
+  #   name: Unit Tests (py${{  matrix.python-version }})
+  #   strategy:
+  #     matrix:
+  #       python-version:
+  #         - "3.9"
+  #         - "3.10"
+  #         - "3.11"
+  #         - "3.12"
+  #   if: needs.files-changed.outputs.sync == 'true'
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 30
+  #   defaults:
+  #     run:
+  #       working-directory: sync/
+  #   steps:
+  #     - name: "Check out repository code"
+  #       uses: "actions/checkout@v4"
+  #     - name: Set up Python ${{ matrix.python-version }}
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: ${{ matrix.python-version }}
+  #     - name: "Setup environment"
+  #       run: |
+  #         pipx install poetry
+  #         poetry config virtualenvs.prefer-active-python true
+  #         pip install toml invoke
+  #     - name: "Install Package"
+  #       run: "poetry install"
+  #     - name: "markdownlint-cli2, ruff, and pylint Tests"
+  #       run: "poetry run invoke tests.tests-unit"

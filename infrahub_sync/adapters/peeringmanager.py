@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional, Self
 
 import requests
 from diffsync import Adapter, DiffSyncModel
+
 from infrahub_sync import (
     DiffSyncMixin,
     DiffSyncModelMixin,
@@ -20,7 +21,7 @@ from .utils import derive_identifier_key, get_value
 class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
     type = "Peeringmanager"
 
-    def __init__(self, *args, target: str, adapter: SyncAdapter, config: SyncConfig, **kwargs):
+    def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
         self.target = target
@@ -44,7 +45,7 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
         full_base_url = f"{url.rstrip('/')}/{api_endpoint.strip('/')}"
         return RestApiClient(base_url=full_base_url, auth_method=auth_method, api_token=api_token, timeout=timeout)
 
-    def model_loader(self, model_name: str, model: PeeringmanagerModel):
+    def model_loader(self, model_name: str, model: PeeringmanagerModel) -> None:
         """
         Load and process models using schema mapping filters and transformations.
 
@@ -147,11 +148,11 @@ class PeeringmanagerModel(DiffSyncModelMixin, DiffSyncModel):
         adapter: Adapter,
         ids: Mapping[Any, Any],
         attrs: Mapping[Any, Any],
-    ):
+    ) -> Optional[Self]:
         # TODO
         return super().create(adapter=adapter, ids=ids, attrs=attrs)
 
-    def update(self, attrs: dict):
+    def update(self, attrs: dict) -> Optional[Self]:
         """
         Update an object in the Peering Manager system with new attributes.
 
