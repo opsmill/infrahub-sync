@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional, Self
 
 import slurpit
 from diffsync import Adapter, DiffSyncModel
+
 from infrahub_sync import (
     DiffSyncMixin,
     DiffSyncModelMixin,
@@ -23,15 +24,15 @@ loop = asyncio.new_event_loop()
 class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
     type = "Slurpitsync"
 
-    def __init__(self, *args, target: str, adapter: SyncAdapter, config: SyncConfig, **kwargs):
+    def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.target = target
-        self.client = self._create_slurpit_client(adapter)
+        self.client = self._create_slurpit_client(adapter=adapter)
         self.config = config
         self.filtered_networks = []
         self.skipped = []
 
-    def _create_slurpit_client(self, adapter):
+    def _create_slurpit_client(self, adapter: SyncAdapter) -> slurpit.api:
         settings = adapter.settings or {}
         client = slurpit.api(**settings)
         try:
@@ -54,17 +55,17 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             asyncio.set_event_loop(loop)
             return loop.run_until_complete(coroutine)
 
-    def unique_vendors(self):
+    def unique_vendors(self) -> list[dict[str, Any]]:
         devices = self.run_async(self.client.device.get_devices())
         vendors = {device.brand for device in devices}
         return [{"brand": item} for item in vendors]
 
-    def unique_device_type(self):
+    def unique_device_type(self) -> list[dict[str, Any]]:
         devices = self.run_async(self.client.device.get_devices())
         device_types = {(device.brand, device.device_type, device.device_os) for device in devices}
         return [{"brand": item[0], "device_type": item[1], "device_os": item[2]} for item in device_types]
 
-    def filter_networks(self):
+    def filter_networks(self) -> list:
         """Filter out networks based on ignore prefixes and normalize network/mask fields."""
         ignore_prefixes = [
             "0.0.0.0/0",
@@ -90,7 +91,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                 entry["normalized_prefix"] = network
             return entry
 
-        def should_ignore(network):
+        def should_ignore(network) -> bool:
             try:
                 net = ipaddress.ip_network(network, strict=False)
                 if net.prefixlen in {32, 128}:
@@ -107,7 +108,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         ]
         return self.filtered_networks
 
-    async def filter_interfaces(self, interfaces):
+    async def filter_interfaces(self, interfaces) -> list:
         precomputed_filtered_networks = [
             {"network": ipaddress.ip_network(prefix["normalized_prefix"], strict=False), "Vrf": prefix.get("Vrf", None)}
             for prefix in self.filtered_networks
@@ -158,7 +159,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         results = self.run_async(self.client.planning.search_plannings(search_data, limit=30000))
         return results if results else []
 
-    def model_loader(self, model_name: str, model: SlurpitsyncModel):
+    def model_loader(self, model_name: str, model: SlurpitsyncModel) -> None:
         for element in self.config.schema_mapping:
             if element.name != model_name:
                 continue
@@ -251,7 +252,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                 )
             elif field.mapping and field.reference:
                 all_nodes_for_reference = self.store.get_all(model=field.reference)
-                nodes = [item for item in all_nodes_for_reference]
+                nodes = [item for item in all_nodes_for_reference]  # noqa: C416
                 if not nodes and all_nodes_for_reference:
                     raise IndexError(
                         f"Unable to get '{field.mapping}' with '{field.reference}' reference from store."
@@ -280,10 +281,10 @@ class SlurpitsyncModel(DiffSyncModelMixin, DiffSyncModel):
         adapter: Adapter,
         ids: Mapping[Any, Any],
         attrs: Mapping[Any, Any],
-    ):
+    ) -> Optional[Self]:
         # TODO
         return super().create(adapter=adapter, ids=ids, attrs=attrs)
 
-    def update(self, attrs):
+    def update(self, attrs: dict) -> Optional[Self]:
         # TODO
         return super().update(attrs)

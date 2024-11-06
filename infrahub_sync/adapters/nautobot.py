@@ -2,10 +2,11 @@ from __future__ import annotations
 
 # pylint: disable=R0801
 import os
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional, Self
 
 import pynautobot
 from diffsync import Adapter, DiffSyncModel
+
 from infrahub_sync import (
     DiffSyncMixin,
     DiffSyncModelMixin,
@@ -20,14 +21,14 @@ from .utils import get_value
 class NautobotAdapter(DiffSyncMixin, Adapter):
     type = "Nautobot"
 
-    def __init__(self, *args, target: str, adapter: SyncAdapter, config: SyncConfig, **kwargs):
+    def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
         self.target = target
         self.client = self._create_nautobot_client(adapter)
         self.config = config
 
-    def _create_nautobot_client(self, adapter: SyncAdapter):
+    def _create_nautobot_client(self, adapter: SyncAdapter) -> pynautobot.api:
         settings = adapter.settings or {}
         url = os.environ.get("NAUTOBOT_ADDRESS") or os.environ.get("NAUTOBOT_URL") or settings.get("url")
         token = os.environ.get("NAUTOBOT_TOKEN") or settings.get("token")
@@ -37,7 +38,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
 
         return pynautobot.api(url, token=token, threading=True, max_workers=5, retries=3)
 
-    def model_loader(self, model_name: str, model: NautobotModel):
+    def model_loader(self, model_name: str, model: NautobotModel) -> None:
         """
         Load and process models using schema mapping filters and transformations.
 
@@ -149,10 +150,10 @@ class NautobotModel(DiffSyncModelMixin, DiffSyncModel):
         adapter: Adapter,
         ids: Mapping[Any, Any],
         attrs: Mapping[Any, Any],
-    ):
+    ) -> Optional[Self]:
         # TODO
         return super().create(adapter=adapter, ids=ids, attrs=attrs)
 
-    def update(self, attrs):
+    def update(self, attrs: dict) -> Optional[Self]:
         # TODO
-        return super().update(attrs)
+        return super().update(attrs=attrs)

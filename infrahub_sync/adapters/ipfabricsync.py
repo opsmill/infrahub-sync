@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional, Self
 
 try:
     from ipfabric import IPFClient
@@ -8,6 +8,7 @@ except ImportError as e:
     print(e)
 
 from diffsync import Adapter, DiffSyncModel
+
 from infrahub_sync import (
     DiffSyncMixin,
     DiffSyncModelMixin,
@@ -26,14 +27,14 @@ ipf_filters = {
 class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
     type = "IPFabricsync"
 
-    def __init__(self, *args, target: str, adapter: SyncAdapter, config: SyncConfig, **kwargs):
+    def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
         self.target = target
         self.client = self._create_ipfabric_client(adapter)
         self.config = config
 
-    def _create_ipfabric_client(self, adapter: SyncAdapter):
+    def _create_ipfabric_client(self, adapter: SyncAdapter) -> IPFClient:
         settings = adapter.settings or {}
 
         base_url = settings.get("base_url") or None
@@ -44,7 +45,7 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
 
         return IPFClient(**settings)
 
-    def build_mapping(self, reference, obj):
+    def build_mapping(self, reference, obj) -> str:
         # Get object class and model name from the store
         object_class, modelname = self.store._get_object_class_and_model(model=reference)
 
@@ -66,7 +67,7 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
         unique_id = "__".join(str(obj.get(key, "")) for key in new_identifiers)
         return unique_id
 
-    def model_loader(self, model_name, model):
+    def model_loader(self, model_name: str, model: IpfabricsyncModel) -> None:
         """
         Load and process models using schema mapping filters and transformations.
 
@@ -146,10 +147,10 @@ class IpfabricsyncModel(DiffSyncModelMixin, DiffSyncModel):
         adapter: Adapter,
         ids: Mapping[Any, Any],
         attrs: Mapping[Any, Any],
-    ):
+    ) -> Optional[Self]:
         # TODO
         return super().create(adapter=adapter, ids=ids, attrs=attrs)
 
-    def update(self, attrs):
+    def update(self, attrs: dict) -> Optional[Self]:
         # TODO
-        return super().update(attrs)
+        return super().update(attrs=attrs)

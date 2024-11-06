@@ -31,6 +31,7 @@ jobs:
       needs.files-changed.outputs.poetry_files == 'true' ||
       github.ref_name == 'stable' ||
       github.ref_name == 'develop'
+    needs: ["files-changed"]
     steps:
       - name: "Check out repository code"
         uses: "actions/checkout@v4"

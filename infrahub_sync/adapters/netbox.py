@@ -2,10 +2,11 @@ from __future__ import annotations
 
 # pylint: disable=R0801
 import os
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional, Self
 
 import pynetbox
 from diffsync import Adapter, DiffSyncModel
+
 from infrahub_sync import (
     DiffSyncMixin,
     DiffSyncModelMixin,
@@ -20,14 +21,14 @@ from .utils import get_value
 class NetboxAdapter(DiffSyncMixin, Adapter):
     type = "Netbox"
 
-    def __init__(self, *args, target: str, adapter: SyncAdapter, config: SyncConfig, **kwargs):
+    def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
         self.target = target
         self.client = self._create_netbox_client(adapter)
         self.config = config
 
-    def _create_netbox_client(self, adapter: SyncAdapter):
+    def _create_netbox_client(self, adapter: SyncAdapter) -> pynetbox.api:
         settings = adapter.settings or {}
         url = os.environ.get("NETBOX_ADDRESS") or os.environ.get("NETBOX_URL") or settings.get("url")
         token = os.environ.get("NETBOX_TOKEN") or settings.get("token")
@@ -37,7 +38,7 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
 
         return pynetbox.api(url, token=token)
 
-    def model_loader(self, model_name: str, model: NetboxModel):
+    def model_loader(self, model_name: str, model: NetboxModel) -> None:
         """
         Load and process models using schema mapping filters and transformations.
 
@@ -97,7 +98,7 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
                 )
             elif field.mapping and field.reference:
                 all_nodes_for_reference = self.store.get_all(model=field.reference)
-                nodes = [item for item in all_nodes_for_reference]
+                nodes = [item for item in all_nodes_for_reference]  # noqa: C416
                 if not nodes and all_nodes_for_reference:
                     raise IndexError(
                         f"Unable to get '{field.mapping}' with '{field.reference}' reference from store."
@@ -142,10 +143,10 @@ class NetboxModel(DiffSyncModelMixin, DiffSyncModel):
         adapter: Adapter,
         ids: Mapping[Any, Any],
         attrs: Mapping[Any, Any],
-    ):
+    ) -> Optional[Self]:
         # TODO
         return super().create(adapter=adapter, ids=ids, attrs=attrs)
 
-    def update(self, attrs):
+    def update(self, attrs: dict) -> Optional[Self]:
         # TODO
         return super().update(attrs)

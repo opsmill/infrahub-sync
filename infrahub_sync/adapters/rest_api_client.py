@@ -12,7 +12,7 @@ class RestApiClient:
         username: Optional[str] = None,
         password: Optional[str] = None,
         timeout: Optional[int] = 30,
-    ):
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.headers = {
             "Content-Type": "application/json",
@@ -43,7 +43,7 @@ class RestApiClient:
 
     def request(
         self, method: str, endpoint: str, params: Optional[dict[str, Any]] = None, data: Optional[dict[str, Any]] = None
-    ) -> Any:
+    ) -> Any:  # noqa: ANN401
         """Make a request to the REST API."""
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
 
@@ -74,17 +74,17 @@ class RestApiClient:
         except requests.exceptions.RequestException as exc:
             raise ConnectionError(f"API request failed: {str(exc)}") from exc
 
-    def get(self, endpoint: str, params: Optional[dict[str, Any]] = None) -> Any:
+    def get(self, endpoint: str, params: Optional[dict[str, Any]] = None) -> Any:  # noqa: ANN401
         return self.request("GET", endpoint, params=params)
 
-    def post(self, endpoint: str, data: Optional[dict[str, Any]] = None) -> Any:
+    def post(self, endpoint: str, data: Optional[dict[str, Any]] = None) -> Any:  # noqa: ANN401
         return self.request("POST", endpoint, data=data)
 
-    def patch(self, endpoint: str, data: Optional[dict[str, Any]] = None) -> Any:
+    def patch(self, endpoint: str, data: Optional[dict[str, Any]] = None) -> Any:  # noqa: ANN401
         return self.request("PATCH", endpoint, data=data)
 
-    def put(self, endpoint: str, data: Optional[dict[str, Any]] = None) -> Any:
+    def put(self, endpoint: str, data: Optional[dict[str, Any]] = None) -> Any:  # noqa: ANN401
         return self.request("PUT", endpoint, data=data)
 
-    def delete(self, endpoint: str) -> Any:
+    def delete(self, endpoint: str) -> Any:  # noqa: ANN401
         return self.request("DELETE", endpoint)

@@ -15,6 +15,11 @@ on:
         required: false
         description: The string to extract semver labels from.
         default: ''
+      publish:
+        type: boolean
+        description: Wether to publish the package to Pypi
+        required: false
+        default: false
 
 jobs:
   publish_to_pypi:

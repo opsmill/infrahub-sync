@@ -150,7 +150,7 @@ def has_children(node: NodeSchema, config: SyncConfig) -> bool:
     return False
 
 
-def render_template(template_file: Path, output_dir: Path, output_file: Path, context: dict[str, Any]):
+def render_template(template_file: Path, output_dir: Path, output_file: Path, context: dict[str, Any]) -> None:
     template_loader = jinja2.PackageLoader("infrahub_sync", "generator/templates")
     template_env = jinja2.Environment(
         loader=template_loader,

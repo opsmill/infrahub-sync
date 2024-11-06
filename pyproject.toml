@@ -180,6 +180,13 @@ ignore = [
     # like this so that we can reactivate them one by one. Alternatively ignored after further       #
     # investigation if they are deemed to not make sense.                                            #
     ##################################################################################################
+    "ANN001", # Missing type annotation for function argument
+    "ANN002", # Missing type annotation for `*args`
+    "ANN003", # Missing type annotation for `**kwargs`
+    "ANN201", # Missing return type annotation for public function
+    "ANN202", # Missing return type annotation for private function
+    "ANN206", # Missing return type annotation for classmethod
+    "ANN401", # Dynamically typed expressions (typing.Any) are disallowed
     "ASYNC230", # Async functions should not open files with blocking methods like `open`
     "ASYNC251", # Async functions should not call `time.sleep`
     "B007",     # Loop control variable not used within loop body
