@@ -75,13 +75,13 @@ jobs:
       - name: Update lock file
         run: poetry lock --no-update
 
-      - name: commit pyproject.toml and galaxy.yml
+      - name: commit pyproject.toml
         uses: github-actions-x/commit@v2.9
         with:
           github-token: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
           push-branch: 'stable'
-          commit-message: 'chore: update pyproject.toml & galaxy.yml'
-          files: pyproject.toml galaxy.yml
+          commit-message: 'chore: update pyproject.toml'
+          files: pyproject.toml poetry.lock
           name: opsmill-bot
           email: github-bot@opsmill.com
           rebase: true
