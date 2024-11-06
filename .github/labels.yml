@@ -8,6 +8,10 @@
 # ----------------------------------
 # TYPE (default)
 # ----------------------------------
+- name: "type/breaking-change"
+  description: "Breaking Changes"
+  color: "bfd4f2"
+
 - name: "type/feature"
   description: "New feature or request"
   color: "a2eeef"
