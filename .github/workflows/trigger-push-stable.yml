@@ -79,7 +79,7 @@ jobs:
         uses: github-actions-x/commit@v2.9
         with:
           github-token: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
-          push-branch: 'stable'
+          push-branch: 'main'
           commit-message: 'chore: update pyproject.toml'
           files: pyproject.toml poetry.lock
           name: opsmill-bot
