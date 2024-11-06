@@ -58,12 +58,9 @@ jobs:
 
       - name: "Poetry build"
         run: "poetry build"
-        working-directory: "./infrahub_sync"
 
       - name: "show output"
         run: "ls -la dist/"
-        working-directory: "./infrahub_sync"
 
       - name: "Poetry push PyPI"
         run: "poetry publish"
-        working-directory: "./infrahub_sync"
