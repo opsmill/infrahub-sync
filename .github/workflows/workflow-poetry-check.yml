@@ -8,32 +8,15 @@ on:
         type: "string"
         description: "Directory in which poetry check will be executed"
         default: "./"
-jobs:
-  files-changed:
-    name: Detect which file has changed
-    runs-on: "ubuntu-22.04"
-    timeout-minutes: 5
-    outputs:
-      poetry_files: ${{ steps.changes.outputs.poetry_files }}
-    steps:
-      - name: "Check out repository code"
-        uses: "actions/checkout@v4"
-      - name: Check for file changes
-        uses: dorny/paths-filter@v3
-        id: changes
-        with:
-          token: ${{ github.token }}
-          filters: .github/file-filters.yml
 
+jobs:
   poetry_check:
     runs-on: "ubuntu-latest"
-    if: |
-      needs.files-changed.outputs.poetry_files == 'true' ||
-      github.ref_name == 'stable' ||
-      github.ref_name == 'develop'
     steps:
       - name: "Check out repository code"
         uses: "actions/checkout@v4"
+        with:
+          submodules: true
       - name: "Set up Python"
         uses: "actions/setup-python@v5"
         with:
