@@ -18,7 +18,7 @@ from .sync_models import (
 class PeeringmanagerSync(PeeringmanagerAdapter):
     InfraAutonomousSystem = InfraAutonomousSystem
     InfraBGPPeerGroup = InfraBGPPeerGroup
-    InfraBGPRoutingPolicy = InfraBGPRoutingPolicy
     InfraBGPCommunity = InfraBGPCommunity
+    InfraBGPRoutingPolicy = InfraBGPRoutingPolicy
     InfraIXP = InfraIXP
     InfraIXPConnection = InfraIXPConnection

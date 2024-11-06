@@ -11,7 +11,7 @@ from infrahub_sdk.schema import GenericSchema, NodeSchema
 
 from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
 from infrahub_sync.generator import render_template
-from potenda import Potenda
+from infrahub_sync.potenda import Potenda
 
 
 def find_missing_schema_model(
@@ -142,16 +142,14 @@ def get_potenda_from_instance(
                 destination_store = RedisStore(name=sync_instance.destination.name)
     try:
         if sync_instance.source.name == "infrahub":
-            settings_branch = sync_instance.source.settings["branch"] or branch
-            if settings_branch:
-                print(f"SOURCE setting branch found {settings_branch}")
-                src: SyncInstance = source(
-                    config=sync_instance,
-                    target="source",
-                    adapter=sync_instance.source,
-                    branch=settings_branch,
-                    internal_storage_engine=source_store,
-                )
+            settings_branch = sync_instance.source.settings.get("branch") or branch or "main"
+            src: SyncInstance = source(
+                config=sync_instance,
+                target="source",
+                adapter=sync_instance.source,
+                branch=settings_branch,
+                internal_storage_engine=source_store,
+            )
         else:
             src: SyncInstance = source(
                 config=sync_instance,
@@ -163,15 +161,14 @@ def get_potenda_from_instance(
         raise ValueError(f"{sync_instance.source.name.title()}Adapter - {exc}") from exc
     try:
         if sync_instance.destination.name == "infrahub":
-            settings_branch = sync_instance.destination.settings["branch"] or branch
-            if settings_branch:
-                dst: SyncInstance = destination(
-                    config=sync_instance,
-                    target="destination",
-                    adapter=sync_instance.destination,
-                    branch=settings_branch,
-                    internal_storage_engine=destination_store,
-                )
+            settings_branch = sync_instance.source.settings.get("branch") or branch or "main"
+            dst: SyncInstance = destination(
+                config=sync_instance,
+                target="destination",
+                adapter=sync_instance.destination,
+                branch=settings_branch,
+                internal_storage_engine=destination_store,
+            )
         else:
             dst: SyncInstance = destination(
                 config=sync_instance,
