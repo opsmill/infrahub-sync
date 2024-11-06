@@ -1,6 +1,6 @@
 ---
 # yamllint disable rule:truthy
-name: "Pull Request on stable"
+name: "Pull Request on main/stable"
 
 on:
   pull_request:

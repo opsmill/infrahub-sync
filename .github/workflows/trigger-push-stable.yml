@@ -1,6 +1,6 @@
 ---
 # yamllint disable rule:truthy
-name: "Push on stable"
+name: "Push on main/stable"
 
 on:
   push:
