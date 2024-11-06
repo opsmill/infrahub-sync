@@ -5,7 +5,9 @@ name: "Managing Github Labels"
 on:
   push:
     branches:
-      - "stable"
+      - stable
+      - main
+      - develop
     paths:
       - ".github/labels.yml"
       - ".github/workflows/labels.yml"
