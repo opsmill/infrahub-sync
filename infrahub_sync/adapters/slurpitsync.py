@@ -259,7 +259,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                         f" The available models are {self.store.get_all_model_names()}"
                     )
                 if not field_is_list:
-                    if node := obj[field.mapping]:
+                    if node := obj.get(field.mapping):
                         matching_nodes = []
                         node_id = self.build_mapping(reference=field.reference, obj=obj)
                         matching_nodes = [item for item in nodes if str(item) == node_id]
