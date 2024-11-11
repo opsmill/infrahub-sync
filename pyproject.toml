@@ -42,7 +42,7 @@ types-toml = "*"
 types-ujson = "*"
 types-pyyaml = "*"
 typer-cli = "*"
-ruff = "0.7.2"
+ruff = "0.7.3"
 pytest-xdist = "^3.3.1"
 types-python-slugify = ">=8.0.0.3"
 
