@@ -129,6 +129,9 @@ schema_mapping:
         mapping: Version
       - name: file
         mapping: File
+      - name: devices
+        mapping: hostname
+        reference: InfraDevice
 
   - name: InfraVLAN
     identifiers: ['vlan_id', "name"]
