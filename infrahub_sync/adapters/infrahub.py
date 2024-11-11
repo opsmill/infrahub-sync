@@ -57,6 +57,7 @@ def update_node(node: InfrahubNodeSync, attrs: dict) -> InfrahubNodeSync:
                     for existing_id in existing_only:
                         attr.remove(existing_id)
 
+                    attr.fetch()
                     for new_id in new_only:
                         attr.add(new_id)
 

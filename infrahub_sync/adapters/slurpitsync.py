@@ -271,6 +271,17 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                             # raise IndexError(f"Unable to locate the node {field.reference} {node_id}")
                         node = matching_nodes[0]
                         data[field.name] = node.get_unique_id()
+                else:
+                    data[field.name] = []
+                    if node := obj.get(field.mapping):
+                        node_id = self.build_mapping(reference=field.reference, obj=obj)
+                        matching_nodes = [item for item in nodes if str(item) == node_id]
+                        if len(matching_nodes) == 0:
+                            self.skipped.append(node)
+                            continue
+                            # raise IndexError(f"Unable to locate the node {field.reference} {node_id}")
+                        data[field.name].append(matching_nodes[0].get_unique_id())
+                    data[field.name] = sorted(data[field.name])
         return data
 
 
