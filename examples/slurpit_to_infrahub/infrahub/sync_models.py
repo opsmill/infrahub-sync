@@ -1,7 +1,6 @@
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from infrahub_sync.adapters.infrahub import InfrahubModel
-
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -22,7 +21,6 @@ class InfraDevice(InfrahubModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
-
 class InfraHardwareInfo(InfrahubModel):
     _modelname = "InfraHardwareInfo"
     _identifiers = ("device", "serial")
@@ -37,18 +35,16 @@ class InfraHardwareInfo(InfrahubModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
-
 class InfraIPAddress(InfrahubModel):
     _modelname = "InfraIPAddress"
-    _identifiers = ("address", "prefix")
+    _identifiers = ("address", "ip_prefix")
     _attributes = ("interface",)
     address: str
     interface: Optional[str] = None
-    prefix: Optional[str] = None
+    ip_prefix: Optional[str] = None
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
-
 
 class InfraInterface(InfrahubModel):
     _modelname = "InfraInterface"
@@ -62,7 +58,6 @@ class InfraInterface(InfrahubModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
-
 class InfraPlatform(InfrahubModel):
     _modelname = "InfraPlatform"
     _identifiers = ("name",)
@@ -71,7 +66,6 @@ class InfraPlatform(InfrahubModel):
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
-
 
 class InfraPrefix(InfrahubModel):
     _modelname = "InfraPrefix"
@@ -83,7 +77,6 @@ class InfraPrefix(InfrahubModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
-
 class InfraVLAN(InfrahubModel):
     _modelname = "InfraVLAN"
     _identifiers = ("vlan_id", "name")
@@ -94,7 +87,6 @@ class InfraVLAN(InfrahubModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
-
 class InfraVRF(InfrahubModel):
     _modelname = "InfraVRF"
     _identifiers = ("name",)
@@ -104,36 +96,34 @@ class InfraVRF(InfrahubModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
-
 class InfraVersion(InfrahubModel):
     _modelname = "InfraVersion"
     _identifiers = ("version",)
-    _attributes = ("file",)
+    _attributes = ("devices", "file")
     version: str
     file: Optional[str] = None
+    devices: Optional[List[str]] = []
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
-
 
 class LocationGeneric(InfrahubModel):
     _modelname = "LocationGeneric"
     _identifiers = ("name",)
-    _attributes = ("description", "number", "street", "zipcode", "country", "phonenumber", "city", "county", "state")
+    _attributes = ("description", "number", "street", "city", "county", "state", "zipcode", "country", "phonenumber")
     name: str
     description: Optional[str] = None
     number: Optional[str] = None
     street: Optional[str] = None
-    zipcode: Optional[str] = None
-    country: Optional[str] = None
-    phonenumber: Optional[str] = None
     city: Optional[str] = None
     county: Optional[str] = None
     state: Optional[str] = None
+    zipcode: Optional[str] = None
+    country: Optional[str] = None
+    phonenumber: Optional[str] = None
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
-
 
 class OrganizationGeneric(InfrahubModel):
     _modelname = "OrganizationGeneric"
@@ -144,7 +134,6 @@ class OrganizationGeneric(InfrahubModel):
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
-
 
 class TemplateDeviceType(InfrahubModel):
     _modelname = "TemplateDeviceType"
