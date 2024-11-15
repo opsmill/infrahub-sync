@@ -3,8 +3,8 @@ name: from-slurpit
 source:
   name: slurpitsync
   settings:
-    url: "https://sandbox.slurpit.io"
-    api_key: "4DTIz5axkWqOuxUGm6gobN4JAaB4l5Cg16589a08019c20"
+    url: "<URL>"
+    api_key: "<TOKEN>"
 
 destination:
   name: infrahub
