@@ -103,9 +103,9 @@ schema_mapping:
     mapping: dcim.regions
     fields:
       - name: name
-        mapping: slug
-      - name: description
         mapping: name
+      - name: description
+        mapping: description
       - name: type
         static: "Region"
       - name: tags
@@ -115,9 +115,9 @@ schema_mapping:
     mapping: dcim.sites
     fields:
       - name: name
-        mapping: slug
-      - name: description
         mapping: name
+      - name: description
+        mapping: description
       - name: type
         static: "Site"
       - name: group
@@ -133,9 +133,9 @@ schema_mapping:
     mapping: dcim.locations
     fields:
       - name: name
-        mapping: slug
-      - name: description
         mapping: name
+      - name: description
+        mapping: description
       - name: type
         static: "Location"
       - name: organization
