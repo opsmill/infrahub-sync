@@ -140,8 +140,9 @@ class DiffSyncModelMixin:
             # Render the template using the item's context
             transformed_value = template.render(**item)
 
-            # Assign the result back to the item
-            item[field] = transformed_value
+            # Assign the result back to the item if not empty
+            if transformed_value:
+                item[field] = transformed_value
         except Exception as exc:
             raise ValueError(f"Failed to transform '{field}' with '{transform_expr}': {exc}") from exc
 
