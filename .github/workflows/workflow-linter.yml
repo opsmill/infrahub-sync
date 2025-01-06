@@ -38,7 +38,7 @@ jobs:
   yaml-lint:
     if: needs.files-changed.outputs.yaml == 'true'
     needs: ["files-changed"]
-    runs-on: "ubuntu-latest"
+    runs-on: "ubuntu-22.04"
     timeout-minutes: 5
     steps:
       - name: "Check out repository code"
@@ -49,41 +49,67 @@ jobs:
         run: "yamllint -s ."
 
   python-lint:
-    if: needs.files-changed.outputs.python == 'true'
+    if: needs.files-changed.outputs.yaml == 'true'
     needs: ["files-changed"]
-    runs-on: "ubuntu-latest"
+    runs-on: "ubuntu-22.04"
+    strategy:
+      matrix:
+        python-version:
+          - "3.12"
+        poetry-version:
+          - "1.8.5"
     timeout-minutes: 5
     steps:
       - name: "Check out repository code"
         uses: "actions/checkout@v4"
-      - name: "Setup environment"
-        run: "pip install ruff==0.6.2"
+
+      - name: "Set up Python ${{ matrix.python-version }}"
+        uses: "actions/setup-python@v5"
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: "Install Poetry ${{ matrix.poetry-version }}"
+        uses: "snok/install-poetry@v1"
+        with:
+          version: ${{ matrix.poetry-version }}
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+          installer-parallel: true
+      - name: "Setup Python environment"
+        run: |
+          poetry config virtualenvs.create true --local
+          poetry env use ${{ matrix.python-version }}
+      - name: "Install dependencies"
+        run: "poetry install --no-interaction --no-ansi"
+
       - name: "Linting: ruff check"
-        run: "ruff check ."
+        run: "poetry run ruff check ."
       - name: "Linting: ruff format"
-        run: "ruff format --check --diff ."
+        run: "poetry run ruff format --check --diff ."
+      - name: "Mypy Tests"
+        run: "poetry run mypy --show-error-codes ."
+      - name: "Pylint Tests"
+        run: "poetry run pylint infrahyb_sync *.py"
 
   markdown-lint:
     if: needs.files-changed.outputs.documentation == 'true'
     needs: ["files-changed"]
-    runs-on: "ubuntu-latest"
+    runs-on: "ubuntu-22.04"
     timeout-minutes: 5
     steps:
       - name: "Check out repository code"
         uses: "actions/checkout@v4"
       - name: "Linting: markdownlint"
-        uses: DavidAnson/markdownlint-cli2-action@v17
+        uses: DavidAnson/markdownlint-cli2-action@v18
         with:
           config: .markdownlint.yaml
           globs: |
             **/*.{md,mdx}
             !changelog/*.md
-            !python_sdk/changelog/*.md
 
   action-lint:
     if: needs.files-changed.outputs.github_workflows == 'true'
     needs: ["files-changed"]
-    runs-on: "ubuntu-latest"
+    runs-on: "ubuntu-22.04"
     timeout-minutes: 5
     steps:
       - name: "Check out repository code"

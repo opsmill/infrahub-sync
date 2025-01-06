@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Mapping, Optional, Self
+from typing import TYPE_CHECKING, Any, Self
 
 from diffsync import Adapter, DiffSyncModel
 
@@ -15,6 +15,9 @@ from infrahub_sync import (
 
 from .rest_api_client import RestApiClient
 from .utils import derive_identifier_key, get_value
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 class ObserviumAdapter(DiffSyncMixin, Adapter):
@@ -38,7 +41,8 @@ class ObserviumAdapter(DiffSyncMixin, Adapter):
         timeout = settings.get("timeout")
 
         if not url:
-            raise ValueError("url must be specified!")
+            msg = "url must be specified!"
+            raise ValueError(msg)
 
         base_url = f"{url.rstrip('/')}/{api_endpoint.strip('/')}"
         return RestApiClient(
@@ -58,7 +62,7 @@ class ObserviumAdapter(DiffSyncMixin, Adapter):
         as specified in the schema mapping, and loads the processed data into the adapter.
         """
         for element in self.config.schema_mapping:
-            if not element.name == model_name:
+            if element.name != model_name:
                 continue
 
             # Use the resource endpoint from the schema mapping
@@ -69,7 +73,8 @@ class ObserviumAdapter(DiffSyncMixin, Adapter):
                 response_data = self.client.get(resource_name)
                 objs = response_data.get(resource_name, {})
             except Exception as exc:
-                raise ValueError(f"Error fetching data from REST API: {str(exc)}") from exc
+                msg = f"Error fetching data from REST API: {exc!s}"
+                raise ValueError(msg) from exc
 
             if isinstance(objs, dict):
                 objs = list(objs.values())
@@ -91,7 +96,7 @@ class ObserviumAdapter(DiffSyncMixin, Adapter):
                 item = model(**data)
                 self.add(item)
 
-    def obj_to_diffsync(self, obj: dict[str, Any], mapping: SchemaMappingModel, model: ObserviumModel) -> dict:  # noqa: C901
+    def obj_to_diffsync(self, obj: dict[str, Any], mapping: SchemaMappingModel, model: ObserviumModel) -> dict:
         obj_id = derive_identifier_key(obj=obj)
         data: dict[str, Any] = {"local_id": str(obj_id)}
 
@@ -105,18 +110,18 @@ class ObserviumAdapter(DiffSyncMixin, Adapter):
                 if value is not None:
                     data[field.name] = value
             elif field_is_list and field.mapping and not field.reference:
-                raise NotImplementedError(
-                    "it's not supported yet to have an attribute of type list with a simple mapping"
-                )
+                msg = "it's not supported yet to have an attribute of type list with a simple mapping"
+                raise NotImplementedError(msg)
 
             elif field.mapping and field.reference:
                 all_nodes_for_reference = self.store.get_all(model=field.reference)
                 nodes = [item for item in all_nodes_for_reference]
                 if not nodes and all_nodes_for_reference:
-                    raise IndexError(
+                    msg = (
                         f"Unable to get '{field.mapping}' with '{field.reference}' reference from store."
                         f" The available models are {self.store.get_all_model_names()}"
                     )
+                    raise IndexError(msg)
                 if not field_is_list:
                     if node := get_value(obj, field.mapping):
                         if isinstance(node, dict):
@@ -124,7 +129,8 @@ class ObserviumAdapter(DiffSyncMixin, Adapter):
                             node_id = node.get("id", None)
                             matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
                             if len(matching_nodes) == 0:
-                                raise IndexError(f"Unable to locate the node {model} {node_id}")
+                                msg = f"Unable to locate the node {model} {node_id}"
+                                raise IndexError(msg)
                             node = matching_nodes[0]
                             data[field.name] = node.get_unique_id()
                         else:
@@ -137,14 +143,14 @@ class ObserviumAdapter(DiffSyncMixin, Adapter):
                         if not node:
                             continue
                         node_id = getattr(node, "id", None)
-                        if not node_id:
-                            if isinstance(node, tuple):
-                                node_id = node[1] if node[0] == "id" else None
-                                if not node_id:
-                                    continue
+                        if not node_id and isinstance(node, tuple):
+                            node_id = node[1] if node[0] == "id" else None
+                            if not node_id:
+                                continue
                         matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
                         if len(matching_nodes) == 0:
-                            raise IndexError(f"Unable to locate the node {field.reference} {node_id}")
+                            msg = f"Unable to locate the node {field.reference} {node_id}"
+                            raise IndexError(msg)
                         data[field.name].append(matching_nodes[0].get_unique_id())
                     data[field.name] = sorted(data[field.name])
 
@@ -158,10 +164,10 @@ class ObserviumModel(DiffSyncModelMixin, DiffSyncModel):
         adapter: Adapter,
         ids: Mapping[Any, Any],
         attrs: Mapping[Any, Any],
-    ) -> Optional[Self]:
-        # TODO
+    ) -> Self | None:
+        # TODO: To implement
         return super().create(adapter=adapter, ids=ids, attrs=attrs)
 
-    def update(self, attrs: dict) -> Optional[Self]:
-        # TODO
+    def update(self, attrs: dict) -> Self | None:
+        # TODO: To implement
         return super().update(attrs)

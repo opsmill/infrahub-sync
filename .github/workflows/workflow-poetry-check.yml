@@ -26,7 +26,7 @@ jobs:
           filters: .github/file-filters.yml
 
   poetry_check:
-    runs-on: "ubuntu-latest"
+    runs-on: "ubuntu-22.04"
     if: |
       needs.files-changed.outputs.poetry_files == 'true' ||
       github.ref_name == 'stable' ||

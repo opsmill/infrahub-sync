@@ -1,12 +1,16 @@
-from typing import List, Optional
+from __future__ import annotations
 
-from diffsync import Adapter
-from diffsync.diff import Diff
+from typing import TYPE_CHECKING
+
 from diffsync.enum import DiffSyncFlags
 from diffsync.logging import enable_console_logging
 from tqdm import tqdm
 
-from infrahub_sync import SyncInstance
+if TYPE_CHECKING:
+    from diffsync import Adapter
+    from diffsync.diff import Diff
+
+    from infrahub_sync import SyncInstance
 
 
 class Potenda:
@@ -15,9 +19,9 @@ class Potenda:
         source: Adapter,
         destination: Adapter,
         config: SyncInstance,
-        top_level: List[str],
+        top_level: list[str],
         partition=None,
-        show_progress: Optional[bool] = False,
+        show_progress: bool | None = False,
     ):
         self.top_level = top_level
 
@@ -53,28 +57,31 @@ class Potenda:
             print(f"Load: Importing data from {self.source}")
             self.source.load()
         except Exception as exc:
-            raise ValueError(f"An error occurred while loading {self.source}: {str(exc)}") from exc
+            msg = f"An error occurred while loading {self.source}: {exc!s}"
+            raise ValueError(msg) from exc
 
     def destination_load(self):
         try:
             print(f"Load: Importing data from {self.destination}")
             self.destination.load()
         except Exception as exc:
-            raise ValueError(f"An error occurred while loading {self.destination}: {str(exc)}") from exc
+            msg = f"An error occurred while loading {self.destination}: {exc!s}"
+            raise ValueError(msg) from exc
 
     def load(self):
         try:
             self.source_load()
             self.destination_load()
         except Exception as exc:
-            raise ValueError(f"An error occurred while loading the sync: {str(exc)}") from exc
+            msg = f"An error occurred while loading the sync: {exc!s}"
+            raise ValueError(msg) from exc
 
     def diff(self) -> Diff:
         print(f"Diff: Comparing data from {self.source} to {self.destination}")
         self.progress_bar = None
         return self.destination.diff_from(self.source, flags=self.flags, callback=self._print_callback)
 
-    def sync(self, diff: Optional[Diff] = None):
+    def sync(self, diff: Diff | None = None):
         print(f"Sync: Importing data from {self.source} to {self.destination} based on Diff")
         self.progress_bar = None
         return self.destination.sync_from(self.source, diff=diff, flags=self.flags, callback=self._print_callback)

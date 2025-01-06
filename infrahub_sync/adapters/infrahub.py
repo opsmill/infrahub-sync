@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import copy
 import os
-from typing import Any, Mapping, Optional, Self
+from typing import TYPE_CHECKING, Any, Self
 
 from diffsync import Adapter, DiffSyncModel
 from infrahub_sdk import (
@@ -8,9 +10,6 @@ from infrahub_sdk import (
     InfrahubClientSync,
 )
 from infrahub_sdk.exceptions import NodeNotFoundError
-from infrahub_sdk.node import InfrahubNodeSync
-from infrahub_sdk.schema import NodeSchema
-from infrahub_sdk.store import NodeStoreSync
 from infrahub_sdk.utils import compare_lists
 
 from infrahub_sync import (
@@ -20,6 +19,13 @@ from infrahub_sync import (
     SyncConfig,
 )
 from infrahub_sync.generator import has_field
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from infrahub_sdk.node import InfrahubNodeSync
+    from infrahub_sdk.schema import NodeSchema
+    from infrahub_sdk.store import NodeStoreSync
 
 
 def update_node(node: InfrahubNodeSync, attrs: dict) -> InfrahubNodeSync:
@@ -52,7 +58,7 @@ def update_node(node: InfrahubNodeSync, attrs: dict) -> InfrahubNodeSync:
                     new_peer_ids = [
                         node._client.store.get(key=value, kind=rel_schema.peer).id for value in list(attr_value)
                     ]
-                    _, existing_only, new_only = compare_lists(existing_peer_ids, new_peer_ids)  # noqa: F841
+                    _, existing_only, new_only = compare_lists(existing_peer_ids, new_peer_ids)
 
                     for existing_id in existing_only:
                         attr.remove(existing_id)
@@ -99,7 +105,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     type = "Infrahub"
 
     def __init__(
-        self, target: str, adapter: SyncAdapter, config: SyncConfig, branch: str = None, *args, **kwargs
+        self, target: str, adapter: SyncAdapter, config: SyncConfig, branch: str | None = None, *args, **kwargs
     ) -> None:
         super().__init__(*args, **kwargs)
         self.target = target
@@ -111,7 +117,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         infrahub_branch = settings.get("branch") or branch
 
         if not infrahub_url or not infrahub_token:
-            raise ValueError("Both url and token must be specified!")
+            msg = "Both url and token must be specified!"
+            raise ValueError(msg)
 
         if infrahub_branch:
             sdk_config = Config(timeout=60, default_branch=infrahub_branch, api_token=infrahub_token)
@@ -127,7 +134,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         except NodeNotFoundError:
             self.account = None
 
-    def model_loader(self, model_name: str, model: "InfrahubModel") -> None:
+    def model_loader(self, model_name: str, model: InfrahubModel) -> None:
         """
         Load and process models using schema mapping filters and transformations.
 
@@ -228,7 +235,7 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
         adapter: Adapter,
         ids: Mapping[Any, Any],
         attrs: Mapping[Any, Any],
-    ) -> Optional[Self]:
+    ) -> Self | None:
         schema = adapter.client.schema.get(kind=cls.__name__)
         data = diffsync_to_infrahub(ids=ids, attrs=attrs, schema=schema, store=adapter.client.store)
         unique_id = cls(**ids, **attrs).get_unique_id()
@@ -244,7 +251,7 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
 
         return super().create(adapter=adapter, ids=ids, attrs=attrs)
 
-    def update(self, attrs: dict) -> Optional[Self]:
+    def update(self, attrs: dict) -> Self | None:
         node = self.adapter.client.get(id=self.local_id, kind=self.__class__.__name__)
         node = update_node(node=node, attrs=attrs)
         node.save(allow_upsert=True)

@@ -1,5 +1,6 @@
-from pathlib import Path
-from typing import Any, List, Optional, Union
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Union
 
 import jinja2
 from infrahub_sdk.schema import (
@@ -9,7 +10,10 @@ from infrahub_sdk.schema import (
     RelationshipSchema,
 )
 
-from infrahub_sync import SyncConfig
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from infrahub_sync import SyncConfig
 
 ATTRIBUTE_KIND_MAP = {
     "Text": "str",
@@ -23,7 +27,7 @@ ATTRIBUTE_KIND_MAP = {
 }
 
 
-def list_to_set(items: List[str]) -> str:
+def list_to_set(items: list[str]) -> str:
     """Convert a list in a string representation of a Set."""
     if not items:
         return "()"
@@ -35,16 +39,13 @@ def list_to_set(items: List[str]) -> str:
     return "(" + response + ")"
 
 
-def list_to_str(items: List[str]) -> str:
+def list_to_str(items: list[str]) -> str:
     """Convert a list into a string separated with comma"""
     return ", ".join(items)
 
 
 def has_node(config: SyncConfig, name: str) -> bool:
-    for item in config.schema_mapping:
-        if item.name == name:
-            return True
-    return False
+    return any(item.name == name for item in config.schema_mapping)
 
 
 def has_field(config: SyncConfig, name: str, field: str) -> bool:
@@ -56,7 +57,7 @@ def has_field(config: SyncConfig, name: str, field: str) -> bool:
     return False
 
 
-def get_identifiers(node: NodeSchema, config: SyncConfig) -> Optional[List[str]]:
+def get_identifiers(node: NodeSchema, config: SyncConfig) -> list[str] | None:
     """Return the identifiers that should be used by DiffSync."""
 
     config_identifiers = [
@@ -76,7 +77,7 @@ def get_identifiers(node: NodeSchema, config: SyncConfig) -> Optional[List[str]]
     return identifiers
 
 
-def get_attributes(node: NodeSchema, config: SyncConfig) -> Optional[List[str]]:
+def get_attributes(node: NodeSchema, config: SyncConfig) -> list[str] | None:
     """Return the attributes that should be used by DiffSync."""
     attrs_attributes = [attr.name for attr in node.attributes if has_field(config, name=node.kind, field=attr.name)]
     rels_identifiers = [
@@ -97,7 +98,7 @@ def get_attributes(node: NodeSchema, config: SyncConfig) -> Optional[List[str]]:
     return attributes
 
 
-def get_children(node: NodeSchema, config: SyncConfig) -> Optional[str]:
+def get_children(node: NodeSchema, config: SyncConfig) -> str | None:
     # rel.peer.lower() might now work in all cases we should have a better function to convert that
     children = {
         rel.peer.lower(): rel.name
@@ -119,7 +120,7 @@ def get_kind(item: Union[RelationshipSchema, AttributeSchema]) -> str:
     if isinstance(item, AttributeSchema):
         kind = ATTRIBUTE_KIND_MAP.get(item.kind, "str")
         if item.optional:
-            kind = f"Optional[{kind}]"
+            kind = f"{kind} | None"
             if item.default_value is not None:
                 # Format the default value based on its type
                 if isinstance(item.default_value, str):
@@ -127,27 +128,25 @@ def get_kind(item: Union[RelationshipSchema, AttributeSchema]) -> str:
                 elif isinstance(item.default_value, (int, float, bool)):
                     kind += f" = {item.default_value}"
                 else:
-                    kind += f" = {repr(item.default_value)}"
+                    kind += f" = {item.default_value!r}"
             else:
                 kind += " = None"
 
     elif isinstance(item, RelationshipSchema) and item.cardinality == "one":
         if item.optional:
-            kind = f"Optional[{kind}] = None"
+            kind = f"{kind} | None = None"
 
     elif isinstance(item, RelationshipSchema) and item.cardinality == "many":
-        kind = "List[str]"
+        kind = "list[str]"
         if item.optional:
-            kind = f"Optional[{kind}]"
+            kind = f"{kind} | None"
         kind += " = []"
 
     return kind
 
 
 def has_children(node: NodeSchema, config: SyncConfig) -> bool:
-    if get_children(config=config, node=node):
-        return True
-    return False
+    return bool(get_children(config=config, node=node))
 
 
 def render_template(template_file: Path, output_dir: Path, output_file: Path, context: dict[str, Any]) -> None:

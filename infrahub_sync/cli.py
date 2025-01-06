@@ -27,7 +27,7 @@ logging.basicConfig(level=logging.WARNING)
 
 def print_error_and_abort(message: str) -> typer.Abort:
     console.print(f"Error: {message}", style="bold red")
-    raise typer.Abort()
+    raise typer.Abort
 
 
 @app.command(name="list")

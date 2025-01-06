@@ -1,4 +1,6 @@
-from typing import Any, Optional
+from __future__ import annotations
+
+from typing import Any
 
 from infrahub_sync.adapters.ipfabricsync import IpfabricsyncModel
 
@@ -12,17 +14,17 @@ class InfraDevice(IpfabricsyncModel):
     _modelname = "InfraDevice"
     _identifiers = ("hostname",)
     _attributes = ("model", "location", "platform", "version", "fqdn", "serial_number", "hardware_serial_number")
-    fqdn: Optional[str] = None
+    fqdn: str | None = None
     hostname: str
     serial_number: str
     hardware_serial_number: str
-    model: Optional[str] = None
+    model: str | None = None
     location: str
-    platform: Optional[str] = None
-    version: Optional[str] = None
+    platform: str | None = None
+    version: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraIPAddress(IpfabricsyncModel):
@@ -30,12 +32,12 @@ class InfraIPAddress(IpfabricsyncModel):
     _identifiers = ("interface", "address")
     _attributes = ("prefix", "description")
     address: str
-    description: Optional[str] = None
-    interface: Optional[str] = None
-    prefix: Optional[str] = None
+    description: str | None = None
+    interface: str | None = None
+    prefix: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraInterfaceL3(IpfabricsyncModel):
@@ -43,14 +45,14 @@ class InfraInterfaceL3(IpfabricsyncModel):
     _identifiers = ("device", "name")
     _attributes = ("description", "speed", "mtu", "mac_address")
     name: str
-    description: Optional[str] = None
-    speed: Optional[int] = None
-    mtu: Optional[int] = 1500
-    mac_address: Optional[str] = None
+    description: str | None = None
+    speed: int | None = None
+    mtu: int | None = 1500
+    mac_address: str | None = None
     device: str
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraNOSVersion(IpfabricsyncModel):
@@ -59,11 +61,11 @@ class InfraNOSVersion(IpfabricsyncModel):
     _attributes = ("platform",)
     version: str
     manufacturer: str
-    platform: Optional[str] = None
-    model: Optional[str] = None
+    platform: str | None = None
+    model: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraPartNumber(IpfabricsyncModel):
@@ -71,27 +73,27 @@ class InfraPartNumber(IpfabricsyncModel):
     _identifiers = ("device", "name")
     _attributes = ("model", "manufacturer", "part_vid", "part_id", "description", "part_sn")
     name: str
-    part_vid: Optional[str] = None
-    part_id: Optional[str] = None
-    description: Optional[str] = None
-    part_sn: Optional[str] = None
+    part_vid: str | None = None
+    part_id: str | None = None
+    description: str | None = None
+    part_sn: str | None = None
     device: str
-    model: Optional[str] = None
-    manufacturer: Optional[str] = None
+    model: str | None = None
+    manufacturer: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraPlatform(IpfabricsyncModel):
     _modelname = "InfraPlatform"
     _identifiers = ("name",)
     _attributes = ("description",)
-    description: Optional[str] = None
+    description: str | None = None
     name: str
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraPrefix(IpfabricsyncModel):
@@ -99,12 +101,12 @@ class InfraPrefix(IpfabricsyncModel):
     _identifiers = ("vrf", "prefix")
     _attributes = ("vlan", "location")
     prefix: str
-    vlan: Optional[str] = None
-    vrf: Optional[str] = None
-    location: Optional[str] = None
+    vlan: str | None = None
+    vrf: str | None = None
+    location: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraVLAN(IpfabricsyncModel):
@@ -112,12 +114,12 @@ class InfraVLAN(IpfabricsyncModel):
     _identifiers = ("location", "vlan_id")
     _attributes = ("description", "name")
     vlan_id: int
-    description: Optional[str] = None
-    name: Optional[str] = None
+    description: str | None = None
+    name: str | None = None
     location: str
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraVRF(IpfabricsyncModel):
@@ -125,10 +127,10 @@ class InfraVRF(IpfabricsyncModel):
     _identifiers = ("name",)
     _attributes = ("vrf_rd",)
     name: str
-    vrf_rd: Optional[str] = None
+    vrf_rd: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class LocationGeneric(IpfabricsyncModel):
@@ -136,11 +138,11 @@ class LocationGeneric(IpfabricsyncModel):
     _identifiers = ("name",)
     _attributes = ("type", "description")
     type: str
-    description: Optional[str] = None
+    description: str | None = None
     name: str
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class OrganizationGeneric(IpfabricsyncModel):
@@ -148,19 +150,19 @@ class OrganizationGeneric(IpfabricsyncModel):
     _identifiers = ("name",)
     _attributes = ("type",)
     name: str
-    type: Optional[str] = None
+    type: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class TemplateDeviceType(IpfabricsyncModel):
     _modelname = "TemplateDeviceType"
     _identifiers = ("name", "manufacturer")
     _attributes = ("description",)
-    description: Optional[str] = None
+    description: str | None = None
     name: str
-    manufacturer: Optional[str] = None
+    manufacturer: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None

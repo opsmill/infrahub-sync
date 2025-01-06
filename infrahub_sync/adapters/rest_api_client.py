@@ -1,4 +1,6 @@
-from typing import Any, Optional
+from __future__ import annotations
+
+from typing import Any
 
 import requests
 
@@ -8,10 +10,10 @@ class RestApiClient:
         self,
         base_url: str,
         auth_method: str,
-        api_token: Optional[str] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        timeout: Optional[int] = 30,
+        api_token: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        timeout: int | None = 30,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.headers = {
@@ -37,13 +39,14 @@ class RestApiClient:
         elif auth_method == "basic" and username and password:
             self.auth = (username, password)
         else:
-            raise ValueError("Invalid authentication configuration!")
+            msg = "Invalid authentication configuration!"
+            raise ValueError(msg)
 
         self.timeout = timeout
 
     def request(
-        self, method: str, endpoint: str, params: Optional[dict[str, Any]] = None, data: Optional[dict[str, Any]] = None
-    ) -> Any:  # noqa: ANN401
+        self, method: str, endpoint: str, params: dict[str, Any] | None = None, data: dict[str, Any] | None = None
+    ) -> Any:
         """Make a request to the REST API."""
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
 
@@ -69,22 +72,24 @@ class RestApiClient:
                 return response.json()
             except requests.exceptions.JSONDecodeError as exc:
                 print("Response content is not valid JSON:", response.text)  # Print the response content
-                raise ValueError("Response content is not valid JSON.") from exc
+                msg = "Response content is not valid JSON."
+                raise ValueError(msg) from exc
 
         except requests.exceptions.RequestException as exc:
-            raise ConnectionError(f"API request failed: {str(exc)}") from exc
+            msg = f"API request failed: {exc!s}"
+            raise ConnectionError(msg) from exc
 
-    def get(self, endpoint: str, params: Optional[dict[str, Any]] = None) -> Any:  # noqa: ANN401
+    def get(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
         return self.request("GET", endpoint, params=params)
 
-    def post(self, endpoint: str, data: Optional[dict[str, Any]] = None) -> Any:  # noqa: ANN401
+    def post(self, endpoint: str, data: dict[str, Any] | None = None) -> Any:
         return self.request("POST", endpoint, data=data)
 
-    def patch(self, endpoint: str, data: Optional[dict[str, Any]] = None) -> Any:  # noqa: ANN401
+    def patch(self, endpoint: str, data: dict[str, Any] | None = None) -> Any:
         return self.request("PATCH", endpoint, data=data)
 
-    def put(self, endpoint: str, data: Optional[dict[str, Any]] = None) -> Any:  # noqa: ANN401
+    def put(self, endpoint: str, data: dict[str, Any] | None = None) -> Any:
         return self.request("PUT", endpoint, data=data)
 
-    def delete(self, endpoint: str) -> Any:  # noqa: ANN401
+    def delete(self, endpoint: str) -> Any:
         return self.request("DELETE", endpoint)
