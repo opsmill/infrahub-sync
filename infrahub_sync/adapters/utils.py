@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 
-def get_value(obj, name: str):
+def get_value(obj: Any, name: str) -> Any | None:
     """Query a value in dot notation recursively"""
     if "." not in name:
         # Check if the object is a dictionary and use appropriate method to access the attribute.

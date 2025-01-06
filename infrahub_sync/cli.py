@@ -32,7 +32,7 @@ def print_error_and_abort(message: str) -> typer.Abort:
 
 @app.command(name="list")
 def list_projects(
-    directory: str = typer.Option(None, help="Base directory to search for sync configurations"),
+    directory: str = typer.Option(default=None, help="Base directory to search for sync configurations"),
 ) -> None:
     """List all available SYNC projects."""
     for item in get_all_sync(directory=directory):
@@ -43,7 +43,7 @@ def list_projects(
 def diff_cmd(
     name: str = typer.Option(default=None, help="Name of the sync to use"),
     config_file: str = typer.Option(default=None, help="File path to the sync configuration YAML file"),
-    directory: str = typer.Option(None, help="Base directory to search for sync configurations"),
+    directory: str = typer.Option(default=None, help="Base directory to search for sync configurations"),
     branch: str = typer.Option(default=None, help="Branch to use for the diff."),
     show_progress: bool = typer.Option(default=True, help="Show a progress bar during diff"),
 ) -> None:
@@ -74,7 +74,7 @@ def diff_cmd(
 def sync_cmd(
     name: str = typer.Option(default=None, help="Name of the sync to use"),
     config_file: str = typer.Option(default=None, help="File path to the sync configuration YAML file"),
-    directory: str = typer.Option(None, help="Base directory to search for sync configurations"),
+    directory: str = typer.Option(default=None, help="Base directory to search for sync configurations"),
     branch: str = typer.Option(default=None, help="Branch to use for the sync."),
     diff: bool = typer.Option(
         default=True, help="Print the differences between the source and the destination before syncing"
@@ -116,7 +116,7 @@ def sync_cmd(
 def generate(
     name: str = typer.Option(default=None, help="Name of the sync to use"),
     config_file: str = typer.Option(default=None, help="File path to the sync configuration YAML file"),
-    directory: str = typer.Option(None, help="Base directory to search for sync configurations"),
+    directory: str = typer.Option(default=None, help="Base directory to search for sync configurations"),
     branch: str = typer.Option(default=None, help="Branch to use for the sync."),
 ) -> None:
     """Generate all the python files for a given sync based on the configuration."""
@@ -132,6 +132,7 @@ def generate(
     infrahub_address = ""
     # Determine if infrahub is in source or destination
     # We are using the destination as the "constraint", if there is 2 infrahubs instance
+    sdk_config = None
     if sync_instance.destination.name == "infrahub" and sync_instance.destination.settings:
         infrahub_address = sync_instance.destination.settings.get("url") or ""
         sdk_config = get_infrahub_config(settings=sync_instance.destination.settings, branch=branch)

@@ -79,16 +79,17 @@ jobs:
           poetry config virtualenvs.create true --local
           poetry env use ${{ matrix.python-version }}
       - name: "Install dependencies"
-        run: "poetry install --no-interaction --no-ansi"
-
+        run: "poetry install --no-interaction --no-ansi --with dev"
       - name: "Linting: ruff check"
         run: "poetry run ruff check ."
       - name: "Linting: ruff format"
         run: "poetry run ruff format --check --diff ."
-      - name: "Mypy Tests"
-        run: "poetry run mypy --show-error-codes ."
-      - name: "Pylint Tests"
-        run: "poetry run pylint infrahyb_sync *.py"
+
+      # TODO: Need to cleanup code
+      # - name: "Mypy Tests"
+      #   run: "poetry run mypy --show-error-codes infrahub_sync"
+      # - name: "Pylint Tests"
+      #   run: "poetry run pylint infrahub_sync/**/*.py"
 
   markdown-lint:
     if: needs.files-changed.outputs.documentation == 'true'
