@@ -49,7 +49,7 @@ jobs:
         run: "yamllint -s ."
 
   python-lint:
-    if: needs.files-changed.outputs.yaml == 'true'
+    if: needs.files-changed.outputs.python == 'true'
     needs: ["files-changed"]
     runs-on: "ubuntu-22.04"
     strategy:
