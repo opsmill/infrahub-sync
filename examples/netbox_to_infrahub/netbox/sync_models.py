@@ -1,4 +1,6 @@
-from typing import Any, List, Optional
+from __future__ import annotations
+
+from typing import Any
 
 from infrahub_sync.adapters.netbox import NetboxModel
 
@@ -12,11 +14,11 @@ class CoreStandardGroup(NetboxModel):
     _modelname = "CoreStandardGroup"
     _identifiers = ("name",)
     _attributes = ("description",)
+    description: str | None = None
     name: str
-    description: Optional[str] = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class BuiltinTag(NetboxModel):
@@ -24,25 +26,25 @@ class BuiltinTag(NetboxModel):
     _identifiers = ("name",)
     _attributes = ("description",)
     name: str
-    description: Optional[str] = None
+    description: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraCircuit(NetboxModel):
     _modelname = "InfraCircuit"
     _identifiers = ("circuit_id",)
-    _attributes = ("tags", "provider", "type", "description", "vendor_id")
+    _attributes = ("tags", "provider", "type", "vendor_id", "description")
     circuit_id: str
-    description: Optional[str] = None
-    vendor_id: Optional[str] = None
-    tags: Optional[List[str]] = []
+    vendor_id: str | None = None
+    description: str | None = None
+    tags: list[str] | None = []
     provider: str
     type: str
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class TemplateCircuitType(NetboxModel):
@@ -50,91 +52,91 @@ class TemplateCircuitType(NetboxModel):
     _identifiers = ("name",)
     _attributes = ("tags", "description")
     name: str
-    description: Optional[str] = None
-    tags: Optional[List[str]] = []
+    description: str | None = None
+    tags: list[str] | None = []
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraDevice(NetboxModel):
     _modelname = "InfraDevice"
     _identifiers = ("location", "rack", "organization", "name")
-    _attributes = ("tags", "role", "model", "serial_number", "asset_tag", "description")
-    name: Optional[str] = None
-    serial_number: Optional[str] = None
-    asset_tag: Optional[str] = None
-    description: Optional[str] = None
-    location: str
-    rack: Optional[str] = None
-    tags: Optional[List[str]] = []
-    role: Optional[str] = None
-    organization: Optional[str] = None
+    _attributes = ("model", "tags", "role", "asset_tag", "description", "serial_number")
+    asset_tag: str | None = None
+    description: str | None = None
+    serial_number: str | None = None
+    name: str | None = None
     model: str
+    tags: list[str] | None = []
+    role: str | None = None
+    location: str
+    organization: str | None = None
+    rack: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class TemplateDeviceType(NetboxModel):
     _modelname = "TemplateDeviceType"
     _identifiers = ("name", "manufacturer")
-    _attributes = ("tags", "full_depth", "part_number", "height")
-    full_depth: Optional[bool] = None
-    part_number: Optional[str] = None
+    _attributes = ("tags", "part_number", "height", "full_depth")
+    part_number: str | None = None
+    height: int | None = None
     name: str
-    height: Optional[int] = None
-    tags: Optional[List[str]] = []
+    full_depth: bool | None = None
+    tags: list[str] | None = []
     manufacturer: str
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraInterfaceL2L3(NetboxModel):
     _modelname = "InfraInterfaceL2L3"
     _identifiers = ("device", "name")
     _attributes = ("tagged_vlan", "tags", "l2_mode", "description", "mgmt_only", "mac_address", "interface_type")
-    l2_mode: Optional[str] = None
+    l2_mode: str | None = None
     name: str
-    description: Optional[str] = None
-    mgmt_only: Optional[bool] = False
-    mac_address: Optional[str] = None
-    interface_type: Optional[str] = None
-    untagged_vlan: Optional[str] = None
-    tagged_vlan: Optional[List[str]] = []
+    description: str | None = None
+    mgmt_only: bool | None = False
+    mac_address: str | None = None
+    interface_type: str | None = None
+    untagged_vlan: str | None = None
+    tagged_vlan: list[str] | None = []
     device: str
-    tags: Optional[List[str]] = []
+    tags: list[str] | None = []
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraIPAddress(NetboxModel):
     _modelname = "InfraIPAddress"
     _identifiers = ("address", "vrf")
     _attributes = ("organization", "description")
+    description: str | None = None
     address: str
-    description: Optional[str] = None
-    organization: Optional[str] = None
-    vrf: Optional[str] = None
+    organization: str | None = None
+    vrf: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraProviderNetwork(NetboxModel):
     _modelname = "InfraProviderNetwork"
     _identifiers = ("name",)
-    _attributes = ("provider", "tags", "vendor_id", "description")
+    _attributes = ("tags", "provider", "description", "vendor_id")
     name: str
-    vendor_id: Optional[str] = None
-    description: Optional[str] = None
+    description: str | None = None
+    vendor_id: str | None = None
+    tags: list[str] | None = []
     provider: str
-    tags: Optional[List[str]] = []
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraPrefix(NetboxModel):
@@ -142,31 +144,31 @@ class InfraPrefix(NetboxModel):
     _identifiers = ("prefix", "vrf")
     _attributes = ("organization", "location", "role", "description")
     prefix: str
-    description: Optional[str] = None
-    organization: Optional[str] = None
-    location: Optional[str] = None
-    role: Optional[str] = None
-    vrf: Optional[str] = None
+    description: str | None = None
+    organization: str | None = None
+    location: str | None = None
+    role: str | None = None
+    vrf: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraRack(NetboxModel):
     _modelname = "InfraRack"
     _identifiers = ("name", "location")
-    _attributes = ("role", "tags", "asset_tag", "height", "facility_id", "serial_number")
-    asset_tag: Optional[str] = None
-    height: Optional[int] = None
-    facility_id: Optional[str] = None
-    serial_number: Optional[str] = None
+    _attributes = ("role", "tags", "asset_tag", "height", "serial_number", "facility_id")
+    asset_tag: str | None = None
+    height: int | None = None
+    serial_number: str | None = None
     name: str
+    facility_id: str | None = None
+    role: str | None = None
     location: str
-    role: Optional[str] = None
-    tags: Optional[List[str]] = []
+    tags: list[str] | None = []
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraRouteTarget(NetboxModel):
@@ -174,41 +176,41 @@ class InfraRouteTarget(NetboxModel):
     _identifiers = ("name", "organization")
     _attributes = ("description",)
     name: str
-    description: Optional[str] = None
-    organization: Optional[str] = None
+    description: str | None = None
+    organization: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraVLAN(NetboxModel):
     _modelname = "InfraVLAN"
     _identifiers = ("name", "vlan_id", "location", "vlan_group")
     _attributes = ("organization", "description")
-    description: Optional[str] = None
     name: str
+    description: str | None = None
     vlan_id: int
-    location: Optional[str] = None
-    organization: Optional[str] = None
-    vlan_group: Optional[str] = None
+    organization: str | None = None
+    location: str | None = None
+    vlan_group: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraVRF(NetboxModel):
     _modelname = "InfraVRF"
     _identifiers = ("name",)
-    _attributes = ("export_rt", "import_rt", "organization", "description", "vrf_rd")
+    _attributes = ("export_rt", "organization", "import_rt", "vrf_rd", "description")
+    vrf_rd: str | None = None
+    description: str | None = None
     name: str
-    description: Optional[str] = None
-    vrf_rd: Optional[str] = None
-    export_rt: Optional[List[str]] = []
-    import_rt: Optional[List[str]] = []
-    organization: Optional[str] = None
+    export_rt: list[str] | None = []
+    organization: str | None = None
+    import_rt: list[str] | None = []
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class OrganizationGeneric(NetboxModel):
@@ -216,11 +218,11 @@ class OrganizationGeneric(NetboxModel):
     _identifiers = ("name",)
     _attributes = ("group", "description")
     name: str
-    description: Optional[str] = None
-    group: Optional[str] = None
+    description: str | None = None
+    group: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class RoleGeneric(NetboxModel):
@@ -228,10 +230,10 @@ class RoleGeneric(NetboxModel):
     _identifiers = ("name",)
     _attributes = ("description",)
     name: str
-    description: Optional[str] = None
+    description: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class LocationGeneric(NetboxModel):
@@ -239,11 +241,11 @@ class LocationGeneric(NetboxModel):
     _identifiers = ("name",)
     _attributes = ("organization", "tags", "group", "description", "type")
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     type: str
-    organization: Optional[str] = None
-    tags: Optional[List[str]] = []
-    group: Optional[str] = None
+    organization: str | None = None
+    tags: list[str] | None = []
+    group: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None

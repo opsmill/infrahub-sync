@@ -1,4 +1,6 @@
-from typing import Any, List, Optional
+from __future__ import annotations
+
+from typing import Any, List
 
 from infrahub_sync.adapters.{{ adapter.name }} import {{ adapter.name.title() }}Model
 
@@ -25,7 +27,7 @@ class {{ nodekind }}({{ adapter.name.title() }}Model):
 {%-          endif -%}
 {%-      endfor %}
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 {%  endif %}
 {%- endfor %}

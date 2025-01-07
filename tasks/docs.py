@@ -49,7 +49,7 @@ def format_markdownlint(context: Context) -> None:
 
 
 @task
-def format(context: Context) -> None:
+def format(context: Context) -> None:  # noqa: A001
     """This will run all formatter."""
     format_markdownlint(context)
 
