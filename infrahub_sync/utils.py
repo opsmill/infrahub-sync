@@ -1,22 +1,28 @@
+from __future__ import annotations
+
 import importlib
 import sys
 from pathlib import Path
-from typing import List, MutableMapping, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 import yaml
 from diffsync.store.local import LocalStore
 from diffsync.store.redis import RedisStore
 from infrahub_sdk import Config
-from infrahub_sdk.schema import GenericSchema, NodeSchema
 
 from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
 from infrahub_sync.generator import render_template
 from infrahub_sync.potenda import Potenda
 
+if TYPE_CHECKING:
+    from collections.abc import MutableMapping
+
+    from infrahub_sdk.schema import GenericSchema, NodeSchema
+
 
 def find_missing_schema_model(
     sync_instance: SyncInstance, schema: MutableMapping[str, Union[NodeSchema, GenericSchema]]
-) -> List[str]:
+) -> list[str]:
     missing_schema_models = []
     for item in sync_instance.schema_mapping:
         match_found = any(item.name == node.kind for node in schema.values())
@@ -29,7 +35,7 @@ def find_missing_schema_model(
 
 def render_adapter(
     sync_instance: SyncInstance, schema: MutableMapping[str, Union[NodeSchema, GenericSchema]]
-) -> List[Tuple[str, str]]:
+) -> list[tuple[str, str]]:
     files_to_render = (
         ("diffsync_models.j2", "sync_models.py"),
         ("diffsync_adapter.j2", "sync_adapter.py"),
@@ -71,13 +77,17 @@ def import_adapter(sync_instance: SyncInstance, adapter: SyncAdapter):
 
         adapter_class = getattr(adapter_module, adapter_name, None)
         if adapter_class is None:
-            raise AttributeError(f"{adapter_name} not found in adapter.py")
-    except (FileNotFoundError, AttributeError) as exc:
-        raise ImportError(f"{adapter_name}: {str(exc)}") from exc
+            msg = f"{adapter_name} not found in adapter.py"
+            raise ImportError(msg)
+
+    except FileNotFoundError as exc:
+        msg = f"{adapter_name}: {exc!s}"
+        raise ImportError(msg) from exc
+
     return adapter_class
 
 
-def get_all_sync(directory: Optional[str] = None) -> List[SyncInstance]:
+def get_all_sync(directory: Optional[str] = None) -> list[SyncInstance]:
     results = []
     search_directory = Path(directory) if directory else Path(__file__).parent
     config_files = search_directory.glob("**/config.yml")
@@ -109,7 +119,7 @@ def get_instance(
         elif directory:
             config_file_path = Path(directory, config_file)
     except TypeError:
-        # TODO Log or raise an Error/Warning
+        # TODO: Log or raise an Error/Warning
         return None
 
     if config_file_path:
@@ -123,7 +133,7 @@ def get_instance(
 
 
 def get_potenda_from_instance(
-    sync_instance: SyncInstance, branch: Optional[str] = None, show_progress: Optional[bool] = True
+    sync_instance: SyncInstance, branch: str | None = None, show_progress: bool | None = True
 ) -> Potenda:
     source = import_adapter(sync_instance=sync_instance, adapter=sync_instance.source)
     destination = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
@@ -131,15 +141,14 @@ def get_potenda_from_instance(
     source_store = LocalStore()
     destination_store = LocalStore()
 
-    if sync_instance.store:
-        if sync_instance.store.type == "redis":
-            if sync_instance.store.settings and isinstance(sync_instance.store.settings, dict):
-                redis_settings = sync_instance.store.settings
-                source_store = RedisStore(**redis_settings, name=sync_instance.source.name)
-                destination_store = RedisStore(**redis_settings, name=sync_instance.destination.name)
-            else:
-                source_store = RedisStore(name=sync_instance.source.name)
-                destination_store = RedisStore(name=sync_instance.destination.name)
+    if sync_instance.store and sync_instance.store.type == "redis":
+        if sync_instance.store.settings and isinstance(sync_instance.store.settings, dict):
+            redis_settings = sync_instance.store.settings
+            source_store = RedisStore(**redis_settings, name=sync_instance.source.name)
+            destination_store = RedisStore(**redis_settings, name=sync_instance.destination.name)
+        else:
+            source_store = RedisStore(name=sync_instance.source.name)
+            destination_store = RedisStore(name=sync_instance.destination.name)
     try:
         if sync_instance.source.name == "infrahub":
             settings_branch = sync_instance.source.settings.get("branch") or branch or "main"
@@ -158,7 +167,8 @@ def get_potenda_from_instance(
                 internal_storage_engine=source_store,
             )
     except ValueError as exc:
-        raise ValueError(f"{sync_instance.source.name.title()}Adapter - {exc}") from exc
+        msg = f"{sync_instance.source.name.title()}Adapter - {exc}"
+        raise ValueError(msg) from exc
     try:
         if sync_instance.destination.name == "infrahub":
             settings_branch = sync_instance.source.settings.get("branch") or branch or "main"
@@ -177,7 +187,8 @@ def get_potenda_from_instance(
                 internal_storage_engine=destination_store,
             )
     except ValueError as exc:
-        raise ValueError(f"{sync_instance.destination.name.title()}Adapter - {exc}") from exc
+        msg = f"{sync_instance.destination.name.title()}Adapter - {exc}"
+        raise ValueError(msg) from exc
 
     ptd = Potenda(
         destination=dst,

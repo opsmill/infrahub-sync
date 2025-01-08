@@ -10,9 +10,9 @@ REPO_BASE = TASKS_DIR.parent
 def check_if_command_available(context: Context, command_name: str) -> bool:
     try:
         context.run(f"command -v {command_name}", hide=True)
-        return True
     except UnexpectedExit:
         return False
+    return True
 
 
 def escape_path(path: Path) -> str:

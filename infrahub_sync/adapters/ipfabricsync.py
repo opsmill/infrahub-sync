@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional, Self
+from typing import TYPE_CHECKING, Any, Self
 
 try:
     from ipfabric import IPFClient
@@ -16,6 +16,9 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 ipf_filters = {
     "tables/inventory/summary/platforms": {"and": [{"platform": ["empty", False]}]},
@@ -41,7 +44,8 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
         auth = settings.get("auth") or None
 
         if not base_url or not auth:
-            raise ValueError("Both url and auth must be specified!")
+            msg = "Both url and auth must be specified!"
+            raise ValueError(msg)
 
         return IPFClient(**settings)
 
@@ -74,7 +78,7 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
         This method retrieves data from IP Fabric, and loads the processed data into the adapter.
         """
         for element in self.config.schema_mapping:
-            if not element.name == model_name:
+            if element.name != model_name:
                 continue
 
             table = self.client.fetch_all(element.mapping, filters=ipf_filters.get(element.mapping))
@@ -114,29 +118,28 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
                     else:
                         data[field.name] = value
             elif field_is_list and field.mapping and not field.reference:
-                raise NotImplementedError(
-                    "it's not supported yet to have an attribute of type list with a simple mapping"
-                )
+                msg = "it's not supported yet to have an attribute of type list with a simple mapping"
+                raise NotImplementedError(msg)
 
             elif field.mapping and field.reference:
                 all_nodes_for_reference = self.store.get_all(model=field.reference)
 
                 nodes = [item for item in all_nodes_for_reference]
                 if not nodes and all_nodes_for_reference:
-                    raise IndexError(
+                    msg = (
                         f"Unable to get '{field.mapping}' with '{field.reference}' reference from store."
                         f" The available models are {self.store.get_all_model_names()}"
                     )
-                if not field_is_list:
-                    if node := obj[field.mapping]:
-                        matching_nodes = []
-                        node_id = self.build_mapping(reference=field.reference, obj=obj)
-                        matching_nodes = [item for item in nodes if str(item) == node_id]
-                        if len(matching_nodes) == 0:
-                            data[field.name] = None
-                        else:
-                            node = matching_nodes[0]
-                            data[field.name] = node.get_unique_id()
+                    raise IndexError(msg)
+                if not field_is_list and (node := obj[field.mapping]):
+                    matching_nodes = []
+                    node_id = self.build_mapping(reference=field.reference, obj=obj)
+                    matching_nodes = [item for item in nodes if str(item) == node_id]
+                    if len(matching_nodes) == 0:
+                        data[field.name] = None
+                    else:
+                        node = matching_nodes[0]
+                        data[field.name] = node.get_unique_id()
         return data
 
 
@@ -147,10 +150,10 @@ class IpfabricsyncModel(DiffSyncModelMixin, DiffSyncModel):
         adapter: Adapter,
         ids: Mapping[Any, Any],
         attrs: Mapping[Any, Any],
-    ) -> Optional[Self]:
-        # TODO
+    ) -> Self | None:
+        # TODO: To Implement
         return super().create(adapter=adapter, ids=ids, attrs=attrs)
 
-    def update(self, attrs: dict) -> Optional[Self]:
-        # TODO
+    def update(self, attrs: dict) -> Self | None:
+        # TODO: To Implement
         return super().update(attrs=attrs)

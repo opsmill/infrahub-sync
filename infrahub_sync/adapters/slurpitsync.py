@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-from typing import Any, Mapping, Optional, Self
+from typing import TYPE_CHECKING, Any, Self
 
 import slurpit
 from diffsync import Adapter, DiffSyncModel
@@ -16,6 +16,9 @@ from infrahub_sync import (
 )
 
 from .utils import get_value
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 # Create a new event loop for running async functions synchronously
 loop = asyncio.new_event_loop()
@@ -37,8 +40,9 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         client = slurpit.api(**settings)
         try:
             self.run_async(client.device.get_devices())
-        except Exception as e:
-            raise ValueError(f"Unable to connect to Slurpit API: {e}")
+        except Exception as e:  # noqa: BLE001
+            msg = f"Unable to connect to Slurpit API: {e}"
+            raise ValueError(msg)
         return client
 
     def run_async(self, coroutine):
@@ -114,7 +118,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             for prefix in self.filtered_networks
         ]
 
-        async def normalize_and_find_prefix(entry):
+        def normalize_and_find_prefix(entry):
             address = entry.get("IP", "")
             if address:
                 if isinstance(address, list):
@@ -153,11 +157,12 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         plannings = self.run_async(self.client.planning.get_plannings())
         planning = next((plan.to_dict() for plan in plannings if plan.slug == planning_name), None)
         if not planning:
-            raise IndexError(f"No planning found for name: {planning_name}")
+            msg = f"No planning found for name: {planning_name}"
+            raise IndexError(msg)
 
         search_data = {"planning_id": planning["id"], "unique_results": True}
         results = self.run_async(self.client.planning.search_plannings(search_data, limit=30000))
-        return results if results else []
+        return results or []
 
     def model_loader(self, model_name: str, model: SlurpitsyncModel) -> None:
         for element in self.config.schema_mapping:
@@ -200,9 +205,9 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             for obj in transformed_objs:
                 if data := self.slurpit_obj_to_diffsync(obj=obj, mapping=element, model=model):
                     item = model(**data)
-                    try:
+                    try:  # noqa: SIM105
                         self.add(item)
-                    except Exception:  # noqa: S110
+                    except Exception:  # noqa: BLE001, S110
                         pass
 
         if self.skipped:
@@ -233,8 +238,8 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
 
     def slurpit_obj_to_diffsync(
         self, obj: dict[str, Any], mapping: SchemaMappingModel, model: SlurpitsyncModel
-    ) -> dict:  # noqa: C901
-        obj_id = obj.get("id", None)
+    ) -> dict:
+        obj_id = obj.get("id")
         data: dict[str, Any] = {"local_id": str(obj_id)}
 
         for field in mapping.fields:
@@ -292,10 +297,10 @@ class SlurpitsyncModel(DiffSyncModelMixin, DiffSyncModel):
         adapter: Adapter,
         ids: Mapping[Any, Any],
         attrs: Mapping[Any, Any],
-    ) -> Optional[Self]:
-        # TODO
+    ) -> Self | None:
+        # TODO: To implement
         return super().create(adapter=adapter, ids=ids, attrs=attrs)
 
-    def update(self, attrs: dict) -> Optional[Self]:
-        # TODO
+    def update(self, attrs: dict) -> Self | None:
+        # TODO: To implement
         return super().update(attrs)

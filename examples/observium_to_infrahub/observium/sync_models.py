@@ -1,4 +1,6 @@
-from typing import Any, Optional
+from __future__ import annotations
+
+from typing import Any
 
 from infrahub_sync.adapters.observium import ObserviumModel
 
@@ -12,33 +14,33 @@ class CoreStandardGroup(ObserviumModel):
     _modelname = "CoreStandardGroup"
     _identifiers = ("name",)
     _attributes = ("description",)
+    description: str | None = None
     name: str
-    description: Optional[str] = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraDevice(ObserviumModel):
     _modelname = "InfraDevice"
     _identifiers = ("name",)
-    _attributes = ("primary_address", "platform", "description", "type")
-    name: str
-    description: Optional[str] = None
+    _attributes = ("platform", "primary_address", "type", "description")
     type: str
-    primary_address: Optional[str] = None
-    platform: Optional[str] = None
+    name: str
+    description: str | None = None
+    platform: str | None = None
+    primary_address: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class IpamIPAddress(ObserviumModel):
     _modelname = "IpamIPAddress"
     _identifiers = ("address",)
     _attributes = ("description",)
+    description: str | None = None
     address: str
-    description: Optional[str] = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None

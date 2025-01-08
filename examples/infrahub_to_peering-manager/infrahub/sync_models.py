@@ -1,4 +1,6 @@
-from typing import Any, List, Optional
+from __future__ import annotations
+
+from typing import Any
 
 from infrahub_sync.adapters.infrahub import InfrahubModel
 
@@ -14,14 +16,14 @@ class InfraAutonomousSystem(InfrahubModel):
     _attributes = ("name", "description", "irr_as_set", "ipv4_max_prefixes", "ipv6_max_prefixes", "affiliated")
     name: str
     asn: int
-    description: Optional[str] = None
-    irr_as_set: Optional[str] = None
-    ipv4_max_prefixes: Optional[int] = None
-    ipv6_max_prefixes: Optional[int] = None
-    affiliated: Optional[bool] = None
+    description: str | None = None
+    irr_as_set: str | None = None
+    ipv4_max_prefixes: int | None = None
+    ipv6_max_prefixes: int | None = None
+    affiliated: bool | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraBGPPeerGroup(InfrahubModel):
@@ -29,14 +31,14 @@ class InfraBGPPeerGroup(InfrahubModel):
     _identifiers = ("name",)
     _attributes = ("import_policies", "export_policies", "bgp_communities", "description", "status")
     name: str
-    description: Optional[str] = None
-    status: Optional[str] = None
-    import_policies: Optional[List[str]] = []
-    export_policies: Optional[List[str]] = []
-    bgp_communities: Optional[List[str]] = []
+    description: str | None = None
+    status: str | None = None
+    import_policies: list[str] | None
+    export_policies: list[str] | None
+    bgp_communities: list[str] | None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraBGPCommunity(InfrahubModel):
@@ -44,13 +46,13 @@ class InfraBGPCommunity(InfrahubModel):
     _identifiers = ("name",)
     _attributes = ("label", "description", "value", "community_type")
     name: str
-    label: Optional[str] = None
-    description: Optional[str] = None
+    label: str | None = None
+    description: str | None = None
     value: str
-    community_type: Optional[str] = None
+    community_type: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraBGPRoutingPolicy(InfrahubModel):
@@ -58,15 +60,15 @@ class InfraBGPRoutingPolicy(InfrahubModel):
     _identifiers = ("name",)
     _attributes = ("bgp_communities", "label", "description", "policy_type", "weight", "address_family")
     name: str
-    label: Optional[str] = None
-    description: Optional[str] = None
+    label: str | None = None
+    description: str | None = None
     policy_type: str
-    weight: Optional[int] = 1000
+    weight: int | None = 1000
     address_family: int
-    bgp_communities: Optional[List[str]] = []
+    bgp_communities: list[str] | None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraIXP(InfrahubModel):
@@ -74,14 +76,14 @@ class InfraIXP(InfrahubModel):
     _identifiers = ("name",)
     _attributes = ("import_policies", "export_policies", "bgp_communities", "description", "status")
     name: str
-    description: Optional[str] = None
-    status: Optional[str] = "enabled"
-    import_policies: Optional[List[str]] = []
-    export_policies: Optional[List[str]] = []
-    bgp_communities: Optional[List[str]] = []
+    description: str | None = None
+    status: str | None = "enabled"
+    import_policies: list[str] | None
+    export_policies: list[str] | None
+    bgp_communities: list[str] | None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraIXPConnection(InfrahubModel):
@@ -89,11 +91,11 @@ class InfraIXPConnection(InfrahubModel):
     _identifiers = ("name",)
     _attributes = ("internet_exchange_point", "description", "peeringdb_netixlan", "status", "vlan")
     name: str
-    description: Optional[str] = None
-    peeringdb_netixlan: Optional[int] = None
-    status: Optional[str] = "enabled"
-    vlan: Optional[int] = None
+    description: str | None = None
+    peeringdb_netixlan: int | None = None
+    status: str | None = "enabled"
+    vlan: int | None = None
     internet_exchange_point: str
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None

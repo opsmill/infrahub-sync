@@ -1,4 +1,6 @@
-from typing import Any, Optional
+from __future__ import annotations
+
+from typing import Any
 
 from infrahub_sync.adapters.librenms import LibrenmsModel
 
@@ -12,24 +14,23 @@ class CoreStandardGroup(LibrenmsModel):
     _modelname = "CoreStandardGroup"
     _identifiers = ("name",)
     _attributes = ("description",)
+    description: str | None = None
     name: str
-    description: Optional[str] = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class InfraDevice(LibrenmsModel):
     _modelname = "InfraDevice"
     _identifiers = ("name",)
-    _attributes = ("site", "type", "serial_number")
-    name: str
+    _attributes = ("site", "type")
     type: str
-    serial_number: str
+    name: str
     site: str
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class IpamIPAddress(LibrenmsModel):
@@ -37,18 +38,18 @@ class IpamIPAddress(LibrenmsModel):
     _identifiers = ("address",)
     _attributes = ("description",)
     address: str
-    description: Optional[str] = None
+    description: str | None = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None
 
 
 class LocationSite(LibrenmsModel):
     _modelname = "LocationSite"
     _identifiers = ("name",)
     _attributes = ("description",)
+    description: str | None = None
     name: str
-    description: Optional[str] = None
 
-    local_id: Optional[str] = None
-    local_data: Optional[Any] = None
+    local_id: str | None = None
+    local_data: Any | None = None

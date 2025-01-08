@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import operator
 import re
-from typing import Any, List, Optional, Union
+from typing import Any, Union
 
 import pydantic
 from jinja2 import Template
@@ -12,7 +14,7 @@ from infrahub_sync.adapters.utils import get_value
 class SchemaMappingFilter(pydantic.BaseModel):
     field: str
     operation: str
-    value: Optional[Any] = None
+    value: Any | None = None
 
 
 class SchemaMappingTransform(pydantic.BaseModel):
@@ -22,44 +24,44 @@ class SchemaMappingTransform(pydantic.BaseModel):
 
 class SchemaMappingField(pydantic.BaseModel):
     name: str
-    mapping: Optional[str] = pydantic.Field(default=None)
-    static: Optional[Any] = pydantic.Field(default=None)
-    reference: Optional[str] = pydantic.Field(default=None)
+    mapping: str | None = pydantic.Field(default=None)
+    static: Any | None = pydantic.Field(default=None)
+    reference: str | None = pydantic.Field(default=None)
 
 
 class SchemaMappingModel(pydantic.BaseModel):
     name: str
     mapping: str
-    identifiers: Optional[List[str]] = pydantic.Field(default=None)
-    filters: Optional[List[SchemaMappingFilter]] = pydantic.Field(default=None)
-    transforms: Optional[List[SchemaMappingTransform]] = pydantic.Field(default=None)
-    fields: List[SchemaMappingField] = []
+    identifiers: list[str] | None = pydantic.Field(default=None)
+    filters: list[SchemaMappingFilter] | None = pydantic.Field(default=None)
+    transforms: list[SchemaMappingTransform] | None = pydantic.Field(default=None)
+    fields: list[SchemaMappingField] = []
 
 
 class SyncAdapter(pydantic.BaseModel):
     name: str
-    settings: Optional[dict[str, Any]] = {}
+    settings: dict[str, Any] | None = {}
 
 
 class SyncStore(pydantic.BaseModel):
     type: str
-    settings: Optional[dict[str, Any]] = {}
+    settings: dict[str, Any] | None = {}
 
 
 class SyncConfig(pydantic.BaseModel):
     name: str
-    store: Optional[SyncStore] = []
+    store: SyncStore | None = []
     source: SyncAdapter
     destination: SyncAdapter
-    order: List[str] = pydantic.Field(default_factory=list)
-    schema_mapping: List[SchemaMappingModel] = []
+    order: list[str] = pydantic.Field(default_factory=list)
+    schema_mapping: list[SchemaMappingModel] = []
 
 
 class SyncInstance(SyncConfig):
     directory: str
 
 
-def is_ip_within_filter(ip: str, ip_compare: Union[str, List[str]]) -> bool:
+def is_ip_within_filter(ip: str, ip_compare: Union[str, list[str]]) -> bool:
     """Check if an IP address is within a given subnet."""
     return netutils_is_ip_within(ip=ip, ip_compare=ip_compare)
 
@@ -68,7 +70,8 @@ def convert_to_int(value: Any) -> int:
     try:
         return int(value)
     except (ValueError, TypeError) as exc:
-        raise ValueError(f"Cannot convert '{value}' to int") from exc
+        msg = f"Cannot convert '{value}' to int"
+        raise ValueError(msg) from exc
 
 
 FILTERS_OPERATIONS = {
@@ -112,7 +115,8 @@ class DiffSyncModelMixin:
         """Apply a specified operation to a field value."""
         operation_func = FILTERS_OPERATIONS.get(operation)
         if operation_func is None:
-            raise ValueError(f"Unsupported operation: {operation}")
+            msg = f"Unsupported operation: {operation}"
+            raise ValueError(msg)
 
         # Handle is_empty and is_not_empty which do not use the value argument
         if operation in {"is_empty", "is_not_empty"}:
@@ -121,7 +125,7 @@ class DiffSyncModelMixin:
         return operation_func(field_value, value)
 
     @classmethod
-    def apply_filters(cls, item: dict[str, Any], filters: List[SchemaMappingFilter]) -> bool:
+    def apply_filters(cls, item: dict[str, Any], filters: list[SchemaMappingFilter]) -> bool:
         """Apply filters to an item and return True if it passes all filters."""
         for filter_obj in filters:
             # Use dot notation to access attributes
@@ -144,10 +148,11 @@ class DiffSyncModelMixin:
             if transformed_value:
                 item[field] = transformed_value
         except Exception as exc:
-            raise ValueError(f"Failed to transform '{field}' with '{transform_expr}': {exc}") from exc
+            msg = f"Failed to transform '{field}' with '{transform_expr}': {exc}"
+            raise ValueError(msg) from exc
 
     @classmethod
-    def apply_transforms(cls, item: dict[str, Any], transforms: List[SchemaMappingTransform]) -> dict[str, Any]:
+    def apply_transforms(cls, item: dict[str, Any], transforms: list[SchemaMappingTransform]) -> dict[str, Any]:
         """Apply a list of structured transformations to an item."""
         for transform_obj in transforms:
             field = transform_obj.field
@@ -184,20 +189,19 @@ class DiffSyncModelMixin:
         return transformed_records
 
     @classmethod
-    def get_resource_name(cls, schema_mapping: List[SchemaMappingModel]) -> str:
+    def get_resource_name(cls, schema_mapping: list[SchemaMappingModel]) -> str:
         """Get the resource name from the schema mapping."""
         for element in schema_mapping:
             if element.name == cls.__name__:
                 return element.mapping
-        raise ValueError(f"Resource name not found for class {cls.__name__}")
+        msg = f"Resource name not found for class {cls.__name__}"
+        raise ValueError(msg)
 
     @classmethod
     def is_list(cls, name):
         field = cls.__fields__.get(name)
         if not field:
-            raise ValueError(f"Unable to find the field {name} under {cls}")
+            msg = f"Unable to find the field {name} under {cls}"
+            raise ValueError(msg)
 
-        if isinstance(field.default, list):
-            return True
-
-        return False
+        return isinstance(field.default, list)
