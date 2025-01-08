@@ -1,7 +1,6 @@
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from infrahub_sync.adapters.slurpitsync import SlurpitsyncModel
-
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -22,7 +21,6 @@ class InfraDevice(SlurpitsyncModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
-
 class InfraHardwareInfo(SlurpitsyncModel):
     _modelname = "InfraHardwareInfo"
     _identifiers = ("device", "serial")
@@ -37,18 +35,16 @@ class InfraHardwareInfo(SlurpitsyncModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
-
 class InfraIPAddress(SlurpitsyncModel):
     _modelname = "InfraIPAddress"
-    _identifiers = ("address", "prefix")
+    _identifiers = ("address", "ip_prefix")
     _attributes = ("interface",)
     address: str
     interface: Optional[str] = None
-    prefix: Optional[str] = None
+    ip_prefix: Optional[str] = None
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
-
 
 class InfraInterface(SlurpitsyncModel):
     _modelname = "InfraInterface"
@@ -62,7 +58,6 @@ class InfraInterface(SlurpitsyncModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
-
 class InfraPlatform(SlurpitsyncModel):
     _modelname = "InfraPlatform"
     _identifiers = ("name",)
@@ -71,7 +66,6 @@ class InfraPlatform(SlurpitsyncModel):
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
-
 
 class InfraPrefix(SlurpitsyncModel):
     _modelname = "InfraPrefix"
@@ -83,7 +77,6 @@ class InfraPrefix(SlurpitsyncModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
-
 class InfraVLAN(SlurpitsyncModel):
     _modelname = "InfraVLAN"
     _identifiers = ("vlan_id", "name")
@@ -94,7 +87,6 @@ class InfraVLAN(SlurpitsyncModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
-
 class InfraVRF(SlurpitsyncModel):
     _modelname = "InfraVRF"
     _identifiers = ("name",)
@@ -104,36 +96,34 @@ class InfraVRF(SlurpitsyncModel):
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
 
-
 class InfraVersion(SlurpitsyncModel):
     _modelname = "InfraVersion"
     _identifiers = ("version",)
-    _attributes = ("file",)
+    _attributes = ("devices", "file")
     version: str
     file: Optional[str] = None
+    devices: Optional[List[str]] = []
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
-
 
 class LocationGeneric(SlurpitsyncModel):
     _modelname = "LocationGeneric"
     _identifiers = ("name",)
-    _attributes = ("description", "number", "street", "zipcode", "country", "phonenumber", "city", "county", "state")
+    _attributes = ("description", "number", "street", "city", "county", "state", "zipcode", "country", "phonenumber")
     name: str
     description: Optional[str] = None
     number: Optional[str] = None
     street: Optional[str] = None
-    zipcode: Optional[str] = None
-    country: Optional[str] = None
-    phonenumber: Optional[str] = None
     city: Optional[str] = None
     county: Optional[str] = None
     state: Optional[str] = None
+    zipcode: Optional[str] = None
+    country: Optional[str] = None
+    phonenumber: Optional[str] = None
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
-
 
 class OrganizationGeneric(SlurpitsyncModel):
     _modelname = "OrganizationGeneric"
@@ -144,7 +134,6 @@ class OrganizationGeneric(SlurpitsyncModel):
 
     local_id: Optional[str] = None
     local_data: Optional[Any] = None
-
 
 class TemplateDeviceType(SlurpitsyncModel):
     _modelname = "TemplateDeviceType"
