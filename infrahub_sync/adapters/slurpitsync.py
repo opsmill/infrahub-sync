@@ -252,17 +252,17 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                 if value is not None:
                     data[field.name] = value
             elif field_is_list and field.mapping and not field.reference:
-                raise NotImplementedError(
-                    "It's not supported yet to have an attribute of type list with a simple mapping"
-                )
+                msg = "It's not supported yet to have an attribute of type list with a simple mapping"
+                raise NotImplementedError(msg)
             elif field.mapping and field.reference:
                 all_nodes_for_reference = self.store.get_all(model=field.reference)
                 nodes = [item for item in all_nodes_for_reference]  # noqa: C416
                 if not nodes and all_nodes_for_reference:
-                    raise IndexError(
+                    msg = (
                         f"Unable to get '{field.mapping}' with '{field.reference}' reference from store."
                         f" The available models are {self.store.get_all_model_names()}"
                     )
+                    raise IndexError(msg)
                 if not field_is_list:
                     if node := obj.get(field.mapping):
                         matching_nodes = []
@@ -273,7 +273,6 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                             return None
                             # Ideally we should raise an IndexError but there are some instances where Slurpit
                             # data has no dependencies so skipping is required.
-                            # raise IndexError(f"Unable to locate the node {field.reference} {node_id}")
                         node = matching_nodes[0]
                         data[field.name] = node.get_unique_id()
                 else:
