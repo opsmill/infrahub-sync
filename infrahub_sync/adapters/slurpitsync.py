@@ -256,7 +256,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                 raise NotImplementedError(msg)
             elif field.mapping and field.reference:
                 all_nodes_for_reference = self.store.get_all(model=field.reference)
-                nodes = [item for item in all_nodes_for_reference]  # noqa: C416
+                nodes = [item for item in all_nodes_for_reference]
                 if not nodes and all_nodes_for_reference:
                     msg = (
                         f"Unable to get '{field.mapping}' with '{field.reference}' reference from store."
@@ -283,7 +283,8 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                         if len(matching_nodes) == 0:
                             self.skipped.append(node)
                             continue
-                            # raise IndexError(f"Unable to locate the node {field.reference} {node_id}")
+                            # Ideally we should raise an IndexError but there are some instances where Slurpit
+                            # data has no dependencies so skipping is required.
                         data[field.name].append(matching_nodes[0].get_unique_id())
                     data[field.name] = sorted(data[field.name])
         return data
