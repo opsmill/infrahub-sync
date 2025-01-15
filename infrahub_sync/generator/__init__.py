@@ -24,6 +24,7 @@ ATTRIBUTE_KIND_MAP = {
     "Number": "int",
     "Integer": "int",
     "Boolean": "bool",
+    "Checkbox": "bool",
 }
 
 

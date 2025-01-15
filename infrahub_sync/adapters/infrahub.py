@@ -63,6 +63,7 @@ def update_node(node: InfrahubNodeSync, attrs: dict) -> InfrahubNodeSync:
                     for existing_id in existing_only:
                         attr.remove(existing_id)
 
+                    attr.fetch()
                     for new_id in new_only:
                         attr.add(new_id)
 
@@ -215,7 +216,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             elif rel_schema.cardinality == "many":
                 values = []
                 rel_manager = getattr(node, rel_schema.name)
-                for peer in rel_manager:
+                rel_manager.fetch()
+                for peer in rel_manager.peers:
                     peer_node = self.client.store.get(key=peer.id, kind=rel_schema.peer)
                     peer_data = self.infrahub_node_to_diffsync(node=peer_node)
                     peer_model = getattr(self, rel_schema.peer)

@@ -3,8 +3,8 @@ name: from-slurpit
 source:
   name: slurpitsync
   settings:
-    url: "http://localhost"
-    api_key: "<API_KEY>"
+    url: "<URL>"
+    api_key: "<TOKEN>"
 
 destination:
   name: infrahub
@@ -23,7 +23,7 @@ order: [
   "InfraVLAN",
   "InfraVRF",
   "InfraInterface",
-  "InfraPrefix", 
+  "InfraPrefix",
   "InfraIPAddress"
 ]
 
@@ -129,6 +129,9 @@ schema_mapping:
         mapping: Version
       - name: file
         mapping: File
+      - name: devices
+        mapping: hostname
+        reference: InfraDevice
 
   - name: InfraVLAN
     identifiers: ['vlan_id', "name"]
@@ -141,7 +144,7 @@ schema_mapping:
 
   - name: InfraVRF
     identifiers: ["name"]
-    filters: 
+    filters:
       - field: Vrf
         operation: is_not_empty
     mapping: planning_results.routing-table
@@ -152,17 +155,20 @@ schema_mapping:
   - name: InfraInterface
     identifiers: ["device", "name"]
     mapping: planning_results.interfaces
-    fields: 
+    transforms:
+      - field: desc_string
+        expression: "{{Description | string}}"
+    fields:
       - name: name
         mapping: Interface
       - name: description
-        mapping: Description
+        mapping: desc_string
       - name: mac_address
         mapping: MAC_normalized
       - name: device
         mapping: hostname
         reference: InfraDevice
-      
+
   - name: InfraPrefix
     identifiers: ['vrf', 'prefix']
     mapping: filter_networks
@@ -174,7 +180,7 @@ schema_mapping:
         reference: InfraVRF
 
   - name: InfraIPAddress
-    identifiers: ["address", 'prefix']
+    identifiers: ["address", 'ip_prefix']
     mapping: filter_interfaces
     transforms:
       - field: dev_int
@@ -187,6 +193,6 @@ schema_mapping:
       - name: interface
         mapping: dev_int
         reference: InfraInterface
-      - name: prefix
+      - name: ip_prefix
         mapping: vrf_prefix
         reference: InfraPrefix
