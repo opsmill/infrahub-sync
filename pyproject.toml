@@ -21,7 +21,7 @@ classifiers = [
 [tool.poetry.dependencies]
 python = ">=3.9, < 3.13"
 infrahub-sdk = {version = "^1", extras = ["all"]}
-structlog = ">=22.3,<25.0"
+structlog = ">=22.3,<26.0"
 diffsync = { version = ">=1.10,<2.0 || >=2.0", extras = ["redis"] }
 netutils = ">=1.9"
 tqdm = ">=4.66"
