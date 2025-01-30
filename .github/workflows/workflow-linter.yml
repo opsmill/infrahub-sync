@@ -1,5 +1,5 @@
 ---
-# yamllint disable rule:truthy
+# yamllint disable rule:truthy rule:truthy rule:line-length
 name: "Run linter"
 on:
   workflow_call:
@@ -105,7 +105,7 @@ jobs:
       - name: "Linting: markdownlint"
         uses: DavidAnson/markdownlint-cli2-action@v19
         with:
-          config: .markdownlint.yaml
+          config: .markdownlint.yml
           globs: |
             **/*.{md,mdx}
             !changelog/*.md

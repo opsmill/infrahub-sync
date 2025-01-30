@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Union
 
 import yaml
 from diffsync.store.local import LocalStore
@@ -87,7 +87,7 @@ def import_adapter(sync_instance: SyncInstance, adapter: SyncAdapter):
     return adapter_class
 
 
-def get_all_sync(directory: Optional[str] = None) -> list[SyncInstance]:
+def get_all_sync(directory: str | None = None) -> list[SyncInstance]:
     results = []
     search_directory = Path(directory) if directory else Path(__file__).parent
     config_files = search_directory.glob("**/config.yml")
@@ -103,8 +103,8 @@ def get_all_sync(directory: Optional[str] = None) -> list[SyncInstance]:
 
 
 def get_instance(
-    name: Optional[str] = None, config_file: Optional[str] = "config.yml", directory: Optional[str] = None
-) -> Optional[SyncInstance]:
+    name: str | None = None, config_file: str | None = "config.yml", directory: str | None = None
+) -> SyncInstance | None:
     if name:
         all_sync_instances = get_all_sync(directory=directory)
         for item in all_sync_instances:
@@ -201,7 +201,7 @@ def get_potenda_from_instance(
     return ptd
 
 
-def get_infrahub_config(settings: dict[str, Optional[str]], branch: Optional[str]) -> Config:
+def get_infrahub_config(settings: dict[str, str | None], branch: str | None) -> Config:
     """Creates and returns a Config object for infrahub if settings are valid.
 
     Args:
