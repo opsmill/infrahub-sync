@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 from invoke import Context, task
@@ -20,7 +21,7 @@ def _generate_infrahubsync_documentation(context: Context) -> None:
 
     print(" - Generate infrahub-sync CLI documentation")
     exec_cmd = 'poetry run typer infrahub_sync.cli utils docs --name "infrahub-sync"'
-    exec_cmd += " --output docs/reference/cli.mdx"
+    exec_cmd += " --output docs/docs/sync/reference/cli.mdx"
     with context.cd(ESCAPED_REPO_PATH):
         context.run(exec_cmd)
 
@@ -50,11 +51,23 @@ def format_markdownlint(context: Context) -> None:
 
 @task
 def format(context: Context) -> None:  # noqa: A001
-    """This will run all formatter."""
+    """This will run all formatters."""
     format_markdownlint(context)
 
 
 @task
 def lint(context: Context) -> None:
-    """This will run all linter."""
+    """This will run all linters."""
     markdownlint(context)
+
+
+@task
+def docusaurus(context: Context) -> None:
+    """Build documentation website."""
+    exec_cmd = "npm run build"
+
+    with context.cd(DOCUMENTATION_DIRECTORY):
+        output = context.run(exec_cmd)
+
+    if output.exited != 0:
+        sys.exit(-1)
