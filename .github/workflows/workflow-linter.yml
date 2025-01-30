@@ -14,6 +14,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  VALE_VERSION: "3.7.1"
+
 jobs:
   files-changed:
     name: Detect which file has changed

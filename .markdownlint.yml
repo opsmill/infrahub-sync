@@ -14,3 +14,6 @@ MD034: false    # no-bare-urls
 MD045: false    # no alt text around images
 MD047: false    # single trailing newline
 MD014: false    # dollar signs used before commands
+MD0001:
+    ignore:
+        - "docs/README.md"
