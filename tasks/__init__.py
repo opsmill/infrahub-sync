@@ -52,9 +52,15 @@ def generate_doc(context: Context) -> None:
     docs.generate_doc(context)
 
 
+@task(name="docusaurus")
+def docusaurus(context: Context) -> None:
+    docs.docusaurus(context)
+
+
 ns.add_task(lint_all)
 ns.add_task(format_all)
 ns.add_task(test_all)
 ns.add_task(tests_unit)
 ns.add_task(tests_integration)
 ns.add_task(generate_doc)
+ns.add_task(docusaurus)
