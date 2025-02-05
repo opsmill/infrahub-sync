@@ -1,0 +1,118 @@
+---
+title: IP Fabric Adapter
+---
+import ReferenceLink from "../../../src/components/Card";
+
+# IP Fabric Adapter
+
+## What is IP Fabric?
+
+The IP Fabric network infrastructure management platform provides on-demand network discovery, advanced analytics, and in-depth engineering visibility. 
+The lightweight discovery capabilities (through SSH or Telnet) quickly detect the current network state, including detailed data for each address and port. 
+A network model of gathered data reconstructs the topologies for each switching and routing protocol to enable cross-technology analysis of upstream and 
+downstream relationships. Dependencies and dependents are calculated for each network element, allowing analysis to represent each aspect of the network 
+in the context of productivity impact on the downstream hosts and network devices, while the immediate productivity impact of performance and capacity is 
+calculated for each user and every element.
+
+## Sync direction
+
+IP Fabric → Infrahub
+
+:::note
+
+Currently the IP Fabric adapter only supports one way syncronization from IP Fabric into Infrahub. The ability to sync information back into IP Fabric has not been added to the adapter yet.
+Although IP Fabric data cannot be edited as such, additional information such as `Device Attributes` and `Site Separation` rules could be updated from Infrahub data.
+
+:::
+
+## Schema
+
+Our `infrahub-sync` repo contains an example schema that can be a starting point for many looking to sync information from IP Fabric into Infrahub. 
+The example schema follows some best practices when creating schemas in Infrahub and does not map the the IP Fabric datamodel one for one into Infrahub as Infrahub may have additional use cases for you.
+
+<ReferenceLink title="Schema" url="https://github.com/opsmill/infrahub/blob/stable/models/examples/ipfabric/ipfabric.yml" openInNewTab />
+
+To installing the example schema into the Infrahub is simple. Download the example schema and use `infrahubctl` to load it.
+
+```shell
+mkdir ipfabric-sync
+cd ipfabric-sync
+curl https://raw.githubusercontent.com/opsmill/infrahub/refs/heads/stable/models/examples/ipfabric/ipfabric.yml > schema.yml
+infrahubctl schema load schema.yml
+```
+
+## Configuration
+
+`infrahub-sync` provides a mechanism to define what gets syncronized from a `source` and `destination`. Included in the examples is a `config.yml` file that matches the example schema provided above.
+
+<ReferenceLink title="config.yml" url="https://github.com/opsmill/infrahub-sync/blob/main/examples/ipfabric_to_infrahub/config.yml" openInNewTab />
+
+To download the example `config.yml` file use the following command:
+
+```shell
+curl https://raw.githubusercontent.com/opsmill/infrahub-sync/refs/heads/main/examples/ipfabric_to_infrahub/config.yml > config.yml
+```
+
+### Configuration Parameters
+
+In the configuration the definition of the source name is defined as `ipfabricsync` this tells `infrahub-sync` to use the IP Fabric adapter. The `settings` dictionary is passed directly to the IP Fabric Python SDK.
+Some of these paramters can be seen in the [IP Fabric SDK Docs](https://docs.ipfabric.io/latest/integrations/python/#environment-variables) under `Python Parameter`. Below is an a snippet of the example `config.yml` file to show how this can be configured.
+
+```yaml
+---
+name: from-ipfabric
+source:
+  name: ipfabricsync
+  settings:
+    base_url: "https://<IPFABRIC-ENDPOINT>"
+    auth: "<TOKEN>"
+```
+
+### Schema Mapping
+
+In the configuration file its possible to map tables from IP Fabric into Infrahub models this may look like the following:
+
+```yaml
+  - name: InfraDevice
+    identifiers: ["hostname"]
+    mapping: tables/inventory/devices
+    fields:
+      - name: hostname
+        mapping: hostname
+      - name: serial_number
+        mapping: sn
+      - name: hardware_serial_number
+        mapping: snHw
+      - name: fqdn
+        mapping: fqdn
+      - name: model
+        mapping: model
+        reference: TemplateDeviceType
+      - name: location
+        mapping: siteName
+        reference: LocationGeneric
+      - name: platform
+        mapping: platform
+        reference: InfraPlatform
+      - name: version
+        mapping: version
+        reference: InfraNOSVersion
+```
+
+This configuration specifies that the destination model will be `InfraDevice` and the table being synced from IP Fabric is `tables/inventory/devices` this table URI can be found by selecting `Table Description` on any IP Fabric table and grabbing everything after the version in the `URL` description. [IP Fabric Docs](https://docs.ipfabric.io/latest/IP_Fabric_API/?h=api+doc#technology-table-endpoints)
+
+The configuration shows the fields being mapped its important to remember that the `name` of the attribute in the destination model and the mapping is the key in the IP Fabric payload the data is comming from. If `reference` is being used its linking to a model that has been syncronized prior to this model syncing.
+
+## Generating the models
+Infrahub sync relies on some additional python files to function but these can be generated automatically from the `config.yml` file to do this do the following:
+
+```shell
+infrahub-sync generate --name from-ipfabric --directory ipfabric-sync
+```
+
+## Running the sync
+To run the sync the following command can be run. There are other arguments the `sync` commands accept these can be seen in the [guide](../guides/run#command-2).
+
+```shell
+infrahub-sync sync --name from-ipfabric --directory ipfabric-sync
+```
