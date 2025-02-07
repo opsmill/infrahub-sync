@@ -35,4 +35,4 @@ jobs:
           git config user.name github-actions
           git config user.email github-actions@github.com
           git add .
-          if ! (git diff --quiet && git diff --staged --quiet); then git commit -m "Sync docs from infrahub-demo-dc-fabric repo" && git push; fi
+          if ! (git diff --quiet && git diff --staged --quiet); then git commit -m "Sync docs from infrahub-sync repo" && git push; fi
