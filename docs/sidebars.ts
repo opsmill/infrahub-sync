@@ -17,6 +17,7 @@ const sidebars: SidebarsConfig = {
       label: 'Adapters',
       items: [
         'sync/adapters/ipfabric',
+        'sync/adapters/slurpit',
       ],
     },
     {
