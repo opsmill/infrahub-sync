@@ -14,6 +14,14 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Adapters',
+      items: [
+        'sync/adapters/ipfabric',
+        'sync/adapters/slurpit',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Reference',
       items: [
         'sync/reference/config',
