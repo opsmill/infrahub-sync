@@ -16,4 +16,4 @@ Infrahub Sync is a versatile Python package that synchronizes data between a sou
 
 ## Using Infrahub sync
 
-Documentation for using Infrahub Sync is available [here](https://docs.infrahub.app/sync/sync/)
+Documentation for using Infrahub Sync is available [here](https://docs.infrahub.app/sync/)

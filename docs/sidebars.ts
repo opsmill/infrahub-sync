@@ -2,30 +2,30 @@ import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
 
 const sidebars: SidebarsConfig = {
   syncSidebar: [
-    'sync/readme',
+    'readme',
     {
       type: 'category',
       label: 'Guides',
       items: [
-        'sync/guides/installation',
-        'sync/guides/creation',
-        'sync/guides/run',
+        'guides/installation',
+        'guides/creation',
+        'guides/run',
       ],
     },
     {
       type: 'category',
       label: 'Adapters',
       items: [
-        'sync/adapters/ipfabric',
-        'sync/adapters/slurpit',
+        'adapters/ipfabric',
+        'adapters/slurpit',
       ],
     },
     {
       type: 'category',
       label: 'Reference',
       items: [
-        'sync/reference/config',
-        'sync/reference/cli',
+        'reference/config',
+        'reference/cli',
       ],
     },
   ]
