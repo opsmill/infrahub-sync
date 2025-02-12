@@ -1,9 +1,13 @@
+import sys
 from __future__ import annotations
 
 # pylint: disable=R0801
 import os
-from typing import TYPE_CHECKING, Any, Self
-
+from typing import TYPE_CHECKING, Any
+if sys.version_info.minor < 11:
+   from typing_extensions import Self
+else:
+   from typing import Self
 import pynetbox
 from diffsync import Adapter, DiffSyncModel
 

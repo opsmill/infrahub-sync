@@ -1,8 +1,12 @@
+import sys
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any, Self
-
+from typing import TYPE_CHECKING, Any
+if sys.version_info.minor < 11:
+   from typing_extensions import Self
+else:
+   from typing import Self
 from diffsync import Adapter, DiffSyncModel
 
 from infrahub_sync import (
