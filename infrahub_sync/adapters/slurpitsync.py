@@ -5,9 +5,9 @@ import ipaddress
 from typing import TYPE_CHECKING, Any
 
 try:
-    from typing import Self
+    from typing import Any, Self
 except ImportError:
-    from typing_extensions import Self
+    from typing_extensions import Any, Self
 import slurpit
 from diffsync import Adapter, DiffSyncModel
 
