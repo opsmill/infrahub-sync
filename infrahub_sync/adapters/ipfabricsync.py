@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 try:
     from ipfabric import IPFClient
@@ -54,7 +59,10 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
         object_class, modelname = self.store._get_object_class_and_model(model=reference)
 
         # Find the schema element matching the model name
-        schema_element = next((element for element in self.config.schema_mapping if element.name == modelname), None)
+        schema_element = next(
+            (element for element in self.config.schema_mapping if element.name == modelname),
+            None,
+        )
 
         # Collect all relevant field mappings for identifiers
         new_identifiers = []

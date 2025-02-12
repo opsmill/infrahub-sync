@@ -21,7 +21,8 @@ if TYPE_CHECKING:
 
 
 def find_missing_schema_model(
-    sync_instance: SyncInstance, schema: MutableMapping[str, Union[NodeSchema, GenericSchema]]
+    sync_instance: SyncInstance,
+    schema: MutableMapping[str, Union[NodeSchema, GenericSchema]],
 ) -> list[str]:
     missing_schema_models = []
     for item in sync_instance.schema_mapping:
@@ -34,7 +35,8 @@ def find_missing_schema_model(
 
 
 def render_adapter(
-    sync_instance: SyncInstance, schema: MutableMapping[str, Union[NodeSchema, GenericSchema]]
+    sync_instance: SyncInstance,
+    schema: MutableMapping[str, Union[NodeSchema, GenericSchema]],
 ) -> list[tuple[str, str]]:
     files_to_render = (
         ("diffsync_models.j2", "sync_models.py"),
@@ -103,7 +105,9 @@ def get_all_sync(directory: str | None = None) -> list[SyncInstance]:
 
 
 def get_instance(
-    name: str | None = None, config_file: str | None = "config.yml", directory: str | None = None
+    name: str | None = None,
+    config_file: str | None = "config.yml",
+    directory: str | None = None,
 ) -> SyncInstance | None:
     if name:
         all_sync_instances = get_all_sync(directory=directory)
@@ -133,7 +137,9 @@ def get_instance(
 
 
 def get_potenda_from_instance(
-    sync_instance: SyncInstance, branch: str | None = None, show_progress: bool | None = True
+    sync_instance: SyncInstance,
+    branch: str | None = None,
+    show_progress: bool | None = True,
 ) -> Potenda:
     source = import_adapter(sync_instance=sync_instance, adapter=sync_instance.source)
     destination = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)

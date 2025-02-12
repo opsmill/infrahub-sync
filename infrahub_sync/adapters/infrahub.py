@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import copy
 import os
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
+
 
 from diffsync import Adapter, DiffSyncModel
 from infrahub_sdk import (
@@ -40,7 +46,9 @@ def update_node(node: InfrahubNodeSync, attrs: dict) -> InfrahubNodeSync:
                     if attr_value:
                         if rel_schema.kind != "Generic":
                             peer = node._client.store.get(
-                                key=attr_value, kind=rel_schema.peer, raise_when_missing=False
+                                key=attr_value,
+                                kind=rel_schema.peer,
+                                raise_when_missing=False,
                             )
                         else:
                             peer = node._client.store.get(key=attr_value, raise_when_missing=False)
@@ -71,7 +79,10 @@ def update_node(node: InfrahubNodeSync, attrs: dict) -> InfrahubNodeSync:
 
 
 def diffsync_to_infrahub(
-    ids: Mapping[Any, Any], attrs: Mapping[Any, Any], store: NodeStoreSync, schema: NodeSchema
+    ids: Mapping[Any, Any],
+    attrs: Mapping[Any, Any],
+    store: NodeStoreSync,
+    schema: NodeSchema,
 ) -> dict[Any, Any]:
     data = copy.deepcopy(dict(ids))
     data.update(dict(attrs))
@@ -84,7 +95,11 @@ def diffsync_to_infrahub(
                         del data[key]
                         continue
                     if rel_schema.kind != "Generic":
-                        peer = store.get(key=data[key], kind=rel_schema.peer, raise_when_missing=False)
+                        peer = store.get(
+                            key=data[key],
+                            kind=rel_schema.peer,
+                            raise_when_missing=False,
+                        )
                     else:
                         peer = store.get(key=data[key], raise_when_missing=False)
                     if not peer:
@@ -106,7 +121,13 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     type = "Infrahub"
 
     def __init__(
-        self, target: str, adapter: SyncAdapter, config: SyncConfig, branch: str | None = None, *args, **kwargs
+        self,
+        target: str,
+        adapter: SyncAdapter,
+        config: SyncConfig,
+        branch: str | None = None,
+        *args,
+        **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
         self.target = target

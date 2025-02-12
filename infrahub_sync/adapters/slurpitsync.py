@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any
 
+try:
+    from typing import Any, Self
+except ImportError:
+    from typing_extensions import Any, Self
 import slurpit
 from diffsync import Adapter, DiffSyncModel
 
@@ -114,7 +118,10 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
 
     async def filter_interfaces(self, interfaces) -> list:
         precomputed_filtered_networks = [
-            {"network": ipaddress.ip_network(prefix["normalized_prefix"], strict=False), "Vrf": prefix.get("Vrf", None)}
+            {
+                "network": ipaddress.ip_network(prefix["normalized_prefix"], strict=False),
+                "Vrf": prefix.get("Vrf", None),
+            }
             for prefix in self.filtered_networks
         ]
 
@@ -219,7 +226,10 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         object_class, modelname = self.store._get_object_class_and_model(model=reference)
 
         # Find the schema element matching the model name
-        schema_element = next((element for element in self.config.schema_mapping if element.name == modelname), None)
+        schema_element = next(
+            (element for element in self.config.schema_mapping if element.name == modelname),
+            None,
+        )
 
         # Collect all relevant field mappings for identifiers
         new_identifiers = []

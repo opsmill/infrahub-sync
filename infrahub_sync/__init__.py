@@ -130,7 +130,11 @@ class DiffSyncModelMixin:
         for filter_obj in filters:
             # Use dot notation to access attributes
             field_value = get_value(obj=item, name=filter_obj.field)
-            if not cls.apply_filter(field_value=field_value, operation=filter_obj.operation, value=filter_obj.value):
+            if not cls.apply_filter(
+                field_value=field_value,
+                operation=filter_obj.operation,
+                value=filter_obj.value,
+            ):
                 return False
         return True
 

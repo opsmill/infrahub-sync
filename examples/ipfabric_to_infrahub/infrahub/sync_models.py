@@ -13,7 +13,15 @@ from infrahub_sync.adapters.infrahub import InfrahubModel
 class InfraDevice(InfrahubModel):
     _modelname = "InfraDevice"
     _identifiers = ("hostname",)
-    _attributes = ("model", "location", "platform", "version", "fqdn", "serial_number", "hardware_serial_number")
+    _attributes = (
+        "model",
+        "location",
+        "platform",
+        "version",
+        "fqdn",
+        "serial_number",
+        "hardware_serial_number",
+    )
     fqdn: str | None = None
     hostname: str
     serial_number: str
@@ -71,7 +79,14 @@ class InfraNOSVersion(InfrahubModel):
 class InfraPartNumber(InfrahubModel):
     _modelname = "InfraPartNumber"
     _identifiers = ("device", "name")
-    _attributes = ("model", "manufacturer", "part_vid", "part_id", "description", "part_sn")
+    _attributes = (
+        "model",
+        "manufacturer",
+        "part_vid",
+        "part_id",
+        "description",
+        "part_sn",
+    )
     name: str
     part_vid: str | None = None
     part_id: str | None = None

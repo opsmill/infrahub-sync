@@ -13,7 +13,14 @@ from infrahub_sync.adapters.infrahub import InfrahubModel
 class InfraAutonomousSystem(InfrahubModel):
     _modelname = "InfraAutonomousSystem"
     _identifiers = ("asn",)
-    _attributes = ("name", "description", "irr_as_set", "ipv4_max_prefixes", "ipv6_max_prefixes", "affiliated")
+    _attributes = (
+        "name",
+        "description",
+        "irr_as_set",
+        "ipv4_max_prefixes",
+        "ipv6_max_prefixes",
+        "affiliated",
+    )
     name: str
     asn: int
     description: str | None = None
@@ -29,7 +36,13 @@ class InfraAutonomousSystem(InfrahubModel):
 class InfraBGPPeerGroup(InfrahubModel):
     _modelname = "InfraBGPPeerGroup"
     _identifiers = ("name",)
-    _attributes = ("import_policies", "export_policies", "bgp_communities", "description", "status")
+    _attributes = (
+        "import_policies",
+        "export_policies",
+        "bgp_communities",
+        "description",
+        "status",
+    )
     name: str
     description: str | None = None
     status: str | None = None
@@ -58,7 +71,14 @@ class InfraBGPCommunity(InfrahubModel):
 class InfraBGPRoutingPolicy(InfrahubModel):
     _modelname = "InfraBGPRoutingPolicy"
     _identifiers = ("name",)
-    _attributes = ("bgp_communities", "label", "description", "policy_type", "weight", "address_family")
+    _attributes = (
+        "bgp_communities",
+        "label",
+        "description",
+        "policy_type",
+        "weight",
+        "address_family",
+    )
     name: str
     label: str | None = None
     description: str | None = None
@@ -74,7 +94,13 @@ class InfraBGPRoutingPolicy(InfrahubModel):
 class InfraIXP(InfrahubModel):
     _modelname = "InfraIXP"
     _identifiers = ("name",)
-    _attributes = ("import_policies", "export_policies", "bgp_communities", "description", "status")
+    _attributes = (
+        "import_policies",
+        "export_policies",
+        "bgp_communities",
+        "description",
+        "status",
+    )
     name: str
     description: str | None = None
     status: str | None = "enabled"
@@ -89,7 +115,13 @@ class InfraIXP(InfrahubModel):
 class InfraIXPConnection(InfrahubModel):
     _modelname = "InfraIXPConnection"
     _identifiers = ("name",)
-    _attributes = ("internet_exchange_point", "description", "peeringdb_netixlan", "status", "vlan")
+    _attributes = (
+        "internet_exchange_point",
+        "description",
+        "peeringdb_netixlan",
+        "status",
+        "vlan",
+    )
     name: str
     description: str | None = None
     peeringdb_netixlan: int | None = None

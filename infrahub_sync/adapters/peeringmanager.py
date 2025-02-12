@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any
 
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 import requests
 from diffsync import Adapter, DiffSyncModel
 
@@ -48,7 +52,12 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
             raise ValueError(msg)
 
         full_base_url = f"{url.rstrip('/')}/{api_endpoint.strip('/')}"
-        return RestApiClient(base_url=full_base_url, auth_method=auth_method, api_token=api_token, timeout=timeout)
+        return RestApiClient(
+            base_url=full_base_url,
+            auth_method=auth_method,
+            api_token=api_token,
+            timeout=timeout,
+        )
 
     def model_loader(self, model_name: str, model: PeeringmanagerModel) -> None:
         """
@@ -90,7 +99,12 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
                 item = model(**data)
                 self.add(item)
 
-    def obj_to_diffsync(self, obj: dict[str, Any], mapping: SchemaMappingModel, model: PeeringmanagerModel) -> dict:
+    def obj_to_diffsync(
+        self,
+        obj: dict[str, Any],
+        mapping: SchemaMappingModel,
+        model: PeeringmanagerModel,
+    ) -> dict:
         obj_id = derive_identifier_key(obj=obj)
         data: dict[str, Any] = {"local_id": str(obj_id)}
 
@@ -197,7 +211,8 @@ class PeeringmanagerModel(DiffSyncModelMixin, DiffSyncModel):
                             else:
                                 # For single references, find the matching node
                                 filtered_node = next(
-                                    (node for node in all_nodes_for_reference if node.get_unique_id() == value), None
+                                    (node for node in all_nodes_for_reference if node.get_unique_id() == value),
+                                    None,
                                 )
                                 if filtered_node:
                                     mapped_attrs[target_field_name] = filtered_node.local_id

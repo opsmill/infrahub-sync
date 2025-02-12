@@ -60,7 +60,15 @@ class InfraCircuit(InfrahubModel):
 class InfraDevice(InfrahubModel):
     _modelname = "InfraDevice"
     _identifiers = ("location", "organization", "name")
-    _attributes = ("model", "rack", "role", "tags", "platform", "serial_number", "asset_tag")
+    _attributes = (
+        "model",
+        "rack",
+        "role",
+        "tags",
+        "platform",
+        "serial_number",
+        "asset_tag",
+    )
     name: str | None = None
     serial_number: str | None = None
     asset_tag: str | None = None
@@ -104,7 +112,15 @@ class InfraIPAddress(InfrahubModel):
 class InfraInterfaceL2L3(InfrahubModel):
     _modelname = "InfraInterfaceL2L3"
     _identifiers = ("name", "device")
-    _attributes = ("tagged_vlan", "tags", "l2_mode", "description", "mgmt_only", "mac_address", "interface_type")
+    _attributes = (
+        "tagged_vlan",
+        "tags",
+        "l2_mode",
+        "description",
+        "mgmt_only",
+        "mac_address",
+        "interface_type",
+    )
     l2_mode: str | None = None
     name: str
     description: str | None = None
@@ -161,7 +177,15 @@ class InfraProviderNetwork(InfrahubModel):
 class InfraRack(InfrahubModel):
     _modelname = "InfraRack"
     _identifiers = ("name",)
-    _attributes = ("location", "role", "tags", "height", "facility_id", "serial_number", "asset_tag")
+    _attributes = (
+        "location",
+        "role",
+        "tags",
+        "height",
+        "facility_id",
+        "serial_number",
+        "asset_tag",
+    )
     name: str
     height: int | None = None
     facility_id: str | None = None

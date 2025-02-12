@@ -2,7 +2,12 @@ from __future__ import annotations
 
 # pylint: disable=R0801
 import os
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 import pynautobot
 from diffsync import Adapter, DiffSyncModel

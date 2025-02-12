@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any
 
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 from diffsync import Adapter, DiffSyncModel
 
 from infrahub_sync import (

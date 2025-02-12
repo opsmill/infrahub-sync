@@ -64,7 +64,16 @@ class InfraCircuit(NautobotModel):
 class InfraDevice(NautobotModel):
     _modelname = "InfraDevice"
     _identifiers = ("location", "organization", "name")
-    _attributes = ("model", "tags", "rack", "role", "status", "platform", "serial_number", "asset_tag")
+    _attributes = (
+        "model",
+        "tags",
+        "rack",
+        "role",
+        "status",
+        "platform",
+        "serial_number",
+        "asset_tag",
+    )
     serial_number: str | None = None
     asset_tag: str | None = None
     name: str | None = None
@@ -113,7 +122,16 @@ class InfraIPAddress(NautobotModel):
 class InfraInterfaceL2L3(NautobotModel):
     _modelname = "InfraInterfaceL2L3"
     _identifiers = ("name", "device")
-    _attributes = ("status", "tags", "tagged_vlan", "l2_mode", "mac_address", "description", "mgmt_only", "interface_type")
+    _attributes = (
+        "status",
+        "tags",
+        "tagged_vlan",
+        "l2_mode",
+        "mac_address",
+        "description",
+        "mgmt_only",
+        "interface_type",
+    )
     l2_mode: str | None = None
     mac_address: str | None = None
     description: str | None = None
@@ -178,7 +196,15 @@ class InfraProviderNetwork(NautobotModel):
 class InfraRack(NautobotModel):
     _modelname = "InfraRack"
     _identifiers = ("name",)
-    _attributes = ("role", "location", "tags", "facility_id", "asset_tag", "serial_number", "height")
+    _attributes = (
+        "role",
+        "location",
+        "tags",
+        "facility_id",
+        "asset_tag",
+        "serial_number",
+        "height",
+    )
     facility_id: str | None = None
     asset_tag: str | None = None
     name: str
@@ -220,7 +246,15 @@ class InfraRouteTarget(NautobotModel):
 class InfraVLAN(NautobotModel):
     _modelname = "InfraVLAN"
     _identifiers = ("name",)
-    _attributes = ("role", "organization", "vlan_group", "status", "locations", "description", "vlan_id")
+    _attributes = (
+        "role",
+        "organization",
+        "vlan_group",
+        "status",
+        "locations",
+        "description",
+        "vlan_id",
+    )
     name: str
     description: str | None = None
     vlan_id: int

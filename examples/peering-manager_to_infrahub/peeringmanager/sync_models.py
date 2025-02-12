@@ -13,7 +13,14 @@ from infrahub_sync.adapters.peeringmanager import PeeringmanagerModel
 class InfraAutonomousSystem(PeeringmanagerModel):
     _modelname = "InfraAutonomousSystem"
     _identifiers = ("asn",)
-    _attributes = ("affiliated", "name", "irr_as_set", "description", "ipv4_max_prefixes", "ipv6_max_prefixes")
+    _attributes = (
+        "affiliated",
+        "name",
+        "irr_as_set",
+        "description",
+        "ipv4_max_prefixes",
+        "ipv6_max_prefixes",
+    )
     affiliated: bool | None = None
     name: str
     asn: int
@@ -29,7 +36,13 @@ class InfraAutonomousSystem(PeeringmanagerModel):
 class InfraBGPPeerGroup(PeeringmanagerModel):
     _modelname = "InfraBGPPeerGroup"
     _identifiers = ("name",)
-    _attributes = ("bgp_communities", "import_policies", "export_policies", "status", "description")
+    _attributes = (
+        "bgp_communities",
+        "import_policies",
+        "export_policies",
+        "status",
+        "description",
+    )
     status: str | None = None
     name: str
     description: str | None = None
@@ -69,7 +82,14 @@ class InfraBGPCommunity(PeeringmanagerModel):
 class InfraBGPRoutingPolicy(PeeringmanagerModel):
     _modelname = "InfraBGPRoutingPolicy"
     _identifiers = ("name",)
-    _attributes = ("bgp_communities", "label", "policy_type", "address_family", "weight", "description")
+    _attributes = (
+        "bgp_communities",
+        "label",
+        "policy_type",
+        "address_family",
+        "weight",
+        "description",
+    )
     name: str
     label: str | None = None
     policy_type: str
@@ -85,7 +105,13 @@ class InfraBGPRoutingPolicy(PeeringmanagerModel):
 class InfraIXP(PeeringmanagerModel):
     _modelname = "InfraIXP"
     _identifiers = ("name",)
-    _attributes = ("export_policies", "bgp_communities", "import_policies", "status", "description")
+    _attributes = (
+        "export_policies",
+        "bgp_communities",
+        "import_policies",
+        "status",
+        "description",
+    )
     name: str
     status: str | None = "enabled"
     description: str | None = None
@@ -100,7 +126,15 @@ class InfraIXP(PeeringmanagerModel):
 class InfraIXPConnection(PeeringmanagerModel):
     _modelname = "InfraIXPConnection"
     _identifiers = ("name",)
-    _attributes = ("ipv4_address", "ipv6_address", "internet_exchange_point", "status", "description", "peeringdb_netixlan", "vlan")
+    _attributes = (
+        "ipv4_address",
+        "ipv6_address",
+        "internet_exchange_point",
+        "status",
+        "description",
+        "peeringdb_netixlan",
+        "vlan",
+    )
     status: str | None = "enabled"
     description: str | None = None
     peeringdb_netixlan: int | None = None

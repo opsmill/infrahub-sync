@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 from diffsync import Adapter, DiffSyncModel
 
@@ -47,7 +52,12 @@ class LibrenmsAdapter(DiffSyncMixin, Adapter):
             raise ValueError(msg)
 
         full_base_url = f"{url.rstrip('/')}/{api_endpoint.strip('/')}"
-        return RestApiClient(base_url=full_base_url, auth_method=auth_method, api_token=api_token, timeout=timeout)
+        return RestApiClient(
+            base_url=full_base_url,
+            auth_method=auth_method,
+            api_token=api_token,
+            timeout=timeout,
+        )
 
     def model_loader(self, model_name: str, model: LibrenmsModel) -> None:
         """

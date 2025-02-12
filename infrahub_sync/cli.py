@@ -77,7 +77,8 @@ def sync_cmd(
     directory: str = typer.Option(default=None, help="Base directory to search for sync configurations"),
     branch: str = typer.Option(default=None, help="Branch to use for the sync."),
     diff: bool = typer.Option(
-        default=True, help="Print the differences between the source and the destination before syncing"
+        default=True,
+        help="Print the differences between the source and the destination before syncing",
     ),
     show_progress: bool = typer.Option(default=True, help="Show a progress bar during syncing"),
 ) -> None:
