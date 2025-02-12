@@ -72,9 +72,7 @@ def import_adapter(sync_instance: SyncInstance, adapter: SyncAdapter):
 
     try:
         adapter_name = f"{adapter.name.title()}Sync"
-        spec = importlib.util.spec_from_file_location(
-            f"{adapter.name}.adapter", str(adapter_file_path)
-        )
+        spec = importlib.util.spec_from_file_location(f"{adapter.name}.adapter", str(adapter_file_path))
         adapter_module = importlib.util.module_from_spec(spec)
         sys.modules[f"{adapter.name}.adapter"] = adapter_module
         spec.loader.exec_module(adapter_module)
@@ -144,30 +142,22 @@ def get_potenda_from_instance(
     show_progress: bool | None = True,
 ) -> Potenda:
     source = import_adapter(sync_instance=sync_instance, adapter=sync_instance.source)
-    destination = import_adapter(
-        sync_instance=sync_instance, adapter=sync_instance.destination
-    )
+    destination = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
 
     source_store = LocalStore()
     destination_store = LocalStore()
 
     if sync_instance.store and sync_instance.store.type == "redis":
-        if sync_instance.store.settings and isinstance(
-            sync_instance.store.settings, dict
-        ):
+        if sync_instance.store.settings and isinstance(sync_instance.store.settings, dict):
             redis_settings = sync_instance.store.settings
             source_store = RedisStore(**redis_settings, name=sync_instance.source.name)
-            destination_store = RedisStore(
-                **redis_settings, name=sync_instance.destination.name
-            )
+            destination_store = RedisStore(**redis_settings, name=sync_instance.destination.name)
         else:
             source_store = RedisStore(name=sync_instance.source.name)
             destination_store = RedisStore(name=sync_instance.destination.name)
     try:
         if sync_instance.source.name == "infrahub":
-            settings_branch = (
-                sync_instance.source.settings.get("branch") or branch or "main"
-            )
+            settings_branch = sync_instance.source.settings.get("branch") or branch or "main"
             src: SyncInstance = source(
                 config=sync_instance,
                 target="source",
@@ -187,9 +177,7 @@ def get_potenda_from_instance(
         raise ValueError(msg) from exc
     try:
         if sync_instance.destination.name == "infrahub":
-            settings_branch = (
-                sync_instance.source.settings.get("branch") or branch or "main"
-            )
+            settings_branch = sync_instance.source.settings.get("branch") or branch or "main"
             dst: SyncInstance = destination(
                 config=sync_instance,
                 target="destination",

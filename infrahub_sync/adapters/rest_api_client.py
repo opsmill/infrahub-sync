@@ -80,9 +80,7 @@ class RestApiClient:
             try:
                 return response.json()
             except requests.exceptions.JSONDecodeError as exc:
-                print(
-                    "Response content is not valid JSON:", response.text
-                )  # Print the response content
+                print("Response content is not valid JSON:", response.text)  # Print the response content
                 msg = "Response content is not valid JSON."
                 raise ValueError(msg) from exc
 

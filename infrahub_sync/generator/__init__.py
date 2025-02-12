@@ -62,18 +62,14 @@ def get_identifiers(node: NodeSchema, config: SyncConfig) -> list[str] | None:
     """Return the identifiers that should be used by DiffSync."""
 
     config_identifiers = [
-        item.identifiers
-        for item in config.schema_mapping
-        if item.name == node.kind and item.identifiers
+        item.identifiers for item in config.schema_mapping if item.name == node.kind and item.identifiers
     ]
 
     if config_identifiers:
         return config_identifiers[0]
 
     identifiers = [
-        attr.name
-        for attr in node.attributes
-        if attr.unique and has_field(config, name=node.kind, field=attr.name)
+        attr.name for attr in node.attributes if attr.unique and has_field(config, name=node.kind, field=attr.name)
     ]
 
     if not identifiers:
@@ -84,25 +80,18 @@ def get_identifiers(node: NodeSchema, config: SyncConfig) -> list[str] | None:
 
 def get_attributes(node: NodeSchema, config: SyncConfig) -> list[str] | None:
     """Return the attributes that should be used by DiffSync."""
-    attrs_attributes = [
-        attr.name
-        for attr in node.attributes
-        if has_field(config, name=node.kind, field=attr.name)
-    ]
+    attrs_attributes = [attr.name for attr in node.attributes if has_field(config, name=node.kind, field=attr.name)]
     rels_identifiers = [
         rel.name
         for rel in node.relationships
-        if rel.kind != RelationshipKind.COMPONENT
-        and has_field(config, name=node.kind, field=rel.name)
+        if rel.kind != RelationshipKind.COMPONENT and has_field(config, name=node.kind, field=rel.name)
     ]
 
     identifiers = get_identifiers(node=node, config=config)
     if not identifiers:
         return None
 
-    attributes = [
-        item for item in rels_identifiers + attrs_attributes if item not in identifiers
-    ]
+    attributes = [item for item in rels_identifiers + attrs_attributes if item not in identifiers]
 
     if not attributes:
         return None
@@ -161,9 +150,7 @@ def has_children(node: NodeSchema, config: SyncConfig) -> bool:
     return bool(get_children(config=config, node=node))
 
 
-def render_template(
-    template_file: Path, output_dir: Path, output_file: Path, context: dict[str, Any]
-) -> None:
+def render_template(template_file: Path, output_dir: Path, output_file: Path, context: dict[str, Any]) -> None:
     template_loader = jinja2.PackageLoader("infrahub_sync", "generator/templates")
     template_env = jinja2.Environment(
         loader=template_loader,

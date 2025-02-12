@@ -51,13 +51,9 @@ def update_node(node: InfrahubNodeSync, attrs: dict) -> InfrahubNodeSync:
                                 raise_when_missing=False,
                             )
                         else:
-                            peer = node._client.store.get(
-                                key=attr_value, raise_when_missing=False
-                            )
+                            peer = node._client.store.get(key=attr_value, raise_when_missing=False)
                         if not peer:
-                            print(
-                                f"Unable to find {rel_schema.peer} [{attr_value}] in the Store - Ignored"
-                            )
+                            print(f"Unable to find {rel_schema.peer} [{attr_value}] in the Store - Ignored")
                             continue
                         setattr(node, attr_name, peer)
                     else:
@@ -68,12 +64,9 @@ def update_node(node: InfrahubNodeSync, attrs: dict) -> InfrahubNodeSync:
                     attr = getattr(node, attr_name)
                     existing_peer_ids = attr.peer_ids
                     new_peer_ids = [
-                        node._client.store.get(key=value, kind=rel_schema.peer).id
-                        for value in list(attr_value)
+                        node._client.store.get(key=value, kind=rel_schema.peer).id for value in list(attr_value)
                     ]
-                    _, existing_only, new_only = compare_lists(
-                        existing_peer_ids, new_peer_ids
-                    )
+                    _, existing_only, new_only = compare_lists(existing_peer_ids, new_peer_ids)
 
                     for existing_id in existing_only:
                         attr.remove(existing_id)
@@ -110,9 +103,7 @@ def diffsync_to_infrahub(
                     else:
                         peer = store.get(key=data[key], raise_when_missing=False)
                     if not peer:
-                        print(
-                            f"Unable to find {rel_schema.peer} [{data[key]}] in the Store - Ignored"
-                        )
+                        print(f"Unable to find {rel_schema.peer} [{data[key]}] in the Store - Ignored")
                         continue
 
                     data[key] = peer.id
@@ -120,10 +111,7 @@ def diffsync_to_infrahub(
                     if data[key] is None:
                         del data[key]
                         continue
-                    new_values = [
-                        store.get(key=value, kind=rel_schema.peer).id
-                        for value in list(data[key])
-                    ]
+                    new_values = [store.get(key=value, kind=rel_schema.peer).id for value in list(data[key])]
                     data[key] = new_values
 
     return data
@@ -146,11 +134,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         self.config = config
 
         settings = adapter.settings or {}
-        infrahub_url = (
-            os.environ.get("INFRAHUB_ADDRESS")
-            or os.environ.get("INFRAHUB_URL")
-            or settings.get("url")
-        )
+        infrahub_url = os.environ.get("INFRAHUB_ADDRESS") or os.environ.get("INFRAHUB_URL") or settings.get("url")
         infrahub_token = os.environ.get("INFRAHUB_API_TOKEN") or settings.get("token")
         infrahub_branch = settings.get("branch") or branch
 
@@ -159,9 +143,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             raise ValueError(msg)
 
         if infrahub_branch:
-            sdk_config = Config(
-                timeout=60, default_branch=infrahub_branch, api_token=infrahub_token
-            )
+            sdk_config = Config(timeout=60, default_branch=infrahub_branch, api_token=infrahub_token)
         else:
             sdk_config = Config(timeout=60, api_token=infrahub_token)
 
@@ -170,9 +152,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         # We need to identify with an account until we have some auth in place
         remote_account = config.source.name
         try:
-            self.account = self.client.get(
-                kind="CoreAccount", name__value=remote_account
-            )
+            self.account = self.client.get(kind="CoreAccount", name__value=remote_account)
         except NodeNotFoundError:
             self.account = None
 
@@ -183,17 +163,13 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         This method retrieves data from Infrahub, applies filters and transformations
         as specified in the schema mapping, and loads the processed data into the adapter.
         """
-        element = next(
-            (el for el in self.config.schema_mapping if el.name == model_name), None
-        )
+        element = next((el for el in self.config.schema_mapping if el.name == model_name), None)
         if element:
             # Retrieve all nodes corresponding to model_name (list of InfrahubNodeSync)
             nodes = self.client.all(kind=model_name, populate_store=True)
 
             # Transform the list of InfrahubNodeSync into a list of (node, dict) tuples
-            node_dict_pairs = [
-                (node, self.infrahub_node_to_diffsync(node=node)) for node in nodes
-            ]
+            node_dict_pairs = [(node, self.infrahub_node_to_diffsync(node=node)) for node in nodes]
             total = len(node_dict_pairs)
 
             # Extract the list of dicts for filtering and transforming
@@ -201,23 +177,17 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
             if self.config.source.name.title() == self.type.title():
                 # Filter records
-                filtered_objs = model.filter_records(
-                    records=list_obj, schema_mapping=element
-                )
+                filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
                 print(f"{self.type}: Loading {len(filtered_objs)}/{total} {model_name}")
                 # Transform records
-                transformed_objs = model.transform_records(
-                    records=filtered_objs, schema_mapping=element
-                )
+                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
             else:
                 print(f"{self.type}: Loading all {total} {model_name}")
                 transformed_objs = list_obj
 
             # Create model instances after filtering and transforming
             for transformed_obj in transformed_objs:
-                original_node = next(
-                    node for node, obj in node_dict_pairs if obj == transformed_obj
-                )
+                original_node = next(node for node, obj in node_dict_pairs if obj == transformed_obj)
                 item = model(**transformed_obj)
                 unique_id = item.get_unique_id()
                 self.client.store.set(key=unique_id, node=original_node)
@@ -239,30 +209,20 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                     data[attr_name] = attr.value
 
         for rel_schema in node._schema.relationships:
-            if not has_field(
-                config=self.config, name=node._schema.kind, field=rel_schema.name
-            ):
+            if not has_field(config=self.config, name=node._schema.kind, field=rel_schema.name):
                 continue
             if rel_schema.cardinality == "one":
                 rel = getattr(node, rel_schema.name)
                 if not rel.id:
                     continue
                 if rel_schema.kind != "Generic":
-                    peer_node = self.client.store.get(
-                        key=rel.id, kind=rel_schema.peer, raise_when_missing=False
-                    )
+                    peer_node = self.client.store.get(key=rel.id, kind=rel_schema.peer, raise_when_missing=False)
                 else:
-                    peer_node = self.client.store.get(
-                        key=rel.id, raise_when_missing=False
-                    )
+                    peer_node = self.client.store.get(key=rel.id, raise_when_missing=False)
                 if not peer_node:
                     # I am not sure if we should end up here "normaly"
-                    print(
-                        f"Debug Unable to find {rel_schema.peer} [{rel.id}] in the Store - Pulling from Infrahub"
-                    )
-                    peer_node = self.client.get(
-                        id=rel.id, kind=rel_schema.peer, populate_store=True
-                    )
+                    print(f"Debug Unable to find {rel_schema.peer} [{rel.id}] in the Store - Pulling from Infrahub")
+                    peer_node = self.client.get(id=rel.id, kind=rel_schema.peer, populate_store=True)
                     if not peer_node:
                         print(f"Unable to find {rel_schema.peer} [{rel.id}]")
                         continue
@@ -300,9 +260,7 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
         attrs: Mapping[Any, Any],
     ) -> Self | None:
         schema = adapter.client.schema.get(kind=cls.__name__)
-        data = diffsync_to_infrahub(
-            ids=ids, attrs=attrs, schema=schema, store=adapter.client.store
-        )
+        data = diffsync_to_infrahub(ids=ids, attrs=attrs, schema=schema, store=adapter.client.store)
         unique_id = cls(**ids, **attrs).get_unique_id()
         source_id = None
         if adapter.account:

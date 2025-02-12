@@ -28,9 +28,7 @@ if TYPE_CHECKING:
 class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
     type = "Peeringmanager"
 
-    def __init__(
-        self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs
-    ) -> None:
+    def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
         self.target = target
@@ -39,14 +37,8 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
 
     def _create_rest_client(self, adapter: SyncAdapter) -> RestApiClient:
         settings = adapter.settings or {}
-        url = (
-            os.environ.get("PEERING_MANAGER_ADDRESS")
-            or os.environ.get("PEERING_MANAGER_URL")
-            or settings.get("url")
-        )
-        api_endpoint = settings.get(
-            "api_endpoint", "/api"
-        )  # Default endpoint, change if necessary
+        url = os.environ.get("PEERING_MANAGER_ADDRESS") or os.environ.get("PEERING_MANAGER_URL") or settings.get("url")
+        api_endpoint = settings.get("api_endpoint", "/api")  # Default endpoint, change if necessary
         auth_method = settings.get("auth_method", "token")
         api_token = os.environ.get("PEERING_MANAGER_TOKEN") or settings.get("token")
         timeout = settings.get("timeout", 30)
@@ -93,16 +85,10 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
             total = len(objs)
             if self.config.source.name.title() == self.type.title():
                 # Filter records
-                filtered_objs = model.filter_records(
-                    records=objs, schema_mapping=element
-                )
-                print(
-                    f"{self.type}: Loading {len(filtered_objs)}/{total} {resource_name}"
-                )
+                filtered_objs = model.filter_records(records=objs, schema_mapping=element)
+                print(f"{self.type}: Loading {len(filtered_objs)}/{total} {resource_name}")
                 # Transform records
-                transformed_objs = model.transform_records(
-                    records=filtered_objs, schema_mapping=element
-                )
+                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
             else:
                 print(f"{self.type}: Loading all {total} {resource_name}")
                 transformed_objs = objs
@@ -148,13 +134,9 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
                         if isinstance(node, dict):
                             matching_nodes = []
                             node_id = node.get("id", None)
-                            matching_nodes = [
-                                item for item in nodes if item.local_id == str(node_id)
-                            ]
+                            matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
                             if len(matching_nodes) == 0:
-                                msg = (
-                                    f"Unable to locate the node {field.name} {node_id}"
-                                )
+                                msg = f"Unable to locate the node {field.name} {node_id}"
                                 raise IndexError(msg)
                             node = matching_nodes[0]
                             data[field.name] = node.get_unique_id()
@@ -170,13 +152,9 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
                             node_id = node[1] if node[0] == "id" else None
                             if not node_id:
                                 continue
-                        matching_nodes = [
-                            item for item in nodes if item.local_id == str(node_id)
-                        ]
+                        matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
                         if len(matching_nodes) == 0:
-                            msg = (
-                                f"Unable to locate the node {field.reference} {node_id}"
-                            )
+                            msg = f"Unable to locate the node {field.reference} {node_id}"
                             raise IndexError(msg)
                         data[field.name].append(matching_nodes[0].get_unique_id())
                     data[field.name] = sorted(data[field.name])
@@ -204,14 +182,10 @@ class PeeringmanagerModel(DiffSyncModelMixin, DiffSyncModel):
         to the API endpoint of the object.
         """
         # Determine the resource name using the schema mapping
-        resource_name = self.__class__.get_resource_name(
-            schema_mapping=self.adapter.config.schema_mapping
-        )
+        resource_name = self.__class__.get_resource_name(schema_mapping=self.adapter.config.schema_mapping)
 
         # Determine the unique identifier for the API request
-        unique_identifier = (
-            self.local_id if hasattr(self, "local_id") else self.get_unique_id()
-        )
+        unique_identifier = self.local_id if hasattr(self, "local_id") else self.get_unique_id()
         endpoint = f"{resource_name}/{unique_identifier}/"
 
         # Map incoming attributes to the target attributes based on schema mapping
@@ -226,34 +200,22 @@ class PeeringmanagerModel(DiffSyncModelMixin, DiffSyncModel):
 
                         # Check if the field is a relationship
                         if field_mapping.reference:
-                            all_nodes_for_reference = self.adapter.store.get_all(
-                                model=field_mapping.reference
-                            )
+                            all_nodes_for_reference = self.adapter.store.get_all(model=field_mapping.reference)
 
                             if isinstance(value, list):
                                 # For lists, filter nodes to match the unique IDs in the attribute value
                                 filtered_nodes = [
-                                    node
-                                    for node in all_nodes_for_reference
-                                    if node.get_unique_id() in value
+                                    node for node in all_nodes_for_reference if node.get_unique_id() in value
                                 ]
-                                mapped_attrs[target_field_name] = [
-                                    node.local_id for node in filtered_nodes
-                                ]
+                                mapped_attrs[target_field_name] = [node.local_id for node in filtered_nodes]
                             else:
                                 # For single references, find the matching node
                                 filtered_node = next(
-                                    (
-                                        node
-                                        for node in all_nodes_for_reference
-                                        if node.get_unique_id() == value
-                                    ),
+                                    (node for node in all_nodes_for_reference if node.get_unique_id() == value),
                                     None,
                                 )
                                 if filtered_node:
-                                    mapped_attrs[target_field_name] = (
-                                        filtered_node.local_id
-                                    )
+                                    mapped_attrs[target_field_name] = filtered_node.local_id
                         else:
                             mapped_attrs[target_field_name] = value
 

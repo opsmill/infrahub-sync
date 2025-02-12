@@ -28,9 +28,7 @@ if TYPE_CHECKING:
 class LibrenmsAdapter(DiffSyncMixin, Adapter):
     type = "LibreNMS"
 
-    def __init__(
-        self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs
-    ) -> None:
+    def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
         self.target = target
@@ -39,11 +37,7 @@ class LibrenmsAdapter(DiffSyncMixin, Adapter):
 
     def _create_rest_client(self, adapter: SyncAdapter) -> RestApiClient:
         settings = adapter.settings or {}
-        url = (
-            os.environ.get("LIBRENMS_ADDRESS")
-            or os.environ.get("LIBRENMS_URL")
-            or settings.get("url")
-        )
+        url = os.environ.get("LIBRENMS_ADDRESS") or os.environ.get("LIBRENMS_URL") or settings.get("url")
         api_endpoint = settings.get("api_endpoint", "/api/v0")
         auth_method = settings.get("auth_method", "x-auth-token")
         api_token = os.environ.get("LIBRENMS_TOKEN") or settings.get("token")
@@ -91,16 +85,10 @@ class LibrenmsAdapter(DiffSyncMixin, Adapter):
             total = len(objs)
             if self.config.source.name.title() == self.type.title():
                 # Filter records
-                filtered_objs = model.filter_records(
-                    records=objs, schema_mapping=element
-                )
-                print(
-                    f"{self.type}: Loading {len(filtered_objs)}/{total} {resource_name}"
-                )
+                filtered_objs = model.filter_records(records=objs, schema_mapping=element)
+                print(f"{self.type}: Loading {len(filtered_objs)}/{total} {resource_name}")
                 # Transform records
-                transformed_objs = model.transform_records(
-                    records=filtered_objs, schema_mapping=element
-                )
+                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
             else:
                 print(f"{self.type}: Loading all {total} {resource_name}")
                 transformed_objs = objs
@@ -111,9 +99,7 @@ class LibrenmsAdapter(DiffSyncMixin, Adapter):
                 item = model(**data)
                 self.add(item)
 
-    def obj_to_diffsync(
-        self, obj: dict[str, Any], mapping: SchemaMappingModel, model: LibrenmsModel
-    ) -> dict:
+    def obj_to_diffsync(self, obj: dict[str, Any], mapping: SchemaMappingModel, model: LibrenmsModel) -> dict:
         obj_id = derive_identifier_key(obj=obj)
         data: dict[str, Any] = {"local_id": str(obj_id)}
 
@@ -144,9 +130,7 @@ class LibrenmsAdapter(DiffSyncMixin, Adapter):
                         if isinstance(node, dict):
                             matching_nodes = []
                             node_id = node.get("id", None)
-                            matching_nodes = [
-                                item for item in nodes if item.local_id == str(node_id)
-                            ]
+                            matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
                             if len(matching_nodes) == 0:
                                 msg = f"Unable to locate the node {model} {node_id}"
                                 raise IndexError(msg)
@@ -166,13 +150,9 @@ class LibrenmsAdapter(DiffSyncMixin, Adapter):
                             node_id = node[1] if node[0] == "id" else None
                             if not node_id:
                                 continue
-                        matching_nodes = [
-                            item for item in nodes if item.local_id == str(node_id)
-                        ]
+                        matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
                         if len(matching_nodes) == 0:
-                            msg = (
-                                f"Unable to locate the node {field.reference} {node_id}"
-                            )
+                            msg = f"Unable to locate the node {field.reference} {node_id}"
                             raise IndexError(msg)
                         data[field.name].append(matching_nodes[0].get_unique_id())
                     data[field.name] = sorted(data[field.name])

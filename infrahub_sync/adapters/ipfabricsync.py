@@ -35,9 +35,7 @@ ipf_filters = {
 class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
     type = "IPFabricsync"
 
-    def __init__(
-        self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs
-    ) -> None:
+    def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
         self.target = target
@@ -58,17 +56,11 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
 
     def build_mapping(self, reference, obj) -> str:
         # Get object class and model name from the store
-        object_class, modelname = self.store._get_object_class_and_model(
-            model=reference
-        )
+        object_class, modelname = self.store._get_object_class_and_model(model=reference)
 
         # Find the schema element matching the model name
         schema_element = next(
-            (
-                element
-                for element in self.config.schema_mapping
-                if element.name == modelname
-            ),
+            (element for element in self.config.schema_mapping if element.name == modelname),
             None,
         )
 
@@ -97,39 +89,27 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
             if element.name != model_name:
                 continue
 
-            table = self.client.fetch_all(
-                element.mapping, filters=ipf_filters.get(element.mapping)
-            )
+            table = self.client.fetch_all(element.mapping, filters=ipf_filters.get(element.mapping))
             print(f"{self.type}: Loading {len(table)} from `{element.mapping}`")
 
             total = len(table)
 
             if self.config.source.name.title() == self.type.title():
                 # Filter records
-                filtered_objs = model.filter_records(
-                    records=table, schema_mapping=element
-                )
-                print(
-                    f"{self.type}: Loading {len(filtered_objs)}/{total} {element.mapping}"
-                )
+                filtered_objs = model.filter_records(records=table, schema_mapping=element)
+                print(f"{self.type}: Loading {len(filtered_objs)}/{total} {element.mapping}")
                 # Transform records
-                transformed_objs = model.transform_records(
-                    records=filtered_objs, schema_mapping=element
-                )
+                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
             else:
                 print(f"{self.type}: Loading all {total} {element.mapping}")
                 transformed_objs = table
 
             for obj in transformed_objs:
-                data = self.ipfabric_dict_to_diffsync(
-                    obj=obj, mapping=element, model=model
-                )
+                data = self.ipfabric_dict_to_diffsync(obj=obj, mapping=element, model=model)
                 item = model(**data)
                 self.update_or_add_model_instance(item)
 
-    def ipfabric_dict_to_diffsync(
-        self, obj: dict, mapping: SchemaMappingModel, model: IpfabricsyncModel
-    ) -> dict:  # pylint: disable=too-many-branches
+    def ipfabric_dict_to_diffsync(self, obj: dict, mapping: SchemaMappingModel, model: IpfabricsyncModel) -> dict:  # pylint: disable=too-many-branches
         data: dict[str, Any] = {"local_id": str(obj["id"])}
 
         for field in mapping.fields:  # pylint: disable=too-many-nested-blocks

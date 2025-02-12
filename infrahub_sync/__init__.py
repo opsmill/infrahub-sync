@@ -79,12 +79,8 @@ FILTERS_OPERATIONS = {
     "!=": operator.ne,
     ">": lambda field, value: operator.gt(convert_to_int(field), convert_to_int(value)),
     "<": lambda field, value: operator.lt(convert_to_int(field), convert_to_int(value)),
-    ">=": lambda field, value: operator.ge(
-        convert_to_int(field), convert_to_int(value)
-    ),
-    "<=": lambda field, value: operator.le(
-        convert_to_int(field), convert_to_int(value)
-    ),
+    ">=": lambda field, value: operator.ge(convert_to_int(field), convert_to_int(value)),
+    "<=": lambda field, value: operator.le(convert_to_int(field), convert_to_int(value)),
     "in": lambda field, value: value and field in value,
     "not in": lambda field, value: field not in value,
     "contains": lambda field, value: field and value in field,
@@ -93,9 +89,7 @@ FILTERS_OPERATIONS = {
     "is_not_empty": lambda field: field is not None and field,
     "regex": lambda field, pattern: re.match(pattern, field) is not None,
     # Netutils
-    "is_ip_within": lambda field, value: is_ip_within_filter(
-        ip=field, ip_compare=value
-    ),
+    "is_ip_within": lambda field, value: is_ip_within_filter(ip=field, ip_compare=value),
 }
 
 
@@ -131,9 +125,7 @@ class DiffSyncModelMixin:
         return operation_func(field_value, value)
 
     @classmethod
-    def apply_filters(
-        cls, item: dict[str, Any], filters: list[SchemaMappingFilter]
-    ) -> bool:
+    def apply_filters(cls, item: dict[str, Any], filters: list[SchemaMappingFilter]) -> bool:
         """Apply filters to an item and return True if it passes all filters."""
         for filter_obj in filters:
             # Use dot notation to access attributes
@@ -147,9 +139,7 @@ class DiffSyncModelMixin:
         return True
 
     @classmethod
-    def apply_transform(
-        cls, item: dict[str, Any], transform_expr: str, field: str
-    ) -> None:
+    def apply_transform(cls, item: dict[str, Any], transform_expr: str, field: str) -> None:
         """Apply a transformation expression using Jinja2 to a specified field in the item."""
         try:
             # Create a Jinja2 template from the transformation expression
@@ -166,9 +156,7 @@ class DiffSyncModelMixin:
             raise ValueError(msg) from exc
 
     @classmethod
-    def apply_transforms(
-        cls, item: dict[str, Any], transforms: list[SchemaMappingTransform]
-    ) -> dict[str, Any]:
+    def apply_transforms(cls, item: dict[str, Any], transforms: list[SchemaMappingTransform]) -> dict[str, Any]:
         """Apply a list of structured transformations to an item."""
         for transform_obj in transforms:
             field = transform_obj.field
@@ -177,9 +165,7 @@ class DiffSyncModelMixin:
         return item
 
     @classmethod
-    def filter_records(
-        cls, records: list[dict], schema_mapping: SchemaMappingModel
-    ) -> list[dict]:
+    def filter_records(cls, records: list[dict], schema_mapping: SchemaMappingModel) -> list[dict]:
         """
         Apply filters to the records based on the schema mapping configuration.
         """
@@ -193,9 +179,7 @@ class DiffSyncModelMixin:
         return filtered_records
 
     @classmethod
-    def transform_records(
-        cls, records: list[dict], schema_mapping: SchemaMappingModel
-    ) -> list[dict]:
+    def transform_records(cls, records: list[dict], schema_mapping: SchemaMappingModel) -> list[dict]:
         """
         Apply transformations to the records based on the schema mapping configuration.
         """
@@ -204,9 +188,7 @@ class DiffSyncModelMixin:
             return records
         transformed_records = []
         for record in records:
-            transformed_record = cls.apply_transforms(
-                item=record, transforms=transforms
-            )
+            transformed_record = cls.apply_transforms(item=record, transforms=transforms)
             transformed_records.append(transformed_record)
         return transformed_records
 

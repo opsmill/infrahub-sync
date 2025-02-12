@@ -28,9 +28,7 @@ if TYPE_CHECKING:
 class NetboxAdapter(DiffSyncMixin, Adapter):
     type = "Netbox"
 
-    def __init__(
-        self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs
-    ) -> None:
+    def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
         self.target = target
@@ -39,11 +37,7 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
 
     def _create_netbox_client(self, adapter: SyncAdapter) -> pynetbox.api:
         settings = adapter.settings or {}
-        url = (
-            os.environ.get("NETBOX_ADDRESS")
-            or os.environ.get("NETBOX_URL")
-            or settings.get("url")
-        )
+        url = os.environ.get("NETBOX_ADDRESS") or os.environ.get("NETBOX_URL") or settings.get("url")
         token = os.environ.get("NETBOX_TOKEN") or settings.get("token")
 
         if not url or not token:
@@ -79,31 +73,21 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
             total = len(list_obj)
             if self.config.source.name.title() == self.type.title():
                 # Filter records
-                filtered_objs = model.filter_records(
-                    records=list_obj, schema_mapping=element
-                )
-                print(
-                    f"{self.type}: Loading {len(filtered_objs)}/{total} {resource_name}"
-                )
+                filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
+                print(f"{self.type}: Loading {len(filtered_objs)}/{total} {resource_name}")
                 # Transform records
-                transformed_objs = model.transform_records(
-                    records=filtered_objs, schema_mapping=element
-                )
+                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
             else:
                 print(f"{self.type}: Loading all {total} {resource_name}")
                 transformed_objs = list_obj
 
             # Create model instances after filtering and transforming
             for obj in transformed_objs:
-                data = self.netbox_obj_to_diffsync(
-                    obj=obj, mapping=element, model=model
-                )
+                data = self.netbox_obj_to_diffsync(obj=obj, mapping=element, model=model)
                 item = model(**data)
                 self.add(item)
 
-    def netbox_obj_to_diffsync(
-        self, obj: dict[str, Any], mapping: SchemaMappingModel, model: NetboxModel
-    ) -> dict:
+    def netbox_obj_to_diffsync(self, obj: dict[str, Any], mapping: SchemaMappingModel, model: NetboxModel) -> dict:
         obj_id = obj.get("id")
         data: dict[str, Any] = {"local_id": str(obj_id)}
 
@@ -133,13 +117,9 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
                         if isinstance(node, dict):
                             matching_nodes = []
                             node_id = node.get("id", None)
-                            matching_nodes = [
-                                item for item in nodes if item.local_id == str(node_id)
-                            ]
+                            matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
                             if len(matching_nodes) == 0:
-                                msg = (
-                                    f"Unable to locate the node {field.name} {node_id}"
-                                )
+                                msg = f"Unable to locate the node {field.name} {node_id}"
                                 raise IndexError(msg)
                             node = matching_nodes[0]
                             data[field.name] = node.get_unique_id()
@@ -155,13 +135,9 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
                             node_id = node[1] if node[0] == "id" else None
                             if not node_id:
                                 continue
-                        matching_nodes = [
-                            item for item in nodes if item.local_id == str(node_id)
-                        ]
+                        matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
                         if len(matching_nodes) == 0:
-                            msg = (
-                                f"Unable to locate the node {field.reference} {node_id}"
-                            )
+                            msg = f"Unable to locate the node {field.reference} {node_id}"
                             raise IndexError(msg)
                         data[field.name].append(matching_nodes[0].get_unique_id())
                     data[field.name] = sorted(data[field.name])

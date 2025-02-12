@@ -31,9 +31,7 @@ loop = asyncio.new_event_loop()
 class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
     type = "Slurpitsync"
 
-    def __init__(
-        self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs
-    ) -> None:
+    def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.target = target
         self.client = self._create_slurpit_client(adapter=adapter)
@@ -72,13 +70,8 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
 
     def unique_device_type(self) -> list[dict[str, Any]]:
         devices = self.run_async(self.client.device.get_devices())
-        device_types = {
-            (device.brand, device.device_type, device.device_os) for device in devices
-        }
-        return [
-            {"brand": item[0], "device_type": item[1], "device_os": item[2]}
-            for item in device_types
-        ]
+        device_types = {(device.brand, device.device_type, device.device_os) for device in devices}
+        return [{"brand": item[0], "device_type": item[1], "device_os": item[2]} for item in device_types]
 
     def filter_networks(self) -> list:
         """Filter out networks based on ignore prefixes and normalize network/mask fields."""
@@ -111,10 +104,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                 net = ipaddress.ip_network(network, strict=False)
                 if net.prefixlen in {32, 128}:
                     return True
-                return any(
-                    net == ipaddress.ip_network(ignore, strict=False)
-                    for ignore in ignore_prefixes
-                )
+                return any(net == ipaddress.ip_network(ignore, strict=False) for ignore in ignore_prefixes)
             except ValueError:
                 return False
 
@@ -129,9 +119,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
     async def filter_interfaces(self, interfaces) -> list:
         precomputed_filtered_networks = [
             {
-                "network": ipaddress.ip_network(
-                    prefix["normalized_prefix"], strict=False
-                ),
+                "network": ipaddress.ip_network(prefix["normalized_prefix"], strict=False),
                 "Vrf": prefix.get("Vrf", None),
             }
             for prefix in self.filtered_networks
@@ -162,9 +150,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             return entry
 
         # Concurrent execution of tasks
-        tasks = [
-            normalize_and_find_prefix(entry) for entry in interfaces if entry.get("IP")
-        ]
+        tasks = [normalize_and_find_prefix(entry) for entry in interfaces if entry.get("IP")]
 
         # Run tasks concurrently
         filtered_interfaces = await asyncio.gather(*tasks)
@@ -176,17 +162,13 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
 
     def planning_results(self, planning_name):
         plannings = self.run_async(self.client.planning.get_plannings())
-        planning = next(
-            (plan.to_dict() for plan in plannings if plan.slug == planning_name), None
-        )
+        planning = next((plan.to_dict() for plan in plannings if plan.slug == planning_name), None)
         if not planning:
             msg = f"No planning found for name: {planning_name}"
             raise IndexError(msg)
 
         search_data = {"planning_id": planning["id"], "unique_results": True}
-        results = self.run_async(
-            self.client.planning.search_plannings(search_data, limit=30000)
-        )
+        results = self.run_async(self.client.planning.search_plannings(search_data, limit=30000))
         return results or []
 
     def model_loader(self, model_name: str, model: SlurpitsyncModel) -> None:
@@ -219,24 +201,16 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
 
             if self.config.source.name.title() == self.type.title():
                 # Filter records
-                filtered_objs = model.filter_records(
-                    records=list_obj, schema_mapping=element
-                )
-                print(
-                    f"{self.type}: Loading {len(filtered_objs)}/{total} {element.mapping}"
-                )
+                filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
+                print(f"{self.type}: Loading {len(filtered_objs)}/{total} {element.mapping}")
                 # Transform records
-                transformed_objs = model.transform_records(
-                    records=filtered_objs, schema_mapping=element
-                )
+                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
             else:
                 print(f"{self.type}: Loading all {total} {resource_name}")
                 transformed_objs = list_obj
 
             for obj in transformed_objs:
-                if data := self.slurpit_obj_to_diffsync(
-                    obj=obj, mapping=element, model=model
-                ):
+                if data := self.slurpit_obj_to_diffsync(obj=obj, mapping=element, model=model):
                     item = model(**data)
                     try:  # noqa: SIM105
                         self.add(item)
@@ -249,17 +223,11 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
     # Reuse mapping from another adapter
     def build_mapping(self, reference, obj):
         # Get object class and model name from the store
-        object_class, modelname = self.store._get_object_class_and_model(
-            model=reference
-        )
+        object_class, modelname = self.store._get_object_class_and_model(model=reference)
 
         # Find the schema element matching the model name
         schema_element = next(
-            (
-                element
-                for element in self.config.schema_mapping
-                if element.name == modelname
-            ),
+            (element for element in self.config.schema_mapping if element.name == modelname),
             None,
         )
 
@@ -309,9 +277,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                     if node := obj.get(field.mapping):
                         matching_nodes = []
                         node_id = self.build_mapping(reference=field.reference, obj=obj)
-                        matching_nodes = [
-                            item for item in nodes if str(item) == node_id
-                        ]
+                        matching_nodes = [item for item in nodes if str(item) == node_id]
                         if len(matching_nodes) == 0:
                             self.skipped.append(node)
                             return None
@@ -323,9 +289,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                     data[field.name] = []
                     if node := obj.get(field.mapping):
                         node_id = self.build_mapping(reference=field.reference, obj=obj)
-                        matching_nodes = [
-                            item for item in nodes if str(item) == node_id
-                        ]
+                        matching_nodes = [item for item in nodes if str(item) == node_id]
                         if len(matching_nodes) == 0:
                             self.skipped.append(node)
                             continue
