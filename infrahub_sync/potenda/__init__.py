@@ -79,9 +79,15 @@ class Potenda:
     def diff(self) -> Diff:
         print(f"Diff: Comparing data from {self.source} to {self.destination}")
         self.progress_bar = None
-        return self.destination.diff_from(self.source, flags=self.flags, callback=self._print_callback)
+        return self.destination.diff_from(
+            self.source, flags=self.flags, callback=self._print_callback
+        )
 
     def sync(self, diff: Diff | None = None):
-        print(f"Sync: Importing data from {self.source} to {self.destination} based on Diff")
+        print(
+            f"Sync: Importing data from {self.source} to {self.destination} based on Diff"
+        )
         self.progress_bar = None
-        return self.destination.sync_from(self.source, diff=diff, flags=self.flags, callback=self._print_callback)
+        return self.destination.sync_from(
+            self.source, diff=diff, flags=self.flags, callback=self._print_callback
+        )

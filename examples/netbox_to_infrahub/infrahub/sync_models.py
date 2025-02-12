@@ -96,7 +96,15 @@ class TemplateDeviceType(InfrahubModel):
 class InfraInterfaceL2L3(InfrahubModel):
     _modelname = "InfraInterfaceL2L3"
     _identifiers = ("device", "name")
-    _attributes = ("tagged_vlan", "tags", "l2_mode", "description", "mgmt_only", "mac_address", "interface_type")
+    _attributes = (
+        "tagged_vlan",
+        "tags",
+        "l2_mode",
+        "description",
+        "mgmt_only",
+        "mac_address",
+        "interface_type",
+    )
     l2_mode: str | None = None
     name: str
     description: str | None = None
@@ -157,7 +165,14 @@ class InfraPrefix(InfrahubModel):
 class InfraRack(InfrahubModel):
     _modelname = "InfraRack"
     _identifiers = ("name", "location")
-    _attributes = ("role", "tags", "asset_tag", "height", "serial_number", "facility_id")
+    _attributes = (
+        "role",
+        "tags",
+        "asset_tag",
+        "height",
+        "serial_number",
+        "facility_id",
+    )
     asset_tag: str | None = None
     height: int | None = None
     serial_number: str | None = None

@@ -28,7 +28,9 @@ def _generate_infrahubsync_documentation(context: Context) -> None:
 
 @task
 def markdownlint(context: Context) -> None:
-    has_markdownlint = check_if_command_available(context=context, command_name="markdownlint-cli2")
+    has_markdownlint = check_if_command_available(
+        context=context, command_name="markdownlint-cli2"
+    )
 
     if not has_markdownlint:
         print("Warning, markdownlint-cli2 is not installed")

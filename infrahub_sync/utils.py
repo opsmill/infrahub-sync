@@ -21,7 +21,8 @@ if TYPE_CHECKING:
 
 
 def find_missing_schema_model(
-    sync_instance: SyncInstance, schema: MutableMapping[str, Union[NodeSchema, GenericSchema]]
+    sync_instance: SyncInstance,
+    schema: MutableMapping[str, Union[NodeSchema, GenericSchema]],
 ) -> list[str]:
     missing_schema_models = []
     for item in sync_instance.schema_mapping:
@@ -34,7 +35,8 @@ def find_missing_schema_model(
 
 
 def render_adapter(
-    sync_instance: SyncInstance, schema: MutableMapping[str, Union[NodeSchema, GenericSchema]]
+    sync_instance: SyncInstance,
+    schema: MutableMapping[str, Union[NodeSchema, GenericSchema]],
 ) -> list[tuple[str, str]]:
     files_to_render = (
         ("diffsync_models.j2", "sync_models.py"),
@@ -70,7 +72,9 @@ def import_adapter(sync_instance: SyncInstance, adapter: SyncAdapter):
 
     try:
         adapter_name = f"{adapter.name.title()}Sync"
-        spec = importlib.util.spec_from_file_location(f"{adapter.name}.adapter", str(adapter_file_path))
+        spec = importlib.util.spec_from_file_location(
+            f"{adapter.name}.adapter", str(adapter_file_path)
+        )
         adapter_module = importlib.util.module_from_spec(spec)
         sys.modules[f"{adapter.name}.adapter"] = adapter_module
         spec.loader.exec_module(adapter_module)
@@ -103,7 +107,9 @@ def get_all_sync(directory: str | None = None) -> list[SyncInstance]:
 
 
 def get_instance(
-    name: str | None = None, config_file: str | None = "config.yml", directory: str | None = None
+    name: str | None = None,
+    config_file: str | None = "config.yml",
+    directory: str | None = None,
 ) -> SyncInstance | None:
     if name:
         all_sync_instances = get_all_sync(directory=directory)
@@ -133,25 +139,35 @@ def get_instance(
 
 
 def get_potenda_from_instance(
-    sync_instance: SyncInstance, branch: str | None = None, show_progress: bool | None = True
+    sync_instance: SyncInstance,
+    branch: str | None = None,
+    show_progress: bool | None = True,
 ) -> Potenda:
     source = import_adapter(sync_instance=sync_instance, adapter=sync_instance.source)
-    destination = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
+    destination = import_adapter(
+        sync_instance=sync_instance, adapter=sync_instance.destination
+    )
 
     source_store = LocalStore()
     destination_store = LocalStore()
 
     if sync_instance.store and sync_instance.store.type == "redis":
-        if sync_instance.store.settings and isinstance(sync_instance.store.settings, dict):
+        if sync_instance.store.settings and isinstance(
+            sync_instance.store.settings, dict
+        ):
             redis_settings = sync_instance.store.settings
             source_store = RedisStore(**redis_settings, name=sync_instance.source.name)
-            destination_store = RedisStore(**redis_settings, name=sync_instance.destination.name)
+            destination_store = RedisStore(
+                **redis_settings, name=sync_instance.destination.name
+            )
         else:
             source_store = RedisStore(name=sync_instance.source.name)
             destination_store = RedisStore(name=sync_instance.destination.name)
     try:
         if sync_instance.source.name == "infrahub":
-            settings_branch = sync_instance.source.settings.get("branch") or branch or "main"
+            settings_branch = (
+                sync_instance.source.settings.get("branch") or branch or "main"
+            )
             src: SyncInstance = source(
                 config=sync_instance,
                 target="source",
@@ -171,7 +187,9 @@ def get_potenda_from_instance(
         raise ValueError(msg) from exc
     try:
         if sync_instance.destination.name == "infrahub":
-            settings_branch = sync_instance.source.settings.get("branch") or branch or "main"
+            settings_branch = (
+                sync_instance.source.settings.get("branch") or branch or "main"
+            )
             dst: SyncInstance = destination(
                 config=sync_instance,
                 target="destination",

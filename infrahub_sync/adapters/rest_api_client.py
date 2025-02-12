@@ -45,7 +45,11 @@ class RestApiClient:
         self.timeout = timeout
 
     def request(
-        self, method: str, endpoint: str, params: dict[str, Any] | None = None, data: dict[str, Any] | None = None
+        self,
+        method: str,
+        endpoint: str,
+        params: dict[str, Any] | None = None,
+        data: dict[str, Any] | None = None,
     ) -> Any:
         """Make a request to the REST API."""
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
@@ -63,7 +67,12 @@ class RestApiClient:
                 )
             else:
                 response = requests.request(
-                    method=method, url=url, headers=self.headers, params=params, json=data, timeout=self.timeout
+                    method=method,
+                    url=url,
+                    headers=self.headers,
+                    params=params,
+                    json=data,
+                    timeout=self.timeout,
                 )
 
             response.raise_for_status()  # Raise an HTTPError for bad responses
@@ -71,7 +80,9 @@ class RestApiClient:
             try:
                 return response.json()
             except requests.exceptions.JSONDecodeError as exc:
-                print("Response content is not valid JSON:", response.text)  # Print the response content
+                print(
+                    "Response content is not valid JSON:", response.text
+                )  # Print the response content
                 msg = "Response content is not valid JSON."
                 raise ValueError(msg) from exc
 

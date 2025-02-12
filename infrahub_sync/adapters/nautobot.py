@@ -1,13 +1,12 @@
-import sys
 from __future__ import annotations
 
 # pylint: disable=R0801
 import os
-from typing import TYPE_CHECKING, Any
-if sys.version_info.minor < 11:
-   from typing_extensions import Self
-else:
-   from typing import Self
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 import pynautobot
 from diffsync import Adapter, DiffSyncModel
@@ -29,7 +28,9 @@ if TYPE_CHECKING:
 class NautobotAdapter(DiffSyncMixin, Adapter):
     type = "Nautobot"
 
-    def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
+    def __init__(
+        self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs
+    ) -> None:
         super().__init__(*args, **kwargs)
 
         self.target = target
@@ -38,14 +39,20 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
 
     def _create_nautobot_client(self, adapter: SyncAdapter) -> pynautobot.api:
         settings = adapter.settings or {}
-        url = os.environ.get("NAUTOBOT_ADDRESS") or os.environ.get("NAUTOBOT_URL") or settings.get("url")
+        url = (
+            os.environ.get("NAUTOBOT_ADDRESS")
+            or os.environ.get("NAUTOBOT_URL")
+            or settings.get("url")
+        )
         token = os.environ.get("NAUTOBOT_TOKEN") or settings.get("token")
 
         if not url or not token:
             msg = "Both url and token must be specified!"
             raise ValueError(msg)
 
-        return pynautobot.api(url, token=token, threading=True, max_workers=5, retries=3)
+        return pynautobot.api(
+            url, token=token, threading=True, max_workers=5, retries=3
+        )
 
     def model_loader(self, model_name: str, model: NautobotModel) -> None:
         """
@@ -75,21 +82,31 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
             total = len(list_obj)
             if self.config.source.name.title() == self.type.title():
                 # Filter records
-                filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
-                print(f"{self.type}: Loading {len(filtered_objs)}/{total} {resource_name}")
+                filtered_objs = model.filter_records(
+                    records=list_obj, schema_mapping=element
+                )
+                print(
+                    f"{self.type}: Loading {len(filtered_objs)}/{total} {resource_name}"
+                )
                 # Transform records
-                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
+                transformed_objs = model.transform_records(
+                    records=filtered_objs, schema_mapping=element
+                )
             else:
                 print(f"{self.type}: Loading all {total} {resource_name}")
                 transformed_objs = list_obj
 
             # Create model instances after filtering and transforming
             for obj in transformed_objs:
-                data = self.nautobot_obj_to_diffsync(obj=obj, mapping=element, model=model)
+                data = self.nautobot_obj_to_diffsync(
+                    obj=obj, mapping=element, model=model
+                )
                 item = model(**data)
                 self.add(item)
 
-    def nautobot_obj_to_diffsync(self, obj: dict[str, Any], mapping: SchemaMappingModel, model: NautobotModel) -> dict:
+    def nautobot_obj_to_diffsync(
+        self, obj: dict[str, Any], mapping: SchemaMappingModel, model: NautobotModel
+    ) -> dict:
         obj_id = obj.get("id")
         data: dict[str, Any] = {"local_id": str(obj_id)}
 
@@ -120,10 +137,14 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                         matching_nodes = []
                         node_id = node.get("id", None)
                         if node_id:
-                            matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
+                            matching_nodes = [
+                                item for item in nodes if item.local_id == str(node_id)
+                            ]
                             if len(matching_nodes) == 0:
                                 # TODO: If the peer is a Node we are filtering, we could end up not finding it
-                                print(f"Unable to locate the node {field.name} {node_id}")
+                                print(
+                                    f"Unable to locate the node {field.name} {node_id}"
+                                )
                                 continue
                             node = matching_nodes[0]
                             data[field.name] = node.get_unique_id()
@@ -138,7 +159,9 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                             node_id = node[1] if node[0] == "id" else None
                             if not node_id:
                                 continue
-                        matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
+                        matching_nodes = [
+                            item for item in nodes if item.local_id == str(node_id)
+                        ]
                         if len(matching_nodes) == 0:
                             # TODO: If the peer is a Node we are filtering, we could end up not finding it
                             print(f"Unable to locate the node {field.name} {node_id}")

@@ -14,7 +14,9 @@ def get_value(obj: Any, name: str) -> Any | None:
     first_name, remaining_part = name.split(".", maxsplit=1)
 
     # Check if the object is a dictionary and use appropriate method to access the attribute.
-    sub_obj = obj.get(first_name) if isinstance(obj, dict) else getattr(obj, first_name, None)
+    sub_obj = (
+        obj.get(first_name) if isinstance(obj, dict) else getattr(obj, first_name, None)
+    )
 
     if not sub_obj:
         return None
