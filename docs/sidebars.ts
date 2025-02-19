@@ -18,8 +18,9 @@ const sidebars: SidebarsConfig = {
       items: [
         'adapters/ipfabric',
         'adapters/slurpit',
+        'adapters/aci',
       ],
-    },
+    },   
     {
       type: 'category',
       label: 'Reference',

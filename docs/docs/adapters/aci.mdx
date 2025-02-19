@@ -1,0 +1,52 @@
+---
+title: Cisco ACI adapter
+---
+import ReferenceLink from "../../src/components/Card";
+
+# Cisco ACI adapter
+
+## What is Cisco ACI?
+
+The *Cisco ACI* is a software-defined networking (SDN) solution that provides a policy-based, application-centric approach to managing and orchestrating network infrastructure. 
+It is designed to improve the scalability, flexibility, and security of data center networks.
+
+## Sync direction
+
+Cisco ACI → Infrahub
+
+:::note
+Currently, the Cisco ACI adapter supports only **one-way synchronization** from ACI to Infrahub.  
+Syncing data back into ACI is not yet supported.
+
+Although ACI data cannot be edited, additional information such as **`Device Attributes`** and **`Site Separation`** rules can be updated from Infrahub data.
+:::
+
+## Schema
+
+
+### Installing the example schema
+
+
+## Configuration
+
+
+### Configuration parameters
+
+
+```yaml
+---
+name: from-ipfabric
+source:
+  name: aci
+  settings:
+    base_url: "https://<APIC_CONTROLLER>"
+    auth: "<TOKEN>"
+```
+
+### Schema mapping
+
+
+#### Important notes
+
+## Generating the models
+
