@@ -55,6 +55,7 @@ class SyncConfig(pydantic.BaseModel):
     destination: SyncAdapter
     order: list[str] = pydantic.Field(default_factory=list)
     schema_mapping: list[SchemaMappingModel] = []
+    skip_unmatched_source: bool = pydantic.Field(default=False)
 
 
 class SyncInstance(SyncConfig):
