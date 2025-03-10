@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, List
 
 from infrahub_sync.adapters.infrahub import InfrahubModel
-
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -25,7 +24,6 @@ class InfraAutonomousSystem(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
-
 class InfraBGPPeerGroup(InfrahubModel):
     _modelname = "InfraBGPPeerGroup"
     _identifiers = ("name",)
@@ -39,7 +37,6 @@ class InfraBGPPeerGroup(InfrahubModel):
 
     local_id: str | None = None
     local_data: Any | None = None
-
 
 class InfraBGPRoutingPolicy(InfrahubModel):
     _modelname = "InfraBGPRoutingPolicy"
@@ -56,7 +53,6 @@ class InfraBGPRoutingPolicy(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
-
 class InfraBGPCommunity(InfrahubModel):
     _modelname = "InfraBGPCommunity"
     _identifiers = ("name",)
@@ -69,7 +65,6 @@ class InfraBGPCommunity(InfrahubModel):
 
     local_id: str | None = None
     local_data: Any | None = None
-
 
 class InfraIXP(InfrahubModel):
     _modelname = "InfraIXP"
@@ -84,7 +79,6 @@ class InfraIXP(InfrahubModel):
 
     local_id: str | None = None
     local_data: Any | None = None
-
 
 class InfraIXPConnection(InfrahubModel):
     _modelname = "InfraIXPConnection"

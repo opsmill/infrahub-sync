@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, List
 
 from infrahub_sync.adapters.peeringmanager import PeeringmanagerModel
-
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -25,7 +24,6 @@ class InfraAutonomousSystem(PeeringmanagerModel):
     local_id: str | None = None
     local_data: Any | None = None
 
-
 class InfraBGPPeerGroup(PeeringmanagerModel):
     _modelname = "InfraBGPPeerGroup"
     _identifiers = ("name",)
@@ -39,7 +37,6 @@ class InfraBGPPeerGroup(PeeringmanagerModel):
 
     local_id: str | None = None
     local_data: Any | None = None
-
 
 class InfraBGPRoutingPolicy(PeeringmanagerModel):
     _modelname = "InfraBGPRoutingPolicy"
@@ -56,7 +53,6 @@ class InfraBGPRoutingPolicy(PeeringmanagerModel):
     local_id: str | None = None
     local_data: Any | None = None
 
-
 class InfraBGPCommunity(PeeringmanagerModel):
     _modelname = "InfraBGPCommunity"
     _identifiers = ("name",)
@@ -69,7 +65,6 @@ class InfraBGPCommunity(PeeringmanagerModel):
 
     local_id: str | None = None
     local_data: Any | None = None
-
 
 class InfraIXP(PeeringmanagerModel):
     _modelname = "InfraIXP"
@@ -84,7 +79,6 @@ class InfraIXP(PeeringmanagerModel):
 
     local_id: str | None = None
     local_data: Any | None = None
-
 
 class InfraIXPConnection(PeeringmanagerModel):
     _modelname = "InfraIXPConnection"
