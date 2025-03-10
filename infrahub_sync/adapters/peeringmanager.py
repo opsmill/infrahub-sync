@@ -34,11 +34,13 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
         self.target = target
         self.client = self._create_rest_client(adapter)
         self.config = config
+        settings = adapter.settings or {}
+        self.params = settings.get("params", {})
 
     def _create_rest_client(self, adapter: SyncAdapter) -> RestApiClient:
         settings = adapter.settings or {}
         url = os.environ.get("PEERING_MANAGER_ADDRESS") or os.environ.get("PEERING_MANAGER_URL") or settings.get("url")
-        api_endpoint = settings.get("api_endpoint", "/api")  # Default endpoint, change if necessary
+        api_endpoint = settings.get("api_endpoint", "api")  # Default endpoint, change if necessary
         auth_method = settings.get("auth_method", "token")
         api_token = os.environ.get("PEERING_MANAGER_TOKEN") or settings.get("token")
         timeout = settings.get("timeout", 30)
@@ -52,12 +54,7 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
             raise ValueError(msg)
 
         full_base_url = f"{url.rstrip('/')}/{api_endpoint.strip('/')}"
-        return RestApiClient(
-            base_url=full_base_url,
-            auth_method=auth_method,
-            api_token=api_token,
-            timeout=timeout,
-        )
+        return RestApiClient(base_url=full_base_url, auth_method=auth_method, api_token=api_token, timeout=timeout)
 
     def model_loader(self, model_name: str, model: PeeringmanagerModel) -> None:
         """
@@ -76,7 +73,7 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
 
             try:
                 # Retrieve all objects
-                response_data = self.client.get(resource_name)
+                response_data = self.client.get(endpoint=resource_name, params=self.params)
                 objs = response_data.get("results", [])
             except Exception as exc:
                 msg = f"Error fetching data from REST API: {exc!s}"

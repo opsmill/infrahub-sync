@@ -22,7 +22,7 @@ class RestApiClient:
         }
 
         # Determine authentication method, some are use by more than one API.
-        # Example :
+        # Example:
         # -> Peering Manager
         if auth_method == "token" and api_token:
             self.headers["Authorization"] = f"Token {api_token}"

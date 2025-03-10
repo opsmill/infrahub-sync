@@ -11,7 +11,11 @@ This guide will walk you through the steps to create a new sync instance for inf
 Start by defining your synchronization requirements in a YAML configuration file.
 
 Here's an example configuration for syncing data from Nautobot to Infrahub:
-In this example, consider that `device_type` and  `manufacturer` are Attribute of InfraDevice. If you are using another object with a Relationship, you would need to first import those objects and then referenced them (like InfraDevice in InfraInterface)
+
+- In this example, consider that `device_type` and  `manufacturer` are Attribute of InfraDevice.
+- If you are using another object with a Relationship, you would need to first import those objects and then referenced them (like InfraDevice in InfraInterface)
+
+The name use on each `schema_mapping` is the Infrahub node `kind` and the mapping is the source API path.
 
 ```yaml
 ---
