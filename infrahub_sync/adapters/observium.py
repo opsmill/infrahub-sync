@@ -33,6 +33,8 @@ class ObserviumAdapter(DiffSyncMixin, Adapter):
         self.target = target
         self.client = self._create_rest_client(adapter)
         self.config = config
+        settings = adapter.settings or {}
+        self.params = settings.get("params", {})
 
     def _create_rest_client(self, adapter: SyncAdapter) -> RestApiClient:
         settings = adapter.settings or {}
@@ -74,7 +76,7 @@ class ObserviumAdapter(DiffSyncMixin, Adapter):
 
             try:
                 # Fetch data from the specified resource endpoint
-                response_data = self.client.get(resource_name)
+                response_data = self.client.get(endpoint=resource_name, params=self.params)
                 objs = response_data.get(resource_name, {})
             except Exception as exc:
                 msg = f"Error fetching data from REST API: {exc!s}"

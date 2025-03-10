@@ -15,12 +15,12 @@ A network model of gathered data reconstructs the topologies for each switching 
 
 Dependencies and dependents are calculated for each network element, allowing analysis to represent each aspect of the network in the context of productivity impact on downstream hosts and network devices. The immediate productivity impact of performance and capacity is also calculated for each user and every element.
 
-## Sync direction
+## Sync directions supported
 
 IP Fabric → Infrahub
 
-:::note
-Currently, the IP Fabric adapter supports only **one-way synchronization** from IP Fabric to Infrahub.  
+:::info
+Currently, the IP Fabric adapter supports only **one-way synchronization** from IP Fabric to Infrahub.
 Syncing data back into IP Fabric is not yet supported.
 
 Although IP Fabric data cannot be edited, additional information such as **`Device Attributes`** and **`Site Separation`** rules can be updated from Infrahub data.
@@ -28,7 +28,7 @@ Although IP Fabric data cannot be edited, additional information such as **`Devi
 
 ## Schema
 
-Our `infrahub` repository contains an **example schema** that serves as a starting point for syncing IP Fabric data into Infrahub.  
+Our `infrahub` repository contains an **example schema** that serves as a starting point for syncing IP Fabric data into Infrahub.
 This schema follows best practices for Infrahub, **but it does not map the IP Fabric data model one-to-one** since Infrahub may have additional use cases.
 
 <ReferenceLink title="Schema" url="https://github.com/opsmill/infrahub/blob/stable/models/examples/ipfabric/ipfabric.yml" openInNewTab />
@@ -37,7 +37,7 @@ This schema follows best practices for Infrahub, **but it does not map the IP Fa
 
 To install the example schema into Infrahub, follow these steps:
 
-```shell
+```bash
 mkdir ipfabric-sync
 cd ipfabric-sync
 curl -o schema.yml https://raw.githubusercontent.com/opsmill/infrahub/refs/heads/stable/models/examples/ipfabric/ipfabric.yml
@@ -52,7 +52,7 @@ infrahubctl schema load schema.yml
 
 To download the example `config.yml`
 
-```shell
+```bash
 curl https://raw.githubusercontent.com/opsmill/infrahub-sync/refs/heads/main/examples/ipfabric_to_infrahub/config.yml > config.yml
 ```
 
@@ -132,7 +132,7 @@ For more details, refer to the [IP Fabric API Docs](https://docs.ipfabric.io/lat
 
 To generate the necessary models, run:
 
-```shell
+```bash
 infrahub-sync generate --name from-ipfabric --directory ipfabric-sync
 ```
 
@@ -140,6 +140,6 @@ infrahub-sync generate --name from-ipfabric --directory ipfabric-sync
 
 To synchronize data from IP Fabric to Infrahub, use the following command:
 
-```shell
+```bash
 infrahub-sync sync --name from-ipfabric --directory ipfabric-sync
 ```

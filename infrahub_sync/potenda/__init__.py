@@ -37,11 +37,14 @@ class Potenda:
         self.progress_bar = None
         self.show_progress = show_progress
         enable_console_logging(verbosity=1)
-        self.flags = (
-            DiffSyncFlags.SKIP_UNMATCHED_BOTH
-            if self.config.skip_unmatched_destination
-            else DiffSyncFlags.SKIP_UNMATCHED_DST
-        )
+        # Combine DiffSyncFlags from the configuration
+        self.flags = DiffSyncFlags.NONE
+        for flag in self.config.diffsync_flags:
+            self.flags |= flag
+
+        # Fallback to `SKIP_UNMATCHED_DST` if nothing is define
+        if self.flags == DiffSyncFlags.NONE:
+            self.flags = DiffSyncFlags.SKIP_UNMATCHED_DST
 
     def _print_callback(self, stage: str, elements_processed: int, total_models: int):
         """Callback for DiffSync using tqdm"""

@@ -1,0 +1,107 @@
+---
+title: Peering Manager adapter
+---
+
+import ReferenceLink from "../../src/components/Card";
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+<!-- vale off -->
+# Peering Manager adapter
+
+## What is Peering Manager?
+<!-- vale on -->
+
+Peering Manager lets you effortlessly manage and document your network’s peering sessions and interconnections with pre-configured data models and automation for seamless BGP session management.
+
+## Sync directions supported
+
+Peering Manager → Infrahub
+Infrahub → Peering Manager
+
+## Schema
+
+Our `infrahub` repository contains an **example schema** that serves as a starting point for syncing Peering Manager data into Infrahub.
+This schema follows best practices for Infrahub, **but it does not map the Peering Manager data model one-to-one** since Infrahub may have additional use cases.
+
+This example is using the "base" demo schema and use an extension for Peering Manager.
+
+<ReferenceLink title="Base Schema" url="https://github.com/opsmill/infrahub/blob/stable/models/base" openInNewTab />
+<ReferenceLink title="Peering Manager Extension" url="https://github.com/opsmill/infrahub/blob/stable/models/examples/ipfabric/ipfabric.yml" openInNewTab />
+
+### Installing the example schema
+
+To install the example schema into Infrahub, follow these steps:
+
+```bash
+mkdir ipfabric-sync
+cd ipfabric-sync
+curl -o schema.yml https://raw.githubusercontent.com/opsmill/infrahub/refs/heads/stable/models/examples/ipfabric/ipfabric.yml
+infrahubctl schema load schema.yml
+```
+
+## Configuration
+
+`infrahub-sync` allows defining what gets synchronized from a source to a destination.
+Included in the examples there is two `config.yml` files that matches the example schema.
+
+<ReferenceLink title="Source config.yml" url="https://github.com/opsmill/infrahub-sync/blob/main/examples/peering-manager_to_infrahub/config.yml" openInNewTab />
+<ReferenceLink title="Destination config.yml" url="https://github.com/opsmill/infrahub-sync/blob/main/examples/infrahub_to_peering-manager/config.yml" openInNewTab />
+
+To download those examples `config.yml`
+
+```bash
+curl https://raw.githubusercontent.com/opsmill/infrahub-sync/refs/heads/main/examples/peering-manager_to_infrahub/config.yml > config.yml
+```
+
+```bash
+curl https://raw.githubusercontent.com/opsmill/infrahub-sync/refs/heads/main/examples/infrahub_to_peering-manager/config.yml > config.yml
+```
+
+### Configuration parameters
+
+The `source.name` is set to `peeringmanager`, instructing `infrahub-sync` to use the Peering Manager adapter.
+
+The settings dictionary is passed directly to the REST API client for Peering Manager for authentication and connection details.
+
+Below is a snippet from the example config.yml file:
+
+<Tabs>
+  <TabItem value="Source example" default>
+
+  ```yaml
+  ---
+  name: from-peering-manager
+  source:
+  name: peeringmanager
+  settings:
+      url: "https://<PEERING-MANAGER-ENDPOINT>"
+      api_endpoint: "api" # Default value
+      auth_method: "token" # Default value
+      # auth_method: "token"
+      token: "<TOKEN>"
+  ```
+
+  </TabItem>
+
+  <TabItem value="Destination example">
+
+  ```yaml
+  ---
+  name: to-peering-manager
+  destination:
+  name: peeringmanager
+  settings:
+      url: "https://<PEERING-MANAGER-ENDPOINT>"
+      api_endpoint: "api" # Default value
+      auth_method: "token" # Default value
+      # auth_method: "token"
+      token: "<TOKEN>"
+
+  ```
+
+  </TabItem>
+</Tabs>
+
+:::warning Under Construction
+:::

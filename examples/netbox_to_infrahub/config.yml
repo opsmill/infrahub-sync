@@ -19,9 +19,9 @@ order: [
   "OrganizationGeneric",
   "LocationGeneric",
   "InfraRack",
-  "TemplateDeviceType",
+  "ChoiceDeviceType",
   "InfraProviderNetwork",
-  "TemplateCircuitType",
+  "ChoiceCircuitType",
   "InfraCircuit",
   "InfraRouteTarget",
   "InfraVRF",
@@ -29,7 +29,7 @@ order: [
   "InfraVLAN",
   "InfraPrefix",
   # "InfraIPAddress",
-  # "InfraInterfaceL2L3",
+  "InfraInterfaceL2L3",
 ]
 
 schema_mapping:
@@ -179,7 +179,7 @@ schema_mapping:
         mapping: name
       - name: description
         mapping: description
-  - name: TemplateDeviceType
+  - name: ChoiceDeviceType
     mapping: dcim.device-types
     identifiers: ["name", "manufacturer"]
     fields:
@@ -217,7 +217,7 @@ schema_mapping:
         mapping: description
       - name: model
         mapping: device_type
-        reference: TemplateDeviceType
+        reference: ChoiceDeviceType
       - name: organization
         mapping: tenant
         reference: OrganizationGeneric
@@ -248,7 +248,7 @@ schema_mapping:
     # Showcase Transforms
     transforms:
       - field: name
-        expression: "{{ name.lower() }}"
+        expression: "{{ name.lower()}}"
       - field: serial_number
         expression: "{{ serial_number.lower() if serial_number else '' }}}"
 
@@ -323,7 +323,7 @@ schema_mapping:
       - name: provider
         mapping: provider
         reference: OrganizationGeneric
-  - name: TemplateCircuitType
+  - name: ChoiceCircuitType
     mapping: circuits.circuit-types
     identifiers: ["name"]
     fields:
