@@ -34,6 +34,8 @@ class LibrenmsAdapter(DiffSyncMixin, Adapter):
         self.target = target
         self.client = self._create_rest_client(adapter)
         self.config = config
+        settings = adapter.settings or {}
+        self.params = settings.get("params", {})
 
     def _create_rest_client(self, adapter: SyncAdapter) -> RestApiClient:
         settings = adapter.settings or {}
@@ -42,6 +44,7 @@ class LibrenmsAdapter(DiffSyncMixin, Adapter):
         auth_method = settings.get("auth_method", "x-auth-token")
         api_token = os.environ.get("LIBRENMS_TOKEN") or settings.get("token")
         timeout = settings.get("timeout", 30)
+        params = settings.get("params", {})
 
         if not url:
             msg = "url must be specified!"
@@ -57,6 +60,7 @@ class LibrenmsAdapter(DiffSyncMixin, Adapter):
             auth_method=auth_method,
             api_token=api_token,
             timeout=timeout,
+            params=params,
         )
 
     def model_loader(self, model_name: str, model: LibrenmsModel) -> None:
@@ -76,7 +80,7 @@ class LibrenmsAdapter(DiffSyncMixin, Adapter):
 
             try:
                 # Fetch data from the specified resource endpoint
-                response_data = self.client.get(resource_name)
+                response_data = self.client.get(endpoint=resource_name, params=self.params)
                 objs = response_data.get(response_key, [])
             except Exception as exc:
                 msg = f"Error fetching data from REST API: {exc!s}"

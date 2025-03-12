@@ -119,19 +119,19 @@ schema_mapping:
         mapping: communities
         reference: InfraBGPCommunity
     # Showcase Filters
-    filters:
-      - field: name
-        operation: "is_not_empty"
-      - field: status.value
-        operation: contains
-        value: "enabled"
-      - field: name
-        operation: contains
-        value: "S.H.I.E.L.D"
+    # filters:
+    #   - field: name
+    #     operation: "is_not_empty"
+    #   - field: status.value
+    #     operation: contains
+    #     value: "enabled"
+    #   - field: name
+    #     operation: contains
+    #     value: "S.H.I.E.L.D"
     # Showcase Transforms
-    transforms:
-      - field: description
-        expression: "{{ name.upper() }}[{{ status.value.lower() }}]"
+    # transforms:
+    #   - field: description
+    #     expression: "{{ name.upper() }}[{{ status.value.lower() }}]"
 
   # Create the IPv4 and IPv6 from the InfraIXPConnection
   # /!\ 'address' is mandatory on Infrahub but it can be empty in PeeringManager
@@ -184,7 +184,7 @@ schema_mapping:
     # Showcase Filters
     # As we filter InfraIXP on the name S.H.I.E.L.D, we need to have the same filter here
     # to avoid importing IXP Connection without IXP
-    filters:
-      - field: internet_exchange_point.name
-        operation: contains
-        value: "S.H.I.E.L.D"
+    # filters:
+    #   - field: internet_exchange_point.name
+    #     operation: contains
+    #     value: "S.H.I.E.L.D"

@@ -3,17 +3,27 @@ title: Slurp’it adapter
 ---
 import ReferenceLink from "../../src/components/Card";
 
+<!-- vale off -->
 ## What is Slurp’it?
+<!-- vale on -->
 
-Slurp’it lets you easily retrieve and store any data you want from your network in an offline, structured database. Out of the box, all major vendors and templates are already pre-configured. Simply run the installation wizard and Slurp’it will start mining your network. You can add as many templates as you want.
+Slurp’it lets you easily retrieve and store any data you want from your network in an offline, structured database. Out of the box, all major vendors and templates are already pre-configured.
+Run the installation wizard and Slurp’it will start mining your network. You can add as many templates as you want.
 
-## Sync direction
+## Requirements
 
-Slurp’it → Infrahub
+This Adapter uses [Slurp’it SDK](https://pypi.org/project/slurpit_sk).
+You will need to install it beforehand.
 
-:::note
+## Sync directions supported
+
+- Slurp’it → Infrahub
+
+:::info
+
 Currently, the Slurp’it adapter supports only **one-way synchronization** from Slurp’it to Infrahub.
 Syncing data back into Slurp’it is not yet supported.
+
 :::
 
 ## Schema
@@ -27,7 +37,7 @@ This schema follows best practices for Infrahub, **but it does not map the Slurp
 
 To install the example schema into Infrahub, follow these steps:
 
-```shell
+```bash
 mkdir slurpit-sync
 cd slurpit-sync
 curl -o schema.yml https://raw.githubusercontent.com/opsmill/infrahub/refs/heads/stable/models/examples/slurpit/slurpit.yml
@@ -42,7 +52,7 @@ infrahubctl schema load schema.yml
 
 To download the example `config.yml`
 
-```shell
+```bash
 curl https://raw.githubusercontent.com/opsmill/infrahub-sync/refs/heads/main/examples/slurpit_to_infrahub/config.yml > config.yml
 ```
 
@@ -70,7 +80,7 @@ source:
 The configuration file allows mapping Slurp’it data to the Infrahub schema, which has been designed to loosely align with the Slurp’it data model.
 Below is an example showing how to:
 
-- Set the destination model (`OrganizationGeneric`)
+- Set the destination Infrahub model (`OrganizationGeneric`)
 - Map source data from Slurp’it and run a custom function `unique_vendors`
 - Specify field mappings between Slurp’it and Infrahub models
 
@@ -85,8 +95,9 @@ schema_mapping:
         static: "Vendor"
 ```
 
-Schema mapping connects Slurp’it fields to Infrahub's schema fields. The `name` must match the schema name in Infrahub, while the `mapping` specifies which Slurp’it data to collect. Each field can either map directly to a Slurp’it field or be statically defined.
+Schema mapping connects Slurp’it fields to Infrahub's Node attributes and relationships.
 
+Each field can either map directly to a Slurp’it field or be statically defined.
 This table highlights the available `mappings` the adapter has to gather and normalize data from Slurp’it
 
 | Name | Description |
@@ -95,29 +106,5 @@ This table highlights the available `mappings` the adapter has to gather and nor
 | `unique_device_type` | The `unique_device_type` function retrieves a list of devices asynchronously, then extracts unique combinations of brand, `device_type`, and `device_os`. It returns a list of dictionaries where each dictionary contains these three distinct attributes, ensuring only unique device types are included in the output. |
 | `model`.`function` | This mapping directly relates to the SDK. For example once the SDK client is initiated you can get devices by using `device.get_devices` this will execute the query to gather all the devices.   |
 | `planning_results`.`<planning_slug>` | If the mapping starts with `planning_result` a call will be made to the Slurp’it planning API to gather the data for the data that matches the slug. For example: `planning_results.routing-table` will query the routing-table plannings for all the data it has and return it to be used in the mapping.  |
-| `filter_networks` | The `filter_networks` function processes a list of network entries, normalizing the network and mask fields, and filters out unwanted networks based on predefined "ignore" prefixes (e.g., 0.0.0.0/0, 127.0.0.0/8). It returns a list of filtered, normalized networks, excluding those with prefixes deemed unnecessary or invalid. |
-| `filter_interfaces` | The `filter_interfaces` function normalizes IP addresses in a list of interfaces and matches them against precomputed network prefixes from `filtered_networks`. It uses asynchronous tasks to process entries concurrently. Each entry's IP is normalized, and if it matches a known network, additional data (e.g., VRF) is added. The function returns a list of interfaces with normalized addresses, excluding invalid or unmatched entries. |
-
-#### Important notes
-
-- The `name` key in the destination model corresponds to the Infrahub attribute.
-- The `mapping` key in the destination model corresponds to the key in the Slurp’it payload to use.
-- If `reference` is used, it links to a model that has been synchronized prior to this model.
-
-## Generating the models
-
-`infrahub-sync` relies on additional Python files, but these can be generated automatically from `config.yml`.
-
-To generate the necessary models, run:
-
-```shell
-infrahub-sync generate --name from-slurpit --directory slurpit-sync
-```
-
-## Running the sync
-
-To synchronize data from Slurp’it to Infrahub, use the following command:
-
-```shell
-infrahub-sync sync --name from-slurpit --directory slurpit-sync
-```
+| `filter_networks` | The `filter_networks` function processes a list of network entries, normalizing the network and mask fields, and filters out unwanted networks based on predefined "ignore" prefixes (such as 0.0.0.0/0 and 127.0.0.0/8). It returns a list of filtered, normalized networks, excluding those with prefixes deemed unnecessary or invalid. |
+| `filter_interfaces` | The `filter_interfaces` function normalizes IP addresses in a list of interfaces and matches them against precomputed network prefixes from `filtered_networks`. It uses asynchronous tasks to process entries concurrently. Each entry's IP is normalized, and if it matches a known network, additional data (like VRF) is added. The function returns a list of interfaces with normalized addresses, excluding invalid or unmatched entries. |

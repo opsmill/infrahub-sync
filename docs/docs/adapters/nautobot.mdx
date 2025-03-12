@@ -1,0 +1,144 @@
+---
+title: Nautobot adapter
+---
+
+import ReferenceLink from "../../src/components/Card";
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+<!-- vale off -->
+## What is Nautobot?
+<!-- vale on -->
+
+Nautobot is an open-source network source of truth and automation platform, offering extended customization, plugin support, and enhanced functionality to simplify network documentation and operations.
+
+## Requirements
+
+This Adapter uses [Nautobot SDK](https://pypi.org/project/pynautobot).
+You will need to install it beforehand.
+
+## Sync directions supported
+
+- Nautobot → Infrahub
+
+:::info
+
+Currently, the Nautobot adapter supports only **one-way synchronization** from Nautobot to Infrahub.
+Syncing data back into Nautobot is not yet supported.
+
+## Schema
+
+Our `infrahub` repository contains an **example schema** that serves as a starting point for syncing Nautobot data into Infrahub.
+This schema follows best practices for Infrahub, **but it does not map the Nautobot data model one-to-one** since Infrahub may have additional use cases.
+
+To reflect the breaking changes introduced in Nautobot v2, there is not one but two schemas. You can explore them to see the difference.
+
+<Tabs>
+  <TabItem value="Nautobot v1">
+  <ReferenceLink title="Schema V1" url="https://github.com/opsmill/infrahub/blob/stable/models/examples/nautobot/nautobot-v1.yml" openInNewTab />
+  </TabItem>
+  <TabItem value="Nautobot v2">
+  <ReferenceLink title="Schema V2" url="https://github.com/opsmill/infrahub/blob/stable/models/examples/nautobot/nautobot-v2.yml" openInNewTab />
+  </TabItem>
+</Tabs>
+
+### Installing the example schema
+
+To install the example schema into Infrahub, follow these steps:
+
+<Tabs>
+  <TabItem value="Nautobot v1">
+
+  ```bash
+  mkdir nautobot-sync
+  cd nautobot-sync
+  curl -o schema.yml https://raw.githubusercontent.com/opsmill/infrahub/refs/heads/stable/models/examples/nautobot/nautobot-v1.yml
+  infrahubctl schema load schema.yml
+  ```
+
+  </TabItem>
+  <TabItem value="Nautobot v2">
+
+  ```bash
+  mkdir nautobot-sync
+  cd nautobot-sync
+  curl -o schema.yml https://raw.githubusercontent.com/opsmill/infrahub/refs/heads/stable/models/examples/nautobot/nautobot-v2.yml
+  infrahubctl schema load schema.yml
+  ```
+
+  </TabItem>
+</Tabs>
+
+## Configuration
+
+`infrahub-sync` allows defining what gets synchronized from a source to a destination. Included in the examples is a config.yml file that matches the example schema.
+
+<Tabs>
+  <TabItem value="Nautobot v1">
+  <ReferenceLink title="config.yml" url="https://github.com/opsmill/infrahub-sync/blob/main/examples/nautobot-v1_to_infrahub/config.yml" openInNewTab />
+  </TabItem>
+  <TabItem value="Nautobot v2">
+  <ReferenceLink title="config.yml" url="https://github.com/opsmill/infrahub-sync/blob/main/examples/nautobot-v2_to_infrahub/config.yml" openInNewTab />
+  </TabItem>
+</Tabs>
+
+To download the example `config.yml`
+
+<Tabs>
+  <TabItem value="Nautobot v1">
+
+  ```bash
+  curl https://raw.githubusercontent.com/opsmill/infrahub-sync/refs/heads/main/examples/nautobot-v1_to_infrahub/config.yml > config.yml
+  ```
+
+  </TabItem>
+  <TabItem value="Nautobot v2">
+
+  ```bash
+  curl https://raw.githubusercontent.com/opsmill/infrahub-sync/refs/heads/main/examples/nautobot-v2_to_infrahub/config.yml > config.yml
+  ```
+
+  </TabItem>
+</Tabs>
+
+### Configuration parameters
+
+The configuration file allows mapping Nautobot data to the Infrahub schema, which has been designed to loosely align with the Nautobot data model.
+Below is an example showing how to:
+
+- Set the destination Infrahub model (`OrganizationGeneric` and `InfraPlatform`)
+- Map source data from Nautobot (`dcim.manufacturers`, and `dcim.platforms`)
+- Specify field mappings between Nautobot and Infrahub models
+
+As you can see in this example, we can map several paths to the same Infrahub Model.
+
+```yaml
+  - name: OrganizationGeneric
+    mapping: dcim.manufacturers
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: name
+      - name: description
+        mapping: description
+      - name: type
+        static: "Manufacturer"
+
+  - name: InfraPlatform
+    mapping: dcim.platforms
+    identifiers: ["name", "manufacturer"]
+    fields:
+      - name: name
+        mapping: name
+      - name: description
+        mapping: description
+      - name: napalm_driver
+        mapping: napalm_driver
+      - name: manufacturer
+        mapping: manufacturer
+        reference: OrganizationGeneric
+```
+
+The models available on Nautobot can be find in the `/api/schema/swagger-ui` of your instance.
+
+<ReferenceLink title="Nautobot API Docs" url="https://demo.nautobot.com/api/docs" openInNewTab />

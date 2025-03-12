@@ -2,7 +2,7 @@
 
 **Usage**:
 
-```shell
+```console
 $ infrahub-sync [OPTIONS] COMMAND [ARGS]...
 ```
 
@@ -25,7 +25,7 @@ Calculate and print the differences between the source and the destination syste
 
 **Usage**:
 
-```shell
+```console
 $ infrahub-sync diff [OPTIONS]
 ```
 
@@ -44,7 +44,7 @@ Generate all the python files for a given sync based on the configuration.
 
 **Usage**:
 
-```shell
+```console
 $ infrahub-sync generate [OPTIONS]
 ```
 
@@ -53,6 +53,7 @@ $ infrahub-sync generate [OPTIONS]
 * `--name TEXT`: Name of the sync to use
 * `--config-file TEXT`: File path to the sync configuration YAML file
 * `--directory TEXT`: Base directory to search for sync configurations
+* `--branch TEXT`: Branch to use for the sync.
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync list`
@@ -61,7 +62,7 @@ List all available SYNC projects.
 
 **Usage**:
 
-```shell
+```console
 $ infrahub-sync list [OPTIONS]
 ```
 
@@ -76,7 +77,7 @@ Synchronize the data between source and the destination systems for a given proj
 
 **Usage**:
 
-```shell
+```console
 $ infrahub-sync sync [OPTIONS]
 ```
 

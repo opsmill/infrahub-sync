@@ -6,32 +6,24 @@ This guide will walk you through the steps to support adapters with custom CA ce
 
 ## Step 1: Create a subdirectory for your custom CA certificates
 
-```shell
-
+```bash
 sudo mkdir /usr/local/share/ca-certificates/custom-ca
-
 ```
 
 ## Step 2: Copy your root CA custom certificate into the folder you just created
 
-```shell
-
+```bash
 cp customRCA.crt /usr/local/share/ca-certificates/custom-ca/
-
 ```
 
 ## Step 3: Run the following command to load the certificates on your system trusted root certificate store
 
-```shell
-
+```bash
 sudo update-ca-certificates
-
 ```
 
 ## Step 4: Use the following command to set `REQUESTS_CA_BUNDLE` environment variable
 
-```shell
-
+```bash
 export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
-
 ```

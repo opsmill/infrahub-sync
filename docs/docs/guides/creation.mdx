@@ -8,8 +8,17 @@ This guide will walk you through the steps to create a new sync instance for inf
 
 Start by defining your synchronization requirements in a YAML configuration file.
 
+:::info
+
+- The `name` key in the destination model corresponds to the Infrahub attribute.
+- The `mapping` key in the destination model corresponds to the key in the IP Fabric payload to use.
+- If `reference` is used, it links to a model that has been synchronized prior to this model.
+
+:::
+
 Here's an example configuration for syncing data from Nautobot to Infrahub:
-In this example, consider that `device_type` and  `manufacturer` are Attribute of InfraDevice. If you are using another object with a Relationship, you would need to first import those objects and then referenced them (like InfraDevice in InfraInterface)
+
+In this example, consider that `device_type` and  `manufacturer` are Attribute of InfraDevice, if you are using another object with a Relationship, you would need to first import those objects and then referenced them (like InfraDevice in InfraInterface)
 
 ```yaml
 ---
@@ -59,3 +68,5 @@ schema_mapping:
 ```
 
 For more information on customizing your sync configuration and troubleshooting, see the [Sync Instance configuration reference](../reference/config)
+
+The next steps will be to run the sync, you can check the [Run a sync instance guide](./run)

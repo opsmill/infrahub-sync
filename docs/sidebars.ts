@@ -17,6 +17,11 @@ const sidebars: SidebarsConfig = {
       label: 'Adapters',
       items: [
         'adapters/ipfabric',
+        'adapters/librenms',
+        'adapters/nautobot',
+        'adapters/netbox',
+        'adapters/observium',
+        'adapters/peering-manager',
         'adapters/slurpit',
       ],
     },
