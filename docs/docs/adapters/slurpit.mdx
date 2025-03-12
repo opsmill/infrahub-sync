@@ -3,8 +3,6 @@ title: Slurp’it adapter
 ---
 import ReferenceLink from "../../src/components/Card";
 
-# Slurp’it adapter
-
 ## What is Slurp’it?
 
 Slurp’it lets you easily retrieve and store any data you want from your network in an offline, structured database. Out of the box, all major vendors and templates are already pre-configured. Simply run the installation wizard and Slurp’it will start mining your network. You can add as many templates as you want.
@@ -14,13 +12,13 @@ Slurp’it lets you easily retrieve and store any data you want from your networ
 Slurp’it → Infrahub
 
 :::note
-Currently, the Slurp’it adapter supports only **one-way synchronization** from Slurp’it to Infrahub.  
+Currently, the Slurp’it adapter supports only **one-way synchronization** from Slurp’it to Infrahub.
 Syncing data back into Slurp’it is not yet supported.
 :::
 
 ## Schema
 
-Our `infrahub` repository contains an **example schema** that serves as a starting point for syncing Slurp’it data into Infrahub.  
+Our `infrahub` repository contains an **example schema** that serves as a starting point for syncing Slurp’it data into Infrahub.
 This schema follows best practices for Infrahub, **but it does not map the Slurp’it data model one-to-one** since Infrahub may have additional use cases and Slurp’it can be customizable.
 
 <ReferenceLink title="Schema" url="https://github.com/opsmill/infrahub/blob/stable/models/examples/slurpit/slurpit.yml" openInNewTab />

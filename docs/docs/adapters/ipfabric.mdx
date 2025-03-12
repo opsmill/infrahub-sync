@@ -3,15 +3,13 @@ title: IP Fabric adapter
 ---
 import ReferenceLink from "../../src/components/Card";
 
-# IP Fabric adapter
-
 ## What is IP Fabric?
 
-The **IP Fabric** network infrastructure management platform provides on-demand network discovery, advanced analytics, and in-depth engineering visibility.  
+The **IP Fabric** network infrastructure management platform provides on-demand network discovery, advanced analytics, and in-depth engineering visibility.
 
-Its lightweight discovery capabilities (via SSH or Telnet) quickly detect the current network state, including detailed data for each address and port.  
+Its lightweight discovery capabilities (via SSH or Telnet) quickly detect the current network state, including detailed data for each address and port.
 
-A network model of gathered data reconstructs the topologies for each switching and routing protocol, enabling cross-technology analysis of upstream and downstream relationships.  
+A network model of gathered data reconstructs the topologies for each switching and routing protocol, enabling cross-technology analysis of upstream and downstream relationships.
 
 Dependencies and dependents are calculated for each network element, allowing analysis to represent each aspect of the network in the context of productivity impact on downstream hosts and network devices. The immediate productivity impact of performance and capacity is also calculated for each user and every element.
 
@@ -20,7 +18,7 @@ Dependencies and dependents are calculated for each network element, allowing an
 IP Fabric → Infrahub
 
 :::note
-Currently, the IP Fabric adapter supports only **one-way synchronization** from IP Fabric to Infrahub.  
+Currently, the IP Fabric adapter supports only **one-way synchronization** from IP Fabric to Infrahub.
 Syncing data back into IP Fabric is not yet supported.
 
 Although IP Fabric data cannot be edited, additional information such as **`Device Attributes`** and **`Site Separation`** rules can be updated from Infrahub data.
@@ -28,7 +26,7 @@ Although IP Fabric data cannot be edited, additional information such as **`Devi
 
 ## Schema
 
-Our `infrahub` repository contains an **example schema** that serves as a starting point for syncing IP Fabric data into Infrahub.  
+Our `infrahub` repository contains an **example schema** that serves as a starting point for syncing IP Fabric data into Infrahub.
 This schema follows best practices for Infrahub, **but it does not map the IP Fabric data model one-to-one** since Infrahub may have additional use cases.
 
 <ReferenceLink title="Schema" url="https://github.com/opsmill/infrahub/blob/stable/models/examples/ipfabric/ipfabric.yml" openInNewTab />
