@@ -10,12 +10,17 @@ This guide will walk you through the steps to create a new sync instance for inf
 
 Start by defining your synchronization requirements in a YAML configuration file.
 
+:::info
+
+- The `name` key in the destination model corresponds to the Infrahub attribute.
+- The `mapping` key in the destination model corresponds to the key in the IP Fabric payload to use.
+- If `reference` is used, it links to a model that has been synchronized prior to this model.
+
+:::
+
 Here's an example configuration for syncing data from Nautobot to Infrahub:
 
-- In this example, consider that `device_type` and  `manufacturer` are Attribute of InfraDevice.
-- If you are using another object with a Relationship, you would need to first import those objects and then referenced them (like InfraDevice in InfraInterface)
-
-The name use on each `schema_mapping` is the Infrahub node `kind` and the mapping is the source API path.
+In this example, consider that `device_type` and  `manufacturer` are Attribute of InfraDevice, if you are using another object with a Relationship, you would need to first import those objects and then referenced them (like InfraDevice in InfraInterface)
 
 ```yaml
 ---
@@ -65,3 +70,21 @@ schema_mapping:
 ```
 
 For more information on customizing your sync configuration and troubleshooting, see the [Sync Instance configuration reference](../reference/config)
+
+## Step 2: Generate the associated files
+
+`infrahub-sync` relies on additional Python files, but these can be generated automatically from `config.yml`.
+
+To generate the necessary models, run:
+
+```bash
+infrahub-sync generate --name example-sync-task
+```
+
+## Step 3: Run the sync
+
+To synchronize data from IP Fabric to Infrahub, use the following command:
+
+```bash
+infrahub-sync sync --name example-sync-taskc
+```

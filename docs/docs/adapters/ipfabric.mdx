@@ -22,13 +22,15 @@ You will need to install it beforehand.
 
 ## Sync directions supported
 
-IP Fabric → Infrahub
+- IP Fabric → Infrahub
 
 :::info
+
 Currently, the IP Fabric adapter supports only **one-way synchronization** from IP Fabric to Infrahub.
 Syncing data back into IP Fabric is not yet supported.
 
 Although IP Fabric data cannot be edited, additional information such as **`Device Attributes`** and **`Site Separation`** rules can be updated from Infrahub data.
+
 :::
 
 ## Schema
@@ -85,8 +87,8 @@ source:
 The configuration file allows mapping tables from IP Fabric into Infrahub models.
 Below is an example showing how to:
 
-- Set the destination model (`InfraDevice`)
-- Map source data from IP Fabric’s `tables/inventory/devices`
+- Set the destination Infrahub model (`InfraDevice`)
+- Map source data from IP Fabric’s Path (`tables/inventory/devices`)
 - Specify field mappings between IP Fabric and Infrahub models
 
 ```yaml
@@ -117,34 +119,5 @@ schema_mapping:
         reference: InfraNOSVersion
 ```
 
-This configuration specifies:
-
-- The destination model is `InfraDevice`.
-- The source table being synced from IP Fabric is `tables/inventory/devices`.
-- The table URI can be found by selecting `Table Description` in any IP Fabric table and copying everything after the version in the URL description.
-
-For more details, refer to the [IP Fabric API Docs](https://docs.ipfabric.io/latest/IP_Fabric_API/?h=api+doc#technology-table-endpoints).
-
-#### Important notes
-
-- The `name` key in the destination model corresponds to the Infrahub attribute.
-- The `mapping` key in the destination model corresponds to the key in the IP Fabric payload to use.
-- If `reference` is used, it links to a model that has been synchronized prior to this model.
-
-## Generating the models
-
-`infrahub-sync` relies on additional Python files, but these can be generated automatically from `config.yml`.
-
-To generate the necessary models, run:
-
-```bash
-infrahub-sync generate --name from-ipfabric --directory ipfabric-sync
-```
-
-## Running the sync
-
-To synchronize data from IP Fabric to Infrahub, use the following command:
-
-```bash
-infrahub-sync sync --name from-ipfabric --directory ipfabric-sync
-```
+The table URI can be found by selecting `Table Description` in any IP Fabric table and copying everything after the version in the URL description.
+For more details regarding, refer to the [IP Fabric API Docs](https://docs.ipfabric.io/latest/IP_Fabric_API/?h=api+doc#technology-table-endpoints).
