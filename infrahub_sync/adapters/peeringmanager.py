@@ -141,21 +141,28 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
                             data[field.name] = node
                 else:
                     data[field.name] = []
-                    for node in get_value(obj, field.mapping):
-                        if not node:
-                            continue
-                        node_id = node.get("id", None)
-                        if not node_id and isinstance(node, tuple):
-                            node_id = node[1] if node[0] == "id" else None
-                            if not node_id:
+                    values = get_value(obj, field.mapping)
+                    if isinstance(values, list):
+                        for node in values:
+                            if not node:
                                 continue
-                        matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
-                        if len(matching_nodes) == 0:
-                            msg = f"Unable to locate the node {field.reference} {node_id}"
-                            raise IndexError(msg)
-                        data[field.name].append(matching_nodes[0].get_unique_id())
-                    data[field.name] = sorted(data[field.name])
-
+                            node_id = node.get("id", None)
+                            if not node_id and isinstance(node, tuple):
+                                node_id = node[1] if node[0] == "id" else None
+                                if not node_id:
+                                    print(f"No ID found for {node} - skipped")
+                                    continue
+                            matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
+                            if len(matching_nodes) == 0:
+                                msg = f"Unable to locate the node {field.reference} {node_id}"
+                                raise IndexError(msg)
+                            data[field.name].append(matching_nodes[0].get_unique_id())
+                        data[field.name] = sorted(data[field.name])
+                    elif isinstance(values, str):
+                        for item in nodes:
+                            tmp = get_value(item, field.mapping)
+                            if tmp == values:
+                                data[field.name].append(item.get_unique_id())
         return data
 
 
