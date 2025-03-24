@@ -133,6 +133,7 @@ class DiffSyncMixin:
                 method = getattr(self, f"load_{item}")
                 method()
             else:
+                print(f"Loading {item}")
                 self.model_loader(model_name=item, model=getattr(self, item))
 
     def model_loader(self, model_name: str, model):
