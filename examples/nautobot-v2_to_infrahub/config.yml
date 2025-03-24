@@ -23,13 +23,13 @@ order: [
   "StatusGeneric",
   "CoreStandardGroup",
   "OrganizationGeneric",
-  "TemplateLocationType",
+  "ChoiceLocationType",
   "LocationGeneric",
   "InfraRack",
-  "TemplateDeviceType",
+  "ChoiceDeviceType",
   "InfraPlatform",
   "InfraProviderNetwork",
-  "TemplateCircuitType",
+  "ChoiceCircuitType",
   "InfraCircuit",
   "NautobotNamespace",
   "InfraRouteTarget",
@@ -108,7 +108,7 @@ schema_mapping:
         reference: CoreStandardGroup
 
   # Locations (Location Type, Locations)
-  - name: TemplateLocationType
+  - name: ChoiceLocationType
     mapping: dcim.location-types
     identifiers: ["name"]
     fields:
@@ -126,7 +126,7 @@ schema_mapping:
         mapping: description
       - name: location_type
         mapping: location_type
-        reference: TemplateLocationType
+        reference: ChoiceLocationType
       - name: status
         mapping: status
         reference: StatusGeneric
@@ -183,7 +183,7 @@ schema_mapping:
       - name: manufacturer
         mapping: manufacturer
         reference: OrganizationGeneric
-  - name: TemplateDeviceType
+  - name: ChoiceDeviceType
     mapping: dcim.device-types
     identifiers: ["name", "manufacturer"]
     fields:
@@ -215,7 +215,7 @@ schema_mapping:
         mapping: asset_tag
       - name: model
         mapping: device_type
-        reference: TemplateDeviceType
+        reference: ChoiceDeviceType
       - name: platform
         mapping: platform
         reference: InfraPlatform
@@ -268,7 +268,7 @@ schema_mapping:
       - name: provider
         mapping: provider
         reference: OrganizationGeneric
-  - name: TemplateCircuitType
+  - name: ChoiceCircuitType
     mapping: circuits.circuit-types
     identifiers: ["name"]
     fields:
@@ -302,7 +302,7 @@ schema_mapping:
         reference: StatusGeneric
       - name: type
         mapping: circuit_type
-        reference: TemplateCircuitType
+        reference: ChoiceCircuitType
       # - name: tenant
       #   mapping: tenant
       #   reference: OrganizationGeneric

@@ -15,7 +15,7 @@ destination:
 order: [
   "OrganizationGeneric",
   "LocationGeneric",
-  "TemplateDeviceType",
+  "ChoiceDeviceType",
   "InfraPlatform",
   "InfraDevice",
   "InfraHardwareInfo",
@@ -61,7 +61,7 @@ schema_mapping:
       - name: phonenumber
         mapping: phonenumber
 
-  - name: TemplateDeviceType
+  - name: ChoiceDeviceType
     mapping: unique_device_type
     fields:
       - name: name
@@ -89,7 +89,7 @@ schema_mapping:
         reference: OrganizationGeneric
       - name: device_type
         mapping: device_type
-        reference: TemplateDeviceType
+        reference: ChoiceDeviceType
       - name: platform
         mapping: device_os
         reference: InfraPlatform

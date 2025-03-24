@@ -15,7 +15,7 @@ order: [
   "LocationGeneric",
   "OrganizationGeneric",
   "InfraPlatform",
-  "TemplateDeviceType",
+  "ChoiceDeviceType",
   "InfraNOSVersion",
   "InfraDevice",
   "InfraPartNumber",
@@ -53,14 +53,14 @@ schema_mapping:
       - name: description
         static: "Platform"
 
-  - name: TemplateDeviceType
+  - name: ChoiceDeviceType
     mapping: tables/inventory/summary/models
     identifiers: ["name", "manufacturer"]
     fields:
       - name: name
         mapping: model
       - name: description
-        static: "Device Template"
+        static: "Device Choice"
       - name: manufacturer
         mapping: vendor
         reference: OrganizationGeneric
@@ -82,7 +82,7 @@ schema_mapping:
         reference: InfraPlatform
       - name: model
         mapping: model
-        reference: TemplateDeviceType
+        reference: ChoiceDeviceType
 
   - name: InfraDevice
     identifiers: ["hostname"]
@@ -98,7 +98,7 @@ schema_mapping:
         mapping: fqdn
       - name: model
         mapping: model
-        reference: TemplateDeviceType
+        reference: ChoiceDeviceType
       # - name: status
       #   mapping: status
       #   reference: StatusGeneric
@@ -131,7 +131,7 @@ schema_mapping:
         reference: OrganizationGeneric
       - name: model
         mapping: model
-        reference: TemplateDeviceType
+        reference: ChoiceDeviceType
       - name: device
         mapping: hostname
         reference: InfraDevice

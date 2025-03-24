@@ -1,6 +1,7 @@
 from infrahub_sync.adapters.ipfabricsync import IpfabricsyncAdapter
 
 from .sync_models import (
+    ChoiceDeviceType,
     InfraDevice,
     InfraInterfaceL3,
     InfraIPAddress,
@@ -12,7 +13,6 @@ from .sync_models import (
     InfraVRF,
     LocationGeneric,
     OrganizationGeneric,
-    TemplateDeviceType,
 )
 
 
@@ -33,4 +33,4 @@ class IpfabricsyncSync(IpfabricsyncAdapter):
     InfraVRF = InfraVRF
     LocationGeneric = LocationGeneric
     OrganizationGeneric = OrganizationGeneric
-    TemplateDeviceType = TemplateDeviceType
+    ChoiceDeviceType = ChoiceDeviceType

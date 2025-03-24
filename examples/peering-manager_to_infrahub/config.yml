@@ -7,6 +7,8 @@ source:
     # api_endpoint: "api"
     # auth_method: "token"
     token: "13bf6338aed52d172e33750d39717fff5a5f5d18"
+    # params:
+    #   "limit": 1000
 
 destination:
   name: infrahub
@@ -14,6 +16,7 @@ destination:
     url: "http://localhost:8000"
 
 order: [
+  "OrganizationProvider",
   "InfraAutonomousSystem",
   "InfraBGPCommunity",
   "InfraBGPRoutingPolicy",
@@ -24,24 +27,46 @@ order: [
 ]
 
 schema_mapping:
-  - name: InfraAutonomousSystem
+  - name: OrganizationProvider
     mapping: peering/autonomous-systems
-    identifiers: ["asn"]
+    identifiers: ["name"]
     fields:
       - name: name
         mapping: name
-      - name: description
-        mapping: display
+
+  - name: InfraAutonomousSystem
+    mapping: peering/autonomous-systems
+    identifiers: ["asn"]
+    transforms:
+      - field: tmp_name
+        expression: "{{ name.lower() }} "
+    fields:
+      - name: name
+        mapping: tmp_name
       - name: asn
         mapping: asn
-      - name: irr_as_set
-        mapping: irr_as_set
-      - name: ipv4_max_prefixes
-        mapping: ipv4_max_prefixes
-      - name: ipv6_max_prefixes
-        mapping: ipv6_max_prefixes
-      - name: affiliated
-        mapping: affiliated
+        #[...]
+      - name: organization
+        mapping: name
+        reference: OrganizationProvider
+  # - name: InfraAutonomousSystem
+  #   mapping: peering/autonomous-systems
+  #   identifiers: ["asn"]
+  #   fields:
+  #     - name: name
+  #       mapping: name
+  #     - name: description
+  #       mapping: display
+  #     - name: asn
+  #       mapping: asn
+  #     - name: irr_as_set
+  #       mapping: irr_as_set
+  #     - name: ipv4_max_prefixes
+  #       mapping: ipv4_max_prefixes
+  #     - name: ipv6_max_prefixes
+  #       mapping: ipv6_max_prefixes
+  #     - name: affiliated
+  #       mapping: affiliated
 
   - name: InfraBGPCommunity
     mapping: peering/communities

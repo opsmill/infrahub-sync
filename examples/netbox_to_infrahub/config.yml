@@ -248,7 +248,7 @@ schema_mapping:
     # Showcase Transforms
     transforms:
       - field: name
-        expression: "{{ name.lower()}}"
+        expression: "{{ name.lower() if name else '' }}"
       - field: serial_number
         expression: "{{ serial_number.lower() if serial_number else '' }}}"
 

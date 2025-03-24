@@ -283,8 +283,8 @@ class StatusGeneric(InfrahubModel):
     local_data: Any | None = None
 
 
-class TemplateCircuitType(InfrahubModel):
-    _modelname = "TemplateCircuitType"
+class ChoiceCircuitType(InfrahubModel):
+    _modelname = "ChoiceCircuitType"
     _identifiers = ("name",)
     _attributes = ("description",)
     name: str
@@ -293,8 +293,8 @@ class TemplateCircuitType(InfrahubModel):
     local_data: Any | None = None
 
 
-class TemplateDeviceType(InfrahubModel):
-    _modelname = "TemplateDeviceType"
+class ChoiceDeviceType(InfrahubModel):
+    _modelname = "ChoiceDeviceType"
     _identifiers = ("name", "manufacturer")
     _attributes = ("tags", "part_number", "height", "full_depth")
     part_number: str | None = None
@@ -307,8 +307,8 @@ class TemplateDeviceType(InfrahubModel):
     local_data: Any | None = None
 
 
-class TemplateLocationType(InfrahubModel):
-    _modelname = "TemplateLocationType"
+class ChoiceLocationType(InfrahubModel):
+    _modelname = "ChoiceLocationType"
     _identifiers = ("name",)
     _attributes = ("description",)
     name: str

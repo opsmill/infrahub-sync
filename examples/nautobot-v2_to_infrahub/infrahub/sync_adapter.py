@@ -2,6 +2,9 @@ from infrahub_sync.adapters.infrahub import InfrahubAdapter
 
 from .sync_models import (
     BuiltinTag,
+    ChoiceCircuitType,
+    ChoiceDeviceType,
+    ChoiceLocationType,
     CoreStandardGroup,
     InfraAutonomousSystem,
     InfraCircuit,
@@ -22,9 +25,6 @@ from .sync_models import (
     OrganizationGeneric,
     RoleGeneric,
     StatusGeneric,
-    TemplateCircuitType,
-    TemplateDeviceType,
-    TemplateLocationType,
 )
 
 
@@ -55,6 +55,6 @@ class InfrahubSync(InfrahubAdapter):
     OrganizationGeneric = OrganizationGeneric
     RoleGeneric = RoleGeneric
     StatusGeneric = StatusGeneric
-    TemplateCircuitType = TemplateCircuitType
-    TemplateDeviceType = TemplateDeviceType
-    TemplateLocationType = TemplateLocationType
+    ChoiceCircuitType = ChoiceCircuitType
+    ChoiceDeviceType = ChoiceDeviceType
+    ChoiceLocationType = ChoiceLocationType
