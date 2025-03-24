@@ -22,9 +22,9 @@ from .sync_models import (
     OrganizationGeneric,
     RoleGeneric,
     StatusGeneric,
-    TemplateCircuitType,
-    TemplateDeviceType,
-    TemplateLocationType,
+    ChoiceCircuitType,
+    ChoiceDeviceType,
+    ChoiceLocationType,
 )
 
 
@@ -55,6 +55,6 @@ class NautobotSync(NautobotAdapter):
     OrganizationGeneric = OrganizationGeneric
     RoleGeneric = RoleGeneric
     StatusGeneric = StatusGeneric
-    TemplateCircuitType = TemplateCircuitType
-    TemplateDeviceType = TemplateDeviceType
-    TemplateLocationType = TemplateLocationType
+    ChoiceCircuitType = ChoiceCircuitType
+    ChoiceDeviceType = ChoiceDeviceType
+    ChoiceLocationType = ChoiceLocationType

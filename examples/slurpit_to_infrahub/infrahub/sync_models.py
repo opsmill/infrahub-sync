@@ -159,8 +159,8 @@ class OrganizationGeneric(InfrahubModel):
     local_data: Any | None = None
 
 
-class TemplateDeviceType(InfrahubModel):
-    _modelname = "TemplateDeviceType"
+class ChoiceDeviceType(InfrahubModel):
+    _modelname = "ChoiceDeviceType"
     _identifiers = ("name",)
     _attributes = ("manufacturer",)
     name: str

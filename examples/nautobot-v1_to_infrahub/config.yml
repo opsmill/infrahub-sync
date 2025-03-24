@@ -15,14 +15,14 @@ order: [
   "RoleGeneric",
   # "StatusGeneric",
   "CoreStandardGroup",
-  "TemplateLocationType",
+  "ChoiceLocationType",
   "OgranizationGeneric",
   "LocationGeneric",
   "InfraRack",
-  "TemplateDeviceType",
+  "ChoiceDeviceType",
   "InfraPlatform",
   "InfraProviderNetwork",
-  "TemplateCircuitType",
+  "ChoiceCircuitType",
   "InfraCircuit",
   "InfraRouteTarget",
   "InfraVRF",
@@ -108,7 +108,7 @@ schema_mapping:
         reference: CoreStandardGroup
 
   # Sites (Region, Sites, Location)
-  - name: TemplateLocationType
+  - name: ChoiceLocationType
     mapping: dcim.location-types
     identifiers: ["name"]
     fields:
@@ -148,7 +148,7 @@ schema_mapping:
         static: "Location"
       - name: location_type
         mapping: location_type
-        reference: TemplateLocationType
+        reference: ChoiceLocationType
       - name: organization
         mapping: tenant
         reference: OgranizationGeneric
@@ -205,7 +205,7 @@ schema_mapping:
       - name: manufacturer
         mapping: manufacturer
         reference: OgranizationGeneric
-  - name: TemplateDeviceType
+  - name: ChoiceDeviceType
     mapping: dcim.device-types
     identifiers: ["name", "manufacturer"]
     fields:
@@ -237,7 +237,7 @@ schema_mapping:
         mapping: asset_tag
       - name: model
         mapping: device_type
-        reference: TemplateDeviceType
+        reference: ChoiceDeviceType
       - name: platform
         mapping: platform
         reference: InfraPlatform
@@ -290,7 +290,7 @@ schema_mapping:
       - name: provider
         mapping: provider
         reference: OgranizationGeneric
-  - name: TemplateCircuitType
+  - name: ChoiceCircuitType
     mapping: circuits.circuit-types
     identifiers: ["name"]
     fields:
@@ -316,7 +316,7 @@ schema_mapping:
       #   reference: StatusGeneric
       - name: type
         mapping: type
-        reference: TemplateCircuitType
+        reference: ChoiceCircuitType
       # - name: tenant
       #   mapping: tenant
       #   reference: OgranizationGeneric

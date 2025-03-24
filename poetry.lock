@@ -616,13 +616,13 @@ all = ["flake8 (>=7.1.1)", "mypy (>=1.11.2)", "pytest (>=8.3.2)", "ruff (>=0.6.2
 
 [[package]]
 name = "infrahub-sdk"
-version = "1.8.0"
+version = "1.9.1"
 description = "Python Client to interact with Infrahub"
 optional = false
 python-versions = "<3.14,>=3.9"
 files = [
-    {file = "infrahub_sdk-1.8.0-py3-none-any.whl", hash = "sha256:4f341dde7cd0ef6b232f3963b7cef864d1226794584a16a05476b0df7882559b"},
-    {file = "infrahub_sdk-1.8.0.tar.gz", hash = "sha256:0f140037235aed0024b89ccb00e1f817e0c83004bef7120c74dbb91657993e91"},
+    {file = "infrahub_sdk-1.9.1-py3-none-any.whl", hash = "sha256:bf9655512bb57f63e45d29090e7a48abe05769a4efc03cf32a975c75b834c2b5"},
+    {file = "infrahub_sdk-1.9.1.tar.gz", hash = "sha256:43e3b329909a95e881281abe55b21b4031ec2f7fdce94ca3886a46a6cac30bdd"},
 ]
 
 [package.dependencies]

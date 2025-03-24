@@ -20,9 +20,9 @@ from .sync_models import (
     LocationGeneric,
     RoleGeneric,
     StatusGeneric,
-    TemplateCircuitType,
-    TemplateDeviceType,
-    TemplateLocationType,
+    ChoiceCircuitType,
+    ChoiceDeviceType,
+    ChoiceLocationType,
 )
 
 
@@ -51,6 +51,6 @@ class InfrahubSync(InfrahubAdapter):
     LocationGeneric = LocationGeneric
     RoleGeneric = RoleGeneric
     StatusGeneric = StatusGeneric
-    TemplateCircuitType = TemplateCircuitType
-    TemplateDeviceType = TemplateDeviceType
-    TemplateLocationType = TemplateLocationType
+    ChoiceCircuitType = ChoiceCircuitType
+    ChoiceDeviceType = ChoiceDeviceType
+    ChoiceLocationType = ChoiceLocationType

@@ -12,7 +12,7 @@ from .sync_models import (
     InfraVRF,
     LocationGeneric,
     OrganizationGeneric,
-    TemplateDeviceType,
+    ChoiceDeviceType,
 )
 
 
@@ -33,4 +33,4 @@ class InfrahubSync(InfrahubAdapter):
     InfraVersion = InfraVersion
     LocationGeneric = LocationGeneric
     OrganizationGeneric = OrganizationGeneric
-    TemplateDeviceType = TemplateDeviceType
+    ChoiceDeviceType = ChoiceDeviceType
