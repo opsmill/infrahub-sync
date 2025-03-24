@@ -291,6 +291,9 @@ schema_mapping:
     #   - field: device.name
     #     operation: "contains"
     #     value: "dmi01"
+    #   - field: device.name
+    #     operation: "not contains"
+    #     value: "pdu"
 
   # Circuits (Provider, Provider Network, Circuits Types, Circuits)
   - name: OrganizationGeneric

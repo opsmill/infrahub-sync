@@ -142,6 +142,7 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
                 else:
                     data[field.name] = []
                     values = get_value(obj, field.mapping)
+                    # When using another node for mapping, it should be a list
                     if isinstance(values, list):
                         for node in values:
                             if not node:
@@ -158,6 +159,7 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
                                 raise IndexError(msg)
                             data[field.name].append(matching_nodes[0].get_unique_id())
                         data[field.name] = sorted(data[field.name])
+                    # If you are using an attribute a mapping
                     elif isinstance(values, str):
                         for item in nodes:
                             tmp = get_value(item, field.mapping)

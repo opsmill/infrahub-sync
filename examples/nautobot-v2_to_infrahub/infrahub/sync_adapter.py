@@ -2,6 +2,9 @@ from infrahub_sync.adapters.infrahub import InfrahubAdapter
 
 from .sync_models import (
     BuiltinTag,
+    ChoiceCircuitType,
+    ChoiceDeviceType,
+    ChoiceLocationType,
     CoreStandardGroup,
     InfraAutonomousSystem,
     InfraCircuit,
@@ -22,9 +25,6 @@ from .sync_models import (
     OrganizationGeneric,
     RoleGeneric,
     StatusGeneric,
-    ChoiceCircuitType,
-    ChoiceDeviceType,
-    ChoiceLocationType,
 )
 
 
@@ -38,23 +38,23 @@ class InfrahubSync(InfrahubAdapter):
     BuiltinTag = BuiltinTag
     InfraAutonomousSystem = InfraAutonomousSystem
     InfraCircuit = InfraCircuit
+    ChoiceCircuitType = ChoiceCircuitType
     InfraDevice = InfraDevice
+    ChoiceDeviceType = ChoiceDeviceType
     InfraFrontPort = InfraFrontPort
-    InfraIPAddress = InfraIPAddress
     InfraInterfaceL2L3 = InfraInterfaceL2L3
+    InfraIPAddress = InfraIPAddress
+    ChoiceLocationType = ChoiceLocationType
+    NautobotNamespace = NautobotNamespace
     InfraPlatform = InfraPlatform
-    InfraPrefix = InfraPrefix
     InfraProviderNetwork = InfraProviderNetwork
+    InfraPrefix = InfraPrefix
     InfraRack = InfraRack
     InfraRearPort = InfraRearPort
     InfraRouteTarget = InfraRouteTarget
     InfraVLAN = InfraVLAN
     InfraVRF = InfraVRF
-    LocationGeneric = LocationGeneric
-    NautobotNamespace = NautobotNamespace
     OrganizationGeneric = OrganizationGeneric
-    RoleGeneric = RoleGeneric
     StatusGeneric = StatusGeneric
-    ChoiceCircuitType = ChoiceCircuitType
-    ChoiceDeviceType = ChoiceDeviceType
-    ChoiceLocationType = ChoiceLocationType
+    RoleGeneric = RoleGeneric
+    LocationGeneric = LocationGeneric

@@ -42,31 +42,22 @@ schema_mapping:
         expression: "{{ name.lower() }} "
     fields:
       - name: name
-        mapping: tmp_name
+        mapping: name
+      - name: description
+        mapping: display
       - name: asn
         mapping: asn
-        #[...]
+      - name: irr_as_set
+        mapping: irr_as_set
+      - name: ipv4_max_prefixes
+        mapping: ipv4_max_prefixes
+      - name: ipv6_max_prefixes
+        mapping: ipv6_max_prefixes
+      - name: affiliated
+        mapping: affiliated
       - name: organization
         mapping: name
         reference: OrganizationProvider
-  # - name: InfraAutonomousSystem
-  #   mapping: peering/autonomous-systems
-  #   identifiers: ["asn"]
-  #   fields:
-  #     - name: name
-  #       mapping: name
-  #     - name: description
-  #       mapping: display
-  #     - name: asn
-  #       mapping: asn
-  #     - name: irr_as_set
-  #       mapping: irr_as_set
-  #     - name: ipv4_max_prefixes
-  #       mapping: ipv4_max_prefixes
-  #     - name: ipv6_max_prefixes
-  #       mapping: ipv6_max_prefixes
-  #     - name: affiliated
-  #       mapping: affiliated
 
   - name: InfraBGPCommunity
     mapping: peering/communities
