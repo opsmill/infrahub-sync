@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 
 from infrahub_sync.adapters.netbox import NetboxModel
+
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -19,6 +20,7 @@ class CoreStandardGroup(NetboxModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class BuiltinTag(NetboxModel):
     _modelname = "BuiltinTag"
     _identifiers = ("name",)
@@ -28,6 +30,7 @@ class BuiltinTag(NetboxModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraCircuit(NetboxModel):
     _modelname = "InfraCircuit"
@@ -43,6 +46,7 @@ class InfraCircuit(NetboxModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class ChoiceCircuitType(NetboxModel):
     _modelname = "ChoiceCircuitType"
     _identifiers = ("name",)
@@ -53,6 +57,7 @@ class ChoiceCircuitType(NetboxModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraDevice(NetboxModel):
     _modelname = "InfraDevice"
@@ -72,6 +77,7 @@ class InfraDevice(NetboxModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class ChoiceDeviceType(NetboxModel):
     _modelname = "ChoiceDeviceType"
     _identifiers = ("name", "manufacturer")
@@ -85,6 +91,7 @@ class ChoiceDeviceType(NetboxModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraInterfaceL2L3(NetboxModel):
     _modelname = "InfraInterfaceL2L3"
@@ -104,6 +111,7 @@ class InfraInterfaceL2L3(NetboxModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraIPAddress(NetboxModel):
     _modelname = "InfraIPAddress"
     _identifiers = ("address", "vrf")
@@ -115,6 +123,7 @@ class InfraIPAddress(NetboxModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraProviderNetwork(NetboxModel):
     _modelname = "InfraProviderNetwork"
@@ -129,6 +138,7 @@ class InfraProviderNetwork(NetboxModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraPrefix(NetboxModel):
     _modelname = "InfraPrefix"
     _identifiers = ("prefix", "vrf")
@@ -142,6 +152,7 @@ class InfraPrefix(NetboxModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraRack(NetboxModel):
     _modelname = "InfraRack"
@@ -159,6 +170,7 @@ class InfraRack(NetboxModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraRouteTarget(NetboxModel):
     _modelname = "InfraRouteTarget"
     _identifiers = ("name", "organization")
@@ -169,6 +181,7 @@ class InfraRouteTarget(NetboxModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraVLAN(NetboxModel):
     _modelname = "InfraVLAN"
@@ -184,6 +197,7 @@ class InfraVLAN(NetboxModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraVRF(NetboxModel):
     _modelname = "InfraVRF"
     _identifiers = ("name",)
@@ -198,6 +212,7 @@ class InfraVRF(NetboxModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class OrganizationGeneric(NetboxModel):
     _modelname = "OrganizationGeneric"
     _identifiers = ("name",)
@@ -209,6 +224,7 @@ class OrganizationGeneric(NetboxModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class RoleGeneric(NetboxModel):
     _modelname = "RoleGeneric"
     _identifiers = ("name",)
@@ -218,6 +234,7 @@ class RoleGeneric(NetboxModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class LocationGeneric(NetboxModel):
     _modelname = "LocationGeneric"

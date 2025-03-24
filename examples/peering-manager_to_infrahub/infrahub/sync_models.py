@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 
 from infrahub_sync.adapters.infrahub import InfrahubModel
+
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -20,6 +21,7 @@ class InfraAutonomousSystem(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraBGPCommunity(InfrahubModel):
     _modelname = "InfraBGPCommunity"
     _identifiers = ("name",)
@@ -32,6 +34,7 @@ class InfraBGPCommunity(InfrahubModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraBGPPeerGroup(InfrahubModel):
     _modelname = "InfraBGPPeerGroup"
@@ -46,6 +49,7 @@ class InfraBGPPeerGroup(InfrahubModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraBGPRoutingPolicy(InfrahubModel):
     _modelname = "InfraBGPRoutingPolicy"
@@ -62,6 +66,7 @@ class InfraBGPRoutingPolicy(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraIXP(InfrahubModel):
     _modelname = "InfraIXP"
     _identifiers = ("name",)
@@ -76,10 +81,19 @@ class InfraIXP(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraIXPConnection(InfrahubModel):
     _modelname = "InfraIXPConnection"
     _identifiers = ("name",)
-    _attributes = ("ipv6_address", "ipv4_address", "internet_exchange_point", "status", "description", "peeringdb_netixlan", "vlan")
+    _attributes = (
+        "ipv6_address",
+        "ipv4_address",
+        "internet_exchange_point",
+        "status",
+        "description",
+        "peeringdb_netixlan",
+        "vlan",
+    )
     status: str | None = "enabled"
     description: str | None = None
     peeringdb_netixlan: int | None = None
@@ -92,6 +106,7 @@ class InfraIXPConnection(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class IpamIPAddress(InfrahubModel):
     _modelname = "IpamIPAddress"
     _identifiers = ("address",)
@@ -101,6 +116,7 @@ class IpamIPAddress(InfrahubModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class OrganizationProvider(InfrahubModel):
     _modelname = "OrganizationProvider"

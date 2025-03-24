@@ -47,6 +47,7 @@ def update_node(node: InfrahubNodeSync, attrs: dict) -> InfrahubNodeSync:
                         if rel_schema.kind != "Generic":
                             peer = node._client.store.get(
                                 key=attr_value,
+                                kind=rel_schema.peer,
                                 raise_when_missing=False,
                             )
                         else:
@@ -62,9 +63,8 @@ def update_node(node: InfrahubNodeSync, attrs: dict) -> InfrahubNodeSync:
                 if attr_name == rel_schema.name and rel_schema.cardinality == "many":
                     attr = getattr(node, attr_name)
                     existing_peer_ids = attr.peer_ids
-                    # FIXME: I removed kind=rel_schema.peer  for 'generics' peer
                     new_peer_ids = [
-                        node._client.store.get(key=value).id for value in list(attr_value)
+                        node._client.store.get(key=value, kind=rel_schema.peer).id for value in list(attr_value)
                     ]
                     _, existing_only, new_only = compare_lists(existing_peer_ids, new_peer_ids)
 
@@ -216,7 +216,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 if not rel.id:
                     continue
                 if rel_schema.kind != "Generic":
-                    peer_node = self.client.store.get(key=rel.id, raise_when_missing=False)
+                    peer_node = self.client.store.get(key=rel.id, kind=rel_schema.peer, raise_when_missing=False)
                 else:
                     peer_node = self.client.store.get(key=rel.id, raise_when_missing=False)
                 if not peer_node:
@@ -239,7 +239,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 rel_manager = getattr(node, rel_schema.name)
                 rel_manager.fetch()
                 for peer in rel_manager.peers:
-                    peer_node = self.client.store.get(key=peer.id)
+                    peer_node = self.client.store.get(key=peer.id, kind=rel_schema.peer)
                     peer_data = self.infrahub_node_to_diffsync(node=peer_node)
                     peer_model = getattr(self, rel_schema.peer)
                     peer_item = peer_model(**peer_data)

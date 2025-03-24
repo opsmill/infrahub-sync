@@ -2,6 +2,9 @@ from infrahub_sync.adapters.nautobot import NautobotAdapter
 
 from .sync_models import (
     BuiltinTag,
+    ChoiceCircuitType,
+    ChoiceDeviceType,
+    ChoiceLocationType,
     CoreStandardGroup,
     InfraAutonomousSystem,
     InfraCircuit,
@@ -20,9 +23,6 @@ from .sync_models import (
     LocationGeneric,
     RoleGeneric,
     StatusGeneric,
-    ChoiceCircuitType,
-    ChoiceDeviceType,
-    ChoiceLocationType,
 )
 
 
