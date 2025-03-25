@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, List
 
 from infrahub_sync.adapters.peeringmanager import PeeringmanagerModel
-
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -13,25 +12,24 @@ from infrahub_sync.adapters.peeringmanager import PeeringmanagerModel
 class InfraAutonomousSystem(PeeringmanagerModel):
     _modelname = "InfraAutonomousSystem"
     _identifiers = ("asn",)
-    _attributes = ("description", "name", "irr_as_set", "ipv4_max_prefixes", "ipv6_max_prefixes", "affiliated")
-    asn: int
+    _attributes = ("affiliated", "description", "ipv4_max_prefixes", "ipv6_max_prefixes", "irr_as_set", "name")
+    affiliated: bool | None = None
     description: str | None = None
-    name: str
-    irr_as_set: str | None = None
     ipv4_max_prefixes: int | None = None
     ipv6_max_prefixes: int | None = None
-    affiliated: bool | None = None
+    irr_as_set: str | None = None
+    name: str
+    asn: int
 
     local_id: str | None = None
     local_data: Any | None = None
-
 
 class InfraBGPPeerGroup(PeeringmanagerModel):
     _modelname = "InfraBGPPeerGroup"
     _identifiers = ("name",)
     _attributes = ("import_policies", "export_policies", "bgp_communities", "description", "status")
-    name: str
     description: str | None = None
+    name: str
     status: str | None = None
     import_policies: list[str] | None = []
     export_policies: list[str] | None = []
@@ -40,22 +38,20 @@ class InfraBGPPeerGroup(PeeringmanagerModel):
     local_id: str | None = None
     local_data: Any | None = None
 
-
 class InfraBGPRoutingPolicy(PeeringmanagerModel):
     _modelname = "InfraBGPRoutingPolicy"
     _identifiers = ("name",)
-    _attributes = ("bgp_communities", "policy_type", "address_family", "description", "weight", "label")
-    policy_type: str
-    address_family: int
+    _attributes = ("bgp_communities", "description", "policy_type", "label", "address_family", "weight")
     description: str | None = None
-    name: str
-    weight: int | None = 1000
+    policy_type: str
     label: str | None = None
+    address_family: int
+    weight: int | None = 1000
+    name: str
     bgp_communities: list[str] | None = []
 
     local_id: str | None = None
     local_data: Any | None = None
-
 
 class InfraBGPCommunity(PeeringmanagerModel):
     _modelname = "InfraBGPCommunity"
@@ -64,37 +60,35 @@ class InfraBGPCommunity(PeeringmanagerModel):
     community_type: str | None = None
     value: str
     description: str | None = None
-    label: str | None = None
     name: str
+    label: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
 class InfraIXP(PeeringmanagerModel):
     _modelname = "InfraIXP"
     _identifiers = ("name",)
-    _attributes = ("import_policies", "bgp_communities", "export_policies", "status", "description")
-    name: str
-    status: str | None = "enabled"
+    _attributes = ("bgp_communities", "import_policies", "export_policies", "description", "status")
     description: str | None = None
-    import_policies: list[str] | None = []
+    status: str | None = "enabled"
+    name: str
     bgp_communities: list[str] | None = []
+    import_policies: list[str] | None = []
     export_policies: list[str] | None = []
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
 class InfraIXPConnection(PeeringmanagerModel):
     _modelname = "InfraIXPConnection"
     _identifiers = ("name",)
-    _attributes = ("internet_exchange_point", "status", "vlan", "peeringdb_netixlan", "description")
-    status: str | None = "enabled"
+    _attributes = ("internet_exchange_point", "description", "peeringdb_netixlan", "vlan", "status")
+    description: str | None = None
+    peeringdb_netixlan: int | None = None
     name: str
     vlan: int | None = None
-    peeringdb_netixlan: int | None = None
-    description: str | None = None
+    status: str | None = "enabled"
     internet_exchange_point: str
 
     local_id: str | None = None
