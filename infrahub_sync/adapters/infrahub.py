@@ -342,7 +342,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                     peer_data = self.infrahub_node_to_diffsync(peer_node)
                     peer_item = peer_model(**peer_data)
                     values.append(peer_item.get_unique_id())
-                data[rel_schema.name] = values
+                data[rel_schema.name] = sorted(values)
 
         return data
 
