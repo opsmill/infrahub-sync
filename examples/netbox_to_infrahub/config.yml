@@ -238,13 +238,13 @@ schema_mapping:
         reference: BuiltinTag
     # Showcase Filters
     # It will import the ones with dmu01 in their name *AND* without pdu
-    filters:
-      - field: name
-        operation: "contains"
-        value: "dmi01"
-      - field: name
-        operation: "not contains"
-        value: "pdu"
+    # filters:
+    #   - field: name
+    #     operation: "contains"
+    #     value: "dmi01"
+    #   - field: name
+    #     operation: "not contains"
+    #     value: "pdu"
     # Showcase Transforms
     transforms:
       - field: name
@@ -287,13 +287,13 @@ schema_mapping:
       # - name: status
       #   mapping: status
       #   reference: StatusGeneric
-    filters:
-      - field: device.name
-        operation: "contains"
-        value: "dmi01"
-      - field: device.name
-        operation: "not contains"
-        value: "pdu"
+    # filters:
+    #   - field: device.name
+    #     operation: "contains"
+    #     value: "dmi01"
+    #   - field: device.name
+    #     operation: "not contains"
+    #     value: "pdu"
 
   # Circuits (Provider, Provider Network, Circuits Types, Circuits)
   - name: OrganizationGeneric
