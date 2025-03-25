@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 
 from infrahub_sync.adapters.peeringmanager import PeeringmanagerModel
+
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -12,7 +13,15 @@ from infrahub_sync.adapters.peeringmanager import PeeringmanagerModel
 class InfraAutonomousSystem(PeeringmanagerModel):
     _modelname = "InfraAutonomousSystem"
     _identifiers = ("asn",)
-    _attributes = ("organization", "description", "name", "affiliated", "ipv6_max_prefixes", "irr_as_set", "ipv4_max_prefixes")
+    _attributes = (
+        "organization",
+        "description",
+        "name",
+        "affiliated",
+        "ipv6_max_prefixes",
+        "irr_as_set",
+        "ipv4_max_prefixes",
+    )
     description: str | None = None
     name: str
     asn: int
@@ -24,6 +33,7 @@ class InfraAutonomousSystem(PeeringmanagerModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraBGPPeerGroup(PeeringmanagerModel):
     _modelname = "InfraBGPPeerGroup"
@@ -39,6 +49,7 @@ class InfraBGPPeerGroup(PeeringmanagerModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class IpamIPAddress(PeeringmanagerModel):
     _modelname = "IpamIPAddress"
     _identifiers = ("address",)
@@ -49,6 +60,7 @@ class IpamIPAddress(PeeringmanagerModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class OrganizationProvider(PeeringmanagerModel):
     _modelname = "OrganizationProvider"
     _identifiers = ("name",)
@@ -57,6 +69,7 @@ class OrganizationProvider(PeeringmanagerModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraBGPCommunity(PeeringmanagerModel):
     _modelname = "InfraBGPCommunity"
@@ -70,6 +83,7 @@ class InfraBGPCommunity(PeeringmanagerModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraBGPRoutingPolicy(PeeringmanagerModel):
     _modelname = "InfraBGPRoutingPolicy"
@@ -86,6 +100,7 @@ class InfraBGPRoutingPolicy(PeeringmanagerModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraIXP(PeeringmanagerModel):
     _modelname = "InfraIXP"
     _identifiers = ("name",)
@@ -100,10 +115,19 @@ class InfraIXP(PeeringmanagerModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraIXPConnection(PeeringmanagerModel):
     _modelname = "InfraIXPConnection"
     _identifiers = ("name",)
-    _attributes = ("ipv6_address", "ipv4_address", "internet_exchange_point", "description", "peeringdb_netixlan", "vlan", "status")
+    _attributes = (
+        "ipv6_address",
+        "ipv4_address",
+        "internet_exchange_point",
+        "description",
+        "peeringdb_netixlan",
+        "vlan",
+        "status",
+    )
     description: str | None = None
     peeringdb_netixlan: int | None = None
     name: str

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 
 from infrahub_sync.adapters.infrahub import InfrahubModel
+
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -19,6 +20,7 @@ class CoreStandardGroup(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class BuiltinTag(InfrahubModel):
     _modelname = "BuiltinTag"
     _identifiers = ("name",)
@@ -28,6 +30,7 @@ class BuiltinTag(InfrahubModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class ChoiceCircuitType(InfrahubModel):
     _modelname = "ChoiceCircuitType"
@@ -39,6 +42,7 @@ class ChoiceCircuitType(InfrahubModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class ChoiceDeviceType(InfrahubModel):
     _modelname = "ChoiceDeviceType"
@@ -54,6 +58,7 @@ class ChoiceDeviceType(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraCircuit(InfrahubModel):
     _modelname = "InfraCircuit"
     _identifiers = ("circuit_id",)
@@ -67,6 +72,7 @@ class InfraCircuit(InfrahubModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraDevice(InfrahubModel):
     _modelname = "InfraDevice"
@@ -86,6 +92,7 @@ class InfraDevice(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraIPAddress(InfrahubModel):
     _modelname = "InfraIPAddress"
     _identifiers = ("address", "vrf")
@@ -97,6 +104,7 @@ class InfraIPAddress(InfrahubModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraInterfaceL2L3(InfrahubModel):
     _modelname = "InfraInterfaceL2L3"
@@ -116,6 +124,7 @@ class InfraInterfaceL2L3(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraPrefix(InfrahubModel):
     _modelname = "InfraPrefix"
     _identifiers = ("prefix", "vrf")
@@ -130,6 +139,7 @@ class InfraPrefix(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraProviderNetwork(InfrahubModel):
     _modelname = "InfraProviderNetwork"
     _identifiers = ("name",)
@@ -142,6 +152,7 @@ class InfraProviderNetwork(InfrahubModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraRack(InfrahubModel):
     _modelname = "InfraRack"
@@ -159,6 +170,7 @@ class InfraRack(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraRouteTarget(InfrahubModel):
     _modelname = "InfraRouteTarget"
     _identifiers = ("name", "organization")
@@ -169,6 +181,7 @@ class InfraRouteTarget(InfrahubModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraVLAN(InfrahubModel):
     _modelname = "InfraVLAN"
@@ -184,6 +197,7 @@ class InfraVLAN(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraVRF(InfrahubModel):
     _modelname = "InfraVRF"
     _identifiers = ("name",)
@@ -197,6 +211,7 @@ class InfraVRF(InfrahubModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class LocationGeneric(InfrahubModel):
     _modelname = "LocationGeneric"
@@ -212,6 +227,7 @@ class LocationGeneric(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class OrganizationGeneric(InfrahubModel):
     _modelname = "OrganizationGeneric"
     _identifiers = ("name",)
@@ -222,6 +238,7 @@ class OrganizationGeneric(InfrahubModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class RoleGeneric(InfrahubModel):
     _modelname = "RoleGeneric"
