@@ -19,10 +19,10 @@ from .sync_models import (
 # -------------------------------------------------------
 class InfrahubSync(InfrahubAdapter):
     InfraAutonomousSystem = InfraAutonomousSystem
-    InfraBGPCommunity = InfraBGPCommunity
     InfraBGPPeerGroup = InfraBGPPeerGroup
+    IpamIPAddress = IpamIPAddress
+    OrganizationProvider = OrganizationProvider
+    InfraBGPCommunity = InfraBGPCommunity
     InfraBGPRoutingPolicy = InfraBGPRoutingPolicy
     InfraIXP = InfraIXP
     InfraIXPConnection = InfraIXPConnection
-    IpamIPAddress = IpamIPAddress
-    OrganizationProvider = OrganizationProvider

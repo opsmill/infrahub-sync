@@ -334,6 +334,7 @@ schema_mapping:
         mapping: name
       - name: description
         mapping: description
+
   - name: InfraRouteTarget
     mapping: ipam.route-targets
     identifiers: ["name", "organization"]
