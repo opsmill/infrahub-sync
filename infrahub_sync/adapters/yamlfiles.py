@@ -85,7 +85,10 @@ class YamlfilesAdapter(DiffSyncMixin, Adapter):
 
             resource_name = element.mapping
 
-            objs = self.data.get(resource_name)
+            objs = self.data.get(resource_name, [])
+
+            if resource_name not in self.data:
+                raise SystemExit(f"Mapping value: {resource_name} not in data.")
 
             total = len(objs)
 
@@ -133,6 +136,7 @@ class YamlfilesAdapter(DiffSyncMixin, Adapter):
                     )
                     raise IndexError(msg)
                 if not field_is_list:
+                    breakpoint()
                     if node := get_value(obj, field.mapping):
                         if isinstance(node, dict):
                             matching_nodes = []
