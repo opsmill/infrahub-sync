@@ -136,7 +136,6 @@ class YamlfilesAdapter(DiffSyncMixin, Adapter):
                     )
                     raise IndexError(msg)
                 if not field_is_list:
-                    breakpoint()
                     if node := get_value(obj, field.mapping):
                         if isinstance(node, dict):
                             matching_nodes = []
@@ -167,7 +166,6 @@ class YamlfilesAdapter(DiffSyncMixin, Adapter):
                             raise IndexError(msg)
                         data[field.name].append(matching_nodes[0].get_unique_id())
                     data[field.name] = sorted(data[field.name])
-        # breakpoint()
         return data
 
     def generate_uuid_from_list(self, values):
