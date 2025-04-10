@@ -45,6 +45,7 @@ class ObserviumAdapter(DiffSyncMixin, Adapter):
         username = os.environ.get("OBSERVIUM_USERNAME") or settings.get("username")
         password = os.environ.get("OBSERVIUM_PASSWORD") or settings.get("password")
         timeout = settings.get("timeout")
+        verify_ssl = settings.get("verify_ssl", True)
 
         if not url:
             msg = "url must be specified!"
@@ -58,6 +59,7 @@ class ObserviumAdapter(DiffSyncMixin, Adapter):
             username=username,
             password=password,
             timeout=timeout,
+            verify=verify_ssl,
         )
 
     def model_loader(self, model_name: str, model: ObserviumModel) -> None:

@@ -44,6 +44,7 @@ class LibrenmsAdapter(DiffSyncMixin, Adapter):
         auth_method = settings.get("auth_method", "x-auth-token")
         api_token = os.environ.get("LIBRENMS_TOKEN") or settings.get("token")
         timeout = settings.get("timeout", 30)
+        verify_ssl = settings.get("verify_ssl", True)
         params = settings.get("params", {})
 
         if not url:
@@ -61,6 +62,7 @@ class LibrenmsAdapter(DiffSyncMixin, Adapter):
             api_token=api_token,
             timeout=timeout,
             params=params,
+            verify=verify_ssl,
         )
 
     def model_loader(self, model_name: str, model: LibrenmsModel) -> None:

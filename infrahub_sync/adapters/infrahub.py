@@ -216,15 +216,18 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         infrahub_url = os.environ.get("INFRAHUB_ADDRESS") or os.environ.get("INFRAHUB_URL") or settings.get("url")
         infrahub_token = os.environ.get("INFRAHUB_API_TOKEN") or settings.get("token")
         infrahub_branch = settings.get("branch") or branch
+        verify_ssl = settings.get("verify_ssl", True)
 
         if not infrahub_url or not infrahub_token:
             msg = "Both url and token must be specified!"
             raise ValueError(msg)
 
         if infrahub_branch:
-            sdk_config = Config(timeout=60, default_branch=infrahub_branch, api_token=infrahub_token)
+            sdk_config = Config(
+                timeout=60, default_branch=infrahub_branch, api_token=infrahub_token, tls_insecure=not verify_ssl
+            )
         else:
-            sdk_config = Config(timeout=60, api_token=infrahub_token)
+            sdk_config = Config(timeout=60, api_token=infrahub_token, tls_insecure=not verify_ssl)
 
         self.client = InfrahubClientSync(address=infrahub_url, config=sdk_config)
 

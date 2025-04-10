@@ -43,6 +43,7 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
         api_endpoint = settings.get("api_endpoint", "api")  # Default endpoint, change if necessary
         auth_method = settings.get("auth_method", "token")
         api_token = os.environ.get("PEERING_MANAGER_TOKEN") or settings.get("token")
+        verify_ssl = settings.get("verify_ssl", True)
         timeout = settings.get("timeout", 30)
 
         if not url:
@@ -54,7 +55,9 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
             raise ValueError(msg)
 
         full_base_url = f"{url.rstrip('/')}/{api_endpoint.strip('/')}"
-        return RestApiClient(base_url=full_base_url, auth_method=auth_method, api_token=api_token, timeout=timeout)
+        return RestApiClient(
+            base_url=full_base_url, auth_method=auth_method, api_token=api_token, timeout=timeout, verify=verify_ssl
+        )
 
     def model_loader(self, model_name: str, model: PeeringmanagerModel) -> None:
         """
