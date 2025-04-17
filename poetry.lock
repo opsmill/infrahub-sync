@@ -616,13 +616,13 @@ all = ["flake8 (>=7.1.1)", "mypy (>=1.11.2)", "pytest (>=8.3.2)", "ruff (>=0.6.2
 
 [[package]]
 name = "infrahub-sdk"
-version = "1.9.1"
+version = "1.10.1"
 description = "Python Client to interact with Infrahub"
 optional = false
 python-versions = "<3.14,>=3.9"
 files = [
-    {file = "infrahub_sdk-1.9.1-py3-none-any.whl", hash = "sha256:bf9655512bb57f63e45d29090e7a48abe05769a4efc03cf32a975c75b834c2b5"},
-    {file = "infrahub_sdk-1.9.1.tar.gz", hash = "sha256:43e3b329909a95e881281abe55b21b4031ec2f7fdce94ca3886a46a6cac30bdd"},
+    {file = "infrahub_sdk-1.10.1-py3-none-any.whl", hash = "sha256:890a2f971f9805307405ad252dc41b9f95d29e7d2b27293788b129a2073c4349"},
+    {file = "infrahub_sdk-1.10.1.tar.gz", hash = "sha256:cf772f9e84d0356aeba561420311a0b0f29633da1e203bb6a2b6200e10967ae5"},
 ]
 
 [package.dependencies]
@@ -634,6 +634,7 @@ httpx = [
     {version = ">=0.23", markers = "python_version >= \"3.11\""},
 ]
 Jinja2 = {version = ">=3,<4", optional = true, markers = "extra == \"ctl\" or extra == \"tests\" or extra == \"all\""}
+netutils = ">=1.0.0,<2.0.0"
 numpy = [
     {version = ">=1.24.2,<2.0.0", optional = true, markers = "python_version >= \"3.9\" and python_version < \"3.12\" and extra == \"ctl\" or python_version >= \"3.9\" and python_version < \"3.12\" and extra == \"all\""},
     {version = ">=1.26.2,<2.0.0", optional = true, markers = "python_version >= \"3.12\" and extra == \"ctl\" or python_version >= \"3.12\" and extra == \"all\""},
@@ -1419,8 +1420,8 @@ astroid = ">=3.3.8,<=3.4.0-dev0"
 colorama = {version = ">=0.4.5", markers = "sys_platform == \"win32\""}
 dill = [
     {version = ">=0.2", markers = "python_version < \"3.11\""},
-    {version = ">=0.3.7", markers = "python_version >= \"3.12\""},
     {version = ">=0.3.6", markers = "python_version >= \"3.11\" and python_version < \"3.12\""},
+    {version = ">=0.3.7", markers = "python_version >= \"3.12\""},
 ]
 isort = ">=4.2.5,<5.13.0 || >5.13.0,<6"
 mccabe = ">=0.6,<0.8"
