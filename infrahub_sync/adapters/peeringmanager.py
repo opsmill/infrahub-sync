@@ -32,13 +32,12 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
         super().__init__(*args, **kwargs)
 
         self.target = target
-        self.client = self._create_rest_client(adapter)
-        self.config = config
         settings = adapter.settings or {}
         self.params = settings.get("params", {})
+        self.client = self._create_rest_client(settings=settings)
+        self.config = config
 
-    def _create_rest_client(self, adapter: SyncAdapter) -> RestApiClient:
-        settings = adapter.settings or {}
+    def _create_rest_client(self, settings: dict) -> RestApiClient:
         url = os.environ.get("PEERING_MANAGER_ADDRESS") or os.environ.get("PEERING_MANAGER_URL") or settings.get("url")
         api_endpoint = settings.get("api_endpoint", "api")  # Default endpoint, change if necessary
         auth_method = settings.get("auth_method", "token")

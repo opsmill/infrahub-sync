@@ -26,8 +26,6 @@ You will need to install it beforehand.
 Currently, the Netbox adapter supports only **one-way synchronization** from Netbox to Infrahub.
 Syncing data back into Netbox is not yet supported.
 
-### Configuration parameters
-
 :::
 
 ## Schema
@@ -61,6 +59,29 @@ curl https://raw.githubusercontent.com/opsmill/infrahub-sync/refs/heads/main/exa
 ```
 
 ### Configuration parameters
+
+To instruct `infrahub-sync` to use the Netbox adapter, set `netbox` in the direction 'name', you want to use for Peering Manager.
+
+Below is a snippet from the example config.yml file:
+
+<Tabs>
+  <TabItem value="Source example" default>
+
+  ```yaml
+  ---
+  name: from-netbox
+  source:
+  name: netbox
+  settings:
+      url: "https://<NETBOX-ENDPOINT>"
+      token: "<TOKEN>"
+      verify_ssl: true # Default value
+  ```
+
+  </TabItem>
+</Tabs>
+
+### Schema mapping
 
 The configuration file allows mapping Netbox data to the Infrahub schema, which has been designed to loosely align with the Netbox data model.
 Below is an example showing how to:
