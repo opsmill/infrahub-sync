@@ -105,6 +105,29 @@ To download the example `config.yml`
 
 ### Configuration parameters
 
+To instruct `infrahub-sync` to use the Nautobot adapter, set `nautobot` in the direction 'name', you want to use for Peering Manager.
+
+Below is a snippet from the example config.yml file:
+
+<Tabs>
+  <TabItem value="Source example" default>
+
+  ```yaml
+  ---
+  name: from-nautobot
+  source:
+  name: nautobot
+  settings:
+      url: "https://<NAUTOBOT-ENDPOINT>"
+      token: "<TOKEN>"
+      verify_ssl: true # Default value
+  ```
+
+  </TabItem>
+</Tabs>
+
+### Schema mapping
+
 The configuration file allows mapping Nautobot data to the Infrahub schema, which has been designed to loosely align with the Nautobot data model.
 Below is an example showing how to:
 

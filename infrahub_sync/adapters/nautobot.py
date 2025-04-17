@@ -40,12 +40,14 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
         settings = adapter.settings or {}
         url = os.environ.get("NAUTOBOT_ADDRESS") or os.environ.get("NAUTOBOT_URL") or settings.get("url")
         token = os.environ.get("NAUTOBOT_TOKEN") or settings.get("token")
+        verify_ssl = settings.get("verify_ssl", True)
 
         if not url or not token:
             msg = "Both url and token must be specified!"
             raise ValueError(msg)
 
-        return pynautobot.api(url, token=token, threading=True, max_workers=5, retries=3)
+        client = pynautobot.api(url=url, token=token, threading=True, max_workers=5, retries=3, verify=verify_ssl)
+        return client
 
     def model_loader(self, model_name: str, model: NautobotModel) -> None:
         """

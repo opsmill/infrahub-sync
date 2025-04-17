@@ -31,13 +31,12 @@ class ObserviumAdapter(DiffSyncMixin, Adapter):
         super().__init__(*args, **kwargs)
 
         self.target = target
-        self.client = self._create_rest_client(adapter)
-        self.config = config
         settings = adapter.settings or {}
         self.params = settings.get("params", {})
+        self.client = self._create_rest_client(settings=settings)
+        self.config = config
 
-    def _create_rest_client(self, adapter: SyncAdapter) -> RestApiClient:
-        settings = adapter.settings or {}
+    def _create_rest_client(self, settings: dict) -> RestApiClient:
         url = os.environ.get("OBSERVIUM_ADDRESS") or os.environ.get("OBSERVIUM_URL") or settings.get("url")
         api_endpoint = settings.get("api_endpoint", "/api/v0")
         auth_method = settings.get("auth_method", "basic")
@@ -45,6 +44,7 @@ class ObserviumAdapter(DiffSyncMixin, Adapter):
         username = os.environ.get("OBSERVIUM_USERNAME") or settings.get("username")
         password = os.environ.get("OBSERVIUM_PASSWORD") or settings.get("password")
         timeout = settings.get("timeout")
+        verify_ssl = settings.get("verify_ssl", True)
 
         if not url:
             msg = "url must be specified!"
@@ -58,6 +58,7 @@ class ObserviumAdapter(DiffSyncMixin, Adapter):
             username=username,
             password=password,
             timeout=timeout,
+            verify=verify_ssl,
         )
 
     def model_loader(self, model_name: str, model: ObserviumModel) -> None:

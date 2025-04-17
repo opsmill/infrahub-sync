@@ -4,21 +4,9 @@ title: Creating a new sync instance
 
 This guide will walk you through the steps to create a new sync instance for infrahub-sync, allowing you to synchronize data between your source and destination systems efficiently.
 
-## Step 1: Define your configuration
+## Step 1: Define basic configuration
 
-Start by defining your synchronization requirements in a YAML configuration file.
-
-:::info
-
-- The `name` key in the destination model corresponds to the Infrahub attribute.
-- The `mapping` key in the destination model corresponds to the key in the IP Fabric payload to use.
-- If `reference` is used, it links to a model that has been synchronized prior to this model.
-
-:::
-
-Here's an example configuration for syncing data from Nautobot to Infrahub:
-
-In this example, consider that `device_type` and  `manufacturer` are Attribute of InfraDevice, if you are using another object with a Relationship, you would need to first import those objects and then referenced them (like InfraDevice in InfraInterface)
+Start by defining your synchronization source and destination in a YAML configuration file.
 
 ```yaml
 ---
@@ -35,12 +23,31 @@ destination:
   settings:
     url: "https://infrahub.example.com"
     token: "INFRAHUB_API_TOKEN" # This can also be loaded from environment variables
+```
 
+## Step 2: Define synchronization order
 
+The `order` key specifies the sequence in which objects should be synchronized. This is important because some objects may depend on others.
+
+```yaml
 order:
   - "InfraDevice"
   - "InfraInterface"
+```
 
+## Step 3: Configure schema mapping
+
+The `schema_mapping` section defines how data is mapped from the source to the destination.
+
+:::info
+
+- The `name` key in the destination model corresponds to the Infrahub attribute.
+- The `mapping` key in the destination model corresponds to the key in the source payload to use.
+- If `reference` is used, it links to a model that has been synchronized prior to this model.
+
+:::
+
+```yaml
 schema_mapping:
   - name: InfraDevice
     mapping: "dcim.devices"
@@ -66,6 +73,39 @@ schema_mapping:
       - name: "device"
         reference: "InfraDevice"
 ```
+
+In this example, `device_type` and `manufacturer` are Attributes of InfraDevice. If you are using another object with a Relationship, you would need to first import those objects and then reference them (like InfraDevice in InfraInterface).
+
+## Step 4: Configure synchronization behavior
+
+You can control how the synchronization process handles various scenarios using DiffSync flags.
+
+```yaml
+# Optional: Control sync behavior with diffsync flags
+diffsync_flags:
+  - "SKIP_UNMATCHED_DST"  # Skip objects in destination that don't exist in source
+```
+
+:::info Understanding DiffSync Flags
+
+DiffSync flags control how the synchronization process handles various scenarios. You can add these flags to your configuration to customize the sync behavior:
+
+```yaml
+diffsync_flags:
+  - "SKIP_UNMATCHED_DST"  # Default if no flags are specified
+```
+
+Available flags:
+
+| Flag | Description |
+|------|-------------|
+| `SKIP_UNMATCHED_DST` | Skip objects in the destination that don't exist in the source (prevents deletion) |
+| `SKIP_UNMATCHED_SRC` | Skip objects in the source that don't exist in the destination (prevents creation) |
+| `SKIP_MODIFIED` | Skip objects that exist in both systems but have different values (prevents updates) |
+
+If no flags are specified, `SKIP_UNMATCHED_DST` is used by default, which means objects in the destination that don't exist in the source will be preserved rather than deleted.
+
+:::
 
 For more information on customizing your sync configuration and troubleshooting, see the [Sync Instance configuration reference](../reference/config)
 

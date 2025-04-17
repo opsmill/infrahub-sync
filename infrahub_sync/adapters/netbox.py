@@ -4,6 +4,8 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any
 
+from requests import Session
+
 try:
     from typing import Self
 except ImportError:
@@ -39,12 +41,18 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
         settings = adapter.settings or {}
         url = os.environ.get("NETBOX_ADDRESS") or os.environ.get("NETBOX_URL") or settings.get("url")
         token = os.environ.get("NETBOX_TOKEN") or settings.get("token")
+        verify_ssl = settings.get("verify_ssl", True)
 
         if not url or not token:
             msg = "Both url and token must be specified!"
             raise ValueError(msg)
 
-        return pynetbox.api(url, token=token)
+        client = pynetbox.api(url, token=token)
+        # Set SSL verification
+        session = Session()
+        session.verify = verify_ssl
+        client.http_session = session
+        return client
 
     def model_loader(self, model_name: str, model: NetboxModel) -> None:
         """
