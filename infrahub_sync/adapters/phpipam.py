@@ -19,7 +19,7 @@ from infrahub_sync import (
     SyncConfig,
 )
 
-from .utils import get_value
+from .utils import derive_identifier_key, get_value
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -94,16 +94,15 @@ class PhpipamAdapter(DiffSyncMixin, Adapter):
                     objs = self.client.get_entity(controller="devices")
                 elif resource_name == "sections":
                     objs = self.client.get_entity(controller="sections")
+                elif resource_name == "vrfs":
+                    objs = self.client.get_entity(controller="vrf")
                 # TODO: For other resources, try a generic approach ?
             except Exception as exc:  # noqa: BLE001
-                msg = f"Failed to get {resource_name} from phpIPAM: {exc}"
-                print(msg)
+                print(f"Failed to get {resource_name} from phpIPAM: {exc}")
                 continue
 
-            # Ensure we have a list of dictionaries
             if not objs or not isinstance(objs, list):
-                msg = f"No data returned for {resource_name} or invalid format"
-                print(msg)
+                print(f"No data returned for {resource_name} or invalid format")
                 continue
 
             total = len(objs)
@@ -119,40 +118,53 @@ class PhpipamAdapter(DiffSyncMixin, Adapter):
 
             # Create model instances after filtering and transforming
             for obj in transformed_objs:
-                data = self.obj_to_diffsync(obj, model, element)
+                data = self.obj_to_diffsync(obj=obj, mapping=element, model=model)
                 item = model(**data)
                 self.add(item)
 
     def obj_to_diffsync(
-        self, obj: dict, model: PhpipamModel, element: SchemaMappingModel
+        self,
+        obj: dict[str, Any],
+        mapping: SchemaMappingModel,
+        model: PhpipamModel,
     ) -> dict[str, Any]:
         """
         Transform phpIPAM data to DiffSync format.
 
         Parameters:
             obj: The phpIPAM object data
+            mapping: The schema mapping element
             model: The DiffSync model class
-            element: The schema mapping element
 
         Returns:
             dict: The transformed data
         """
-        obj_id = obj.get("id")
+        try:
+            obj_id = derive_identifier_key(obj=obj)
+        except ValueError:
+            # Try to get the ID based on the resource type
+            resource_type = mapping.mapping.rstrip("s")
+            id_field = f"{resource_type}Id"
+
+            if obj.get(id_field):
+                obj_id = obj[id_field]
+            else:
+                msg = f"No suitable identifier key found in object: {obj}"
+                raise ValueError(msg)
+
         data: dict[str, Any] = {"local_id": str(obj_id)}
 
         # Check if this is a subnet/prefix object from phpIPAM
         is_subnet_object = "subnet" in obj and "mask" in obj
-        is_address_object = "ip" in obj
 
-        for field in element.fields:
+        for field in mapping.fields:
             field_is_list = model.is_list(name=field.name)
 
             if field.static:
                 data[field.name] = field.static
             elif not field_is_list and field.mapping and not field.reference:
-                # Special handling for subnet/prefix objects
+                # For subnet objects in phpIPAM, combine subnet and mask
                 if is_subnet_object and field.mapping == "subnet":
-                    # For subnet objects in phpIPAM, combine subnet and mask
                     subnet = obj.get("subnet")
                     mask = obj.get("mask")
                     if subnet and mask:
@@ -162,12 +174,11 @@ class PhpipamAdapter(DiffSyncMixin, Adapter):
                 value = get_value(obj, field.mapping)
 
                 # Default to /32 for IPv4 or /128 for IPv6 if no mask is provided
-                if is_address_object and value and "/" not in value:
+                if field.mapping == "ip" and value and "/" not in value:
                     value = f"{value}/128" if ":" in value else f"{value}/32"
 
                 if value is not None:
                     data[field.name] = value
-
             elif field_is_list and field.mapping and not field.reference:
                 msg = "It's not supported yet to have an attribute of type list with a simple mapping"
                 raise NotImplementedError(msg)
@@ -181,18 +192,17 @@ class PhpipamAdapter(DiffSyncMixin, Adapter):
                     )
                     raise IndexError(msg)
                 if not field_is_list:
-                    if node := get_value(obj, field.mapping):
-                        if isinstance(node, dict):
-                            matching_nodes = []
-                            node_id = node.get("id", None)
-                            matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
-                            if len(matching_nodes) == 0:
-                                msg = f"Unable to locate the node {field.name} {node_id}"
-                                raise IndexError(msg)
+                    # Use the build_mapping function to get the reference ID
+                    ref_id = self.build_mapping(
+                        reference_model=field.reference,
+                        field_mapping=field.mapping,
+                        obj=obj
+                    )
+                    if ref_id:
+                        matching_nodes = [item for item in nodes if item.local_id == ref_id]
+                        if matching_nodes:
                             node = matching_nodes[0]
                             data[field.name] = node.get_unique_id()
-                        else:
-                            data[field.name] = node
                 else:
                     data[field.name] = []
                     for node in get_value(obj, field.mapping):
@@ -210,10 +220,45 @@ class PhpipamAdapter(DiffSyncMixin, Adapter):
                         data[field.name].append(matching_nodes[0].get_unique_id())
                     data[field.name] = sorted(data[field.name])
 
-        # Add local_data for debugging
-        data["local_data"] = obj
-
         return data
+
+    def build_mapping(
+            self,
+            reference_model: str,
+            field_mapping: str,
+            obj: dict
+        ) -> str:
+        """
+        Build a reference mapping for a related node.
+
+        Parameters:
+            reference_model: The model name of the referenced object
+            field_mapping: The field mapping in the current object that points to the reference
+            obj: The current object data
+
+        Returns:
+            A string that can be used to identify the referenced object
+        """
+        # Get model name from the store
+        _, modelname = self.store._get_object_class_and_model(model=reference_model)
+
+        # Find the schema element matching the model name
+        schema_element = next(
+            (element for element in self.config.schema_mapping if element.name == modelname),
+            None,
+        )
+
+        if not schema_element:
+            return str(obj.get(field_mapping, ""))
+
+        # Get the value from the current object that points to the reference
+        ref_value = obj.get(field_mapping)
+        if not ref_value:
+            return ""
+
+        # For phpIPAM, the reference is usually just an ID
+        if isinstance(ref_value, (str, int)):
+            return str(ref_value)
 
 
 class PhpipamModel(DiffSyncModelMixin, DiffSyncModel):

@@ -16,6 +16,7 @@ destination:
     url: "http://localhost:8000"
 
 order: [
+  # "InfraVLAN",
   "IpamIPPrefix",
   "IpamIPAddress",
 ]
@@ -31,8 +32,7 @@ schema_mapping:
         mapping: isPool
       # - name: vlan
       #   mapping: vlanId
-      # - name: vrf
-      #   mapping: vrfId
+      #   reference: InfraVLAN
 
   - name: IpamIPAddress
     mapping: addresses
