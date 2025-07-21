@@ -1,6 +1,15 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
+
+
+def is_uuid(value: str) -> bool:
+    try:
+        UUID(value)
+    except ValueError:
+        return False
+    return True
 
 
 def get_value(obj: Any, name: str) -> Any | None:

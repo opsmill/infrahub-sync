@@ -28,6 +28,8 @@ from infrahub_sync import (
 )
 from infrahub_sync.generator import has_field
 
+from .utils import is_uuid
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, MutableMapping
 
@@ -63,9 +65,15 @@ def resolve_peer_node(
             if peer_node and peer_node.get_kind() == used_by:
                 break
 
-    if not peer_node and fallback:
+    if not peer_node and not fallback:
+        print(f"Unable to find {rel_schema.peer} [{key}] in Store - Ignored")
+        return None
+    if not peer_node and fallback and client:
         print(f"Unable to find {rel_schema.peer} [{key}] in Store - Fallback to Infrahub")
-        peer_node = client.get(id=key, kind=rel_schema.peer, populate_store=True)
+        if is_uuid(key):
+            peer_node = client.get(id=key, kind=rel_schema.peer, populate_store=True)
+        else:
+            peer_node = client.get(hfid=[key], kind=rel_schema.peer, populate_store=True)
         if not peer_node:
             print(f"Unable to find {rel_schema.peer} [{key}] - Ignored")
     return peer_node
@@ -101,7 +109,6 @@ def update_node(node: InfrahubNodeSync, attrs: Mapping[str, Any]) -> InfrahubNod
                             fallback=False,
                         )
                         if not peer_node:
-                            print(f"Unable to find {rel_schema.peer} [{attr_value}] in the Store - Ignored")
                             continue
                         setattr(node, attr_name, peer_node)
                     else:
@@ -142,6 +149,7 @@ def update_node(node: InfrahubNodeSync, attrs: Mapping[str, Any]) -> InfrahubNod
 def diffsync_to_infrahub(
     ids: Mapping[Any, Any],
     attrs: Mapping[Any, Any],
+    client: InfrahubClientSync,
     store: NodeStoreSync,
     node_schema: NodeSchema,
     schemas: Mapping[str, MainSchemaTypesAPI],
@@ -170,9 +178,10 @@ def diffsync_to_infrahub(
                         rel_schema=rel_schema,
                         peer_schema=peer_schema,
                         store=store,
+                        fallback=True,
+                        client=client
                     )
                     if not peer_node:
-                        print(f"Unable to find {rel_schema.peer} [{data[key]}] in the Store - Ignored")
                         continue
                     data[key] = peer_node.id
 
@@ -189,7 +198,6 @@ def diffsync_to_infrahub(
                             store=store,
                         )
                         if not peer_node:
-                            print(f"Unable to find {rel_schema.peer} [{value}] in the Store - Ignored")
                             continue
                         new_values.append(peer_node.id)
                     data[key] = new_values
@@ -360,7 +368,7 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
     ) -> Self | None:
         node_schema = adapter.client.schema.get(kind=cls.__name__)
         data = diffsync_to_infrahub(
-            ids=ids, attrs=attrs, node_schema=node_schema, store=adapter.client.store, schemas=adapter.schema
+            ids=ids, attrs=attrs, node_schema=node_schema, client=adapter.client, store=adapter.client.store, schemas=adapter.schema
         )
         unique_id = cls(**ids, **attrs).get_unique_id()
         source_id = None
