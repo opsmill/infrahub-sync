@@ -74,7 +74,7 @@ jobs:
           poetry version $VERSION  # directly use the VERSION
 
       - name: Update lock file
-        run: poetry lock --no-update
+        run: poetry lock
 
       - name: commit pyproject.toml
         uses: github-actions-x/commit@v2.9
