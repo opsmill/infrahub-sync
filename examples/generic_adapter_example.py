@@ -7,13 +7,13 @@ to connect to different types of REST APIs.
 """
 
 from infrahub_sync import SyncAdapter, SyncConfig
-from infrahub_sync.adapters.generic_rest_api import GenericRestApiAdapter, GenericRestApiModel
+from infrahub_sync.adapters.generic_rest_api import GenericRestApiAdapter
 
 
 def example_librenms_style():
     """Example configuration for LibreNMS-style API."""
     print("=== LibreNMS-style Configuration ===")
-    
+
     # Configuration similar to LibreNMS
     settings = {
         "url": "https://demo.librenms.org",
@@ -23,7 +23,7 @@ def example_librenms_style():
         "url_env_vars": ["LIBRENMS_URL", "LIBRENMS_ADDRESS"],
         "token_env_vars": ["LIBRENMS_TOKEN"],
     }
-    
+
     adapter_config = SyncAdapter(name="librenms_generic", settings=settings)
     sync_config = SyncConfig(
         name="test_sync",
@@ -31,7 +31,7 @@ def example_librenms_style():
         destination=SyncAdapter(name="Infrahub"),
         schema_mapping=[]
     )
-    
+
     try:
         # Create the generic adapter with LibreNMS-like configuration
         adapter = GenericRestApiAdapter(
@@ -43,7 +43,7 @@ def example_librenms_style():
         print(f"✓ Created adapter with type: {adapter.type}")
         print(f"✓ Client configured for: {settings['url']}")
         print(f"✓ Authentication method: {settings['auth_method']}")
-        
+
     except Exception as e:
         print(f"✗ Error: {e}")
 
@@ -51,8 +51,8 @@ def example_librenms_style():
 def example_observium_style():
     """Example configuration for Observium-style API."""
     print("\n=== Observium-style Configuration ===")
-    
-    # Configuration similar to Observium  
+
+    # Configuration similar to Observium
     settings = {
         "url": "https://demo.observium.org",
         "auth_method": "basic",
@@ -62,7 +62,7 @@ def example_observium_style():
         "username_env_vars": ["OBSERVIUM_USERNAME"],
         "password_env_vars": ["OBSERVIUM_PASSWORD"],
     }
-    
+
     adapter_config = SyncAdapter(name="observium_generic", settings=settings)
     sync_config = SyncConfig(
         name="test_sync",
@@ -70,7 +70,7 @@ def example_observium_style():
         destination=SyncAdapter(name="Infrahub"),
         schema_mapping=[]
     )
-    
+
     try:
         # Create the generic adapter with Observium-like configuration
         adapter = GenericRestApiAdapter(
@@ -82,7 +82,7 @@ def example_observium_style():
         print(f"✓ Created adapter with type: {adapter.type}")
         print(f"✓ Client configured for: {settings['url']}")
         print(f"✓ Authentication method: {settings['auth_method']}")
-        
+
     except Exception as e:
         print(f"✗ Error: {e}")
 
@@ -90,7 +90,7 @@ def example_observium_style():
 def example_custom_tool():
     """Example configuration for a custom tool."""
     print("\n=== Custom Tool Configuration ===")
-    
+
     # Configuration for a hypothetical custom monitoring tool
     settings = {
         "url": "https://api.customtool.example.com",
@@ -106,7 +106,7 @@ def example_custom_tool():
             "limit": 100
         }
     }
-    
+
     adapter_config = SyncAdapter(name="custom_tool", settings=settings)
     sync_config = SyncConfig(
         name="test_sync",
@@ -114,7 +114,7 @@ def example_custom_tool():
         destination=SyncAdapter(name="Infrahub"),
         schema_mapping=[]
     )
-    
+
     try:
         # Create the generic adapter for custom tool
         adapter = GenericRestApiAdapter(
@@ -127,7 +127,7 @@ def example_custom_tool():
         print(f"✓ Client configured for: {settings['url']}")
         print(f"✓ Authentication method: {settings['auth_method']}")
         print(f"✓ Extra parameters: {settings['params']}")
-        
+
     except Exception as e:
         print(f"✗ Error: {e}")
 
@@ -135,13 +135,13 @@ def example_custom_tool():
 def example_response_extraction():
     """Example showing response data extraction."""
     print("\n=== Response Data Extraction Example ===")
-    
+
     settings = {
         "url": "https://api.example.com",
         "auth_method": "token",
         "token": "test_token"
     }
-    
+
     adapter_config = SyncAdapter(name="test_adapter", settings=settings)
     sync_config = SyncConfig(
         name="test_sync",
@@ -149,31 +149,31 @@ def example_response_extraction():
         destination=SyncAdapter(name="Infrahub"),
         schema_mapping=[]
     )
-    
+
     try:
         adapter = GenericRestApiAdapter(
             target="test",
             adapter=adapter_config,
             config=sync_config
         )
-        
+
         # Example response data in different formats
-        
+
         # Format 1: List response (like LibreNMS)
         response_1 = {"devices": [{"id": 1, "name": "device1"}, {"id": 2, "name": "device2"}]}
         result_1 = adapter._extract_objects_from_response(response_1, "devices", None)
         print(f"✓ List format extraction: {len(result_1)} objects")
-        
+
         # Format 2: Dict response (like Observium)
         response_2 = {"devices": {"1": {"id": 1, "name": "device1"}, "2": {"id": 2, "name": "device2"}}}
         result_2 = adapter._extract_objects_from_response(response_2, "devices", None)
         print(f"✓ Dict format extraction: {len(result_2)} objects")
-        
+
         # Format 3: Direct response
         response_3 = {"device_data": [{"id": 1, "name": "device1"}]}
         result_3 = adapter._extract_objects_from_response(response_3, "device_data", None)
         print(f"✓ Direct format extraction: {len(result_3)} objects")
-        
+
     except Exception as e:
         print(f"✗ Error: {e}")
 
@@ -181,13 +181,13 @@ def example_response_extraction():
 if __name__ == "__main__":
     print("GenericRestApiAdapter Examples")
     print("=" * 50)
-    
+
     # Run all examples
     example_librenms_style()
     example_observium_style()
     example_custom_tool()
     example_response_extraction()
-    
+
     print("\n" + "=" * 50)
     print("All examples completed!")
     print("\nThe GenericRestApiAdapter provides:")

@@ -19,17 +19,17 @@ class TestGenericRestApiAdapter:
         target = "test_target"
         adapter = SyncAdapter(name="test", settings={})
         config = Mock(spec=SyncConfig)
-        
+
         # Mock the _create_rest_client method to avoid actual API calls
-        with patch.object(GenericRestApiAdapter, '_create_rest_client') as mock_client:
+        with patch.object(GenericRestApiAdapter, "_create_rest_client") as mock_client:
             mock_client.return_value = Mock()
-            
+
             generic_adapter = GenericRestApiAdapter(
                 target=target,
                 adapter=adapter,
                 config=config
             )
-            
+
             assert generic_adapter.target == target
             assert generic_adapter.type == "GenericRestApi"
             assert generic_adapter.params == {}
@@ -41,17 +41,17 @@ class TestGenericRestApiAdapter:
         adapter = SyncAdapter(name="test", settings={})
         config = Mock(spec=SyncConfig)
         custom_type = "CustomTool"
-        
-        with patch.object(GenericRestApiAdapter, '_create_rest_client') as mock_client:
+
+        with patch.object(GenericRestApiAdapter, "_create_rest_client") as mock_client:
             mock_client.return_value = Mock()
-            
+
             generic_adapter = GenericRestApiAdapter(
                 target=target,
                 adapter=adapter,
                 config=config,
                 adapter_type=custom_type
             )
-            
+
             assert generic_adapter.type == custom_type
 
     def test_create_rest_client_token_auth(self):
@@ -62,16 +62,16 @@ class TestGenericRestApiAdapter:
             "token": "test_token",
             "api_endpoint": "/api/v1"
         }
-        
+
         adapter = SyncAdapter(name="test", settings=settings)
         config = Mock(spec=SyncConfig)
-        
+
         generic_adapter = GenericRestApiAdapter(
             target="test",
             adapter=adapter,
             config=config
         )
-        
+
         # Verify client was created (we can't easily test the internal state without exposing it)
         assert generic_adapter.client is not None
 
@@ -83,16 +83,16 @@ class TestGenericRestApiAdapter:
             "username": "testuser",
             "password": "testpass"
         }
-        
+
         adapter = SyncAdapter(name="test", settings=settings)
         config = Mock(spec=SyncConfig)
-        
+
         generic_adapter = GenericRestApiAdapter(
             target="test",
             adapter=adapter,
             config=config
         )
-        
+
         assert generic_adapter.client is not None
 
     def test_create_rest_client_env_vars(self):
@@ -102,17 +102,17 @@ class TestGenericRestApiAdapter:
             "url_env_vars": ["TEST_URL"],
             "token_env_vars": ["TEST_TOKEN"]
         }
-        
+
         with patch.dict(os.environ, {"TEST_URL": "https://env.example.com", "TEST_TOKEN": "env_token"}):
             adapter = SyncAdapter(name="test", settings=settings)
             config = Mock(spec=SyncConfig)
-            
+
             generic_adapter = GenericRestApiAdapter(
                 target="test",
                 adapter=adapter,
                 config=config
             )
-            
+
             assert generic_adapter.client is not None
 
     def test_create_rest_client_missing_url(self):
@@ -121,10 +121,10 @@ class TestGenericRestApiAdapter:
             "auth_method": "token",
             "token": "test_token"
         }
-        
+
         adapter = SyncAdapter(name="test", settings=settings)
         config = Mock(spec=SyncConfig)
-        
+
         with pytest.raises(ValueError, match="url must be specified"):
             GenericRestApiAdapter(
                 target="test",
@@ -138,10 +138,10 @@ class TestGenericRestApiAdapter:
             "url": "https://api.example.com",
             "auth_method": "token"
         }
-        
+
         adapter = SyncAdapter(name="test", settings=settings)
         config = Mock(spec=SyncConfig)
-        
+
         with pytest.raises(ValueError, match="Authentication method 'token' requires a valid API token"):
             GenericRestApiAdapter(
                 target="test",
@@ -157,10 +157,10 @@ class TestGenericRestApiAdapter:
             "username": "testuser"
             # Missing password
         }
-        
+
         adapter = SyncAdapter(name="test", settings=settings)
         config = Mock(spec=SyncConfig)
-        
+
         with pytest.raises(ValueError, match="Basic authentication requires both username and password"):
             GenericRestApiAdapter(
                 target="test",
@@ -175,26 +175,26 @@ class TestGenericRestApiAdapter:
             "auth_method": "token",
             "token": "test_token"
         }
-        
+
         adapter = SyncAdapter(name="test", settings=settings)
         config = Mock(spec=SyncConfig)
-        
+
         generic_adapter = GenericRestApiAdapter(
             target="test",
             adapter=adapter,
             config=config
         )
-        
+
         response_data = {"devices": [{"id": 1, "name": "device1"}, {"id": 2, "name": "device2"}]}
         resource_name = "devices"
         element = Mock()
-        
+
         result = generic_adapter._extract_objects_from_response(
             response_data=response_data,
             resource_name=resource_name,
             element=element
         )
-        
+
         assert len(result) == 2
         assert result[0]["id"] == 1
         assert result[1]["id"] == 2
@@ -206,31 +206,31 @@ class TestGenericRestApiAdapter:
             "auth_method": "token",
             "token": "test_token"
         }
-        
+
         adapter = SyncAdapter(name="test", settings=settings)
         config = Mock(spec=SyncConfig)
-        
+
         generic_adapter = GenericRestApiAdapter(
             target="test",
             adapter=adapter,
             config=config
         )
-        
+
         response_data = {
             "devices": {
-                "1": {"id": 1, "name": "device1"}, 
+                "1": {"id": 1, "name": "device1"},
                 "2": {"id": 2, "name": "device2"}
             }
         }
         resource_name = "devices"
         element = Mock()
-        
+
         result = generic_adapter._extract_objects_from_response(
             response_data=response_data,
             resource_name=resource_name,
             element=element
         )
-        
+
         assert len(result) == 2
         # Order might vary since it's from dict.values()
         ids = [obj["id"] for obj in result]

@@ -20,7 +20,7 @@ class TestBackwardCompatibility:
             "timeout": 30,
             "verify_ssl": True
         }
-        
+
         adapter_config = SyncAdapter(name="librenms", settings=settings)
         sync_config = SyncConfig(
             name="test_sync",
@@ -28,20 +28,20 @@ class TestBackwardCompatibility:
             destination=SyncAdapter(name="Infrahub"),
             schema_mapping=[]
         )
-        
+
         # Mock the _create_rest_client method to avoid actual API calls
-        with patch.object(LibrenmsAdapter, '_create_rest_client') as mock_client:
+        with patch.object(LibrenmsAdapter, "_create_rest_client") as mock_client:
             mock_client.return_value = Mock()
-            
+
             adapter = LibrenmsAdapter(
                 target="test",
                 adapter=adapter_config,
                 config=sync_config
             )
-            
+
             # Should maintain the same type
             assert adapter.type == "LibreNMS"
-            
+
             # Should have configured the auth method to x-auth-token by default
             # We need to check the settings passed to the generic adapter
             assert adapter.client is not None
@@ -55,7 +55,7 @@ class TestBackwardCompatibility:
             "password": "password",
             "timeout": 60
         }
-        
+
         adapter_config = SyncAdapter(name="observium", settings=settings)
         sync_config = SyncConfig(
             name="test_sync",
@@ -63,20 +63,20 @@ class TestBackwardCompatibility:
             destination=SyncAdapter(name="Infrahub"),
             schema_mapping=[]
         )
-        
+
         # Mock the _create_rest_client method to avoid actual API calls
-        with patch.object(ObserviumAdapter, '_create_rest_client') as mock_client:
+        with patch.object(ObserviumAdapter, "_create_rest_client") as mock_client:
             mock_client.return_value = Mock()
-            
+
             adapter = ObserviumAdapter(
                 target="test",
                 adapter=adapter_config,
                 config=sync_config
             )
-            
+
             # Should maintain the same type
             assert adapter.type == "Observium"
-            
+
             # Should have configured the auth method to basic by default
             assert adapter.client is not None
 
@@ -85,7 +85,7 @@ class TestBackwardCompatibility:
         settings = {
             "auth_method": "x-auth-token",  # Explicitly set (should remain unchanged)
         }
-        
+
         adapter_config = SyncAdapter(name="librenms", settings=settings)
         sync_config = SyncConfig(
             name="test_sync",
@@ -93,23 +93,23 @@ class TestBackwardCompatibility:
             destination=SyncAdapter(name="Infrahub"),
             schema_mapping=[]
         )
-        
+
         with patch.dict("os.environ", {"LIBRENMS_URL": "https://env.librenms.com", "LIBRENMS_TOKEN": "env_token"}):
-            with patch.object(LibrenmsAdapter, '_create_rest_client') as mock_client:
+            with patch.object(LibrenmsAdapter, "_create_rest_client") as mock_client:
                 mock_client.return_value = Mock()
-                
+
                 adapter = LibrenmsAdapter(
                     target="test",
                     adapter=adapter_config,
                     config=sync_config
                 )
-                
+
                 assert adapter.type == "LibreNMS"
 
     def test_observium_adapter_with_environment_variables(self):
         """Test Observium adapter uses the correct environment variable names."""
         settings = {}  # Empty settings to use defaults
-        
+
         adapter_config = SyncAdapter(name="observium", settings=settings)
         sync_config = SyncConfig(
             name="test_sync",
@@ -117,21 +117,21 @@ class TestBackwardCompatibility:
             destination=SyncAdapter(name="Infrahub"),
             schema_mapping=[]
         )
-        
+
         with patch.dict("os.environ", {
             "OBSERVIUM_URL": "https://env.observium.com",
             "OBSERVIUM_USERNAME": "env_user",
             "OBSERVIUM_PASSWORD": "env_pass"
         }):
-            with patch.object(ObserviumAdapter, '_create_rest_client') as mock_client:
+            with patch.object(ObserviumAdapter, "_create_rest_client") as mock_client:
                 mock_client.return_value = Mock()
-                
+
                 adapter = ObserviumAdapter(
                     target="test",
                     adapter=adapter_config,
                     config=sync_config
                 )
-                
+
                 assert adapter.type == "Observium"
 
     def test_observium_response_extraction(self):
@@ -141,7 +141,7 @@ class TestBackwardCompatibility:
             "username": "admin",
             "password": "password"
         }
-        
+
         adapter_config = SyncAdapter(name="observium", settings=settings)
         sync_config = SyncConfig(
             name="test_sync",
@@ -149,16 +149,16 @@ class TestBackwardCompatibility:
             destination=SyncAdapter(name="Infrahub"),
             schema_mapping=[]
         )
-        
-        with patch.object(ObserviumAdapter, '_create_rest_client') as mock_client:
+
+        with patch.object(ObserviumAdapter, "_create_rest_client") as mock_client:
             mock_client.return_value = Mock()
-            
+
             adapter = ObserviumAdapter(
                 target="test",
                 adapter=adapter_config,
                 config=sync_config
             )
-            
+
             # Test Observium-specific response format (dict to list conversion)
             response_data = {
                 "devices": {
@@ -166,13 +166,13 @@ class TestBackwardCompatibility:
                     "2": {"id": 2, "name": "device2"}
                 }
             }
-            
+
             result = adapter._extract_objects_from_response(
                 response_data=response_data,
                 resource_name="devices",
                 element=Mock()
             )
-            
+
             # Should convert dict values to list
             assert len(result) == 2
             ids = [obj["id"] for obj in result]
