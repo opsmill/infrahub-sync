@@ -32,15 +32,17 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
         super().__init__(*args, **kwargs)
 
         self.target = target
-        self.client = self._create_rest_client(adapter)
+        settings = adapter.settings or {}
+        self.params = settings.get("params", {})
+        self.client = self._create_rest_client(settings=settings)
         self.config = config
 
-    def _create_rest_client(self, adapter: SyncAdapter) -> RestApiClient:
-        settings = adapter.settings or {}
+    def _create_rest_client(self, settings: dict) -> RestApiClient:
         url = os.environ.get("PEERING_MANAGER_ADDRESS") or os.environ.get("PEERING_MANAGER_URL") or settings.get("url")
-        api_endpoint = settings.get("api_endpoint", "/api")  # Default endpoint, change if necessary
+        api_endpoint = settings.get("api_endpoint", "api")  # Default endpoint, change if necessary
         auth_method = settings.get("auth_method", "token")
         api_token = os.environ.get("PEERING_MANAGER_TOKEN") or settings.get("token")
+        verify_ssl = settings.get("verify_ssl", True)
         timeout = settings.get("timeout", 30)
 
         if not url:
@@ -53,10 +55,7 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
 
         full_base_url = f"{url.rstrip('/')}/{api_endpoint.strip('/')}"
         return RestApiClient(
-            base_url=full_base_url,
-            auth_method=auth_method,
-            api_token=api_token,
-            timeout=timeout,
+            base_url=full_base_url, auth_method=auth_method, api_token=api_token, timeout=timeout, verify=verify_ssl
         )
 
     def model_loader(self, model_name: str, model: PeeringmanagerModel) -> None:
@@ -76,7 +75,7 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
 
             try:
                 # Retrieve all objects
-                response_data = self.client.get(resource_name)
+                response_data = self.client.get(endpoint=resource_name, params=self.params)
                 objs = response_data.get("results", [])
             except Exception as exc:
                 msg = f"Error fetching data from REST API: {exc!s}"
@@ -144,21 +143,30 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
                             data[field.name] = node
                 else:
                     data[field.name] = []
-                    for node in get_value(obj, field.mapping):
-                        if not node:
-                            continue
-                        node_id = node.get("id", None)
-                        if not node_id and isinstance(node, tuple):
-                            node_id = node[1] if node[0] == "id" else None
-                            if not node_id:
+                    values = get_value(obj, field.mapping)
+                    # When using another node for mapping, it should be a list
+                    if isinstance(values, list):
+                        for node in values:
+                            if not node:
                                 continue
-                        matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
-                        if len(matching_nodes) == 0:
-                            msg = f"Unable to locate the node {field.reference} {node_id}"
-                            raise IndexError(msg)
-                        data[field.name].append(matching_nodes[0].get_unique_id())
-                    data[field.name] = sorted(data[field.name])
-
+                            node_id = node.get("id", None)
+                            if not node_id and isinstance(node, tuple):
+                                node_id = node[1] if node[0] == "id" else None
+                                if not node_id:
+                                    print(f"No ID found for {node} - skipped")
+                                    continue
+                            matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
+                            if len(matching_nodes) == 0:
+                                msg = f"Unable to locate the node {field.reference} {node_id}"
+                                raise IndexError(msg)
+                            data[field.name].append(matching_nodes[0].get_unique_id())
+                        data[field.name] = sorted(data[field.name])
+                    # If you are using an attribute a mapping
+                    elif isinstance(values, str):
+                        for item in nodes:
+                            tmp = get_value(item, field.mapping)
+                            if tmp == values:
+                                data[field.name].append(item.get_unique_id())
         return data
 
 

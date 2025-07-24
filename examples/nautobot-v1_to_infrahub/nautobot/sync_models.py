@@ -302,8 +302,8 @@ class StatusGeneric(NautobotModel):
     local_data: Any | None = None
 
 
-class TemplateCircuitType(NautobotModel):
-    _modelname = "TemplateCircuitType"
+class ChoiceCircuitType(NautobotModel):
+    _modelname = "ChoiceCircuitType"
     _identifiers = ("name",)
     _attributes = ("description",)
     name: str
@@ -313,8 +313,8 @@ class TemplateCircuitType(NautobotModel):
     local_data: Any | None = None
 
 
-class TemplateDeviceType(NautobotModel):
-    _modelname = "TemplateDeviceType"
+class ChoiceDeviceType(NautobotModel):
+    _modelname = "ChoiceDeviceType"
     _identifiers = ("name", "manufacturer")
     _attributes = ("tags", "part_number", "height", "full_depth")
     part_number: str | None = None
@@ -328,8 +328,8 @@ class TemplateDeviceType(NautobotModel):
     local_data: Any | None = None
 
 
-class TemplateLocationType(NautobotModel):
-    _modelname = "TemplateLocationType"
+class ChoiceLocationType(NautobotModel):
+    _modelname = "ChoiceLocationType"
     _identifiers = ("name",)
     _attributes = ("description",)
     name: str

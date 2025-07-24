@@ -1,18 +1,18 @@
 from infrahub_sync.adapters.slurpitsync import SlurpitsyncAdapter
 
 from .sync_models import (
+    ChoiceDeviceType,
     InfraDevice,
     InfraHardwareInfo,
-    InfraIPAddress,
     InfraInterface,
+    InfraIPAddress,
     InfraPlatform,
     InfraPrefix,
+    InfraVersion,
     InfraVLAN,
     InfraVRF,
-    InfraVersion,
     LocationGeneric,
     OrganizationGeneric,
-    TemplateDeviceType,
 )
 
 
@@ -33,4 +33,4 @@ class SlurpitsyncSync(SlurpitsyncAdapter):
     InfraVersion = InfraVersion
     LocationGeneric = LocationGeneric
     OrganizationGeneric = OrganizationGeneric
-    TemplateDeviceType = TemplateDeviceType
+    ChoiceDeviceType = ChoiceDeviceType

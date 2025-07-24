@@ -5,10 +5,23 @@ import re
 from typing import Any, Union
 
 import pydantic
+from diffsync.enum import DiffSyncFlags
 from jinja2 import Template
 from netutils.ip import is_ip_within as netutils_is_ip_within
+from packaging import version
 
 from infrahub_sync.adapters.utils import get_value
+
+if version.parse(pydantic.__version__) >= version.parse("2.0.0"):
+    # With Pydantic v2, we use `field_validator` with mode "before"
+    from pydantic import field_validator as validator_decorator
+
+    validator_kwargs = {"mode": "before"}
+else:
+    # With Pydantic v1, we use validator with `pre=True` and `allow_reuse=True`
+    from pydantic import validator as validator_decorator
+
+    validator_kwargs = {"pre": True, "allow_reuse": True}
 
 
 class SchemaMappingFilter(pydantic.BaseModel):
@@ -35,7 +48,7 @@ class SchemaMappingModel(pydantic.BaseModel):
     identifiers: list[str] | None = pydantic.Field(default=None)
     filters: list[SchemaMappingFilter] | None = pydantic.Field(default=None)
     transforms: list[SchemaMappingTransform] | None = pydantic.Field(default=None)
-    fields: list[SchemaMappingField] = []
+    fields: list[SchemaMappingField] | None = []
 
 
 class SyncAdapter(pydantic.BaseModel):
@@ -55,6 +68,24 @@ class SyncConfig(pydantic.BaseModel):
     destination: SyncAdapter
     order: list[str] = pydantic.Field(default_factory=list)
     schema_mapping: list[SchemaMappingModel] = []
+    diffsync_flags: list[Union[str, DiffSyncFlags]] | None = []
+
+    @validator_decorator("diffsync_flags", **validator_kwargs)
+    def convert_str_to_enum(cls, v):
+        if not isinstance(v, list):
+            msg = "diffsync_flags must be provided as a list"
+            raise TypeError(msg)
+        new_flags = []
+        for item in v:
+            if isinstance(item, str):
+                try:
+                    new_flags.append(DiffSyncFlags[item])
+                except KeyError:
+                    msg = f"Invalid DiffSyncFlags value: {item}"
+                    raise ValueError(msg)
+            else:
+                new_flags.append(item)
+        return new_flags
 
 
 class SyncInstance(SyncConfig):
@@ -97,12 +128,11 @@ class DiffSyncMixin:
     def load(self):
         """Load all the models, one by one based on the order defined in top_level."""
         for item in self.top_level:
+            print(f"Loading {item}")
             if hasattr(self, f"load_{item}"):
-                print(f"Loading {item}")
                 method = getattr(self, f"load_{item}")
                 method()
             else:
-                print(f"Loading {item}")
                 self.model_loader(model_name=item, model=getattr(self, item))
 
     def model_loader(self, model_name: str, model):

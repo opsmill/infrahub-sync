@@ -159,8 +159,8 @@ class OrganizationGeneric(SlurpitsyncModel):
     local_data: Any | None = None
 
 
-class TemplateDeviceType(SlurpitsyncModel):
-    _modelname = "TemplateDeviceType"
+class ChoiceDeviceType(SlurpitsyncModel):
+    _modelname = "ChoiceDeviceType"
     _identifiers = ("name",)
     _attributes = ("manufacturer",)
     name: str

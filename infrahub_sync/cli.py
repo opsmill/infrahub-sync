@@ -120,7 +120,7 @@ def generate(
     directory: str = typer.Option(default=None, help="Base directory to search for sync configurations"),
     branch: str = typer.Option(default=None, help="Branch to use for the sync."),
 ) -> None:
-    """Generate all the python files for a given sync based on the configuration."""
+    """Generate all the Python files for a given sync based on the configuration."""
 
     if sum([bool(name), bool(config_file)]) != 1:
         print_error_and_abort("Please specify exactly one of 'name' or 'config_file'.")

@@ -2,6 +2,9 @@ from infrahub_sync.adapters.nautobot import NautobotAdapter
 
 from .sync_models import (
     BuiltinTag,
+    ChoiceCircuitType,
+    ChoiceDeviceType,
+    ChoiceLocationType,
     CoreStandardGroup,
     InfraAutonomousSystem,
     InfraCircuit,
@@ -22,9 +25,6 @@ from .sync_models import (
     OrganizationGeneric,
     RoleGeneric,
     StatusGeneric,
-    TemplateCircuitType,
-    TemplateDeviceType,
-    TemplateLocationType,
 )
 
 
@@ -38,23 +38,23 @@ class NautobotSync(NautobotAdapter):
     BuiltinTag = BuiltinTag
     InfraAutonomousSystem = InfraAutonomousSystem
     InfraCircuit = InfraCircuit
+    ChoiceCircuitType = ChoiceCircuitType
     InfraDevice = InfraDevice
+    ChoiceDeviceType = ChoiceDeviceType
     InfraFrontPort = InfraFrontPort
-    InfraIPAddress = InfraIPAddress
     InfraInterfaceL2L3 = InfraInterfaceL2L3
+    InfraIPAddress = InfraIPAddress
+    ChoiceLocationType = ChoiceLocationType
+    NautobotNamespace = NautobotNamespace
     InfraPlatform = InfraPlatform
-    InfraPrefix = InfraPrefix
     InfraProviderNetwork = InfraProviderNetwork
+    InfraPrefix = InfraPrefix
     InfraRack = InfraRack
     InfraRearPort = InfraRearPort
     InfraRouteTarget = InfraRouteTarget
     InfraVLAN = InfraVLAN
     InfraVRF = InfraVRF
-    LocationGeneric = LocationGeneric
-    NautobotNamespace = NautobotNamespace
     OrganizationGeneric = OrganizationGeneric
-    RoleGeneric = RoleGeneric
     StatusGeneric = StatusGeneric
-    TemplateCircuitType = TemplateCircuitType
-    TemplateDeviceType = TemplateDeviceType
-    TemplateLocationType = TemplateLocationType
+    RoleGeneric = RoleGeneric
+    LocationGeneric = LocationGeneric

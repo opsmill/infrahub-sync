@@ -171,8 +171,8 @@ class OrganizationGeneric(IpfabricsyncModel):
     local_data: Any | None = None
 
 
-class TemplateDeviceType(IpfabricsyncModel):
-    _modelname = "TemplateDeviceType"
+class ChoiceDeviceType(IpfabricsyncModel):
+    _modelname = "ChoiceDeviceType"
     _identifiers = ("name", "manufacturer")
     _attributes = ("description",)
     description: str | None = None

@@ -14,15 +14,17 @@ class RestApiClient:
         username: str | None = None,
         password: str | None = None,
         timeout: int | None = 30,
+        verify: bool | None = True,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        self.verify = verify
 
         # Determine authentication method, some are use by more than one API.
-        # Example :
+        # Example:
         # -> Peering Manager
         if auth_method == "token" and api_token:
             self.headers["Authorization"] = f"Token {api_token}"
@@ -64,6 +66,7 @@ class RestApiClient:
                     json=data,
                     auth=self.auth,
                     timeout=self.timeout,
+                    verify=self.verify,
                 )
             else:
                 response = requests.request(
@@ -73,6 +76,7 @@ class RestApiClient:
                     params=params,
                     json=data,
                     timeout=self.timeout,
+                    verify=self.verify,
                 )
 
             response.raise_for_status()  # Raise an HTTPError for bad responses

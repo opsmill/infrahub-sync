@@ -47,12 +47,14 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
 
         base_url = settings.get("base_url") or None
         auth = settings.get("auth") or None
+        timeout = settings.get("timeout", 10)
+        verify_ssl = settings.get("verify_ssl", True)
 
         if not base_url or not auth:
             msg = "Both url and auth must be specified!"
             raise ValueError(msg)
 
-        return IPFClient(**settings)
+        return IPFClient(base_url=base_url, auth=auth, timeout=timeout, verify=verify_ssl)
 
     def build_mapping(self, reference, obj) -> str:
         # Get object class and model name from the store

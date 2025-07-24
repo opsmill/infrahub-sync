@@ -8,6 +8,7 @@ from .sync_models import (
     InfraIXP,
     InfraIXPConnection,
     IpamIPAddress,
+    OrganizationProvider,
 )
 
 
@@ -20,6 +21,7 @@ class PeeringmanagerSync(PeeringmanagerAdapter):
     InfraAutonomousSystem = InfraAutonomousSystem
     InfraBGPPeerGroup = InfraBGPPeerGroup
     IpamIPAddress = IpamIPAddress
+    OrganizationProvider = OrganizationProvider
     InfraBGPCommunity = InfraBGPCommunity
     InfraBGPRoutingPolicy = InfraBGPRoutingPolicy
     InfraIXP = InfraIXP

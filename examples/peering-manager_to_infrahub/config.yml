@@ -7,6 +7,8 @@ source:
     # api_endpoint: "api"
     # auth_method: "token"
     token: "13bf6338aed52d172e33750d39717fff5a5f5d18"
+    # params:
+    #   "limit": 1000
 
 destination:
   name: infrahub
@@ -14,6 +16,7 @@ destination:
     url: "http://localhost:8000"
 
 order: [
+  "OrganizationProvider",
   "InfraAutonomousSystem",
   "InfraBGPCommunity",
   "InfraBGPRoutingPolicy",
@@ -24,9 +27,19 @@ order: [
 ]
 
 schema_mapping:
+  - name: OrganizationProvider
+    mapping: peering/autonomous-systems
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: name
+
   - name: InfraAutonomousSystem
     mapping: peering/autonomous-systems
     identifiers: ["asn"]
+    transforms:
+      - field: tmp_name
+        expression: "{{ name.lower() }} "
     fields:
       - name: name
         mapping: name
@@ -42,6 +55,9 @@ schema_mapping:
         mapping: ipv6_max_prefixes
       - name: affiliated
         mapping: affiliated
+      - name: organization
+        mapping: name
+        reference: OrganizationProvider
 
   - name: InfraBGPCommunity
     mapping: peering/communities
@@ -119,19 +135,19 @@ schema_mapping:
         mapping: communities
         reference: InfraBGPCommunity
     # Showcase Filters
-    filters:
-      - field: name
-        operation: "is_not_empty"
-      - field: status.value
-        operation: contains
-        value: "enabled"
-      - field: name
-        operation: contains
-        value: "S.H.I.E.L.D"
+    # filters:
+    #   - field: name
+    #     operation: "is_not_empty"
+    #   - field: status.value
+    #     operation: contains
+    #     value: "enabled"
+    #   - field: name
+    #     operation: contains
+    #     value: "S.H.I.E.L.D"
     # Showcase Transforms
-    transforms:
-      - field: description
-        expression: "{{ name.upper() }}[{{ status.value.lower() }}]"
+    # transforms:
+    #   - field: description
+    #     expression: "{{ name.upper() }}[{{ status.value.lower() }}]"
 
   # Create the IPv4 and IPv6 from the InfraIXPConnection
   # /!\ 'address' is mandatory on Infrahub but it can be empty in PeeringManager
@@ -184,7 +200,7 @@ schema_mapping:
     # Showcase Filters
     # As we filter InfraIXP on the name S.H.I.E.L.D, we need to have the same filter here
     # to avoid importing IXP Connection without IXP
-    filters:
-      - field: internet_exchange_point.name
-        operation: contains
-        value: "S.H.I.E.L.D"
+    # filters:
+    #   - field: internet_exchange_point.name
+    #     operation: contains
+    #     value: "S.H.I.E.L.D"
