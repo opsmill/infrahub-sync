@@ -1,0 +1,46 @@
+---
+name: from-phpipam
+
+source:
+  name: phpipam
+  settings:
+    url: "http://localhost:8080"
+    app_id: "infrahub"
+    username: "infrahub"
+    password: "infrahub"
+    verify_ssl: false
+
+destination:
+  name: infrahub
+  settings:
+    url: "http://localhost:8000"
+
+order: [
+  # "InfraVLAN",
+  "IpamIPPrefix",
+  "IpamIPAddress",
+]
+
+schema_mapping:
+  - name: IpamIPPrefix
+    mapping: subnets
+    identifiers: ["prefix"]
+    fields:
+      - name: prefix
+        mapping: subnet
+      - name: is_pool
+        mapping: isPool
+      # - name: vlan
+      #   mapping: vlanId
+      #   reference: InfraVLAN
+
+  - name: IpamIPAddress
+    mapping: addresses
+    identifiers: ["address"]
+    fields:
+      - name: address
+        mapping: ip
+      - name: description
+        mapping: description
+      # - name: XXXX
+      #   mapping: hostname

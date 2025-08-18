@@ -104,6 +104,17 @@ class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
         mapping: SchemaMappingModel,
         model: PeeringmanagerModel,
     ) -> dict:
+        """
+        Transform PeeringManager data to DiffSync format.
+
+        Parameters:
+            obj: The PeeringManager object data
+            model: The DiffSync model class
+            element: The schema mapping element
+
+        Returns:
+            dict: The transformed data
+        """
         obj_id = derive_identifier_key(obj=obj)
         data: dict[str, Any] = {"local_id": str(obj_id)}
 
