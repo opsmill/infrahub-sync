@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from diffsync import Adapter
+if TYPE_CHECKING:
+    from diffsync import Adapter
 
 
 def build_mapping(adapter: Adapter, reference: str, obj, field) -> str:
@@ -16,9 +17,11 @@ def build_mapping(adapter: Adapter, reference: str, obj, field) -> str:
         None,
     )
     if not schema_element:
-        raise ValueError(
-            f"Schema mapping for model '{reference}' not found when attempting to resolve reference for {field.name}. The reference must be an existing schema mapping."
+        msg = (
+            f"Schema mapping for model '{reference}' not found when attempting to resolve "
+            f"reference for {field.name}. The reference must be an existing schema mapping."
         )
+        raise ValueError(msg)
 
     # Collect all relevant field mappings for identifiers
     new_identifiers = []

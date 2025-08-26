@@ -18,7 +18,7 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
-from infrahub_sync.adapters.utils import build_mapping
+from infrahub_sync.adapters.utils import build_mapping, get_value
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
