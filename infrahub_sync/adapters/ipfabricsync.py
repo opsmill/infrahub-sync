@@ -46,16 +46,14 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
     def _create_ipfabric_client(self, adapter: SyncAdapter) -> IPFClient:
         settings = adapter.settings or {}
 
-        base_url = settings.get("base_url") or None
-        auth = settings.get("auth") or None
-        timeout = settings.get("timeout", 10)
-        verify_ssl = settings.get("verify_ssl", True)
+        base_url = settings.get("base_url", None)
+        auth = settings.get("auth", None)
 
         if not base_url or not auth:
             msg = "Both url and auth must be specified!"
             raise ValueError(msg)
 
-        return IPFClient(base_url=base_url, auth=auth, timeout=timeout, verify=verify_ssl)
+        return IPFClient(**settings)
 
     def model_loader(self, model_name: str, model: IpfabricsyncModel) -> None:
         """
