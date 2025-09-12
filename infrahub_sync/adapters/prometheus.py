@@ -4,6 +4,8 @@ import os
 import re
 from typing import TYPE_CHECKING, Any
 
+from prometheus_client.parser import text_string_to_metric_families
+
 try:
     from typing import Self
 except ImportError:
@@ -38,10 +40,7 @@ def _derive_identifier_key(obj: dict) -> str:
     """Deterministic local_id from metric name + sorted labels; fallback to hashable value."""
     name = obj.get("__metric__", "")
     labels = obj.get("labels", {}) or {}
-    if isinstance(labels, dict):
-        key = ",".join(f"{k}={labels[k]}" for k in sorted(labels))
-    else:
-        key = str(labels)
+    key = ",".join(f"{k}={labels[k]}" for k in sorted(labels)) if isinstance(labels, dict) else str(labels)
     return f"{name}|{key}" if key else name
 
 
@@ -57,7 +56,7 @@ if TYPE_CHECKING:
 
 class PrometheusScrapeClient:
     """
-    Scrape a Prometheus *text exposition* endpoint (e.g., http://host:9117/metrics).
+    Scrape a Prometheus *text exposition* endpoint (e.g., http://host:9100/metrics).
     Returns dict: { metric_name: [sample, ...] } where sample is:
       {
         "__metric__": "<name>",
@@ -205,136 +204,42 @@ class PrometheusAPIClient:
         return results
 
 
-# =========================
-# Exposition text parser
-# =========================
-
-
 def parse_prometheus_text(text: str) -> dict[str, list[dict[str, Any]]]:
     """
-    Parse Prometheus exposition format. Prefer official parser if present,
-    else use a minimal but safe fallback for HELP/TYPE and sample lines.
+    Parse Prometheus exposition format using prometheus_client.parser
+    and normalize to a dict of samples keyed by metric name.
     """
-    try:
-        from prometheus_client.parser import text_string_to_metric_families  # type: ignore
+    families = list(text_string_to_metric_families(text))
+    out: dict[str, list[dict[str, Any]]] = {}
+    meta: dict[str, tuple[str, str]] = {}  # name -> (help, type)
 
-        families = list(text_string_to_metric_families(text))
-        out: dict[str, list[dict[str, Any]]] = {}
-        meta: dict[str, tuple[str, str]] = {}  # name -> (help, type)
-
-        for fam in families:
-            meta[fam.name] = (fam.documentation or "", fam.type or "")
-            for sample in fam.samples:
-                # prometheus_client returns tuples; normalize
-                # Common tuple shape: (name, labels, value, timestamp, exemplar)
-                name, labels, value, timestamp = sample[0], sample[1], sample[2], None
-                if len(sample) > 3:
-                    timestamp = sample[3]
-                ts = None
-                if timestamp is not None:
-                    # prometheus_client may give ns; heuristically convert if too big
-                    ts = (
-                        (timestamp / 1000.0)
-                        if (isinstance(timestamp, (int, float)) and timestamp > 10**10)
-                        else float(timestamp)
-                    )
-                rec = {
-                    "__metric__": name,
-                    "labels": dict(labels or {}),
-                    "value": float(value),
-                    "timestamp": ts,
-                    "help": meta.get(name, ("", ""))[0],
-                    "type": meta.get(name, ("", ""))[1],
-                }
-                out.setdefault(name, []).append(rec)
-        return out
-    except Exception:
-        # Fallback minimal parser
-        help_map: dict[str, str] = {}
-        type_map: dict[str, str] = {}
-        samples: dict[str, list[dict[str, Any]]] = {}
-
-        help_re = re.compile(r"^#\s*HELP\s+([a-zA-Z_:][a-zA-Z0-9_:]*)\s+(.*)$")
-        type_re = re.compile(r"^#\s*TYPE\s+([a-zA-Z_:][a-zA-Z0-9_:]*)\s+([a-zA-Z_]+)\s*$")
-        sample_re = re.compile(
-            r"^([a-zA-Z_:][a-zA-Z0-9_:]*)"  # name
-            r"(?:\{(?P<labels>[^}]*)\})?"  # labels
-            r"\s+([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)"  # value
-            r"(?:\s+([-+]?\d+))?"  # optional ts
-            r"\s*$"
-        )
-
-        def parse_labels(lbl: str) -> dict[str, str]:
-            if not lbl:
-                return {}
-            labels: dict[str, str] = {}
-            key = ""
-            val = ""
-            in_key = True
-            in_str = False
-            esc = False
-            for i, c in enumerate(lbl):
-                if in_key:
-                    if c == "=":
-                        in_key = False
-                        continue
-                    key += c
-                else:
-                    if not in_str:
-                        if c == '"':
-                            in_str = True
-                        continue
-                    if esc:
-                        val += c
-                        esc = False
-                    elif c == "\\":
-                        esc = True
-                    elif c == '"':
-                        labels[key.strip()] = val
-                        key, val, in_key, in_str = "", "", True, False
-                        # skip trailing comma
-                    else:
-                        val += c
-            if key and val:
-                labels[key.strip()] = val
-            return labels
-
-        for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            m = help_re.match(line)
-            if m:
-                help_map[m.group(1)] = m.group(2)
-                continue
-            m = type_re.match(line)
-            if m:
-                type_map[m.group(1)] = m.group(2)
-                continue
-            m = sample_re.match(line)
-            if not m:
-                continue
-            name = m.group(1)
-            lbls = parse_labels(m.group("labels") or "")
-            value = float(m.group(3))
-            ts = m.group(4)
-            ts_f = float(ts) if ts is not None else None
+    for fam in families:
+        meta[fam.name] = (fam.documentation or "", fam.type or "")
+        for sample in fam.samples:
+            # prometheus_client returns tuples; normalize
+            # Common tuple shape: (name, labels, value, timestamp, exemplar)
+            name, labels, value, timestamp = sample[0], sample[1], sample[2], None
+            if len(sample) > 3:
+                timestamp = sample[3]
+            ts = None
+            if timestamp is not None:
+                # prometheus_client may give ns; heuristically convert if too big
+                ts = (
+                    (timestamp / 1000.0)
+                    if (isinstance(timestamp, (int, float)) and timestamp > 10**10)
+                    else float(timestamp)
+                )
             rec = {
                 "__metric__": name,
-                "labels": lbls,
-                "value": value,
-                "timestamp": ts_f,
-                "help": help_map.get(name, ""),
-                "type": type_map.get(name, ""),
+                "labels": dict(labels or {}),
+                "value": float(value),
+                "timestamp": ts,
+                "help": meta.get(name, ("", ""))[0],
+                "type": meta.get(name, ("", ""))[1],
             }
-            samples.setdefault(name, []).append(rec)
+            out.setdefault(name, []).append(rec)
+    return out
 
-        return samples
-
-
-# ======================
-# Lookup support
-# ======================
 
 _LOOKUP_RE = re.compile(
     r"""^lookup\(\s*
@@ -401,7 +306,6 @@ class LookupResolver:
         val = _dotted_get(match, value_path)
         return default if val is None else val
 
-    # NEW: callable version suitable for Jinja — accepts either a path or the resolved value.
     def resolve_fn(
         self,
         current_obj: dict[str, Any],
@@ -415,13 +319,20 @@ class LookupResolver:
         Otherwise treat it as the already-resolved key value and match on the common label
         'dialer_name' (works for this use-case).
         """
-        # Path-like? use the generic resolver
-        if isinstance(key_or_path, str) and "." in key_or_path:
-            return self.resolve(current_obj, f"lookup({metric},{key_or_path},{value_path},{repr(default)})")
+        if key_or_path in (None, "", "*", {}):
+            for rec in self.samples_by_metric.get(metric, []):
+                val = _dotted_get(rec, value_path)
+                if val is not None:
+                    return val
+            return default
 
-        # Otherwise, key_or_path is the actual key value (e.g., 'infrahub-server')
+        # If a dotted string path is provided, use the strict joiner
+        if isinstance(key_or_path, str) and "." in key_or_path:
+            return self.resolve(current_obj, f"lookup({metric},{key_or_path},{value_path},{default!r})")
+
+        # Existing "treat as direct key value" path (kept for backwards-compat)
         key_value = key_or_path
-        label_name = "dialer_name"  # default label used for joins in this pipeline
+        label_name = "dialer_name"
         lidx_key = (metric, label_name)
         if lidx_key not in self._label_index_cache:
             idx: dict[str, dict[str, Any]] = {}
@@ -436,11 +347,6 @@ class LookupResolver:
             return default
         val = _dotted_get(match, value_path)
         return default if val is None else val
-
-
-# ======================
-# DiffSync adapter
-# ======================
 
 
 class PrometheusAdapter(DiffSyncMixin, Adapter):
@@ -515,18 +421,19 @@ class PrometheusAdapter(DiffSyncMixin, Adapter):
             # promql resources: { resource_name: "<promql query>" }
             self.promql_resources: dict[str, str] = settings.get("promql", {}).get("resources", {})
             if not isinstance(self.promql_resources, dict):
-                raise ValueError("settings.promql.resources must be a mapping of resource_name -> query string")
+                msg = "settings.promql.resources must be a mapping of resource_name -> query string"
+                raise ValueError(msg)
         else:
-            raise ValueError(f"Unknown mode '{self.mode}'. Use 'scrape' or 'api'.")
+            msg = f"Unknown mode '{self.mode}'. Use 'scrape' or 'api'."
+            raise ValueError(msg)
 
-        # cache
         self._samples_by_metric: dict[str, list[dict[str, Any]]] | None = None
         self._lookup: LookupResolver | None = None
 
-    # ---- core loading helpers ----
-
     def _ensure_samples(self) -> dict[str, list[dict[str, Any]]]:
         if self._samples_by_metric is not None:
+            if self._lookup is None:
+                self._lookup = LookupResolver(samples_by_metric=self._samples_by_metric)
             return self._samples_by_metric
 
         if isinstance(self.client, PrometheusScrapeClient):
@@ -551,7 +458,7 @@ class PrometheusAdapter(DiffSyncMixin, Adapter):
             self._samples_by_metric = store
 
         # init lookup resolver
-        self._lookup = LookupResolver(self._samples_by_metric)
+        self._lookup = LookupResolver(samples_by_metric=self._samples_by_metric)
         return self._samples_by_metric
 
     # ---- DiffSync hooks ----
@@ -576,13 +483,15 @@ class PrometheusAdapter(DiffSyncMixin, Adapter):
                         return lambda metric, key_or_path, value_path, default=None: self._lookup.resolve_fn(
                             current, metric, key_or_path, value_path, default
                         )
+
                     obj["lookup"] = _mk_lookup(obj)
 
-            # ✅ Run filters + transforms so computed fields (e.g., *_i) exist
             if self.config.source.name.title() == self.type.title():
                 filtered_objs = model.filter_records(records=objs, schema_mapping=element)
                 transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
-                print(f"{self.type}: Loading {len(transformed_objs)}/{total} from '{metric_or_resource}' (with transforms)")
+                print(
+                    f"{self.type}: Loading {len(transformed_objs)}/{total} from '{metric_or_resource}' (with transforms)"
+                )
             else:
                 transformed_objs = objs
                 print(f"{self.type}: Loading all {total} from '{metric_or_resource}'")
@@ -606,7 +515,7 @@ class PrometheusAdapter(DiffSyncMixin, Adapter):
             if field.mapping and not field_is_list and not field.reference:
                 m = field.mapping.strip()
 
-                # lookup(metric, key_path_or_value, value_path [, default])
+                # Syntax: lookup(metric, key_path_or_value, value_path [, default])
                 if m.startswith("lookup("):
                     value = self._lookup.resolve(obj, m) if self._lookup else None
                     if value is not None:

@@ -1,7 +1,10 @@
 from infrahub_sync.adapters.infrahub import InfrahubAdapter
 
 from .sync_models import (
-    MonitoringNetConntrackDialer,
+    VirtualizationVMDisk,
+    VirtualizationVMFilesystem,
+    VirtualizationVMNetworkInterface,
+    VirtualizationVirtualMachine,
 )
 
 
@@ -11,4 +14,7 @@ from .sync_models import (
 #  All modifications will be lost the next time you reexecute this command
 # -------------------------------------------------------
 class InfrahubSync(InfrahubAdapter):
-    MonitoringNetConntrackDialer = MonitoringNetConntrackDialer
+    VirtualizationVMDisk = VirtualizationVMDisk
+    VirtualizationVMFilesystem = VirtualizationVMFilesystem
+    VirtualizationVMNetworkInterface = VirtualizationVMNetworkInterface
+    VirtualizationVirtualMachine = VirtualizationVirtualMachine

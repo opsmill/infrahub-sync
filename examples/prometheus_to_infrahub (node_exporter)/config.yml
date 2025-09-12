@@ -1,0 +1,205 @@
+---
+name: from-node-exporter
+source:
+  name: prometheus
+  settings:
+    mode: scrape
+    url: "http://localhost:9100"
+    endpoint: "/metrics"
+
+destination:
+  name: infrahub
+  settings:
+    url: "http://localhost:8000"
+
+order:
+  - "VirtualizationVirtualMachine"
+  - "VirtualizationVMNetworkInterface"
+  - "VirtualizationVMFilesystem"
+  - "VirtualizationVMDisk"
+
+schema_mapping:
+
+  ###########################################################################
+  # VIRTUAL MACHINE (root object)
+  ###########################################################################
+  - name: VirtualizationVirtualMachine
+    mapping: node_uname_info
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: labels.nodename
+
+      - name: os_name
+        mapping: labels.sysname
+
+      - name: os_kernel
+        mapping: labels.release
+
+      - name: architecture
+        mapping: labels.machine
+
+      - name: mem_total_bytes
+        mapping: mem_total_t
+
+      - name: ip_forwarding_enabled
+        mapping: ip_forward_b
+
+      - name: conntrack_limit
+        mapping: conntrack_limit_t
+
+      # optional: mark as active since the node_exporter is reachable
+      - name: status
+        mapping: status_t
+
+    transforms:
+      # total memory in bytes
+      - field: mem_total_t
+        expression: "{{ lookup('node_memory_MemTotal_bytes', {}, 'value') or 0 }}"
+
+      # ip forwarding: 1 => enabled, 2 => disabled (treat >0 as enabled)
+      - field: ip_forward_b
+        expression: "{{ 1 if ((lookup('node_netstat_Ip_Forwarding', {}, 'value') or 0) | float) == 1 else 0 }}"
+
+      # conntrack limit
+      - field: conntrack_limit_t
+        expression: "{{ lookup('node_nf_conntrack_entries_limit', {}, 'value') or 0 }}"
+
+      # exporter up => VM 'active' (otherwise 'unknown')
+      - field: status_t
+        expression: "{{ 'active' if ((lookup('node_time_seconds', {}, 'value') | float ) > 0) else 'unknown' }}"
+
+  ###########################################################################
+  # VM NETWORK INTERFACE
+  ###########################################################################
+  - name: VirtualizationVMNetworkInterface
+    mapping: node_network_mtu_bytes
+    identifiers: ["virtual_machine", "name"]
+    fields:
+      # parent link (join on VM name from uname)
+      - name: virtual_machine
+        mapping: vm_name
+
+      - name: name
+        mapping: labels.device
+
+      - name: mac_address
+        mapping: mac_clean
+
+      - name: mtu
+        mapping: value
+
+      - name: speed_bps
+        mapping: speed_clean
+
+      - name: operational_status
+        mapping: op_status
+
+      - name: carrier
+        mapping: carrier_b
+
+      - name: duplex
+        mapping: duplex_val
+
+    transforms:
+      # VM name (no instance in scrape mode)
+      - field: vm_name
+        expression: "{{ lookup('node_uname_info', {}, 'labels.nodename') or 'unknown' }}"
+
+      # MAC address from node_network_info; normalize & blank bogus all-zeroes
+      - field: mac_raw
+        expression: "{{ lookup('node_network_info', {'device': labels.device}, 'labels.address') or '' }}"
+      - field: mac_norm
+        expression: "{{ (mac_raw | lower) if mac_raw else '' }}"
+      - field: mac_clean
+        expression: "{{ '' if mac_norm == '00:00:00:00:00:00' else mac_norm }}"
+
+      # speed in bytes/sec, some exporters expose negative when unknown -> coerce to 0
+      - field: speed_raw
+        expression: "{{ lookup('node_network_speed_bytes', {'device': labels.device}, 'value') or 0 }}"
+      - field: speed_clean
+        expression: "{{ 0 if (speed_raw | float) < 0 else (speed_raw | float) }}"
+
+      # operstatus from node_network_up
+      - field: op_status
+        expression: "{{ 'up' if ((lookup('node_network_up', {'device': labels.device}, 'value') or 0) | float) > 0 else 'down' }}"
+
+      # carrier boolean
+      - field: carrier_b
+        expression: "{{ 1 if ((lookup('node_network_carrier', {'device': labels.device}, 'value') or 0) | float) > 0 else 0 }}"
+
+      # duplex from node_network_info (full/half/unknown)
+      - field: duplex_raw
+        expression: "{{ (lookup('node_network_info', {'device': labels.device}, 'labels.duplex') or '') | lower }}"
+      - field: duplex_val
+        expression: "{{ duplex_raw if duplex_raw in ['full','half'] else 'unknown' }}"
+
+  ###########################################################################
+  # VM FILESYSTEM / MOUNT
+  ###########################################################################
+  - name: VirtualizationVMFilesystem
+    mapping: node_filesystem_size_bytes
+    identifiers: ["virtual_machine", "mountpoint"]
+    fields:
+      - name: virtual_machine
+        mapping: vm_name
+
+      - name: mountpoint
+        mapping: labels.mountpoint
+
+      - name: device
+        mapping: labels.device
+
+      - name: fstype
+        mapping: labels.fstype
+
+      - name: size_bytes
+        mapping: value
+
+      - name: readonly
+        mapping: ro_b
+
+      - name: device_error
+        mapping: deverr_b
+
+    transforms:
+      - field: vm_name
+        expression: "{{ lookup('node_uname_info', {}, 'labels.nodename') or 'unknown' }}"
+
+      # readonly flag (1 => true)
+      - field: ro_val
+        expression: "{{ lookup('node_filesystem_readonly', {'device': labels.device, 'mountpoint': labels.mountpoint}, 'value') or 0 }}"
+      - field: ro_b
+        expression: "{{ 1 if (ro_val | float) > 0 else 0 }}"
+
+      # device error flag (1 => true)
+      - field: deverr_val
+        expression: "{{ lookup('node_filesystem_device_error', {'device': labels.device, 'mountpoint': labels.mountpoint}, 'value') or 0 }}"
+      - field: deverr_b
+        expression: "{{ 1 if (deverr_val | float) > 0 else 0 }}"
+
+  ###########################################################################
+  # VM DISK / BLOCK DEVICE
+  ###########################################################################
+  - name: VirtualizationVMDisk
+    mapping: node_disk_info
+    identifiers: ["virtual_machine", "device"]
+    fields:
+      - name: virtual_machine
+        mapping: vm_name
+
+      - name: device
+        mapping: labels.device
+
+      - name: rotational
+        mapping: rotational_b
+
+    transforms:
+      - field: vm_name
+        expression: "{{ lookup('node_uname_info', {}, 'labels.nodename') or 'unknown' }}"
+
+      # rotational is a LABEL on node_disk_info (string "0"/"1")
+      - field: rotational_lbl
+        expression: "{{ lookup('node_disk_info', {'device': labels.device}, 'labels.rotational') or '0' }}"
+      - field: rotational_b
+        expression: "{{ 1 if rotational_lbl == '1' else 0 }}"
