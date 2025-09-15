@@ -1,6 +1,42 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from diffsync import Adapter
+
+
+def build_mapping(adapter: Adapter, reference: str, obj, field) -> str:
+    """This is used when references are encountered to attempt to resolve them for mapping."""
+    # Get object class and model name from the store
+    object_class, modelname = adapter.store._get_object_class_and_model(model=reference)
+
+    # Find the schema element matching the model name
+    schema_element = next(
+        (element for element in adapter.config.schema_mapping if element.name == modelname),
+        None,
+    )
+    if not schema_element:
+        msg = (
+            f"Schema mapping for model '{reference}' not found when attempting to resolve "
+            f"reference for {field.name}. The reference must be an existing schema mapping."
+        )
+        raise ValueError(msg)
+
+    # Collect all relevant field mappings for identifiers
+    new_identifiers = []
+
+    # Convert schema_element.fields to a dictionary for fast lookup
+    field_dict = {field.name: field.mapping for field in schema_element.fields}
+
+    # Loop through object_class._identifiers to find corresponding field mappings
+    for identifier in object_class._identifiers:
+        if identifier in field_dict:
+            new_identifiers.append(field_dict[identifier])
+
+    # Construct the unique identifier, using a fallback if a key isn't found
+    unique_id = "__".join(str(obj.get(key, "")) for key in new_identifiers)
+    return unique_id
 
 
 def get_value(obj: Any, name: str) -> Any | None:

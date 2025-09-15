@@ -21,6 +21,7 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
+from infrahub_sync.adapters.utils import build_mapping
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -45,41 +46,14 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
     def _create_ipfabric_client(self, adapter: SyncAdapter) -> IPFClient:
         settings = adapter.settings or {}
 
-        base_url = settings.get("base_url") or None
-        auth = settings.get("auth") or None
-        timeout = settings.get("timeout", 10)
-        verify_ssl = settings.get("verify_ssl", True)
+        base_url = settings.get("base_url", None)
+        auth = settings.get("auth", None)
 
         if not base_url or not auth:
             msg = "Both url and auth must be specified!"
             raise ValueError(msg)
 
-        return IPFClient(base_url=base_url, auth=auth, timeout=timeout, verify=verify_ssl)
-
-    def build_mapping(self, reference, obj) -> str:
-        # Get object class and model name from the store
-        object_class, modelname = self.store._get_object_class_and_model(model=reference)
-
-        # Find the schema element matching the model name
-        schema_element = next(
-            (element for element in self.config.schema_mapping if element.name == modelname),
-            None,
-        )
-
-        # Collect all relevant field mappings for identifiers
-        new_identifiers = []
-
-        # Convert schema_element.fields to a dictionary for fast lookup
-        field_dict = {field.name: field.mapping for field in schema_element.fields}
-
-        # Loop through object_class._identifiers to find corresponding field mappings
-        for identifier in object_class._identifiers:
-            if identifier in field_dict:
-                new_identifiers.append(field_dict[identifier])
-
-        # Construct the unique identifier, using a fallback if a key isn't found
-        unique_id = "__".join(str(obj.get(key, "")) for key in new_identifiers)
-        return unique_id
+        return IPFClient(**settings)
 
     def model_loader(self, model_name: str, model: IpfabricsyncModel) -> None:
         """
@@ -143,7 +117,7 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
                     raise IndexError(msg)
                 if not field_is_list and (node := obj[field.mapping]):
                     matching_nodes = []
-                    node_id = self.build_mapping(reference=field.reference, obj=obj)
+                    node_id = build_mapping(adapter=self, reference=field.reference, obj=obj, field=field)
                     matching_nodes = [item for item in nodes if str(item) == node_id]
                     if len(matching_nodes) == 0:
                         data[field.name] = None

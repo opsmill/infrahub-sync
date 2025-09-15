@@ -45,7 +45,7 @@ jobs:
       - name: "Install Poetry"
         uses: "snok/install-poetry@v1"
         with:
-          version: 1.8.5
+          version: 2.1.3
           virtualenvs-create: true
           virtualenvs-in-project: true
           installer-parallel: true
@@ -74,7 +74,7 @@ jobs:
           poetry version $VERSION  # directly use the VERSION
 
       - name: Update lock file
-        run: poetry lock --no-update
+        run: poetry lock
 
       - name: commit pyproject.toml
         uses: github-actions-x/commit@v2.9
