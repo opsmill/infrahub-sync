@@ -186,7 +186,7 @@ class DiffSyncModelMixin:
             raise ValueError(msg) from exc
 
     @classmethod
-    def apply_transforms(cls, item: dict[str, Azny], transforms: list[SchemaMappingTransform]) -> dict[str, Any]:
+    def apply_transforms(cls, item: dict[str, Any], transforms: list[SchemaMappingTransform]) -> dict[str, Any]:
         """Apply a list of structured transformations to an item."""
         for transform_obj in transforms:
             field = transform_obj.field

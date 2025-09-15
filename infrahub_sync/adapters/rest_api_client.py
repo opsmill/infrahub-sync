@@ -40,6 +40,8 @@ class RestApiClient:
         # -> Observium
         elif auth_method == "basic" and username and password:
             self.auth = (username, password)
+        elif auth_method == "none":
+            pass  # No authentication
         else:
             msg = "Invalid authentication configuration!"
             raise ValueError(msg)

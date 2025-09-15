@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 
-class GenericRestApiAdapter(DiffSyncMixin, Adapter):
+class GenericrestapiAdapter(DiffSyncMixin, Adapter):
     """
     A generic REST API adapter that can be configured for different tools and APIs.
     This adapter reduces code duplication by providing a configurable base class
@@ -37,7 +37,7 @@ class GenericRestApiAdapter(DiffSyncMixin, Adapter):
         target: str,
         adapter: SyncAdapter,
         config: SyncConfig,
-        adapter_type: str = "GenericRestApi",
+        adapter_type: str | None = "GenericRestApi",
         *args,
         **kwargs,
     ) -> None:
@@ -136,7 +136,7 @@ class GenericRestApiAdapter(DiffSyncMixin, Adapter):
             verify=verify_ssl,
         )
 
-    def model_loader(self, model_name: str, model: GenericRestApiModel) -> None:
+    def model_loader(self, model_name: str, model: GenericrestapiModel) -> None:
         """
         Load and process models using schema mapping filters and transformations.
 
@@ -214,7 +214,7 @@ class GenericRestApiAdapter(DiffSyncMixin, Adapter):
 
         return objs
 
-    def obj_to_diffsync(self, obj: dict[str, Any], mapping: SchemaMappingModel, model: GenericRestApiModel) -> dict:
+    def obj_to_diffsync(self, obj: dict[str, Any], mapping: SchemaMappingModel, model: GenericrestapiModel) -> dict:
         """
         Convert an object to DiffSync format.
 
@@ -285,7 +285,7 @@ class GenericRestApiAdapter(DiffSyncMixin, Adapter):
         return data
 
 
-class GenericRestApiModel(DiffSyncModelMixin, DiffSyncModel):
+class GenericrestapiModel(DiffSyncModelMixin, DiffSyncModel):
     """
     A generic model class for REST API adapters.
     """
