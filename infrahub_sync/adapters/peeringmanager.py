@@ -10,8 +10,6 @@ except ImportError:
 import requests
 
 from infrahub_sync import (
-    DiffSyncModelMixin,
-    SchemaMappingModel,
     SyncAdapter,
     SyncConfig,
 )
@@ -41,16 +39,12 @@ class PeeringmanagerAdapter(GenericRestApiAdapter):
         if "token_env_vars" not in settings:
             settings["token_env_vars"] = ["PEERING_MANAGER_TOKEN"]
 
+        settings.setdefault("response_key_pattern", "results")
+
         # Create a new adapter with updated settings
         updated_adapter = SyncAdapter(name=adapter.name, settings=settings)
 
-        super().__init__(
-            target=target,
-            adapter=updated_adapter,
-            config=config,
-            adapter_type="Peeringmanager",
-            **kwargs
-        )
+        super().__init__(target=target, adapter=updated_adapter, config=config, adapter_type="Peeringmanager", **kwargs)
 
 
 class PeeringmanagerModel(GenericRestApiModel):

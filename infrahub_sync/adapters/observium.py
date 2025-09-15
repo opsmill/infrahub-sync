@@ -8,7 +8,6 @@ except ImportError:
     from typing_extensions import Self
 
 from infrahub_sync import (
-    SchemaMappingModel,
     SyncAdapter,
     SyncConfig,
 )
@@ -42,39 +41,12 @@ class ObserviumAdapter(GenericRestApiAdapter):
         if "password_env_vars" not in settings:
             settings["password_env_vars"] = ["OBSERVIUM_PASSWORD"]
 
+        settings.setdefault("response_key_pattern", "{resource}")
+
         # Create a new adapter with updated settings
         updated_adapter = SyncAdapter(name=adapter.name, settings=settings)
 
-        super().__init__(
-            target=target,
-            adapter=updated_adapter,
-            config=config,
-            adapter_type="Observium",
-            **kwargs
-        )
-
-    def _extract_objects_from_response(
-        self,
-        response_data: dict[str, Any],
-        resource_name: str,
-        element: SchemaMappingModel,  # noqa: ARG002
-    ) -> list[dict[str, Any]]:
-        """
-        Override extraction for Observium-specific response format.
-
-        Observium returns data in format: {"resource": {key: value, key: value}}
-        We need to convert the dict values to a list.
-        """
-        # Try to get data using the resource name
-        objs = response_data.get(resource_name, {})
-
-        # Observium typically returns dict format, convert to list
-        if isinstance(objs, dict):
-            objs = list(objs.values())
-        elif not isinstance(objs, list):
-            objs = [objs] if objs else []
-
-        return objs
+        super().__init__(target=target, adapter=updated_adapter, config=config, adapter_type="Observium", **kwargs)
 
 
 class ObserviumModel(GenericRestApiModel):

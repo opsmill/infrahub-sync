@@ -1,4 +1,5 @@
 """Tests for backward compatibility of updated LibreNMS and Observium adapters."""
+
 from __future__ import annotations
 
 from unittest.mock import Mock, patch
@@ -15,30 +16,21 @@ class TestBackwardCompatibility:
     def test_librenms_adapter_backward_compatibility(self):
         """Test that LibreNMS adapter works with existing configuration patterns."""
         # Configuration that would have worked with the old adapter
-        settings = {
-            "url": "https://librenms.example.com",
-            "token": "test_token",
-            "timeout": 30,
-            "verify_ssl": True
-        }
+        settings = {"url": "https://librenms.example.com", "token": "test_token", "timeout": 30, "verify_ssl": True}
 
         adapter_config = SyncAdapter(name="librenms", settings=settings)
         sync_config = SyncConfig(
             name="test_sync",
             source=SyncAdapter(name="LibreNMS"),
             destination=SyncAdapter(name="Infrahub"),
-            schema_mapping=[]
+            schema_mapping=[],
         )
 
         # Mock the _create_rest_client method to avoid actual API calls
         with patch.object(LibrenmsAdapter, "_create_rest_client") as mock_client:
             mock_client.return_value = Mock()
 
-            adapter = LibrenmsAdapter(
-                target="test",
-                adapter=adapter_config,
-                config=sync_config
-            )
+            adapter = LibrenmsAdapter(target="test", adapter=adapter_config, config=sync_config)
 
             # Should maintain the same type
             assert adapter.type == "LibreNMS"
@@ -50,30 +42,21 @@ class TestBackwardCompatibility:
     def test_observium_adapter_backward_compatibility(self):
         """Test that Observium adapter works with existing configuration patterns."""
         # Configuration that would have worked with the old adapter
-        settings = {
-            "url": "https://observium.example.com",
-            "username": "admin",
-            "password": "password",
-            "timeout": 60
-        }
+        settings = {"url": "https://observium.example.com", "username": "admin", "password": "password", "timeout": 60}
 
         adapter_config = SyncAdapter(name="observium", settings=settings)
         sync_config = SyncConfig(
             name="test_sync",
             source=SyncAdapter(name="Observium"),
             destination=SyncAdapter(name="Infrahub"),
-            schema_mapping=[]
+            schema_mapping=[],
         )
 
         # Mock the _create_rest_client method to avoid actual API calls
         with patch.object(ObserviumAdapter, "_create_rest_client") as mock_client:
             mock_client.return_value = Mock()
 
-            adapter = ObserviumAdapter(
-                target="test",
-                adapter=adapter_config,
-                config=sync_config
-            )
+            adapter = ObserviumAdapter(target="test", adapter=adapter_config, config=sync_config)
 
             # Should maintain the same type
             assert adapter.type == "Observium"
@@ -92,18 +75,14 @@ class TestBackwardCompatibility:
             name="test_sync",
             source=SyncAdapter(name="LibreNMS"),
             destination=SyncAdapter(name="Infrahub"),
-            schema_mapping=[]
+            schema_mapping=[],
         )
 
         with patch.dict("os.environ", {"LIBRENMS_URL": "https://env.librenms.com", "LIBRENMS_TOKEN": "env_token"}):
             with patch.object(LibrenmsAdapter, "_create_rest_client") as mock_client:
                 mock_client.return_value = Mock()
 
-                adapter = LibrenmsAdapter(
-                    target="test",
-                    adapter=adapter_config,
-                    config=sync_config
-                )
+                adapter = LibrenmsAdapter(target="test", adapter=adapter_config, config=sync_config)
 
                 assert adapter.type == "LibreNMS"
 
@@ -116,62 +95,48 @@ class TestBackwardCompatibility:
             name="test_sync",
             source=SyncAdapter(name="Observium"),
             destination=SyncAdapter(name="Infrahub"),
-            schema_mapping=[]
+            schema_mapping=[],
         )
 
-        with patch.dict("os.environ", {
-            "OBSERVIUM_URL": "https://env.observium.com",
-            "OBSERVIUM_USERNAME": "env_user",
-            "OBSERVIUM_PASSWORD": "env_pass"
-        }):
-            with patch.object(ObserviumAdapter, "_create_rest_client") as mock_client:
-                mock_client.return_value = Mock()
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "OBSERVIUM_URL": "https://env.observium.com",
+                    "OBSERVIUM_USERNAME": "env_user",
+                    "OBSERVIUM_PASSWORD": "env_pass",
+                },
+            ),
+            patch.object(ObserviumAdapter, "_create_rest_client") as mock_client,
+        ):
+            mock_client.return_value = Mock()
 
-                adapter = ObserviumAdapter(
-                    target="test",
-                    adapter=adapter_config,
-                    config=sync_config
-                )
+            adapter = ObserviumAdapter(target="test", adapter=adapter_config, config=sync_config)
 
-                assert adapter.type == "Observium"
+            assert adapter.type == "Observium"
 
     def test_observium_response_extraction(self):
         """Test that Observium adapter handles response extraction correctly."""
-        settings = {
-            "url": "https://observium.example.com",
-            "username": "admin",
-            "password": "password"
-        }
+        settings = {"url": "https://observium.example.com", "username": "admin", "password": "password"}
 
         adapter_config = SyncAdapter(name="observium", settings=settings)
         sync_config = SyncConfig(
             name="test_sync",
             source=SyncAdapter(name="Observium"),
             destination=SyncAdapter(name="Infrahub"),
-            schema_mapping=[]
+            schema_mapping=[],
         )
 
         with patch.object(ObserviumAdapter, "_create_rest_client") as mock_client:
             mock_client.return_value = Mock()
 
-            adapter = ObserviumAdapter(
-                target="test",
-                adapter=adapter_config,
-                config=sync_config
-            )
+            adapter = ObserviumAdapter(target="test", adapter=adapter_config, config=sync_config)
 
             # Test Observium-specific response format (dict to list conversion)
-            response_data = {
-                "devices": {
-                    "1": {"id": 1, "name": "device1"},
-                    "2": {"id": 2, "name": "device2"}
-                }
-            }
+            response_data = {"devices": {"1": {"id": 1, "name": "device1"}, "2": {"id": 2, "name": "device2"}}}
 
             result = adapter._extract_objects_from_response(
-                response_data=response_data,
-                resource_name="devices",
-                element=Mock()
+                response_data=response_data, resource_name="devices", element=Mock()
             )
 
             # Should convert dict values to list
@@ -188,7 +153,7 @@ class TestBackwardCompatibility:
             "token": "test_token",
             "timeout": 30,
             "verify_ssl": True,
-            "api_endpoint": "api"
+            "api_endpoint": "api",
         }
 
         adapter_config = SyncAdapter(name="peeringmanager", settings=settings)
@@ -196,18 +161,14 @@ class TestBackwardCompatibility:
             name="test_sync",
             source=SyncAdapter(name="Peeringmanager"),
             destination=SyncAdapter(name="Infrahub"),
-            schema_mapping=[]
+            schema_mapping=[],
         )
 
         # Mock the _create_rest_client method to avoid actual API calls
         with patch.object(PeeringmanagerAdapter, "_create_rest_client") as mock_client:
             mock_client.return_value = Mock()
 
-            adapter = PeeringmanagerAdapter(
-                target="test",
-                adapter=adapter_config,
-                config=sync_config
-            )
+            adapter = PeeringmanagerAdapter(target="test", adapter=adapter_config, config=sync_config)
 
             # Should maintain the same type
             assert adapter.type == "Peeringmanager"
@@ -217,10 +178,13 @@ class TestBackwardCompatibility:
 
     def test_peeringmanager_adapter_with_environment_variables(self):
         """Test that PeeringManager adapter works with environment variables."""
-        with patch.dict('os.environ', {
-            'PEERING_MANAGER_ADDRESS': 'https://peering-env.example.com',
-            'PEERING_MANAGER_TOKEN': 'env_token'
-        }), patch.object(PeeringmanagerAdapter, "_create_rest_client") as mock_client:
+        with (
+            patch.dict(
+                "os.environ",
+                {"PEERING_MANAGER_ADDRESS": "https://peering-env.example.com", "PEERING_MANAGER_TOKEN": "env_token"},
+            ),
+            patch.object(PeeringmanagerAdapter, "_create_rest_client") as mock_client,
+        ):
             mock_client.return_value = Mock()
 
             adapter_config = SyncAdapter(name="peeringmanager", settings={})
@@ -228,14 +192,10 @@ class TestBackwardCompatibility:
                 name="test_sync",
                 source=SyncAdapter(name="Peeringmanager"),
                 destination=SyncAdapter(name="Infrahub"),
-                schema_mapping=[]
+                schema_mapping=[],
             )
 
-            adapter = PeeringmanagerAdapter(
-                target="test",
-                adapter=adapter_config,
-                config=sync_config
-            )
+            adapter = PeeringmanagerAdapter(target="test", adapter=adapter_config, config=sync_config)
 
             # Should maintain the same type
             assert adapter.type == "Peeringmanager"

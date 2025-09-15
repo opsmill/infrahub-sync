@@ -40,13 +40,7 @@ class LibrenmsAdapter(GenericRestApiAdapter):
         # Create a new adapter with updated settings
         updated_adapter = SyncAdapter(name=adapter.name, settings=settings)
 
-        super().__init__(
-            target=target,
-            adapter=updated_adapter,
-            config=config,
-            adapter_type="LibreNMS",
-            **kwargs
-        )
+        super().__init__(target=target, adapter=updated_adapter, config=config, adapter_type="LibreNMS", **kwargs)
 
 
 class LibrenmsModel(GenericRestApiModel):

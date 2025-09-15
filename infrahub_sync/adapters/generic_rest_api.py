@@ -45,9 +45,9 @@ class GenericRestApiAdapter(DiffSyncMixin, Adapter):
 
         self.target = target
         self.type = adapter_type
-        settings = adapter.settings or {}
-        self.params = settings.get("params", {})
-        self.client = self._create_rest_client(settings=settings)
+        self.settings = adapter.settings or {}
+        self.params = self.settings.get("params", {})
+        self.client = self._create_rest_client(settings=self.settings)
         self.config = config
 
     def _create_rest_client(self, settings: dict) -> RestApiClient:
@@ -156,9 +156,7 @@ class GenericRestApiAdapter(DiffSyncMixin, Adapter):
 
                 # Extract objects from response using configurable response extraction
                 objs = self._extract_objects_from_response(
-                    response_data=response_data,
-                    resource_name=resource_name,
-                    element=element
+                    response_data=response_data, resource_name=resource_name, element=element
                 )
             except Exception as exc:
                 msg = f"Error fetching data from REST API: {exc!s}"
@@ -194,13 +192,13 @@ class GenericRestApiAdapter(DiffSyncMixin, Adapter):
         per adapter through settings or schema mapping configuration.
         """
         # Check if there's a custom response key specified in the settings
-        response_key_pattern = getattr(self.config, "response_key_pattern", None)
+        response_key_pattern: str | None = self.settings.get("response_key_pattern")
+        default_key = resource_name.rstrip("/").rsplit("/", maxsplit=1)[-1]
 
-        # Use ternary operator for response key selection
         response_key = (
-            response_key_pattern.format(resource=resource_name)
+            response_key_pattern.format(resource=resource_name, default=default_key)
             if response_key_pattern
-            else resource_name.split("/")[-1]
+            else default_key
         )
 
         # Try to get data using the response key
@@ -225,6 +223,10 @@ class GenericRestApiAdapter(DiffSyncMixin, Adapter):
         """
         obj_id = derive_identifier_key(obj=obj)
         data: dict[str, Any] = {"local_id": str(obj_id)}
+
+        if not mapping.fields:
+            msg = f"No fields defined in schema mapping for model {model.__name__}"
+            raise ValueError(msg)
 
         for field in mapping.fields:  # pylint: disable=too-many-nested-blocks
             field_is_list = model.is_list(name=field.name)
