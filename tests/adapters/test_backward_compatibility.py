@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 from infrahub_sync import SyncAdapter, SyncConfig
 from infrahub_sync.adapters.librenms import LibrenmsAdapter
 from infrahub_sync.adapters.observium import ObserviumAdapter
+from infrahub_sync.adapters.peeringmanager import PeeringmanagerAdapter
 
 
 class TestBackwardCompatibility:
@@ -178,3 +179,63 @@ class TestBackwardCompatibility:
             ids = [obj["id"] for obj in result]
             assert 1 in ids
             assert 2 in ids
+
+    def test_peeringmanager_adapter_backward_compatibility(self):
+        """Test that PeeringManager adapter works with existing configuration patterns."""
+        # Configuration that would have worked with the old adapter
+        settings = {
+            "url": "https://peering.example.com",
+            "token": "test_token",
+            "timeout": 30,
+            "verify_ssl": True,
+            "api_endpoint": "api"
+        }
+
+        adapter_config = SyncAdapter(name="peeringmanager", settings=settings)
+        sync_config = SyncConfig(
+            name="test_sync",
+            source=SyncAdapter(name="Peeringmanager"),
+            destination=SyncAdapter(name="Infrahub"),
+            schema_mapping=[]
+        )
+
+        # Mock the _create_rest_client method to avoid actual API calls
+        with patch.object(PeeringmanagerAdapter, "_create_rest_client") as mock_client:
+            mock_client.return_value = Mock()
+
+            adapter = PeeringmanagerAdapter(
+                target="test",
+                adapter=adapter_config,
+                config=sync_config
+            )
+
+            # Should maintain the same type
+            assert adapter.type == "Peeringmanager"
+
+            # Should have configured the auth method to token by default
+            assert adapter.client is not None
+
+    def test_peeringmanager_adapter_with_environment_variables(self):
+        """Test that PeeringManager adapter works with environment variables."""
+        with patch.dict('os.environ', {
+            'PEERING_MANAGER_ADDRESS': 'https://peering-env.example.com',
+            'PEERING_MANAGER_TOKEN': 'env_token'
+        }), patch.object(PeeringmanagerAdapter, "_create_rest_client") as mock_client:
+            mock_client.return_value = Mock()
+
+            adapter_config = SyncAdapter(name="peeringmanager", settings={})
+            sync_config = SyncConfig(
+                name="test_sync",
+                source=SyncAdapter(name="Peeringmanager"),
+                destination=SyncAdapter(name="Infrahub"),
+                schema_mapping=[]
+            )
+
+            adapter = PeeringmanagerAdapter(
+                target="test",
+                adapter=adapter_config,
+                config=sync_config
+            )
+
+            # Should maintain the same type
+            assert adapter.type == "Peeringmanager"
