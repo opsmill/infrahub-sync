@@ -13,9 +13,12 @@ from infrahub_sync.adapters.genericrestapi import GenericrestapiModel
 class InfraAutonomousSystem(GenericrestapiModel):
     _modelname = "InfraAutonomousSystem"
     _identifiers = ("asn",)
-    _attributes = ("name",)
-    asn: int
+    _attributes = ("ipv6_max_prefixes", "name", "ipv4_max_prefixes", "irr_as_set")
+    ipv6_max_prefixes: int | None = None
     name: str
+    ipv4_max_prefixes: int | None = None
+    asn: int
+    irr_as_set: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
