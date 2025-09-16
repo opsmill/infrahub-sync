@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 
 from infrahub_sync.adapters.genericrestapi import GenericrestapiModel
+
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -18,6 +19,7 @@ class BuiltinTag(GenericrestapiModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class LocationSite(GenericrestapiModel):
     _modelname = "LocationSite"
     _identifiers = ("name",)
@@ -27,6 +29,7 @@ class LocationSite(GenericrestapiModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class OrganizationTenant(GenericrestapiModel):
     _modelname = "OrganizationTenant"
