@@ -1,0 +1,20 @@
+from infrahub_sync.adapters.prometheus import PrometheusAdapter
+
+from .sync_models import (
+    VirtualizationVMDisk,
+    VirtualizationVMFilesystem,
+    VirtualizationVMNetworkInterface,
+    VirtualizationVirtualMachine,
+)
+
+
+# -------------------------------------------------------
+# AUTO-GENERATED FILE, DO NOT MODIFY
+#  This file has been generated with the command `infrahub-sync generate`
+#  All modifications will be lost the next time you reexecute this command
+# -------------------------------------------------------
+class PrometheusSync(PrometheusAdapter):
+    VirtualizationVMDisk = VirtualizationVMDisk
+    VirtualizationVMFilesystem = VirtualizationVMFilesystem
+    VirtualizationVMNetworkInterface = VirtualizationVMNetworkInterface
+    VirtualizationVirtualMachine = VirtualizationVirtualMachine

@@ -1,0 +1,217 @@
+version: "1.0"
+nodes:
+  - name: VirtualMachine
+    namespace: Virtualization
+    description: Guest VM discovered from node_exporter; optionally enriched by libvirt.
+    label: Virtual Machine
+    icon: carbon:virtual-machine
+    human_friendly_id: ["name__value"]
+    display_labels:
+      - name__value
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+        description: Virtual machine hostname or identifier
+      - name: os_name
+        kind: Text
+        optional: true
+        description: Operating system name
+      - name: os_kernel
+        kind: Text
+        optional: true
+        description: Kernel version
+      - name: architecture
+        kind: Text
+        optional: true
+        description: CPU architecture (e.g., x86_64, arm64)
+      - name: cpu_count
+        kind: Number
+        optional: true
+        description: Number of virtual CPUs
+      - name: mem_total_bytes
+        kind: Number
+        optional: true
+        description: Total memory in bytes
+      - name: ip_forwarding_enabled
+        kind: Boolean
+        optional: true
+        description: Whether IP forwarding is enabled
+      - name: conntrack_limit
+        kind: Number
+        optional: true
+        description: Connection tracking table limit
+      - name: status
+        kind: Dropdown
+        optional: true
+        description: Current VM status
+        choices:
+          - name: active
+            label: Active
+            description: VM is running
+            color: "#009933"
+          - name: inactive
+            label: Inactive
+            description: VM is stopped
+            color: "#cc0000"
+          - name: paused
+            label: Paused
+            description: VM is paused
+            color: "#ff9900"
+          - name: unknown
+            label: Unknown
+            description: VM status unknown
+            color: "#666666"
+    relationships:
+      - name: interfaces
+        peer: VirtualizationVMNetworkInterface
+        cardinality: many
+        kind: Component
+        optional: true
+      - name: filesystems
+        peer: VirtualizationVMFilesystem
+        cardinality: many
+        kind: Component
+        optional: true
+      - name: disks
+        peer: VirtualizationVMDisk
+        cardinality: many
+        kind: Component
+        optional: true
+
+  - name: VMNetworkInterface
+    namespace: Virtualization
+    description: Network interface belonging to a VM (node_exporter netclass/netdev).
+    label: VM Network Interface
+    icon: carbon:network--interface
+    human_friendly_id: ["virtual_machine__name__value", "name__value"]
+    display_labels:
+      - name__value
+    uniqueness_constraints:
+      - ["virtual_machine", "name__value"]
+    attributes:
+      - name: name
+        kind: Text
+        description: Interface name inside the guest (e.g., eth0)
+      - name: mac_address
+        kind: MacAddress
+        optional: true
+        description: MAC address of the interface
+      - name: mtu
+        kind: Number
+        optional: true
+        description: Maximum transmission unit
+      - name: speed_bps
+        kind: Number
+        optional: true
+        description: Interface speed in bits per second
+      - name: operational_status
+        kind: Dropdown
+        optional: true
+        description: Interface operational status
+        choices:
+          - name: up
+            label: Up
+            description: Interface is operational
+            color: "#009933"
+          - name: down
+            label: Down
+            description: Interface is not operational
+            color: "#cc0000"
+          - name: unknown
+            label: Unknown
+            description: Interface status unknown
+            color: "#666666"
+      - name: carrier
+        kind: Boolean
+        optional: true
+        description: Whether carrier signal is detected
+      - name: duplex
+        kind: Dropdown
+        optional: true
+        description: Duplex mode
+        choices:
+          - name: full
+            label: Full
+            description: Full duplex
+            color: "#009933"
+          - name: half
+            label: Half
+            description: Half duplex
+            color: "#ff9900"
+          - name: unknown
+            label: Unknown
+            description: Duplex unknown
+            color: "#666666"
+    relationships:
+      - name: virtual_machine
+        peer: VirtualizationVirtualMachine
+        cardinality: one
+        kind: Parent
+        optional: false
+
+  - name: VMFilesystem
+    namespace: Virtualization
+    description: Filesystem/mountpoint within a VM.
+    label: VM Filesystem
+    icon: carbon:folder
+    human_friendly_id: ["virtual_machine__name__value", "mountpoint__value"]
+    display_labels:
+      - mountpoint__value
+    uniqueness_constraints:
+      - ["virtual_machine", "mountpoint__value"]
+    attributes:
+      - name: mountpoint
+        kind: Text
+        description: Mount path (e.g., /, /var)
+      - name: device
+        kind: Text
+        optional: true
+        description: Device path (e.g., /dev/vda1)
+      - name: fstype
+        kind: Text
+        optional: true
+        description: Filesystem type (e.g., ext4, xfs)
+      - name: size_bytes
+        kind: Number
+        optional: true
+        description: Total filesystem size in bytes
+      - name: readonly
+        kind: Boolean
+        optional: true
+        description: Whether filesystem is mounted read-only
+      - name: device_error
+        kind: Boolean
+        optional: true
+        description: Whether device has errors
+    relationships:
+      - name: virtual_machine
+        peer: VirtualizationVirtualMachine
+        cardinality: one
+        kind: Parent
+        optional: false
+
+  - name: VMDisk
+    namespace: Virtualization
+    description: Block device as seen by the VM.
+    label: VM Disk
+    icon: carbon:storage
+    human_friendly_id: ["virtual_machine__name__value", "device__value"]
+    display_labels:
+      - device__value
+    uniqueness_constraints:
+      - ["virtual_machine", "device__value"]
+    attributes:
+      - name: device
+        kind: Text
+        description: Device name (e.g., vda)
+      - name: rotational
+        kind: Boolean
+        optional: true
+        description: Whether disk is rotational (HDD vs SSD)
+    relationships:
+      - name: virtual_machine
+        peer: VirtualizationVirtualMachine
+        cardinality: one
+        kind: Parent
+        optional: false
