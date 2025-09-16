@@ -2,13 +2,14 @@
 name: from-device42
 
 source:
-  name: device42
+  name: genericrestapi
   settings:
     url: "http://swaggerdemo.device42.com"
+    auth_method: "basic"
     username: "guest"
     password: "device42_rocks!"
-    verify_ssl: false
-    # debug: true  # Uncomment to enable debug logging
+    api_endpoint: "/api/1.0"
+    response_key_pattern: "objects"
 
 destination:
   name: infrahub
@@ -17,18 +18,21 @@ destination:
 
 order: [
   "BuiltinTag",
-  "RoleGeneric", 
-  "OrganizationGeneric",
-  "LocationGeneric",
-  "InfraRack",
-  "ChoiceDeviceType",
-  "InfraDevice",
-  "InfraInterfaceL2L3",
+  "OrganizationTenant",
+  "LocationSite",
 ]
 
 schema_mapping:
+  # Builtin Tags (Device42 tags)
+  - name: BuiltinTag
+    mapping: tags
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: name
+
   # Organizations (Customers in Device42)
-  - name: OrganizationGeneric
+  - name: OrganizationTenant
     mapping: customers
     identifiers: ["name"]
     fields:
@@ -38,104 +42,13 @@ schema_mapping:
         mapping: notes
 
   # Locations (Buildings in Device42)
-  - name: LocationGeneric
+  - name: LocationSite
     mapping: buildings
     identifiers: ["name"]
     fields:
       - name: name
         mapping: name
-      - name: description
-        mapping: notes
-      - name: type
-        static: "Building"
+      - name: tags
+        mapping: tags
+        reference: BuiltinTag
 
-  # Locations (Rooms in Device42)  
-  - name: LocationGeneric
-    mapping: rooms
-    identifiers: ["name"]
-    fields:
-      - name: name
-        mapping: name
-      - name: description
-        mapping: notes
-      - name: type
-        static: "Room"
-
-  # Racks
-  - name: InfraRack
-    mapping: racks
-    identifiers: ["name", "location"]
-    fields:
-      - name: name
-        mapping: name
-      - name: location
-        mapping: room
-        reference: LocationGeneric
-      - name: height
-        mapping: size
-      - name: serial_number
-        mapping: serial_no
-      - name: asset_tag
-        mapping: asset_no
-
-  # Hardware Models (Device Types)
-  - name: ChoiceDeviceType  
-    mapping: hardwares
-    identifiers: ["name", "manufacturer"]
-    fields:
-      - name: name
-        mapping: name
-      - name: part_number
-        mapping: part_no
-      - name: height
-        mapping: size
-      - name: manufacturer
-        mapping: manufacturer
-        reference: OrganizationGeneric
-
-  # Devices
-  - name: InfraDevice
-    identifiers: ["name"]
-    mapping: devices
-    fields:
-      - name: name
-        mapping: name
-      - name: serial_number
-        mapping: serial_no
-      - name: asset_tag
-        mapping: asset_no
-      - name: description
-        mapping: notes
-      - name: model
-        mapping: hardware
-        reference: ChoiceDeviceType
-      - name: organization
-        mapping: customer
-        reference: OrganizationGeneric
-      - name: location
-        mapping: room
-        reference: LocationGeneric
-      - name: rack
-        mapping: rack
-        reference: InfraRack
-    transforms:
-      - field: name
-        expression: "{{ name.lower() if name else '' }}"
-
-  # Network Interfaces (Device42 IP addresses often represent interfaces)
-  - name: InfraInterfaceL2L3
-    identifiers: ["device", "name"]
-    mapping: ips
-    fields:
-      - name: name
-        mapping: label
-      - name: description  
-        mapping: notes
-      - name: device
-        mapping: device
-        reference: InfraDevice
-    # Only include IPs that have interface-like labels
-    filters:
-      - field: label
-        operation: "exists"
-        value: true

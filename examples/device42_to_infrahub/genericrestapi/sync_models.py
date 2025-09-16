@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from typing import Any, List
 
-from infrahub_sync.adapters.infrahub import InfrahubModel
+from infrahub_sync.adapters.genericrestapi import GenericrestapiModel
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
 #  This file has been generated with the command `infrahub-sync generate`
 #  All modifications will be lost the next time you reexecute this command
 # -------------------------------------------------------
-class BuiltinTag(InfrahubModel):
+class BuiltinTag(GenericrestapiModel):
     _modelname = "BuiltinTag"
     _identifiers = ("name",)
     _attributes = ()
@@ -18,7 +18,7 @@ class BuiltinTag(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
-class LocationSite(InfrahubModel):
+class LocationSite(GenericrestapiModel):
     _modelname = "LocationSite"
     _identifiers = ("name",)
     _attributes = ("tags",)
@@ -28,7 +28,7 @@ class LocationSite(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
-class OrganizationTenant(InfrahubModel):
+class OrganizationTenant(GenericrestapiModel):
     _modelname = "OrganizationTenant"
     _identifiers = ("name",)
     _attributes = ("description",)
