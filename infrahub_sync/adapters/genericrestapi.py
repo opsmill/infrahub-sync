@@ -303,3 +303,8 @@ class GenericrestapiModel(DiffSyncModelMixin, DiffSyncModel):
     def update(self, attrs: dict) -> Self | None:
         # TODO: To implement
         return super().update(attrs=attrs)
+
+
+# Aliases for backward compatibility and consistency
+GenericRestApiAdapter = GenericrestapiAdapter
+GenericRestApiModel = GenericrestapiModel
