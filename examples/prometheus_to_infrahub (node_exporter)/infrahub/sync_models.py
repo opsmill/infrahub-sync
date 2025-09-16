@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 
 from infrahub_sync.adapters.infrahub import InfrahubModel
+
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -20,6 +21,7 @@ class VirtualizationVMDisk(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class VirtualizationVMFilesystem(InfrahubModel):
     _modelname = "VirtualizationVMFilesystem"
     _identifiers = ("virtual_machine", "mountpoint")
@@ -34,6 +36,7 @@ class VirtualizationVMFilesystem(InfrahubModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class VirtualizationVMNetworkInterface(InfrahubModel):
     _modelname = "VirtualizationVMNetworkInterface"
@@ -51,10 +54,19 @@ class VirtualizationVMNetworkInterface(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class VirtualizationVirtualMachine(InfrahubModel):
     _modelname = "VirtualizationVirtualMachine"
     _identifiers = ("name",)
-    _attributes = ("os_name", "ip_forwarding_enabled", "os_kernel", "status", "architecture", "conntrack_limit", "mem_total_bytes")
+    _attributes = (
+        "os_name",
+        "ip_forwarding_enabled",
+        "os_kernel",
+        "status",
+        "architecture",
+        "conntrack_limit",
+        "mem_total_bytes",
+    )
     os_name: str | None = None
     ip_forwarding_enabled: bool | None = None
     os_kernel: str | None = None

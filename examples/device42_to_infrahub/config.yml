@@ -1,0 +1,54 @@
+---
+name: from-device42
+
+source:
+  name: genericrestapi
+  settings:
+    url: "http://swaggerdemo.device42.com"
+    auth_method: "basic"
+    username: "guest"
+    password: "device42_rocks!"
+    api_endpoint: "/api/1.0"
+    response_key_pattern: "objects"
+
+destination:
+  name: infrahub
+  settings:
+    url: "http://localhost:8000"
+
+order: [
+  "BuiltinTag",
+  "OrganizationTenant",
+  "LocationSite",
+]
+
+schema_mapping:
+  # Builtin Tags (Device42 tags)
+  - name: BuiltinTag
+    mapping: tags
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: name
+
+  # Organizations (Customers in Device42)
+  - name: OrganizationTenant
+    mapping: customers
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: name
+      - name: description
+        mapping: notes
+
+  # Locations (Buildings in Device42)
+  - name: LocationSite
+    mapping: buildings
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: name
+      - name: tags
+        mapping: tags
+        reference: BuiltinTag
+
