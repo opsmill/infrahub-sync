@@ -13,12 +13,9 @@ from infrahub_sync.adapters.infrahub import InfrahubModel
 class InfraAutonomousSystem(InfrahubModel):
     _modelname = "InfraAutonomousSystem"
     _identifiers = ("asn",)
-    _attributes = ("irr_as_set", "name", "ipv4_max_prefixes", "ipv6_max_prefixes")
+    _attributes = ("name",)
     asn: int
-    irr_as_set: str | None = None
     name: str
-    ipv4_max_prefixes: int | None = None
-    ipv6_max_prefixes: int | None = None
 
     local_id: str | None = None
     local_data: Any | None = None

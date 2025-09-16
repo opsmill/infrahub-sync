@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 
 from infrahub_sync.adapters.infrahub import InfrahubModel
+
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -18,6 +19,7 @@ class BuiltinTag(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class LocationSite(InfrahubModel):
     _modelname = "LocationSite"
     _identifiers = ("name",)
@@ -27,6 +29,7 @@ class LocationSite(InfrahubModel):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class OrganizationTenant(InfrahubModel):
     _modelname = "OrganizationTenant"

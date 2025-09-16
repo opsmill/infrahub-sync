@@ -1,10 +1,10 @@
 from infrahub_sync.adapters.infrahub import InfrahubAdapter
 
 from .sync_models import (
+    VirtualizationVirtualMachine,
     VirtualizationVMDisk,
     VirtualizationVMFilesystem,
     VirtualizationVMNetworkInterface,
-    VirtualizationVirtualMachine,
 )
 
 
