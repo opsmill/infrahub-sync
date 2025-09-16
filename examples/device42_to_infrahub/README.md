@@ -21,10 +21,23 @@ Update the `config.yml` file with your Device42 instance details:
 source:
   name: device42
   settings:
-    url: "https://your-device42-instance.com"
+    url: "http://your-device42-instance.com"
     username: "your-username"
     password: "your-password"
     verify_ssl: true
+```
+
+For testing and demonstration, you can use the Device42 demo server:
+
+```yaml
+source:
+  name: device42
+  settings:
+    url: "http://swaggerdemo.device42.com"
+    username: "guest"
+    password: "device42_rocks!"
+    verify_ssl: false
+    debug: true  # Enable debug logging to see API response structure
 ```
 
 ### Environment Variables
@@ -32,9 +45,17 @@ source:
 You can also configure the connection using environment variables:
 
 ```bash
-export DEVICE42_URL="https://your-device42-instance.com"
+export DEVICE42_URL="http://your-device42-instance.com"
 export DEVICE42_USERNAME="your-username"  
 export DEVICE42_PASSWORD="your-password"
+```
+
+For testing with the demo server:
+
+```bash
+export DEVICE42_URL="http://swaggerdemo.device42.com"
+export DEVICE42_USERNAME="guest"
+export DEVICE42_PASSWORD="device42_rocks!"
 ```
 
 ### Infrahub Settings
@@ -117,6 +138,38 @@ Device42 uses HTTP Basic Authentication. Ensure your user account has the necess
 - Location management  
 - Device management
 - Network management
+
+## Device42-Specific Features
+
+### Response Format Handling
+
+Device42 API returns data in a structured format:
+
+```json
+{
+  "objects": [...],
+  "total_count": 123,
+  "limit": 100,
+  "offset": 0
+}
+```
+
+The adapter automatically handles this format and extracts the data from the `objects` key.
+
+### Pagination Support
+
+Device42 APIs return paginated results. The adapter includes methods to handle pagination automatically, though the basic implementation loads the first page. For large datasets, the adapter will log information about remaining records.
+
+### Debug Mode
+
+Enable debug mode to see detailed information about API responses:
+
+```yaml
+settings:
+  debug: true
+```
+
+This will show the available keys in each API response and help troubleshoot data mapping issues.
 
 ## Troubleshooting
 

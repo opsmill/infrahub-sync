@@ -201,8 +201,24 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
             else default_key
         )
 
+        # Debug information for API response structure
+        debug_mode = self.settings.get("debug", False)
+        if debug_mode:
+            print(f"API Response keys for {resource_name}: {list(response_data.keys())}")
+            print(f"Looking for data using key: {response_key}")
+
         # Try to get data using the response key
         objs = response_data.get(response_key, response_data.get(resource_name, {}))
+        
+        # If no data found with expected key, try common alternative keys
+        if not objs and response_key != "objects":
+            # Try some common API response keys
+            for alt_key in ["objects", "data", "results", "items"]:
+                if alt_key in response_data:
+                    objs = response_data[alt_key]
+                    if debug_mode:
+                        print(f"Found data using alternative key: {alt_key}")
+                    break
 
         # Handle different response formats
         if isinstance(objs, dict):

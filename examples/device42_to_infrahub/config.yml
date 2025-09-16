@@ -4,10 +4,11 @@ name: from-device42
 source:
   name: device42
   settings:
-    url: "https://device42.example.com"
-    username: "your-username"
-    password: "your-password"
-    verify_ssl: true
+    url: "http://swaggerdemo.device42.com"
+    username: "guest"
+    password: "device42_rocks!"
+    verify_ssl: false
+    # debug: true  # Uncomment to enable debug logging
 
 destination:
   name: infrahub
