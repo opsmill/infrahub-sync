@@ -34,6 +34,61 @@ def find_missing_schema_model(
     return missing_schema_models
 
 
+def get_adapter_import_info(sync_instance: SyncInstance, adapter: SyncAdapter) -> tuple[str, str]:
+    """
+    Determine the correct import path and class name for an adapter.
+    
+    Returns:
+        tuple: (import_statement, class_name)
+    """
+    directory = Path(sync_instance.directory)
+    adapter_name = f"{adapter.name.title()}Adapter"
+    
+    # First check if it's a built-in adapter
+    try:
+        importlib.import_module(f"infrahub_sync.adapters.{adapter.name}")
+        return f"infrahub_sync.adapters.{adapter.name}", adapter_name
+    except ImportError:
+        pass
+    
+    # Check for local adapter files in order of preference
+    possible_paths = [
+        directory / f"{adapter.name}.py",  # e.g., my_adapter.py
+        directory / f"{adapter.name}_adapter.py",  # e.g., my_adapter_adapter.py
+        directory / "adapters" / f"{adapter.name}.py",  # e.g., adapters/my_adapter.py
+        directory / adapter.name / "adapter.py",  # e.g., my_adapter/adapter.py
+    ]
+    
+    # Handle underscores properly in adapter name by creating CamelCase
+    parts = adapter.name.split("_")
+    camel_case_name = "".join(part.capitalize() for part in parts)
+    
+    for adapter_file_path in possible_paths:
+        if adapter_file_path.exists():
+            # Determine the correct import path based on file location
+            relative_path = adapter_file_path.relative_to(directory)
+            if relative_path.parent.name == "adapters":
+                import_path = f"adapters.{adapter.name}"
+            elif adapter_file_path.name == "adapter.py":
+                import_path = f"{adapter.name}.adapter" 
+            else:
+                import_path = adapter_file_path.stem
+            
+            # Try different class names that might exist in the local file
+            possible_class_names = [
+                f"{camel_case_name}Adapter",  # e.g., MyCustomAdapterAdapter
+                f"{camel_case_name}",  # e.g., MyCustomAdapter
+                f"{camel_case_name}Sync",  # e.g., MyCustomAdapterSync
+            ]
+            
+            # We can't easily check which class name exists without importing,
+            # so we'll use the first one as default and let the user know
+            return import_path, possible_class_names[0]
+    
+    # Default to built-in path if no local file found (will likely fail but gives better error)
+    return f"infrahub_sync.adapters.{adapter.name}", adapter_name
+
+
 def render_adapter(
     sync_instance: SyncInstance,
     schema: MutableMapping[str, Union[NodeSchema, GenericSchema]],
@@ -52,12 +107,21 @@ def render_adapter(
         if not init_file_path.exists():
             init_file_path.touch()
 
+        # Get import information for this adapter
+        import_path, class_name = get_adapter_import_info(sync_instance, adapter)
+
         for item in files_to_render:
             render_template(
                 template_file=item[0],
                 output_dir=output_dir_path,
                 output_file=item[1],
-                context={"schema": schema, "adapter": adapter, "config": sync_instance},
+                context={
+                    "schema": schema, 
+                    "adapter": adapter, 
+                    "config": sync_instance,
+                    "adapter_import_path": import_path,
+                    "adapter_class_name": class_name,
+                },
             )
             output_file_path = output_dir_path / item[1]
             rendered_files.append((item[0], output_file_path))
