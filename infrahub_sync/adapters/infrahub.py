@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import ipaddress
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -294,6 +295,14 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 # got a ValidationError from pydantic while trying to get the model(**data)
                 # for IPHost and IPInterface
                 data[attr_name] = str(attr.value) if attr.value and not isinstance(attr.value, str) else attr.value
+                val = attr.value
+                if isinstance(
+                    val,
+                    (ipaddress.IPv4Interface, ipaddress.IPv6Interface, ipaddress.IPv4Network, ipaddress.IPv6Network),
+                ):
+                    data[attr_name] = str(val)
+                else:
+                    data[attr_name] = val
 
         for rel_schema in node._schema.relationships:
             if not has_field(config=self.config, name=node._schema.kind, field=rel_schema.name):

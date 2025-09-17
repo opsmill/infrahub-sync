@@ -25,6 +25,7 @@ ATTRIBUTE_KIND_MAP = {
     "Integer": "int",
     "Boolean": "bool",
     "Checkbox": "bool",
+    "List": "list[Any]",
 }
 
 
