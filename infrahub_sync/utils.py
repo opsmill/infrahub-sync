@@ -10,9 +10,11 @@ from diffsync.store.local import LocalStore
 from diffsync.store.redis import RedisStore
 from infrahub_sdk import Config
 
-from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
 from infrahub_sync.generator import render_template
 from infrahub_sync.potenda import Potenda
+
+if TYPE_CHECKING:
+    from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
@@ -24,6 +26,9 @@ def find_missing_schema_model(
     sync_instance: SyncInstance,
     schema: MutableMapping[str, Union[NodeSchema, GenericSchema]],
 ) -> list[str]:
+    # Import at runtime to avoid circular dependency
+    from infrahub_sync import SyncInstance
+    
     missing_schema_models = []
     for item in sync_instance.schema_mapping:
         match_found = any(item.name == node.kind for node in schema.values())
@@ -38,6 +43,9 @@ def render_adapter(
     sync_instance: SyncInstance,
     schema: MutableMapping[str, Union[NodeSchema, GenericSchema]],
 ) -> list[tuple[str, str]]:
+    # Import at runtime to avoid circular dependency
+    from infrahub_sync import SyncInstance
+    
     files_to_render = (
         ("diffsync_models.j2", "sync_models.py"),
         ("diffsync_adapter.j2", "sync_adapter.py"),
@@ -66,6 +74,9 @@ def render_adapter(
 
 
 def import_adapter(sync_instance: SyncInstance, adapter: SyncAdapter):
+    # Import at runtime to avoid circular dependency
+    from infrahub_sync import SyncAdapter, SyncInstance
+    
     directory = Path(sync_instance.directory)
     sys.path.insert(0, str(directory))
     adapter_file_path = directory / f"{adapter.name}" / "sync_adapter.py"
@@ -90,6 +101,9 @@ def import_adapter(sync_instance: SyncInstance, adapter: SyncAdapter):
 
 
 def get_all_sync(directory: str | None = None) -> list[SyncInstance]:
+    # Import at runtime to avoid circular dependency
+    from infrahub_sync import SyncConfig, SyncInstance
+    
     results = []
     search_directory = Path(directory) if directory else Path(__file__).parent
     config_files = search_directory.glob("**/config.yml")
@@ -109,6 +123,9 @@ def get_instance(
     config_file: str | None = "config.yml",
     directory: str | None = None,
 ) -> SyncInstance | None:
+    # Import at runtime to avoid circular dependency
+    from infrahub_sync import SyncInstance
+    
     if name:
         all_sync_instances = get_all_sync(directory=directory)
         for item in all_sync_instances:
@@ -141,6 +158,9 @@ def get_potenda_from_instance(
     branch: str | None = None,
     show_progress: bool | None = True,
 ) -> Potenda:
+    # Import at runtime to avoid circular dependency
+    from infrahub_sync import SyncInstance
+    
     source = import_adapter(sync_instance=sync_instance, adapter=sync_instance.source)
     destination = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
 

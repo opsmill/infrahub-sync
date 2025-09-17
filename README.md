@@ -17,3 +17,26 @@ Infrahub Sync is a versatile Python package that synchronizes data between a sou
 ## Using Infrahub sync
 
 Documentation for using Infrahub Sync is available [here](https://docs.infrahub.app/sync/)
+
+### Python API
+
+Infrahub Sync also provides a Python API for programmatic access. You can use sync operations directly in your Python code:
+
+```python
+from infrahub_sync.api import sync, diff, list_projects
+
+# List available sync projects
+projects = list_projects()
+
+# Perform a diff
+result = diff(name="my-sync-project")
+if result.success and result.changes_detected:
+    print(f"Changes detected: {result.message}")
+
+# Perform a sync
+result = sync(name="my-sync-project")
+if result.success:
+    print(f"Sync completed in {result.duration:.2f} seconds")
+```
+
+For detailed documentation on the Python API, see [docs/python-api.md](docs/python-api.md).

@@ -1,5 +1,4 @@
 import logging
-from timeit import default_timer as timer
 from typing import TYPE_CHECKING
 
 import typer
@@ -7,12 +6,11 @@ from infrahub_sdk import InfrahubClientSync
 from infrahub_sdk.exceptions import ServerNotResponsiveError
 from rich.console import Console
 
+from infrahub_sync.api import SyncError, diff as api_diff, list_projects as api_list_projects, sync as api_sync
 from infrahub_sync.utils import (
     find_missing_schema_model,
-    get_all_sync,
     get_infrahub_config,
     get_instance,
-    get_potenda_from_instance,
     render_adapter,
 )
 
@@ -35,8 +33,12 @@ def list_projects(
     directory: str = typer.Option(default=None, help="Base directory to search for sync configurations"),
 ) -> None:
     """List all available SYNC projects."""
-    for item in get_all_sync(directory=directory):
-        console.print(f"{item.name} | {item.source.name} >> {item.destination.name} | {item.directory}")
+    try:
+        projects = api_list_projects(directory=directory)
+        for project in projects:
+            console.print(f"{project.name} | {project.source.name} >> {project.destination.name} | {project.directory}")
+    except Exception as exc:
+        print_error_and_abort(f"Failed to list projects: {exc}")
 
 
 @app.command(name="diff")
@@ -48,26 +50,20 @@ def diff_cmd(
     show_progress: bool = typer.Option(default=True, help="Show a progress bar during diff"),
 ) -> None:
     """Calculate and print the differences between the source and the destination systems for a given project."""
-    if sum([bool(name), bool(config_file)]) != 1:
-        print_error_and_abort("Please specify exactly one of 'name' or 'config-file'.")
-
-    sync_instance = get_instance(name=name, config_file=config_file, directory=directory)
-    if not sync_instance:
-        print_error_and_abort("Failed to load sync instance.")
-
     try:
-        ptd = get_potenda_from_instance(sync_instance=sync_instance, branch=branch, show_progress=show_progress)
-    except ValueError as exc:
-        print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}")
-    try:
-        ptd.source_load()
-        ptd.destination_load()
-    except ValueError as exc:
+        result = api_diff(
+            name=name,
+            config_file=config_file,
+            directory=directory,
+            branch=branch,
+            show_progress=show_progress,
+        )
+        if result.success:
+            print(result.message)
+        else:
+            print_error_and_abort(f"Diff failed: {result.error}")
+    except SyncError as exc:
         print_error_and_abort(str(exc))
-
-    mydiff = ptd.diff()
-
-    print(mydiff.str())
 
 
 @app.command(name="sync")
@@ -83,34 +79,24 @@ def sync_cmd(
     show_progress: bool = typer.Option(default=True, help="Show a progress bar during syncing"),
 ) -> None:
     """Synchronize the data between source and the destination systems for a given project or configuration file."""
-    if sum([bool(name), bool(config_file)]) != 1:
-        print_error_and_abort("Please specify exactly one of 'name' or 'config-file'.")
-
-    sync_instance = get_instance(name=name, config_file=config_file, directory=directory)
-    if not sync_instance:
-        print_error_and_abort("Failed to load sync instance.")
-
     try:
-        ptd = get_potenda_from_instance(sync_instance=sync_instance, branch=branch, show_progress=show_progress)
-    except ValueError as exc:
-        print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}")
-    try:
-        ptd.source_load()
-        ptd.destination_load()
-    except ValueError as exc:
+        result = api_sync(
+            name=name,
+            config_file=config_file,
+            directory=directory,
+            branch=branch,
+            diff_first=diff,
+            show_progress=show_progress,
+        )
+        if result.success:
+            if result.changes_detected:
+                console.print(f"Sync: Completed in {result.duration} sec")
+            else:
+                console.print("No difference found. Nothing to sync")
+        else:
+            print_error_and_abort(f"Sync failed: {result.error}")
+    except SyncError as exc:
         print_error_and_abort(str(exc))
-
-    mydiff = ptd.diff()
-
-    if mydiff.has_diffs():
-        if diff:
-            print(mydiff.str())
-        start_synctime = timer()
-        ptd.sync(diff=mydiff)
-        end_synctime = timer()
-        console.print(f"Sync: Completed in {end_synctime - start_synctime} sec")
-    else:
-        console.print("No difference found. Nothing to sync")
 
 
 @app.command(name="generate")
