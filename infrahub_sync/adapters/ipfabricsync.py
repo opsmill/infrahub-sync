@@ -6,6 +6,7 @@ try:
     from typing import Self
 except ImportError:
     from typing_extensions import Self
+import json
 
 try:
     from ipfabric import IPFClient
@@ -81,7 +82,9 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
                 transformed_objs = table
 
             for obj in transformed_objs:
+                print(f"Object to load: {obj}")
                 data = self.ipfabric_dict_to_diffsync(obj=obj, mapping=element, model=model)
+                print(f"Data to load: {data}")
                 item = model(**data)
                 self.update_or_add_model_instance(item)
 
@@ -102,8 +105,25 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
                     else:
                         data[field.name] = value
             elif field_is_list and field.mapping and not field.reference:
-                msg = "it's not supported yet to have an attribute of type list with a simple mapping"
-                raise NotImplementedError(msg)
+                # Handle list data for attributes like ntp_servers
+                list_value = obj.get(field.mapping)
+                if list_value is not None:
+                    # Ensure we end up with a real Python list.
+                    if isinstance(list_value, str):
+                        # Try to parse as JSON first.
+                        s = list_value.strip()
+                        try:
+                            parsed = json.loads(s)
+                        except (json.JSONDecodeError, TypeError):
+                            # Fallbacks: comma-separated -> list; otherwise singleton list
+                            parsed = [part.strip() for part in s.split(",")] if "," in s else [s]
+                        list_value = parsed
+                    # If it's not a list yet, wrap it.
+                    if not isinstance(list_value, list):
+                        list_value = [list_value]
+                    data[field.name] = list_value
+                else:
+                    data[field.name] = []
 
             elif field.mapping and field.reference:
                 all_nodes_for_reference = self.store.get_all(model=field.reference)

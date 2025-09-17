@@ -6,7 +6,8 @@ from typing import Any, Union
 
 import pydantic
 from diffsync.enum import DiffSyncFlags
-from jinja2 import Template
+from jinja2 import StrictUndefined
+from jinja2.nativetypes import NativeEnvironment
 from netutils.ip import is_ip_within as netutils_is_ip_within
 from packaging import version
 
@@ -170,17 +171,29 @@ class DiffSyncModelMixin:
 
     @classmethod
     def apply_transform(cls, item: dict[str, Any], transform_expr: str, field: str) -> None:
-        """Apply a transformation expression using Jinja2 to a specified field in the item."""
-        try:
-            # Create a Jinja2 template from the transformation expression
-            template = Template(transform_expr)
+        """Apply a transformation expression using Jinja2 to a specified field in the item.
 
-            # Render the template using the item's context
+        Uses Jinja's NativeEnvironment so expressions return native Python types
+        (list/dict/bool/int/str) instead of always strings.
+        """
+        try:
+            native_env = NativeEnvironment(
+                undefined=StrictUndefined,  # fail fast on missing keys
+                autoescape=False,
+                trim_blocks=True,
+                lstrip_blocks=True,
+            )
+            # Compile the template with the native env
+            template = native_env.from_string(transform_expr)
+
+            # Render with the item as context → returns a native Python value
             transformed_value = template.render(**item)
 
-            # Assign the result back to the item if not empty
-            if transformed_value:
+            # Always assign the result, even if it's an empty list/dict/False/0.
+            # Only skip if the result is literally None (meaning "don't set").
+            if transformed_value is not None:
                 item[field] = transformed_value
+
         except Exception as exc:
             msg = f"Failed to transform '{field}' with '{transform_expr}': {exc}"
             raise ValueError(msg) from exc
