@@ -1,0 +1,32 @@
+---
+name: plugin-loader-demo
+adapters_path:
+  - "./adapters"
+source:
+  adapter: "my_network"  # Resolved from adapters/ directory
+  settings:
+    api_endpoint: "https://network-monitor.example.com/api"
+    timeout: 60
+destination:
+  name: infrahub  # Uses built-in InfrahubAdapter
+  settings:
+    url: "http://localhost:8000"
+    token: "${INFRAHUB_TOKEN}"
+order:
+  - NetworkDevice
+schema_mapping:
+  - name: NetworkDevice
+    mapping: network_devices
+    identifiers:
+      - hostname
+    fields:
+      - name: hostname
+        mapping: hostname
+      - name: ip_address
+        mapping: ip_address
+      - name: device_type
+        mapping: device_type
+      - name: location
+        mapping: location
+      - name: vendor
+        mapping: vendor
