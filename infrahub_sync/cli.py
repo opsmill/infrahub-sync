@@ -46,6 +46,7 @@ def diff_cmd(
     directory: str = typer.Option(default=None, help="Base directory to search for sync configurations"),
     branch: str = typer.Option(default=None, help="Branch to use for the diff."),
     show_progress: bool = typer.Option(default=True, help="Show a progress bar during diff"),
+    adapter_path: list[str] = typer.Option(default=None, help="Additional paths to search for local adapters"),
 ) -> None:
     """Calculate and print the differences between the source and the destination systems for a given project."""
     if sum([bool(name), bool(config_file)]) != 1:
@@ -56,7 +57,7 @@ def diff_cmd(
         print_error_and_abort("Failed to load sync instance.")
 
     try:
-        ptd = get_potenda_from_instance(sync_instance=sync_instance, branch=branch, show_progress=show_progress)
+        ptd = get_potenda_from_instance(sync_instance=sync_instance, branch=branch, show_progress=show_progress, adapter_paths=adapter_path)
     except ValueError as exc:
         print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}")
     try:
@@ -81,6 +82,7 @@ def sync_cmd(
         help="Print the differences between the source and the destination before syncing",
     ),
     show_progress: bool = typer.Option(default=True, help="Show a progress bar during syncing"),
+    adapter_path: list[str] = typer.Option(default=None, help="Additional paths to search for local adapters"),
 ) -> None:
     """Synchronize the data between source and the destination systems for a given project or configuration file."""
     if sum([bool(name), bool(config_file)]) != 1:
@@ -91,7 +93,7 @@ def sync_cmd(
         print_error_and_abort("Failed to load sync instance.")
 
     try:
-        ptd = get_potenda_from_instance(sync_instance=sync_instance, branch=branch, show_progress=show_progress)
+        ptd = get_potenda_from_instance(sync_instance=sync_instance, branch=branch, show_progress=show_progress, adapter_paths=adapter_path)
     except ValueError as exc:
         print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}")
     try:
@@ -119,6 +121,7 @@ def generate(
     config_file: str = typer.Option(default=None, help="File path to the sync configuration YAML file"),
     directory: str = typer.Option(default=None, help="Base directory to search for sync configurations"),
     branch: str = typer.Option(default=None, help="Branch to use for the sync."),
+    adapter_path: list[str] = typer.Option(default=None, help="Additional paths to search for local adapters"),
 ) -> None:
     """Generate all the Python files for a given sync based on the configuration."""
 

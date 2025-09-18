@@ -34,61 +34,6 @@ def find_missing_schema_model(
     return missing_schema_models
 
 
-def get_adapter_import_info(sync_instance: SyncInstance, adapter: SyncAdapter) -> tuple[str, str]:
-    """
-    Determine the correct import path and class name for an adapter.
-    
-    Returns:
-        tuple: (import_statement, class_name)
-    """
-    directory = Path(sync_instance.directory)
-    adapter_name = f"{adapter.name.title()}Adapter"
-    
-    # First check if it's a built-in adapter
-    try:
-        importlib.import_module(f"infrahub_sync.adapters.{adapter.name}")
-        return f"infrahub_sync.adapters.{adapter.name}", adapter_name
-    except ImportError:
-        pass
-    
-    # Check for local adapter files in order of preference
-    possible_paths = [
-        directory / f"{adapter.name}.py",  # e.g., my_adapter.py
-        directory / f"{adapter.name}_adapter.py",  # e.g., my_adapter_adapter.py
-        directory / "adapters" / f"{adapter.name}.py",  # e.g., adapters/my_adapter.py
-        directory / adapter.name / "adapter.py",  # e.g., my_adapter/adapter.py
-    ]
-    
-    # Handle underscores properly in adapter name by creating CamelCase
-    parts = adapter.name.split("_")
-    camel_case_name = "".join(part.capitalize() for part in parts)
-    
-    for adapter_file_path in possible_paths:
-        if adapter_file_path.exists():
-            # Determine the correct import path based on file location
-            relative_path = adapter_file_path.relative_to(directory)
-            if relative_path.parent.name == "adapters":
-                import_path = f"adapters.{adapter.name}"
-            elif adapter_file_path.name == "adapter.py":
-                import_path = f"{adapter.name}.adapter" 
-            else:
-                import_path = adapter_file_path.stem
-            
-            # Try different class names that might exist in the local file
-            possible_class_names = [
-                f"{camel_case_name}Adapter",  # e.g., MyCustomAdapterAdapter
-                f"{camel_case_name}",  # e.g., MyCustomAdapter
-                f"{camel_case_name}Sync",  # e.g., MyCustomAdapterSync
-            ]
-            
-            # We can't easily check which class name exists without importing,
-            # so we'll use the first one as default and let the user know
-            return import_path, possible_class_names[0]
-    
-    # Default to built-in path if no local file found (will likely fail but gives better error)
-    return f"infrahub_sync.adapters.{adapter.name}", adapter_name
-
-
 def render_adapter(
     sync_instance: SyncInstance,
     schema: MutableMapping[str, Union[NodeSchema, GenericSchema]],
@@ -107,21 +52,12 @@ def render_adapter(
         if not init_file_path.exists():
             init_file_path.touch()
 
-        # Get import information for this adapter
-        import_path, class_name = get_adapter_import_info(sync_instance, adapter)
-
         for item in files_to_render:
             render_template(
                 template_file=item[0],
                 output_dir=output_dir_path,
                 output_file=item[1],
-                context={
-                    "schema": schema, 
-                    "adapter": adapter, 
-                    "config": sync_instance,
-                    "adapter_import_path": import_path,
-                    "adapter_class_name": class_name,
-                },
+                context={"schema": schema, "adapter": adapter, "config": sync_instance},
             )
             output_file_path = output_dir_path / item[1]
             rendered_files.append((item[0], output_file_path))
@@ -129,98 +65,50 @@ def render_adapter(
     return rendered_files
 
 
-def import_adapter(sync_instance: SyncInstance, adapter: SyncAdapter):
-    adapter_name = f"{adapter.name.title()}Adapter"
-
-    # First try to import from built-in adapters
+def import_adapter(sync_instance: SyncInstance, adapter: SyncAdapter, adapter_paths: list[str] | None = None):
+    """Import an adapter using the plugin loader system."""
+    from infrahub_sync.plugin_loader import PluginLoader
+    
+    # Collect all adapter paths: config + CLI args
+    all_paths = []
+    if sync_instance.adapters_path:
+        all_paths.extend(sync_instance.adapters_path)
+    if adapter_paths:
+        all_paths.extend(adapter_paths)
+    
+    # Create plugin loader
+    loader = PluginLoader.from_env_and_args(all_paths)
+    
+    # Get the adapter specification
+    spec = adapter.get_spec()
+    
     try:
-        adapter_module = importlib.import_module(f"infrahub_sync.adapters.{adapter.name}")
-        adapter_class = getattr(adapter_module, adapter_name, None)
-        if adapter_class is not None:
-            return adapter_class
-    except ImportError:
-        pass
-
-    # If built-in adapter not found, try to load from local generated sync_adapter.py
-    directory = Path(sync_instance.directory)
-    sys.path.insert(0, str(directory))
-    adapter_file_path = directory / f"{adapter.name}" / "sync_adapter.py"
-
-    try:
-        sync_adapter_name = f"{adapter.name.title()}Sync"
-        spec = importlib.util.spec_from_file_location(f"{adapter.name}.adapter", str(adapter_file_path))
-        adapter_module = importlib.util.module_from_spec(spec)
-        sys.modules[f"{adapter.name}.adapter"] = adapter_module
-        spec.loader.exec_module(adapter_module)
-
-        adapter_class = getattr(adapter_module, sync_adapter_name, None)
-        if adapter_class is None:
-            msg = f"{sync_adapter_name} not found in sync_adapter.py"
-            raise ImportError(msg)
+        # Try to resolve the adapter class
+        adapter_class = loader.resolve(spec, default_class_candidates=("Adapter", f"{spec.title()}Adapter"))
         return adapter_class
-
-    except FileNotFoundError:
-        # If neither built-in nor generated adapter found, try loading from local adapter file
-        return _import_local_adapter(sync_instance, adapter)
-
-
-def _import_local_adapter(sync_instance: SyncInstance, adapter: SyncAdapter):
-    """Import a local adapter from a Python module file."""
-    directory = Path(sync_instance.directory)
-
-    # Try different possible locations and naming conventions for local adapters
-    possible_paths = [
-        directory / f"{adapter.name}.py",  # e.g., my_adapter.py
-        directory / f"{adapter.name}_adapter.py",  # e.g., my_adapter_adapter.py
-        directory / "adapters" / f"{adapter.name}.py",  # e.g., adapters/my_adapter.py
-        directory / adapter.name / "adapter.py",  # e.g., my_adapter/adapter.py
-    ]
-
-    # Handle underscores properly in adapter name by creating CamelCase
-    parts = adapter.name.split("_")
-    camel_case_name = "".join(part.capitalize() for part in parts)
-    adapter_base_name = f"{camel_case_name}Adapter"
-
-    for adapter_file_path in possible_paths:
-        if not adapter_file_path.exists():
-            continue
+    except Exception as exc:
+        # Fallback to the old generated sync_adapter.py approach for backward compatibility
+        directory = Path(sync_instance.directory)
+        sys.path.insert(0, str(directory))
+        adapter_file_path = directory / f"{spec}" / "sync_adapter.py"
 
         try:
-            # Add the directory to sys.path to allow imports
-            parent_dir = str(adapter_file_path.parent)
-            if parent_dir not in sys.path:
-                sys.path.insert(0, parent_dir)
+            adapter_name = f"{spec.title()}Sync"
+            spec_obj = importlib.util.spec_from_file_location(f"{spec}.adapter", str(adapter_file_path))
+            adapter_module = importlib.util.module_from_spec(spec_obj)
+            sys.modules[f"{spec}.adapter"] = adapter_module
+            spec_obj.loader.exec_module(adapter_module)
 
-            spec = importlib.util.spec_from_file_location(f"{adapter.name}_local", str(adapter_file_path))
-            if spec is None or spec.loader is None:
-                continue
+            adapter_class = getattr(adapter_module, adapter_name, None)
+            if adapter_class is None:
+                msg = f"{adapter_name} not found in sync_adapter.py"
+                raise ImportError(msg)
+            
+            return adapter_class
 
-            adapter_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(adapter_module)
-
-            # Try different possible class names
-            possible_class_names = [
-                adapter_base_name,  # e.g., MyCustomAdapterAdapter
-                f"{camel_case_name}",  # e.g., MyCustomAdapter
-                f"{camel_case_name}Sync",  # e.g., MyCustomAdapterSync
-            ]
-
-            for class_name in possible_class_names:
-                adapter_class = getattr(adapter_module, class_name, None)
-                if adapter_class is not None:
-                    return adapter_class
-
-        except (ImportError, AttributeError):
-            # Continue to next possible path if this one fails
-            continue
-
-    # If we get here, no adapter could be loaded
-    paths_str = ", ".join(str(p) for p in possible_paths)
-    msg = (
-        f"Could not load adapter '{adapter.name}'. Tried built-in adapters, "
-        f"generated sync_adapter.py, and local adapter files at: {paths_str}"
-    )
-    raise ImportError(msg)
+        except FileNotFoundError:
+            # If both plugin loading and generated file failed, raise the original error
+            raise ImportError(f"Could not load adapter '{spec}': {exc}")
 
 
 def get_all_sync(directory: str | None = None) -> list[SyncInstance]:
@@ -274,9 +162,10 @@ def get_potenda_from_instance(
     sync_instance: SyncInstance,
     branch: str | None = None,
     show_progress: bool | None = True,
+    adapter_paths: list[str] | None = None,
 ) -> Potenda:
-    source = import_adapter(sync_instance=sync_instance, adapter=sync_instance.source)
-    destination = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
+    source = import_adapter(sync_instance=sync_instance, adapter=sync_instance.source, adapter_paths=adapter_paths)
+    destination = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination, adapter_paths=adapter_paths)
 
     source_store = LocalStore()
     destination_store = LocalStore()

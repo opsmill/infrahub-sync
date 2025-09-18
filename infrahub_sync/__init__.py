@@ -53,8 +53,21 @@ class SchemaMappingModel(pydantic.BaseModel):
 
 
 class SyncAdapter(pydantic.BaseModel):
-    name: str
+    name: str | None = None
+    adapter: str | None = None
     settings: dict[str, Any] | None = {}
+    
+    @validator_decorator("name", **validator_kwargs)
+    def validate_name_or_adapter(cls, v, values):
+        adapter = values.get("adapter")
+        if not v and not adapter:
+            msg = "Either 'name' or 'adapter' must be specified"
+            raise ValueError(msg)
+        return v
+    
+    def get_spec(self) -> str:
+        """Get the adapter specification for plugin loading."""
+        return self.adapter or self.name
 
 
 class SyncStore(pydantic.BaseModel):
@@ -70,6 +83,7 @@ class SyncConfig(pydantic.BaseModel):
     order: list[str] = pydantic.Field(default_factory=list)
     schema_mapping: list[SchemaMappingModel] = []
     diffsync_flags: list[Union[str, DiffSyncFlags]] | None = []
+    adapters_path: list[str] | None = pydantic.Field(default=None)
 
     @validator_decorator("diffsync_flags", **validator_kwargs)
     def convert_str_to_enum(cls, v):

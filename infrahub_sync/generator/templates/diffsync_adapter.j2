@@ -1,4 +1,4 @@
-from {{ adapter_import_path }} import {{ adapter_class_name }}
+from infrahub_sync.plugin_loader import get_loader
 
 from .sync_models import (
 {% for nodekind, node in schema.items()|sort() %}
@@ -13,7 +13,12 @@ from .sync_models import (
 #  This file has been generated with the command `infrahub-sync generate`
 #  All modifications will be lost the next time you reexecute this command
 # -------------------------------------------------------
-class {{ adapter.name.title() }}Sync({{ adapter_class_name }}):
+
+# Load the adapter class dynamically using the plugin loader
+_loader = get_loader({% if config.adapters_path %}{{ config.adapters_path }}{% else %}None{% endif %})
+_AdapterClass = _loader.resolve("{{ adapter.adapter or adapter.name }}")
+
+class {{ (adapter.name or adapter.adapter or 'Unknown').title() }}Sync(_AdapterClass):
 {% for nodekind, node in schema.items() -%}
 {%-   if node | get_identifiers(config) %}    {{ node.kind }} = {{ nodekind }}
 {%   endif -%}
