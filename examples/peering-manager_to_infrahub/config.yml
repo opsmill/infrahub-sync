@@ -2,13 +2,17 @@
 name: from-peering-manager
 source:
   name: peeringmanager
+  # It's possible to use the genericrestapi adapter, but peeringmanager is preferred
+  # name: genericrestapi
   settings:
     url: "https://demo.peering-manager.net"
-    # api_endpoint: "api"
-    # auth_method: "token"
     token: "13bf6338aed52d172e33750d39717fff5a5f5d18"
-    # params:
-    #   "limit": 1000
+    # When using the genericrestapi adapter
+    # we need to specify the api_endpoint, auth_method and response_key_pattern
+    # with peeringmanager adapter, these are set by default
+    # api_endpoint: "/api"
+    # auth_method: "token"
+    # response_key_pattern: "results"
 
 destination:
   name: infrahub
@@ -37,9 +41,9 @@ schema_mapping:
   - name: InfraAutonomousSystem
     mapping: peering/autonomous-systems
     identifiers: ["asn"]
-    transforms:
-      - field: tmp_name
-        expression: "{{ name.lower() }} "
+    # transforms:
+    #   - field: tmp_name
+    #     expression: "{{ name.lower() }} "
     fields:
       - name: name
         mapping: name

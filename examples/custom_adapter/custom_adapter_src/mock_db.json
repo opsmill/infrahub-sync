@@ -1,0 +1,12 @@
+{
+    "version": "1.0",
+    "nodes": {
+        "devices": [
+            {"name": "core01", "description": "Core Router 1", "device_type": "juniper mx204"},
+            {"name": "core02", "description": "Core Router 2", "device_type": "arista 7504"},
+            {"name": "core03", "description": "Core Router 3", "device_type": "cisco asr9001"},
+            {"name": "edge01", "description": "Edge Router 1", "device_type": "cisco nexus9000"},
+            {"name": "edge02", "description": "Edge Router 2", "device_type": "cisco nexus9000"}
+        ]
+    }
+}

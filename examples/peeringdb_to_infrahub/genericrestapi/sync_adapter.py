@@ -1,8 +1,14 @@
-from infrahub_sync.adapters.genericrestapi import GenericrestapiAdapter
+from __future__ import annotations
+
+from infrahub_sync.plugin_loader import PluginLoader
 
 from .sync_models import (
     InfraAutonomousSystem,
 )
+
+# Load adapter class dynamically at runtime
+
+_AdapterBaseClass = PluginLoader().resolve("genericrestapi")
 
 
 # -------------------------------------------------------
@@ -10,5 +16,5 @@ from .sync_models import (
 #  This file has been generated with the command `infrahub-sync generate`
 #  All modifications will be lost the next time you reexecute this command
 # -------------------------------------------------------
-class GenericrestapiSync(GenericrestapiAdapter):
+class GenericrestapiSync(_AdapterBaseClass):
     InfraAutonomousSystem = InfraAutonomousSystem

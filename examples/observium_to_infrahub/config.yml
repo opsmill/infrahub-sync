@@ -1,13 +1,14 @@
 ---
 name: from-observium
 source:
-  name: observium
+  name: genericrestapi
   settings:
     url: "OBSERVIUM_URL"
-    # api_endpoint: "api/v0"
-    # auth_method: "basic"
-    username: "OBSERVIUM_USERNAME"
+    username: "OBSERVIUM_USER"
     password: "OBSERVIUM_PASSWORD"
+    api_endpoint: "api/v0"
+    auth_method: "basic"
+
 
 destination:
   name: infrahub

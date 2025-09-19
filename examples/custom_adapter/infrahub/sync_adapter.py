@@ -3,7 +3,7 @@ from __future__ import annotations
 from infrahub_sync.plugin_loader import PluginLoader
 
 from .sync_models import (
-    InfraAutonomousSystem,
+    InfraDevice,
 )
 
 # Load adapter class dynamically at runtime
@@ -17,4 +17,4 @@ _AdapterBaseClass = PluginLoader().resolve("infrahub")
 #  All modifications will be lost the next time you reexecute this command
 # -------------------------------------------------------
 class InfrahubSync(_AdapterBaseClass):
-    InfraAutonomousSystem = InfraAutonomousSystem
+    InfraDevice = InfraDevice

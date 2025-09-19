@@ -2,12 +2,12 @@
 name: from-librenms
 
 source:
-  name: librenms
+  name: genericrestapi
   settings:
     url: "http://localhost:8080"
-    # api_endpoint: "api/v0"
-    # auth_method: "x-auth-token"
-    # token: "LIBRENMS_TOKEN"
+    api_endpoint: "api/v0"
+    auth_method: "x-auth-token"
+    token: "LIBRENMS_TOKEN"
 
 destination:
   name: infrahub
