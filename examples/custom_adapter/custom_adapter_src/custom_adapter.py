@@ -58,7 +58,7 @@ class MockDBClient:
             A list of dictionaries representing the nodes.
         """
         print(f"DEBUG: Getting all {model} nodes from mock database")
-        nodes = self.data["nodes"].get(model, [])
+        nodes = self.data.get("nodes", {}).get(model, [])
         print(f"Loading {len(nodes)} {model} nodes")
         return nodes
 
