@@ -41,14 +41,13 @@ class MockDBClient:
         self.data = {}
 
         # If a filepath is provided, try to load the data from it
-        if filepath and Path(filepath).exists:
+        if filepath and Path(filepath).exists():
             try:
                 with Path(filepath).open(encoding="utf-8") as f:
                     self.data = json.load(f)
                 print(f"DEBUG: Loaded mock database from {filepath}")
             except (FileNotFoundError, json.JSONDecodeError) as e:
                 print(f"DEBUG: Failed to load mock database from {filepath}: {e}")
-
     def get_all_nodes(self, model: str) -> list[dict[str, Any]]:
         """Get all nodes of a specific model from the mock database.
 
