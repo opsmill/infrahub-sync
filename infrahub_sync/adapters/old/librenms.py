@@ -40,8 +40,7 @@ class LibrenmsAdapter(GenericrestapiAdapter):
         # Save the original settings back to the adapter
         adapter.settings = settings
 
-        super().__init__(target=target, adapter=adapter, config=config, adapter_type="PeeringManager", **kwargs)
-
+        super().__init__(target=target, adapter=adapter, config=config, adapter_type="LibreNMS", **kwargs)
 
 class LibrenmsModel(GenericrestapiModel):
     """LibreNMS model that extends the generic REST API model."""
