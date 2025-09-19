@@ -21,3 +21,5 @@ Infrahub Sync is a versatile Python package that synchronizes data between a sou
 - **Configuration Options**: Configure adapter paths through YAML, CLI flags, or environment variables
 - **Automated Code Generation**: Generate adapter code based on your configuration
 - **Developer-friendly**: Clear error messages and comprehensive documentation
+
+For comprehensive documentation on using Infrahub Sync, visit the [official Infrahub Sync documentation](https://docs.infrahub.app/sync/)
