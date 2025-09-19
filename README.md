@@ -14,12 +14,4 @@
 
 Infrahub Sync is a versatile Python package that synchronizes data between a source and a destination system. It builds on the robust capabilities of `diffsync` to offer flexible and efficient data synchronization across different platforms, including Netbox, Nautobot, and Infrahub. This package features a Typer-based CLI for ease of use, supporting operations such as listing available sync projects, generating diffs, and executing sync processes.
 
-## Features
-
-- **Flexible Adapter Loading**: Load adapters from built-ins, dotted paths, filesystem paths, or Python entry points
-- **Plugin System**: Create and use custom adapters without modifying the core code
-- **Configuration Options**: Configure adapter paths through YAML, CLI flags, or environment variables
-- **Automated Code Generation**: Generate adapter code based on your configuration
-- **Developer-friendly**: Clear error messages and comprehensive documentation
-
 For comprehensive documentation on using Infrahub Sync, visit the [official Infrahub Sync documentation](https://docs.infrahub.app/sync/)
