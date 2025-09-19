@@ -54,6 +54,7 @@ class SchemaMappingModel(pydantic.BaseModel):
 
 class SyncAdapter(pydantic.BaseModel):
     name: str
+    adapter: str | None = None  # Optional adapter specification (path, dotted path, etc.)
     settings: dict[str, Any] | None = {}
 
 
@@ -64,9 +65,10 @@ class SyncStore(pydantic.BaseModel):
 
 class SyncConfig(pydantic.BaseModel):
     name: str
-    store: SyncStore | None = []
+    store: SyncStore | None = None  # Fix default value that was incorrectly set as list
     source: SyncAdapter
     destination: SyncAdapter
+    adapters_path: list[str] | None = None  # New field for adapter path configuration
     order: list[str] = pydantic.Field(default_factory=list)
     schema_mapping: list[SchemaMappingModel] = []
     diffsync_flags: list[Union[str, DiffSyncFlags]] | None = []

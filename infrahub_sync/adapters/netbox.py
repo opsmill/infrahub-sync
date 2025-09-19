@@ -99,6 +99,8 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
         obj_id = obj.get("id")
         data: dict[str, Any] = {"local_id": str(obj_id)}
 
+        if not mapping.fields:
+            return data
         for field in mapping.fields:  # pylint: disable=too-many-nested-blocks
             field_is_list = model.is_list(name=field.name)
 

@@ -6,7 +6,7 @@ from infrahub_sync.plugin_loader import PluginLoader
 
 # Load model class dynamically at runtime
 
-_ModelBaseClass = PluginLoader().resolve("infrahub", default_class_candidates=("Model",))
+_ModelBaseClass = PluginLoader().resolve("genericrestapi", default_class_candidates=("Model",))
 
 
 # -------------------------------------------------------
@@ -28,10 +28,12 @@ class CoreStandardGroup(_ModelBaseClass):
 class InfraDevice(_ModelBaseClass):
     _modelname = "InfraDevice"
     _identifiers = ("name",)
-    _attributes = ("site", "type")
+    _attributes = ("primary_address", "platform", "description", "type")
     name: str
+    description: str | None = None
     type: str
-    site: str | None = None
+    primary_address: str | None = None
+    platform: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
@@ -42,17 +44,6 @@ class IpamIPAddress(_ModelBaseClass):
     _identifiers = ("address",)
     _attributes = ("description",)
     address: str
-    description: str | None = None
-
-    local_id: str | None = None
-    local_data: Any | None = None
-
-
-class LocationSite(_ModelBaseClass):
-    _modelname = "LocationSite"
-    _identifiers = ("name",)
-    _attributes = ("description",)
-    name: str
     description: str | None = None
 
     local_id: str | None = None

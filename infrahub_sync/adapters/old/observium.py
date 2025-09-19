@@ -7,20 +7,20 @@ try:
 except ImportError:
     from typing_extensions import Self
 
-from infrahub_sync import (
-    SyncAdapter,
-    SyncConfig,
-)
-
-from .generic_rest_api import GenericRestApiAdapter, GenericRestApiModel
+from infrahub_sync.adapters.genericrestapi import GenericrestapiAdapter, GenericrestapiModel
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from diffsync import Adapter
 
+    from infrahub_sync import (
+        SyncAdapter,
+        SyncConfig,
+    )
 
-class ObserviumAdapter(GenericRestApiAdapter):
+
+class ObserviumAdapter(GenericrestapiAdapter):
     """Observium adapter that extends the generic REST API adapter."""
 
     def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, **kwargs) -> None:
@@ -43,13 +43,13 @@ class ObserviumAdapter(GenericRestApiAdapter):
 
         settings.setdefault("response_key_pattern", "{resource}")
 
-        # Create a new adapter with updated settings
-        updated_adapter = SyncAdapter(name=adapter.name, settings=settings)
+        # Save the original settings back to the adapter
+        adapter.settings = settings
 
-        super().__init__(target=target, adapter=updated_adapter, config=config, adapter_type="Observium", **kwargs)
+        super().__init__(target=target, adapter=adapter, config=config, adapter_type="Observium", **kwargs)
 
 
-class ObserviumModel(GenericRestApiModel):
+class ObserviumModel(GenericrestapiModel):
     """Observium model that extends the generic REST API model."""
 
     @classmethod

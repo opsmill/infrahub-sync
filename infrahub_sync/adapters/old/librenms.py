@@ -7,20 +7,20 @@ try:
 except ImportError:
     from typing_extensions import Self
 
-from infrahub_sync import (
-    SyncAdapter,
-    SyncConfig,
-)
-
-from .generic_rest_api import GenericRestApiAdapter, GenericRestApiModel
+from infrahub_sync.adapters.genericrestapi import GenericrestapiAdapter, GenericrestapiModel
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from diffsync import Adapter
 
+    from infrahub_sync import (
+        SyncAdapter,
+        SyncConfig,
+    )
 
-class LibrenmsAdapter(GenericRestApiAdapter):
+
+class LibrenmsAdapter(GenericrestapiAdapter):
     """LibreNMS adapter that extends the generic REST API adapter."""
 
     def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, **kwargs) -> None:
@@ -37,13 +37,13 @@ class LibrenmsAdapter(GenericRestApiAdapter):
         if "token_env_vars" not in settings:
             settings["token_env_vars"] = ["LIBRENMS_TOKEN"]
 
-        # Create a new adapter with updated settings
-        updated_adapter = SyncAdapter(name=adapter.name, settings=settings)
+        # Save the original settings back to the adapter
+        adapter.settings = settings
 
-        super().__init__(target=target, adapter=updated_adapter, config=config, adapter_type="LibreNMS", **kwargs)
+        super().__init__(target=target, adapter=adapter, config=config, adapter_type="PeeringManager", **kwargs)
 
 
-class LibrenmsModel(GenericRestApiModel):
+class LibrenmsModel(GenericrestapiModel):
     """LibreNMS model that extends the generic REST API model."""
 
     @classmethod

@@ -3,12 +3,13 @@ from __future__ import annotations
 from infrahub_sync.plugin_loader import PluginLoader
 
 from .sync_models import (
-    InfraAutonomousSystem,
+    InfraDevice,
 )
 
 # Load adapter class dynamically at runtime
 
-_AdapterBaseClass = PluginLoader().resolve("infrahub")
+_loader = PluginLoader()
+_AdapterBaseClass = _loader.resolve("./examples/custom_adapter/custom_adapter_src/custom_adapter.py:MockdbAdapter")
 
 
 # -------------------------------------------------------
@@ -16,5 +17,5 @@ _AdapterBaseClass = PluginLoader().resolve("infrahub")
 #  This file has been generated with the command `infrahub-sync generate`
 #  All modifications will be lost the next time you reexecute this command
 # -------------------------------------------------------
-class InfrahubSync(_AdapterBaseClass):
-    InfraAutonomousSystem = InfraAutonomousSystem
+class MockdbSync(_AdapterBaseClass):
+    InfraDevice = InfraDevice

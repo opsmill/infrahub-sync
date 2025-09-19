@@ -6,7 +6,9 @@ from infrahub_sync.plugin_loader import PluginLoader
 
 # Load model class dynamically at runtime
 
-_ModelBaseClass = PluginLoader().resolve("genericrestapi", default_class_candidates=("Model",))
+_ModelBaseClass = PluginLoader().resolve(
+    "./examples/custom_adapter/custom_adapter_src/custom_adapter.py", default_class_candidates=("Model",)
+)
 
 
 # -------------------------------------------------------
@@ -14,14 +16,12 @@ _ModelBaseClass = PluginLoader().resolve("genericrestapi", default_class_candida
 #  This file has been generated with the command `infrahub-sync generate`
 #  All modifications will be lost the next time you reexecute this command
 # -------------------------------------------------------
-class InfraAutonomousSystem(_ModelBaseClass):
-    _modelname = "InfraAutonomousSystem"
-    _identifiers = ("asn",)
-    _attributes = ("ipv6_max_prefixes", "ipv4_max_prefixes", "name")
-    ipv6_max_prefixes: int | None = None
-    asn: int
-    ipv4_max_prefixes: int | None = None
+class InfraDevice(_ModelBaseClass):
+    _modelname = "InfraDevice"
+    _identifiers = ("name",)
+    _attributes = ("type",)
     name: str
+    type: str
 
     local_id: str | None = None
     local_data: Any | None = None

@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from typing import Any, List
 
-from infrahub_sync.adapters.{{ adapter.name }} import {{ adapter.name.title() }}Model
+from infrahub_sync.plugin_loader import PluginLoader
+
+# Load model class dynamically at runtime
+{% if adapter.adapter %}
+_ModelBaseClass = PluginLoader().resolve("{{ adapter.adapter.split(':')[0] }}", default_class_candidates=("Model",))
+{% else %}
+_ModelBaseClass = PluginLoader().resolve("{{ adapter.name }}", default_class_candidates=("Model",))
+{% endif %}
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -11,7 +18,7 @@ from infrahub_sync.adapters.{{ adapter.name }} import {{ adapter.name.title() }}
 # -------------------------------------------------------
 {%- for nodekind, node in schema.items() -%}
 {%-  if node | get_identifiers(config) and config | has_node(node.kind) %}
-class {{ nodekind }}({{ adapter.name.title() }}Model):
+class {{ nodekind }}(_ModelBaseClass):
     _modelname = "{{ node.kind }}"
     _identifiers = {{ node | get_identifiers(config) | list_to_set }}
     _attributes = {{ node | get_attributes(config) | list_to_set }}

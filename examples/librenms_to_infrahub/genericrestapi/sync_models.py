@@ -6,7 +6,7 @@ from infrahub_sync.plugin_loader import PluginLoader
 
 # Load model class dynamically at runtime
 
-_ModelBaseClass = PluginLoader().resolve("infrahub", default_class_candidates=("Model",))
+_ModelBaseClass = PluginLoader().resolve("genericrestapi", default_class_candidates=("Model",))
 
 
 # -------------------------------------------------------

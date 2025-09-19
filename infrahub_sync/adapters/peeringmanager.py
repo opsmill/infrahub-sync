@@ -9,20 +9,20 @@ except ImportError:
 
 import requests
 
-from infrahub_sync import (
-    SyncAdapter,
-    SyncConfig,
-)
-
-from .generic_rest_api import GenericRestApiAdapter, GenericRestApiModel
+from infrahub_sync.adapters.genericrestapi import GenericrestapiAdapter, GenericrestapiModel
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from diffsync import Adapter
 
+    from infrahub_sync import (
+        SyncAdapter,
+        SyncConfig,
+    )
 
-class PeeringmanagerAdapter(GenericRestApiAdapter):
+
+class PeeringmanagerAdapter(GenericrestapiAdapter):
     """PeeringManager adapter that extends the generic REST API adapter."""
 
     def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, **kwargs) -> None:
@@ -33,7 +33,7 @@ class PeeringmanagerAdapter(GenericRestApiAdapter):
         if "auth_method" not in settings:
             settings["auth_method"] = "token"
         if "api_endpoint" not in settings:
-            settings["api_endpoint"] = "api"
+            settings["api_endpoint"] = "/api"
         if "url_env_vars" not in settings:
             settings["url_env_vars"] = ["PEERING_MANAGER_ADDRESS", "PEERING_MANAGER_URL"]
         if "token_env_vars" not in settings:
@@ -41,13 +41,13 @@ class PeeringmanagerAdapter(GenericRestApiAdapter):
 
         settings.setdefault("response_key_pattern", "results")
 
-        # Create a new adapter with updated settings
-        updated_adapter = SyncAdapter(name=adapter.name, settings=settings)
+        # Save the original settings back to the adapter
+        adapter.settings = settings
 
-        super().__init__(target=target, adapter=updated_adapter, config=config, adapter_type="Peeringmanager", **kwargs)
+        super().__init__(target=target, adapter=adapter, config=config, adapter_type="PeeringManager", **kwargs)
 
 
-class PeeringmanagerModel(GenericRestApiModel):
+class PeeringmanagerModel(GenericrestapiModel):
     """PeeringManager model that extends the generic REST API model."""
 
     @classmethod

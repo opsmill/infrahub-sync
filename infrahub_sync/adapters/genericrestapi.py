@@ -70,23 +70,17 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
         if not url:
             url = settings.get("url")
 
-        # Get API endpoint configuration
+        # Get settings with defaults
         api_endpoint = settings.get("api_endpoint", "/api/v0")
-
-        # Get authentication configuration
         auth_method = settings.get("auth_method", "token")
-
-        # Get authentication credentials from multiple sources
         token_env_vars = settings.get("token_env_vars", ["TOKEN"])
         api_token = None
         for env_var in token_env_vars:
             api_token = os.environ.get(env_var)
             if api_token:
                 break
-
         if not api_token:
             api_token = settings.get("token")
-
         username_env_vars = settings.get("username_env_vars", ["USERNAME"])
         username = None
         for env_var in username_env_vars:

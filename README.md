@@ -14,6 +14,43 @@
 
 Infrahub Sync is a versatile Python package that synchronizes data between a source and a destination system. It builds on the robust capabilities of `diffsync` to offer flexible and efficient data synchronization across different platforms, including Netbox, Nautobot, and Infrahub. This package features a Typer-based CLI for ease of use, supporting operations such as listing available sync projects, generating diffs, and executing sync processes.
 
+## Features
+
+- **Flexible Adapter Loading**: Load adapters from built-ins, dotted paths, filesystem paths, or Python entry points
+- **Plugin System**: Create and use custom adapters without modifying the core code
+- **Configuration Options**: Configure adapter paths through YAML, CLI flags, or environment variables
+- **Automated Code Generation**: Generate adapter code based on your configuration
+- **Developer-friendly**: Clear error messages and comprehensive documentation
+
+## Adapter Plugin System
+
+The plugin system allows you to:
+
+- Use built-in adapters: `infrahub_sync.adapters.<name>`
+- Use dotted path imports: `myproj.adapters.foo:MyAdapter`
+- Load from filesystem paths: `./adapters/foo.py:MyCustomAdapter`
+- Discover adapters through Python entry points: group `infrahub_sync.adapters`
+
+Configure adapter paths in your YAML:
+
+```yaml
+name: my-sync
+adapters_path:
+  - ./adapters
+  - ../shared/adapters
+source:
+  name: custom-source
+  adapter: ./adapters/my_adapter.py:MyCustomAdapter
+  settings:
+    url: "http://localhost:8000"
+destination:
+  name: infrahub
+  settings:
+    url: "http://localhost:8000"
+```
+
+See the [Plugin Loader documentation](https://docs.infrahub.app/sync/reference/plugin_loader) for more details.
+
 ## Using Infrahub sync
 
-Documentation for using Infrahub Sync is available [here](https://docs.infrahub.app/sync/)
+For comprehensive documentation on using Infrahub Sync, visit the [official Infrahub Sync documentation](https://docs.infrahub.app/sync/)
