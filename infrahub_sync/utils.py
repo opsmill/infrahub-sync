@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Union
@@ -12,6 +13,7 @@ from infrahub_sdk import Config
 
 from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
 from infrahub_sync.generator import render_template
+from infrahub_sync.plugin_loader import PluginLoader, PluginLoadError
 from infrahub_sync.potenda import Potenda
 
 if TYPE_CHECKING:
@@ -66,27 +68,54 @@ def render_adapter(
 
 
 def import_adapter(sync_instance: SyncInstance, adapter: SyncAdapter):
-    directory = Path(sync_instance.directory)
-    sys.path.insert(0, str(directory))
-    adapter_file_path = directory / f"{adapter.name}" / "sync_adapter.py"
+    # ALWAYS try the generated adapter class first
+    if adapter.name and sync_instance.directory:
+        directory = Path(sync_instance.directory)
+        adapter_file_path = directory / f"{adapter.name}" / "sync_adapter.py"
+        adapter_name = f"{PluginLoader().camelize(adapter.name)}Sync"
 
-    try:
-        adapter_name = f"{adapter.name.title()}Sync"
-        spec = importlib.util.spec_from_file_location(f"{adapter.name}.adapter", str(adapter_file_path))
-        adapter_module = importlib.util.module_from_spec(spec)
-        sys.modules[f"{adapter.name}.adapter"] = adapter_module
-        spec.loader.exec_module(adapter_module)
+        if adapter_file_path.exists():
+            # Add directory to path so relative imports work
+            if str(directory) not in sys.path:
+                sys.path.insert(0, str(directory))
 
-        adapter_class = getattr(adapter_module, adapter_name, None)
-        if adapter_class is None:
-            msg = f"{adapter_name} not found in adapter.py"
-            raise ImportError(msg)
+            try:
+                # Import the generated adapter module
+                spec = importlib.util.spec_from_file_location(f"{adapter.name}.adapter", str(adapter_file_path))
+                if spec is not None and spec.loader is not None:
+                    adapter_module = importlib.util.module_from_spec(spec)
+                    sys.modules[f"{adapter.name}.adapter"] = adapter_module
+                    spec.loader.exec_module(adapter_module)
 
-    except FileNotFoundError as exc:
-        msg = f"{adapter_name}: {exc!s}"
-        raise ImportError(msg) from exc
+                    # Get the generated adapter class
+                    generated_class = getattr(adapter_module, adapter_name, None)
+                    if generated_class:
+                        return generated_class
+            except (ImportError, AttributeError, SyntaxError, TypeError, ValueError, OSError) as exc:
+                print(f"Could not load generated adapter from {adapter_file_path}: {exc}")
 
-    return adapter_class
+    # Fall back to the plugin loader
+    # The "sync" classes could be declared into a separate module
+    adapter_paths = sync_instance.adapters_path or []
+    loader = PluginLoader.from_env_and_args(adapter_paths=adapter_paths)
+
+    # If explicit adapter spec is provided, use it
+    if adapter.adapter:
+        try:
+            # Try loading the explicitly specified adapter
+            adapter_class = loader.resolve(adapter.adapter)
+            print(f"Using directly specified adapter class: {adapter_class.__name__}")
+        except PluginLoadError as exc:
+            msg = f"Failed to load adapter '{adapter.adapter}': {exc}"
+            raise ImportError(msg) from exc
+        else:
+            return adapter_class
+
+    else:
+        try:
+            return loader.resolve(adapter.name)
+        except PluginLoadError:
+            return None
 
 
 def get_all_sync(directory: str | None = None) -> list[SyncInstance]:
@@ -141,8 +170,18 @@ def get_potenda_from_instance(
     branch: str | None = None,
     show_progress: bool | None = True,
 ) -> Potenda:
+    """Create and return a Potenda instance based on the provided SyncInstance."""
     source = import_adapter(sync_instance=sync_instance, adapter=sync_instance.source)
     destination = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
+
+    if not source or not destination:
+        missing = []
+        if not source:
+            missing.append(f"source adapter '{sync_instance.source.name}'")
+        if not destination:
+            missing.append(f"destination adapter '{sync_instance.destination.name}'")
+        msg = f"Could not load the following adapter(s): {', '.join(missing)}"
+        raise ImportError(msg)
 
     source_store = LocalStore()
     destination_store = LocalStore()
@@ -155,45 +194,35 @@ def get_potenda_from_instance(
         else:
             source_store = RedisStore(name=sync_instance.source.name)
             destination_store = RedisStore(name=sync_instance.destination.name)
+
+    source_kwargs = {
+        "config": sync_instance,
+        "target": "source",
+        "adapter": sync_instance.source,
+        "internal_storage_engine": source_store,
+    }
+    if "infrahub" in sync_instance.source.name.lower():
+        source_kwargs["branch"] = (sync_instance.source.settings or {}).get("branch") or branch or "main"
+
     try:
-        if sync_instance.source.name == "infrahub":
-            settings_branch = sync_instance.source.settings.get("branch") or branch or "main"
-            src: SyncInstance = source(
-                config=sync_instance,
-                target="source",
-                adapter=sync_instance.source,
-                branch=settings_branch,
-                internal_storage_engine=source_store,
-            )
-        else:
-            src: SyncInstance = source(
-                config=sync_instance,
-                target="source",
-                adapter=sync_instance.source,
-                internal_storage_engine=source_store,
-            )
-    except ValueError as exc:
-        msg = f"{sync_instance.source.name.title()}Adapter - {exc}"
+        src = source(**source_kwargs)
+    except (ValueError, TypeError) as exc:
+        msg = f"Error initializing {sync_instance.source.name.title()}Adapter: {exc}"
         raise ValueError(msg) from exc
+
+    dest_kwargs = {
+        "config": sync_instance,
+        "target": "destination",
+        "adapter": sync_instance.destination,
+        "internal_storage_engine": destination_store,
+    }
+    if "infrahub" in sync_instance.destination.name.lower():
+        dest_kwargs["branch"] = (sync_instance.destination.settings or {}).get("branch") or branch or "main"
+
     try:
-        if sync_instance.destination.name == "infrahub":
-            settings_branch = sync_instance.source.settings.get("branch") or branch or "main"
-            dst: SyncInstance = destination(
-                config=sync_instance,
-                target="destination",
-                adapter=sync_instance.destination,
-                branch=settings_branch,
-                internal_storage_engine=destination_store,
-            )
-        else:
-            dst: SyncInstance = destination(
-                config=sync_instance,
-                target="destination",
-                adapter=sync_instance.destination,
-                internal_storage_engine=destination_store,
-            )
-    except ValueError as exc:
-        msg = f"{sync_instance.destination.name.title()}Adapter - {exc}"
+        dst = destination(**dest_kwargs)
+    except (ValueError, TypeError) as exc:
+        msg = f"Error initializing {sync_instance.destination.name.title()}Adapter: {exc}"
         raise ValueError(msg) from exc
 
     ptd = Potenda(

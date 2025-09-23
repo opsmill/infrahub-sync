@@ -5,7 +5,11 @@ source:
   settings:
     url: "https://www.peeringdb.com"
     api_endpoint: "api"
-    auth_method: "none"          # PeeringDB allows public access (beware rate limits)
+    # PeeringDB allows public access (beware rate limits)
+    # auth_method: "none"
+    # If you need authentication
+    auth_method: "api-key"
+    token: "BdW624dP.fBkFmpt3gPAj0z3t2PcQE7FQvhfn1IKV"
     response_key_pattern: "data"  # PeeringDB wraps lists under "data"
 
 
@@ -28,8 +32,6 @@ schema_mapping:
         mapping: asn
       - name: name
         mapping: name
-      - name: irr_as_set
-        mapping: irr_as_set
       - name: ipv4_max_prefixes
         mapping: info_prefixes4
       - name: ipv6_max_prefixes
