@@ -26,3 +26,4 @@ schema_mapping:
         mapping: name
       - name: type
         mapping: device_type
+

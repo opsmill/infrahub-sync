@@ -1,4 +1,6 @@
-from infrahub_sync.adapters.nautobot import NautobotAdapter
+from __future__ import annotations
+
+from infrahub_sync.plugin_loader import PluginLoader
 
 from .sync_models import (
     BuiltinTag,
@@ -10,8 +12,8 @@ from .sync_models import (
     InfraCircuit,
     InfraDevice,
     InfraFrontPort,
-    InfraInterfaceL2L3,
     InfraIPAddress,
+    InfraInterfaceL2L3,
     InfraPlatform,
     InfraPrefix,
     InfraProviderNetwork,
@@ -27,13 +29,17 @@ from .sync_models import (
     StatusGeneric,
 )
 
+# Load adapter class dynamically at runtime
+
+_AdapterBaseClass = PluginLoader().resolve("nautobot")
+
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
 #  This file has been generated with the command `infrahub-sync generate`
 #  All modifications will be lost the next time you reexecute this command
 # -------------------------------------------------------
-class NautobotSync(NautobotAdapter):
+class NautobotSync(_AdapterBaseClass):
     CoreStandardGroup = CoreStandardGroup
     BuiltinTag = BuiltinTag
     InfraAutonomousSystem = InfraAutonomousSystem

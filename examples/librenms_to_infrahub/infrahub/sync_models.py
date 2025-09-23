@@ -1,13 +1,19 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, List
 
 from infrahub_sync.plugin_loader import PluginLoader
+# Load model class dynamically at runtime (honor adapters_path, safe fallback)
+try:
+    _loader = PluginLoader.from_env_and_args(adapter_paths=[])
 
-# Load model class dynamically at runtime
+    _spec = "infrahub"
 
-_ModelBaseClass = PluginLoader().resolve("infrahub", default_class_candidates=("Model",))
-
+    _ModelBaseClass = _loader.resolve(_spec, default_class_candidates=("Model",))
+except Exception:
+    # Fallback: use DiffSyncModel to avoid import-time failure
+    from diffsync import DiffSyncModel as _FallbackModel
+    _ModelBaseClass = _FallbackModel
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -18,24 +24,22 @@ class CoreStandardGroup(_ModelBaseClass):
     _modelname = "CoreStandardGroup"
     _identifiers = ("name",)
     _attributes = ("description",)
-    description: str | None = None
     name: str
+    description: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
-
 
 class InfraDevice(_ModelBaseClass):
     _modelname = "InfraDevice"
     _identifiers = ("name",)
     _attributes = ("site", "type")
-    name: str
     type: str
+    name: str
     site: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
-
 
 class IpamIPAddress(_ModelBaseClass):
     _modelname = "IpamIPAddress"
@@ -46,7 +50,6 @@ class IpamIPAddress(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
-
 
 class LocationSite(_ModelBaseClass):
     _modelname = "LocationSite"

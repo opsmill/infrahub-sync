@@ -24,10 +24,10 @@ _AdapterBaseClass = PluginLoader().resolve("peeringmanager")
 #  All modifications will be lost the next time you reexecute this command
 # -------------------------------------------------------
 class PeeringmanagerSync(_AdapterBaseClass):
-    InfraAutonomousSystem = InfraAutonomousSystem
-    InfraBGPPeerGroup = InfraBGPPeerGroup
     IpamIPAddress = IpamIPAddress
     OrganizationProvider = OrganizationProvider
+    InfraAutonomousSystem = InfraAutonomousSystem
+    InfraBGPPeerGroup = InfraBGPPeerGroup
     InfraBGPCommunity = InfraBGPCommunity
     InfraBGPRoutingPolicy = InfraBGPRoutingPolicy
     InfraIXP = InfraIXP

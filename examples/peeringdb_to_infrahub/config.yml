@@ -4,12 +4,12 @@ source:
   name: genericrestapi
   settings:
     url: "https://www.peeringdb.com"
-    # api_endpoint: "api"
+    api_endpoint: "api"
     # PeeringDB allows public access (beware rate limits)
     # auth_method: "none"
     # If you need authentication
-    # auth_method: "api-key"
-    # token: "your_api_key_here"
+    auth_method: "api-key"
+    token: "BdW624dP.fBkFmpt3gPAj0z3t2PcQE7FQvhfn1IKV"
     response_key_pattern: "data"  # PeeringDB wraps lists under "data"
 
 

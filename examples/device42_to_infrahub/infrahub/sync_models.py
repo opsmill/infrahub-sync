@@ -3,11 +3,17 @@ from __future__ import annotations
 from typing import Any, List
 
 from infrahub_sync.plugin_loader import PluginLoader
+# Load model class dynamically at runtime (honor adapters_path, safe fallback)
+try:
+    _loader = PluginLoader.from_env_and_args(adapter_paths=[])
 
-# Load model class dynamically at runtime
+    _spec = "infrahub"
 
-_ModelBaseClass = PluginLoader().resolve("infrahub", default_class_candidates=("Model",))
-
+    _ModelBaseClass = _loader.resolve(_spec, default_class_candidates=("Model",))
+except Exception:
+    # Fallback: use DiffSyncModel to avoid import-time failure
+    from diffsync import DiffSyncModel as _FallbackModel
+    _ModelBaseClass = _FallbackModel
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -37,8 +43,8 @@ class OrganizationTenant(_ModelBaseClass):
     _modelname = "OrganizationTenant"
     _identifiers = ("name",)
     _attributes = ("description",)
-    name: str
     description: str | None = None
+    name: str
 
     local_id: str | None = None
     local_data: Any | None = None
