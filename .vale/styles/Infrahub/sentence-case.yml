@@ -50,6 +50,7 @@ exceptions:
   - Jinja
   - Jinja2
   - JWT
+  - LibreNMS
   - Namespace
   - NATS
   - Node
@@ -57,6 +58,7 @@ exceptions:
   - OIDC
   - Open ID Connect
   - OpsMill
+  - Prometheus
   - Pydantic
   - Python
   - RabbitMQ
