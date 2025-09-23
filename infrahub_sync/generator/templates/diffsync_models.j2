@@ -3,13 +3,19 @@ from __future__ import annotations
 from typing import Any, List
 
 from infrahub_sync.plugin_loader import PluginLoader
-
-# Load model class dynamically at runtime
-{% if adapter.adapter %}
-_ModelBaseClass = PluginLoader().resolve("{{ adapter.adapter.split(':')[0] }}", default_class_candidates=("Model",))
-{% else %}
-_ModelBaseClass = PluginLoader().resolve("{{ adapter.name }}", default_class_candidates=("Model",))
-{% endif %}
+# Load model class dynamically at runtime (honor adapters_path, safe fallback)
+try:
+    _loader = PluginLoader.from_env_and_args(adapter_paths={{ config.adapters_path or [] }})
+    {% if adapter.adapter %}
+    _spec = "{{ adapter.adapter.split(':')[0] }}"
+    {% else %}
+    _spec = "{{ adapter.name }}"
+    {% endif %}
+    _ModelBaseClass = _loader.resolve(_spec, default_class_candidates=("Model",))
+except Exception:
+    # Fallback: use DiffSyncModel to avoid import-time failure
+    from diffsync import DiffSyncModel as _FallbackModel
+    _ModelBaseClass = _FallbackModel
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY

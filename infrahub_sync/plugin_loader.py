@@ -340,33 +340,36 @@ class PluginLoader:
         """
         # Normalize name by removing hyphens and underscores
         normalized_name = re.sub(r"[-_]", "", name.lower())
-
         # Try to find a matching module in infrahub_sync.adapters
         try:
-            # Get all modules in the adapters package
             adapters_pkg = importlib.import_module("infrahub_sync.adapters")
-
-            # Look for an exact match first
-            cls = None
+        except ImportError:
+            return None
+        cls = None
+        # 1) Exact module
+        try:
             module = importlib.import_module(f"infrahub_sync.adapters.{name}")
             cls = self._find_class_in_module(module, class_name, name, default_class_candidates)
-
-            if not cls:
-                module = importlib.import_module(f"infrahub_sync.adapters.{normalized_name}")
+            if cls:
+                return cls
+        except ImportError:
+            pass
+        # 2) Normalized module
+        try:
+            module = importlib.import_module(f"infrahub_sync.adapters.{normalized_name}")
+            cls = self._find_class_in_module(module, class_name, name, default_class_candidates)
+            if cls:
+                return cls
+        except ImportError:
+            pass
+        # 3) Iterate package contents
+        for _, module_name, _ in pkgutil.iter_modules(adapters_pkg.__path__):
+            if normalized_name == re.sub(r"[-_]", "", module_name.lower()):
+                module = importlib.import_module(f"infrahub_sync.adapters.{module_name}")
                 cls = self._find_class_in_module(module, class_name, name, default_class_candidates)
-
-            if not cls:
-                # Search all modules in infrahub_sync.adapters
-                for _, module_name, _ in pkgutil.iter_modules(adapters_pkg.__path__):
-                    if normalized_name == re.sub(r"[-_]", "", module_name.lower()):
-                        module = importlib.import_module(f"infrahub_sync.adapters.{module_name}")
-                        cls = self._find_class_in_module(module, class_name, name, default_class_candidates)
-
-        except (ImportError, AttributeError) as exc:
-            print(f"Error loading built-in adapter '{name}': {exc}")
-            return None
-
-        return cls
+                if cls:
+                    return cls
+        return None
 
     def _import_from_file(self, file_path: str) -> Any | None:
         """
@@ -463,7 +466,7 @@ class PluginLoader:
 
         # Add default candidates with appropriate prefix
         for candidate in default_class_candidates:
-            candidates.append(f"{base_name.title()}{candidate}")
+            candidates.append(f"{camelized}{candidate}")
 
         # Also look for the default candidates on their own
         candidates.extend(default_class_candidates)

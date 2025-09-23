@@ -72,7 +72,7 @@ def import_adapter(sync_instance: SyncInstance, adapter: SyncAdapter):
     if adapter.name and sync_instance.directory:
         directory = Path(sync_instance.directory)
         adapter_file_path = directory / f"{adapter.name}" / "sync_adapter.py"
-        adapter_name = f"{adapter.name.title()}Sync"
+        adapter_name = f"{PluginLoader().camelize(adapter.name)}Sync"
 
         if adapter_file_path.exists():
             # Add directory to path so relative imports work
@@ -111,7 +111,11 @@ def import_adapter(sync_instance: SyncInstance, adapter: SyncAdapter):
         else:
             return adapter_class
 
-    return None
+    else:
+        try:
+            return loader.resolve(adapter.name)
+        except PluginLoadError:
+            return None
 
 
 def get_all_sync(directory: str | None = None) -> list[SyncInstance]:
