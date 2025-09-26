@@ -18,9 +18,6 @@ on:
         type: string
         description: "Commit SHA to tag"
 
-permissions:
-  contents: read
-
 concurrency:
   group: release-${{ inputs.version }}
   cancel-in-progress: false
@@ -29,7 +26,7 @@ jobs:
   update_release_draft:
     permissions:
       contents: write
-      pull-requests: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repository
