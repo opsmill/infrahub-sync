@@ -34,7 +34,6 @@ jobs:
           echo "author=$(git log -1 --pretty=format:'%an')" >> $GITHUB_OUTPUT
           echo "message=$(git log -1 --pretty=format:'%s')" >> $GITHUB_OUTPUT
 
-      # Your three steps, kept here:
       - name: Get previous tag
         id: previoustag
         uses: WyriHaximus/github-action-get-previous-tag@v1
@@ -60,6 +59,10 @@ jobs:
           prev='${{ steps.previoustag.outputs.tag }}'
           next='${{ steps.version.outputs.next-version }}'
 
+          # Normalize version strings (strip optional leading 'v')
+          prev_norm="${prev#v}"
+          next_norm="${next#v}"
+
           # Skip on bot housekeeping commits
           if [[ "$author" == "opsmill-bot" ]] && [[ "$msg" =~ ^chore(:|\(release\):) ]]; then
             skip=true
@@ -67,12 +70,12 @@ jobs:
           fi
 
           # Skip when there is no new version to cut
-          if [[ "$next" == "$prev" || -z "$next" ]]; then
+          if [[ "$next_norm" == "$prev_norm" || -z "$next_norm" ]]; then
             skip=true
             reason="${reason:+$reason,}no-new-version"
           fi
 
-          echo "skip=$skip"   >> $GITHUB_OUTPUT
+          echo "skip=$skip"     >> $GITHUB_OUTPUT
           echo "reason=$reason" >> $GITHUB_OUTPUT
 
   prepare_release:
@@ -111,21 +114,36 @@ jobs:
       - name: Update lock file
         run: poetry lock
 
-      - name: Commit version bump (skip CI)
+      - name: Commit version bump (skip CI) only if there are changes
+        id: commit_bump
         env:
           VERSION: ${{ needs.check_commit.outputs.next_version }}
+          BRANCH: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
           git config user.name "opsmill-bot"
           git config user.email "github-bot@opsmill.com"
-          git add pyproject.toml poetry.lock
-          git commit -m "chore(release): v${VERSION} [skip ci]"
-          git push origin HEAD:main
 
-      - name: Get new HEAD of main after push
+          # Stage expected files
+          git add pyproject.toml poetry.lock || true
+
+          # Commit only if there are staged changes
+          if git diff --cached --quiet; then
+            echo "No changes detected; skipping commit."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "chore(release): v${VERSION} [skip ci]"
+            git push origin "HEAD:${BRANCH}"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Get new HEAD of branch after push
         id: head
+        env:
+          BRANCH: ${{ github.ref_name }}
         run: |
-          git fetch origin main
-          echo "sha=$(git rev-parse origin/main)" >> $GITHUB_OUTPUT
+          git fetch origin "${BRANCH}"
+          echo "sha=$(git rev-parse "origin/${BRANCH}")" >> "$GITHUB_OUTPUT"
 
       - name: Expose next_version for downstream jobs
         id: expose
