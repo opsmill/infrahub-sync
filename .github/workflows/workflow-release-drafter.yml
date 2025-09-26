@@ -32,8 +32,13 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v5
         with:
-          fetch-depth: 2
+          fetch-depth: 0
           token: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
+
+      - name: Configure git identity (required for annotated tags)
+        run: |
+          git config --local user.name "opsmill-bot"
+          git config --local user.email "github-bot@opsmill.com"
 
       - name: Ensure tag exists on the target commit
         env:
@@ -42,7 +47,6 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin --tags
-          # Ensure the target commit exists locally
           if ! git cat-file -e "${TARGET_SHA}^{commit}" >/dev/null 2>&1; then
             echo "::error::Target SHA ${TARGET_SHA} not found locally"
             exit 1
