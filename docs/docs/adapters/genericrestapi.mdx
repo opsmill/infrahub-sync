@@ -1,0 +1,318 @@
+---
+title: GenericRestAPI adapter
+---
+
+import ReferenceLink from "../../src/components/Card";
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+The GenericRestAPI adapter is a flexible, configurable adapter that can connect to any REST API following common patterns. It's designed to reduce code duplication and provide a foundation for creating adapters for new systems without having to build them from scratch.
+
+This adapter can be used in two ways:
+
+1. As a standalone adapter for systems that have a REST API
+2. As a base for building more specialized adapters (like LibreNMS, Observium, PeeringDB)
+
+## Key features
+
+- Flexible authentication methods (token, API key, basic auth)
+- Configurable endpoints and URL structures
+- Response format handling with customizable extraction
+- Transformation and filtering capabilities
+- Environment variable support for credentials
+
+## Sync directions supported
+
+- GenericRestAPI → Infrahub
+
+:::info
+
+Currently, the GenericRestAPI adapter supports only **one-way synchronization** from a REST API source to Infrahub.
+Syncing data back to the source is not yet supported and need to be done on custom adapters. Those adapters can use the generic one as base similar to what is done with Peering Manager adapter.
+
+:::
+
+## Configuration
+
+### Basic configuration
+
+To use the GenericRestAPI adapter, specify `genericrestapi` as the name in your configuration:
+
+```yaml
+source:
+  name: genericrestapi
+  settings:
+    url: "https://api.example.com"
+    api_endpoint: "/api/v1"
+    auth_method: "token"
+    token: "YOUR_API_TOKEN"  # Better to use environment variables
+```
+
+### Configuration parameters
+
+| Parameter | Description | Default | Required |
+|-----------|-------------|---------|----------|
+| `url` | Base URL of the API | None | Yes |
+| `api_endpoint` | API endpoint path | `/api/v0` | No |
+| `auth_method` | Authentication method (token, x-auth-token, api-key, key, basic) | `token` | No |
+| token | API token for token-based auth | None | For token auth |
+| username | Username for basic auth | None | For basic auth |
+| password | Password for basic auth | None | For basic auth |
+| `verify_ssl` | Whether to verify SSL certificates | `true` | No |
+| timeout | Request timeout in seconds | `30` | No |
+| `params` | Additional query parameters to include in all requests | `{}` | No |
+| `response_key_pattern` | Pattern for extracting data from responses | None | No |
+
+### Environment variables
+
+You can specify credentials using environment variables instead of storing them directly in the configuration:
+
+| Setting | Environment Variables | Description |
+|---------|----------------------|-------------|
+| `url` | URL, ADDRESS | API base URL |
+| token | TOKEN | API token/key |
+| username | USERNAME | Basic auth username |
+| password | PASSWORD | Basic auth password |
+
+The adapter will check for these environment variables in the order specified.
+
+### Custom response handling
+
+If your API has a specific response format, you can customize how the data is extracted using the `response_key_pattern` setting:
+
+```yaml
+source:
+  name: genericrestapi
+  settings:
+    # ...other settings...
+    response_key_pattern: "data.{resource}.items"
+```
+
+This pattern will be formatted with:
+
+- `{resource}`: The endpoint being queried
+- `{default}`: The default key (last part of the endpoint path)
+
+## Schema mapping
+
+The schema mapping defines how data from the API is mapped to Infrahub models:
+
+```yaml
+schema_mapping:
+  - name: InfraDevice  # Infrahub model
+    mapping: devices   # API endpoint
+    identifiers: ["name"]  # Unique identifier fields
+    filters:  # Optional filters to apply
+      - field: hostname
+        operation: contains
+        value: "router"
+    fields:
+      - name: name       # Infrahub field
+        mapping: hostname  # API field
+      - name: type
+        mapping: device_type
+      - name: site       # Reference to another model
+        mapping: location
+        reference: LocationSite
+```
+
+### Field mapping types
+
+- **Direct mapping**: Maps a field from the API to an Infrahub field
+- **Static value**: Sets a constant value for an Infrahub field
+- **Reference**: Links to another Infrahub model
+
+```yaml
+fields:
+  # Direct mapping
+  - name: name
+    mapping: hostname
+
+  # Static value
+  - name: type
+    static: "Network Device"
+
+  # Reference to another model
+  - name: site
+    mapping: location_id
+    reference: LocationSite
+```
+
+### Filtering records
+
+You can filter records from the API before processing:
+
+```yaml
+filters:
+  - field: status
+    operation: equals
+    value: "active"
+
+  - field: hostname
+    operation: contains
+    value: "prod"
+```
+
+Supported operations: equals, `not_equals`, contains, `not_contains`, in, `not_in`
+
+## Examples
+
+### Basic REST API example
+
+```yaml
+---
+name: rest-api-example
+
+source:
+  name: genericrestapi
+  settings:
+    url: "http://api.example.com"
+    api_endpoint: "/api/v1"
+    auth_method: "token"
+    token: "${API_TOKEN}"  # Uses environment variable
+
+destination:
+  name: infrahub
+  settings:
+    url: "http://localhost:8000"
+
+order: [
+  "InfraDevice",
+  "IpamIPAddress",
+]
+
+schema_mapping:
+  - name: InfraDevice
+    mapping: devices
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: hostname
+      - name: serial_number
+        mapping: serial
+      - name: type
+        static: "Network Device"
+
+  - name: IpamIPAddress
+    mapping: ips
+    identifiers: ["address"]
+    fields:
+      - name: address
+        mapping: ip_address
+      - name: description
+        mapping: description
+```
+
+### LibreNMS example
+
+LibreNMS is one of the systems that use the GenericRestAPI adapter:
+
+```yaml
+---
+name: from-librenms
+
+source:
+  name: genericrestapi
+  settings:
+    url: "http://librenms.example.com"
+    api_endpoint: "api/v0"
+    auth_method: "x-auth-token"
+    token: "${LIBRENMS_TOKEN}"
+
+destination:
+  name: infrahub
+  settings:
+    url: "http://localhost:8000"
+
+order: [
+  "CoreStandardGroup",
+  "LocationSite",
+  "IpamIPAddress",
+  "InfraDevice",
+]
+
+schema_mapping:
+  - name: CoreStandardGroup
+    mapping: devicegroups
+    fields:
+      - name: name
+        mapping: name
+      - name: description
+        mapping: desc
+
+  - name: LocationSite
+    mapping: resources/locations
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: location
+      - name: description
+        mapping: location
+
+  - name: IpamIPAddress
+    mapping: devices
+    identifiers: ["address"]
+    fields:
+      - name: address
+        mapping: ip
+      - name: description
+        mapping: hostname
+
+  - name: InfraDevice
+    mapping: devices
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: hostname
+      - name: serial_number
+        mapping: serial
+      - name: type
+        mapping: hardware
+      - name: site
+        mapping: location
+        reference: LocationSite
+```
+
+## Common issues
+
+### Authentication failures
+
+If you encounter authentication issues:
+
+1. Verify your token/credentials are correct
+2. Check that you're using the correct `auth_method` for your API
+3. Ensure the API endpoint path is correct
+
+### Response parsing errors
+
+If the adapter fails to parse the API response:
+
+1. Check the API documentation for the correct response format
+2. Use the `response_key_pattern` setting to customize data extraction
+3. Consider implementing a custom adapter extending GenericRestAPI
+
+### Connection timeout
+
+For slow APIs or large datasets:
+
+1. Increase the timeout setting
+2. Add pagination parameters if the API supports it
+3. Use filters to reduce the amount of data fetched
+
+## Building specialized adapters
+
+You can extend the GenericRestAPI adapter to create more specialized adapters:
+
+```python
+from infrahub_sync.adapters.genericrestapi import GenericrestapiAdapter
+
+class MySpecializedAdapter(GenericrestapiAdapter):
+    def __init__(self, target, adapter, config, *args, **kwargs):
+        # Override adapter_type to change the adapter name in logs
+        super().__init__(target, adapter, config, adapter_type="MySpecialized", *args, **kwargs)
+
+    # Override methods as needed for specialized behavior
+    def _extract_objects_from_response(self, response_data, resource_name, element):
+        # Custom extraction logic
+        return custom_data
+```

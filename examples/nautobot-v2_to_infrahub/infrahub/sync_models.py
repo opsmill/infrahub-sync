@@ -1,113 +1,116 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, List
 
-from infrahub_sync.adapters.infrahub import InfrahubModel
+from infrahub_sync.plugin_loader import PluginLoader
+# Load model class dynamically at runtime (honor adapters_path, safe fallback)
+try:
+    _loader = PluginLoader.from_env_and_args(adapter_paths=[])
 
+    _spec = "infrahub"
+
+    _ModelBaseClass = _loader.resolve(_spec, default_class_candidates=("Model",))
+except Exception:
+    # Fallback: use DiffSyncModel to avoid import-time failure
+    from diffsync import DiffSyncModel as _FallbackModel
+    _ModelBaseClass = _FallbackModel
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
 #  This file has been generated with the command `infrahub-sync generate`
 #  All modifications will be lost the next time you reexecute this command
 # -------------------------------------------------------
-class CoreStandardGroup(InfrahubModel):
+class CoreStandardGroup(_ModelBaseClass):
     _modelname = "CoreStandardGroup"
     _identifiers = ("name",)
     _attributes = ("description",)
-    description: str | None = None
     name: str
+    description: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class BuiltinTag(InfrahubModel):
+class BuiltinTag(_ModelBaseClass):
     _modelname = "BuiltinTag"
     _identifiers = ("name",)
     _attributes = ("description",)
-    name: str
     description: str | None = None
+    name: str
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class InfraAutonomousSystem(InfrahubModel):
+class InfraAutonomousSystem(_ModelBaseClass):
     _modelname = "InfraAutonomousSystem"
     _identifiers = ("name",)
     _attributes = ("organization", "description", "asn")
+    name: str
     description: str | None = None
     asn: int
-    name: str
     organization: str
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class InfraCircuit(InfrahubModel):
+class InfraCircuit(_ModelBaseClass):
     _modelname = "InfraCircuit"
     _identifiers = ("circuit_id",)
-    _attributes = ("provider", "tags", "type", "status", "vendor_id", "description")
-    vendor_id: str | None = None
+    _attributes = ("status", "type", "tags", "provider", "description", "vendor_id")
     circuit_id: str
     description: str | None = None
-    provider: str
-    tags: list[str] | None = []
-    type: str
+    vendor_id: str | None = None
     status: str | None = None
+    type: str
+    tags: list[str] | None = []
+    provider: str
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class ChoiceCircuitType(InfrahubModel):
+class ChoiceCircuitType(_ModelBaseClass):
     _modelname = "ChoiceCircuitType"
     _identifiers = ("name",)
     _attributes = ("description",)
-    description: str | None = None
     name: str
+    description: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class InfraDevice(InfrahubModel):
+class InfraDevice(_ModelBaseClass):
     _modelname = "InfraDevice"
     _identifiers = ("location", "organization", "name")
-    _attributes = ("platform", "tags", "role", "rack", "status", "model", "asset_tag", "serial_number")
+    _attributes = ("role", "model", "status", "platform", "rack", "tags", "asset_tag", "serial_number")
     name: str | None = None
     asset_tag: str | None = None
     serial_number: str | None = None
-    platform: str | None = None
-    organization: str | None = None
-    tags: list[str] | None = []
     role: str | None = None
-    rack: str | None = None
+    model: str
     status: str | None = None
     location: str
-    model: str
+    platform: str | None = None
+    organization: str | None = None
+    rack: str | None = None
+    tags: list[str] | None = []
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class ChoiceDeviceType(InfrahubModel):
+class ChoiceDeviceType(_ModelBaseClass):
     _modelname = "ChoiceDeviceType"
     _identifiers = ("name", "manufacturer")
-    _attributes = ("tags", "full_depth", "height", "part_number")
-    name: str
+    _attributes = ("tags", "part_number", "full_depth", "height")
+    part_number: str | None = None
     full_depth: bool | None = None
     height: int | None = None
-    part_number: str | None = None
-    tags: list[str] | None = []
+    name: str
     manufacturer: str
+    tags: list[str] | None = []
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class InfraFrontPort(InfrahubModel):
+class InfraFrontPort(_ModelBaseClass):
     _modelname = "InfraFrontPort"
     _identifiers = ("name", "device")
     _attributes = ("rear_port", "description", "port_type")
@@ -120,63 +123,51 @@ class InfraFrontPort(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class InfraInterfaceL2L3(InfrahubModel):
+class InfraInterfaceL2L3(_ModelBaseClass):
     _modelname = "InfraInterfaceL2L3"
     _identifiers = ("name", "device")
-    _attributes = (
-        "tagged_vlan",
-        "status",
-        "tags",
-        "l2_mode",
-        "description",
-        "mgmt_only",
-        "mac_address",
-        "interface_type",
-    )
+    _attributes = ("tagged_vlan", "tags", "status", "l2_mode", "description", "mac_address", "mgmt_only", "interface_type")
     l2_mode: str | None = None
-    name: str
     description: str | None = None
-    mgmt_only: bool | None = False
+    name: str
     mac_address: str | None = None
+    mgmt_only: bool | None = False
     interface_type: str | None = None
-    untagged_vlan: str | None = None
     tagged_vlan: list[str] | None = []
-    status: str | None = None
+    untagged_vlan: str | None = None
     device: str
     tags: list[str] | None = []
+    status: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class InfraIPAddress(InfrahubModel):
+class InfraIPAddress(_ModelBaseClass):
     _modelname = "InfraIPAddress"
     _identifiers = ("address", "ip_prefix")
-    _attributes = ("organization", "interfaces", "role", "description")
+    _attributes = ("organization", "interfaces", "role", "status", "description")
     description: str | None = None
     address: str
     organization: str | None = None
     interfaces: list[str] | None = []
     role: str | None = None
+    status: str | None = None
     ip_prefix: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class ChoiceLocationType(InfrahubModel):
+class ChoiceLocationType(_ModelBaseClass):
     _modelname = "ChoiceLocationType"
     _identifiers = ("name",)
     _attributes = ("description",)
-    description: str | None = None
     name: str
+    description: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class NautobotNamespace(InfrahubModel):
+class NautobotNamespace(_ModelBaseClass):
     _modelname = "NautobotNamespace"
     _identifiers = ("name",)
     _attributes = ("description",)
@@ -186,36 +177,33 @@ class NautobotNamespace(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class InfraPlatform(InfrahubModel):
+class InfraPlatform(_ModelBaseClass):
     _modelname = "InfraPlatform"
     _identifiers = ("name", "manufacturer")
     _attributes = ("napalm_driver", "description")
-    name: str
     napalm_driver: str | None = None
+    name: str
     description: str | None = None
     manufacturer: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class InfraProviderNetwork(InfrahubModel):
+class InfraProviderNetwork(_ModelBaseClass):
     _modelname = "InfraProviderNetwork"
     _identifiers = ("name",)
-    _attributes = ("provider", "status", "tags", "vendor_id", "description")
+    _attributes = ("provider", "tags", "status", "description", "vendor_id")
+    description: str | None = None
     name: str
     vendor_id: str | None = None
-    description: str | None = None
     provider: str
-    status: str | None = None
     tags: list[str] | None = []
+    status: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class InfraPrefix(InfrahubModel):
+class InfraPrefix(_ModelBaseClass):
     _modelname = "InfraPrefix"
     _identifiers = ("prefix", "ip_namespace")
     _attributes = ("organization", "locations", "status", "role", "vlan", "description")
@@ -231,25 +219,23 @@ class InfraPrefix(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class InfraRack(InfrahubModel):
+class InfraRack(_ModelBaseClass):
     _modelname = "InfraRack"
     _identifiers = ("name",)
-    _attributes = ("location", "role", "tags", "serial_number", "asset_tag", "height", "facility_id")
-    serial_number: str | None = None
+    _attributes = ("role", "tags", "location", "serial_number", "asset_tag", "height", "facility_id")
     name: str
+    serial_number: str | None = None
     asset_tag: str | None = None
     height: int | None = None
     facility_id: str | None = None
-    location: str
     role: str | None = None
     tags: list[str] | None = []
+    location: str
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class InfraRearPort(InfrahubModel):
+class InfraRearPort(_ModelBaseClass):
     _modelname = "InfraRearPort"
     _identifiers = ("name", "device")
     _attributes = ("description", "port_type")
@@ -261,53 +247,49 @@ class InfraRearPort(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class InfraRouteTarget(InfrahubModel):
+class InfraRouteTarget(_ModelBaseClass):
     _modelname = "InfraRouteTarget"
     _identifiers = ("name", "organization")
     _attributes = ("description",)
-    description: str | None = None
     name: str
+    description: str | None = None
     organization: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class InfraVLAN(InfrahubModel):
+class InfraVLAN(_ModelBaseClass):
     _modelname = "InfraVLAN"
     _identifiers = ("name",)
-    _attributes = ("locations", "vlan_group", "organization", "role", "status", "vlan_id", "description")
-    vlan_id: int
-    description: str | None = None
+    _attributes = ("role", "vlan_group", "locations", "organization", "status", "description", "vlan_id")
     name: str
-    locations: list[str] | None = []
-    vlan_group: str | None = None
-    organization: str | None = None
+    description: str | None = None
+    vlan_id: int
     role: str | None = None
+    vlan_group: str | None = None
+    locations: list[str] | None = []
+    organization: str | None = None
     status: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class InfraVRF(InfrahubModel):
+class InfraVRF(_ModelBaseClass):
     _modelname = "InfraVRF"
     _identifiers = ("name", "ip_namespace")
     _attributes = ("import_rt", "export_rt", "organization", "vrf_rd", "description")
-    vrf_rd: str | None = None
     name: str
+    vrf_rd: str | None = None
     description: str | None = None
+    ip_namespace: str
     import_rt: list[str] | None = []
     export_rt: list[str] | None = []
     organization: str | None = None
-    ip_namespace: str
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class OrganizationGeneric(InfrahubModel):
+class OrganizationGeneric(_ModelBaseClass):
     _modelname = "OrganizationGeneric"
     _identifiers = ("name",)
     _attributes = ("group", "description", "type")
@@ -319,8 +301,7 @@ class OrganizationGeneric(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class StatusGeneric(InfrahubModel):
+class StatusGeneric(_ModelBaseClass):
     _modelname = "StatusGeneric"
     _identifiers = ("name",)
     _attributes = ("label", "description")
@@ -331,8 +312,7 @@ class StatusGeneric(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class RoleGeneric(InfrahubModel):
+class RoleGeneric(_ModelBaseClass):
     _modelname = "RoleGeneric"
     _identifiers = ("name",)
     _attributes = ("label", "description")
@@ -343,8 +323,7 @@ class RoleGeneric(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class LocationGeneric(InfrahubModel):
+class LocationGeneric(_ModelBaseClass):
     _modelname = "LocationGeneric"
     _identifiers = ("name",)
     _attributes = ("tags", "location_type", "status", "description")

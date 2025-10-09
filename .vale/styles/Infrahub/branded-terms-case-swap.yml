@@ -21,6 +21,7 @@ swap:
   (?:k3s): K3s
   (?:k8s): K8s
   (?:kubernetes): Kubernetes
+  (?:[Ll]ibre[Nn][Mm][Ss](?!\S)): LibreNMS
   (?:[^/][Mm]y[Ss]ql): MySQL
   (?:neo4j): Neo4j
   (?:[^/][Nn]ginx): NGINX

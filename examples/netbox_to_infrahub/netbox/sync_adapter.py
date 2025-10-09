@@ -1,4 +1,6 @@
-from infrahub_sync.adapters.netbox import NetboxAdapter
+from __future__ import annotations
+
+from infrahub_sync.plugin_loader import PluginLoader
 
 from .sync_models import (
     BuiltinTag,
@@ -7,8 +9,8 @@ from .sync_models import (
     CoreStandardGroup,
     InfraCircuit,
     InfraDevice,
-    InfraInterfaceL2L3,
     InfraIPAddress,
+    InfraInterfaceL2L3,
     InfraPrefix,
     InfraProviderNetwork,
     InfraRack,
@@ -20,13 +22,17 @@ from .sync_models import (
     RoleGeneric,
 )
 
+# Load adapter class dynamically at runtime
+
+_AdapterBaseClass = PluginLoader().resolve("netbox")
+
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
 #  This file has been generated with the command `infrahub-sync generate`
 #  All modifications will be lost the next time you reexecute this command
 # -------------------------------------------------------
-class NetboxSync(NetboxAdapter):
+class NetboxSync(_AdapterBaseClass):
     CoreStandardGroup = CoreStandardGroup
     BuiltinTag = BuiltinTag
     ChoiceCircuitType = ChoiceCircuitType

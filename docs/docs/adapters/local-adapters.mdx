@@ -1,0 +1,114 @@
+---
+title: Local Adapters
+---
+
+import ReferenceLink from "../../src/components/Card";
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+## Using local adapters
+
+The infrahub-sync tool supports loading adapters from various sources, including local filesystem paths. This feature allows you to develop and use custom adapters without having to integrate them into the main codebase.
+
+### Adapter resolution paths
+
+The plugin loader can resolve adapters from:
+
+1. **Built-ins**: Adapters that ship with infrahub-sync (`infrahub_sync.adapters.<name>`)
+2. **Dotted paths**: Python module paths (`myproj.adapters.foo:MyAdapter`)
+3. **Filesystem paths**: Local files or directories (`./adapters/foo.py:MyAdapter`)
+4. **Python entry points**: Installed packages that register entry points
+
+### Configuring local adapters
+
+To use a local adapter in your configuration, specify the filesystem path in the `adapter` field:
+
+```yaml
+source:
+  name: mycustom
+  adapter: ./path/to/my_adapter.py:MyCustomAdapter
+  settings:
+    # Your adapter settings here
+```
+
+If your adapter class name follows naming conventions (for example: `MycustomAdapter`), you can omit the class name:
+
+```yaml
+source:
+  name: mycustom
+  adapter: ./path/to/my_adapter.py
+  settings:
+    # Your adapter settings here
+```
+
+### Environment variables
+
+You can also specify additional adapter search paths via the `INFRAHUB_SYNC_ADAPTER_PATHS` environment variable:
+
+```bash
+# Unix/Linux/macOS
+export INFRAHUB_SYNC_ADAPTER_PATHS="/path/to/adapters:/another/path"
+
+# Windows
+set INFRAHUB_SYNC_ADAPTER_PATHS="C:\path\to\adapters;D:\another\path"
+```
+
+### Creating a custom adapter
+
+A minimal custom adapter needs to extend `diffsync.Adapter` and implement the necessary methods:
+
+```python
+from diffsync import Adapter
+
+from infrahub_sync import DiffSyncMixin
+
+class MyCustomAdapter(DiffSyncMixin, Adapter):
+    def __init__(self, target, adapter, config, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.target = target
+        self.settings = adapter.settings or {}
+        self.config = config
+
+    def model_loader(self, model_name, model):
+        # Your implementation to load data into the model
+        pass
+```
+
+For a more complete example, refer to the example in the repository:
+
+<ReferenceLink title="Custom Adapter Example" url="https://github.com/opsmill/infrahub-sync/tree/main/examples/custom_adapter" openInNewTab />
+
+### Best practices
+
+1. **Package Structure**: Organize complex adapters as packages with `__init__.py`
+2. **Testing**: Include test data and documentation with your adapter
+3. **Configuration**: Use settings to make your adapter configurable
+4. **Error Handling**: Implement proper error handling and logging
+5. **Type Annotations**: Use type hints to make your code more maintainable
+
+### Local adapter example
+
+Here's an example configuration using a local adapter:
+
+```yaml
+name: custom-example
+
+source:
+  name: mockdb
+  # Filesystem path to the adapter class
+  adapter: ./examples/custom_adapter/custom_adapter_src/custom_adapter.py:MockdbAdapter
+  settings:
+    db_path: "./examples/custom_adapter/custom_adapter_src/mock_db.json"
+
+destination:
+  name: infrahub
+  settings:
+    url: "http://localhost:8000"
+
+order: [
+  "InfraDevice",
+]
+
+schema_mapping:
+  # Your schema mapping here
+```

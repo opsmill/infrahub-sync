@@ -17,7 +17,7 @@ jobs:
       poetry_files: ${{ steps.changes.outputs.poetry_files }}
     steps:
       - name: "Check out repository code"
-        uses: "actions/checkout@v4"
+        uses: "actions/checkout@v5"
       - name: Check for file changes
         uses: dorny/paths-filter@v3
         id: changes
@@ -37,10 +37,10 @@ jobs:
         python-version:
           - "3.12"
         poetry-version:
-          - "1.8.5"
+          - "2.1.3"
     steps:
       - name: "Check out repository code"
-        uses: "actions/checkout@v4"
+        uses: "actions/checkout@v5"
 
       - name: "Set up Python ${{ matrix.python-version }}"
         uses: "actions/setup-python@v5"

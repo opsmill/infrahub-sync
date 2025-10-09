@@ -1,6 +1,5 @@
 import logging
 from timeit import default_timer as timer
-from typing import TYPE_CHECKING
 
 import typer
 from infrahub_sdk import InfrahubClientSync
@@ -15,9 +14,6 @@ from infrahub_sync.utils import (
     get_potenda_from_instance,
     render_adapter,
 )
-
-if TYPE_CHECKING:
-    from infrahub_sync import SyncInstance
 
 app = typer.Typer()
 console = Console()
@@ -46,6 +42,10 @@ def diff_cmd(
     directory: str = typer.Option(default=None, help="Base directory to search for sync configurations"),
     branch: str = typer.Option(default=None, help="Branch to use for the diff."),
     show_progress: bool = typer.Option(default=True, help="Show a progress bar during diff"),
+    adapter_path: list[str] = typer.Option(
+        default=None,
+        help="Paths to look for adapters. Can be specified multiple times.",
+    ),
 ) -> None:
     """Calculate and print the differences between the source and the destination systems for a given project."""
     if sum([bool(name), bool(config_file)]) != 1:
@@ -54,6 +54,13 @@ def diff_cmd(
     sync_instance = get_instance(name=name, config_file=config_file, directory=directory)
     if not sync_instance:
         print_error_and_abort("Failed to load sync instance.")
+
+    # Add adapter paths from CLI to the sync instance if specified
+    if adapter_path is not None:
+        if sync_instance.adapters_path:
+            sync_instance.adapters_path.extend(adapter_path)
+        else:
+            sync_instance.adapters_path = adapter_path
 
     try:
         ptd = get_potenda_from_instance(sync_instance=sync_instance, branch=branch, show_progress=show_progress)
@@ -81,6 +88,10 @@ def sync_cmd(
         help="Print the differences between the source and the destination before syncing",
     ),
     show_progress: bool = typer.Option(default=True, help="Show a progress bar during syncing"),
+    adapter_path: list[str] = typer.Option(
+        default=None,
+        help="Paths to look for adapters. Can be specified multiple times.",
+    ),
 ) -> None:
     """Synchronize the data between source and the destination systems for a given project or configuration file."""
     if sum([bool(name), bool(config_file)]) != 1:
@@ -89,6 +100,13 @@ def sync_cmd(
     sync_instance = get_instance(name=name, config_file=config_file, directory=directory)
     if not sync_instance:
         print_error_and_abort("Failed to load sync instance.")
+
+    # Add adapter paths from CLI to the sync instance if specified
+    if adapter_path is not None:
+        if sync_instance.adapters_path:
+            sync_instance.adapters_path.extend(adapter_path)
+        else:
+            sync_instance.adapters_path = adapter_path
 
     try:
         ptd = get_potenda_from_instance(sync_instance=sync_instance, branch=branch, show_progress=show_progress)
@@ -119,15 +137,26 @@ def generate(
     config_file: str = typer.Option(default=None, help="File path to the sync configuration YAML file"),
     directory: str = typer.Option(default=None, help="Base directory to search for sync configurations"),
     branch: str = typer.Option(default=None, help="Branch to use for the sync."),
+    adapter_path: list[str] = typer.Option(
+        default=None,
+        help="Paths to look for adapters. Can be specified multiple times.",
+    ),
 ) -> None:
     """Generate all the Python files for a given sync based on the configuration."""
 
     if sum([bool(name), bool(config_file)]) != 1:
         print_error_and_abort("Please specify exactly one of 'name' or 'config_file'.")
 
-    sync_instance: SyncInstance = get_instance(name=name, config_file=config_file, directory=directory)
+    sync_instance = get_instance(name=name, config_file=config_file, directory=directory)
     if not sync_instance:
         print_error_and_abort(f"Unable to find the sync {name}. Use the list command to see the sync available")
+
+    # Add adapter paths from CLI to the sync instance if specified
+    if adapter_path:
+        if sync_instance.adapters_path:
+            sync_instance.adapters_path.extend(adapter_path)
+        else:
+            sync_instance.adapters_path = adapter_path
 
     # Check if the destination is infrahub
     infrahub_address = ""

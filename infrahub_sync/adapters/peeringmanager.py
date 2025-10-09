@@ -1,176 +1,55 @@
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING, Any
 
 try:
     from typing import Self
 except ImportError:
     from typing_extensions import Self
+
 import requests
-from diffsync import Adapter, DiffSyncModel
 
-from infrahub_sync import (
-    DiffSyncMixin,
-    DiffSyncModelMixin,
-    SchemaMappingModel,
-    SyncAdapter,
-    SyncConfig,
-)
-
-from .rest_api_client import RestApiClient
-from .utils import derive_identifier_key, get_value
+from infrahub_sync.adapters.genericrestapi import GenericrestapiAdapter, GenericrestapiModel
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from diffsync import Adapter
 
-class PeeringmanagerAdapter(DiffSyncMixin, Adapter):
-    type = "Peeringmanager"
+    from infrahub_sync import (
+        SyncAdapter,
+        SyncConfig,
+    )
 
-    def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
 
-        self.target = target
+class PeeringmanagerAdapter(GenericrestapiAdapter):
+    """PeeringManager adapter that extends the generic REST API adapter."""
+
+    def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, **kwargs) -> None:
+        # Set PeeringManager-specific defaults
         settings = adapter.settings or {}
-        self.params = settings.get("params", {})
-        self.client = self._create_rest_client(settings=settings)
-        self.config = config
 
-    def _create_rest_client(self, settings: dict) -> RestApiClient:
-        url = os.environ.get("PEERING_MANAGER_ADDRESS") or os.environ.get("PEERING_MANAGER_URL") or settings.get("url")
-        api_endpoint = settings.get("api_endpoint", "api")  # Default endpoint, change if necessary
-        auth_method = settings.get("auth_method", "token")
-        api_token = os.environ.get("PEERING_MANAGER_TOKEN") or settings.get("token")
-        verify_ssl = settings.get("verify_ssl", True)
-        timeout = settings.get("timeout", 30)
+        # Apply PeeringManager-specific defaults if not specified
+        if "auth_method" not in settings:
+            settings["auth_method"] = "token"
+        if "api_endpoint" not in settings:
+            settings["api_endpoint"] = "/api"
+        if "url_env_vars" not in settings:
+            settings["url_env_vars"] = ["PEERING_MANAGER_ADDRESS", "PEERING_MANAGER_URL"]
+        if "token_env_vars" not in settings:
+            settings["token_env_vars"] = ["PEERING_MANAGER_TOKEN"]
 
-        if not url:
-            msg = "url must be specified!"
-            raise ValueError(msg)
+        settings.setdefault("response_key_pattern", "results")
 
-        if auth_method != "token" or not api_token:
-            msg = "Token-based authentication requires a valid API token!"
-            raise ValueError(msg)
+        # Save the original settings back to the adapter
+        adapter.settings = settings
 
-        full_base_url = f"{url.rstrip('/')}/{api_endpoint.strip('/')}"
-        return RestApiClient(
-            base_url=full_base_url, auth_method=auth_method, api_token=api_token, timeout=timeout, verify=verify_ssl
-        )
-
-    def model_loader(self, model_name: str, model: PeeringmanagerModel) -> None:
-        """
-        Load and process models using schema mapping filters and transformations.
-
-        This method retrieves data from Peering Manager, applies filters and transformations
-        as specified in the schema mapping, and loads the processed data into the adapter.
-        """
-        # Retrieve schema mapping for this model
-        for element in self.config.schema_mapping:
-            if element.name != model_name:
-                continue
-
-            # Use the resource endpoint from the schema mapping
-            resource_name = element.mapping
-
-            try:
-                # Retrieve all objects
-                response_data = self.client.get(endpoint=resource_name, params=self.params)
-                objs = response_data.get("results", [])
-            except Exception as exc:
-                msg = f"Error fetching data from REST API: {exc!s}"
-                raise ValueError(msg) from exc
-
-            total = len(objs)
-            if self.config.source.name.title() == self.type.title():
-                # Filter records
-                filtered_objs = model.filter_records(records=objs, schema_mapping=element)
-                print(f"{self.type}: Loading {len(filtered_objs)}/{total} {resource_name}")
-                # Transform records
-                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
-            else:
-                print(f"{self.type}: Loading all {total} {resource_name}")
-                transformed_objs = objs
-
-            # Create model instances after filtering and transforming
-            for obj in transformed_objs:
-                data = self.obj_to_diffsync(obj=obj, mapping=element, model=model)
-                item = model(**data)
-                self.add(item)
-
-    def obj_to_diffsync(
-        self,
-        obj: dict[str, Any],
-        mapping: SchemaMappingModel,
-        model: PeeringmanagerModel,
-    ) -> dict:
-        obj_id = derive_identifier_key(obj=obj)
-        data: dict[str, Any] = {"local_id": str(obj_id)}
-
-        for field in mapping.fields:
-            field_is_list = model.is_list(name=field.name)
-
-            if field.static:
-                data[field.name] = field.static
-            elif not field_is_list and field.mapping and not field.reference:
-                value = get_value(obj, field.mapping)
-                if value is not None:
-                    data[field.name] = value
-            elif field_is_list and field.mapping and not field.reference:
-                msg = "It's not supported yet to have an attribute of type list with a simple mapping"
-                raise NotImplementedError(msg)
-            elif field.mapping and field.reference:
-                all_nodes_for_reference = self.store.get_all(model=field.reference)
-                nodes = [item for item in all_nodes_for_reference]
-                if not nodes and all_nodes_for_reference:
-                    msg = (
-                        f"Unable to get '{field.mapping}' with '{field.reference}' reference from store."
-                        f" The available models are {self.store.get_all_model_names()}"
-                    )
-                    raise IndexError(msg)
-                if not field_is_list:
-                    if node := get_value(obj, field.mapping):
-                        if isinstance(node, dict):
-                            matching_nodes = []
-                            node_id = node.get("id", None)
-                            matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
-                            if len(matching_nodes) == 0:
-                                msg = f"Unable to locate the node {field.name} {node_id}"
-                                raise IndexError(msg)
-                            node = matching_nodes[0]
-                            data[field.name] = node.get_unique_id()
-                        else:
-                            data[field.name] = node
-                else:
-                    data[field.name] = []
-                    values = get_value(obj, field.mapping)
-                    # When using another node for mapping, it should be a list
-                    if isinstance(values, list):
-                        for node in values:
-                            if not node:
-                                continue
-                            node_id = node.get("id", None)
-                            if not node_id and isinstance(node, tuple):
-                                node_id = node[1] if node[0] == "id" else None
-                                if not node_id:
-                                    print(f"No ID found for {node} - skipped")
-                                    continue
-                            matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
-                            if len(matching_nodes) == 0:
-                                msg = f"Unable to locate the node {field.reference} {node_id}"
-                                raise IndexError(msg)
-                            data[field.name].append(matching_nodes[0].get_unique_id())
-                        data[field.name] = sorted(data[field.name])
-                    # If you are using an attribute a mapping
-                    elif isinstance(values, str):
-                        for item in nodes:
-                            tmp = get_value(item, field.mapping)
-                            if tmp == values:
-                                data[field.name].append(item.get_unique_id())
-        return data
+        super().__init__(target=target, adapter=adapter, config=config, adapter_type="PeeringManager", **kwargs)
 
 
-class PeeringmanagerModel(DiffSyncModelMixin, DiffSyncModel):
+class PeeringmanagerModel(GenericrestapiModel):
+    """PeeringManager model that extends the generic REST API model."""
+
     @classmethod
     def create(
         cls,

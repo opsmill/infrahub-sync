@@ -1,0 +1,29 @@
+---
+name: custom-example
+
+source:
+  name: mockdb
+  # Filesystem path to the adapter class
+  adapter: ./examples/custom_adapter/custom_adapter_src/custom_adapter.py:MockdbAdapter
+  settings:
+    db_path: "./examples/custom_adapter/custom_adapter_src/mock_db.json"
+
+destination:
+  name: infrahub
+  settings:
+    url: "http://localhost:8000"
+
+order: [
+  "InfraDevice",
+]
+
+schema_mapping:
+  - name: InfraDevice
+    mapping: devices
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: name
+      - name: type
+        mapping: device_type
+

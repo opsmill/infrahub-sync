@@ -16,8 +16,10 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Adapters',
       items: [
+        'adapters/genericrestapi',
         'adapters/ipfabric',
         'adapters/librenms',
+        'adapters/local-adapters',
         'adapters/nautobot',
         'adapters/netbox',
         'adapters/observium',

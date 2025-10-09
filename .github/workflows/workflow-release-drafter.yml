@@ -7,32 +7,62 @@ on:
     inputs:
       publish:
         type: boolean
-        description: Wether to publish Release note
+        description: Whether to publish Release note
         required: false
         default: false
       version:
         required: true
         type: string
+      target_sha:
+        required: true
+        type: string
+        description: "Commit SHA to tag"
 
-permissions:
-  contents: read
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
 
 jobs:
   update_release_draft:
     permissions:
       contents: write
-      pull-requests: write
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
-          fetch-depth: 2
+          fetch-depth: 0
+          token: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
 
-      - name: Tag new version
+      - name: Configure git identity (required for annotated tags)
         run: |
-          git tag ${{ inputs.version }}
-          git push --tags
+          git config --local user.name "opsmill-bot"
+          git config --local user.email "github-bot@opsmill.com"
+
+      - name: Ensure tag exists on the target commit
+        env:
+          VERSION: ${{ inputs.version }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin --tags
+          if ! git cat-file -e "${TARGET_SHA}^{commit}" >/dev/null 2>&1; then
+            echo "::error::Target SHA ${TARGET_SHA} not found locally"
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/${VERSION}" >/dev/null; then
+            existing_sha="$(git rev-list -n 1 "${VERSION}")"
+            if [ "${existing_sha}" = "${TARGET_SHA}" ]; then
+              echo "Tag ${VERSION} already points to ${TARGET_SHA} — OK"
+            else
+              echo "::error::Tag ${VERSION} exists on ${existing_sha}, refusing to move to ${TARGET_SHA}."
+              exit 1
+            fi
+          else
+            git tag -a "${VERSION}" "${TARGET_SHA}" -m "Release ${VERSION}"
+            git push origin "refs/tags/${VERSION}"
+          fi
 
       - uses: release-drafter/release-drafter@v6
         with:

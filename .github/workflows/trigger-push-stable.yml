@@ -1,6 +1,6 @@
 ---
 # yamllint disable rule:truthy
-name: "Push on main/stable"
+name: "Push on main"
 
 on:
   push:
@@ -10,56 +10,35 @@ on:
     paths-ignore:
       - 'docs/**'
 
+permissions:
+  contents: write
+  pull-requests: read
+
 jobs:
   check_commit:
     runs-on: ubuntu-latest
     outputs:
-      skip: ${{ steps.filter.outputs.skip }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2  # Fetches the commit history for the last 2 commits
-      - id: filter
-        run: |
-          commit_author=$(git log -1 --pretty=format:'%an')
-          commit_message=$(git log -1 --pretty=format:'%s')
-          if [[ "$commit_author" == "opsmill-bot" && \
-                "$commit_message" == "chore: update pyproject.toml & galaxy.yml" ]]; then
-            echo "skip=true" >> $GITHUB_OUTPUT
-          else
-            echo "skip=false" >> $GITHUB_OUTPUT
-          fi
-
-  prepare_release:
-    needs: check_commit
-    if: needs.check_commit.outputs.skip == 'false'
-    runs-on: ubuntu-22.04
-    outputs:
+      skip: ${{ steps.decide.outputs.skip }}
+      reason: ${{ steps.decide.outputs.reason }}
       next_version: ${{ steps.version.outputs.next-version }}
+      previous_tag: ${{ steps.previoustag.outputs.tag }}
     steps:
-      - name: "Set up Python"
-        uses: "actions/setup-python@v5"
-        with:
-          python-version: "3.11"
-
-      - name: "Install Poetry"
-        uses: "snok/install-poetry@v1"
-        with:
-          version: 1.8.5
-          virtualenvs-create: true
-          virtualenvs-in-project: true
-          installer-parallel: true
-
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           token: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
           fetch-depth: 0
 
-      - name: Get Previous tag
+      - id: commit_meta
+        shell: bash
+        run: |
+          echo "author=$(git log -1 --pretty=format:'%an')" >> $GITHUB_OUTPUT
+          echo "message=$(git log -1 --pretty=format:'%s')" >> $GITHUB_OUTPUT
+
+      - name: Get previous tag
         id: previoustag
-        uses: "WyriHaximus/github-action-get-previous-tag@master"
+        uses: WyriHaximus/github-action-get-previous-tag@v1
         env:
-          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Calculate next version
         id: version
@@ -67,29 +46,114 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update pyproject.toml versions
+      # Decide whether to skip downstream work:
+      - id: decide
+        shell: bash
         run: |
-          VERSION=${{ steps.version.outputs.next-version }}
+          set -euo pipefail
+          skip=false
+          reason=""
+
+          author='${{ steps.commit_meta.outputs.author }}'
+          msg='${{ steps.commit_meta.outputs.message }}'
+          prev='${{ steps.previoustag.outputs.tag }}'
+          next='${{ steps.version.outputs.next-version }}'
+
+          # Normalize version strings (strip optional leading 'v')
+          prev_norm="${prev#v}"
+          next_norm="${next#v}"
+
+          # Skip on bot housekeeping commits
+          if [[ "$author" == "opsmill-bot" ]] && [[ "$msg" =~ ^chore(:|\(release\):) ]]; then
+            skip=true
+            reason="bot-commit"
+          fi
+
+          # Skip when there is no new version to cut
+          if [[ "$next_norm" == "$prev_norm" || -z "$next_norm" ]]; then
+            skip=true
+            reason="${reason:+$reason,}no-new-version"
+          fi
+
+          echo "skip=$skip"     >> $GITHUB_OUTPUT
+          echo "reason=$reason" >> $GITHUB_OUTPUT
+
+  prepare_release:
+    needs: check_commit
+    if: needs.check_commit.outputs.skip == 'false'
+    runs-on: ubuntu-22.04
+    outputs:
+      head_sha: ${{ steps.head.outputs.sha }}
+      next_version: ${{ steps.expose.outputs.next_version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 2.1.3
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+          installer-parallel: true
+
+      - name: Update pyproject.toml versions
+        env:
+          VERSION: ${{ needs.check_commit.outputs.next_version }}
+        run: |
           echo "Updating to version $VERSION"
-          poetry version $VERSION  # directly use the VERSION
+          poetry version "$VERSION"
 
       - name: Update lock file
-        run: poetry lock --no-update
+        run: poetry lock
 
-      - name: commit pyproject.toml
-        uses: github-actions-x/commit@v2.9
-        with:
-          github-token: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
-          push-branch: 'main'
-          commit-message: 'chore: update pyproject.toml'
-          files: pyproject.toml poetry.lock
-          name: opsmill-bot
-          email: github-bot@opsmill.com
-          rebase: true
+      - name: Commit version bump (skip CI) only if there are changes
+        id: commit_bump
+        env:
+          VERSION: ${{ needs.check_commit.outputs.next_version }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git config user.name "opsmill-bot"
+          git config user.email "github-bot@opsmill.com"
+
+          # Stage expected files
+          git add pyproject.toml poetry.lock || true
+
+          # Commit only if there are staged changes
+          if git diff --cached --quiet; then
+            echo "No changes detected; skipping commit."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "chore(release): v${VERSION} [skip ci]"
+            git push origin "HEAD:${BRANCH}"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Get new HEAD of branch after push
+        id: head
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          git fetch origin "${BRANCH}"
+          echo "sha=$(git rev-parse "origin/${BRANCH}")" >> "$GITHUB_OUTPUT"
+
+      - name: Expose next_version for downstream jobs
+        id: expose
+        run: echo "next_version=${{ needs.check_commit.outputs.next_version }}" >> "$GITHUB_OUTPUT"
 
   release:
     needs: ["prepare_release"]
+    if: needs.prepare_release.result == 'success'
     uses: ./.github/workflows/workflow-release-drafter.yml
     with:
       version: ${{ needs.prepare_release.outputs.next_version }}
+      target_sha: ${{ needs.prepare_release.outputs.head_sha }}
     secrets: inherit

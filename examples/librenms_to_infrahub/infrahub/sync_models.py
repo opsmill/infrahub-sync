@@ -1,39 +1,47 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, List
 
-from infrahub_sync.adapters.infrahub import InfrahubModel
+from infrahub_sync.plugin_loader import PluginLoader
+# Load model class dynamically at runtime (honor adapters_path, safe fallback)
+try:
+    _loader = PluginLoader.from_env_and_args(adapter_paths=[])
 
+    _spec = "infrahub"
+
+    _ModelBaseClass = _loader.resolve(_spec, default_class_candidates=("Model",))
+except Exception:
+    # Fallback: use DiffSyncModel to avoid import-time failure
+    from diffsync import DiffSyncModel as _FallbackModel
+    _ModelBaseClass = _FallbackModel
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
 #  This file has been generated with the command `infrahub-sync generate`
 #  All modifications will be lost the next time you reexecute this command
 # -------------------------------------------------------
-class CoreStandardGroup(InfrahubModel):
+class CoreStandardGroup(_ModelBaseClass):
     _modelname = "CoreStandardGroup"
     _identifiers = ("name",)
     _attributes = ("description",)
-    description: str | None = None
     name: str
+    description: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class InfraDevice(InfrahubModel):
+class InfraDevice(_ModelBaseClass):
     _modelname = "InfraDevice"
     _identifiers = ("name",)
     _attributes = ("site", "type")
     type: str
     name: str
-    site: str
+    site: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class IpamIPAddress(InfrahubModel):
+class IpamIPAddress(_ModelBaseClass):
     _modelname = "IpamIPAddress"
     _identifiers = ("address",)
     _attributes = ("description",)
@@ -43,13 +51,12 @@ class IpamIPAddress(InfrahubModel):
     local_id: str | None = None
     local_data: Any | None = None
 
-
-class LocationSite(InfrahubModel):
+class LocationSite(_ModelBaseClass):
     _modelname = "LocationSite"
     _identifiers = ("name",)
     _attributes = ("description",)
-    description: str | None = None
     name: str
+    description: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None

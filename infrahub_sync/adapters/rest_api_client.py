@@ -25,7 +25,7 @@ class RestApiClient:
 
         # Determine authentication method, some are use by more than one API.
         # Example:
-        # -> Peering Manager
+        # -> Peering Manager & Device42
         if auth_method == "token" and api_token:
             self.headers["Authorization"] = f"Token {api_token}"
         # -> LibreNMS
@@ -37,9 +37,11 @@ class RestApiClient:
         # -> RIPE API
         elif auth_method == "key" and api_token:
             self.headers["Authorization"] = f"Key {api_token}"
-        # -> Observium
+        # -> Observium & Device42
         elif auth_method == "basic" and username and password:
             self.auth = (username, password)
+        elif auth_method == "none":
+            pass  # No authentication
         else:
             msg = "Invalid authentication configuration!"
             raise ValueError(msg)
