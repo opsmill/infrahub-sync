@@ -1,0 +1,1 @@
+"""Infrahub sync adapter module."""

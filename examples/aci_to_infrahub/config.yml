@@ -1,0 +1,119 @@
+---
+name: from-cisco-aci
+description: "Sync Cisco ACI fabric data to Infrahub"
+
+source:
+  name: aci
+  settings:
+    url: https://sandboxapicdc.cisco.com
+    username: admin
+    password: "!v3G@!4@Y"
+    api_endpoint: "api"
+    verify: false
+
+destination:
+  name: infrahub
+  settings:
+    url: "http://localhost:8000"
+
+order: [
+  "OrganizationCustomer",
+  "LocationBuilding",
+  "DcimPhysicalDevice",
+  "DcimPhysicalInterface",
+]
+
+schema_mapping:
+  # ACI Tenants -> Organizations
+  - name: OrganizationCustomer
+    mapping: "class/fvTenant.json"
+    identifiers: ["name", "customer_id"]
+    fields:
+      - name: name
+        mapping: "fvTenant.attributes.name"
+      - name: customer_id
+        mapping: customer_id
+    filters:
+      - field: "fvTenant.attributes.name"
+        operation: "not in"
+        value: ["infra", "mgmt"]
+    transforms:
+      - field: customer_id
+        expression: "CUST-{{ fvTenant.attributes.name.upper() }}"
+      - field: description
+        expression: "{{ fvTenant.attributes.descr or fvTenant.attributes.name }}"
+
+  # Create parent location (City)
+  - name: LocationGeneric
+    mapping: "class/fabricTopology.json"
+    identifiers: ["name"]
+    fields:
+      - name: name
+        static: "Munich"
+      - name: shortname
+        static: "MUC-1"
+    transforms:
+      - field: description
+        expression: "ACI Fabric City"
+
+  # ACI Fabric Topology -> Location Building
+  - name: LocationBuilding
+    mapping: "class/fabricTopology.json"
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: "fabricTopology.attributes.fabricId"
+      - name: shortname
+        mapping: "fabricTopology.attributes.fabricId"
+    transforms:
+      - field: name
+        expression: "MUC-{{ fabricTopology.attributes.fabricId }}"
+      - field: shortname
+        expression: "MUC-F{{ fabricTopology.attributes.fabricId }}"
+      - field: description
+        expression: "ACI Fabric {{ fabricTopology.attributes.fabricId }} in Munich"
+
+  # ACI Fabric Nodes -> Devices (Spine/Leaf switches)
+  - name: DcimPhysicalDevice
+    mapping: "class/fabricNode.json"
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: "fabricNode.attributes.name"
+      - name: serial
+        mapping: "fabricNode.attributes.serial"
+      - name: description
+        mapping: "fabricNode.attributes.descr"
+      - name: location
+        static: "MUC-1"
+        reference: LocationBuilding
+      - name: role
+        mapping: "fabricNode.attributes.role"
+      - name: status
+        mapping: "fabricNode.attributes.fabricSt"
+    filters:
+      - field: "fabricNode.attributes.fabricSt"
+        operation: "=="
+        value: "active"
+
+  # ACI Physical Interfaces -> Interfaces
+  - name: DcimPhysicalInterface
+    mapping: "class/l1PhysIf.json"
+    identifiers: ["device", "name"]
+    fields:
+      - name: name
+        mapping: "l1PhysIf.attributes.id"
+      - name: device
+        mapping: "l1PhysIf.attributes.dn"
+        reference: DcimPhysicalDevice
+      - name: description
+        mapping: "l1PhysIf.attributes.descr"
+    transforms:
+      - field: device
+        expression: "{{ l1PhysIf.attributes.dn.split('/')[2].replace('node-', '') | aci_device_name }}"
+      - field: status
+        expression: "{{ 'active' if l1PhysIf.attributes.adminSt == 'up' else 'free' }}"
+    filters:
+      - field: "l1PhysIf.attributes.id"
+        operation: "contains"
+        value: "eth"
