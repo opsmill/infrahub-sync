@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -48,10 +49,17 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
         settings = adapter.settings or {}
 
         base_url = settings.get("base_url", None)
+        if not base_url:
+            base_url = os.environ.get("IPF_URL", None)
+            settings["base_url"] = base_url
+
         auth = settings.get("auth", None)
+        if not auth:
+            auth = os.environ.get("IPF_TOKEN", None)
+            settings["auth"] = auth
 
         if not base_url or not auth:
-            msg = "Both url and auth must be specified!"
+            msg = "Both url and auth must be specified! Please specify in the config or using `IPF_URL` and `IPF_TOKEN` environment variables."
             raise ValueError(msg)
 
         return IPFClient(**settings)
