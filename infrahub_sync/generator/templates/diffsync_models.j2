@@ -5,7 +5,11 @@ from typing import Any, List
 from infrahub_sync.plugin_loader import PluginLoader
 # Load model class dynamically at runtime (honor adapters_path, safe fallback)
 try:
-    _loader = PluginLoader.from_env_and_args({{ 'adapter_paths=' ~ config.adapters_path if config.adapters_path else '' }})
+{% if config.adapters_path %}
+    _loader = PluginLoader.from_env_and_args(adapter_paths={{ config.adapters_path }})
+{% else %}
+    _loader = PluginLoader.from_env_and_args()
+{% endif %}
 {% if adapter.adapter %}
     _spec = "{{ adapter.adapter.split(':')[0] }}"
 {% else %}
