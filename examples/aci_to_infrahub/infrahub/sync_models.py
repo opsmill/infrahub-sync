@@ -5,7 +5,7 @@ from typing import Any, List
 from infrahub_sync.plugin_loader import PluginLoader
 # Load model class dynamically at runtime (honor adapters_path, safe fallback)
 try:
-    _loader = PluginLoader.from_env_and_args(adapter_paths=[])
+    _loader = PluginLoader.from_env_and_args()
 
     _spec = "infrahub"
 

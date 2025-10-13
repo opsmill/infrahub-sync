@@ -5,11 +5,11 @@ description: "Sync Cisco ACI fabric data to Infrahub"
 source:
   name: aci
   settings:
-    url: https://sandboxapicdc.cisco.com
-    username: admin
-    password: "!v3G@!4@Y"
+    url: ${CISCO_APIC_URL}
+    username: ${CISCO_APIC_USERNAME}
+    password: ${CISCO_APIC_PASSWORD}
     api_endpoint: "api"
-    verify: false
+    verify: ${CISCO_APIC_VERIFY}
 
 destination:
   name: infrahub

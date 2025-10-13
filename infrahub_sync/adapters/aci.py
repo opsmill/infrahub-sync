@@ -29,7 +29,6 @@ from .utils import get_value
 if TYPE_CHECKING:
     import builtins
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 
@@ -81,7 +80,9 @@ class AciApiClient:
         self.cookies = ""
         self.last_login: datetime | None = None
         self.refresh_timeout: int | None = None
-
+        # Suppress TLS warnings only when verification is disabled
+        if not self.verify:
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         # Use a requests Session for connection pooling and to preserve cookies
         self.session: requests.Session = requests.Session()
         # Configure retries with backoff for idempotent operations and common transient errors
@@ -89,7 +90,7 @@ class AciApiClient:
             total=3,
             backoff_factor=0.3,
             status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["HEAD", "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+            allowed_methods=["HEAD", "GET", "OPTIONS"],
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
         self.session.mount("https://", adapter)
@@ -203,10 +204,11 @@ class AciAdapter(DiffSyncMixin, Adapter):
         self.config = config
         # Build device mapping once during initialization
         self.device_mapping = self._build_device_mapping()
+        AciModel.set_device_mapping(self.device_mapping)
 
     def _create_aci_client(self, adapter: SyncAdapter) -> AciApiClient:
         settings = adapter.settings or {}
-        url = os.environ.get("CISCO_APIC_ADDRESS") or settings.get("url")
+        url = os.environ.get("CISCO_APIC_URL") or settings.get("url")
         username = os.environ.get("CISCO_APIC_USERNAME") or settings.get("username")
         password = os.environ.get("CISCO_APIC_PASSWORD") or settings.get("password")
         # Prefer explicit env var for verify; allow boolean or string values
@@ -277,9 +279,6 @@ class AciAdapter(DiffSyncMixin, Adapter):
                 data = self.obj_to_diffsync(obj=obj, mapping=element, model=model)
                 item = model(**data)  # type: ignore[misc]
                 self.add(item)
-
-            # Set the device mapping for Jinja filter use
-            AciModel.set_device_mapping(self.device_mapping)
 
     def obj_to_diffsync(
         self,
