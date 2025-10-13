@@ -59,7 +59,7 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
             settings["auth"] = auth
 
         if not base_url or not auth:
-            msg = "Both url and auth must be specified!"
+            msg = "Both url and auth must be specified! Please specify in the config or using `IPF_URL` and `IPF_TOKEN` environment variables."
             raise ValueError(msg)
 
         return IPFClient(**settings)
