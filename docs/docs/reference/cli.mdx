@@ -36,6 +36,7 @@ $ infrahub-sync diff [OPTIONS]
 * `--directory TEXT`: Base directory to search for sync configurations
 * `--branch TEXT`: Branch to use for the diff.
 * `--show-progress / --no-show-progress`: Show a progress bar during diff  [default: show-progress]
+* `--adapter-path TEXT`: Paths to look for adapters. Can be specified multiple times.
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync generate`
@@ -54,6 +55,7 @@ $ infrahub-sync generate [OPTIONS]
 * `--config-file TEXT`: File path to the sync configuration YAML file
 * `--directory TEXT`: Base directory to search for sync configurations
 * `--branch TEXT`: Branch to use for the sync.
+* `--adapter-path TEXT`: Paths to look for adapters. Can be specified multiple times.
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync list`
@@ -89,4 +91,5 @@ $ infrahub-sync sync [OPTIONS]
 * `--branch TEXT`: Branch to use for the sync.
 * `--diff / --no-diff`: Print the differences between the source and the destination before syncing  [default: diff]
 * `--show-progress / --no-show-progress`: Show a progress bar during syncing  [default: show-progress]
+* `--adapter-path TEXT`: Paths to look for adapters. Can be specified multiple times.
 * `--help`: Show this message and exit.

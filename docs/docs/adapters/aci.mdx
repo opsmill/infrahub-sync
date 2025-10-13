@@ -50,6 +50,7 @@ Notes:
 ### Schema mapping examples
 
 #### Basic device mapping
+
 ```yaml
 - name: DcimPhysicalDevice
   mapping: "class/fabricNode.json"
@@ -68,6 +69,7 @@ Notes:
 ```
 
 #### Interface mapping with ACI Jinja filter
+
 ```yaml
 - name: DcimPhysicalInterface
   mapping: "class/l1PhysIf.json"
@@ -100,15 +102,18 @@ The ACI adapter provides custom Jinja filters for data transformation:
 The `aci_device_name` filter resolves ACI node IDs to device names automatically. This is particularly useful when mapping physical interfaces to their parent devices.
 
 **Usage:**
+
 ```jinja2
 {{ node_id | aci_device_name }}
 ```
 
 **Example:**
+
 - Input: `"102"` (ACI node ID)
 - Output: `"spine-102"` (actual device name from ACI)
 
 **Common use case in transforms:**
+
 ```yaml
 transforms:
   - field: device
@@ -116,11 +121,13 @@ transforms:
 ```
 
 This transform:
+
 1. Extracts the node ID from the ACI Distinguished Name (DN)
 2. Removes the `"node-"` prefix (e.g., `"node-102"` → `"102"`)
 3. Uses the `aci_device_name` filter to resolve the node ID to the actual device name
 
 **How it works:**
+
 - The adapter automatically queries ACI's `fabricNode` class during initialization
 - Builds a mapping of node IDs to device names
 - The filter performs a simple lookup with fallback to the original node ID if not found
@@ -136,23 +143,28 @@ poetry run infrahub-sync generate --name from-cisco-aci --directory examples/
 ## Common issues and troubleshooting
 
 ### Authentication and connectivity
+
 - If you see token refresh errors, ensure the APIC response includes refreshTimeoutSeconds; the adapter forces re-login when refresh data is unavailable.
 - For TLS verification problems, set CISCO_APIC_VERIFY to false in a secure environment (use with caution).
 
 ### Device reference resolution
+
 - **Interface-device relationship errors**: If you see "Unable to locate the node device" errors, ensure:
-  - The `DcimPhysicalDevice` mapping runs before `DcimPhysicalInterface` in the `order` configuration
-  - The device transform uses the `aci_device_name` filter correctly: `{{ node_id | aci_device_name }}`
-  - The ACI fabricNode query is successful (check logs for "Built ACI device mapping" messages)
+    - The `DcimPhysicalDevice` mapping runs before `DcimPhysicalInterface` in the `order` configuration
+    - The device transform uses the `aci_device_name` filter correctly: `{{ node_id | aci_device_name }}`
+    - The ACI fabricNode query is successful (check logs for "Built ACI device mapping" messages)
 
 ### Jinja filter issues
+
 - **`aci_device_name` filter not found**: Ensure you're using the ACI adapter and the filter is correctly spelled
 - **Filter returns node ID instead of device name**: Check that the fabricNode query was successful during adapter initialization
 - **Transform expression errors**: Verify the DN parsing logic extracts the correct node ID:
+
   ```yaml
   expression: "{{ l1PhysIf.attributes.dn.split('/')[2].replace('node-', '') | aci_device_name }}"
   ```
 
 ### General debugging
+
 - Enable DEBUG logging for the adapter to see raw fetched objects and mapping decisions. Logs will not include secrets.
 - Check the device mapping build process in logs: look for "Built ACI device mapping with X entries"
