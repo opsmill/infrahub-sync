@@ -6,7 +6,7 @@ from .sync_models import (
     DcimPhysicalDevice,
     DcimPhysicalInterface,
     LocationBuilding,
-    LocationGeneric,
+    LocationMetro,
     OrganizationCustomer,
 )
 
@@ -24,5 +24,5 @@ class InfrahubSync(_AdapterBaseClass):
     DcimPhysicalDevice = DcimPhysicalDevice
     DcimPhysicalInterface = DcimPhysicalInterface
     LocationBuilding = LocationBuilding
+    LocationMetro = LocationMetro
     OrganizationCustomer = OrganizationCustomer
-    LocationGeneric = LocationGeneric

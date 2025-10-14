@@ -5,7 +5,9 @@ from typing import Any, List
 from infrahub_sync.plugin_loader import PluginLoader
 # Load model class dynamically at runtime (honor adapters_path, safe fallback)
 try:
+
     _loader = PluginLoader.from_env_and_args()
+
 
     _spec = "aci"
 
@@ -48,6 +50,17 @@ class DcimPhysicalInterface(_ModelBaseClass):
 class LocationBuilding(_ModelBaseClass):
     _modelname = "LocationBuilding"
     _identifiers = ("name",)
+    _attributes = ("parent", "shortname")
+    name: str
+    shortname: str
+    parent: str
+
+    local_id: str | None = None
+    local_data: Any | None = None
+
+class LocationMetro(_ModelBaseClass):
+    _modelname = "LocationMetro"
+    _identifiers = ("name",)
     _attributes = ("shortname",)
     name: str
     shortname: str
@@ -61,16 +74,6 @@ class OrganizationCustomer(_ModelBaseClass):
     _attributes = ()
     customer_id: str | None = None
     name: str
-
-    local_id: str | None = None
-    local_data: Any | None = None
-
-class LocationGeneric(_ModelBaseClass):
-    _modelname = "LocationGeneric"
-    _identifiers = ("name",)
-    _attributes = ("shortname",)
-    name: str
-    shortname: str
 
     local_id: str | None = None
     local_data: Any | None = None

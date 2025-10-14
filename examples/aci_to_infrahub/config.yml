@@ -18,6 +18,7 @@ destination:
 
 order: [
   "OrganizationCustomer",
+  "LocationMetro",
   "LocationBuilding",
   "DcimPhysicalDevice",
   "DcimPhysicalInterface",
@@ -44,17 +45,14 @@ schema_mapping:
         expression: "{{ fvTenant.attributes.descr or fvTenant.attributes.name }}"
 
   # Create parent location (City)
-  - name: LocationGeneric
+  - name: LocationMetro
     mapping: "class/fabricTopology.json"
     identifiers: ["name"]
     fields:
       - name: name
         static: "Munich"
       - name: shortname
-        static: "MUC-1"
-    transforms:
-      - field: description
-        expression: "ACI Fabric City"
+        static: "MUC"
 
   # ACI Fabric Topology -> Location Building
   - name: LocationBuilding
@@ -65,11 +63,14 @@ schema_mapping:
         mapping: "fabricTopology.attributes.fabricId"
       - name: shortname
         mapping: "fabricTopology.attributes.fabricId"
+      - name: parent
+        static: "Munich"
+        reference: LocationMetro
     transforms:
       - field: name
         expression: "MUC-{{ fabricTopology.attributes.fabricId }}"
       - field: shortname
-        expression: "MUC-F{{ fabricTopology.attributes.fabricId }}"
+        expression: "MUC-{{ fabricTopology.attributes.fabricId }}"
       - field: description
         expression: "ACI Fabric {{ fabricTopology.attributes.fabricId }} in Munich"
 
