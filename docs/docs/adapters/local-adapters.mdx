@@ -119,7 +119,7 @@ class MyCustomModel(DiffSyncModelMixin, DiffSyncModel):
 
 #### Setting up filter data
 
-If your filters need data (like mappings, lookups, etc.), initialize it in your adapter:
+If your filters need data (like mappings, lookup values, etc.), initialize it in your adapter:
 
 ```python
 class MyCustomAdapter(DiffSyncMixin, Adapter):
@@ -161,10 +161,10 @@ schema_mapping:
 
 #### Filter implementation guidelines
 
-1. **Keep filters simple**: Each filter should do one specific transformation
+1. **Keep filters focused**: Each filter should do one specific transformation
 2. **Handle edge cases**: Always provide fallback values for missing data
 3. **Use class variables**: Store filter data as class variables for efficient access
-4. **Document your filters**: Add docstrings explaining what each filter does
+4. **Document your filters**: Add Python documentation strings explaining what each filter does
 5. **Test thoroughly**: Ensure filters work with various input types and edge cases
 
 #### Real-world example: ACI device name filter

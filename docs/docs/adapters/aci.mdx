@@ -3,7 +3,9 @@ title: Cisco ACI adapter
 ---
 import ReferenceLink from "../../src/components/Card";
 
+<!-- vale off -->
 ## What is Cisco ACI?
+<!-- vale on -->
 
 The *Cisco ACI* is a software-defined networking (SDN) solution that provides a policy-based, application-centric approach to managing and orchestrating network infrastructure. It is commonly used in data centers for scalable, policy-driven networking.
 
@@ -17,7 +19,7 @@ Currently, the Cisco ACI adapter supports only **one-way synchronization** from 
 
 ## Configuration
 
-The adapter reads connection settings from the sync config and can be overridden by environment variables. Credentials should be provided from a secret manager or environment variables in production.
+The adapter reads connection settings from the synchronization configuration and can be overridden by environment variables. Credentials should be provided via a secret manager or environment variables in production.
 
 ### Configuration parameters
 
@@ -123,14 +125,14 @@ transforms:
 This transform:
 
 1. Extracts the node ID from the ACI Distinguished Name (DN)
-2. Removes the `"node-"` prefix (e.g., `"node-102"` → `"102"`)
+2. Removes the `"node-"` prefix (for example: `"node-102"` → `"102"`)
 3. Uses the `aci_device_name` filter to resolve the node ID to the actual device name
 
 **How it works:**
 
-- The adapter automatically queries ACI's `fabricNode` class during initialization
+- The adapter automatically queries the ACI `fabricNode` class during initialization
 - Builds a mapping of node IDs to device names
-- The filter performs a simple lookup with fallback to the original node ID if not found
+- The filter performs a lookup with a fallback to the original node ID if not found
 
 ## Generating the models
 
@@ -152,12 +154,12 @@ poetry run infrahub-sync generate --name from-cisco-aci --directory examples/
 - **Interface-device relationship errors**: If you see "Unable to locate the node device" errors, ensure:
     - The `DcimPhysicalDevice` mapping runs before `DcimPhysicalInterface` in the `order` configuration
     - The device transform uses the `aci_device_name` filter correctly: `{{ node_id | aci_device_name }}`
-    - The ACI fabricNode query is successful (check logs for "Built ACI device mapping" messages)
+    - The ACI fabric node query succeeds (check logs for "Built ACI device mapping" messages)
 
 ### Jinja filter issues
 
 - **`aci_device_name` filter not found**: Ensure you're using the ACI adapter and the filter is correctly spelled
-- **Filter returns node ID instead of device name**: Check that the fabricNode query was successful during adapter initialization
+- **Filter returns node ID instead of device name**: Check that the fabric node query succeeded during adapter initialization
 - **Transform expression errors**: Verify the DN parsing logic extracts the correct node ID:
 
   ```yaml
