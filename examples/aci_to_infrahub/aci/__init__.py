@@ -1,0 +1,1 @@
+"""ACI sync adapter module."""

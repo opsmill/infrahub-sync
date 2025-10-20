@@ -185,6 +185,11 @@ class DiffSyncModelMixin:
                 trim_blocks=True,
                 lstrip_blocks=True,
             )
+
+            # Allow subclasses to add custom filters
+            if hasattr(cls, "_add_custom_filters"):
+                cls._add_custom_filters(native_env, item)
+
             # Compile the template with the native env
             template = native_env.from_string(transform_expr)
 

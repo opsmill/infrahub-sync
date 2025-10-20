@@ -25,8 +25,9 @@ const sidebars: SidebarsConfig = {
         'adapters/observium',
         'adapters/peering-manager',
         'adapters/slurpit',
+        'adapters/aci',
       ],
-    },
+    },   
     {
       type: 'category',
       label: 'Reference',

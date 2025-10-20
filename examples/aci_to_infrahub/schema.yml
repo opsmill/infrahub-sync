@@ -1,0 +1,914 @@
+---
+# yaml-language-server: $schema=https://schema.infrahub.app/infrahub/schema/latest.json
+version: "1.0"
+
+generics:
+  - name: GenericDevice
+    namespace: Dcim
+    description: Generic Device object.
+    label: Device
+    icon: mdi:server
+    human_friendly_id:
+      - name__value
+    order_by:
+      - name__value
+    display_labels:
+      - name__value
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+        order_weight: 1000
+      - name: description
+        state: absent
+        kind: Text
+        optional: true
+        order_weight: 2000
+      - name: os_version
+        kind: Text
+        optional: true
+        order_weight: 2200
+      - name: role
+        kind: Dropdown
+        optional: true
+        order_weight: 1400
+        choices:
+          - name: core
+            label: Core Router
+            description: Central part of the network.
+            color: "#7f7fff"
+          - name: edge
+            label: Edge Router
+            description: Network boundary with external networks.
+            color: "#bf7fbf"
+          - name: cpe
+            label: Customer Premise Equipment
+            description: Devices located at the customer's premises.
+            color: "#bf7f7f"
+          - name: spine
+            label: Spine Router
+            description: Aggregation router part of a Fabric.
+            color: "#aeeeee"
+          - name: leaf
+            label: Leaf Switch
+            description: Top of Rack part of a Fabric.
+            color: "#e6e6fa"
+          - name: border_leaf
+            label: Border Leaf Switch
+            description: Border Leaf providing external connectivity in a Fabric.
+            color: "#dda0dd"
+          - name: tor
+            label: Tor Switch
+            description: Tor switch part of a Fabric.
+            color: "#e8e7fd"
+          - name: oob
+            label: Out of Band Switch
+            description: OOB switch part of a Fabric.
+            color: "#e8e7ed"
+          - name: console
+            label: Console Server
+            description: Console server part of a Fabric.
+            color: "#e8e7ad"
+          - name: dc_firewall
+            label: DC Firewall
+            description: "Security boundary with external network"
+            color: "#6e5abd"
+          - name: edge_firewall
+            label: Edge Firewall
+            description: "Security boundary with external network"
+            color: "#6a5acd"
+          - name: branch_firewall
+            label: Branch Firewall
+            description: "Security boundary with external network"
+            color: "#6a5bdd"
+          - name: load_balancer
+            label: Load Balancer
+            description: Load Balancer part of a Fabric.
+            color: "#38e7fb"
+      - name: status
+        kind: Dropdown
+        optional: false
+        order_weight: 1100
+        choices:
+          - name: active
+            label: Active
+            description: Fully operational and currently in service.
+            color: "#7fbf7f"
+          - name: provisioning
+            label: Provisioning
+            description: In the process of being set up and configured.
+            color: "#ffff7f"
+          - name: maintenance
+            label: Maintenance
+            description: Undergoing routine maintenance or repairs.
+            color: "#ffd27f"
+          - name: drained
+            label: Drained
+            description: Temporarily taken out of service.
+            color: "#bfbfbf"
+    relationships:
+      - name: device_type
+        peer: DcimDeviceType
+        optional: true
+        cardinality: one
+        kind: Attribute
+        order_weight: 1200
+      - name: location
+        label: Location
+        peer: LocationHosting
+        optional: false
+        cardinality: one
+        kind: Attribute
+        order_weight: 1500
+      - name: interfaces
+        peer: DcimInterface
+        optional: true
+        cardinality: many
+        identifier: device__interface
+        kind: Component
+      - name: tags
+        peer: BuiltinTag
+        optional: true
+        cardinality: many
+        kind: Attribute
+        order_weight: 2000
+      - name: primary_address
+        peer: IpamIPAddress
+        label: Primary IP Address
+        optional: true
+        cardinality: one
+        kind: Attribute
+        order_weight: 1700
+      - name: platform
+        peer: DcimPlatform
+        optional: true
+        cardinality: one
+        kind: Attribute
+        order_weight: 1250
+
+  - name: Endpoint
+    namespace: Dcim
+    description: Generic Endpoint to receive a connector.
+    include_in_menu: false
+    relationships:
+      - name: connector
+        peer: DcimEndpoint
+        optional: true
+        cardinality: one
+        order_weight: 1500
+        kind: Attribute
+
+  # Interfaces
+  - name: Interface
+    namespace: Dcim
+    description: "Generic Network Interface"
+    label: Interface
+    include_in_menu: false
+    order_by:
+      - device__name__value
+      - name__value
+    uniqueness_constraints:
+      - ["device", "name__value"]
+    human_friendly_id:
+      - device__name__value
+      - name__value
+    display_labels:
+      - name__value
+    attributes:
+      - name: name
+        kind: Text
+        description: "Name of the interface"
+        order_weight: 1000
+      - name: description
+        kind: Text
+        optional: true
+        description: "A brief description of the interface"
+        order_weight: 1100
+      - name: status
+        kind: Dropdown
+        description: "The status of the interface"
+        choices:
+          - name: provisioning
+            label: Provisioning
+            description: "Interface is being provisioned."
+            color: "#A9DFBF" # light pastel green
+          - name: free
+            label: Free
+            description: "Interface is unused."
+            color: "#CDEACC" # slightly darker pastel green
+          - name: active
+            label: Active
+            description: "Interface is active and operational."
+            color: "#A9CCE3" # pastel blue
+          - name: maintenance
+            label: Maintenance
+            description: "Interface is under maintenance."
+            color: "#FFF2CC" # pastel yellow
+          - name: disabled
+            label: Disabled
+            description: "Interface has been disabled."
+            color: "#D3D3D3" # light grey
+          - name: deleted
+            label: Deleted
+            description: "Interface has been deleted."
+            color: "#FAD7A0" # pastel orange
+          - name: outage
+            label: Outage
+            description: "Interface is currently experiencing an outage."
+            color: "#F4CCCC" # pastel red
+        default_value: "free"
+        order_weight: 1200
+      - name: role
+        kind: Dropdown
+        optional: true
+        description: "The role of the interface in the network"
+        choices:
+          - name: lag
+            label: Lag
+            description: "Interface LAG."
+            color: "#A9DFBF" # light pastel green
+          - name: core
+            label: Core
+            description: "Central part of the network."
+            color: "#A9CCE3" # pastel blue
+          - name: customer
+            label: Customer
+            description: "Interface dedicated to customer connections."
+            color: "#D2B4DE" # pastel purple
+          - name: access
+            label: Access
+            description: "Interface connecting endpoint devices."
+            color: "#B4E0DC" # pastel teal
+          - name: management
+            label: Management
+            description: "Interface dedicated to device management."
+            color: "#E3DAC9" # pastel cream
+          - name: unnumbered
+            label: Unnumbered
+            description: "Interface dedicated to IP unnumbered connections for BGP and OSPF protocols."
+            color: "#C4B7E6" # pastel purple
+          - name: ospf
+            label: OSPF
+            description: "Interface dedicated to OSPF connections."
+            color: "#C432E6"
+          - name: bgp
+            label: BGP
+            description: "Interface dedicated to BGP connections."
+            color: "#C432E6"
+          - name: upstream
+            label: Upstream
+            description: "Interface dedicated to upstream traffic between networks."
+            color: "#B2D4E6" # pastel sky blue
+          - name: leaf
+            label: Leaf
+            description: "Interface dedicated to upstream to leaf between networks."
+            color: "#B2D4C6"
+          - name: console
+            label: Console
+            description: "Interface dedicated to console connection management."
+            color: "#E2D4C6"
+          - name: uplink
+            label: Uplink
+            description: "Interface dedicated to connect with aggragation switch."
+            color: "#E2D4C6"
+          - name: peering
+            label: Peering
+            description: "Interface dedicated to peering connections."
+            color: "#E2D4C6"
+          - name: loopback
+            label: Loopback
+            description: "Interface dedicated to loopback connections."
+            color: "#E2D4C6"
+          - name: loopback-vtep
+            label: Loopback VTEP
+            description: "Interface dedicated to loopback vtep connections."
+            color: "#E2D4C6"
+        order_weight: 1250
+    relationships:
+      - name: device
+        peer: DcimGenericDevice
+        identifier: device__interface
+        optional: false
+        cardinality: one
+        kind: Parent
+        order_weight: 1025
+      - name: tags
+        peer: BuiltinTag
+        optional: true
+        cardinality: many
+        kind: Attribute
+        order_weight: 3000
+
+  - name: SubInterface
+    namespace: Dcim
+    description: A generic interface that can have sub-interfaces
+    include_in_menu: false
+    relationships:
+      - name: sub_interfaces
+        label: "Sub-interface(s)"
+        peer: DcimVirtualInterface
+        identifier: "sub__interface"
+        optional: true
+        cardinality: many
+        kind: Attribute
+        description: "Sub-interfaces of this interface"
+        order_weight: 1750
+
+  - name: Generic
+    namespace: Location
+    description: Generic Location, could be a country, city ...
+    label: Location
+    icon: mingcute:location-line
+    include_in_menu: true
+    hierarchical: true
+    branch: agnostic
+    human_friendly_id:
+      - name__value
+    order_by:
+      - name__value
+    display_labels:
+      - name__value
+    attributes:
+      - name: name
+        kind: Text
+        order_weight: 1000
+      - name: shortname
+        kind: Text
+        unique: true
+        order_weight: 1100
+      - name: description
+        kind: Text
+        optional: true
+        order_weight: 1200
+    relationships:
+      - name: tags
+        peer: BuiltinTag
+        kind: Attribute
+        optional: true
+        cardinality: many
+
+  - name: Hosting
+    namespace: Location
+    description: Location directly hosting device and services.
+    include_in_menu: false
+    # This is only owning relationships toward various assets that could be found on those locations
+    relationships:
+      - name: prefixes
+        label: Prefixes
+        peer: IpamPrefix
+        cardinality: many
+        optional: true
+      - name: devices
+        label: Devices
+        peer: DcimGenericDevice
+        cardinality: many
+        optional: true
+
+  - name: Generic
+    namespace: Organization
+    label: Organization
+    description: An organization represent a legal entity, a company.
+    human_friendly_id:
+      - name__value
+    order_by:
+      - name__value
+    display_labels:
+      - name__value
+    icon: mdi:domain
+    include_in_menu: false
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+        order_weight: 1000
+      - name: description
+        kind: Text
+        optional: true
+        order_weight: 1200
+    relationships:
+      - name: tags
+        peer: BuiltinTag
+        cardinality: many
+        kind: Attribute
+        optional: true
+        order_weight: 3000
+
+nodes:
+  # --------------------  Device (Types, Platforms, Device, Interfaces )  --------------------
+  - name: DeviceType
+    namespace: Dcim
+    description: A model of device
+    label: Device Type
+    icon: mdi:poll
+    human_friendly_id:
+      - name__value
+    display_labels:
+      - name__value
+    order_by:
+      - manufacturer__name__value
+      - name__value
+    uniqueness_constraints:
+      - ["manufacturer", "name__value"]
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+        order_weight: 1000
+      - name: description
+        kind: Text
+        optional: true
+        order_weight: 1100
+      - name: part_number
+        label: Part Number
+        optional: true
+        kind: Text
+        order_weight: 1200
+      - name: height
+        label: Height (U)
+        optional: false
+        default_value: 1
+        kind: Number
+        order_weight: 1400
+      - name: full_depth
+        label: Full Depth
+        default_value: true
+        kind: Boolean
+        order_weight: 1500
+      - name: weight
+        label: Weight (kg)
+        optional: true
+        kind: Number
+        order_weight: 1600
+    relationships:
+      - name: platform
+        peer: DcimPlatform
+        cardinality: one
+        kind: Attribute
+        order_weight: 1300
+      - name: manufacturer
+        peer: OrganizationManufacturer
+        cardinality: one
+        kind: Attribute
+        order_weight: 1250
+        optional: false
+      - name: tags
+        peer: BuiltinTag
+        optional: true
+        cardinality: many
+        kind: Attribute
+        order_weight: 2000
+
+  - name: Platform
+    namespace: Dcim
+    description: A Platform represent the type of software running on a device.
+    label: Platform
+    icon: mdi:application-cog-outline
+    human_friendly_id:
+      - name__value
+    display_labels:
+      - name__value
+    order_by:
+      - manufacturer__name__value
+      - name__value
+    uniqueness_constraints:
+      - ["name__value"]
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+        order_weight: 1000
+      - name: description
+        kind: Text
+        optional: true
+        order_weight: 1200
+      - name: nornir_platform
+        kind: Text
+        optional: true
+        order_weight: 1500
+      - name: napalm_driver
+        kind: Text
+        optional: true
+        order_weight: 1600
+      - name: netmiko_device_type
+        kind: Text
+        optional: true
+        order_weight: 1700
+      - name: ansible_network_os
+        kind: Text
+        optional: true
+        order_weight: 1800
+      - name: containerlab_os
+        kind: Text
+        optional: true
+        order_weight: 1900
+    relationships:
+      - name: devices
+        peer: DcimGenericDevice
+        optional: true
+        cardinality: many
+        order_weight: 1350
+      - name: manufacturer
+        peer: OrganizationManufacturer
+        cardinality: one
+        kind: Attribute
+        order_weight: 1300
+
+  - name: PhysicalDevice
+    namespace: Dcim
+    description: Generic holding attributes and relationships relevant for physical device.
+    include_in_menu: false
+    icon: clarity:network-switch-solid
+    label: Physical Device
+    generate_template: true
+    inherit_from:
+      - CoreArtifactTarget
+      - DcimGenericDevice
+    attributes:
+      - name: position
+        label: Position (U)
+        description: Lowest unit.
+        kind: Number
+        optional: true
+        order_weight: 1500
+      - name: serial
+        kind: Text
+        optional: true
+        order_weight: 1500
+      - name: rack_face
+        label: Rack Face
+        description: On which face of the rack the device is mounted.
+        kind: Dropdown
+        optional: false
+        default_value: front
+        order_weight: 1515
+        choices:
+          - name: front
+            label: Front
+            description: Device mounted on the front face of the rack.
+          - name: rear
+            label: Rear
+            description: Device mounted on the rear face of the rack.
+
+  - name: VirtualDevice
+    namespace: Dcim
+    description: Generic holding attributes and relationships relevant for virtual device.
+    include_in_menu: false
+    label: Virtual Device
+    icon: mdi:server-network
+    uniqueness_constraints:
+      - ["name__value"]
+    generate_template: true
+    inherit_from:
+      - CoreArtifactTarget
+      - DcimGenericDevice
+    attributes:
+      - name: cpu
+        label: CPU Number
+        kind: Number
+        optional: true
+        order_weight: 2000
+      - name: memory
+        label: Memory Size (GB)
+        kind: Number
+        optional: true
+        order_weight: 2100
+      - name: storage
+        label: Storage Size (GB)
+        kind: Number
+        optional: true
+        order_weight: 2200
+    relationships:
+      - name: hosting_device
+        peer: DcimPhysicalDevice
+        kind: Attribute
+        cardinality: one
+        optional: true
+
+  - name: PhysicalInterface
+    namespace: Dcim
+    label: Physical Interface
+    description: "Physical network port on a device"
+    inherit_from:
+      - DcimInterface
+      - DcimEndpoint
+      - DcimSubInterface
+    include_in_menu: false
+    display_labels:
+      - name__value
+
+    attributes:
+      - name: interface_type
+        kind: Dropdown
+        description: "The type of the interface"
+        choices:
+          - name: 100base-fx
+            label: 100BASE-FX
+            description: "100 Mbps fiber interface."
+            color: "#FFF2CC" # pastel yellow
+          - name: 100base-lfx
+            label: 100BASE-LFX
+            description: "100 Mbps long-range fiber interface."
+            color: "#D3D3D3" # light grey
+          - name: 100base-tx
+            label: 100BASE-TX
+            description: "100 Mbps twisted-pair copper interface."
+            color: "#FAD7A0" # pastel orange
+          - name: 100base-t1
+            label: 100BASE-T1
+            description: "100 Mbps single-pair twisted copper interface."
+            color: "#F4CCCC" # pastel red
+          - name: 1000base-t
+            label: 1000BASE-T
+            description: "1 Gbps twisted-pair copper interface."
+            color: "#A9DFBF" # light pastel green
+          - name: 1000base-x-gbic
+            label: 1000BASE-X GBIC
+            description: "1 Gbps fiber interface with GBIC."
+            color: "#CDEACC" # slightly darker pastel green
+          - name: 1000base-x-sfp
+            label: 1000BASE-X SFP
+            description: "1 Gbps fiber interface with SFP."
+            color: "#A9CCE3" # pastel blue
+          - name: 10gbase-t
+            label: 10GBASE-T
+            description: "10 Gbps twisted-pair copper interface."
+            color: "#FFF2CC" # pastel yellow
+          - name: 10gbase-x-sfpp
+            label: 10GBASE-X SFP+
+            description: "10 Gbps fiber interface with SFP+."
+            color: "#D3D3D3" # light grey
+          - name: 25gbase-x-sfp28
+            label: 25GBASE-X SFP28
+            description: "25 Gbps fiber interface with SFP28."
+            color: "#FAD7A0" # pastel orange
+          - name: 40gbase-x-qsfpp
+            label: 40GBASE-X QSFP+
+            description: "40 Gbps fiber interface with QSFP+."
+            color: "#F4CCCC" # pastel red
+          - name: 100gbase-x-qsfp28
+            label: 100GBASE-X QSFP28
+            description: "100 Gbps fiber interface with QSFP28."
+            color: "#A9DFBF" # light pastel green
+          - name: 400gbase-x-qsfpdd
+            label: 400GBASE-X QSFP-DD
+            description: "400 Gbps fiber interface with QSFP-DD."
+            color: "#CDEACC" # slightly darker pastel green
+          - name: lte
+            label: LTE
+            description: "LTE cellular interface."
+            color: "#FFF2CC" # pastel yellow
+          - name: other
+            label: Other
+            description: "Other interface type."
+            color: "#D3D3D3" # light grey
+        default_value: "other"
+        order_weight: 1400
+      - name: mtu
+        label: MTU
+        kind: Number
+        default_value: 9000
+        order_weight: 1300
+    relationships:
+      - name: ip_addresses
+        peer: IpamIPAddress
+        optional: true
+        cardinality: many
+        kind: Attribute
+
+  - name: VirtualInterface
+    namespace: Dcim
+    label: Virtual Interface
+    description: "Virtual interface like VLAN or Loopback"
+    inherit_from:
+      - DcimInterface
+      # - DcimSubInterface # Depending if you want your virtual interfaces to have sub interface
+    include_in_menu: false
+    display_labels:
+      - name__value
+    relationships:
+      - name: parent_interface
+        peer: DcimSubInterface
+        cardinality: one
+        kind: Attribute
+        identifier: "sub__interface"
+        description: "Parent interface to which this sub-interface belongs"
+      - name: ip_addresses
+        peer: IpamIPAddress
+        optional: true
+        cardinality: many
+        kind: Attribute
+
+  - name: Manufacturer
+    namespace: Organization
+    description: Device Manufacturer
+    icon: mdi:domain
+    include_in_menu: true
+    menu_placement: OrganizationGeneric
+    human_friendly_id:
+      - name__value
+    order_by:
+      - name__value
+    display_labels:
+      - name__value
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+        order_weight: 1000
+      - name: description
+        kind: Text
+        optional: true
+        order_weight: 1200
+    relationships:
+      - name: device_type
+        peer: DcimDeviceType
+        cardinality: many
+        optional: true
+      - name: platform
+        peer: DcimPlatform
+        cardinality: many
+        optional: true
+
+  - name: Provider
+    namespace: Organization
+    description: Circuit or Location Provider
+    icon: mdi:domain
+    inherit_from:
+      - OrganizationGeneric
+    include_in_menu: true
+    menu_placement: OrganizationGeneric
+
+  - name: Customer
+    namespace: Organization
+    description: Customer with dedicated network namespace for multi-tenant isolation
+    icon: mdi:account-group
+    inherit_from:
+      - OrganizationGeneric
+    include_in_menu: true
+    menu_placement: OrganizationGeneric
+    attributes:
+      - name: customer_id
+        kind: Text
+        unique: true
+        optional: true
+        description: "Unique customer identifier"
+        order_weight: 900
+    relationships:
+      - name: ip_prefixes
+        peer: IpamPrefix
+        cardinality: many
+        kind: Component
+        optional: true
+        description: "IP prefixes allocated to this customer"
+        order_weight: 2200
+      - name: namespaces
+        peer: IpamNamespace
+        cardinality: many
+        kind: Component
+        optional: true
+        order_weight: 2000
+  - name: Region
+    namespace: Location
+    label: Region
+    inherit_from:
+      - LocationGeneric
+    menu_placement: LocationGeneric
+    include_in_menu: false
+    display_labels:
+      - name__value
+    parent: ""
+    children: LocationCountry
+    icon: "carbon:cics-region-target"
+
+  - name: Country
+    namespace: Location
+    label: Country
+    inherit_from:
+      - LocationGeneric
+    menu_placement: LocationGeneric
+    include_in_menu: false
+    display_labels:
+      - name__value
+    parent: "LocationRegion"
+    children: LocationMetro
+    icon: gis:search-country
+    attributes:
+      - name: timezone
+        kind: Text
+        optional: true
+        order_weight: 1300
+  - name: Metro
+    namespace: Location
+    label: Metro
+    inherit_from:
+      - LocationGeneric
+    menu_placement: LocationGeneric
+    include_in_menu: false
+    display_labels:
+      - name__value
+    parent: LocationCountry
+    children: LocationBuilding
+    icon: healthicons:city
+  - name: Building
+    namespace: Location
+    inherit_from:
+      - LocationGeneric
+      - LocationHosting
+    menu_placement: "LocationGeneric"
+    include_in_menu: false
+    label: Building
+    display_labels:
+      - name__value
+    parent: "LocationMetro"
+    children: "LocationFloor"
+    icon: "ri:building-line"
+    attributes:
+      - name: facility_id
+        kind: Text
+        unique: false
+        optional: true
+        order_weight: 1100
+      - name: physical_address
+        kind: Text
+        unique: false
+        optional: true
+        order_weight: 1500
+      - name: is_cloud
+        kind: Boolean
+        optional: false
+        default_value: false
+        order_weight: 1600
+    relationships:
+      - name: owner
+        peer: OrganizationGeneric
+        optional: true
+        cardinality: one
+  - name: Floor
+    namespace: Location
+    inherit_from: ["LocationGeneric"]
+    include_in_menu: false
+    menu_placement: "LocationGeneric"
+    label: Floor
+    display_labels:
+      - name__value
+    parent: "LocationBuilding"
+    icon: "mdi:home-floor-0"
+    children: "LocationSuite"
+  - name: Suite
+    namespace: Location
+    inherit_from:
+      - "LocationGeneric"
+    include_in_menu: false
+    menu_placement: "LocationGeneric"
+    label: Suite
+    display_labels:
+      - name__value
+    parent: "LocationFloor"
+    children: "LocationRack"
+    icon: "game-icons:cage"
+    attributes:
+      - name: facility_id
+        kind: Text
+        unique: false
+        optional: true
+        order_weight: 1100
+    relationships:
+      - name: owner
+        peer: OrganizationGeneric
+        optional: true
+        cardinality: one
+  - name: Rack
+    namespace: Location
+    inherit_from:
+      - "LocationGeneric"
+      - "LocationHosting"
+    include_in_menu: false
+    menu_placement: "LocationGeneric"
+    label: Rack
+    display_labels:
+      - name__value
+    human_friendly_id:
+      - shortname__value
+    parent: "LocationSuite"
+    children: ""
+    icon: "clarity:rack-server-line"
+    attributes:
+      - name: facility_id
+        kind: Text
+        unique: false
+        optional: true
+        order_weight: 1100
+    relationships:
+      - name: owner
+        peer: OrganizationGeneric
+        optional: true
+        cardinality: one
+
+extensions:
+  nodes:
+    - kind: OrganizationProvider
+      relationships:
+        - name: location
+          peer: LocationBuilding
+          cardinality: many
+          optional: true
