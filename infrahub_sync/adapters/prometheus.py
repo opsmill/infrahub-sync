@@ -470,6 +470,10 @@ class PrometheusAdapter(DiffSyncMixin, Adapter):
             if element.name != model_name:
                 continue
 
+            if not element.mapping:
+                print(f"No mapping defined for '{element.name}', skipping...")
+                continue
+
             metric_or_resource = element.mapping
             objs = samples_by_metric.get(metric_or_resource, [])
             total = len(objs)

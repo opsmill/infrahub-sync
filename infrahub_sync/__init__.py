@@ -45,7 +45,7 @@ class SchemaMappingField(pydantic.BaseModel):
 
 class SchemaMappingModel(pydantic.BaseModel):
     name: str
-    mapping: str
+    mapping: str | None = pydantic.Field(default=None)
     identifiers: list[str] | None = pydantic.Field(default=None)
     filters: list[SchemaMappingFilter] | None = pydantic.Field(default=None)
     transforms: list[SchemaMappingTransform] | None = pydantic.Field(default=None)

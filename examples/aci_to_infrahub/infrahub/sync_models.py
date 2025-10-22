@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 
 from infrahub_sync.plugin_loader import PluginLoader
+
 # Load model class dynamically at runtime (honor adapters_path, safe fallback)
 try:
-
     _loader = PluginLoader.from_env_and_args()
-
 
     _spec = "infrahub"
 
@@ -15,7 +14,9 @@ try:
 except Exception:
     # Fallback: use DiffSyncModel to avoid import-time failure
     from diffsync import DiffSyncModel as _FallbackModel
+
     _ModelBaseClass = _FallbackModel
+
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -36,6 +37,7 @@ class DcimPhysicalDevice(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class DcimPhysicalInterface(_ModelBaseClass):
     _modelname = "DcimPhysicalInterface"
     _identifiers = ("device", "name")
@@ -46,6 +48,7 @@ class DcimPhysicalInterface(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class LocationBuilding(_ModelBaseClass):
     _modelname = "LocationBuilding"
@@ -58,6 +61,7 @@ class LocationBuilding(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class LocationMetro(_ModelBaseClass):
     _modelname = "LocationMetro"
     _identifiers = ("name",)
@@ -67,6 +71,7 @@ class LocationMetro(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class OrganizationCustomer(_ModelBaseClass):
     _modelname = "OrganizationCustomer"

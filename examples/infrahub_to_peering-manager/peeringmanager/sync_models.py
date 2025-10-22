@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 
 from infrahub_sync.plugin_loader import PluginLoader
+
 # Load model class dynamically at runtime (honor adapters_path, safe fallback)
 try:
     _loader = PluginLoader.from_env_and_args(adapter_paths=[])
@@ -13,7 +14,9 @@ try:
 except Exception:
     # Fallback: use DiffSyncModel to avoid import-time failure
     from diffsync import DiffSyncModel as _FallbackModel
+
     _ModelBaseClass = _FallbackModel
+
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -35,6 +38,7 @@ class InfraAutonomousSystem(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraBGPPeerGroup(_ModelBaseClass):
     _modelname = "InfraBGPPeerGroup"
     _identifiers = ("name",)
@@ -49,6 +53,7 @@ class InfraBGPPeerGroup(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraBGPCommunity(_ModelBaseClass):
     _modelname = "InfraBGPCommunity"
     _identifiers = ("name",)
@@ -61,6 +66,7 @@ class InfraBGPCommunity(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraBGPRoutingPolicy(_ModelBaseClass):
     _modelname = "InfraBGPRoutingPolicy"
@@ -77,6 +83,7 @@ class InfraBGPRoutingPolicy(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraIXP(_ModelBaseClass):
     _modelname = "InfraIXP"
     _identifiers = ("name",)
@@ -90,6 +97,7 @@ class InfraIXP(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraIXPConnection(_ModelBaseClass):
     _modelname = "InfraIXPConnection"

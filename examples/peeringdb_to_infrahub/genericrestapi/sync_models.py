@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 
 from infrahub_sync.plugin_loader import PluginLoader
+
 # Load model class dynamically at runtime (honor adapters_path, safe fallback)
 try:
     _loader = PluginLoader.from_env_and_args(adapter_paths=[])
@@ -13,7 +14,9 @@ try:
 except Exception:
     # Fallback: use DiffSyncModel to avoid import-time failure
     from diffsync import DiffSyncModel as _FallbackModel
+
     _ModelBaseClass = _FallbackModel
+
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
