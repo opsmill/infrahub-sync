@@ -65,6 +65,10 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
             if element.name != model_name:
                 continue
 
+            if not element.mapping:
+                print(f"No mapping defined for '{element.name}', skipping...")
+                continue
+
             # Use the resource endpoint from the schema mapping
             app_name, resource_name = element.mapping.split(".")
             netbox_app = getattr(self.client, app_name)

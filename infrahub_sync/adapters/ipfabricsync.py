@@ -58,6 +58,7 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
             auth = os.environ.get("IPF_TOKEN", None)
             settings["auth"] = auth
 
+
         if not base_url or not auth:
             msg = "Both url and auth must be specified! Please specify in the config or using `IPF_URL` and `IPF_TOKEN` environment variables."
             raise ValueError(msg)
@@ -74,11 +75,12 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
             if element.name != model_name:
                 continue
 
+            if not element.mapping:
+                print(f"No mapping defined for '{element.name}', skipping...")
+                continue
             table = self.client.fetch_all(element.mapping, filters=ipf_filters.get(element.mapping))
-            print(f"{self.type}: Loading {len(table)} from `{element.mapping}`")
 
             total = len(table)
-
             if self.config.source.name.title() == self.type.title():
                 # Filter records
                 filtered_objs = model.filter_records(records=table, schema_mapping=element)
@@ -90,9 +92,7 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
                 transformed_objs = table
 
             for obj in transformed_objs:
-                print(f"Object to load: {obj}")
                 data = self.ipfabric_dict_to_diffsync(obj=obj, mapping=element, model=model)
-                print(f"Data to load: {data}")
                 item = model(**data)
                 self.update_or_add_model_instance(item)
 

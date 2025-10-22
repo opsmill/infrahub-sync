@@ -175,6 +175,10 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             if element.name != model_name:
                 continue
 
+            if not element.mapping:
+                print(f"No mapping defined for '{element.name}', skipping...")
+                continue
+
             if element.mapping.startswith("planning_results"):
                 planning_name = element.mapping.split(".")[1]
                 nodes = self.planning_results(planning_name)
