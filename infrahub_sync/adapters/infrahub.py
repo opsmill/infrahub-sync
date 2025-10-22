@@ -69,8 +69,6 @@ def resolve_peer_node(
         peer_node = client.get(id=key, kind=rel_schema.peer, populate_store=True)
         if not peer_node:
             print(f"Unable to find {rel_schema.peer} [{key}] - Ignored")
-        else:
-            print(f"Found it with kind {peer_node.get_kind()} using Infrahub client")
     return peer_node
 
 

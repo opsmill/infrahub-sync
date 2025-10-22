@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 
 from infrahub_sync.plugin_loader import PluginLoader
+
 # Load model class dynamically at runtime (honor adapters_path, safe fallback)
 try:
     _loader = PluginLoader.from_env_and_args(adapter_paths=[])
@@ -13,7 +14,9 @@ try:
 except Exception:
     # Fallback: use DiffSyncModel to avoid import-time failure
     from diffsync import DiffSyncModel as _FallbackModel
+
     _ModelBaseClass = _FallbackModel
+
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -30,6 +33,7 @@ class CoreStandardGroup(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class BuiltinTag(_ModelBaseClass):
     _modelname = "BuiltinTag"
     _identifiers = ("name",)
@@ -39,6 +43,7 @@ class BuiltinTag(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraAutonomousSystem(_ModelBaseClass):
     _modelname = "InfraAutonomousSystem"
@@ -51,6 +56,7 @@ class InfraAutonomousSystem(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraCircuit(_ModelBaseClass):
     _modelname = "InfraCircuit"
@@ -67,6 +73,7 @@ class InfraCircuit(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class ChoiceCircuitType(_ModelBaseClass):
     _modelname = "ChoiceCircuitType"
     _identifiers = ("name",)
@@ -76,6 +83,7 @@ class ChoiceCircuitType(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraDevice(_ModelBaseClass):
     _modelname = "InfraDevice"
@@ -96,6 +104,7 @@ class InfraDevice(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class ChoiceDeviceType(_ModelBaseClass):
     _modelname = "ChoiceDeviceType"
     _identifiers = ("name", "manufacturer")
@@ -110,6 +119,7 @@ class ChoiceDeviceType(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraFrontPort(_ModelBaseClass):
     _modelname = "InfraFrontPort"
     _identifiers = ("name", "device")
@@ -123,10 +133,20 @@ class InfraFrontPort(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraInterfaceL2L3(_ModelBaseClass):
     _modelname = "InfraInterfaceL2L3"
     _identifiers = ("name", "device")
-    _attributes = ("tagged_vlan", "tags", "status", "l2_mode", "description", "mac_address", "mgmt_only", "interface_type")
+    _attributes = (
+        "tagged_vlan",
+        "tags",
+        "status",
+        "l2_mode",
+        "description",
+        "mac_address",
+        "mgmt_only",
+        "interface_type",
+    )
     l2_mode: str | None = None
     description: str | None = None
     name: str
@@ -141,6 +161,7 @@ class InfraInterfaceL2L3(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraIPAddress(_ModelBaseClass):
     _modelname = "InfraIPAddress"
@@ -157,6 +178,7 @@ class InfraIPAddress(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class ChoiceLocationType(_ModelBaseClass):
     _modelname = "ChoiceLocationType"
     _identifiers = ("name",)
@@ -167,6 +189,7 @@ class ChoiceLocationType(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class NautobotNamespace(_ModelBaseClass):
     _modelname = "NautobotNamespace"
     _identifiers = ("name",)
@@ -176,6 +199,7 @@ class NautobotNamespace(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraPlatform(_ModelBaseClass):
     _modelname = "InfraPlatform"
@@ -188,6 +212,7 @@ class InfraPlatform(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraProviderNetwork(_ModelBaseClass):
     _modelname = "InfraProviderNetwork"
@@ -202,6 +227,7 @@ class InfraProviderNetwork(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraPrefix(_ModelBaseClass):
     _modelname = "InfraPrefix"
@@ -219,6 +245,7 @@ class InfraPrefix(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraRack(_ModelBaseClass):
     _modelname = "InfraRack"
     _identifiers = ("name",)
@@ -235,6 +262,7 @@ class InfraRack(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraRearPort(_ModelBaseClass):
     _modelname = "InfraRearPort"
     _identifiers = ("name", "device")
@@ -247,6 +275,7 @@ class InfraRearPort(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraRouteTarget(_ModelBaseClass):
     _modelname = "InfraRouteTarget"
     _identifiers = ("name", "organization")
@@ -257,6 +286,7 @@ class InfraRouteTarget(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraVLAN(_ModelBaseClass):
     _modelname = "InfraVLAN"
@@ -274,6 +304,7 @@ class InfraVLAN(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraVRF(_ModelBaseClass):
     _modelname = "InfraVRF"
     _identifiers = ("name", "ip_namespace")
@@ -289,6 +320,7 @@ class InfraVRF(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class OrganizationGeneric(_ModelBaseClass):
     _modelname = "OrganizationGeneric"
     _identifiers = ("name",)
@@ -301,6 +333,7 @@ class OrganizationGeneric(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class StatusGeneric(_ModelBaseClass):
     _modelname = "StatusGeneric"
     _identifiers = ("name",)
@@ -312,6 +345,7 @@ class StatusGeneric(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class RoleGeneric(_ModelBaseClass):
     _modelname = "RoleGeneric"
     _identifiers = ("name",)
@@ -322,6 +356,7 @@ class RoleGeneric(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class LocationGeneric(_ModelBaseClass):
     _modelname = "LocationGeneric"

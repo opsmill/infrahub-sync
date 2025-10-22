@@ -58,7 +58,6 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
             auth = os.environ.get("IPF_TOKEN", None)
             settings["auth"] = auth
 
-
         if not base_url or not auth:
             msg = "Both url and auth must be specified! Please specify in the config or using `IPF_URL` and `IPF_TOKEN` environment variables."
             raise ValueError(msg)

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 
 from infrahub_sync.plugin_loader import PluginLoader
+
 # Load model class dynamically at runtime (honor adapters_path, safe fallback)
 try:
     _loader = PluginLoader.from_env_and_args(adapter_paths=[])
@@ -13,7 +14,9 @@ try:
 except Exception:
     # Fallback: use DiffSyncModel to avoid import-time failure
     from diffsync import DiffSyncModel as _FallbackModel
+
     _ModelBaseClass = _FallbackModel
+
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
@@ -30,6 +33,7 @@ class CoreStandardGroup(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class BuiltinTag(_ModelBaseClass):
     _modelname = "BuiltinTag"
     _identifiers = ("name",)
@@ -39,6 +43,7 @@ class BuiltinTag(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class ChoiceCircuitType(_ModelBaseClass):
     _modelname = "ChoiceCircuitType"
@@ -50,6 +55,7 @@ class ChoiceCircuitType(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class ChoiceDeviceType(_ModelBaseClass):
     _modelname = "ChoiceDeviceType"
@@ -65,6 +71,7 @@ class ChoiceDeviceType(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraCircuit(_ModelBaseClass):
     _modelname = "InfraCircuit"
     _identifiers = ("circuit_id",)
@@ -78,6 +85,7 @@ class InfraCircuit(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraDevice(_ModelBaseClass):
     _modelname = "InfraDevice"
@@ -97,6 +105,7 @@ class InfraDevice(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraIPAddress(_ModelBaseClass):
     _modelname = "InfraIPAddress"
     _identifiers = ("address", "vrf")
@@ -108,6 +117,7 @@ class InfraIPAddress(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraInterfaceL2L3(_ModelBaseClass):
     _modelname = "InfraInterfaceL2L3"
@@ -127,6 +137,7 @@ class InfraInterfaceL2L3(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraPrefix(_ModelBaseClass):
     _modelname = "InfraPrefix"
     _identifiers = ("prefix", "vrf")
@@ -141,6 +152,7 @@ class InfraPrefix(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraProviderNetwork(_ModelBaseClass):
     _modelname = "InfraProviderNetwork"
     _identifiers = ("name",)
@@ -153,6 +165,7 @@ class InfraProviderNetwork(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraRack(_ModelBaseClass):
     _modelname = "InfraRack"
@@ -170,6 +183,7 @@ class InfraRack(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraRouteTarget(_ModelBaseClass):
     _modelname = "InfraRouteTarget"
     _identifiers = ("name", "organization")
@@ -180,6 +194,7 @@ class InfraRouteTarget(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class InfraVLAN(_ModelBaseClass):
     _modelname = "InfraVLAN"
@@ -195,6 +210,7 @@ class InfraVLAN(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class InfraVRF(_ModelBaseClass):
     _modelname = "InfraVRF"
     _identifiers = ("name",)
@@ -208,6 +224,7 @@ class InfraVRF(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class LocationGeneric(_ModelBaseClass):
     _modelname = "LocationGeneric"
@@ -223,6 +240,7 @@ class LocationGeneric(_ModelBaseClass):
     local_id: str | None = None
     local_data: Any | None = None
 
+
 class OrganizationGeneric(_ModelBaseClass):
     _modelname = "OrganizationGeneric"
     _identifiers = ("name",)
@@ -233,6 +251,7 @@ class OrganizationGeneric(_ModelBaseClass):
 
     local_id: str | None = None
     local_data: Any | None = None
+
 
 class RoleGeneric(_ModelBaseClass):
     _modelname = "RoleGeneric"
