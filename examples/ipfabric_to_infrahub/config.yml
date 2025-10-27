@@ -70,7 +70,8 @@ schema_mapping:
     filters:
       - field: version
         operation: is_not_empty
-    mapping: tables/management/osver-consistency
+    # mapping: tables/management/osver-consistency # This is for version <7.0 of IPFabric.
+    mapping: tables/inventory/os-version-consistency/platforms # This is for versions >= 7.0 of IPFabric.
     fields:
       - name: version
         mapping: version
