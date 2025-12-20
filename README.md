@@ -50,21 +50,24 @@ Apply appropriate labels to PRs before merging. Labels determine the version bum
 | `changes/minor`, `type/feature`, `type/refactoring`                    | Minor (1.0.0 → 1.1.0)  | New features, refactoring    |
 | `changes/patch`, `type/bug`, `type/housekeeping`, `type/documentation` | Patch (1.0.0 → 1.0.1)  | Bug fixes, docs, maintenance |
 
-PRs are auto-labeled based on title patterns:
+Auto-labeling rules are configured in `.github/release-drafter.yml` but require a separate
+workflow trigger to activate. For now, apply labels manually:
 
-- Title contains `fix` → `type/bug`
-- Title contains `enhance`, `improve`, or `feature` → `type/feature`
-- Title contains `chore` → `ci/skip-changelog` (excluded from release notes)
+| PR Title Pattern                         | Recommended Label   |
+| ---------------------------------------- | ------------------- |
+| Contains `fix`                           | `type/bug`          |
+| Contains `enhance`, `improve`, `feature` | `type/feature`      |
+| Contains `chore`                         | `ci/skip-changelog` |
+| Contains `deprecat`                      | `type/deprecated`   |
 
 #### Step 2: Merge to Main
 
 Merge your labeled PR to the `main` branch. The automation will:
 
 1. Calculate the next version based on PR labels
-2. Update `pyproject.toml` with the new version
-3. Update `poetry.lock`
-4. Commit changes as `chore(release): v{VERSION} [skip ci]`
-5. Create/update a draft GitHub Release with auto-generated release notes
+2. Update `pyproject.toml` with the new version (and regenerate `poetry.lock`)
+3. Commit changes as `chore(release): v{VERSION} [skip ci]`
+4. Create/update a draft GitHub Release with auto-generated release notes
 
 #### Step 3: Publish the GitHub Release
 
@@ -187,9 +190,9 @@ Ensure PRs have appropriate labels before merging. If labels are missing, the ve
 
 ### Workflow Files Reference
 
-| Workflow                       | Trigger                     | Purpose                                                            |
-| ------------------------------ | --------------------------- | ------------------------------------------------------------------ |
-| `trigger-push-stable.yml`      | Push to `main`/`stable`     | Calculates version, bumps `pyproject.toml`, triggers release draft |
-| `workflow-release-drafter.yml` | Called by push workflow     | Creates/updates GitHub Release draft with notes                    |
-| `trigger-release.yml`          | GitHub Release published    | Triggers PyPI publish                                              |
-| `workflow-publish.yml`         | Release published or manual | Builds and publishes package to PyPI                               |
+| Workflow                       | Type                           | Purpose                                                                  |
+| ------------------------------ | ------------------------------ | ------------------------------------------------------------------------ |
+| `trigger-push-stable.yml`      | Push to `main`/`stable`        | Calculates version, bumps `pyproject.toml`, triggers release draft       |
+| `workflow-release-drafter.yml` | Reusable (`workflow_call`)     | Creates/updates GitHub Release draft; invoked by `trigger-release.yml`   |
+| `trigger-release.yml`          | GitHub Release published       | Orchestrates release: invokes release drafter and publish workflows      |
+| `workflow-publish.yml`         | Reusable (`workflow_dispatch`) | Builds and publishes package to PyPI; invoked by `trigger-release.yml`   |
