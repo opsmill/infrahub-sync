@@ -54,7 +54,7 @@ uv run invoke lint      # Lint code with ruff and pylint
 uv run mypy infrahub_sync/ --ignore-missing-imports
 ```
 
-### CLI validation
+### Validate the CLI
 
 After making changes, verify the CLI still works:
 
@@ -89,7 +89,7 @@ uv run pytest -q
 
 If you make user-facing changes (CLI flags, configuration options, new adapters), update the documentation.
 
-### Generate CLI documentation
+### Generate command-line documentation
 
 ```bash
 uv run invoke docs.generate
@@ -244,7 +244,7 @@ This triggers the `trigger-release.yml` workflow, which publishes to PyPI.
 
 Use this for emergency releases or when you need to bypass the standard flow.
 
-#### Via GitHub UI
+#### Using the GitHub UI
 
 1. Go to **Actions** → **Publish Infrahub Sync Package**
 2. Click **Run workflow**
@@ -254,7 +254,7 @@ Use this for emergency releases or when you need to bypass the standard flow.
    - `runs-on`: OS for the runner (default: `ubuntu-22.04`)
 4. Click **Run workflow**
 
-#### Via GitHub CLI
+#### Using the GitHub CLI
 
 ```bash
 gh workflow run workflow-publish.yml \
@@ -303,7 +303,7 @@ The automated release is skipped when:
 - No version bump is detected (no labeled PRs since last release)
 - Changes are only in the `docs/` directory
 
-#### PyPI upload failed
+#### The PyPI upload failed
 
 Common causes:
 
