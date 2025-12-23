@@ -27,7 +27,7 @@ const sidebars: SidebarsConfig = {
         'adapters/slurpit',
         'adapters/aci',
       ],
-    },   
+    },
     {
       type: 'category',
       label: 'Reference',
@@ -36,6 +36,7 @@ const sidebars: SidebarsConfig = {
         'reference/cli',
       ],
     },
+    'development',
   ]
 };
 
