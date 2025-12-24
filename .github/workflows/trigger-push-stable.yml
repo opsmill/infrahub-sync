@@ -101,7 +101,7 @@ jobs:
           VERSION: ${{ needs.check_commit.outputs.next_version }}
         run: |
           echo "Updating to version $VERSION"
-          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
+          uv version $VERSION
 
       - name: Update lock file
         run: uv lock
