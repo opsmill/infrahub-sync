@@ -91,28 +91,20 @@ jobs:
           token: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
         with:
-          python-version: "3.11"
+          version: "latest"
 
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
-        with:
-          version: 2.1.3
-          virtualenvs-create: true
-          virtualenvs-in-project: true
-          installer-parallel: true
-
-      - name: Update pyproject.toml versions
+      - name: Update pyproject.toml version
         env:
           VERSION: ${{ needs.check_commit.outputs.next_version }}
         run: |
           echo "Updating to version $VERSION"
-          poetry version "$VERSION"
+          uv version $VERSION
 
       - name: Update lock file
-        run: poetry lock
+        run: uv lock
 
       - name: Commit version bump (skip CI) only if there are changes
         id: commit_bump
@@ -125,7 +117,7 @@ jobs:
           git config user.email "github-bot@opsmill.com"
 
           # Stage expected files
-          git add pyproject.toml poetry.lock || true
+          git add pyproject.toml uv.lock || true
 
           # Commit only if there are staged changes
           if git diff --cached --quiet; then

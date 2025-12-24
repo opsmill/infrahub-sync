@@ -1,54 +1,64 @@
-[tool.poetry]
+[project]
 name = "infrahub-sync"
 version = "1.5.0"
 description = "Infrahub-Sync is a versatile Python package that synchronizes data between a source and a destination system"
-authors = ["OpsMill <info@opsmill.com>"]
+authors = [{ name = "OpsMill", email = "info@opsmill.com" }]
 readme = "README.md"
 license = "Apache-2.0"
-homepage = "https://opsmill.com"
-repository = "https://github.com/opsmill/infrahub"
-documentation = "https://docs.infrahub.app/integrations/sync/"
-packages = [{ include = "infrahub_sync" }]
+requires-python = ">=3.10,<3.14"
 classifiers = [
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "infrahub-sdk[all]>=1.17,<2",
+    "structlog>=25.1,<26.0",
+    "diffsync[redis]>=2.1,<3.0",
+    "netutils>=1.9,<2.0",
+    "tqdm>=4.67",
 ]
 
-[tool.poetry.dependencies]
-python = ">=3.9, < 3.13"
-infrahub-sdk = {version = "^1", extras = ["all"]}
-structlog = ">=22.3,<26.0"
-diffsync = { version = ">=1.10,<2.0 || >=2.0", extras = ["redis"] }
-netutils = ">=1.9"
-tqdm = ">=4.66"
+[project.urls]
+Homepage = "https://opsmill.com"
+Repository = "https://github.com/opsmill/infrahub"
+Documentation = "https://docs.infrahub.app/sync/"
 
-[tool.poetry.group.dev.dependencies]
-pytest = "*"
-pytest-clarity = "^1.0.1"
-pytest-cov = ">=4,<7"
-pytest-httpx = "*"
-yamllint = "^1.35.1"
-pylint = "*"
-mypy = "*"
-ipython = "*"
-pytest-asyncio = "*"
-requests = "*"
-pre-commit = ">=2.20,<5.0"
-types-toml = "*"
-types-ujson = "*"
-types-pyyaml = "*"
-typer-cli = "*"
-ruff = ">=0.8,<0.10"
-invoke = "^2.2.0"
-pytest-xdist = "^3.3.1"
-types-python-slugify = ">=8.0.0.3"
-
-[tool.poetry.scripts]
+[project.scripts]
 infrahub-sync = "infrahub_sync.cli:app"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-clarity>=1.0.1",
+    "pytest-cov>=7,<8",
+    "pytest-httpx",
+    "yamllint>=1.37.1",
+    "pylint",
+    "mypy",
+    "ipython",
+    "pytest-asyncio",
+    "requests",
+    "pre-commit>=4.0,<5.0",
+    "types-toml",
+    "types-ujson",
+    "types-pyyaml",
+    "typer-cli",
+    "ruff>=0.14,<0.15",
+    "invoke>=2.2.1",
+    "pytest-xdist>=3.8",
+    "types-python-slugify>=8.0.2.20240310",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["infrahub_sync"]
 
 [tool.pylint.general]
 extension-pkg-whitelist = [
@@ -277,8 +287,3 @@ max-complexity = 33
 "tests/**.py" = [
     "PGH003", # Use specific rule codes when ignoring type issues
 ]
-
-
-[build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"

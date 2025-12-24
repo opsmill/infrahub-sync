@@ -1,0 +1,48 @@
+---
+# yamllint disable rule:truthy rule:line-length
+name: "uv check"
+on:
+  workflow_call:
+    inputs:
+      directory:
+        type: "string"
+        description: "Directory in which uv check will be executed"
+        default: "./"
+jobs:
+  files-changed:
+    name: Detect which file has changed
+    runs-on: "ubuntu-22.04"
+    timeout-minutes: 5
+    outputs:
+      uv_files: ${{ steps.changes.outputs.uv_files }}
+    steps:
+      - name: "Check out repository code"
+        uses: "actions/checkout@v5"
+      - name: Check for file changes
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          token: ${{ github.token }}
+          filters: .github/file-filters.yml
+
+  uv_check:
+    runs-on: "ubuntu-22.04"
+    if: |
+      needs.files-changed.outputs.uv_files == 'true' ||
+      github.ref_name == 'stable' ||
+      github.ref_name == 'develop'
+    needs: ["files-changed"]
+    timeout-minutes: 5
+    steps:
+      - name: "Check out repository code"
+        uses: "actions/checkout@v5"
+
+      - name: "Install uv"
+        uses: "astral-sh/setup-uv@v4"
+        with:
+          version: "latest"
+
+      - name: "Validate pyproject.toml and consistency with uv.lock"
+        run: |
+          uv lock --check
+        working-directory: ${{ github.event.inputs.directory }}

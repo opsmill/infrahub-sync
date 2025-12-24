@@ -20,9 +20,9 @@ development_files: &development_files
 github_workflows: &github_workflows
   - ".github/workflows/*.yml"
 
-poetry_files: &poetry_files
+uv_files: &uv_files
   - "pyproject.toml"
-  - "poetry.lock"
+  - "uv.lock"
 
 sync_all:
   - *sync_files

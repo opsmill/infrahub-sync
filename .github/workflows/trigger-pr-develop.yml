@@ -14,9 +14,9 @@ jobs:
   linter:
     uses: ./.github/workflows/workflow-linter.yml
 
-  poetry-checker:
-    uses: ./.github/workflows/workflow-poetry-check.yml
+  uv-checker:
+    uses: ./.github/workflows/workflow-uv-check.yml
 
   tests:
-    needs: ["linter", "poetry-checker"]
+    needs: ["linter", "uv-checker"]
     uses: ./.github/workflows/workflow-tests.yml
