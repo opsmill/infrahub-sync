@@ -76,7 +76,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: "Install dependencies"
-        run: uv sync --frozen --group dev
+        run: uv sync --frozen --extra dev
 
       - name: "Linting: ruff check"
         run: "uv run ruff check ."
