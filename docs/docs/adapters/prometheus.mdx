@@ -14,7 +14,9 @@ Prometheus is an open-source monitoring and alerting toolkit that collects and s
 
 ## Requirements
 
-This adapter uses the [prometheus-client](https://pypi.org/project/prometheus-client) library for parsing Prometheus exposition format.
+<!-- vale Infrahub.branded-terms-case-swap = NO -->
+This adapter uses the [prometheus-client](https://pypi.org/project/prometheus-client) library for parsing the Prometheus exposition format.
+<!-- vale Infrahub.branded-terms-case-swap = YES -->
 
 ## Sync directions supported
 
@@ -30,7 +32,7 @@ The Prometheus adapter supports two modes of operation:
 
 ### Scrape mode (default)
 
-Directly scrapes a Prometheus text exposition endpoint (for example, from node_exporter, application metrics endpoints). Best for collecting metrics from individual exporters.
+Directly scrapes a Prometheus text exposition endpoint (for example, from `node_exporter`, application metrics endpoints). Best for collecting metrics from individual exporters.
 
 ### API mode
 
@@ -103,7 +105,7 @@ Queries the Prometheus HTTP API using PromQL. Best for aggregating data from mul
 |---------|------|----------|---------|-------------|
 | `mode` | string | No | `scrape` | Operating mode: `scrape` or `api` |
 | `url` | string | Yes | - | Prometheus server or exporter URL |
-| `endpoint` | string | No | `/metrics` (scrape) or `/api/v1/query` (api) | Target endpoint |
+| `endpoint` | string | No | `/metrics` (scrape) or `/api/v1/query` (API) | Target endpoint |
 | `timeout` | number | No | 10 | Request timeout in seconds |
 | `verify_ssl` | boolean | No | true | Verify SSL certificates |
 | `auth_method` | string | No | `none` | Authentication: `none`, `basic`, or `bearer` |
@@ -112,7 +114,7 @@ Queries the Prometheus HTTP API using PromQL. Best for aggregating data from mul
 | `token` | string | No | - | Token for bearer auth |
 | `headers` | object | No | - | Additional HTTP headers |
 | `params` | object | No | - | Query parameters for scrape mode |
-| `promql.resources` | object | No | - | PromQL queries for API mode (resource_name: query) |
+| `promql.resources` | object | No | - | PromQL queries for API mode (`resource_name`: `query`) |
 
 ## Schema mapping
 
@@ -180,7 +182,7 @@ transforms:
 
 <ReferenceLink title="Node Exporter Example" url="https://github.com/opsmill/infrahub-sync/tree/main/examples/prometheus_to_infrahub%20(node_exporter)" openInNewTab />
 
-This example syncs node_exporter metrics to create virtual machine records in Infrahub:
+This example syncs `node_exporter` metrics to create virtual machine records in Infrahub:
 
 ```yaml
 schema_mapping:
@@ -249,8 +251,8 @@ poetry run infrahub-sync generate --name from-node-exporter --directory examples
 
 - Ensure the metric being looked up exists in the scraped data
 - Verify label names match exactly (case-sensitive)
-- Use empty dict `{}` for match_criteria to get the first matching record
-- Provide default values for optional lookups
+- Use empty dict `{}` for `match_criteria` to get the first matching record
+- Provide default values for optional lookup operations
 
 ### Authentication issues
 
@@ -262,4 +264,4 @@ poetry run infrahub-sync generate --name from-node-exporter --directory examples
 
 - Ensure `promql.resources` is a dict mapping resource names to PromQL queries
 - Verify queries return vector or scalar results (other types not supported)
-- Test queries in Prometheus UI before using in config
+- Test queries in Prometheus UI before using in configuration

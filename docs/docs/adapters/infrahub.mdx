@@ -176,7 +176,7 @@ poetry run infrahub-sync generate --name from-netbox --directory examples/
 
 ### Relationship resolution failures
 
-- Ensure referenced objects are synced before objects that reference them (check `order` in config)
+- Ensure referenced objects are synced before objects that reference them (check `order` in configuration)
 - Verify the unique identifier used in references matches the target object's identifier
 - Check logs for "Unable to find ... in the Store" messages
 
@@ -186,7 +186,9 @@ poetry run infrahub-sync generate --name from-netbox --directory examples/
 - Use `infrahubctl branch list` to see available branches
 - Create branches with `infrahubctl branch create <name>` if needed
 
+<!-- vale Infrahub.sentence-case = NO -->
 ### SSL certificate issues
+<!-- vale Infrahub.sentence-case = YES -->
 
 - Set `verify_ssl: false` in settings for self-signed certificates (development only)
 - For production, ensure proper CA certificates are installed
