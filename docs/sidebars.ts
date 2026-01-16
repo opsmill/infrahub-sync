@@ -16,7 +16,9 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Adapters',
       items: [
+        'adapters/aci',
         'adapters/genericrestapi',
+        'adapters/infrahub',
         'adapters/ipfabric',
         'adapters/librenms',
         'adapters/local-adapters',
@@ -24,8 +26,8 @@ const sidebars: SidebarsConfig = {
         'adapters/netbox',
         'adapters/observium',
         'adapters/peering-manager',
+        'adapters/prometheus',
         'adapters/slurpit',
-        'adapters/aci',
       ],
     },
     {
