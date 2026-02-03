@@ -52,6 +52,8 @@ The adapter reads connection settings from the synchronization configuration and
       token: "<INFRAHUB_TOKEN>"  # Optional if using env var
       branch: "main"            # Optional, defaults to main
       verify_ssl: true          # Optional, defaults to true
+      source: "data-sync"       # Optional, CoreAccountGroup name for lineage source
+      owner: "network-team"     # Optional, CoreAccountGroup name for lineage owner
   ```
 
   </TabItem>
@@ -92,6 +94,8 @@ The adapter reads connection settings from the synchronization configuration and
 | `token` | string | Yes* | - | API token for authentication |
 | `branch` | string | No | main | Target branch for operations |
 | `verify_ssl` | boolean | No | true | Verify SSL certificates |
+| `source` | string | No | - | CoreAccountGroup name to use as lineage source |
+| `owner` | string | No | - | CoreAccountGroup name to use as lineage owner |
 
 *Can be provided via environment variables instead.
 
@@ -145,12 +149,44 @@ fields:
     reference: BuiltinTag
 ```
 
-## Source account tracking
+## Lineage tracking
 
-When syncing data into Infrahub, the adapter tracks the source of each record using Infrahub's account system. The adapter looks for a `CoreAccount` with a name matching the source adapter name, enabling:
+When syncing data into Infrahub, the adapter tracks the source and owner of each record using Infrahub's lineage system. This enables:
 
 - Tracking which system created each record
 - Protecting source-managed attributes from manual edits
+- Assigning ownership to teams or groups
+
+### Default behavior
+
+By default, the adapter looks for a `CoreAccount` with a name matching the source adapter name. This account is used as both the source and owner for all synced attributes.
+
+### Using account groups
+
+You can override the default behavior by specifying `source` and/or `owner` in the destination settings. When specified, these values are used to look up a `CoreAccountGroup` by name:
+
+```yaml
+destination:
+  name: infrahub
+  settings:
+    url: "http://localhost:8000"
+    token: "<TOKEN>"
+    source: "data-sync"      # Uses CoreAccountGroup "data-sync" as source
+    owner: "network-team"    # Uses CoreAccountGroup "network-team" as owner
+```
+
+This allows you to:
+
+- Use different groups for source and owner
+- Override only one while keeping the default account for the other
+- Assign ownership to a team rather than an individual account
+
+| Configuration | Source | Owner |
+|--------------|--------|-------|
+| Neither specified | CoreAccount (source name) | CoreAccount (source name) |
+| Only `source` specified | CoreAccountGroup | CoreAccount (source name) |
+| Only `owner` specified | CoreAccount (source name) | CoreAccountGroup |
+| Both specified | CoreAccountGroup | CoreAccountGroup |
 
 ## Generating the models
 
