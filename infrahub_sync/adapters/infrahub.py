@@ -19,6 +19,7 @@ from infrahub_sdk import (
     InfrahubClientSync,
 )
 from infrahub_sdk.exceptions import NodeNotFoundError
+from infrahub_sdk.node.property import NodeProperty
 from infrahub_sdk.utils import compare_lists
 
 from infrahub_sync import (
@@ -37,6 +38,17 @@ if TYPE_CHECKING:
     from infrahub_sdk.store import NodeStoreSync
 
 
+def _node_has_complete_attributes(node: InfrahubNodeSync) -> bool:
+    """Check if a node has all its non-optional attributes populated."""
+    for attr_schema in node._schema.attributes:
+        if attr_schema.optional:
+            continue
+        attr = getattr(node, attr_schema.name, None)
+        if attr is None or attr.value is None:
+            return False
+    return True
+
+
 def resolve_peer_node(
     key: str,
     rel_schema: RelationshipSchemaAPI,
@@ -52,6 +64,7 @@ def resolve_peer_node(
       - If peer_schema is not a GenericSchemaAPI, try fetching the node from the store using rel_schema.peer.
       - If it is a GenericSchemaAPI, iterate over its `used_by` list and return the first matching node.
       - If not found and fallback is enabled, use the client to fetch the node.
+      - If node is found but has incomplete attributes, re-fetch from Infrahub.
 
     Returns the found peer node or None.
     """
@@ -64,6 +77,10 @@ def resolve_peer_node(
             if peer_node and peer_node.get_kind() == used_by:
                 break
 
+    # Check if the node from store has incomplete attributes and needs re-fetching
+    if peer_node and fallback and client and not _node_has_complete_attributes(peer_node):
+        peer_node = client.get(id=key, kind=peer_node.get_kind(), populate_store=True)
+
     if not peer_node and fallback:
         print(f"Unable to find {rel_schema.peer} [{key}] in Store - Fallback to Infrahub")
         peer_node = client.get(id=key, kind=rel_schema.peer, populate_store=True)
@@ -72,18 +89,33 @@ def resolve_peer_node(
     return peer_node
 
 
-def update_node(node: InfrahubNodeSync, attrs: Mapping[str, Any]) -> InfrahubNodeSync:
+def update_node(
+    node: InfrahubNodeSync,
+    attrs: Mapping[str, Any],
+    source: str | None = None,
+    owner: str | None = None,
+) -> InfrahubNodeSync:
     """
     Update the given node using the provided attributes and relationship values.
 
     For relationship attributes, the function uses `resolve_peer_node` or `resolve_peer_nodes`
     to update one-to-one and one-to-many relationships, respectively.
+
+    Args:
+        node: The node to update.
+        attrs: The attributes and relationships to update.
+        source: Optional source ID to set on updated attributes.
+        owner: Optional owner ID to set on updated attributes.
     """
     schemas: Mapping[str, MainSchemaTypesAPI] = node._client.schema.all(branch=node._branch)
     for attr_name, attr_value in attrs.items():
         if attr_name in node._schema.attribute_names:
             attr = getattr(node, attr_name)
             attr.value = attr_value
+            if source:
+                attr.source = NodeProperty(data=source)
+            if owner:
+                attr.owner = NodeProperty(data=owner)
 
         if attr_name in node._schema.relationship_names:
             for rel_schema in node._schema.relationships:
@@ -231,13 +263,36 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         self.client = InfrahubClientSync(address=infrahub_url, config=Config(**sdk_config))
 
-        # We need to identify with an account until we have some auth in place
+        # Resolve source and owner nodes for lineage tracking
+        # Default: use CoreAccount matching config.source.name
+        # Override: if source/owner specified in destination settings, use CoreAccountGroup
         remote_account = config.source.name
         try:
-            self.account = self.client.get(kind="CoreAccount", name__value=remote_account)
+            default_account = self.client.get(kind="CoreAccount", name__value=remote_account)
         except NodeNotFoundError:
-            # TODO: We should fallback to the owner of the Token and log/print this information
-            self.account = None
+            default_account = None
+
+        # Resolve source - group if specified in settings, else default account
+        source_setting = settings.get("source")
+        if source_setting:
+            try:
+                self.source_node = self.client.get(kind="CoreAccountGroup", hfid=[source_setting])
+            except NodeNotFoundError:
+                print(f"Warning: CoreAccountGroup '{source_setting}' not found for source, falling back to account")
+                self.source_node = default_account
+        else:
+            self.source_node = default_account
+
+        # Resolve owner - group if specified in settings, else default account
+        owner_setting = settings.get("owner")
+        if owner_setting:
+            try:
+                self.owner_node = self.client.get(kind="CoreAccountGroup", hfid=[owner_setting])
+            except NodeNotFoundError:
+                print(f"Warning: CoreAccountGroup '{owner_setting}' not found for owner, falling back to account")
+                self.owner_node = default_account
+        else:
+            self.owner_node = default_account
 
         # We will keep a copy of the schema
         self.schema: MutableMapping[str, MainSchemaTypesAPI] = self.client.schema.all(branch=infrahub_branch)
@@ -290,15 +345,12 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         for attr_name in node._schema.attribute_names:
             if has_field(config=self.config, name=node._schema.kind, field=attr_name):
                 attr = getattr(node, attr_name)
-                # Is it the right place to do it or are we missing some de-serialize ?
-                # got a ValidationError from pydantic while trying to get the model(**data)
-                # for IPHost and IPInterface
-                data[attr_name] = str(attr.value) if attr.value and not isinstance(attr.value, str) else attr.value
                 val = attr.value
+                # Convert IP types and other non-string values to strings for DiffSync models
                 if isinstance(
                     val,
                     (ipaddress.IPv4Interface, ipaddress.IPv6Interface, ipaddress.IPv4Network, ipaddress.IPv6Network),
-                ):
+                ) or (val is not None and not isinstance(val, str)):
                     data[attr_name] = str(val)
                 else:
                     data[attr_name] = val
@@ -371,11 +423,10 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
             ids=ids, attrs=attrs, node_schema=node_schema, store=adapter.client.store, schemas=adapter.schema
         )
         unique_id = cls(**ids, **attrs).get_unique_id()
-        source_id = None
-        if adapter.account:
-            source_id = adapter.account.id
+        source_id = adapter.source_node.id if adapter.source_node else None
+        owner_id = adapter.owner_node.id if adapter.owner_node else None
         create_data = adapter.client.schema.generate_payload_create(
-            schema=node_schema, data=data, source=source_id, is_protected=True
+            schema=node_schema, data=data, source=source_id, owner=owner_id, is_protected=True
         )
         node = adapter.client.create(kind=cls.__name__, data=create_data)
         node.save(allow_upsert=True)
@@ -385,7 +436,9 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
 
     def update(self, attrs: dict) -> Self | None:
         node = self.adapter.client.get(id=self.local_id, kind=self.__class__.__name__)
-        node = update_node(node=node, attrs=attrs)
+        source_id = self.adapter.source_node.id if self.adapter.source_node else None
+        owner_id = self.adapter.owner_node.id if self.adapter.owner_node else None
+        node = update_node(node=node, attrs=attrs, source=source_id, owner=owner_id)
         node.save(allow_upsert=True)
 
         return super().update(attrs=attrs)
