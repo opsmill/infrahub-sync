@@ -52,7 +52,7 @@ The adapter reads connection settings from the synchronization configuration and
       token: "<INFRAHUB_TOKEN>"  # Optional if using env var
       branch: "main"            # Optional, defaults to main
       verify_ssl: true          # Optional, defaults to true
-      source: "netbox-sync"     # Optional, CoreAccountGroup name for lineage source
+      source: "data-sync"       # Optional, CoreAccountGroup name for lineage source
       owner: "network-team"     # Optional, CoreAccountGroup name for lineage owner
   ```
 
@@ -159,7 +159,7 @@ When syncing data into Infrahub, the adapter tracks the source and owner of each
 
 ### Default behavior
 
-By default, the adapter looks for a `CoreAccount` with a name matching the source adapter name (e.g., `netbox`). This account is used as both the source and owner for all synced attributes.
+By default, the adapter looks for a `CoreAccount` with a name matching the source adapter name. This account is used as both the source and owner for all synced attributes.
 
 ### Using account groups
 
@@ -171,7 +171,7 @@ destination:
   settings:
     url: "http://localhost:8000"
     token: "<TOKEN>"
-    source: "netbox-sync"    # Uses CoreAccountGroup "netbox-sync" as source
+    source: "data-sync"      # Uses CoreAccountGroup "data-sync" as source
     owner: "network-team"    # Uses CoreAccountGroup "network-team" as owner
 ```
 
