@@ -253,8 +253,12 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                 if not field_is_list:
                     if node := obj.get(field.mapping):
                         matching_nodes = []
-                        node_id = build_mapping(adapter=self, reference=field.reference, obj=obj, field=field)
-                        matching_nodes = [item for item in nodes if str(item) == node_id]
+                        # If node is a simple string/value, use it directly; otherwise build from nested object
+                        if isinstance(node, (str, int)):
+                            node_id = str(node)
+                        else:
+                            node_id = build_mapping(adapter=self, reference=field.reference, obj=obj, field=field)
+                        matching_nodes = [item for item in nodes if item.get_unique_id() == node_id]
                         if len(matching_nodes) == 0:
                             self.skipped.append(node)
                             return None
@@ -266,7 +270,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                     data[field.name] = []
                     if node := obj.get(field.mapping):
                         node_id = build_mapping(adapter=self, reference=field.reference, obj=obj, field=field)
-                        matching_nodes = [item for item in nodes if str(item) == node_id]
+                        matching_nodes = [item for item in nodes if item.get_unique_id() == node_id]
                         if len(matching_nodes) == 0:
                             self.skipped.append(node)
                             continue
