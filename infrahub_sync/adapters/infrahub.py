@@ -374,12 +374,28 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 )
                 if not peer_node:
                     continue
+
+                # First, get the peer model class to access identifiers
                 peer_model = getattr(self, peer_node._schema.kind, None)
                 if not peer_model:
                     print(f"Unable to map '{peer_node}' with kind '{peer_node._schema.kind}'")
                     continue
+
+                # Convert peer_node to dict to extract identifier values
                 peer_data = self.infrahub_node_to_diffsync(peer_node)
-                peer_item = peer_model(**peer_data)
+                # Create the unique_id using the peer model's identifier schema
+                unique_id = peer_model.create_unique_id(**{k: peer_data[k] for k in peer_model._identifiers})
+
+                # Try to get existing item from store using the unique identifier
+                peer_item = self.store.get(model=peer_node._schema.kind, identifier=unique_id)
+
+                # If not found in store, create and add it
+                if not peer_item:
+                    peer_item = peer_model(**peer_data)
+                    self.update_or_add_model_instance(peer_item)
+                    # Also store in Infrahub client store for future lookups
+                    self.client.store.set(key=unique_id, node=peer_node)
+
                 data[rel_schema.name] = peer_item.get_unique_id()
 
             elif rel_schema.cardinality == "many":
@@ -398,12 +414,28 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                     )
                     if not peer_node:
                         continue
+
+                    # First, get the peer model class to access identifiers
                     peer_model = getattr(self, peer_node._schema.kind, None)
                     if not peer_model:
                         print(f"Unable to map '{peer_node}' with kind '{peer_node._schema.kind}' - Ignored")
                         continue
+
+                    # Convert peer_node to dict to extract identifier values
                     peer_data = self.infrahub_node_to_diffsync(peer_node)
-                    peer_item = peer_model(**peer_data)
+                    # Create the unique_id using the peer model's identifier schema
+                    unique_id = peer_model.create_unique_id(**{k: peer_data[k] for k in peer_model._identifiers})
+
+                    # Try to get existing item from store using the unique identifier
+                    peer_item = self.store.get(model=peer_node._schema.kind, identifier=unique_id)
+
+                    # If not found in store, create and add it
+                    if not peer_item:
+                        peer_item = peer_model(**peer_data)
+                        self.update_or_add_model_instance(peer_item)
+                        # Also store in Infrahub client store for future lookups
+                        self.client.store.set(key=unique_id, node=peer_node)
+
                     values.append(peer_item.get_unique_id())
                 data[rel_schema.name] = sorted(values)
 
