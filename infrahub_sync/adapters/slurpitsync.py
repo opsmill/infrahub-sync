@@ -148,11 +148,8 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
 
             return entry
 
-        # Concurrent execution of tasks
-        tasks = [normalize_and_find_prefix(entry) for entry in interfaces if entry.get("IP")]
-
-        # Run tasks concurrently
-        filtered_interfaces = await asyncio.gather(*tasks)
+        # Process interfaces synchronously (normalize_and_find_prefix is not async)
+        filtered_interfaces = [normalize_and_find_prefix(entry) for entry in interfaces if entry.get("IP")]
 
         results = [entry for entry in filtered_interfaces if entry]
 
