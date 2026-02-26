@@ -1,10 +1,10 @@
 import logging
+from enum import Enum
 from timeit import default_timer as timer
 
 import typer
 from infrahub_sdk import InfrahubClientSync
 from infrahub_sdk.exceptions import ServerNotResponsiveError
-from rich.console import Console
 
 from infrahub_sync.utils import (
     find_missing_schema_model,
@@ -15,14 +15,51 @@ from infrahub_sync.utils import (
     render_adapter,
 )
 
-app = typer.Typer()
-console = Console()
+VERBOSITY_MAP = {"quiet": logging.WARNING, "default": logging.INFO, "verbose": logging.DEBUG}
 
-logging.basicConfig(level=logging.WARNING)
+app = typer.Typer()
+logger = logging.getLogger(__name__)
+
+
+class Verbosity(str, Enum):
+    quiet = "quiet"
+    default = "default"
+    verbose = "verbose"
+
+
+def _setup_logging(level: int = logging.INFO) -> None:
+    """Configure logging for the infrahub_sync package when used via CLI."""
+    pkg_logger = logging.getLogger("infrahub_sync")
+    pkg_logger.setLevel(level)
+    if not pkg_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s | %(name)s | %(message)s"))
+        pkg_logger.addHandler(handler)
+
+
+@app.callback(invoke_without_command=True)
+def main(
+    ctx: typer.Context,
+    verbosity: Verbosity = typer.Option(Verbosity.default, "--verbosity", help="Log verbosity level"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Shorthand for --verbosity verbose"),  # noqa: FBT003
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Shorthand for --verbosity quiet"),  # noqa: FBT003
+) -> None:
+    """Infrahub-sync: synchronize data between infrastructure sources and destinations."""
+    if quiet:
+        level = logging.WARNING
+    elif verbose:
+        level = logging.DEBUG
+    else:
+        level = VERBOSITY_MAP[verbosity.value]
+    _setup_logging(level=level)
+    ctx.ensure_object(dict)
+    ctx.obj["verbosity"] = level
+    if ctx.invoked_subcommand is None:
+        ctx.get_help()
 
 
 def print_error_and_abort(message: str) -> typer.Abort:
-    console.print(f"Error: {message}", style="bold red")
+    logger.error("%s", message)
     raise typer.Abort
 
 
@@ -32,16 +69,17 @@ def list_projects(
 ) -> None:
     """List all available SYNC projects."""
     for item in get_all_sync(directory=directory):
-        console.print(f"{item.name} | {item.source.name} >> {item.destination.name} | {item.directory}")
+        logger.info("%s | %s >> %s | %s", item.name, item.source.name, item.destination.name, item.directory)
 
 
 @app.command(name="diff")
 def diff_cmd(
+    ctx: typer.Context,
     name: str = typer.Option(default=None, help="Name of the sync to use"),
     config_file: str = typer.Option(default=None, help="File path to the sync configuration YAML file"),
     directory: str = typer.Option(default=None, help="Base directory to search for sync configurations"),
     branch: str = typer.Option(default=None, help="Branch to use for the diff."),
-    show_progress: bool = typer.Option(default=True, help="Show a progress bar during diff"),
+    show_progress: bool | None = typer.Option(default=None, help="Show a progress bar (default: auto-detect terminal)"),
     adapter_path: list[str] = typer.Option(
         default=None,
         help="Paths to look for adapters. Can be specified multiple times.",
@@ -62,8 +100,11 @@ def diff_cmd(
         else:
             sync_instance.adapters_path = adapter_path
 
+    verbosity_level = ctx.obj.get("verbosity", logging.INFO) if ctx.obj else logging.INFO
     try:
-        ptd = get_potenda_from_instance(sync_instance=sync_instance, branch=branch, show_progress=show_progress)
+        ptd = get_potenda_from_instance(
+            sync_instance=sync_instance, branch=branch, show_progress=show_progress, verbosity=verbosity_level
+        )
     except ValueError as exc:
         print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}")
     try:
@@ -74,11 +115,12 @@ def diff_cmd(
 
     mydiff = ptd.diff()
 
-    print(mydiff.str())
+    logger.info("\n%s", mydiff.str())
 
 
 @app.command(name="sync")
 def sync_cmd(
+    ctx: typer.Context,
     name: str = typer.Option(default=None, help="Name of the sync to use"),
     config_file: str = typer.Option(default=None, help="File path to the sync configuration YAML file"),
     directory: str = typer.Option(default=None, help="Base directory to search for sync configurations"),
@@ -87,7 +129,7 @@ def sync_cmd(
         default=True,
         help="Print the differences between the source and the destination before syncing",
     ),
-    show_progress: bool = typer.Option(default=True, help="Show a progress bar during syncing"),
+    show_progress: bool | None = typer.Option(default=None, help="Show a progress bar (default: auto-detect terminal)"),
     adapter_path: list[str] = typer.Option(
         default=None,
         help="Paths to look for adapters. Can be specified multiple times.",
@@ -108,8 +150,11 @@ def sync_cmd(
         else:
             sync_instance.adapters_path = adapter_path
 
+    verbosity_level = ctx.obj.get("verbosity", logging.INFO) if ctx.obj else logging.INFO
     try:
-        ptd = get_potenda_from_instance(sync_instance=sync_instance, branch=branch, show_progress=show_progress)
+        ptd = get_potenda_from_instance(
+            sync_instance=sync_instance, branch=branch, show_progress=show_progress, verbosity=verbosity_level
+        )
     except ValueError as exc:
         print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}")
     try:
@@ -122,13 +167,13 @@ def sync_cmd(
 
     if mydiff.has_diffs():
         if diff:
-            print(mydiff.str())
+            logger.info("\n%s", mydiff.str())
         start_synctime = timer()
         ptd.sync(diff=mydiff)
         end_synctime = timer()
-        console.print(f"Sync: Completed in {end_synctime - start_synctime} sec")
+        logger.info("Sync: Completed in %s sec", end_synctime - start_synctime)
     else:
-        console.print("No difference found. Nothing to sync")
+        logger.info("No difference found. Nothing to sync")
 
 
 @app.command(name="generate")
@@ -184,4 +229,4 @@ def generate(
 
     rendered_files = render_adapter(sync_instance=sync_instance, schema=schema)
     for template, output_path in rendered_files:
-        console.print(f"Rendered template {template} to {output_path}")
+        logger.info("Rendered template %s to %s", template, output_path)

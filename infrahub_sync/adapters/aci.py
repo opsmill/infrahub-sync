@@ -249,7 +249,7 @@ class AciAdapter(DiffSyncMixin, Adapter):
                 continue
 
             if not element.mapping:
-                print(f"No mapping defined for '{element.name}', skipping...")
+                logger.info("No mapping defined for '%s', skipping", element.name)
                 continue
 
             # Use the resource endpoint from the schema mapping

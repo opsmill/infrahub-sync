@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Union
+
+logger = logging.getLogger(__name__)
 
 import yaml
 from diffsync.store.local import LocalStore
@@ -91,7 +94,7 @@ def import_adapter(sync_instance: SyncInstance, adapter: SyncAdapter):
                     if generated_class:
                         return generated_class
             except (ImportError, AttributeError, SyntaxError, TypeError, ValueError, OSError) as exc:
-                print(f"Could not load generated adapter from {adapter_file_path}: {exc}")
+                logger.warning("Could not load generated adapter from %s: %s", adapter_file_path, exc)
 
     # Fall back to the plugin loader
     # The "sync" classes could be declared into a separate module
@@ -103,7 +106,7 @@ def import_adapter(sync_instance: SyncInstance, adapter: SyncAdapter):
         try:
             # Try loading the explicitly specified adapter
             adapter_class = loader.resolve(adapter.adapter)
-            print(f"Using directly specified adapter class: {adapter_class.__name__}")
+            logger.debug("Using directly specified adapter class: %s", adapter_class.__name__)
         except PluginLoadError as exc:
             msg = f"Failed to load adapter '{adapter.adapter}': {exc}"
             raise ImportError(msg) from exc
@@ -167,7 +170,8 @@ def get_instance(
 def get_potenda_from_instance(
     sync_instance: SyncInstance,
     branch: str | None = None,
-    show_progress: bool | None = True,
+    show_progress: bool | None = None,
+    verbosity: int | None = None,
 ) -> Potenda:
     """Create and return a Potenda instance based on the provided SyncInstance."""
     source = import_adapter(sync_instance=sync_instance, adapter=sync_instance.source)
@@ -230,6 +234,7 @@ def get_potenda_from_instance(
         config=sync_instance,
         top_level=sync_instance.order,
         show_progress=show_progress,
+        verbosity=verbosity,
     )
 
     return ptd

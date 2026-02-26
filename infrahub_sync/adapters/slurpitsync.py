@@ -20,6 +20,10 @@ from infrahub_sync import (
 )
 from infrahub_sync.adapters.utils import build_mapping, get_value
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -173,7 +177,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                 continue
 
             if not element.mapping:
-                print(f"No mapping defined for '{element.name}', skipping...")
+                logger.info("No mapping defined for '%s', skipping", element.name)
                 continue
 
             if element.mapping.startswith("planning_results"):
@@ -202,11 +206,11 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             if self.config.source.name.title() == self.type.title():
                 # Filter records
                 filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
-                print(f"{self.type}: Loading {len(filtered_objs)}/{total} {element.mapping}")
+                logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, element.mapping)
                 # Transform records
                 transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
             else:
-                print(f"{self.type}: Loading all {total} {resource_name}")
+                logger.info("%s: Loading all %d %s", self.type, total, resource_name)
                 transformed_objs = list_obj
 
             for obj in transformed_objs:
@@ -218,7 +222,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                         pass
 
         if self.skipped:
-            print(f"{self.type}: skipped syncing {len(self.skipped)} models")
+            logger.info("%s: skipped syncing %d models", self.type, len(self.skipped))
 
     def slurpit_obj_to_diffsync(
         self, obj: dict[str, Any], mapping: SchemaMappingModel, model: SlurpitsyncModel

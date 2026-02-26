@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import operator
 import re
 from typing import Any, Union
+
+logger = logging.getLogger(__name__)
 
 import pydantic
 from diffsync.enum import DiffSyncFlags
@@ -131,7 +134,7 @@ class DiffSyncMixin:
     def load(self):
         """Load all the models, one by one based on the order defined in top_level."""
         for item in self.top_level:
-            print(f"Loading {item}")
+            logger.debug("Loading %s", item)
             if hasattr(self, f"load_{item}"):
                 method = getattr(self, f"load_{item}")
                 method()
