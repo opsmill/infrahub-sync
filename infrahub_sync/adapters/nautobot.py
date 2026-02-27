@@ -22,6 +22,10 @@ from infrahub_sync import (
 
 from .utils import get_value
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -62,7 +66,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                 continue
 
             if not element.mapping:
-                print(f"No mapping defined for '{element.name}', skipping...")
+                logger.info("No mapping defined for '%s', skipping", element.name)
                 continue
 
             # Use the resource endpoint from the schema mapping
@@ -82,11 +86,11 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
             if self.config.source.name.title() == self.type.title():
                 # Filter records
                 filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
-                print(f"{self.type}: Loading {len(filtered_objs)}/{total} {resource_name}")
+                logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, resource_name)
                 # Transform records
                 transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
             else:
-                print(f"{self.type}: Loading all {total} {resource_name}")
+                logger.info("%s: Loading all %d %s", self.type, total, resource_name)
                 transformed_objs = list_obj
 
             # Create model instances after filtering and transforming
@@ -129,7 +133,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                             matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
                             if len(matching_nodes) == 0:
                                 # TODO: If the peer is a Node we are filtering, we could end up not finding it
-                                print(f"Unable to locate the node {field.name} {node_id}")
+                                logger.warning("Unable to locate the node %s %s", field.name, node_id)
                                 continue
                             node = matching_nodes[0]
                             data[field.name] = node.get_unique_id()
@@ -147,7 +151,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                         matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
                         if len(matching_nodes) == 0:
                             # TODO: If the peer is a Node we are filtering, we could end up not finding it
-                            print(f"Unable to locate the node {field.name} {node_id}")
+                            logger.warning("Unable to locate the node %s %s", field.name, node_id)
                             continue
                         data[field.name].append(matching_nodes[0].get_unique_id())
                     data[field.name] = sorted(data[field.name])

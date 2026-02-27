@@ -155,7 +155,6 @@ ignore = [
     "D",        # pydocstyle
     "DOC",      # pydoclint
     "CPY",      # flake8-copyright
-    "T201",     # use of `print`
     "ISC",      # flake8-implicit-str-concat
     "COM812",   # missing-trailing-comma
 ]
@@ -285,5 +284,7 @@ max-complexity = 33
 ]
 
 "tests/**.py" = [
-    "PGH003", # Use specific rule codes when ignoring type issues
+    "PGH003",  # Use specific rule codes when ignoring type issues
+    "S101",    # Use of `assert` detected (standard in pytest)
+    "PLC0415", # `import` should be at the top-level of a file
 ]

@@ -22,6 +22,10 @@ from infrahub_sync import (
     SyncConfig,
 )
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 # ---- If you already have these in your project, you can delete the fallbacks below and import instead. ----
 def _dotted_get(obj: Any, path: str) -> Any:
@@ -471,7 +475,7 @@ class PrometheusAdapter(DiffSyncMixin, Adapter):
                 continue
 
             if not element.mapping:
-                print(f"No mapping defined for '{element.name}', skipping...")
+                logger.info("No mapping defined for '%s', skipping", element.name)
                 continue
 
             metric_or_resource = element.mapping
@@ -493,12 +497,16 @@ class PrometheusAdapter(DiffSyncMixin, Adapter):
             if self.config.source.name.title() == self.type.title():
                 filtered_objs = model.filter_records(records=objs, schema_mapping=element)
                 transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
-                print(
-                    f"{self.type}: Loading {len(transformed_objs)}/{total} from '{metric_or_resource}' (with transforms)"
+                logger.info(
+                    "%s: Loading %d/%d from '%s' (with transforms)",
+                    self.type,
+                    len(transformed_objs),
+                    total,
+                    metric_or_resource,
                 )
             else:
                 transformed_objs = objs
-                print(f"{self.type}: Loading all {total} from '{metric_or_resource}'")
+                logger.info("%s: Loading all %d from '%s'", self.type, total, metric_or_resource)
 
             for obj in transformed_objs:
                 data = self.obj_to_diffsync(obj=obj, mapping=element, model=model)

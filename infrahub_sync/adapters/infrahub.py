@@ -30,6 +30,10 @@ from infrahub_sync import (
 )
 from infrahub_sync.generator import has_field
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, MutableMapping
 
@@ -82,10 +86,10 @@ def resolve_peer_node(
         peer_node = client.get(id=key, kind=peer_node.get_kind(), populate_store=True)
 
     if not peer_node and fallback:
-        print(f"Unable to find {rel_schema.peer} [{key}] in Store - Fallback to Infrahub")
+        logger.warning("Unable to find %s [%s] in Store - Fallback to Infrahub", rel_schema.peer, key)
         peer_node = client.get(id=key, kind=rel_schema.peer, populate_store=True)
         if not peer_node:
-            print(f"Unable to find {rel_schema.peer} [{key}] - Ignored")
+            logger.warning("Unable to find %s [%s] - Ignored", rel_schema.peer, key)
     return peer_node
 
 
@@ -134,7 +138,7 @@ def update_node(
                             fallback=False,
                         )
                         if not peer_node:
-                            print(f"Unable to find {rel_schema.peer} [{attr_value}] in the Store - Ignored")
+                            logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, attr_value)
                             continue
                         setattr(node, attr_name, peer_node)
                     else:
@@ -205,7 +209,7 @@ def diffsync_to_infrahub(
                         store=store,
                     )
                     if not peer_node:
-                        print(f"Unable to find {rel_schema.peer} [{data[key]}] in the Store - Ignored")
+                        logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, data[key])
                         continue
                     data[key] = peer_node.id
 
@@ -222,7 +226,7 @@ def diffsync_to_infrahub(
                             store=store,
                         )
                         if not peer_node:
-                            print(f"Unable to find {rel_schema.peer} [{value}] in the Store - Ignored")
+                            logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, value)
                             continue
                         new_values.append(peer_node.id)
                     data[key] = new_values
@@ -278,7 +282,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             try:
                 self.source_node = self.client.get(kind="CoreAccountGroup", hfid=[source_setting])
             except NodeNotFoundError:
-                print(f"Warning: CoreAccountGroup '{source_setting}' not found for source, falling back to account")
+                logger.warning("CoreAccountGroup '%s' not found for source, falling back to account", source_setting)
                 self.source_node = default_account
         else:
             self.source_node = default_account
@@ -289,7 +293,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             try:
                 self.owner_node = self.client.get(kind="CoreAccountGroup", hfid=[owner_setting])
             except NodeNotFoundError:
-                print(f"Warning: CoreAccountGroup '{owner_setting}' not found for owner, falling back to account")
+                logger.warning("CoreAccountGroup '%s' not found for owner, falling back to account", owner_setting)
                 self.owner_node = default_account
         else:
             self.owner_node = default_account
@@ -319,11 +323,11 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             if self.config.source.name.title() == self.type.title():
                 # Filter records
                 filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
-                print(f"{self.type}: Loading {len(filtered_objs)}/{total} {model_name}")
+                logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, model_name)
                 # Transform records
                 transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
             else:
-                print(f"{self.type}: Loading all {total} {model_name}")
+                logger.info("%s: Loading all %d %s", self.type, total, model_name)
                 transformed_objs = list_obj
 
             # Create model instances after filtering and transforming
@@ -378,7 +382,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 # First, get the peer model class to access identifiers
                 peer_model = getattr(self, peer_node._schema.kind, None)
                 if not peer_model:
-                    print(f"Unable to map '{peer_node}' with kind '{peer_node._schema.kind}'")
+                    logger.warning("Unable to map '%s' with kind '%s'", peer_node, peer_node._schema.kind)
                     continue
 
                 # Convert peer_node to dict to extract identifier values
@@ -418,7 +422,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                     # First, get the peer model class to access identifiers
                     peer_model = getattr(self, peer_node._schema.kind, None)
                     if not peer_model:
-                        print(f"Unable to map '{peer_node}' with kind '{peer_node._schema.kind}' - Ignored")
+                        logger.warning("Unable to map '%s' with kind '%s' - Ignored", peer_node, peer_node._schema.kind)
                         continue
 
                     # Convert peer_node to dict to extract identifier values
