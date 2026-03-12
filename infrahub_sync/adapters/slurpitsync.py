@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import logging
 from typing import TYPE_CHECKING, Any
 
 try:
-    from typing import Any, Self
+    from typing import Self
 except ImportError:
-    from typing_extensions import Any, Self
+    from typing_extensions import Self
+
 import slurpit
 from diffsync import Adapter, DiffSyncModel
 
@@ -19,8 +21,6 @@ from infrahub_sync import (
     SyncConfig,
 )
 from infrahub_sync.adapters.utils import build_mapping, get_value
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +210,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                 # Transform records
                 transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
             else:
-                logger.info("%s: Loading all %d %s", self.type, total, resource_name)
+                logger.info("%s: Loading all %d %s", self.type, total, element.mapping)
                 transformed_objs = list_obj
 
             for obj in transformed_objs:

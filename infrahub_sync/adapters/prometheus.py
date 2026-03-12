@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import TYPE_CHECKING, Any
@@ -21,8 +22,6 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
-
-import logging
 
 logger = logging.getLogger(__name__)
 

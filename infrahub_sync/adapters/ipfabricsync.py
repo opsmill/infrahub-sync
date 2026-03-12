@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -7,15 +9,6 @@ try:
     from typing import Self
 except ImportError:
     from typing_extensions import Self
-import json
-import logging
-
-logger = logging.getLogger(__name__)
-
-try:
-    from ipfabric import IPFClient
-except ImportError as e:
-    logger.error("Failed to import ipfabric: %s", e)
 
 from diffsync import Adapter, DiffSyncModel
 
@@ -27,6 +20,14 @@ from infrahub_sync import (
     SyncConfig,
 )
 from infrahub_sync.adapters.utils import build_mapping
+
+logger = logging.getLogger(__name__)
+
+try:
+    from ipfabric import IPFClient
+except ImportError:
+    logger.exception("Failed to import ipfabric")
+    raise
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

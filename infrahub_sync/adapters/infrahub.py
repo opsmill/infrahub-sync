@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import ipaddress
+import logging
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -29,8 +30,6 @@ from infrahub_sync import (
     SyncConfig,
 )
 from infrahub_sync.generator import has_field
-
-import logging
 
 logger = logging.getLogger(__name__)
 

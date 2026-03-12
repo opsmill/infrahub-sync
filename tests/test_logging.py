@@ -64,18 +64,20 @@ def test_no_print_calls_in_package() -> None:
     assert not violations, "Found print() calls that should use logging:\n" + "\n".join(violations)
 
 
-# Files that are allowed to not have a module-level logger (package __init__ files that
-# only re-export, tiny utility modules, etc.)
+# Files that are allowed to not have a module-level logger (relative paths from repo root).
 _LOGGER_EXEMPT = {
-    "__init__.py",  # some __init__.py files are just re-exports
+    "infrahub_sync/generator/__init__.py",
 }
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_modules_have_logger() -> None:
     """Every non-trivial .py module should define a module-level logger."""
     missing: list[str] = []
     for py_file in _python_files():
-        if py_file.name in _LOGGER_EXEMPT:
+        rel = str(py_file.relative_to(_REPO_ROOT))
+        if rel in _LOGGER_EXEMPT:
             continue
         source = py_file.read_text(encoding="utf-8")
         # Check for logger = logging.getLogger pattern

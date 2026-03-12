@@ -6,8 +6,6 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Union
 
-logger = logging.getLogger(__name__)
-
 import yaml
 from diffsync.store.local import LocalStore
 from diffsync.store.redis import RedisStore
@@ -17,6 +15,8 @@ from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
 from infrahub_sync.generator import render_template
 from infrahub_sync.plugin_loader import PluginLoader, PluginLoadError
 from infrahub_sync.potenda import Potenda
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping

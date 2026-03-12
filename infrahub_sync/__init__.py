@@ -5,8 +5,6 @@ import operator
 import re
 from typing import Any, Union
 
-logger = logging.getLogger(__name__)
-
 import pydantic
 from diffsync.enum import DiffSyncFlags
 from jinja2 import StrictUndefined
@@ -15,6 +13,8 @@ from netutils.ip import is_ip_within as netutils_is_ip_within
 from packaging import version
 
 from infrahub_sync.adapters.utils import get_value
+
+logger = logging.getLogger(__name__)
 
 if version.parse(pydantic.__version__) >= version.parse("2.0.0"):
     # With Pydantic v2, we use `field_validator` with mode "before"

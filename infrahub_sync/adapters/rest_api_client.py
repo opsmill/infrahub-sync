@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
-
 import logging
+from typing import Any
 
 import requests
 
@@ -90,7 +89,12 @@ class RestApiClient:
             try:
                 return response.json()
             except requests.exceptions.JSONDecodeError as exc:
-                logger.error("Response content is not valid JSON: %s", response.text)
+                logger.exception(
+                    "Response content is not valid JSON: url=%s status=%s content_type=%s",
+                    response.url,
+                    response.status_code,
+                    response.headers.get("Content-Type"),
+                )
                 msg = "Response content is not valid JSON."
                 raise ValueError(msg) from exc
 

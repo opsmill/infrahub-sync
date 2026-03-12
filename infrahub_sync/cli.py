@@ -55,7 +55,7 @@ def main(
     ctx.ensure_object(dict)
     ctx.obj["verbosity"] = level
     if ctx.invoked_subcommand is None:
-        ctx.get_help()
+        typer.echo(ctx.get_help())
 
 
 def print_error_and_abort(message: str) -> typer.Abort:

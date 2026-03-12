@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # pylint: disable=R0801
+import logging
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -21,8 +22,6 @@ from infrahub_sync import (
 )
 
 from .utils import get_value
-
-import logging
 
 logger = logging.getLogger(__name__)
 

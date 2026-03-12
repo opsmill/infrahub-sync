@@ -8,6 +8,8 @@ try:
 except ImportError:
     from typing_extensions import Self
 
+import logging
+
 from diffsync import Adapter, DiffSyncModel
 
 from infrahub_sync import (
@@ -21,12 +23,10 @@ from infrahub_sync import (
 from .rest_api_client import RestApiClient
 from .utils import derive_identifier_key, get_value
 
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
-
-import logging
-
-logger = logging.getLogger(__name__)
 
 
 class GenericrestapiAdapter(DiffSyncMixin, Adapter):
