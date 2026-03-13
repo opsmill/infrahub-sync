@@ -6,7 +6,7 @@ from .utils import ESCAPED_REPO_PATH
 
 NAMESPACE = "INFRAHUB-SYNC"
 CURRENT_DIRECTORY = Path(__file__).parent.resolve()
-MAIN_DIRECTORY = CURRENT_DIRECTORY.parent
+MAIN_DIRECTORY = "."
 
 
 @task(name="format")
@@ -37,7 +37,7 @@ def lint_pylint(context: Context) -> None:
     """This will run pylint for the specified name and Python version."""
 
     print(f" - [{NAMESPACE}] Check code with pylint")
-    exec_cmd = f"pylint {MAIN_DIRECTORY}"
+    exec_cmd = "pylint infrahub_sync/"
     with context.cd(ESCAPED_REPO_PATH):
         context.run(exec_cmd)
 
@@ -63,7 +63,7 @@ def lint_yaml(context: Context) -> None:
     """This will run yamllint to validate formatting of all yaml files."""
 
     print(f" - [{NAMESPACE}] Format yaml with yamllint")
-    exec_cmd = "yamllint ."
+    exec_cmd = f"yamllint {MAIN_DIRECTORY}"
     context.run(exec_cmd, pty=True)
 
 
