@@ -1,7 +1,7 @@
 
 # LLM Context Guide for `infrahub-sync`
 
-`infrahub-sync` synchronizes data between infra sources and destinations (Infrahub, NetBox, Nautobot, etc.). It uses Poetry for packaging, a Typer CLI, and Invoke tasks for linting and docs. Examples live in `examples/`.
+`infrahub-sync` synchronizes data between infra sources and destinations (Infrahub, NetBox, Nautobot, etc.). It uses uv for packaging, a Typer CLI, and Invoke tasks for linting and docs. Examples live in `examples/`.
 
 ## Agent Operating Principles
 
@@ -20,36 +20,58 @@
 5. **Idempotency and safety**
    Favor operations that are safe to re-run. Use dry runs. Never print or guess secrets. Handle timeouts, auth, and network errors explicitly.
 
+## Quickstart
+
+```bash
+# Setup
+pyenv local 3.12.x || use system Python 3.10–3.13
+uv sync
+
+# Validate dev environment
+uv run infrahub-sync --help
+uv run infrahub-sync list --directory examples/
+
+# Make a change, then:
+uv run invoke format
+uv run invoke lint
+uv run mypy infrahub_sync/ --ignore-missing-imports
+uv run infrahub-sync list --directory examples/
+
+# If docs/CLI changed:
+uv run invoke docs.generate
+uv run invoke docs.docusaurus
+```
+
 ## Required Development Workflow
 
 Run these in order before committing.
 
 ```bash
-poetry install
-poetry run invoke format
-poetry run invoke lint
-poetry run mypy infrahub_sync/ --ignore-missing-imports
+uv sync
+uv run invoke format
+uv run invoke lint
+uv run mypy infrahub_sync/ --ignore-missing-imports
 ```
 
 **Policy:**
 
 - New or changed code is Ruff-clean and typed where touched (docstrings, specific exceptions).
 - Do not increase existing mypy debt. If needed, use targeted `# type: ignore[<code>]` with a short TODO.
-- If you add tests, run `poetry run pytest -q`.
+- If you add tests, run `uv run pytest -q`.
 
 **CLI sanity after changes:**
 
 ```bash
-poetry run infrahub-sync --help
-poetry run infrahub-sync list --directory examples/
-poetry run infrahub-sync generate --name from-netbox --directory examples/
+uv run infrahub-sync --help
+uv run infrahub-sync list --directory examples/
+uv run infrahub-sync generate --name from-netbox --directory examples/
 ```
 
 **Docs:** (only if user-facing changes)
 
 ```bash
-poetry run invoke docs.generate
-poetry run invoke docs.docusaurus
+uv run invoke docs.generate
+uv run invoke docs.docusaurus
 ```
 
 ## Repository Structure
@@ -65,14 +87,15 @@ infrahub-sync/
 ├─ examples/                     # Example sync configs
 ├─ tasks/                        # Invoke task definitions
 ├─ docs/                         # Docusaurus (npm project)
-├─ tests/                        # Scaffolding (no tests yet)
-├─ pyproject.toml                # Poetry + tool configs
+├─ tests/                        # Unit and integration tests
+├─ pyproject.toml                # uv + tool configs
 └─ .github/workflows/            # CI
 ```
 
 ## Core Surfaces
 
 - **Adapters** (`infrahub_sync/adapters/`): per-system connectors. Use existing ones as patterns.
+  - Available: `infrahub`, `netbox`, `nautobot`, `aci`, `prometheus`, `peeringmanager`, `ipfabricsync`, `slurpitsync`, `genericrestapi`
 - **Engine** (`infrahub_sync/potenda/`): orchestrates `list`, `diff`, `generate`, and `sync`.
 - **Examples** (`examples/`): runnable configs and templates.
 
@@ -93,7 +116,7 @@ infrahub-sync/
 
 ## Code Standards
 
-### Python (3.10–3.12)
+### Python (3.10–3.13)
 
 - Prefer explicit types on new or changed code.
 - Ruff: formatted and lint-clean. Honor `pyproject.toml`.
@@ -110,8 +133,6 @@ infrahub-sync/
 
 ## Testing
 
-Current state: `tests/` exists but has no active tests.
-
 If you introduce features or bug fixes, add targeted tests.
 
 - Unit tests for `utils` and adapter edge cases (timeouts, 401/403, empty pages).
@@ -122,7 +143,7 @@ If you introduce features or bug fixes, add targeted tests.
 Run:
 
 ```bash
-poetry run pytest -q
+uv run pytest -q
 ```
 
 ## Documentation
@@ -131,39 +152,53 @@ poetry run pytest -q
 - Generate CLI docs:
 
 ```bash
-poetry run invoke docs.generate
+uv run invoke docs.generate
 ```
 
 - Build site (ensure `cd docs && npm install` once):
 
 ```bash
-poetry run invoke docs.docusaurus
+uv run invoke docs.docusaurus
 ```
 
 - Keep examples minimal, accurate, and redacted.
 
 ### Linting documentation (markdownlint)
 
-Use `markdownlint` and `markdownlint-cli` for Markdown and MDX files.
+Use `markdownlint-cli2` for Markdown and MDX files (also available via `uv run invoke docs.markdownlint`).
 
 ```bash
-# Check and fix Markdown and MDX in docs
-npx markdownlint-cli "docs/docs/**/*.{md,mdx}"
-npx markdownlint-cli --fix "docs/docs/**/*.{md,mdx}"
+# Check Markdown and MDX in docs
+markdownlint-cli2 "docs/docs/**/*.{md,mdx}"
+# Fix automatically
+markdownlint-cli2 "docs/docs/**/*.{md,mdx}" --fix
 ```
 
 ## Invoke Tasks (reference)
 
 ```bash
-poetry run invoke --list
-# linter.format-ruff     Format Python code with ruff
-# linter.lint-ruff       Lint Python code with ruff
-# linter.lint-pylint     Lint Python code with pylint
-# linter.lint-yaml       Lint YAML files with yamllint
-# docs.generate          Generate CLI documentation
-# docs.docusaurus        Build documentation website
-# format                 Alias for ruff format (if defined)
-# lint                   Run all linters
+uv run invoke --list
+# Top-level
+# format                          Run all formatters
+# lint                            Run all linters
+#
+# linter.*
+# linter.format-ruff              Format Python code with ruff
+# linter.lint-ruff                Lint Python code with ruff
+# linter.lint-pylint              Lint Python code with pylint
+# linter.lint-yaml                Lint YAML files with yamllint
+#
+# docs.*
+# docs.generate                   Generate CLI documentation
+# docs.docusaurus                 Build documentation website
+# docs.markdownlint               Lint Markdown/MDX with markdownlint-cli2
+# docs.format-markdownlint        Fix Markdown/MDX with markdownlint-cli2
+# docs.format                     Run all doc formatters
+# docs.lint                       Run all doc linters
+#
+# tests.*
+# tests.tests-unit                Run unit tests
+# tests.tests-integration         Run integration tests
 ```
 
 ## Known Issues and Limitations
@@ -184,8 +219,8 @@ poetry run invoke --list
 
 ### Commit and PR Messages
 
-- Agents must identify themselves (for example, `🤖 Generated with Copilot`).
-- Commit subject: imperative “what changed.” Rationale goes in the PR body.
+- Agents must identify themselves (for example, `Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>` or `🤖 Generated with Copilot`).
+- Commit subject: imperative "what changed." Rationale goes in the PR body.
 - PR body includes:
     - Problem or tension and the solution in one to two short paragraphs.
     - Minimal code example or before/after snippet.
@@ -211,7 +246,7 @@ poetry run invoke --list
 - Prefer dry runs (`diff`, `list`, `generate`) and include outputs in PRs when helpful.
 - Least privilege: only touch minimal required resources.
 - Idempotency: ensure safe re-runs and guard against partial failures.
-- Observability: contextual logging without secrets (request IDs, endpoints, object counts).
+- Observability: use `structlog` for structured logging (not `print`). Include context (request IDs, endpoints, object counts) but never secrets.
 - Concurrency: avoid collisions with live migrations or active syncs. Coordinate via PRs.
 
 If unsure, stop and ask with a concrete question.
@@ -224,38 +259,15 @@ If unsure, stop and ask with a concrete question.
 
 ## Platform-Specific Notes
 
-Mirror these principles to:
+This file (`AGENTS.md`) is the single source of truth. Platform-specific files should point here and only contain overrides:
 
-- `CLAUDE.md`
+- `CLAUDE.md` — points to this file
 - `.github/copilot-instructions.md`
 - `GEMINI.md`
 - `GPT.md`
 - `.cursor/rules/dev-standard.mdc`
 
-Each should include the “Required Development Workflow” block and the “Approval checklist” verbatim.
-
-## Quickstart
-
-```bash
-# Setup
-pyenv local 3.12.x || use system Python 3.9–3.12
-pip install poetry
-poetry install
-
-# Validate dev environment
-poetry run infrahub-sync --help
-poetry run infrahub-sync list --directory examples/
-
-# Make a change, then:
-poetry run invoke format
-poetry run invoke lint
-poetry run mypy infrahub_sync/ --ignore-missing-imports
-poetry run infrahub-sync list --directory examples/
-
-# If docs/CLI changed:
-poetry run invoke docs.generate
-poetry run invoke docs.docusaurus
-```
+Each should include the "Required Development Workflow" block and the "Approval checklist" verbatim.
 
 ## Adding a New Adapter
 
@@ -269,6 +281,6 @@ poetry run invoke docs.docusaurus
    - Validate with markdownlint:
 
    ```bash
-   npx markdownlint-cli "docs/docs/adapters/**/*.{md,mdx}"
-   npx markdownlint-cli --fix "docs/docs/adapters/**/*.{md,mdx}"
+   markdownlint-cli2 "docs/docs/adapters/**/*.{md,mdx}"
+   markdownlint-cli2 "docs/docs/adapters/**/*.{md,mdx}" --fix
    ```
