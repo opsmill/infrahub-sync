@@ -274,4 +274,5 @@ poetry run invoke docs.docusaurus
    ```
 
 ## Recent Changes
+
 - 001-structured-logging: Replace all print() calls with Python standard logging; add --verbosity CLI flag; auto-detect non-TTY for progress bar suppression
