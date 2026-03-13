@@ -95,7 +95,7 @@ infrahub-sync/
 ## Core Surfaces
 
 - **Adapters** (`infrahub_sync/adapters/`): per-system connectors. Use existing ones as patterns.
-  - Available: `infrahub`, `netbox`, `nautobot`, `aci`, `prometheus`, `peeringmanager`, `ipfabricsync`, `slurpitsync`, `genericrestapi`
+    - Available: `infrahub`, `netbox`, `nautobot`, `aci`, `prometheus`, `peeringmanager`, `ipfabricsync`, `slurpitsync`, `genericrestapi`
 - **Engine** (`infrahub_sync/potenda/`): orchestrates `list`, `diff`, `generate`, and `sync`.
 - **Examples** (`examples/`): runnable configs and templates.
 
