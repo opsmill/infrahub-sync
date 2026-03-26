@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import operator
 import re
 from typing import Any, Union
@@ -12,6 +13,8 @@ from netutils.ip import is_ip_within as netutils_is_ip_within
 from packaging import version
 
 from infrahub_sync.adapters.utils import get_value
+
+logger = logging.getLogger(__name__)
 
 if version.parse(pydantic.__version__) >= version.parse("2.0.0"):
     # With Pydantic v2, we use `field_validator` with mode "before"
@@ -131,7 +134,7 @@ class DiffSyncMixin:
     def load(self):
         """Load all the models, one by one based on the order defined in top_level."""
         for item in self.top_level:
-            print(f"Loading {item}")
+            logger.debug("Loading %s", item)
             if hasattr(self, f"load_{item}"):
                 method = getattr(self, f"load_{item}")
                 method()

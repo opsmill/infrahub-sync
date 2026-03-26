@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
+import sys
 from typing import TYPE_CHECKING
 
 from diffsync.enum import DiffSyncFlags
-from diffsync.logging import enable_console_logging
 from tqdm import tqdm
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from diffsync import Adapter
@@ -21,7 +24,8 @@ class Potenda:
         config: SyncInstance,
         top_level: list[str],
         partition=None,
-        show_progress: bool | None = False,
+        show_progress: bool | None = None,
+        verbosity: int | None = None,
     ):
         self.top_level = top_level
 
@@ -35,8 +39,11 @@ class Potenda:
 
         self.partition = partition
         self.progress_bar = None
-        self.show_progress = show_progress
-        enable_console_logging(verbosity=1)
+        self.show_progress = show_progress if show_progress is not None else sys.stderr.isatty()
+
+        if verbosity is not None:
+            logging.getLogger("diffsync").setLevel(verbosity)
+
         # Combine DiffSyncFlags from the configuration
         self.flags = DiffSyncFlags.NONE
         for flag in self.config.diffsync_flags:
@@ -47,7 +54,7 @@ class Potenda:
             self.flags = DiffSyncFlags.SKIP_UNMATCHED_DST
 
     def _print_callback(self, stage: str, elements_processed: int, total_models: int):
-        """Callback for DiffSync using tqdm"""
+        """Callback for DiffSync progress tracking."""
         if self.show_progress:
             if self.progress_bar is None:
                 self.progress_bar = tqdm(total=total_models, desc=stage, unit="models")
@@ -58,10 +65,12 @@ class Potenda:
             if elements_processed == total_models:
                 self.progress_bar.close()
                 self.progress_bar = None
+        elif elements_processed == total_models:
+            logger.info("%s: %d/%d models processed", stage, elements_processed, total_models)
 
     def source_load(self):
         try:
-            print(f"Load: Importing data from {self.source}")
+            logger.info("Load: Importing data from %s", self.source)
             self.source.load()
         except Exception as exc:
             msg = f"An error occurred while loading {self.source}: {exc!s}"
@@ -69,7 +78,7 @@ class Potenda:
 
     def destination_load(self):
         try:
-            print(f"Load: Importing data from {self.destination}")
+            logger.info("Load: Importing data from %s", self.destination)
             self.destination.load()
         except Exception as exc:
             msg = f"An error occurred while loading {self.destination}: {exc!s}"
@@ -84,11 +93,11 @@ class Potenda:
             raise ValueError(msg) from exc
 
     def diff(self) -> Diff:
-        print(f"Diff: Comparing data from {self.source} to {self.destination}")
+        logger.info("Diff: Comparing data from %s to %s", self.source, self.destination)
         self.progress_bar = None
         return self.destination.diff_from(self.source, flags=self.flags, callback=self._print_callback)
 
     def sync(self, diff: Diff | None = None):
-        print(f"Sync: Importing data from {self.source} to {self.destination} based on Diff")
+        logger.info("Sync: Importing data from %s to %s based on Diff", self.source, self.destination)
         self.progress_bar = None
         return self.destination.sync_from(self.source, diff=diff, flags=self.flags, callback=self._print_callback)

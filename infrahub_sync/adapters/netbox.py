@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # pylint: disable=R0801
+import logging
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -22,6 +23,8 @@ from infrahub_sync import (
 )
 
 from .utils import get_value
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -66,7 +69,7 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
                 continue
 
             if not element.mapping:
-                print(f"No mapping defined for '{element.name}', skipping...")
+                logger.info("No mapping defined for '%s', skipping", element.name)
                 continue
 
             # Use the resource endpoint from the schema mapping
@@ -86,11 +89,11 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
             if self.config.source.name.title() == self.type.title():
                 # Filter records
                 filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
-                print(f"{self.type}: Loading {len(filtered_objs)}/{total} {resource_name}")
+                logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, resource_name)
                 # Transform records
                 transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
             else:
-                print(f"{self.type}: Loading all {total} {resource_name}")
+                logger.info("%s: Loading all %d %s", self.type, total, resource_name)
                 transformed_objs = list_obj
 
             # Create model instances after filtering and transforming

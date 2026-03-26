@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -7,12 +9,6 @@ try:
     from typing import Self
 except ImportError:
     from typing_extensions import Self
-import json
-
-try:
-    from ipfabric import IPFClient
-except ImportError as e:
-    print(e)
 
 from diffsync import Adapter, DiffSyncModel
 
@@ -24,6 +20,14 @@ from infrahub_sync import (
     SyncConfig,
 )
 from infrahub_sync.adapters.utils import build_mapping
+
+logger = logging.getLogger(__name__)
+
+try:
+    from ipfabric import IPFClient
+except ImportError:
+    logger.exception("Failed to import ipfabric")
+    raise
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -75,7 +79,7 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
                 continue
 
             if not element.mapping:
-                print(f"No mapping defined for '{element.name}', skipping...")
+                logger.info("No mapping defined for '%s', skipping", element.name)
                 continue
             table = self.client.fetch_all(element.mapping, filters=ipf_filters.get(element.mapping))
 
@@ -83,11 +87,11 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
             if self.config.source.name.title() == self.type.title():
                 # Filter records
                 filtered_objs = model.filter_records(records=table, schema_mapping=element)
-                print(f"{self.type}: Loading {len(filtered_objs)}/{total} {element.mapping}")
+                logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, element.mapping)
                 # Transform records
                 transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
             else:
-                print(f"{self.type}: Loading all {total} {element.mapping}")
+                logger.info("%s: Loading all %d %s", self.type, total, element.mapping)
                 transformed_objs = table
 
             for obj in transformed_objs:
