@@ -482,7 +482,7 @@ all = [
 
 [[package]]
 name = "infrahub-sync"
-version = "1.5.6"
+version = "1.5.7"
 source = { editable = "." }
 dependencies = [
     { name = "diffsync", extra = ["redis"] },
