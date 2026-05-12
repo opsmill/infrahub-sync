@@ -1,0 +1,21 @@
+infrahub_sync/dependency_graph.py
+  s_2cfeb2e4f21a4e::t_6518da8abf5584 96-100
+tests/test_dependency_graph.py
+  s_2cfeb2e4f21a4e::t_d8e4547a26afae 86-115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "fe8e9e9ecd2dcc2e2cdbc67de63fe1344dd7e903",
+  "prompts": {},
+  "sessions": {
+    "s_2cfeb2e4f21a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e71ddd6-f4d4-4c93-aa9d-1b02c5c75881",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
