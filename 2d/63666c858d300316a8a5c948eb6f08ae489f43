@@ -1,0 +1,22 @@
+tests/cache/test_locks.py
+  s_2cfeb2e4f21a4e::t_06c45bcdda6d54 1-25,27,29-46
+  s_2cfeb2e4f21a4e::t_3985cd0e4a8d10 26,28
+infrahub_sync/cache/locks.py
+  s_2cfeb2e4f21a4e::t_d8cfa468b42af2 1-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "2d63666c858d300316a8a5c948eb6f08ae489f43",
+  "prompts": {},
+  "sessions": {
+    "s_2cfeb2e4f21a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e71ddd6-f4d4-4c93-aa9d-1b02c5c75881",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
