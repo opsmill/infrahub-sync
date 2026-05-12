@@ -1,0 +1,24 @@
+infrahub_sync/cli.py
+  s_2cfeb2e4f21a4e::t_03c8ecbacccc15 248-266
+tests/cache/test_schema_subhash_persist.py
+  s_2cfeb2e4f21a4e::t_0346fe86f37b0c 1-42
+infrahub_sync/utils.py
+  s_2cfeb2e4f21a4e::t_c87e58fcfde9e2 244-245
+  s_2cfeb2e4f21a4e::t_c4beb4a0ecae8c 251-271
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "12688aaa66f3334e81bf5dfb202e350c65a30638",
+  "prompts": {},
+  "sessions": {
+    "s_2cfeb2e4f21a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e71ddd6-f4d4-4c93-aa9d-1b02c5c75881",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
