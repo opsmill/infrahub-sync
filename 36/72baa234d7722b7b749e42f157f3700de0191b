@@ -1,0 +1,29 @@
+infrahub_sync/cache/parquet_io.py
+  s_2cfeb2e4f21a4e::t_569557485a81d8 93
+  s_2cfeb2e4f21a4e::t_c9318cf96d67b2 11
+infrahub_sync/potenda/__init__.py
+  s_2cfeb2e4f21a4e::t_2b47100049bebf 48-49
+  s_2cfeb2e4f21a4e::t_97bce81a710323 5
+  s_2cfeb2e4f21a4e::t_ad91b2714c178a 83
+  s_2cfeb2e4f21a4e::t_e5e07cde83f4c4 142
+  s_2cfeb2e4f21a4e::t_8b3bc01a9e0bc6 40
+infrahub_sync/cache/locks.py
+  s_2cfeb2e4f21a4e::t_974d97b41936db 8,14-15
+  s_2cfeb2e4f21a4e::t_48e5146b32d73b 21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "3672baa234d7722b7b749e42f157f3700de0191b",
+  "prompts": {},
+  "sessions": {
+    "s_2cfeb2e4f21a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e71ddd6-f4d4-4c93-aa9d-1b02c5c75881",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
