@@ -1,0 +1,33 @@
+infrahub_sync/cache/__init__.py
+  s_2cfeb2e4f21a4e::t_c87e58fcfde9e2 9,15
+examples/netbox_to_infrahub/config.yml
+  s_2cfeb2e4f21a4e::t_ce99f5cdd0d56a 8
+infrahub_sync/cache/parquet_io.py
+  s_2cfeb2e4f21a4e::t_76bdb1a5206045 6,9-11
+infrahub_sync/potenda/__init__.py
+  s_2cfeb2e4f21a4e::t_992489f5b95ecf 13-14
+pyproject.toml
+  s_2cfeb2e4f21a4e::t_bbd1706c890862 301-309
+tests/cache/test_sidecars.py
+  s_2cfeb2e4f21a4e::t_c87e58fcfde9e2 65,76
+tests/cache/test_potenda_cache_hook.py
+  s_2cfeb2e4f21a4e::t_c87e58fcfde9e2 35
+tests/cache/test_locks.py
+  s_2cfeb2e4f21a4e::t_c87e58fcfde9e2 34-35,43-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "2596c248f71b20b231d377eaad2a18b5f7991ff4",
+  "prompts": {},
+  "sessions": {
+    "s_2cfeb2e4f21a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e71ddd6-f4d4-4c93-aa9d-1b02c5c75881",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
