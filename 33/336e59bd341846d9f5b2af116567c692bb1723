@@ -1,0 +1,22 @@
+docs/docs/reference/cli.mdx
+  s_2cfeb2e4f21a4e::t_0ab8ce5828fcc9 25,61,84-103
+docs/docs/reference/cache-layout.mdx
+  s_2cfeb2e4f21a4e::t_23fe36c4fcdda5 1-6,8-33
+  s_2cfeb2e4f21a4e::t_63e3199fe58d63 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "33336e59bd341846d9f5b2af116567c692bb1723",
+  "prompts": {},
+  "sessions": {
+    "s_2cfeb2e4f21a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e71ddd6-f4d4-4c93-aa9d-1b02c5c75881",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
