@@ -1,0 +1,22 @@
+tests/adapters/test_netbox_incremental.py
+  s_559e0393aa3944::t_704b8a3a6dfece 110-126,130-132,134-138,140-154
+  s_559e0393aa3944::t_fc0ac8874316b2 127-128,133
+infrahub_sync/adapters/netbox.py
+  s_559e0393aa3944::t_b6c93f55d475e5 116-137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "d7c928715b0bc6b371a329eb707142b4c5744d16",
+  "prompts": {},
+  "sessions": {
+    "s_559e0393aa3944": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c2c0471-cf63-45d5-916e-2e9d552d6797",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
