@@ -1,0 +1,41 @@
+tasks/bench.py
+  s_559e0393aa3944::t_fe891045387e9b 74,87-88,91-97
+  s_2cfeb2e4f21a4e::t_2aaa05804d5371 238-248
+  s_2cfeb2e4f21a4e::t_019f4f2dea39f7 259,271-272
+  s_559e0393aa3944::t_2625abd0ca98e2 129
+  s_2cfeb2e4f21a4e::t_503b3c275b53dc 73,81,84-86,90,99-114
+  s_2cfeb2e4f21a4e::t_9eb90c245bd646 117,120-124,128,142-145,172-173
+  s_2cfeb2e4f21a4e::t_b8fa57f2d972ed 190-202,205-206,208-210
+  s_2cfeb2e4f21a4e::t_f822581e703735 213-221,226-227,232
+  s_2cfeb2e4f21a4e::t_c148fcee135f50 125-127,133-134
+  s_2cfeb2e4f21a4e::t_3e66d6ee5c1229 305-309,311-327
+  s_2cfeb2e4f21a4e::t_769c65d63e2554 67
+  s_2cfeb2e4f21a4e::t_7b5ded2d5dcc5f 28
+  s_2cfeb2e4f21a4e::t_4d09ee33e88e8b 72
+  s_2cfeb2e4f21a4e::t_68d5755109613c 82-83
+  s_2cfeb2e4f21a4e::t_4720e2cb2fa3a9 156
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "afcdd75ccfa9710510fc82ad8f157954942db507",
+  "prompts": {},
+  "sessions": {
+    "s_2cfeb2e4f21a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e71ddd6-f4d4-4c93-aa9d-1b02c5c75881",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    },
+    "s_559e0393aa3944": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c2c0471-cf63-45d5-916e-2e9d552d6797",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
