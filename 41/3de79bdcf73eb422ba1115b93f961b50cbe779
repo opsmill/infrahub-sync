@@ -1,0 +1,27 @@
+infrahub_sync/adapters/nautobot.py
+  s_559e0393aa3944::t_dae7da10fcf02d 31
+  s_559e0393aa3944::t_438fe1a49f9bd9 15,155,157-169,213
+  s_559e0393aa3944::t_edd982bffaef86 57-130,146-149,151,156
+  s_559e0393aa3944::t_bdd2db3351c6ac 24
+tests/adapters/test_nautobot_incremental.py
+  s_559e0393aa3944::t_abb4ff396b4d89 1-54,56-83,85-89,91-94
+  s_559e0393aa3944::t_f18dbf4bcebfa4 84
+docs/docs/reference/incremental-extraction.mdx
+  s_559e0393aa3944::t_bb0df7a149e368 41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "413de79bdcf73eb422ba1115b93f961b50cbe779",
+  "prompts": {},
+  "sessions": {
+    "s_559e0393aa3944": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c2c0471-cf63-45d5-916e-2e9d552d6797",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
