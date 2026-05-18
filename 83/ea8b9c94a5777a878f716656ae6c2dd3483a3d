@@ -1,0 +1,21 @@
+tasks/bench.py
+  s_559e0393aa3944::t_0b08a1f07eb524 306,319-320
+  s_559e0393aa3944::t_1d9f710071ebd3 173-175
+  s_559e0393aa3944::t_2d277458583a1c 177-218
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "83ea8b9c94a5777a878f716656ae6c2dd3483a3d",
+  "prompts": {},
+  "sessions": {
+    "s_559e0393aa3944": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c2c0471-cf63-45d5-916e-2e9d552d6797",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
