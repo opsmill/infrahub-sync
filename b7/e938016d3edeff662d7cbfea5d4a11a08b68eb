@@ -1,0 +1,31 @@
+tasks/bench.py
+  s_2cfeb2e4f21a4e::t_56f86d47eecbde 233
+  s_2cfeb2e4f21a4e::t_46b1f5ccc20f50 254-255,260-262,264,273,277
+  s_2cfeb2e4f21a4e::t_c9afd8112f36a2 43
+  s_2cfeb2e4f21a4e::t_5776f400f27903 37
+  s_2cfeb2e4f21a4e::t_34d77f66213508 1-2,4-5,10-11,14-19,21-36,38-42,44-71,73-78,80-142,144-156,159,161-172,174-177,179-181,183-189,191-232,234-253,256-259,263,265-268,275,279-280
+  s_2cfeb2e4f21a4e::t_6b3ac812883f4e 269-272,274,276,278
+  s_2cfeb2e4f21a4e::t_0d449c81de458f 143,157-158,160,173,178,182,190
+  s_2cfeb2e4f21a4e::t_a0a3f2200aec2f 3,6-9,12-13,20
+  s_2cfeb2e4f21a4e::t_bef4f963f75239 79
+  s_2cfeb2e4f21a4e::t_9fe9c7fa9dc44c 72
+tasks/__init__.py
+  s_2cfeb2e4f21a4e::t_ecbbc89044f266 5
+  s_2cfeb2e4f21a4e::t_850ae749f3be1e 20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "b7e938016d3edeff662d7cbfea5d4a11a08b68eb",
+  "prompts": {},
+  "sessions": {
+    "s_2cfeb2e4f21a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e71ddd6-f4d4-4c93-aa9d-1b02c5c75881",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
