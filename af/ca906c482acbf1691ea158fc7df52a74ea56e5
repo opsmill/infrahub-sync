@@ -1,0 +1,63 @@
+tests/adapters/test_infrahub_peer_identifier.py
+  s_7b9081b85bb669::t_b4795b47517ef9 72
+  s_7b9081b85bb669::t_377ad7058720f2 41,45,60,64,67,69
+  s_7b9081b85bb669::t_bbaff8ecb68455 24,26,29
+  s_7b9081b85bb669::t_e9243eb8392153 1-23,25,27-28,31-40,44,46,50-54,56-59,61-63,65-66,68,70-71,73-123
+  s_7b9081b85bb669::t_56f5a8c9b530c9 30,55
+  s_7b9081b85bb669::t_140a5d00db53c2 42-43,47-49
+infrahub_sync/potenda/__init__.py
+  s_7b9081b85bb669::t_d23e69b600332c 33,37
+  s_e562d7833aa91b::t_b59d6894c5252f 166
+  s_e562d7833aa91b::t_12ae767ddc9075 155-156,158-165,167-168,171,173,175-177
+  s_7b9081b85bb669::t_2fe23d02eb5bbc 53-57
+infrahub_sync/utils.py
+  s_7b9081b85bb669::t_a53dc22d65109d 176
+  s_7b9081b85bb669::t_8bc0930517962b 282
+tests/cache/test_plan_serialization.py
+  s_e562d7833aa91b::t_a21c961c93018f 12-13,15-21,24-33,37,39-43,46,60-66
+infrahub_sync/adapters/infrahub.py
+  s_4dac2639ac61f9::t_62f6e38a3b20fb 378-390
+  s_7b9081b85bb669::t_0992401d50512a 395-441
+  s_7b9081b85bb669::t_58ad8d9a0d9ba2 236-275,279
+  s_7b9081b85bb669::t_f64b98b7e5d37d 482-485,487,505-508,510
+infrahub_sync/cli.py
+  s_7b9081b85bb669::t_fcd869a21d8bdc 197-201,218-223
+  s_7b9081b85bb669::t_8d91cc515a676f 168-174
+examples/netbox_to_infrahub/config.yml
+  s_7b9081b85bb669::t_49dd6dd5d859ab 25
+tests/cache/test_sync_cache_flow.py
+  s_e562d7833aa91b::t_b59d6894c5252f 43
+  s_e562d7833aa91b::t_6175d405a3cf8c 37-38,46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "afca906c482acbf1691ea158fc7df52a74ea56e5",
+  "prompts": {},
+  "sessions": {
+    "s_4dac2639ac61f9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8038c26e-0982-4b10-bbb4-6aedca5619be",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    },
+    "s_7b9081b85bb669": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c2a0cda6-d9b1-404f-9de6-8dc252461ade",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    },
+    "s_e562d7833aa91b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "abbb7d16-f884-495b-a943-653924b37a68",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
