@@ -1,0 +1,33 @@
+infrahub_sync/adapters/netbox.py
+  s_559e0393aa3944::t_d5264e667b6d5b 24
+  s_559e0393aa3944::t_08c12b3ce83585 61-72
+  s_29aea0e312c469::t_ad2964ae89814f 88-95
+tests/adapters/test_netbox_incremental.py
+  s_559e0393aa3944::t_79d31f85d3ac1a 31-35,40-44,49-53
+  s_559e0393aa3944::t_16be606cc6e67b 26
+  s_559e0393aa3944::t_1b7e4042890ff1 1-25,27-30,36-39,45-48,54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "3fa41011e12c6a3c1faff376485d2578560766f3",
+  "prompts": {},
+  "sessions": {
+    "s_29aea0e312c469": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a0c57083-7766-4570-8b4e-08473edbcbd4",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    },
+    "s_559e0393aa3944": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c2c0471-cf63-45d5-916e-2e9d552d6797",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
