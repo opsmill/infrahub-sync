@@ -41,18 +41,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install infrahub-sync
 
-# Verify the install and list available sync projects in a directory
+# Verify the install
 infrahub-sync --help
-infrahub-sync list --directory ./examples
-
-# Generate the Python adapter code from a YAML sync configuration
-infrahub-sync generate --name <sync-name> --directory ./examples
-
-# Preview what a sync would change (read-only — does not modify the destination)
-infrahub-sync diff --name <sync-name> --directory ./examples
-
-# Execute the synchronization
-infrahub-sync sync --name <sync-name> --directory ./examples
 ```
 
 → For step-by-step setup, see [Installing Infrahub Sync](https://docs.infrahub.app/sync/guides/installation), [Creating a new sync instance](https://docs.infrahub.app/sync/guides/creation), and [Running sync tasks](https://docs.infrahub.app/sync/guides/run).
