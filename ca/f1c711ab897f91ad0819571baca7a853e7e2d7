@@ -1,0 +1,21 @@
+examples/netbox_to_infrahub/config.yml
+  s_2cfeb2e4f21a4e::t_3d86860761c099 2-18,32-33
+docs/docs/guides/run.mdx
+  s_2cfeb2e4f21a4e::t_f61d8cd159c6b6 5,9,11,15,18,21,25,35-39,41,45,55-61,63,65-69,71,73,75-79,82-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "caf1c711ab897f91ad0819571baca7a853e7e2d7",
+  "prompts": {},
+  "sessions": {
+    "s_2cfeb2e4f21a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e71ddd6-f4d4-4c93-aa9d-1b02c5c75881",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
