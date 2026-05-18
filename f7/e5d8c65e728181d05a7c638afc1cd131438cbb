@@ -1,0 +1,28 @@
+tests/cache/test_incremental_helpers.py
+  s_559e0393aa3944::t_5a431c7c7abc7a 174-193
+infrahub_sync/potenda/__init__.py
+  s_559e0393aa3944::t_808ceed492f2c9 46
+  s_559e0393aa3944::t_1c7acb1ce8fd01 362-363,368,376-382
+  s_559e0393aa3944::t_26cd8ed67224ee 153-156
+  s_559e0393aa3944::t_45d8dfb3737e9a 130,134-144,149-150
+infrahub_sync/__init__.py
+  s_559e0393aa3944::t_213f29e86372de 76-81,91
+infrahub_sync/cache/incremental.py
+  s_559e0393aa3944::t_f51c03034636f3 56-57,62-66,74-79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "f7e5d8c65e728181d05a7c638afc1cd131438cbb",
+  "prompts": {},
+  "sessions": {
+    "s_559e0393aa3944": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c2c0471-cf63-45d5-916e-2e9d552d6797",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": null
+    }
+  }
+}
