@@ -1,0 +1,23 @@
+infrahub_sync/cache/sidecars.py
+  s_559e0393aa3944::t_9f45e0e3cccfe8 103-127
+tests/cache/test_run_counter.py
+  s_559e0393aa3944::t_c84cad8dce4ad0 1-5,7-10,12-16
+  s_559e0393aa3944::t_4c3ca4eccaaa56 11
+  s_559e0393aa3944::t_dda46859e1eb2e 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "0f24c71c4b256f6f50c7387464f7125e18a3fc61",
+  "prompts": {},
+  "sessions": {
+    "s_559e0393aa3944": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c2c0471-cf63-45d5-916e-2e9d552d6797",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
