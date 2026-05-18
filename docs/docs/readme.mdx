@@ -33,6 +33,10 @@ Each sync project consists of a directory and a `config.yml` describing the sync
 
 → [Creating a new sync instance](./guides/creation.mdx) · [Sync instance configuration](./reference/config.mdx)
 
+### Generate the adapter code
+
+`infrahub-sync generate --name <project> --directory <dir>` reads the YAML configuration and produces the Python adapter and model code that `diff` and `sync` use. Re-run `generate` whenever the configuration or the schema mapping changes.
+
 ### Preview with `diff`
 
 `infrahub-sync diff --name <project> --directory <dir>` reads both the source and destination, calculates what would change, and prints the result to the terminal. The destination is not modified. The `diff` command is read-only and is typically run before applying any sync — particularly during initial setup or when adjusting mappings.
