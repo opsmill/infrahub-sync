@@ -1,0 +1,23 @@
+tests/cache/test_incremental_helpers.py
+  s_559e0393aa3944::t_09ffeaafc1e6a5 123-168,170-173
+  s_559e0393aa3944::t_7d3179e1d7f3a5 169
+infrahub_sync/cache/incremental.py
+  s_559e0393aa3944::t_00a28ba41c3a51 10-11
+  s_559e0393aa3944::t_85009a86781ab4 120-162
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "c560daf07726331407d4331c486de51f6a70f66d",
+  "prompts": {},
+  "sessions": {
+    "s_559e0393aa3944": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c2c0471-cf63-45d5-916e-2e9d552d6797",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
