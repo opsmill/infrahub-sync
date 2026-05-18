@@ -1,0 +1,21 @@
+docs/docs/reference/incremental-extraction.mdx
+  s_559e0393aa3944::t_067ec2c5366804 1-54
+docs/sidebars.ts
+  s_559e0393aa3944::t_1f73e5b762cd3f 39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "2c55859e07a52781688670e8a33109f83d7df4f5",
+  "prompts": {},
+  "sessions": {
+    "s_559e0393aa3944": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c2c0471-cf63-45d5-916e-2e9d552d6797",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
