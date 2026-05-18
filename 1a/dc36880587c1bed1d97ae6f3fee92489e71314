@@ -1,0 +1,38 @@
+infrahub_sync/adapters/netbox.py
+  s_559e0393aa3944::t_03b0e7e77586d5 24
+  s_559e0393aa3944::t_f88fe895a7a0fe 73-115,131-134,136-138,141-142,147
+  s_29aea0e312c469::t_378b8671c723f1 193
+  s_559e0393aa3944::t_3607a6bb565c50 31
+tests/adapters/test_netbox_incremental.py
+  s_559e0393aa3944::t_15edfec520906d 84-85
+  s_559e0393aa3944::t_70819be53a97ac 62-63,75-76
+  s_559e0393aa3944::t_e1d744c118e143 58-59,64-74,77-80,90-109
+  s_559e0393aa3944::t_e60506056437ce 6
+  s_559e0393aa3944::t_2c36d3030c56dc 81-83,86-89
+  s_559e0393aa3944::t_5e8fdf1cff7d91 60-61
+  s_559e0393aa3944::t_342fa5d1969e83 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "1adc36880587c1bed1d97ae6f3fee92489e71314",
+  "prompts": {},
+  "sessions": {
+    "s_29aea0e312c469": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a0c57083-7766-4570-8b4e-08473edbcbd4",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    },
+    "s_559e0393aa3944": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c2c0471-cf63-45d5-916e-2e9d552d6797",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
