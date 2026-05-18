@@ -1,0 +1,32 @@
+infrahub_sync/cli.py
+  s_2cfeb2e4f21a4e::t_9610deb22abacd 176
+  s_2cfeb2e4f21a4e::t_f67e11abe3e38c 186-187,189-191,193-238
+tests/cache/test_cli_sync_cache.py
+  s_2cfeb2e4f21a4e::t_6d17a9e10a0518 1-71
+tests/test_cli_parallel.py
+  s_2cfeb2e4f21a4e::t_02fd785505c151 20,25-26,30,35,37-40,48,54-56,58-61
+infrahub_sync/potenda/__init__.py
+  s_2cfeb2e4f21a4e::t_771dcc0ce2d454 142-143,145-147,165-173
+  s_2cfeb2e4f21a4e::t_35ab90cec71fa8 235,240-242,247,249,252,257,259,266,271-276
+tests/test_potenda_parallel.py
+  s_2cfeb2e4f21a4e::t_2fe93280bd6889 66-68
+tests/cache/test_sync_cache_flow.py
+  s_2cfeb2e4f21a4e::t_5b8fac269b6cc1 1-49,51-108
+  s_2cfeb2e4f21a4e::t_e10dc996c03c63 50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "ff2031ed7d0d6859f42db97771af7b3b004f7c30",
+  "prompts": {},
+  "sessions": {
+    "s_2cfeb2e4f21a4e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3e71ddd6-f4d4-4c93-aa9d-1b02c5c75881",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
