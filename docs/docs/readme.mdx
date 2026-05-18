@@ -2,7 +2,7 @@
 title: Infrahub Sync
 ---
 
-Infrahub Sync is a Python package that synchronizes data between Infrahub and external infrastructure systems. It connects to NetBox, Nautobot, IP Fabric, Slurp'it, Cisco ACI, ServiceNow-style systems, and other tools through a library of pre-built adapters, and handles both the communication with each system and the translation of data between different schemas. Sync projects are defined declaratively in YAML; the CLI generates the adapter code, calculates the diff, and applies changes.
+Infrahub Sync is a Python package that synchronizes data between Infrahub and external infrastructure systems. It connects to NetBox, Nautobot, IP Fabric, Slurp’it, Cisco ACI, ServiceNow-style systems, and other tools through a library of pre-built adapters, and handles both the communication with each system and the translation of data between different schemas. Sync projects are defined declaratively in YAML; the CLI generates the adapter code, calculates the diff, and applies changes.
 
 Infrahub Sync is open source under Apache 2.0, distributed on [PyPI](https://pypi.org/project/infrahub-sync/), and maintained on [GitHub](https://github.com/opsmill/infrahub-sync).
 
@@ -10,7 +10,7 @@ Infrahub Sync supports the following:
 
 - **Migration from an existing system of record** — data moves from NetBox, Nautobot, or another source into Infrahub one model at a time, on the schedule the team chooses. The legacy system continues to operate during the migration.
 - **Recurring synchronization between systems** — a sync project runs as often as the environment requires. Each run calculates a fresh diff and applies only the deltas.
-- **Inventory population from network discovery** — adapters for IP Fabric and Slurp'it bring discovered network state into Infrahub as the source of truth, rather than requiring inventory to be entered by hand.
+- **Inventory population from network discovery** — adapters for IP Fabric and Slurp’it bring discovered network state into Infrahub as the source of truth, rather than requiring inventory to be entered by hand.
 - **Outbound data movement from Infrahub** — Infrahub data is published into monitoring, observability, or CMDB systems that need a current view of infrastructure.
 - **Translation between data models** — source fields map to destination fields through a declarative YAML configuration. Identifiers, relationships, and static values are handled in the same file.
 - **Diff preview before changes are applied** — `infrahub-sync diff` shows the differences between source and destination state without modifying either system.
@@ -22,8 +22,8 @@ Infrahub Sync supports the following:
 Three key concepts in Infrahub Sync:
 
 - **Sync project** — a directory containing a YAML configuration file (`config.yml`) that defines one synchronization between two systems. A project specifies the source, the destination, the sync order, and the per-model schema mapping. A team can have many sync projects, each managing a different source-destination pair.
-- **Adapter** — the component that connects Infrahub Sync to a specific system. Each adapter handles both communication (API calls, authentication, pagination) and translation (converting the system's data into the internal sync engine's format). Infrahub Sync ships with adapters for common systems and supports custom adapters for systems without a pre-built one.
-- **Schema mapping** — the part of the project configuration that defines how source fields map to destination fields. Direct field mappings, renames, references between models, identifiers, and static values are all declared in YAML.
+- **Adapter** — the component that connects Infrahub Sync to a specific system. Each adapter handles both communication (API calls, authentication, request handling) and translation (converting the system's data into the internal sync engine's format). Infrahub Sync ships with adapters for common systems and supports custom adapters for systems without a pre-built one.
+- **Schema mapping** — the part of the project configuration that defines how source fields map to destination fields. Direct field mappings, references between models, identifiers, and static values are all declared in YAML.
 
 Three CLI commands operate on a sync project: `generate`, `diff`, and `sync`.
 
@@ -65,13 +65,13 @@ Infrahub is deployed and needs to stay current with the other systems the team u
 
 ### Building inventory from network discovery
 
-Infrahub is populated from what is actually deployed in the network rather than from manually curated inventory. IP Fabric and Slurp'it adapters connect to discovery tools and bring discovered state into Infrahub.
+Infrahub is populated from what is actually deployed in the network rather than from manually curated inventory. IP Fabric and Slurp’it adapters connect to discovery tools and bring discovered state into Infrahub.
 
-→ [IP Fabric adapter](./adapters/ipfabric.mdx) · [Slurp'it adapter](./adapters/slurpit.mdx)
+→ [IP Fabric adapter](./adapters/ipfabric.mdx) · [Slurp’it adapter](./adapters/slurpit.mdx)
 
 ## What's included
 
-- **Pre-built adapter library** — adapters for Infrahub, NetBox, Nautobot, IP Fabric, Cisco ACI, LibreNMS, Observium, Peering Manager, Prometheus, and Slurp'it, plus a Generic REST API adapter for systems with HTTP/JSON APIs. Each adapter handles both communication and translation for its target system.
+- **Pre-built adapter library** — adapters for Infrahub, NetBox, Nautobot, IP Fabric, Cisco ACI, LibreNMS, Observium, Peering Manager, Prometheus, and Slurp’it, plus a Generic REST API adapter for systems with HTTP/JSON APIs. Each adapter handles both communication and translation for its target system.
 - **Declarative YAML configuration** — a single file per sync project defines source, destination, sync order, and per-model schema mapping. Mappings support 14 filter operations (including `regex` and `is_ip_within`), per-field transforms, custom Jinja filters, and ordered cross-reference resolution.
 - **Sync engine** — built on the `diffsync` framework. Diffs and applies only deltas; three flags control what each run is allowed to change (creates, deletes, modifications).
 - **Typer-based CLI** — four commands: `list` (show available projects), `generate` (produce adapter code from the configuration), `diff` (preview changes), `sync` (apply changes).
@@ -89,7 +89,7 @@ Infrahub is populated from what is actually deployed in the network rather than 
 | Cisco ACI | Cisco ACI → Infrahub |
 | Peering Manager | Peering Manager → Infrahub · Infrahub → Peering Manager |
 | Prometheus | Prometheus → Infrahub |
-| Slurp'it | Slurp'it → Infrahub |
+| Slurp’it | Slurp’it → Infrahub |
 | LibreNMS | LibreNMS → Infrahub |
 | Observium | Observium → Infrahub |
 | Generic REST API | external system → Infrahub |
