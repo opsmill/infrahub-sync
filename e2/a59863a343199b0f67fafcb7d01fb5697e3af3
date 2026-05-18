@@ -1,0 +1,26 @@
+infrahub_sync/potenda/__init__.py
+  s_559e0393aa3944::t_45d8dfb3737e9a 129,133-143,148-149,152-154
+  s_559e0393aa3944::t_1c7acb1ce8fd01 360-361,366,374-380
+infrahub_sync/__init__.py
+  s_559e0393aa3944::t_213f29e86372de 76-81,91
+infrahub_sync/cache/incremental.py
+  s_559e0393aa3944::t_f51c03034636f3 56-57,62-66,74-79
+tests/cache/test_incremental_helpers.py
+  s_559e0393aa3944::t_5a431c7c7abc7a 174-193
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "e2a59863a343199b0f67fafcb7d01fb5697e3af3",
+  "prompts": {},
+  "sessions": {
+    "s_559e0393aa3944": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c2c0471-cf63-45d5-916e-2e9d552d6797",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
