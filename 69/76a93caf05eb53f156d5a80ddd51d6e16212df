@@ -1,0 +1,21 @@
+infrahub_sync/cli.py
+  s_559e0393aa3944::t_ef30e493195d79 234-237,241
+  s_559e0393aa3944::t_76a18d6e89cd5e 1-2,6,21-24
+  s_559e0393aa3944::t_6e9fd5259a345e 69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "6976a93caf05eb53f156d5a80ddd51d6e16212df",
+  "prompts": {},
+  "sessions": {
+    "s_559e0393aa3944": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c2c0471-cf63-45d5-916e-2e9d552d6797",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
