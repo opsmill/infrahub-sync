@@ -358,18 +358,6 @@ too-many-positional-arguments = "ignore"
 unresolved-attribute = "ignore"
 
 [[tool.ty.overrides]]
-include = ["infrahub_sync/potenda/**"]
-
-[tool.ty.overrides.rules]
-##################################################################################################
-# The ignored rules below should be removed once the code has been updated, they are included    #
-# like this so that we can reactivate them one by one.                                           #
-##################################################################################################
-invalid-attribute-access = "ignore"
-not-iterable = "ignore"
-unsupported-operator = "ignore"
-
-[[tool.ty.overrides]]
 include = ["tasks/**"]
 
 [tool.ty.overrides.rules]
