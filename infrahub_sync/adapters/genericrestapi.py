@@ -159,8 +159,8 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
                 raise ValueError(msg) from exc
 
             total = len(objs)
-            # `self.type` is set via `adapter_type` in __init__ but typed `str | None` on the base.
-            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
+            adapter_type_title = (self.type or "").title()
+            if self.config.source.name.title() == adapter_type_title:
                 # Filter records
                 filtered_objs = model.filter_records(records=objs, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, resource_name)
@@ -201,18 +201,15 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
         # Try to get data using the response key
         objs = response_data.get(response_key, response_data.get(resource_name, {}))
 
-        # Handle different response formats
-        result: list[dict[str, Any]]
+        # Handle different response formats. Filter each branch down to dict items so the
+        # declared `list[dict[str, Any]]` contract holds and `obj_to_diffsync` (which calls
+        # `obj.get(...)`) doesn't crash on non-dict entries.
         if isinstance(objs, dict):
-            # If it's a dict, convert values to list (like Observium); response values are dict-shaped.
-            result = list(objs.values())  # ty: ignore[invalid-assignment]
-        elif not isinstance(objs, list):
-            # If it's neither dict nor list, wrap in list
-            result = [objs] if objs else []
-        else:
-            result = objs
-
-        return result
+            # Dict response (e.g. Observium-style: {id: {…}, id2: {…}}).
+            return [v for v in objs.values() if isinstance(v, dict)]
+        if isinstance(objs, list):
+            return [v for v in objs if isinstance(v, dict)]
+        return []
 
     def obj_to_diffsync(
         self, obj: dict[str, Any], mapping: SchemaMappingModel, model: type[GenericrestapiModel]

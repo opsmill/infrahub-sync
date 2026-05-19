@@ -151,11 +151,12 @@ def get_instance(
         # TODO: Log or raise an Error/Warning
         return None
 
-    config_file_path: Path | None = None
-    if Path(config_file).is_absolute() or directory is None:
-        config_file_path = Path(config_file)
-    elif directory:
-        config_file_path = Path(directory, config_file)
+    # Empty-string `directory` must still produce Path(config_file), matching pre-refactor behavior.
+    config_file_path: Path = (
+        Path(config_file)
+        if Path(config_file).is_absolute() or directory is None
+        else Path(directory, config_file)
+    )
 
     if config_file_path:
         directory_path = config_file_path.parent

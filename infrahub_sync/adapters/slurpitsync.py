@@ -167,6 +167,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         return results or []
 
     def model_loader(self, model_name: str, model: type[SlurpitsyncModel]) -> None:
+        """Fetch `model_name` from Slurpit, apply schema-mapping filters/transforms, and add each row to the store."""
         for element in self.config.schema_mapping:
             if element.name != model_name:
                 continue
@@ -223,6 +224,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
     def slurpit_obj_to_diffsync(
         self, obj: dict[str, Any], mapping: SchemaMappingModel, model: type[SlurpitsyncModel]
     ) -> dict | None:
+        """Convert a Slurpit dict to a DiffSync-ready payload, or None when a required reference is missing."""
         obj_id = obj.get("id")
         data: dict[str, Any] = {"local_id": str(obj_id)}
 
@@ -286,9 +288,11 @@ class SlurpitsyncModel(DiffSyncModelMixin, DiffSyncModel):
         ids: dict[Any, Any],
         attrs: dict[Any, Any],
     ) -> Self | None:
+        """Create a Slurpit-side record from DiffSync ids/attrs (not yet implemented; delegates to the base)."""
         # TODO: To implement
         return super().create(adapter=adapter, ids=ids, attrs=attrs)
 
     def update(self, attrs: dict) -> Self | None:
+        """Update a Slurpit-side record from DiffSync attrs (not yet implemented; delegates to the base)."""
         # TODO: To implement
         return super().update(attrs)

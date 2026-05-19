@@ -454,11 +454,15 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
     ) -> Self | None:
         # `adapter` is typed as the diffsync base for Liskov compatibility with DiffSyncModel.create,
         # but at runtime it is always an InfrahubAdapter (registered via add_model).
-        assert isinstance(adapter, InfrahubAdapter)
+        if not isinstance(adapter, InfrahubAdapter):
+            msg = f"{cls.__name__}.create expected an InfrahubAdapter, got {type(adapter).__name__}"
+            raise TypeError(msg)
         node_schema = adapter.client.schema.get(kind=cls.__name__)
         # client.schema.get() returns MainSchemaTypesAPI; diffsync_to_infrahub requires NodeSchemaAPI.
         # All nodes registered as DiffSync models are concrete (NodeSchemaAPI), not generics/profiles.
-        assert isinstance(node_schema, NodeSchemaAPI)
+        if not isinstance(node_schema, NodeSchemaAPI):
+            msg = f"Expected NodeSchemaAPI for {cls.__name__}, got {type(node_schema).__name__}"
+            raise TypeError(msg)
         data = diffsync_to_infrahub(
             ids=ids, attrs=attrs, node_schema=node_schema, store=adapter.client.store, schemas=adapter.schema
         )
@@ -477,7 +481,9 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
     def update(self, attrs: dict) -> Self | None:
         # `self.adapter` is `Adapter | None` on the diffsync base; always set after registration.
         adapter = self.adapter
-        assert isinstance(adapter, InfrahubAdapter)
+        if not isinstance(adapter, InfrahubAdapter):
+            msg = f"{self.__class__.__name__}.update expected an InfrahubAdapter, got {type(adapter).__name__}"
+            raise TypeError(msg)
         node = adapter.client.get(id=self.local_id, kind=self.__class__.__name__)
         source_id = adapter.source_node.id if adapter.source_node else None
         owner_id = adapter.owner_node.id if adapter.owner_node else None

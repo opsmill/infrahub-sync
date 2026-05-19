@@ -56,7 +56,7 @@ uv run invoke linter.lint-ty
 **Policy:**
 
 - New or changed code is Ruff-clean and typed where touched (docstrings, specific exceptions).
-- Do not increase existing ty debt. The `[tool.ty.overrides]` blocks in `pyproject.toml` already cover today's diagnostic baseline — do not add rules to them. If a real fix is impossible in your PR, use a targeted `# ty: ignore[<rule>]` with a short TODO.
+- The codebase is clean under ty with no `[[tool.ty.overrides]]` blocks. Don't reintroduce overrides to mask type errors — fix the underlying issue, or use a targeted `# ty: ignore[<rule>]` with a short TODO at the call site.
 - If you add tests, run `uv run pytest -q`.
 
 **CLI sanity after changes:**
@@ -205,7 +205,7 @@ uv run invoke --list
 
 - Optional dependencies (for example, `pynetbox`, `pynautobot`) may be missing, producing import warnings.
 - `generate` and `sync` require running servers (Infrahub, NetBox, Nautobot).
-- Existing ty debt is suppressed per module via `[[tool.ty.overrides]]` in `pyproject.toml`; do not broaden those blocks, and remove rules from them as you fix the underlying code.
+- The codebase is clean under ty; there are no `[[tool.ty.overrides]]` blocks in `pyproject.toml`. Prefer real type fixes over reintroducing overrides.
 - Docs npm audit may flag dev-only vulnerabilities; they do not affect the Python package.
 
 ## Development Rules
