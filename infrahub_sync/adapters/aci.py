@@ -6,15 +6,15 @@ import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import Any, ClassVar
 
-import requests  # type: ignore[import]
+import requests
 import urllib3
 from diffsync import Adapter, DiffSyncModel
-from requests import Response  # type: ignore[import]
-from requests.adapters import HTTPAdapter  # type: ignore[import]
+from requests import Response
+from requests.adapters import HTTPAdapter
 from typing_extensions import Self
-from urllib3.util.retry import Retry  # type: ignore[import]
+from urllib3.util.retry import Retry
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -25,9 +25,6 @@ from infrahub_sync import (
 )
 
 from .utils import get_value
-
-if TYPE_CHECKING:
-    import builtins
 
 logger = logging.getLogger(__name__)
 
@@ -233,7 +230,7 @@ class AciAdapter(DiffSyncMixin, Adapter):
             verify=verify,
         )
 
-    def model_loader(self, model_name: str, model: builtins.type[AciModel]) -> None:  # type: ignore[valid-type]
+    def model_loader(self, model_name: str, model: type[AciModel]) -> None:
         """
         Load and process models using schema mapping filters and transformations.
 
@@ -270,10 +267,10 @@ class AciAdapter(DiffSyncMixin, Adapter):
             is_source_adapter = self.config.source.name.lower() == "aci"
             if is_source_adapter:
                 # Filter records
-                filtered_objs = model.filter_records(records=objs, schema_mapping=element)  # type: ignore[attr-defined]
+                filtered_objs = model.filter_records(records=objs, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, resource_name)
                 # Transform records
-                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)  # type: ignore[attr-defined]
+                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
             else:
                 logger.info("%s: Loading all %d %s", self.type, total, resource_name)
                 transformed_objs = objs
@@ -281,14 +278,14 @@ class AciAdapter(DiffSyncMixin, Adapter):
             # Create model instances after filtering and transforming
             for obj in transformed_objs:
                 data = self.obj_to_diffsync(obj=obj, mapping=element, model=model)
-                item = model(**data)  # type: ignore[misc]
+                item = model(**data)
                 self.add(item)
 
     def obj_to_diffsync(
         self,
         obj: dict[str, Any],
         mapping: SchemaMappingModel,
-        model: builtins.type[AciModel],  # type: ignore[valid-type]
+        model: type[AciModel],
     ) -> dict[str, Any]:
         """Convert an object to DiffSync format based on the provided mapping schema."""
         obj_id = self._extract_aci_id(obj)
@@ -298,7 +295,7 @@ class AciAdapter(DiffSyncMixin, Adapter):
         if not mapping.fields:
             return data
         for field in mapping.fields:
-            field_is_list = model.is_list(name=field.name)  # type: ignore[attr-defined]
+            field_is_list = model.is_list(name=field.name)
 
             if field.static:
                 data[field.name] = field.static

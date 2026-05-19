@@ -169,6 +169,6 @@ def render_template(template_file: Path, output_dir: Path, output_file: Path, co
 
     template = template_env.get_template(str(template_file))
 
-    rendered_tpl = template.render(**context)  # type: ignore[arg-type]
+    rendered_tpl = template.render(**context)
     output_filename = output_dir / output_file
     output_filename.write_text(rendered_tpl, encoding="utf-8")

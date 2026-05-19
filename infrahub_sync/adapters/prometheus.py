@@ -444,7 +444,7 @@ class PrometheusAdapter(DiffSyncMixin, Adapter):
             store: dict[str, list[dict[str, Any]]] = {}
             for resource_name, query in self.promql_resources.items():
                 try:
-                    results = self.client.instant_query(query)  # type: ignore[attr-defined]
+                    results = self.client.instant_query(query)
                 except Exception as exc:
                     msg = f"Prometheus API query failed for '{resource_name}': {exc!s}"
                     raise ValueError(msg) from exc
