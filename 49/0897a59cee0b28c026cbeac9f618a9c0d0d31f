@@ -1,0 +1,20 @@
+infrahub_sync/potenda/__init__.py
+  s_559e0393aa3944::t_997021c294794b 108-110
+  s_559e0393aa3944::t_82a249ef28dfe5 111-120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "490897a59cee0b28c026cbeac9f618a9c0d0d31f",
+  "prompts": {},
+  "sessions": {
+    "s_559e0393aa3944": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c2c0471-cf63-45d5-916e-2e9d552d6797",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
