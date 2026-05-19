@@ -328,19 +328,3 @@ not-iterable = "ignore"
 unresolved-attribute = "ignore"
 unresolved-import = "ignore"
 
-[[tool.ty.overrides]]
-include = ["infrahub_sync/__init__.py"]
-
-[tool.ty.overrides.rules]
-##################################################################################################
-# The ignored rules below should be removed once the code has been updated, they are included    #
-# like this so that we can reactivate them one by one.                                           #
-##################################################################################################
-call-non-callable = "ignore"
-deprecated = "ignore"
-invalid-argument-type = "ignore"
-invalid-return-type = "ignore"
-missing-argument = "ignore"
-no-matching-overload = "ignore"
-too-many-positional-arguments = "ignore"
-unresolved-attribute = "ignore"
