@@ -1,0 +1,20 @@
+tasks/linter.py
+  s_559e0393aa3944::t_d7cefd7a27ba02 19
+  s_559e0393aa3944::t_ba84ee9617d19d 71-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "fa341a721beb0cb0e7c0dadd55d10934b5bce656",
+  "prompts": {},
+  "sessions": {
+    "s_559e0393aa3944": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c2c0471-cf63-45d5-916e-2e9d552d6797",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
