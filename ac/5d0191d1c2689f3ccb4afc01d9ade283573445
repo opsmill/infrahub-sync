@@ -1,0 +1,24 @@
+tests/adapters/test_infrahub_incremental.py
+  s_559e0393aa3944::t_d7d5fe6e3ab0ce 66
+infrahub_sync/adapters/infrahub.py
+  s_559e0393aa3944::t_6742248ff648ae 39-40,42
+  s_559e0393aa3944::t_cb02fae816c7c4 356-360,369-370
+docs/docs/reference/incremental-extraction.mdx
+  s_559e0393aa3944::t_54ca78340c8624 42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "ac5d0191d1c2689f3ccb4afc01d9ade283573445",
+  "prompts": {},
+  "sessions": {
+    "s_559e0393aa3944": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c2c0471-cf63-45d5-916e-2e9d552d6797",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
