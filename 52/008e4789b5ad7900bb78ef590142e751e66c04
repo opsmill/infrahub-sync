@@ -1,0 +1,33 @@
+infrahub_sync/adapters/slurpitsync.py
+  s_559e0393aa3944::t_7e954db9f5a48b 227
+  s_559e0393aa3944::t_d703e9a53d6068 291,296
+  s_559e0393aa3944::t_2ba12500898109 170
+AGENTS.md
+  s_559e0393aa3944::t_ae7a563cfdc7b6 208
+  s_559e0393aa3944::t_b48daeba4ce8e2 59
+infrahub_sync/utils.py
+  s_559e0393aa3944::t_6943d0ef7bb560 154-159
+infrahub_sync/adapters/genericrestapi.py
+  s_559e0393aa3944::t_99f9de51bd603d 162-163
+  s_559e0393aa3944::t_a4c96e13bf5b05 204-206,208-211
+  s_559e0393aa3944::t_91d86a9a294b1b 212
+infrahub_sync/adapters/infrahub.py
+  s_559e0393aa3944::t_2ba1aa0627e660 457-459,463-465
+  s_559e0393aa3944::t_db86018dfc219c 484-486
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "52008e4789b5ad7900bb78ef590142e751e66c04",
+  "prompts": {},
+  "sessions": {
+    "s_559e0393aa3944": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c2c0471-cf63-45d5-916e-2e9d552d6797",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
