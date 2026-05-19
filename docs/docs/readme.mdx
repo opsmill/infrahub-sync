@@ -19,8 +19,6 @@ Infrahub Sync supports the following:
 
 ### Concepts
 
-Three key concepts in Infrahub Sync:
-
 - **Sync project** — a directory containing a YAML configuration file (`config.yml`) that defines one synchronization between two systems. A project specifies the source, the destination, the sync order, and the per-model schema mapping. A team can have many sync projects, each managing a different source-destination pair.
 - **Adapter** — the component that connects Infrahub Sync to a specific system. Each adapter handles both communication (API calls, authentication, request handling) and translation (converting the system's data into the internal sync engine's format). Infrahub Sync ships with adapters for common systems and supports custom adapters for systems without a pre-built one.
 - **Schema mapping** — the part of the project configuration that defines how source fields map to destination fields. Direct field mappings, references between models, identifiers, and static values are all declared in YAML.
