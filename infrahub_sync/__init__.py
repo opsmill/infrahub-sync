@@ -9,6 +9,8 @@ import pydantic
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from diffsync.store import BaseStore
 from diffsync.enum import DiffSyncFlags
 from jinja2 import StrictUndefined
 from jinja2.nativetypes import NativeEnvironment
@@ -143,6 +145,16 @@ class DiffSyncMixin:
     # attribute on `diffsync.DiffSync`). Declare it here so static type
     # checkers can resolve `self.top_level` on the mixin.
     top_level: ClassVar[list[str]] = []
+
+    # Every concrete adapter (NetboxAdapter, NautobotAdapter, InfrahubAdapter,
+    # …) assigns `self.config = config` in __init__. Declaring it on the mixin
+    # lets ty resolve `adapter.config.schema_mapping` without per-call ignores.
+    config: SyncConfig
+
+    # `store` is provided by `diffsync.Adapter` (the other base in every
+    # concrete adapter's MRO). Annotated here so helpers typed against the
+    # mixin alone — e.g. `adapters/utils.build_mapping` — can resolve it.
+    store: BaseStore
 
     def load(self):
         """Load all the models, one by one based on the order defined in top_level."""

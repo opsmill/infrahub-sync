@@ -3,18 +3,17 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from diffsync import Adapter
+    from infrahub_sync import DiffSyncMixin
 
 
-def build_mapping(adapter: Adapter, reference: str, obj, field) -> str:
+def build_mapping(adapter: DiffSyncMixin, reference: str, obj, field) -> str:
     """This is used when references are encountered to attempt to resolve them for mapping."""
     # Get object class and model name from the store
     object_class, modelname = adapter.store._get_object_class_and_model(model=reference)
 
-    # Find the schema element matching the model name
-    # `config` is attached at runtime by SyncAdapter subclasses; not part of diffsync.Adapter.
+    # Find the schema element matching the model name.
     schema_element = next(
-        (element for element in adapter.config.schema_mapping if element.name == modelname),  # ty: ignore[unresolved-attribute]
+        (element for element in adapter.config.schema_mapping if element.name == modelname),
         None,
     )
     if not schema_element:
