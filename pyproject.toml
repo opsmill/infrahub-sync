@@ -310,21 +310,3 @@ exclude = ["examples/**"]
 [tool.ty.environment]
 python-version = "3.10"
 
-[[tool.ty.overrides]]
-include = ["infrahub_sync/adapters/**"]
-
-[tool.ty.overrides.rules]
-##################################################################################################
-# The ignored rules below should be removed once the code has been updated, they are included    #
-# like this so that we can reactivate them one by one.                                           #
-##################################################################################################
-call-non-callable = "ignore"
-invalid-argument-type = "ignore"
-invalid-assignment = "ignore"
-invalid-method-override = "ignore"
-invalid-return-type = "ignore"
-no-matching-overload = "ignore"
-not-iterable = "ignore"
-unresolved-attribute = "ignore"
-unresolved-import = "ignore"
-

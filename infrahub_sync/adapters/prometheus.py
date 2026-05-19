@@ -3,17 +3,16 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import TYPE_CHECKING, Any
-
-from prometheus_client.parser import text_string_to_metric_families
-
-try:
-    from typing import Self
-except ImportError:
-    from typing_extensions import Self
+from typing import Any
 
 import requests
 from diffsync import Adapter, DiffSyncModel
+from prometheus_client.parser import (  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
+    text_string_to_metric_families,
+)
+
+# typing.Self is Python 3.11+; project supports 3.10 so import from typing_extensions.
+from typing_extensions import Self
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -47,8 +46,6 @@ def _derive_identifier_key(obj: dict) -> str:
     return f"{name}|{key}" if key else name
 
 
-if TYPE_CHECKING:
-    from collections.abc import Mapping
 # -----------------------------------------------------------------------------------------------------------
 
 
@@ -434,10 +431,11 @@ class PrometheusAdapter(DiffSyncMixin, Adapter):
         self._lookup: LookupResolver | None = None
 
     def _ensure_samples(self) -> dict[str, list[dict[str, Any]]]:
-        if self._samples_by_metric is not None:
+        cached = self._samples_by_metric
+        if cached is not None:
             if self._lookup is None:
-                self._lookup = LookupResolver(samples_by_metric=self._samples_by_metric)
-            return self._samples_by_metric
+                self._lookup = LookupResolver(samples_by_metric=cached)
+            return cached
 
         if isinstance(self.client, PrometheusScrapeClient):
             self._samples_by_metric = self.client.get_metrics(params=self.params)
@@ -461,8 +459,10 @@ class PrometheusAdapter(DiffSyncMixin, Adapter):
             self._samples_by_metric = store
 
         # init lookup resolver
-        self._lookup = LookupResolver(samples_by_metric=self._samples_by_metric)
-        return self._samples_by_metric
+        assert self._samples_by_metric is not None
+        samples = self._samples_by_metric
+        self._lookup = LookupResolver(samples_by_metric=samples)
+        return samples
 
     # ---- DiffSync hooks ----
 
@@ -483,17 +483,19 @@ class PrometheusAdapter(DiffSyncMixin, Adapter):
 
             # Inject a callable 'lookup' into each record so Jinja transforms can use it.
             # NOTE: must be done BEFORE transforms.
-            if self._lookup:
+            lookup = self._lookup
+            if lookup is not None:
                 for obj in objs:
                     # bind current obj into the callable
-                    def _mk_lookup(current: dict[str, Any]):
-                        return lambda metric, key_or_path, value_path, default=None: self._lookup.resolve_fn(
+                    def _mk_lookup(current: dict[str, Any], _lookup: LookupResolver = lookup):
+                        return lambda metric, key_or_path, value_path, default=None: _lookup.resolve_fn(
                             current, metric, key_or_path, value_path, default
                         )
 
                     obj["lookup"] = _mk_lookup(obj)
 
-            if self.config.source.name.title() == self.type.title():
+            # `self.type` is overridden as a non-None ClassVar; ty sees the base Optional[str].
+            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
                 filtered_objs = model.filter_records(records=objs, schema_mapping=element)
                 transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
                 logger.info(
@@ -556,8 +558,8 @@ class PrometheusModel(DiffSyncModelMixin, DiffSyncModel):
     def create(
         cls,
         adapter: Adapter,
-        ids: Mapping[Any, Any],
-        attrs: Mapping[Any, Any],
+        ids: dict[Any, Any],
+        attrs: dict[Any, Any],
     ) -> Self | None:
         # TODO: To implement
         return super().create(adapter=adapter, ids=ids, attrs=attrs)

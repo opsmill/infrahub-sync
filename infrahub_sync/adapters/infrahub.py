@@ -6,14 +6,6 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
-from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchema, RelationshipSchemaAPI
-
-try:
-    from typing import Self
-except ImportError:
-    from typing_extensions import Self
-
-
 from diffsync import Adapter, DiffSyncModel
 from infrahub_sdk import (
     Config,
@@ -21,7 +13,11 @@ from infrahub_sdk import (
 )
 from infrahub_sdk.exceptions import NodeNotFoundError
 from infrahub_sdk.node.property import NodeProperty
+from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
 from infrahub_sdk.utils import compare_lists
+
+# typing.Self is Python 3.11+; project supports 3.10 so import from typing_extensions.
+from typing_extensions import Self
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -84,7 +80,7 @@ def resolve_peer_node(
     if peer_node and fallback and client and not _node_has_complete_attributes(peer_node):
         peer_node = client.get(id=key, kind=peer_node.get_kind(), populate_store=True)
 
-    if not peer_node and fallback:
+    if not peer_node and fallback and client is not None:
         logger.warning("Unable to find %s [%s] in Store - Fallback to Infrahub", rel_schema.peer, key)
         peer_node = client.get(id=key, kind=rel_schema.peer, populate_store=True)
         if not peer_node:
@@ -122,8 +118,8 @@ def update_node(
 
         if attr_name in node._schema.relationship_names:
             for rel_schema in node._schema.relationships:
-                peer_schema: MainSchemaTypesAPI = schemas.get(rel_schema.peer)
-                if attr_name != rel_schema.name:
+                peer_schema = schemas.get(rel_schema.peer)
+                if attr_name != rel_schema.name or peer_schema is None:
                     continue
 
                 if rel_schema.cardinality == "one":
@@ -179,7 +175,7 @@ def diffsync_to_infrahub(
     ids: Mapping[Any, Any],
     attrs: Mapping[Any, Any],
     store: NodeStoreSync,
-    node_schema: NodeSchema,
+    node_schema: NodeSchemaAPI,
     schemas: Mapping[str, MainSchemaTypesAPI],
 ) -> dict[Any, Any]:
     """
@@ -193,8 +189,8 @@ def diffsync_to_infrahub(
     for key in list(data.keys()):
         if key in node_schema.relationship_names:
             for rel_schema in node_schema.relationships:
-                peer_schema: MainSchemaTypesAPI = schemas.get(rel_schema.peer)
-                if key != rel_schema.name:
+                peer_schema = schemas.get(rel_schema.peer)
+                if key != rel_schema.name or peer_schema is None:
                     continue
 
                 if rel_schema.cardinality == "one":
@@ -300,7 +296,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         # We will keep a copy of the schema
         self.schema: MutableMapping[str, MainSchemaTypesAPI] = self.client.schema.all(branch=infrahub_branch)
 
-    def model_loader(self, model_name: str, model: InfrahubModel) -> None:
+    def model_loader(self, model_name: str, model: type[InfrahubModel]) -> None:
         """
         Load and process models using schema mapping filters and transformations.
 
@@ -310,7 +306,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         element = next((el for el in self.config.schema_mapping if el.name == model_name), None)
         if element:
             # Retrieve all nodes corresponding to model_name (list of InfrahubNodeSync)
-            nodes = self.client.all(kind=model_name, include=model._attributes, populate_store=True)
+            nodes = self.client.all(kind=model_name, include=list(model._attributes), populate_store=True)
 
             # Transform the list of InfrahubNodeSync into a list of (node, dict) tuples
             node_dict_pairs = [(node, self.infrahub_node_to_diffsync(node=node)) for node in nodes]
@@ -319,7 +315,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             # Extract the list of dicts for filtering and transforming
             list_obj = [pair[1] for pair in node_dict_pairs]
 
-            if self.config.source.name.title() == self.type.title():
+            # `self.type` is overridden as a non-None ClassVar; ty sees the base Optional[str].
+            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
                 # Filter records
                 filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, model_name)
@@ -361,7 +358,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         for rel_schema in node._schema.relationships:
             if not has_field(config=self.config, name=node._schema.kind, field=rel_schema.name):
                 continue
-            peer_schema: MainSchemaTypesAPI = self.schema.get(rel_schema.peer)
+            peer_schema = self.schema.get(rel_schema.peer)
+            if peer_schema is None:
+                continue
 
             if rel_schema.cardinality == "one":
                 rel: RelatedNodeSync = getattr(node, rel_schema.name)
@@ -449,11 +448,17 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
     @classmethod
     def create(
         cls,
-        adapter: InfrahubAdapter,
-        ids: Mapping[Any, Any],
-        attrs: Mapping[Any, Any],
+        adapter: Adapter,
+        ids: dict[Any, Any],
+        attrs: dict[Any, Any],
     ) -> Self | None:
+        # `adapter` is typed as the diffsync base for Liskov compatibility with DiffSyncModel.create,
+        # but at runtime it is always an InfrahubAdapter (registered via add_model).
+        assert isinstance(adapter, InfrahubAdapter)
         node_schema = adapter.client.schema.get(kind=cls.__name__)
+        # client.schema.get() returns MainSchemaTypesAPI; diffsync_to_infrahub requires NodeSchemaAPI.
+        # All nodes registered as DiffSync models are concrete (NodeSchemaAPI), not generics/profiles.
+        assert isinstance(node_schema, NodeSchemaAPI)
         data = diffsync_to_infrahub(
             ids=ids, attrs=attrs, node_schema=node_schema, store=adapter.client.store, schemas=adapter.schema
         )
@@ -470,9 +475,12 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
         return super().create(adapter=adapter, ids=ids, attrs=attrs)
 
     def update(self, attrs: dict) -> Self | None:
-        node = self.adapter.client.get(id=self.local_id, kind=self.__class__.__name__)
-        source_id = self.adapter.source_node.id if self.adapter.source_node else None
-        owner_id = self.adapter.owner_node.id if self.adapter.owner_node else None
+        # `self.adapter` is `Adapter | None` on the diffsync base; always set after registration.
+        adapter = self.adapter
+        assert isinstance(adapter, InfrahubAdapter)
+        node = adapter.client.get(id=self.local_id, kind=self.__class__.__name__)
+        source_id = adapter.source_node.id if adapter.source_node else None
+        owner_id = adapter.owner_node.id if adapter.owner_node else None
         node = update_node(node=node, attrs=attrs, source=source_id, owner=owner_id)
         node.save(allow_upsert=True)
 

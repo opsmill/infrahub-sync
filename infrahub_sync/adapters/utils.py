@@ -12,8 +12,9 @@ def build_mapping(adapter: Adapter, reference: str, obj, field) -> str:
     object_class, modelname = adapter.store._get_object_class_and_model(model=reference)
 
     # Find the schema element matching the model name
+    # `config` is attached at runtime by SyncAdapter subclasses; not part of diffsync.Adapter.
     schema_element = next(
-        (element for element in adapter.config.schema_mapping if element.name == modelname),
+        (element for element in adapter.config.schema_mapping if element.name == modelname),  # ty: ignore[unresolved-attribute]
         None,
     )
     if not schema_element:
@@ -30,7 +31,8 @@ def build_mapping(adapter: Adapter, reference: str, obj, field) -> str:
     field_dict = {field.name: field.mapping for field in schema_element.fields}
 
     # Loop through object_class._identifiers to find corresponding field mappings
-    for identifier in object_class._identifiers:
+    # `_identifiers` is a private ClassVar on DiffSyncModel subclasses, not exposed on the base.
+    for identifier in object_class._identifiers:  # ty: ignore[unresolved-attribute]
         if identifier in field_dict:
             new_identifiers.append(field_dict[identifier])
 

@@ -58,7 +58,7 @@ class SchemaMappingModel(pydantic.BaseModel):
     identifiers: list[str] | None = pydantic.Field(default=None)
     filters: list[SchemaMappingFilter] | None = pydantic.Field(default=None)
     transforms: list[SchemaMappingTransform] | None = pydantic.Field(default=None)
-    fields: list[SchemaMappingField] | None = []
+    fields: list[SchemaMappingField] = pydantic.Field(default_factory=list)
 
 
 class SyncAdapter(pydantic.BaseModel):
@@ -159,6 +159,10 @@ class DiffSyncMixin:
 
 
 class DiffSyncModelMixin:
+    # `local_id` is declared by generated subclasses (see generator/templates/diffsync_models.j2).
+    # Declare it here so static type checkers can resolve `instance.local_id` on the mixin.
+    local_id: str | None = None
+
     @classmethod
     def apply_filter(cls, field_value: Any, operation: str, value: Any) -> bool:
         """Apply a specified operation to a field value."""
