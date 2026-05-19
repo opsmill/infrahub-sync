@@ -53,7 +53,7 @@ def has_node(config: SyncConfig, name: str) -> bool:
 def has_field(config: SyncConfig, name: str, field: str) -> bool:
     for item in config.schema_mapping:
         if item.name == name:
-            for subitem in item.fields:
+            for subitem in item.fields or []:
                 if subitem.name == field:
                     return True
     return False
