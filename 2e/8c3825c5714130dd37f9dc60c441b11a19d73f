@@ -1,0 +1,31 @@
+infrahub_sync/adapters/prometheus.py
+  s_559e0393aa3944::t_e339b5c4aa9c3b 447
+infrahub_sync/adapters/aci.py
+  s_559e0393aa3944::t_d379408bf5e24c 281
+  s_559e0393aa3944::t_4f304f78c56ace 288
+  s_559e0393aa3944::t_1c3ca2e73c6fb4 298
+  s_559e0393aa3944::t_e3232e9ad69035 9
+  s_559e0393aa3944::t_36f98bdc615a85 233
+  s_559e0393aa3944::t_5249f5314f75a4 11,14-15,17
+  s_559e0393aa3944::t_d4aed8378322a3 270,273
+tests/__init__.py
+  s_559e0393aa3944::t_b9083c326e6f95 5
+infrahub_sync/generator/__init__.py
+  s_559e0393aa3944::t_63488d451a78c1 172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "2e8c3825c5714130dd37f9dc60c441b11a19d73f",
+  "prompts": {},
+  "sessions": {
+    "s_559e0393aa3944": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c2c0471-cf63-45d5-916e-2e9d552d6797",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
