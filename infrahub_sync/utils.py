@@ -153,9 +153,7 @@ def get_instance(
 
     # Empty-string `directory` must still produce Path(config_file), matching pre-refactor behavior.
     config_file_path: Path = (
-        Path(config_file)
-        if Path(config_file).is_absolute() or directory is None
-        else Path(directory, config_file)
+        Path(config_file) if Path(config_file).is_absolute() or directory is None else Path(directory, config_file)
     )
 
     if config_file_path:
