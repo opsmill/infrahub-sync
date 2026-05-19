@@ -34,7 +34,6 @@ uv run infrahub-sync list --directory examples/
 # Make a change, then:
 uv run invoke format
 uv run invoke lint
-uv run invoke linter.lint-ty
 uv run infrahub-sync list --directory examples/
 
 # If docs/CLI changed:
@@ -50,8 +49,9 @@ Run these in order before committing.
 uv sync
 uv run invoke format
 uv run invoke lint
-uv run invoke linter.lint-ty
 ```
+
+`invoke lint` runs ruff → pylint → yamllint → ty.
 
 **Policy:**
 
@@ -121,7 +121,7 @@ infrahub-sync/
 - Prefer explicit types on new or changed code.
 - Ruff: formatted and lint-clean. Honor `pyproject.toml`.
 - Pylint: fix actionable issues in touched code; some warnings are expected.
-- ty: run via `uv run invoke linter.lint-ty` (or `uv run ty check .`); do not increase the error count.
+- ty: included in `uv run invoke lint`; do not increase the error count. For an ad-hoc check, `uv run ty check .` works too.
 - Public functions and classes require concise docstrings.
 - Raise specific exceptions; avoid broad `except Exception:`.
 
@@ -187,6 +187,7 @@ uv run invoke --list
 # linter.lint-ruff                Lint Python code with ruff
 # linter.lint-pylint              Lint Python code with pylint
 # linter.lint-yaml                Lint YAML files with yamllint
+# linter.lint-ty                  Type-check Python code with ty
 #
 # docs.*
 # docs.generate                   Generate CLI documentation
