@@ -14,9 +14,9 @@ ns.configure(
         }
     }
 )
-ns.add_collection(linter)
-ns.add_collection(docs)
-ns.add_collection(tests)
+ns.add_collection(Collection.from_module(linter))
+ns.add_collection(Collection.from_module(docs))
+ns.add_collection(Collection.from_module(tests))
 
 
 @task(name="lint")
@@ -49,7 +49,7 @@ def tests_integration(context: Context) -> None:
 
 @task(name="generate-doc")
 def generate_doc(context: Context) -> None:
-    docs.generate_doc(context)
+    docs.generate(context)
 
 
 @task(name="docusaurus")
