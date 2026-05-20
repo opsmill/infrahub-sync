@@ -1,0 +1,33 @@
+infrahub_sync/adapters/infrahub.py
+  s_559e0393aa3944::t_069a6a12352ecf 456
+infrahub_sync/adapters/genericrestapi.py
+  s_559e0393aa3944::t_dc14c20fdee22a 202
+infrahub_sync/potenda/__init__.py
+  s_559e0393aa3944::t_8bb3a134307986 37
+infrahub_sync/adapters/peeringmanager.py
+  s_559e0393aa3944::t_8e2e531420b1bb 67
+infrahub_sync/utils.py
+  s_559e0393aa3944::t_7ecc1a821dc1c7 154
+infrahub_sync/__init__.py
+  s_559e0393aa3944::t_9794babf30fe62 24
+  s_559e0393aa3944::t_5dcfbbb8a2fe2b 157
+  s_559e0393aa3944::t_128f69dbb20d21 274
+infrahub_sync/cli.py
+  s_559e0393aa3944::t_271221eebdcdcc 234
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.10",
+  "base_commit_sha": "9c571f7fcc4793cf7f405bf98f15fec76729ec22",
+  "prompts": {},
+  "sessions": {
+    "s_559e0393aa3944": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1c2c0471-cf63-45d5-916e-2e9d552d6797",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Benoit Kohler <bkohler@bearchitek.tailc018d.ts.net>"
+    }
+  }
+}
