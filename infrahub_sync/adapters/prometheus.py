@@ -10,8 +10,6 @@ from diffsync import Adapter, DiffSyncModel
 from prometheus_client.parser import (  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
     text_string_to_metric_families,
 )
-
-# typing.Self is Python 3.11+; project supports 3.10 so import from typing_extensions.
 from typing_extensions import Self
 
 from infrahub_sync import (
@@ -494,7 +492,6 @@ class PrometheusAdapter(DiffSyncMixin, Adapter):
 
                     obj["lookup"] = _mk_lookup(obj)
 
-            # `self.type` is overridden as a non-None ClassVar; ty sees the base Optional[str].
             if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
                 filtered_objs = model.filter_records(records=objs, schema_mapping=element)
                 transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)

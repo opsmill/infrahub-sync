@@ -5,8 +5,6 @@ import os
 from typing import Any
 
 from diffsync import Adapter, DiffSyncModel
-
-# typing.Self is Python 3.11+; project supports 3.10 so import from typing_extensions.
 from typing_extensions import Self
 
 from infrahub_sync import (
@@ -201,11 +199,8 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
         # Try to get data using the response key
         objs = response_data.get(response_key, response_data.get(resource_name, {}))
 
-        # Handle different response formats. Filter each branch down to dict items so the
-        # declared `list[dict[str, Any]]` contract holds and `obj_to_diffsync` (which calls
-        # `obj.get(...)`) doesn't crash on non-dict entries.
+        # Filter each branch to dicts so `obj_to_diffsync` (which calls `.get(...)`) never sees non-dict items.
         if isinstance(objs, dict):
-            # Dict response (e.g. Observium-style: {id: {…}, id2: {…}}).
             return [v for v in objs.values() if isinstance(v, dict)]
         if isinstance(objs, list):
             return [v for v in objs if isinstance(v, dict)]
@@ -266,7 +261,6 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
 
                 else:
                     data[field.name] = []
-                    # get_value returns Any | None; guarded above by the outer field.mapping check.
                     for node in get_value(obj, field.mapping) or []:
                         if not node:
                             continue

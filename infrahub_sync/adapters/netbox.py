@@ -8,8 +8,6 @@ from typing import Any
 import pynetbox  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
 from diffsync import Adapter, DiffSyncModel
 from requests import Session
-
-# typing.Self is Python 3.11+; project supports 3.10 so import from typing_extensions.
 from typing_extensions import Self
 
 from infrahub_sync import (
@@ -81,7 +79,6 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
                 list_obj.append(dict(node))
 
             total = len(list_obj)
-            # `self.type` is overridden as a non-None ClassVar; ty sees the base Optional[str].
             if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
                 # Filter records
                 filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
@@ -142,7 +139,6 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
                             data[field.name] = node
                 else:
                     data[field.name] = []
-                    # get_value returns Any | None; default to empty iterable when missing.
                     for node in get_value(obj, field.mapping) or []:
                         if not node:
                             continue

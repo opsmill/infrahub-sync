@@ -231,8 +231,7 @@ def generate(
     except ServerNotResponsiveError as exc:
         print_error_and_abort(str(exc))
 
-    # The Infrahub SDK returns API schema variants (NodeSchemaAPI, GenericSchemaAPI, ...) that are
-    # structurally compatible with the (NodeSchema | GenericSchema) mapping expected by utils.
+    # SDK returns *SchemaAPI variants; structurally compatible with the (NodeSchema | GenericSchema) shape utils expects.
     typed_schema = cast("MutableMapping[str, NodeSchema | GenericSchema]", schema)
     missing_schema_models = find_missing_schema_model(sync_instance=sync_instance, schema=typed_schema)
     if missing_schema_models:

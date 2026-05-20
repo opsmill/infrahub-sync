@@ -3,8 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import requests
-
-# typing.Self is Python 3.11+; project supports 3.10 so import from typing_extensions.
 from typing_extensions import Self
 
 from infrahub_sync.adapters.genericrestapi import GenericrestapiAdapter, GenericrestapiModel
@@ -64,12 +62,9 @@ class PeeringmanagerModel(GenericrestapiModel):
         based on the schema mapping configuration, and sends an update request
         to the API endpoint of the object.
         """
-        # `self.adapter` is `Adapter | None` on the diffsync base, but is always
-        # set when `update()` is called on a registered instance.
         adapter = self.adapter
         assert adapter is not None
-        # `config` / `client` are attached at runtime by the concrete sync adapter
-        # and are not declared on the diffsync.Adapter base.
+        # `adapter` is typed as the base diffsync.Adapter; `config` and `client` come from the concrete subclass.
         resource_name = self.__class__.get_resource_name(schema_mapping=adapter.config.schema_mapping)  # ty: ignore[unresolved-attribute]
 
         # Determine the unique identifier for the API request
@@ -95,7 +90,6 @@ class PeeringmanagerModel(GenericrestapiModel):
                                 filtered_nodes = [
                                     node for node in all_nodes_for_reference if node.get_unique_id() in value
                                 ]
-                                # `local_id` is declared on generated subclasses (DiffSyncModelMixin).
                                 mapped_attrs[target_field_name] = [node.local_id for node in filtered_nodes]  # ty: ignore[unresolved-attribute]
                             else:
                                 # For single references, find the matching node

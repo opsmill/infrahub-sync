@@ -21,16 +21,12 @@ from infrahub_sync.adapters.utils import get_value
 
 logger = logging.getLogger(__name__)
 
-# Pydantic v1/v2 compatibility shim. The runtime branch picks the right decorator
-# and kwargs; ty cannot statically follow this (the kwargs dict has mixed value
-# types across branches), so we suppress at the single call-site below.
+# Pydantic v1/v2 compatibility shim — runtime branch picks the right decorator + kwargs.
 if version.parse(pydantic.__version__) >= version.parse("2.0.0"):
-    # With Pydantic v2, we use `field_validator` with mode "before"
     from pydantic import field_validator as validator_decorator
 
     validator_kwargs: dict[str, Any] = {"mode": "before"}
 else:
-    # With Pydantic v1, we use validator with `pre=True` and `allow_reuse=True`
     from pydantic import validator as validator_decorator  # ty: ignore[deprecated]
 
     validator_kwargs = {"pre": True, "allow_reuse": True}
@@ -84,8 +80,6 @@ class SyncConfig(pydantic.BaseModel):
     schema_mapping: list[SchemaMappingModel] = []
     diffsync_flags: list[Union[str, DiffSyncFlags]] | None = []
 
-    # ty cannot resolve which overload matches because validator_kwargs holds mixed
-    # value types across the v1/v2 branches. The runtime branch is correct.
     @validator_decorator("diffsync_flags", **validator_kwargs)  # ty: ignore[no-matching-overload]
     def convert_str_to_enum(cls, v):
         if not isinstance(v, list):
@@ -141,19 +135,8 @@ FILTERS_OPERATIONS: dict[str, Callable[..., Any]] = {
 
 
 class DiffSyncMixin:
-    # `top_level` is supplied by the concrete `DiffSync` subclass (a class
-    # attribute on `diffsync.DiffSync`). Declare it here so static type
-    # checkers can resolve `self.top_level` on the mixin.
     top_level: ClassVar[list[str]] = []
-
-    # Every concrete adapter (NetboxAdapter, NautobotAdapter, InfrahubAdapter,
-    # …) assigns `self.config = config` in __init__. Declaring it on the mixin
-    # lets ty resolve `adapter.config.schema_mapping` without per-call ignores.
     config: SyncConfig
-
-    # `store` is provided by `diffsync.Adapter` (the other base in every
-    # concrete adapter's MRO). Annotated here so helpers typed against the
-    # mixin alone — e.g. `adapters/utils.build_mapping` — can resolve it.
     store: BaseStore
 
     def load(self):
@@ -171,8 +154,7 @@ class DiffSyncMixin:
 
 
 class DiffSyncModelMixin:
-    # `local_id` is declared by generated subclasses (see generator/templates/diffsync_models.j2).
-    # Declare it here so static type checkers can resolve `instance.local_id` on the mixin.
+    # Set on generated subclasses (see generator/templates/diffsync_models.j2).
     local_id: str | None = None
 
     @classmethod
@@ -289,8 +271,7 @@ class DiffSyncModelMixin:
 
     @classmethod
     def is_list(cls, name):
-        # DiffSync models extend Pydantic; the field map is `model_fields` on v2
-        # and `__fields__` on v1. Look up dynamically so this works with both.
+        # Pydantic v2 exposes `model_fields`; v1 uses `__fields__`. Try both.
         fields = getattr(cls, "model_fields", None) or getattr(cls, "__fields__", None) or {}
         field = fields.get(name)
         if not field:

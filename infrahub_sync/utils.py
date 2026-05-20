@@ -151,7 +151,7 @@ def get_instance(
         # TODO: Log or raise an Error/Warning
         return None
 
-    # Empty-string `directory` must still produce Path(config_file), matching pre-refactor behavior.
+    # Check `directory is None` (not truthiness) so an empty string still collapses to Path(config_file).
     config_file_path: Path = (
         Path(config_file) if Path(config_file).is_absolute() or directory is None else Path(directory, config_file)
     )

@@ -34,9 +34,7 @@ class Potenda:
         self.source = source
         self.destination = destination
 
-        # diffsync's `Adapter.top_level` is declared as a ClassVar but the library
-        # supports per-instance overrides via attribute assignment; ty flags the
-        # ClassVar assignment so we suppress just those two lines.
+        # diffsync's `Adapter.top_level` is a ClassVar but the library supports per-instance overrides.
         self.source.top_level = top_level  # ty: ignore[invalid-attribute-access]
         self.destination.top_level = top_level  # ty: ignore[invalid-attribute-access]
 

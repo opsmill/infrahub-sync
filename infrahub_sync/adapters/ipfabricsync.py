@@ -6,8 +6,6 @@ import os
 from typing import Any, ClassVar
 
 from diffsync import Adapter, DiffSyncModel
-
-# typing.Self is Python 3.11+; project supports 3.10 so import from typing_extensions.
 from typing_extensions import Self
 
 from infrahub_sync import (
@@ -35,7 +33,6 @@ ipf_filters = {
 
 
 class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
-    # diffsync.Adapter declares `type: Optional[str]`; narrow to non-None here.
     type: ClassVar[str] = "IPFabricsync"
 
     def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
@@ -80,7 +77,6 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
             table = self.client.fetch_all(element.mapping, filters=ipf_filters.get(element.mapping))
 
             total = len(table)
-            # `self.type` is overridden as a non-None ClassVar above; ty sees the base Optional[str].
             if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
                 # Filter records
                 filtered_objs = model.filter_records(records=table, schema_mapping=element)

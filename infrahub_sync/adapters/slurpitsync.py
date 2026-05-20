@@ -7,8 +7,6 @@ from typing import Any
 
 import slurpit  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
 from diffsync import Adapter, DiffSyncModel
-
-# typing.Self is Python 3.11+; project supports 3.10 so import from typing_extensions.
 from typing_extensions import Self
 
 from infrahub_sync import (
@@ -199,7 +197,6 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                     list_obj.append(node)
             total = len(list_obj)
 
-            # `self.type` is overridden as a non-None ClassVar; ty sees the base Optional[str].
             if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
                 # Filter records
                 filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)

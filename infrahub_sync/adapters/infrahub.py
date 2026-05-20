@@ -15,8 +15,6 @@ from infrahub_sdk.exceptions import NodeNotFoundError
 from infrahub_sdk.node.property import NodeProperty
 from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
 from infrahub_sdk.utils import compare_lists
-
-# typing.Self is Python 3.11+; project supports 3.10 so import from typing_extensions.
 from typing_extensions import Self
 
 from infrahub_sync import (
@@ -315,7 +313,6 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             # Extract the list of dicts for filtering and transforming
             list_obj = [pair[1] for pair in node_dict_pairs]
 
-            # `self.type` is overridden as a non-None ClassVar; ty sees the base Optional[str].
             if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
                 # Filter records
                 filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
@@ -452,14 +449,11 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
         ids: dict[Any, Any],
         attrs: dict[Any, Any],
     ) -> Self | None:
-        # `adapter` is typed as the diffsync base for Liskov compatibility with DiffSyncModel.create,
-        # but at runtime it is always an InfrahubAdapter (registered via add_model).
         if not isinstance(adapter, InfrahubAdapter):
             msg = f"{cls.__name__}.create expected an InfrahubAdapter, got {type(adapter).__name__}"
             raise TypeError(msg)
         node_schema = adapter.client.schema.get(kind=cls.__name__)
-        # client.schema.get() returns MainSchemaTypesAPI; diffsync_to_infrahub requires NodeSchemaAPI.
-        # All nodes registered as DiffSync models are concrete (NodeSchemaAPI), not generics/profiles.
+        # client.schema.get() returns the wider MainSchemaTypesAPI; diffsync_to_infrahub needs NodeSchemaAPI.
         if not isinstance(node_schema, NodeSchemaAPI):
             msg = f"Expected NodeSchemaAPI for {cls.__name__}, got {type(node_schema).__name__}"
             raise TypeError(msg)
@@ -479,7 +473,6 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
         return super().create(adapter=adapter, ids=ids, attrs=attrs)
 
     def update(self, attrs: dict) -> Self | None:
-        # `self.adapter` is `Adapter | None` on the diffsync base; always set after registration.
         adapter = self.adapter
         if not isinstance(adapter, InfrahubAdapter):
             msg = f"{self.__class__.__name__}.update expected an InfrahubAdapter, got {type(adapter).__name__}"
