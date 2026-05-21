@@ -29,14 +29,17 @@ class _PrintCallVisitor(ast.NodeVisitor):
         self.generic_visit(node)
         self._current_class = old
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         old = self._current_func
         self._current_func = node.name
         self.generic_visit(node)
         self._current_func = old
 
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_function(node)
+
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self.visit_FunctionDef(node)  # type: ignore[arg-type]
+        self._visit_function(node)
 
     def visit_Call(self, node: ast.Call) -> None:
         if isinstance(node.func, ast.Name) and node.func.id == "print" and self._current_func != "_print_callback":

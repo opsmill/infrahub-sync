@@ -2,18 +2,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-try:
-    from typing import Self
-except ImportError:
-    from typing_extensions import Self
-
 import requests
+from typing_extensions import Self
 
 from infrahub_sync.adapters.genericrestapi import GenericrestapiAdapter, GenericrestapiModel
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from diffsync import Adapter
 
     from infrahub_sync import (
@@ -54,8 +48,8 @@ class PeeringmanagerModel(GenericrestapiModel):
     def create(
         cls,
         adapter: Adapter,
-        ids: Mapping[Any, Any],
-        attrs: Mapping[Any, Any],
+        ids: dict[Any, Any],
+        attrs: dict[Any, Any],
     ) -> Self | None:
         # TODO: To implement
         return super().create(adapter=adapter, ids=ids, attrs=attrs)
@@ -68,8 +62,10 @@ class PeeringmanagerModel(GenericrestapiModel):
         based on the schema mapping configuration, and sends an update request
         to the API endpoint of the object.
         """
-        # Determine the resource name using the schema mapping
-        resource_name = self.__class__.get_resource_name(schema_mapping=self.adapter.config.schema_mapping)
+        adapter = self.adapter
+        assert adapter is not None
+        # `adapter` is typed as the base diffsync.Adapter; `config` and `client` come from the concrete subclass.
+        resource_name = self.__class__.get_resource_name(schema_mapping=adapter.config.schema_mapping)  # ty: ignore[unresolved-attribute]
 
         # Determine the unique identifier for the API request
         unique_identifier = self.local_id if hasattr(self, "local_id") else self.get_unique_id()
@@ -77,7 +73,7 @@ class PeeringmanagerModel(GenericrestapiModel):
 
         # Map incoming attributes to the target attributes based on schema mapping
         mapped_attrs: dict[str, Any] = {}
-        for field in self.adapter.config.schema_mapping:
+        for field in adapter.config.schema_mapping:  # ty: ignore[unresolved-attribute]
             if field.name == self.__class__.get_type():
                 for field_mapping in field.fields:
                     # Map source field name to target field name
@@ -87,14 +83,14 @@ class PeeringmanagerModel(GenericrestapiModel):
 
                         # Check if the field is a relationship
                         if field_mapping.reference:
-                            all_nodes_for_reference = self.adapter.store.get_all(model=field_mapping.reference)
+                            all_nodes_for_reference = adapter.store.get_all(model=field_mapping.reference)
 
                             if isinstance(value, list):
                                 # For lists, filter nodes to match the unique IDs in the attribute value
                                 filtered_nodes = [
                                     node for node in all_nodes_for_reference if node.get_unique_id() in value
                                 ]
-                                mapped_attrs[target_field_name] = [node.local_id for node in filtered_nodes]
+                                mapped_attrs[target_field_name] = [node.local_id for node in filtered_nodes]  # ty: ignore[unresolved-attribute]
                             else:
                                 # For single references, find the matching node
                                 filtered_node = next(
@@ -102,13 +98,13 @@ class PeeringmanagerModel(GenericrestapiModel):
                                     None,
                                 )
                                 if filtered_node:
-                                    mapped_attrs[target_field_name] = filtered_node.local_id
+                                    mapped_attrs[target_field_name] = filtered_node.local_id  # ty: ignore[unresolved-attribute]
                         else:
                             mapped_attrs[target_field_name] = value
 
         # Attempt to send the update request to the API
         try:
-            self.adapter.client.patch(endpoint, data=mapped_attrs)
+            adapter.client.patch(endpoint, data=mapped_attrs)  # ty: ignore[unresolved-attribute]
             return super().update(attrs)
         except (requests.exceptions.HTTPError, ConnectionError) as exc:
             msg = f"Error during update: {exc!s}"

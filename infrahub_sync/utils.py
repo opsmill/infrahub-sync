@@ -58,9 +58,9 @@ def render_adapter(
 
         for item in files_to_render:
             render_template(
-                template_file=item[0],
+                template_file=Path(item[0]),
                 output_dir=output_dir_path,
-                output_file=item[1],
+                output_file=Path(item[1]),
                 context={"schema": schema, "adapter": adapter, "config": sync_instance},
             )
             output_file_path = output_dir_path / item[1]
@@ -147,15 +147,14 @@ def get_instance(
                 return item
         return None
 
-    config_file_path = None
-    try:
-        if Path(config_file).is_absolute() or directory is None:
-            config_file_path = Path(config_file)
-        elif directory:
-            config_file_path = Path(directory, config_file)
-    except TypeError:
+    if config_file is None:
         # TODO: Log or raise an Error/Warning
         return None
+
+    # Check `directory is None` (not truthiness) so an empty string still collapses to Path(config_file).
+    config_file_path: Path = (
+        Path(config_file) if Path(config_file).is_absolute() or directory is None else Path(directory, config_file)
+    )
 
     if config_file_path:
         directory_path = config_file_path.parent

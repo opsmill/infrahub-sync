@@ -3,15 +3,11 @@ from __future__ import annotations
 # pylint: disable=R0801
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-try:
-    from typing import Self
-except ImportError:
-    from typing_extensions import Self
-
-import pynautobot
+import pynautobot  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
 from diffsync import Adapter, DiffSyncModel
+from typing_extensions import Self
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -24,9 +20,6 @@ from infrahub_sync import (
 from .utils import get_value
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
 
 
 class NautobotAdapter(DiffSyncMixin, Adapter):
@@ -52,7 +45,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
         client = pynautobot.api(url=url, token=token, threading=True, max_workers=5, retries=3, verify=verify_ssl)
         return client
 
-    def model_loader(self, model_name: str, model: NautobotModel) -> None:
+    def model_loader(self, model_name: str, model: type[NautobotModel]) -> None:
         """
         Load and process models using schema mapping filters and transformations.
 
@@ -82,7 +75,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                 list_obj.append(dict(node))
 
             total = len(list_obj)
-            if self.config.source.name.title() == self.type.title():
+            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
                 # Filter records
                 filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, resource_name)
@@ -98,7 +91,9 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                 item = model(**data)
                 self.add(item)
 
-    def nautobot_obj_to_diffsync(self, obj: dict[str, Any], mapping: SchemaMappingModel, model: NautobotModel) -> dict:
+    def nautobot_obj_to_diffsync(
+        self, obj: dict[str, Any], mapping: SchemaMappingModel, model: type[NautobotModel]
+    ) -> dict:
         obj_id = obj.get("id")
         data: dict[str, Any] = {"local_id": str(obj_id)}
 
@@ -129,7 +124,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                         matching_nodes = []
                         node_id = node.get("id", None)
                         if node_id:
-                            matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
+                            matching_nodes = [item for item in nodes if item.local_id == str(node_id)]  # ty: ignore[unresolved-attribute]
                             if len(matching_nodes) == 0:
                                 # TODO: If the peer is a Node we are filtering, we could end up not finding it
                                 logger.warning("Unable to locate the node %s %s", field.name, node_id)
@@ -139,7 +134,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
 
                 else:
                     data[field.name] = []
-                    for node in get_value(obj, field.mapping):
+                    for node in get_value(obj, field.mapping) or []:
                         if not node:
                             continue
                         node_id = node.get("id", None)
@@ -147,7 +142,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                             node_id = node[1] if node[0] == "id" else None
                             if not node_id:
                                 continue
-                        matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
+                        matching_nodes = [item for item in nodes if item.local_id == str(node_id)]  # ty: ignore[unresolved-attribute]
                         if len(matching_nodes) == 0:
                             # TODO: If the peer is a Node we are filtering, we could end up not finding it
                             logger.warning("Unable to locate the node %s %s", field.name, node_id)
@@ -163,8 +158,8 @@ class NautobotModel(DiffSyncModelMixin, DiffSyncModel):
     def create(
         cls,
         adapter: Adapter,
-        ids: Mapping[Any, Any],
-        attrs: Mapping[Any, Any],
+        ids: dict[Any, Any],
+        attrs: dict[Any, Any],
     ) -> Self | None:
         # TODO: To implement
         return super().create(adapter=adapter, ids=ids, attrs=attrs)

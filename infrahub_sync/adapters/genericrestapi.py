@@ -1,16 +1,11 @@
 from __future__ import annotations
 
-import os
-from typing import TYPE_CHECKING, Any
-
-try:
-    from typing import Self
-except ImportError:
-    from typing_extensions import Self
-
 import logging
+import os
+from typing import Any
 
 from diffsync import Adapter, DiffSyncModel
+from typing_extensions import Self
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -24,9 +19,6 @@ from .rest_api_client import RestApiClient
 from .utils import derive_identifier_key, get_value
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
 
 
 class GenericrestapiAdapter(DiffSyncMixin, Adapter):
@@ -134,7 +126,7 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
             verify=verify_ssl,
         )
 
-    def model_loader(self, model_name: str, model: GenericrestapiModel) -> None:
+    def model_loader(self, model_name: str, model: type[GenericrestapiModel]) -> None:
         """
         Load and process models using schema mapping filters and transformations.
 
@@ -165,7 +157,8 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
                 raise ValueError(msg) from exc
 
             total = len(objs)
-            if self.config.source.name.title() == self.type.title():
+            adapter_type_title = (self.type or "").title()
+            if self.config.source.name.title() == adapter_type_title:
                 # Filter records
                 filtered_objs = model.filter_records(records=objs, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, resource_name)
@@ -206,17 +199,16 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
         # Try to get data using the response key
         objs = response_data.get(response_key, response_data.get(resource_name, {}))
 
-        # Handle different response formats
+        # Filter each branch to dicts so `obj_to_diffsync` (which calls `.get(...)`) never sees non-dict items.
         if isinstance(objs, dict):
-            # If it's a dict, convert values to list (like Observium)
-            objs = list(objs.values())
-        elif not isinstance(objs, list):
-            # If it's neither dict nor list, wrap in list
-            objs = [objs] if objs else []
+            return [v for v in objs.values() if isinstance(v, dict)]
+        if isinstance(objs, list):
+            return [v for v in objs if isinstance(v, dict)]
+        return []
 
-        return objs
-
-    def obj_to_diffsync(self, obj: dict[str, Any], mapping: SchemaMappingModel, model: GenericrestapiModel) -> dict:
+    def obj_to_diffsync(
+        self, obj: dict[str, Any], mapping: SchemaMappingModel, model: type[GenericrestapiModel]
+    ) -> dict:
         """
         Convert an object to DiffSync format.
 
@@ -257,7 +249,7 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
                         if isinstance(node, dict):
                             matching_nodes = []
                             node_id = node.get("id", None)
-                            matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
+                            matching_nodes = [item for item in nodes if item.local_id == str(node_id)]  # ty: ignore[unresolved-attribute]
                             if len(matching_nodes) == 0:
                                 msg = f"Unable to locate the node {model} {node_id}"
                                 raise IndexError(msg)
@@ -269,7 +261,7 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
 
                 else:
                     data[field.name] = []
-                    for node in get_value(obj, field.mapping):
+                    for node in get_value(obj, field.mapping) or []:
                         if not node:
                             continue
                         node_id = node.get("id", None)
@@ -277,7 +269,7 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
                             node_id = node[1] if node[0] == "id" else None
                             if not node_id:
                                 continue
-                        matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
+                        matching_nodes = [item for item in nodes if item.local_id == str(node_id)]  # ty: ignore[unresolved-attribute]
                         if len(matching_nodes) == 0:
                             msg = f"Unable to locate the node {field.reference} {node_id}"
                             raise IndexError(msg)
@@ -296,8 +288,8 @@ class GenericrestapiModel(DiffSyncModelMixin, DiffSyncModel):
     def create(
         cls,
         adapter: Adapter,
-        ids: Mapping[Any, Any],
-        attrs: Mapping[Any, Any],
+        ids: dict[Any, Any],
+        attrs: dict[Any, Any],
     ) -> Self | None:
         # TODO: To implement
         return super().create(adapter=adapter, ids=ids, attrs=attrs)

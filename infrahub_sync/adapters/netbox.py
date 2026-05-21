@@ -3,16 +3,12 @@ from __future__ import annotations
 # pylint: disable=R0801
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from requests import Session
-
-try:
-    from typing import Self
-except ImportError:
-    from typing_extensions import Self
-import pynetbox
+import pynetbox  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
 from diffsync import Adapter, DiffSyncModel
+from requests import Session
+from typing_extensions import Self
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -25,9 +21,6 @@ from infrahub_sync import (
 from .utils import get_value
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
 
 
 class NetboxAdapter(DiffSyncMixin, Adapter):
@@ -57,7 +50,7 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
         client.http_session = session
         return client
 
-    def model_loader(self, model_name: str, model: NetboxModel) -> None:
+    def model_loader(self, model_name: str, model: type[NetboxModel]) -> None:
         """
         Load and process models using schema mapping filters and transformations.
 
@@ -86,7 +79,7 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
                 list_obj.append(dict(node))
 
             total = len(list_obj)
-            if self.config.source.name.title() == self.type.title():
+            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
                 # Filter records
                 filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, resource_name)
@@ -102,7 +95,9 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
                 item = model(**data)
                 self.add(item)
 
-    def netbox_obj_to_diffsync(self, obj: dict[str, Any], mapping: SchemaMappingModel, model: NetboxModel) -> dict:
+    def netbox_obj_to_diffsync(
+        self, obj: dict[str, Any], mapping: SchemaMappingModel, model: type[NetboxModel]
+    ) -> dict:
         obj_id = obj.get("id")
         data: dict[str, Any] = {"local_id": str(obj_id)}
 
@@ -134,7 +129,7 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
                         if isinstance(node, dict):
                             matching_nodes = []
                             node_id = node.get("id", None)
-                            matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
+                            matching_nodes = [item for item in nodes if item.local_id == str(node_id)]  # ty: ignore[unresolved-attribute]
                             if len(matching_nodes) == 0:
                                 msg = f"Unable to locate the node {field.name} {node_id}"
                                 raise IndexError(msg)
@@ -144,7 +139,7 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
                             data[field.name] = node
                 else:
                     data[field.name] = []
-                    for node in get_value(obj, field.mapping):
+                    for node in get_value(obj, field.mapping) or []:
                         if not node:
                             continue
                         node_id = node.get("id", None)
@@ -152,7 +147,7 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
                             node_id = node[1] if node[0] == "id" else None
                             if not node_id:
                                 continue
-                        matching_nodes = [item for item in nodes if item.local_id == str(node_id)]
+                        matching_nodes = [item for item in nodes if item.local_id == str(node_id)]  # ty: ignore[unresolved-attribute]
                         if len(matching_nodes) == 0:
                             msg = f"Unable to locate the node {field.reference} {node_id}"
                             raise IndexError(msg)
@@ -167,8 +162,8 @@ class NetboxModel(DiffSyncModelMixin, DiffSyncModel):
     def create(
         cls,
         adapter: Adapter,
-        ids: Mapping[Any, Any],
-        attrs: Mapping[Any, Any],
+        ids: dict[Any, Any],
+        attrs: dict[Any, Any],
     ) -> Self | None:
         # TODO: To implement
         return super().create(adapter=adapter, ids=ids, attrs=attrs)

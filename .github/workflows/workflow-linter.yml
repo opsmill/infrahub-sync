@@ -84,6 +84,9 @@ jobs:
       - name: "Linting: ruff format"
         run: "uv run ruff format --check --diff ."
 
+      - name: "Linting: ty check"
+        run: "uv run ty check ."
+
       # TODO: Need to cleanup code
       # - name: "Pylint Tests"
       #   run: "uv run pylint infrahub_sync/**/*.py"

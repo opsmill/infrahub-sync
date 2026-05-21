@@ -34,8 +34,9 @@ class Potenda:
         self.source = source
         self.destination = destination
 
-        self.source.top_level = top_level
-        self.destination.top_level = top_level
+        # diffsync's `Adapter.top_level` is a ClassVar but the library supports per-instance overrides.
+        self.source.top_level = top_level  # ty: ignore[invalid-attribute-access]
+        self.destination.top_level = top_level  # ty: ignore[invalid-attribute-access]
 
         self.partition = partition
         self.progress_bar = None
@@ -45,9 +46,9 @@ class Potenda:
             logging.getLogger("diffsync").setLevel(verbosity)
 
         # Combine DiffSyncFlags from the configuration
-        self.flags = DiffSyncFlags.NONE
-        for flag in self.config.diffsync_flags:
-            self.flags |= flag
+        self.flags: DiffSyncFlags = DiffSyncFlags.NONE
+        for flag in self.config.diffsync_flags or []:
+            self.flags |= flag if isinstance(flag, DiffSyncFlags) else DiffSyncFlags[flag]
 
         # Fallback to `SKIP_UNMATCHED_DST` if nothing is define
         if self.flags == DiffSyncFlags.NONE:

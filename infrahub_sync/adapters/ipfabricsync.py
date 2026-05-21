@@ -3,14 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import TYPE_CHECKING, Any
-
-try:
-    from typing import Self
-except ImportError:
-    from typing_extensions import Self
+from typing import Any, ClassVar
 
 from diffsync import Adapter, DiffSyncModel
+from typing_extensions import Self
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -24,13 +20,10 @@ from infrahub_sync.adapters.utils import build_mapping
 logger = logging.getLogger(__name__)
 
 try:
-    from ipfabric import IPFClient
+    from ipfabric import IPFClient  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
 except ImportError:
     logger.exception("Failed to import ipfabric")
     raise
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
 
 ipf_filters = {
     "tables/inventory/summary/platforms": {"and": [{"platform": ["empty", False]}]},
@@ -40,7 +33,7 @@ ipf_filters = {
 
 
 class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
-    type = "IPFabricsync"
+    type: ClassVar[str] = "IPFabricsync"
 
     def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -68,7 +61,7 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
 
         return IPFClient(**settings)
 
-    def model_loader(self, model_name: str, model: IpfabricsyncModel) -> None:
+    def model_loader(self, model_name: str, model: type[IpfabricsyncModel]) -> None:
         """
         Load and process models using schema mapping filters and transformations.
 
@@ -84,7 +77,7 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
             table = self.client.fetch_all(element.mapping, filters=ipf_filters.get(element.mapping))
 
             total = len(table)
-            if self.config.source.name.title() == self.type.title():
+            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
                 # Filter records
                 filtered_objs = model.filter_records(records=table, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, element.mapping)
@@ -99,7 +92,7 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
                 item = model(**data)
                 self.update_or_add_model_instance(item)
 
-    def ipfabric_dict_to_diffsync(self, obj: dict, mapping: SchemaMappingModel, model: IpfabricsyncModel) -> dict:  # pylint: disable=too-many-branches
+    def ipfabric_dict_to_diffsync(self, obj: dict, mapping: SchemaMappingModel, model: type[IpfabricsyncModel]) -> dict:  # pylint: disable=too-many-branches
         data: dict[str, Any] = {"local_id": str(obj["id"])}
 
         for field in mapping.fields:  # pylint: disable=too-many-nested-blocks
@@ -163,8 +156,8 @@ class IpfabricsyncModel(DiffSyncModelMixin, DiffSyncModel):
     def create(
         cls,
         adapter: Adapter,
-        ids: Mapping[Any, Any],
-        attrs: Mapping[Any, Any],
+        ids: dict[Any, Any],
+        attrs: dict[Any, Any],
     ) -> Self | None:
         # TODO: To Implement
         return super().create(adapter=adapter, ids=ids, attrs=attrs)

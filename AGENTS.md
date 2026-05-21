@@ -34,7 +34,6 @@ uv run infrahub-sync list --directory examples/
 # Make a change, then:
 uv run invoke format
 uv run invoke lint
-uv run mypy infrahub_sync/ --ignore-missing-imports
 uv run infrahub-sync list --directory examples/
 
 # If docs/CLI changed:
@@ -50,13 +49,14 @@ Run these in order before committing.
 uv sync
 uv run invoke format
 uv run invoke lint
-uv run mypy infrahub_sync/ --ignore-missing-imports
 ```
+
+`invoke lint` runs ruff → pylint → yamllint → ty.
 
 **Policy:**
 
 - New or changed code is Ruff-clean and typed where touched (docstrings, specific exceptions).
-- Do not increase existing mypy debt. If needed, use targeted `# type: ignore[<code>]` with a short TODO.
+- The codebase is clean under ty with no `[[tool.ty.overrides]]` blocks. Don't reintroduce overrides to mask type errors — fix the underlying issue, or use a targeted `# ty: ignore[<rule>]` with a short TODO at the call site.
 - If you add tests, run `uv run pytest -q`.
 
 **CLI sanity after changes:**
@@ -121,7 +121,7 @@ infrahub-sync/
 - Prefer explicit types on new or changed code.
 - Ruff: formatted and lint-clean. Honor `pyproject.toml`.
 - Pylint: fix actionable issues in touched code; some warnings are expected.
-- Mypy: run with `--ignore-missing-imports`; do not increase the error count.
+- ty: included in `uv run invoke lint`; do not increase the error count. For an ad-hoc check, `uv run ty check .` works too.
 - Public functions and classes require concise docstrings.
 - Raise specific exceptions; avoid broad `except Exception:`.
 
@@ -187,6 +187,7 @@ uv run invoke --list
 # linter.lint-ruff                Lint Python code with ruff
 # linter.lint-pylint              Lint Python code with pylint
 # linter.lint-yaml                Lint YAML files with yamllint
+# linter.lint-ty                  Type-check Python code with ty
 #
 # docs.*
 # docs.generate                   Generate CLI documentation
@@ -205,7 +206,7 @@ uv run invoke --list
 
 - Optional dependencies (for example, `pynetbox`, `pynautobot`) may be missing, producing import warnings.
 - `generate` and `sync` require running servers (Infrahub, NetBox, Nautobot).
-- Existing mypy debt exists; do not increase it and type the code you touch.
+- The codebase is clean under ty; there are no `[[tool.ty.overrides]]` blocks in `pyproject.toml`. Prefer real type fixes over reintroducing overrides.
 - Docs npm audit may flag dev-only vulnerabilities; they do not affect the Python package.
 
 ## Development Rules
@@ -215,7 +216,7 @@ uv run invoke --list
 - Do not force-push on shared branches.
 - Do not amend to hide pre-commit fixes; use a follow-up commit.
 - Apply PR labels: `bugs`, `breaking`, `enhancements`, `features` (default to `enhancements`).
-- Always run the required workflow (format → lint → mypy → CLI sanity) before a PR.
+- Always run the required workflow (format → lint → CLI sanity) before a PR. `invoke lint` now includes ty alongside ruff, pylint, and yamllint.
 
 ### Commit and PR Messages
 
@@ -236,7 +237,7 @@ uv run invoke --list
 **Approval checklist:**
 
 - [ ] Format and lint clean on changed areas.
-- [ ] No increase in mypy errors; new code typed.
+- [ ] `uv run ty check .` exits 0; new code typed.
 - [ ] CLI behaviors validated (`--help`, `list`, targeted `generate`).
 - [ ] Docs updated if flags or config changed.
 - [ ] Error handling uses specific exception types and clear messages.

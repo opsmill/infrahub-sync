@@ -3,15 +3,11 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-try:
-    from typing import Self
-except ImportError:
-    from typing_extensions import Self
-
-import slurpit
+import slurpit  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
 from diffsync import Adapter, DiffSyncModel
+from typing_extensions import Self
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -23,9 +19,6 @@ from infrahub_sync import (
 from infrahub_sync.adapters.utils import build_mapping, get_value
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
 
 # Create a new event loop for running async functions synchronously
 loop = asyncio.new_event_loop()
@@ -171,7 +164,8 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         results = self.run_async(self.client.planning.search_plannings(search_data, limit=30000))
         return results or []
 
-    def model_loader(self, model_name: str, model: SlurpitsyncModel) -> None:
+    def model_loader(self, model_name: str, model: type[SlurpitsyncModel]) -> None:
+        """Fetch `model_name` from Slurpit, apply schema-mapping filters/transforms, and add each row to the store."""
         for element in self.config.schema_mapping:
             if element.name != model_name:
                 continue
@@ -203,7 +197,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                     list_obj.append(node)
             total = len(list_obj)
 
-            if self.config.source.name.title() == self.type.title():
+            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
                 # Filter records
                 filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, element.mapping)
@@ -225,8 +219,9 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             logger.info("%s: skipped syncing %d models", self.type, len(self.skipped))
 
     def slurpit_obj_to_diffsync(
-        self, obj: dict[str, Any], mapping: SchemaMappingModel, model: SlurpitsyncModel
-    ) -> dict:
+        self, obj: dict[str, Any], mapping: SchemaMappingModel, model: type[SlurpitsyncModel]
+    ) -> dict | None:
+        """Convert a Slurpit dict to a DiffSync-ready payload, or None when a required reference is missing."""
         obj_id = obj.get("id")
         data: dict[str, Any] = {"local_id": str(obj_id)}
 
@@ -287,12 +282,14 @@ class SlurpitsyncModel(DiffSyncModelMixin, DiffSyncModel):
     def create(
         cls,
         adapter: Adapter,
-        ids: Mapping[Any, Any],
-        attrs: Mapping[Any, Any],
+        ids: dict[Any, Any],
+        attrs: dict[Any, Any],
     ) -> Self | None:
+        """Create a Slurpit-side record from DiffSync ids/attrs (not yet implemented; delegates to the base)."""
         # TODO: To implement
         return super().create(adapter=adapter, ids=ids, attrs=attrs)
 
     def update(self, attrs: dict) -> Self | None:
+        """Update a Slurpit-side record from DiffSync attrs (not yet implemented; delegates to the base)."""
         # TODO: To implement
         return super().update(attrs)

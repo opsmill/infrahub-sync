@@ -3,9 +3,14 @@ from __future__ import annotations
 import logging
 import operator
 import re
-from typing import Any, Union
+from typing import TYPE_CHECKING, Any, ClassVar, Union
 
 import pydantic
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from diffsync.store import BaseStore
 from diffsync.enum import DiffSyncFlags
 from jinja2 import StrictUndefined
 from jinja2.nativetypes import NativeEnvironment
@@ -16,14 +21,13 @@ from infrahub_sync.adapters.utils import get_value
 
 logger = logging.getLogger(__name__)
 
+# Pydantic v1/v2 compatibility shim — runtime branch picks the right decorator + kwargs.
 if version.parse(pydantic.__version__) >= version.parse("2.0.0"):
-    # With Pydantic v2, we use `field_validator` with mode "before"
     from pydantic import field_validator as validator_decorator
 
-    validator_kwargs = {"mode": "before"}
+    validator_kwargs: dict[str, Any] = {"mode": "before"}
 else:
-    # With Pydantic v1, we use validator with `pre=True` and `allow_reuse=True`
-    from pydantic import validator as validator_decorator
+    from pydantic import validator as validator_decorator  # ty: ignore[deprecated]
 
     validator_kwargs = {"pre": True, "allow_reuse": True}
 
@@ -52,7 +56,7 @@ class SchemaMappingModel(pydantic.BaseModel):
     identifiers: list[str] | None = pydantic.Field(default=None)
     filters: list[SchemaMappingFilter] | None = pydantic.Field(default=None)
     transforms: list[SchemaMappingTransform] | None = pydantic.Field(default=None)
-    fields: list[SchemaMappingField] | None = []
+    fields: list[SchemaMappingField] = pydantic.Field(default_factory=list)
 
 
 class SyncAdapter(pydantic.BaseModel):
@@ -76,7 +80,7 @@ class SyncConfig(pydantic.BaseModel):
     schema_mapping: list[SchemaMappingModel] = []
     diffsync_flags: list[Union[str, DiffSyncFlags]] | None = []
 
-    @validator_decorator("diffsync_flags", **validator_kwargs)
+    @validator_decorator("diffsync_flags", **validator_kwargs)  # ty: ignore[no-matching-overload]
     def convert_str_to_enum(cls, v):
         if not isinstance(v, list):
             msg = "diffsync_flags must be provided as a list"
@@ -111,7 +115,7 @@ def convert_to_int(value: Any) -> int:
         raise ValueError(msg) from exc
 
 
-FILTERS_OPERATIONS = {
+FILTERS_OPERATIONS: dict[str, Callable[..., Any]] = {
     "==": operator.eq,
     "!=": operator.ne,
     ">": lambda field, value: operator.gt(convert_to_int(field), convert_to_int(value)),
@@ -131,6 +135,10 @@ FILTERS_OPERATIONS = {
 
 
 class DiffSyncMixin:
+    top_level: ClassVar[list[str]] = []
+    config: SyncConfig
+    store: BaseStore
+
     def load(self):
         """Load all the models, one by one based on the order defined in top_level."""
         for item in self.top_level:
@@ -146,6 +154,9 @@ class DiffSyncMixin:
 
 
 class DiffSyncModelMixin:
+    # Set on generated subclasses (see generator/templates/diffsync_models.j2).
+    local_id: str | None = None
+
     @classmethod
     def apply_filter(cls, field_value: Any, operation: str, value: Any) -> bool:
         """Apply a specified operation to a field value."""
@@ -190,8 +201,9 @@ class DiffSyncModelMixin:
             )
 
             # Allow subclasses to add custom filters
-            if hasattr(cls, "_add_custom_filters"):
-                cls._add_custom_filters(native_env, item)
+            add_custom_filters: Callable[..., None] | None = getattr(cls, "_add_custom_filters", None)
+            if add_custom_filters is not None:
+                add_custom_filters(native_env, item)
 
             # Compile the template with the native env
             template = native_env.from_string(transform_expr)
@@ -250,13 +262,18 @@ class DiffSyncModelMixin:
         """Get the resource name from the schema mapping."""
         for element in schema_mapping:
             if element.name == cls.__name__:
+                if element.mapping is None:
+                    msg = f"Resource mapping is unset for class {cls.__name__}"
+                    raise ValueError(msg)
                 return element.mapping
         msg = f"Resource name not found for class {cls.__name__}"
         raise ValueError(msg)
 
     @classmethod
     def is_list(cls, name):
-        field = cls.__fields__.get(name)
+        # Pydantic v2 exposes `model_fields`; v1 uses `__fields__`. Try both.
+        fields = getattr(cls, "model_fields", None) or getattr(cls, "__fields__", None) or {}
+        field = fields.get(name)
         if not field:
             msg = f"Unable to find the field {name} under {cls}"
             raise ValueError(msg)

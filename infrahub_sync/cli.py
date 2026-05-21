@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import logging
 from enum import Enum
 from timeit import default_timer as timer
+from typing import TYPE_CHECKING, NoReturn, cast
 
 import typer
 from infrahub_sdk import InfrahubClientSync
@@ -14,6 +17,11 @@ from infrahub_sync.utils import (
     get_potenda_from_instance,
     render_adapter,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import MutableMapping
+
+    from infrahub_sdk.schema import GenericSchema, NodeSchema
 
 VERBOSITY_MAP = {"quiet": logging.WARNING, "default": logging.INFO, "verbose": logging.DEBUG}
 
@@ -58,7 +66,7 @@ def main(
         typer.echo(ctx.get_help())
 
 
-def print_error_and_abort(message: str) -> typer.Abort:
+def print_error_and_abort(message: str) -> NoReturn:
     logger.error("%s", message)
     raise typer.Abort
 
@@ -223,10 +231,12 @@ def generate(
     except ServerNotResponsiveError as exc:
         print_error_and_abort(str(exc))
 
-    missing_schema_models = find_missing_schema_model(sync_instance=sync_instance, schema=schema)
+    # SDK returns *SchemaAPI variants; structurally compatible with the (NodeSchema | GenericSchema) shape utils expects.
+    typed_schema = cast("MutableMapping[str, NodeSchema | GenericSchema]", schema)
+    missing_schema_models = find_missing_schema_model(sync_instance=sync_instance, schema=typed_schema)
     if missing_schema_models:
         print_error_and_abort(f"One or more model model are not present in the Schema - {missing_schema_models}")
 
-    rendered_files = render_adapter(sync_instance=sync_instance, schema=schema)
+    rendered_files = render_adapter(sync_instance=sync_instance, schema=typed_schema)
     for template, output_path in rendered_files:
         logger.info("Rendered template %s to %s", template, output_path)

@@ -53,7 +53,7 @@ def has_node(config: SyncConfig, name: str) -> bool:
 def has_field(config: SyncConfig, name: str, field: str) -> bool:
     for item in config.schema_mapping:
         if item.name == name:
-            for subitem in item.fields:
+            for subitem in item.fields or []:
                 if subitem.name == field:
                     return True
     return False
@@ -169,6 +169,6 @@ def render_template(template_file: Path, output_dir: Path, output_file: Path, co
 
     template = template_env.get_template(str(template_file))
 
-    rendered_tpl = template.render(**context)  # type: ignore[arg-type]
+    rendered_tpl = template.render(**context)
     output_filename = output_dir / output_file
     output_filename.write_text(rendered_tpl, encoding="utf-8")

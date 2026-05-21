@@ -40,14 +40,13 @@ dev = [
     "pre-commit>=4.0,<5.0",
     "types-toml",
     "types-ujson",
-    "types-pyyaml",
     "typer-cli",
     "invoke>=2.2.1,<3",
-    "mypy>=1.15.0,<2",
     "types-PyYAML>=6.0.12",
     "ruff==0.15.5",
     "pytest>=9.0.2,<10",
     "pytest-xdist>=3.8",
+    "ty==0.0.32",
     "types-python-slugify>=8.0.2.20240310",
 ]
 
@@ -131,12 +130,6 @@ filterwarnings = [
     "ignore:Deprecated call to",
 ]
 addopts = "-vs --cov-report term-missing --cov-report xml --dist loadscope"
-
-[tool.mypy]
-pretty = true
-ignore_missing_imports = true
-disallow_untyped_defs = true
-disable_error_code = ["type-abstract"]
 
 [tool.ruff]
 line-length = 120
@@ -300,3 +293,12 @@ max-complexity = 33
 "tasks/**.py" = [
     "T201",    # print() is standard for invoke task status messages
 ]
+
+[tool.ty]
+
+[tool.ty.src]
+exclude = ["examples/**"]
+
+[tool.ty.environment]
+python-version = "3.10"
+

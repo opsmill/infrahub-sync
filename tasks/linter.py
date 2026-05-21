@@ -16,6 +16,7 @@ def lint_all(context: Context) -> None:
     lint_ruff(context)
     lint_pylint(context)
     lint_yaml(context)
+    lint_ty(context)
 
     print(f" - [{NAMESPACE}] All linter have been executed!")
 
@@ -65,6 +66,17 @@ def lint_yaml(context: Context) -> None:
     print(f" - [{NAMESPACE}] Format yaml with yamllint")
     exec_cmd = f"yamllint {MAIN_DIRECTORY}"
     context.run(exec_cmd, pty=True)
+
+
+@task
+def lint_ty(context: Context) -> None:
+    """Run ty type checker against project files."""
+
+    print(f" - [{NAMESPACE}] Check code with ty")
+    exec_cmd = "uv run ty check ."
+
+    with context.cd(ESCAPED_REPO_PATH):
+        context.run(exec_cmd)
 
 
 # ----------------------------------------------------------------------------
