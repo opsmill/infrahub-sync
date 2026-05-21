@@ -77,7 +77,7 @@ def test_list_changed_since_falls_back_when_endpoint_rejects_filter() -> None:
     """Some Nautobot endpoints (front-ports, rear-ports, ...) return 400 'Unknown filter field'
     on `last_updated__gte`. The adapter must catch that and fall back to `endpoint.all()`.
     """
-    import pynautobot
+    import pynautobot  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
 
     adapter = _make_adapter([{"name": "InfraDevice", "mapping": "dcim.devices", "identifiers": ["name"]}])
     fake_record = _FakeRecord({"id": 7, "name": "edge1"})
