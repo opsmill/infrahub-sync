@@ -103,8 +103,9 @@ def test_compute_tiers_for_netbox_example_config() -> None:
 
     # Tier 0 must include leaf-like kinds with no outgoing refs.
     assert "BuiltinTag" in tiers[0]
-    # Every name in the existing operator-maintained order: list must appear
-    # somewhere in the computed tiers.
+    # Every mapped kind must appear somewhere in the computed tiers.
+    # (cfg.order is empty for examples that opt into auto-tiering, so this
+    # loop would be a no-op against `cfg.order` and miss regressions.)
     flat = set(flatten_tiers(tiers))
-    for name in cfg.order:
+    for name in {m.name for m in cfg.schema_mapping}:
         assert name in flat, f"{name} missing from computed tiers"

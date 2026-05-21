@@ -22,7 +22,7 @@ source:
   name: netbox
   settings:
     url: "https://demo.netbox.dev"
-    token: "nbt_w2PDu9cxy8q0.lq7kzYOs0oaNwVEgFpmZ9bVj75FLcHIwObasXxGb"
+    token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 destination:
   name: infrahub

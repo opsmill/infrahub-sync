@@ -261,6 +261,8 @@ def sync_cmd(
                 try:
                     ptd.load_both_sides()
                 except ValueError as exc:
+                    run_file.status = "failed"
+                    run_file.save()
                     print_error_and_abort(str(exc))
                 ptd.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
                 mydiff = ptd.diff()

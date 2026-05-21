@@ -36,12 +36,15 @@ The flattened tier order replaces the manual `order:` list. Tiers and any
 optional edges dropped to break cycles are logged at `INFO` level when
 `diff` or `sync` runs.
 
-Set `--parallel` on `infrahub-sync sync` to enforce a hard tier boundary:
-the engine narrows the destination's `top_level` to one tier at a time so
-no tier starts before the previous tier's writes have completed.
+`infrahub-sync sync` runs with `--parallel` on by default: the engine
+narrows the destination's `top_level` to one tier at a time so no tier
+starts before the previous tier's writes have completed. Pass
+`--no-parallel` to disable the tier boundary and fall back to the legacy
+single-pass code path.
 
-If you must override (because the auto-tiered order doesn't match an
-adapter quirk), keep the `order:` list — it always wins.
+If you must override the computed order (because it doesn't match an
+adapter quirk), keep the `order:` list — it always wins, and `--parallel`
+will warn and fall back to serial when an explicit order is set.
 
 ### Sync store
 

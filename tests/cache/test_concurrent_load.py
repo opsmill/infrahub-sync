@@ -47,10 +47,12 @@ def test_load_both_sides_runs_concurrently(tmp_path: Path) -> None:
     # Sequential would be ~1.0s; concurrent should be ~0.5s. Allow generous slack.
     assert elapsed < 0.8, f"loads ran sequentially (elapsed={elapsed:.2f}s)"
 
-    # Both adapter.load calls overlap: source's start happens before dst's end.
+    # Intervals must intersect (sequential execution would pass `src_start < dst_end`).
     src_start = next(t for label, t in src.events if label == "start")
+    src_end = next(t for label, t in src.events if label == "end")
+    dst_start = next(t for label, t in dst.events if label == "start")
     dst_end = next(t for label, t in dst.events if label == "end")
-    assert src_start < dst_end
+    assert max(src_start, dst_start) < min(src_end, dst_end)
 
 
 def test_load_both_sides_sequential_when_disabled(tmp_path: Path) -> None:

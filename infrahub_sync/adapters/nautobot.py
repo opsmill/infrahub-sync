@@ -90,7 +90,11 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
         parts = mapping.split(".")
         endpoint = self.client
         for part in parts:
-            endpoint = getattr(endpoint, part)
+            try:
+                endpoint = getattr(endpoint, part)
+            except AttributeError as exc:
+                msg = f"Invalid Nautobot mapping path {mapping!r} (missing segment {part!r})"
+                raise ValueError(msg) from exc
         return endpoint
 
     def _records_to_diffsync(

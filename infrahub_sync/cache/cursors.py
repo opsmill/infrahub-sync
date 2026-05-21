@@ -18,6 +18,8 @@ from enum import IntEnum
 
 
 class CursorTier(IntEnum):
+    """Capability tier the adapter exposes for incremental cursors (see module docstring)."""
+
     NONE = 0
     PAGE_TOKEN = 1
     TIMESTAMP = 2
@@ -26,6 +28,8 @@ class CursorTier(IntEnum):
 
 @dataclass(frozen=True)
 class CursorState:
+    """Serialized cursor for one model/resource — `tier` + a tier-specific opaque value."""
+
     tier: CursorTier
     value: str | None = None
 

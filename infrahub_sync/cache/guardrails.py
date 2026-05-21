@@ -21,12 +21,15 @@ class RowcountGuardrailError(RuntimeError):
 
 @dataclass
 class RowcountGuardrail:
+    """Reject per-resource rowcount drops below `drop_threshold` vs. `previous`."""
+
     previous: dict[str, int]
     drop_threshold: float = 0.5
     allow_drop: bool = False
     triggered: list[str] = field(default_factory=list)
 
     def check(self, resource: str, *, current: int) -> None:
+        """Raise `RowcountGuardrailError` when `current/prior < drop_threshold`."""
         if self.allow_drop:
             return
         prior = self.previous.get(resource)
