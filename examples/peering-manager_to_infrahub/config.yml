@@ -19,16 +19,18 @@ destination:
   settings:
     url: "http://localhost:8000"
 
-order: [
-  "OrganizationProvider",
-  "InfraAutonomousSystem",
-  "InfraBGPCommunity",
-  "InfraBGPRoutingPolicy",
-  "InfraBGPPeerGroup",
-  "InfraIXP",
-  "IpamIPAddress",
-  "InfraIXPConnection",
-]
+# order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
+# Uncomment and edit only if you need to override the computed order:
+# order: [
+#   "OrganizationProvider",
+#   "InfraAutonomousSystem",
+#   "InfraBGPCommunity",
+#   "InfraBGPRoutingPolicy",
+#   "InfraBGPPeerGroup",
+#   "InfraIXP",
+#   "IpamIPAddress",
+#   "InfraIXPConnection",
+# ]
 
 schema_mapping:
   - name: OrganizationProvider

@@ -13,14 +13,16 @@ destination:
     # auth_method: "token"
     token: "13bf6338aed52d172e33750d39717fff5a5f5d18"
 
-order: [
-  "InfraAutonomousSystem",
-  "InfraBGPCommunity",
-  "InfraBGPRoutingPolicy",
-  "InfraBGPPeerGroup",
-  "InfraIXP",
-  "InfraIXPConnection",
-]
+# order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
+# Uncomment and edit only if you need to override the computed order:
+# order: [
+#   "InfraAutonomousSystem",
+#   "InfraBGPCommunity",
+#   "InfraBGPRoutingPolicy",
+#   "InfraBGPPeerGroup",
+#   "InfraIXP",
+#   "InfraIXPConnection",
+# ]
 
 schema_mapping:
   - name: InfraAutonomousSystem

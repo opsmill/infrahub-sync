@@ -21,7 +21,9 @@ destination:
 # Optional: Skip objects in the source that don't exist in the destination (prevents creation)
 dyffsync_flags: ["SKIP_UNMATCHED_SRC"]
 
-order: ["InfraAutonomousSystem"]
+# order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
+# Uncomment and edit only if you need to override the computed order:
+# order: ["InfraAutonomousSystem"]
 
 schema_mapping:
   - name: InfraAutonomousSystem

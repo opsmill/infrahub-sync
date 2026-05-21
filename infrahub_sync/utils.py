@@ -171,8 +171,15 @@ def get_potenda_from_instance(
     branch: str | None = None,
     show_progress: bool | None = None,
     verbosity: int | None = None,
+    run_id: str | None = None,
+    continue_on_error: bool = False,
+    concurrent_load: bool = True,
 ) -> Potenda:
-    """Create and return a Potenda instance based on the provided SyncInstance."""
+    """Create and return a Potenda instance based on the provided SyncInstance.
+
+    When ``run_id`` is None, a fresh sortable identifier is allocated via
+    ``generate_run_id()`` so each invocation gets its own cache directory.
+    """
     source = import_adapter(sync_instance=sync_instance, adapter=sync_instance.source)
     destination = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
 
@@ -227,14 +234,54 @@ def get_potenda_from_instance(
         msg = f"Error initializing {sync_instance.destination.name.title()}Adapter: {exc}"
         raise ValueError(msg) from exc
 
+    explicit_order = bool(sync_instance.order)
+    top_level = sync_instance.compute_order()
+    tiers: list[set[str]] | None = None
+    if not explicit_order:
+        from infrahub_sync.dependency_graph import compute_tiers
+
+        tiers, _dropped = compute_tiers(sync_instance.schema_mapping)
+
+    from infrahub_sync.cache.paths import generate_run_id
+    from infrahub_sync.cache.paths import run_dir as run_dir_for
+
+    rid = run_id or generate_run_id()
+    rdir = run_dir_for(sync_instance.name, rid)
+    rdir.mkdir(parents=True, exist_ok=True)
+
     ptd = Potenda(
         destination=dst,
         source=src,
         config=sync_instance,
-        top_level=sync_instance.order,
+        top_level=top_level,
+        tiers=tiers,
         show_progress=show_progress,
         verbosity=verbosity,
+        run_dir=rdir,
+        continue_on_error=continue_on_error,
+        concurrent_load=concurrent_load,
     )
+    ptd.run_id = rid  # expose for CLI logging
+    ptd.cache_root = rdir.parent  # .infrahub-sync-cache/<sync_name>/
+
+    # Persist the schema sub-hash so `apply` can refuse cached runs whose
+    # shape no longer matches the destination's live schema, and so
+    # `should_use_incremental` can compare it against the prior run.
+    # Uses the destination adapter's live schema (populated at __init__);
+    # falls back to `sync_instance._cached_schema` for test seams.
+    subhash = ""
+    try:
+        from infrahub_sync.cache import compute_schema_subhash
+        from infrahub_sync.cache.sidecars import SchemaHashFile
+
+        schema = getattr(dst, "schema", None) or getattr(sync_instance, "_cached_schema", None)
+        if schema:
+            subhash = compute_schema_subhash(sync_instance, schema)
+            SchemaHashFile(path=rdir / "schema-sub-hash.txt", value=subhash).save()
+    except ImportError:
+        pass  # cache extras not available — degrade silently
+
+    ptd._schema_subhash = subhash
 
     return ptd
 

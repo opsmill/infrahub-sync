@@ -12,11 +12,13 @@ destination:
   settings:
     url: "http://localhost:8000"
 
-order:
-  - "VirtualizationVirtualMachine"
-  - "VirtualizationVMNetworkInterface"
-  - "VirtualizationVMFilesystem"
-  - "VirtualizationVMDisk"
+# order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
+# Uncomment and edit only if you need to override the computed order:
+# order:
+#   - "VirtualizationVirtualMachine"
+#   - "VirtualizationVMNetworkInterface"
+#   - "VirtualizationVMFilesystem"
+#   - "VirtualizationVMDisk"
 
 schema_mapping:
 

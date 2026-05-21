@@ -14,3 +14,4 @@ node_modules/*
 .direnv/
 .envrc
 dist/
+.infrahub-sync-cache/

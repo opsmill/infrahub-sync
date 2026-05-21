@@ -3,10 +3,12 @@ from __future__ import annotations
 # pylint: disable=R0801
 import logging
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pynautobot  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
+import pynautobot.core.query  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
 from diffsync import Adapter, DiffSyncModel
+from pydantic import ValidationError
 from typing_extensions import Self
 
 from infrahub_sync import (
@@ -16,10 +18,34 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
+from infrahub_sync.cache.cursors import CursorState, CursorTier
 
 from .utils import get_value
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+
+def _is_unknown_filter_error(exc: pynautobot.core.query.RequestError, field: str) -> bool:
+    """True if `exc` is a 400 mentioning `field` as an unknown filter.
+
+    Checks the response JSON when available so the predicate survives
+    wording tweaks in Nautobot's error string ("Unknown filter field"
+    vs. "is not a valid filter", etc.). Falls back to substring match
+    on the rendered message for transports that didn't return JSON.
+    """
+    req = getattr(exc, "req", None)
+    if req is None or getattr(req, "status_code", None) != 400:
+        return False
+    try:
+        payload = req.json()
+    except (ValueError, AttributeError):
+        return field in str(exc)
+    if isinstance(payload, dict) and field in payload:
+        return True
+    return field in str(exc)
 
 
 class NautobotAdapter(DiffSyncMixin, Adapter):
@@ -45,6 +71,96 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
         client = pynautobot.api(url=url, token=token, threading=True, max_workers=5, retries=3, verify=verify_ssl)
         return client
 
+    def cursor_tier_for(self, model_name: str) -> CursorTier:
+        """Return TIMESTAMP for any kind we have a schema_mapping for.
+
+        Most pynautobot endpoints accept ``last_updated__gte`` but a few
+        (e.g. dcim.front-ports / rear-ports) return 400 "Unknown filter
+        field" — ``list_changed_since`` falls back to a full extract for
+        those. Kinds not in the schema_mapping return NONE so the engine
+        never attempts an incremental query for them.
+        """
+        for element in self.config.schema_mapping:
+            if element.name == model_name and element.mapping:
+                return CursorTier.TIMESTAMP
+        return CursorTier.NONE
+
+    def _resolve_endpoint(self, mapping: str) -> Any:
+        """Walk `mapping` (e.g. 'dcim.devices' or 'plugins.foo.bar') to a pynautobot endpoint."""
+        parts = mapping.split(".")
+        endpoint = self.client
+        for part in parts:
+            endpoint = getattr(endpoint, part)
+        return endpoint
+
+    def _records_to_diffsync(
+        self,
+        *,
+        element: SchemaMappingModel,
+        model: type[NautobotModel],
+        raw_records: list[dict],
+    ) -> Iterator[dict]:
+        """Filter+transform Nautobot records and yield diffsync-ready dicts.
+
+        Same transformation flow as model_loader, factored out for reuse by
+        list_changed_since.
+        """
+        if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
+            filtered = model.filter_records(records=raw_records, schema_mapping=element)
+            transformed = model.transform_records(records=filtered, schema_mapping=element)
+        else:
+            transformed = raw_records
+        for obj in transformed:
+            yield self.nautobot_obj_to_diffsync(obj=obj, mapping=element, model=model)
+
+    def list_changed_since(self, model_name: str, cursor: CursorState) -> Iterator[dict]:
+        """Yield Nautobot records changed since `cursor`. Uses `last_updated__gte` filter."""
+        element = next(
+            (e for e in self.config.schema_mapping if e.name == model_name),
+            None,
+        )
+        if element is None or not element.mapping:
+            msg = f"Nautobot: no schema_mapping entry with mapping for {model_name!r}"
+            raise NotImplementedError(msg)
+
+        model: type[NautobotModel] = getattr(self, model_name)
+        endpoint = self._resolve_endpoint(element.mapping)
+        try:
+            raw = [dict(node) for node in endpoint.filter(last_updated__gte=cursor.value)]
+        except pynautobot.core.query.RequestError as exc:
+            # Not every Nautobot endpoint exposes `last_updated__gte` (e.g.
+            # dcim.front-ports / dcim.rear-ports return 400 with a body like
+            # `{"last_updated__gte": ["Unknown filter field"]}`). Fall back
+            # to a full extract for any 400 that mentions the filter key.
+            if not _is_unknown_filter_error(exc, "last_updated__gte"):
+                raise
+            logger.warning(
+                "Nautobot %s (%s) does not support last_updated__gte; falling back to full extract for this kind.",
+                model_name,
+                element.mapping,
+            )
+            raw = [dict(node) for node in endpoint.all()]
+        yield from self._records_to_diffsync(element=element, model=model, raw_records=raw)
+
+    def list_existing_ids(self, model_name: str) -> Iterator[str]:
+        """Yield current unique IDs for `model_name` from Nautobot.
+
+        Used by soft-delete sweeps: timestamp-filtered queries miss DELETEs.
+        """
+        element = next(
+            (e for e in self.config.schema_mapping if e.name == model_name),
+            None,
+        )
+        if element is None or not element.mapping:
+            msg = f"Nautobot: no schema_mapping entry with mapping for {model_name!r}"
+            raise NotImplementedError(msg)
+
+        model: type[NautobotModel] = getattr(self, model_name)
+        endpoint = self._resolve_endpoint(element.mapping)
+        raw_records = [dict(node) for node in endpoint.all()]
+        for payload in self._records_to_diffsync(element=element, model=model, raw_records=raw_records):
+            yield model(**payload).get_unique_id()
+
     def model_loader(self, model_name: str, model: type[NautobotModel]) -> None:
         """
         Load and process models using schema mapping filters and transformations.
@@ -52,7 +168,6 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
         This method retrieves data from Nautobot, applies filters and transformations
         as specified in the schema mapping, and loads the processed data into the adapter.
         """
-        # Retrieve schema mapping for this model
         for element in self.config.schema_mapping:
             if element.name != model_name:
                 continue
@@ -61,34 +176,30 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                 logger.info("No mapping defined for '%s', skipping", element.name)
                 continue
 
-            # Use the resource endpoint from the schema mapping
-            app_name, resource_name = element.mapping.split(".")
-            nautobot_app = getattr(self.client, app_name)
-            nautobot_model = getattr(nautobot_app, resource_name)
-
-            # Retrieve all objects (RecordSet)
-            nodes = nautobot_model.all()
-
-            # Transform the RecordSet into a list of Dict
-            list_obj = []
-            for node in nodes:
-                list_obj.append(dict(node))
-
-            total = len(list_obj)
+            endpoint = self._resolve_endpoint(element.mapping)
+            raw_records = [dict(node) for node in endpoint.all()]
+            total = len(raw_records)
+            resource_name = element.mapping.split(".")[-1]
             if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
-                # Filter records
-                filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
-                logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, resource_name)
-                # Transform records
-                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
+                logger.info("%s: Loading %d %s", self.type, total, resource_name)
             else:
                 logger.info("%s: Loading all %d %s", self.type, total, resource_name)
-                transformed_objs = list_obj
 
-            # Create model instances after filtering and transforming
-            for obj in transformed_objs:
-                data = self.nautobot_obj_to_diffsync(obj=obj, mapping=element, model=model)
-                item = model(**data)
+            continue_on_error = getattr(self, "continue_on_error", False)
+            for data in self._records_to_diffsync(element=element, model=model, raw_records=raw_records):
+                try:
+                    item = model(**data)
+                except ValidationError as exc:
+                    if not continue_on_error:
+                        raise
+                    logger.warning(
+                        "Skipping %s[%s]: cannot build DiffSync model "
+                        "(likely a required peer was skipped earlier). Pydantic errors: %s",
+                        model_name,
+                        data.get("local_id"),
+                        exc.errors(include_url=False),
+                    )
+                    continue
                 self.add(item)
 
     def nautobot_obj_to_diffsync(
