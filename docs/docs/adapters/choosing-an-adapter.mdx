@@ -1,0 +1,78 @@
+---
+title: Choose an adapter
+---
+
+Infrahub Sync includes adapters for the most common infrastructure systems and a Generic REST API adapter for everything else. For systems with non-standard APIs, build a custom adapter.
+
+## How to choose
+
+If a pre-built adapter exists for the system you want to connect, use it. If the system has a REST/JSON API but no dedicated adapter, use the Generic REST API adapter. Only build a custom adapter when the system has a non-standard API, requires custom authentication logic, or has data access patterns the Generic REST API adapter cannot handle.
+
+## Pre-built adapters
+
+Each adapter handles two responsibilities for its target system: **communication** (talking to the system's API, authentication, request handling) and **translation** (converting the system's data structures into the `diffsync` models the sync engine works with).
+
+| Adapter | Direction supported | Best for |
+| --- | --- | --- |
+| Infrahub | source or destination | Any sync project where Infrahub is one side of the sync |
+| NetBox | NetBox → Infrahub | Existing NetBox deployments migrating to or syncing with Infrahub |
+| Nautobot | Nautobot → Infrahub | Existing Nautobot deployments migrating to or syncing with Infrahub |
+| IP Fabric | IP Fabric → Infrahub | Building Infrahub inventory from IP Fabric network discovery data |
+| Slurp'it | Slurp'it → Infrahub | Building Infrahub inventory from Slurp'it network discovery data |
+| Cisco ACI | Cisco ACI → Infrahub | Syncing data from Cisco ACI fabrics into Infrahub |
+| Peering Manager | Peering Manager → Infrahub · Infrahub → Peering Manager | Bi-directional sync between Peering Manager and Infrahub |
+| PeeringDB | PeeringDB → Infrahub | Pulling autonomous system and internet exchange data from PeeringDB into Infrahub |
+| Prometheus | Prometheus → Infrahub | Pulling target or metric metadata from Prometheus into Infrahub |
+| LibreNMS | LibreNMS → Infrahub | Syncing device inventory and metadata from LibreNMS into Infrahub |
+| Observium | Observium → Infrahub | Syncing device inventory and metadata from Observium into Infrahub |
+| Device42 | Device42 → Infrahub | Syncing IT asset and dependency data from Device42 into Infrahub |
+| Generic REST API | external system → Infrahub | Any external system with a REST/JSON API and no dedicated adapter |
+
+For per-adapter details — connection parameters, supported models, known limitations — see the individual adapter pages in the Adapters sidebar.
+
+## When to use the Generic REST API adapter
+
+The Generic REST API adapter works with any system that exposes data over HTTP/JSON. It handles authentication and basic data access patterns out of configuration alone. Set the API endpoint, the authentication method, and the structure of the data you want to read in the same YAML format as every other adapter.
+
+Common cases where the Generic REST API adapter is the right choice:
+
+- **ServiceNow** — pull device, location, or service data from a ServiceNow CMDB.
+- **Infoblox** — pull IP address management data from Infoblox.
+- **Internal IPAM tools** — pull data from a homegrown IPAM or asset database.
+- **Vendor-specific inventory APIs** — pull data from a vendor's cloud-hosted inventory service.
+- **Spreadsheet-based data** — when a team exports a spreadsheet to a JSON file served over HTTP, the Generic REST API adapter can read it.
+
+Most source systems without a dedicated adapter are reachable directly with the Generic REST API adapter. See [Generic REST API adapter](./genericrestapi.mdx) for configuration details.
+
+## When to build a custom adapter
+
+A custom adapter is the right choice when the Generic REST API adapter can't handle the source system. Common reasons:
+
+- **Non-REST APIs.** The system uses gRPC, SOAP, GraphQL with non-standard patterns, a binary protocol, or any other non-REST interface.
+- **Custom authentication flows.** The system requires multi-step authentication, token refresh logic, or other auth patterns standard configuration cannot express.
+- **Stateful or session-based access.** The system requires maintaining a session across multiple requests in a way the Generic REST API adapter does not support.
+- **Complex pagination or query patterns.** The data access requires logic beyond what configuration can express — for example, conditional pagination based on response content.
+- **Data transformations that exceed Jinja filter capabilities.** The source data requires substantial preprocessing before mapping into `diffsync` models.
+
+A custom adapter is a Python class implementing the same interface as the pre-built adapters. Load it from a filesystem path, a Python module path, or an installed entry point. See [Local adapters](./local-adapters.mdx) for how to build and load one.
+
+If you build a custom adapter for a system other teams might use, consider contributing it back to the Infrahub Sync repository.
+
+## Choosing between two valid options
+
+Sometimes more than one adapter works for the same source system. For example: a Nautobot deployment is reachable through the Nautobot adapter or through the Generic REST API adapter pointed at Nautobot's REST API. Use the dedicated adapter when one exists — it understands the source system's data model and handles edge cases (nested data, authentication) that would otherwise need to be configured manually.
+
+The Generic REST API adapter is the fallback, not the default.
+
+## Multiple adapters in one sync project
+
+A sync project has one source adapter and one destination adapter. To sync data from multiple sources into Infrahub, create one sync project per source. Each project has its own configuration, sync order, and schedule.
+
+This keeps each sync independent — a failure in one project does not affect others, and each project can be scheduled and operated separately.
+
+## Related
+
+- [Generic REST API adapter](./genericrestapi.mdx)
+- [Local adapters](./local-adapters.mdx)
+- [Create a sync project](../creating-a-sync-project.mdx)
+- [Sync instance configuration](../reference/config.mdx)

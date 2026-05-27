@@ -1,0 +1,96 @@
+---
+title: Schedule sync runs
+---
+
+Infrahub Sync runs as a single CLI command. Schedule it with whatever tooling already runs scheduled jobs in your environment — cron, CI, Prefect, Dagster, or a homegrown runner.
+
+## Common orchestration options
+
+Any tool that can run a CLI command on a schedule and capture its output works. Pick whichever fits your existing operational model.
+
+### Cron
+
+The most direct option. A cron entry runs `infrahub-sync sync` on a defined schedule. Output and exit codes are captured by your normal cron logging.
+
+**When this works well:**
+
+- You already operate a cron host for scheduled jobs.
+- The sync is straightforward — one project, one schedule, no dependencies on other jobs.
+- Failure handling can be reactive (logs are reviewed when something looks off).
+
+**Trade-offs:** No native retry on failure, no visibility beyond logs, no built-in alerting. For mission-critical syncs, wrap the cron entry in a script that handles retries and alerts.
+
+### CI jobs (GitHub Actions, GitLab CI, etc.)
+
+Define the sync as a scheduled workflow in your CI system. CI provides run history, log retention, secret management, and notification on failure.
+
+**When this works well:**
+
+- You treat infrastructure data movement as part of your software delivery pipeline.
+- You want run history and structured failure notifications from tooling you already operate.
+- Sync project configurations live in a git repository alongside other infrastructure code.
+
+**Trade-offs:** CI systems are designed for short-lived jobs. For very large or long-running syncs, watch out for job timeout limits.
+
+### Prefect
+
+Prefect is a Python-based workflow orchestrator. Wrap a sync run in a Prefect flow to get retry policies, dependency management, observability through the Prefect UI, and the ability to compose syncs with other Python tasks.
+
+**When this works well:**
+
+- You already use Prefect for other infrastructure or data workflows.
+- Syncs need to be composed with other tasks — for example, run a sync, then trigger downstream automation.
+- You want centralized observability across many sync projects.
+
+**Trade-offs:** Prefect itself has to be operated. If you don't already run it, this adds operational surface area.
+
+### Dagster, Airflow, and other workflow engines
+
+Any workflow engine that can run a CLI command works the same way as Prefect. Pick based on what you already use and what other workloads share the orchestration platform.
+
+### Event-driven execution
+
+Some sync use cases are better triggered by an event than by a schedule. For example: "when a device is created in Infrahub, sync its details from the inventory system." For event-driven patterns, Infrahub's trigger event system can call `infrahub-sync` directly instead of running on a fixed cadence.
+
+Event-driven sync is the exception, not the rule. Most data movement is well-served by a recurring schedule. Use event-driven patterns when the data volume is small, the freshness requirement is high, or the source system is itself event-driven.
+
+## Choosing a cadence
+
+Match the cadence to the rate at which source data changes and your tolerance for staleness:
+
+- **Every few minutes** — for high-change-rate sources that need near-real-time freshness. Verify the sync run completes faster than the cadence to avoid overlap.
+- **Hourly** — a common default for active infrastructure data.
+- **Daily** — appropriate for slower-moving data or for syncs where the next run can absorb a missed one.
+- **On demand** — for migrations, audits, or one-off seeding rather than steady-state operation.
+
+Each sync run calculates a fresh diff and applies only deltas, so running more often does not multiply work. The constraint is the time the sync takes, not the work it does.
+
+## Observability and failure handling
+
+Whatever scheduling tool you use, plan for these operational concerns:
+
+- **Logging.** Infrahub Sync emits structured logs via `structlog`. Pipe the output to your log aggregator (Splunk, Datadog, Loki, ELK, etc.).
+- **Failure detection.** The CLI returns a non-zero exit code on failure. Wire the scheduling tool to catch this and alert the appropriate channel.
+- **Idempotency.** Sync runs are idempotent. If a run fails partway through, re-running it calculates a fresh diff against the current destination state and applies what is still outstanding. Retries on failure are safe.
+- **Run isolation.** Avoid overlapping runs of the same sync project. Set the cadence longer than the run time, or have the scheduler skip a run if the previous one is still active.
+- **Sync project versioning.** Store sync project directories in version control. Tag or release configuration changes the same way you handle infrastructure code.
+
+## Running Infrahub Sync in a container
+
+To run Infrahub Sync from any orchestrator while keeping a single Python environment under your control, package it as a container. Build the image with `infrahub-sync` installed and the sync project directory included, set the sync command as the entrypoint, and pass credentials via environment variables.
+
+Infrahub Sync does not ship a reference container image — examples in the [OpsMill GitHub repository](https://github.com/opsmill/infrahub-sync) show common patterns to adapt.
+
+## What's not in Infrahub Sync (and what to use instead)
+
+- **Built-in scheduler.** Use one of the options above.
+- **Sync history dashboard.** The scheduling tool typically provides this — CI run history, Prefect UI, or aggregated logs.
+- **Built-in retry policies.** Configure retries in the scheduling tool. Runs are idempotent, so retrying is safe.
+- **Alerting on failure.** Configure alerts in the scheduling tool or log aggregator.
+
+## Related
+
+- [Run a sync](./running-a-sync.mdx)
+- [Create a sync project](./creating-a-sync-project.mdx)
+- [CLI reference](./reference/cli.mdx)
+- [Migrate from NetBox or Nautobot](./migrating-from-netbox-or-nautobot.mdx)

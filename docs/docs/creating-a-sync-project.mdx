@@ -1,0 +1,109 @@
+---
+title: Create a sync project
+---
+
+A sync project is a directory containing a `config.yml` file that defines one synchronization between two systems. Configure four parts: source and destination, sync order, schema mapping, and sync behavior. A Nautobot → Infrahub example runs through each.
+
+## Define the source and destination
+
+The `source` and `destination` keys identify which adapter to use on each side of the sync and how to connect to each system. Credentials reference environment variables rather than being embedded in the file.
+
+```yaml
+---
+name: example-sync-task
+
+source:
+  name: nautobot
+  settings:
+    url: "https://nautobot.example.com"
+    token: "NAUTOBOT_TOKEN" # This can also be loaded from environment variables
+
+destination:
+  name: infrahub
+  settings:
+    url: "https://infrahub.example.com"
+    token: "INFRAHUB_API_TOKEN" # This can also be loaded from environment variables
+```
+
+For the full list of adapters and their connection parameters, see [Choose an adapter](./adapters/choosing-an-adapter.mdx).
+
+## Set the sync order
+
+The `order` key specifies the sequence in which objects should be synchronized. Order matters because some objects depend on others — a device cannot be created until its location, role, and platform already exist in the destination.
+
+```yaml
+order:
+  - "InfraDevice"
+  - "InfraInterface"
+```
+
+## Map the schema fields
+
+The `schema_mapping` section defines how data is translated from the source's schema into the destination's schema.
+
+:::info
+
+- The `name` key in the destination model corresponds to the Infrahub attribute.
+- The `mapping` key corresponds to the key in the source payload to use.
+- If `reference` is used, it links to a model that has been synchronized prior to this model.
+
+:::
+
+```yaml
+schema_mapping:
+  - name: InfraDevice
+    mapping: "dcim.devices"
+    identifiers: ["name"]
+    fields:
+      - name: "name"
+        mapping: "name"
+      - name: "device_type"
+        mapping: "device_type.display_name"
+      - name: "manufacturer"
+        mapping: "device_type.manufacturer.name"
+
+  - name: InfraInterface
+    mapping: "dcim.interfaces"
+    identifiers: ["device", "name"]
+    fields:
+      - name: "name"
+        mapping: "name"
+      - name: "interface_type"
+        static: "10gbe"
+      - name: "description"
+        mapping: "description"
+      - name: "device"
+        reference: "InfraDevice"
+```
+
+In this example, `device_type` and `manufacturer` are attributes of `InfraDevice`. For destination objects that have relationships to other models, the related models must be synchronized first — see how `InfraInterface` references `InfraDevice` via the `reference` key.
+
+For the full mapping syntax — direct mappings, nested attributes, static values, references, identifiers, filters, transforms, and worked examples — see [Schema mapping reference](./reference/schema-mapping.mdx).
+
+## Tune sync behavior
+
+The `diffsync_flags` key controls how the synchronization handles three scenarios: unmatched objects in the destination, unmatched objects in the source, and modified objects.
+
+```yaml
+# Optional: control sync behavior with diffsync flags
+diffsync_flags:
+  - "SKIP_UNMATCHED_DST"  # Skip objects in destination that don't exist in source
+```
+
+:::info Understanding diffsync flags
+
+Available flags:
+
+| Flag | Description |
+|------|-------------|
+| `SKIP_UNMATCHED_DST` | Skip objects in the destination that don't exist in the source (prevents deletion) |
+| `SKIP_UNMATCHED_SRC` | Skip objects in the source that don't exist in the destination (prevents creation) |
+| `SKIP_MODIFIED` | Skip objects that exist in both systems but have different values (prevents updates) |
+
+If no flags are specified, `SKIP_UNMATCHED_DST` is used by default — destination objects that don't exist in the source are preserved rather than deleted.
+
+:::
+
+For more on customizing sync configuration and troubleshooting, see [Sync instance configuration](./reference/config.mdx).
+
+When the project is configured, run the sync — see [Run a sync](./running-a-sync.mdx).

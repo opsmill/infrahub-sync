@@ -45,7 +45,7 @@ pip install infrahub-sync
 infrahub-sync --help
 ```
 
-→ For step-by-step setup, see [Installing Infrahub Sync](https://docs.infrahub.app/sync/guides/installation), [Creating a new sync instance](https://docs.infrahub.app/sync/guides/creation), and [Running sync tasks](https://docs.infrahub.app/sync/guides/run).
+→ For step-by-step setup, see [Install Infrahub Sync](https://docs.infrahub.app/sync/installation), [Create a sync project](https://docs.infrahub.app/sync/creating-a-sync-project), and [Run a sync](https://docs.infrahub.app/sync/running-a-sync).
 
 ---
 
@@ -63,7 +63,7 @@ infrahub-sync sync --name from-netbox --directory ./examples
 
 After the sync completes, every NetBox device, interface, VLAN, prefix, and related model appears in Infrahub, mapped per the schema mapping in `config.yml`.
 
-→ For the full walkthrough of what happens under the hood — adapter generation, diff calculation, and sync ordering — see [Running sync tasks](https://docs.infrahub.app/sync/guides/run).
+→ For the full walkthrough of what happens under the hood — adapter generation, diff calculation, and sync ordering — see [Run a sync](https://docs.infrahub.app/sync/running-a-sync).
 
 ---
 
@@ -113,13 +113,13 @@ After the sync completes, every NetBox device, interface, VLAN, prefix, and rela
 
 | | |
 |---|---|
-| **Install and run** | [Installing Infrahub Sync](https://docs.infrahub.app/sync/guides/installation) · [Creating a sync instance](https://docs.infrahub.app/sync/guides/creation) · [Running sync tasks](https://docs.infrahub.app/sync/guides/run) |
+| **Install and run** | [Install Infrahub Sync](https://docs.infrahub.app/sync/installation) · [Create a sync project](https://docs.infrahub.app/sync/creating-a-sync-project) · [Run a sync](https://docs.infrahub.app/sync/running-a-sync) |
 | **Full documentation** | [Infrahub Sync docs](https://docs.infrahub.app/sync) |
 | **All adapters** | [Adapter reference](https://docs.infrahub.app/sync#adapters) |
 | **Configuration reference** | [Sync instance configuration](https://docs.infrahub.app/sync/reference/config) · [CLI reference](https://docs.infrahub.app/sync/reference/cli) |
-| **Custom CA certificates** | [Custom certificates guide](https://docs.infrahub.app/sync/guides/custom-certificates) |
+| **Custom CA certificates** | [Custom certificates guide](https://docs.infrahub.app/sync/custom-certificates) |
 | **Local custom adapters** | [Local adapters guide](https://docs.infrahub.app/sync/adapters/local-adapters) |
-| **Contribute** | [Development guide](https://docs.infrahub.app/sync/development) — development environment, tests, releases |
+| **Contribute** | [Contributing guide](https://docs.infrahub.app/sync/contributing) — development environment, tests, code standards |
 
 ---
 
@@ -127,7 +127,7 @@ After the sync completes, every NetBox device, interface, VLAN, prefix, and rela
 
 - **Report a bug or request a feature** — [GitHub Issues](https://github.com/opsmill/infrahub-sync/issues)
 - **Discuss with the community** — [discord.gg/opsmill](https://discord.gg/opsmill)
-- **Contribute code or docs** — see the [Development guide](https://docs.infrahub.app/sync/development)
+- **Contribute code or docs** — see the [Contributing guide](https://docs.infrahub.app/sync/contributing)
 
 ---
 

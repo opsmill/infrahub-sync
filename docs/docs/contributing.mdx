@@ -1,0 +1,147 @@
+---
+title: Contributing
+---
+
+This guide covers how to set up a development environment for `infrahub-sync` and contribute to the project. For the release runbook, see [RELEASING.md](https://github.com/opsmill/infrahub-sync/blob/main/RELEASING.md) at the repository root — that's maintainer-only.
+
+## Prerequisites
+
+- Python 3.10–3.13 (3.12 recommended)
+- [uv](https://docs.astral.sh/uv/) for dependency management
+- Git
+
+## Setting up your development environment
+
+### Clone the repository
+
+```bash
+git clone https://github.com/opsmill/infrahub-sync.git
+cd infrahub-sync
+```
+
+### Install uv
+
+If you don't have uv installed, you can install it with:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Or see the [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/) for other options.
+
+### Install dependencies
+
+```bash
+uv sync --group dev
+```
+
+This installs all runtime and development dependencies defined in `pyproject.toml`.
+
+### Verify your setup
+
+```bash
+uv run infrahub-sync --help
+uv run infrahub-sync list --directory examples/
+```
+
+## Development workflow
+
+Before committing any changes, run the following commands in order:
+
+```bash
+uv run invoke format    # Format code with ruff
+uv run invoke lint      # Lint code with ruff and pylint
+uv run mypy infrahub_sync/ --ignore-missing-imports
+```
+
+### Validate the CLI
+
+After making changes, verify the CLI still works:
+
+```bash
+uv run infrahub-sync --help
+uv run infrahub-sync list --directory examples/
+uv run infrahub-sync generate --name from-netbox --directory examples/
+```
+
+### Running tests
+
+```bash
+uv run pytest -q
+```
+
+## Code standards
+
+### Python style
+
+- Python 3.10–3.13 compatible
+- Type hints on new or changed code
+- Ruff-formatted and lint-clean
+- Mypy-checked (do not increase existing error count)
+- Public functions and classes require documentation strings
+- Raise specific exceptions; avoid broad `except Exception:`
+
+### Line length
+
+- Maximum line length: 120 characters (configured in `pyproject.toml`)
+
+## Documentation
+
+If you make user-facing changes (CLI flags, configuration options, new adapters), update the documentation.
+
+### Generate command-line documentation
+
+```bash
+uv run invoke docs.generate
+```
+
+### Build documentation site
+
+First-time setup (requires Node.js):
+
+```bash
+cd docs && npm install
+```
+
+Build the site:
+
+```bash
+uv run invoke docs.docusaurus
+```
+
+### Lint markdown files
+
+```bash
+npx markdownlint-cli "docs/docs/**/*.{md,mdx}"
+npx markdownlint-cli --fix "docs/docs/**/*.{md,mdx}"
+```
+
+## Adding a new adapter
+
+1. Create `infrahub_sync/adapters/<name>.py` following existing adapter patterns
+2. Add connection configuration schema and an example under `examples/`
+3. Provide `list` and `diff` pathways before enabling `sync`
+4. Document required environment variables and expected error cases
+5. Create a documentation page in `docs/docs/adapters/`
+6. Add the adapter to the sidebar in `docs/sidebars.ts`
+
+## Invoke tasks
+
+View all available tasks:
+
+```bash
+uv run invoke --list
+```
+
+Common tasks:
+
+| Task | Description |
+|------|-------------|
+| `linter.format-ruff` | Format Python code with ruff |
+| `linter.lint-ruff` | Lint Python code with ruff |
+| `linter.lint-pylint` | Lint Python code with pylint |
+| `linter.lint-yaml` | Lint YAML files with yamllint |
+| `docs.generate` | Generate CLI documentation |
+| `docs.docusaurus` | Build documentation website |
+| `format` | Alias for ruff format |
+| `lint` | Run all linters |
