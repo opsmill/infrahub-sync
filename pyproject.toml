@@ -124,6 +124,9 @@ asyncio_mode = "auto"
 testpaths = [
     "tests"
 ]
+markers = [
+    "integration: tests that require a running Infrahub instance. Skipped by default; opt in with -m integration and INFRAHUB_ADDRESS + INFRAHUB_API_TOKEN set.",
+]
 filterwarnings = [
     "ignore:Module already imported so cannot be rewritten",
     "ignore:the imp module is deprecated",
