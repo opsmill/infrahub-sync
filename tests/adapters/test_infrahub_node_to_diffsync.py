@@ -100,11 +100,12 @@ def _make_adapter(kind: str, field_names: list[str]) -> InfrahubAdapter:
 
 
 # ---------------------------------------------------------------------------
-# Tests — one per attribute kind. The pass-through cases all assert both
-# the value AND the resulting Python type, because the original bug was a
-# type change (list → str) that Pydantic later rejected — value equality
-# alone (``[] == "[]"`` is False but ``str([]) == "[]"``) wouldn't catch
-# every regression cleanly.
+# Tests — one per attribute kind. The pass-through cases assert both the
+# value AND the resulting Python type. Pydantic's downstream validation
+# rejects a stringified list (``"[]"``) against a ``list[str]`` field, so
+# locking the type at the dict boundary is the contract that matters;
+# value equality alone (``[] == "[]"`` is False but ``str([]) == "[]"``)
+# is a weaker invariant.
 # ---------------------------------------------------------------------------
 
 
@@ -128,9 +129,9 @@ def test_text_value_passes_through_unchanged() -> None:
 def test_list_value_passes_through_as_list() -> None:
     """``kind: List`` must arrive as a real list.
 
-    Regression guard for the original bug: prior to this fix, lists were
-    coerced via ``str()`` to ``"[]"`` / ``"['a']"``, which then failed
-    Pydantic validation against ``list[str]``-typed DiffSync fields.
+    Stringifying turns a list into its ``repr`` (e.g. ``"[]"`` / ``"['a']"``),
+    which then fails Pydantic validation against ``list[str]``-typed DiffSync
+    fields.
     """
     adapter = _make_adapter("Thing", ["tags"])
     node = FakeNode(node_id="1", kind="Thing", attrs={"tags": ["foo", "bar"]})
@@ -140,7 +141,7 @@ def test_list_value_passes_through_as_list() -> None:
 
 
 def test_empty_list_value_passes_through_as_empty_list() -> None:
-    """Empty list is the most common failure mode in the wild — exercise it explicitly."""
+    """Empty list is a separate code path under ``str()`` — exercise it explicitly."""
     adapter = _make_adapter("Thing", ["tags"])
     node = FakeNode(node_id="1", kind="Thing", attrs={"tags": []})
     data = adapter.infrahub_node_to_diffsync(node)
@@ -250,18 +251,20 @@ def test_mixed_kinds_round_trip_together() -> None:
         "validation": None,
         "is_revoked": False,
     }
-    # Explicit type checks on the ones that the original bug mangled.
+    # Explicit type checks on the kinds where Pydantic won't coerce a
+    # stringified value back (list, bool) — locks in correct typing at
+    # the dict boundary.
     assert isinstance(data["sans"], list)
     assert isinstance(data["is_revoked"], bool)
 
 
 # ---------------------------------------------------------------------------
 # End-to-end: the real consumer of this method's output is
-# ``DiffSyncModel(**data)`` inside ``InfrahubAdapter.load``. Validating the
-# dict shape alone misses the layer that actually breaks in practice —
-# Pydantic typed-field validation on the DiffSync model. These tests feed
-# the adapter's output straight into a model and prove the model
-# constructs without error, with values of the right Python type.
+# ``DiffSyncModel(**data)`` inside ``InfrahubAdapter.load``. Validating
+# the dict shape alone misses the layer that matters in practice —
+# Pydantic typed-field validation on the DiffSync model. These tests
+# feed the adapter's output straight into a model and prove construction
+# succeeds with values of the right Python type.
 # ---------------------------------------------------------------------------
 
 
@@ -271,13 +274,11 @@ from infrahub_sync import DiffSyncModelMixin  # noqa: E402
 
 
 class TypedCertModel(DiffSyncModelMixin, DiffSyncModel):
-    """A Pydantic-typed DiffSync model shaped like the real F5
-    ``CertificateCertificate`` that triggered the original bug.
+    """A Pydantic-typed DiffSync model representative of real downstream usage.
 
-    The point: every attribute is typed *exactly* (``list[str]`` not
-    ``list``; ``int`` not ``int | str``). Before the fix, the adapter's
-    output failed Pydantic validation on the ``sans`` field. After the
-    fix it constructs cleanly.
+    Every attribute is typed *exactly* (``list[str]`` not ``list``;
+    ``int`` not ``int | str``). The adapter's output must construct this
+    model cleanly without Pydantic coercing values across types.
     """
 
     _modelname = "TypedCert"
@@ -308,10 +309,9 @@ def test_adapter_output_constructs_pydantic_diffsync_model() -> None:
     """The output of ``infrahub_node_to_diffsync`` must be directly
     consumable by ``DiffSyncModel(**data)``.
 
-    This is what ``InfrahubAdapter.load`` does at runtime and the layer
-    that the original bug actually broke. The other tests in this module
-    check dict shape; this one checks the contract that matters:
-    Pydantic-typed model construction.
+    This is what ``InfrahubAdapter.load`` does at runtime. The other
+    tests in this module check dict shape; this one checks the contract
+    that matters downstream: Pydantic-typed model construction.
     """
     field_names = ["serial", "subject_dn", "expiration", "port", "enabled", "sans", "metadata", "validation"]
     adapter = _make_adapter("TypedCert", field_names)
@@ -332,8 +332,8 @@ def test_adapter_output_constructs_pydantic_diffsync_model() -> None:
 
     data = adapter.infrahub_node_to_diffsync(node)
 
-    # This is the line that raises pydantic.ValidationError before the
-    # fix and succeeds after.
+    # The adapter's dict must satisfy strict Pydantic field types — any
+    # cross-type coercion here would surface as ``ValidationError``.
     instance = TypedCertModel(**data)
 
     # Values survive intact.
@@ -345,7 +345,8 @@ def test_adapter_output_constructs_pydantic_diffsync_model() -> None:
     assert instance.metadata == {"issuer": "demo-ca", "chain_depth": 2}
     assert instance.validation is None
 
-    # Types survive intact on the previously-mangled fields.
+    # Each non-string kind must arrive with the exact Python type the
+    # model annotates — Pydantic strict-mode would reject a coerced str.
     assert isinstance(instance.sans, list)
     assert isinstance(instance.port, int)
     assert isinstance(instance.enabled, bool)
@@ -353,12 +354,11 @@ def test_adapter_output_constructs_pydantic_diffsync_model() -> None:
 
 
 def test_adapter_output_constructs_model_with_empty_list() -> None:
-    """The original reported failure: empty list arriving as ``"[]"``.
+    """Empty-list and empty-dict edge cases must construct the model.
 
-    With the buggy adapter, ``TypedCertModel(**data)`` raises:
-    ``ValidationError: 1 validation error for TypedCertModel
-    sans: Input should be a valid list [type=list_type,
-    input_value='[]', input_type=str]``
+    ``str([])`` and ``str({})`` produce ``"[]"`` / ``"{}"`` — distinct
+    Python literals that look list/dict-ish but fail Pydantic validation
+    against ``list[str]`` / ``dict[str, Any]`` fields.
     """
     field_names = ["serial", "subject_dn", "expiration", "port", "enabled", "sans", "metadata"]
     adapter = _make_adapter("TypedCert", field_names)

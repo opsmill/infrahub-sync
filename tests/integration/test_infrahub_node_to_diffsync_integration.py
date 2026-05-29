@@ -189,8 +189,8 @@ def test_real_sdk_node_round_trips_into_typed_diffsync_model(
 ) -> None:
     """End-to-end: load a real SDK node, run it through the adapter, feed
     into a Pydantic-typed DiffSync model. Asserts both per-field type and
-    value survive the trip — which is the contract that broke for the
-    original bug.
+    value survive the trip — that's the contract ``InfrahubAdapter.load``
+    relies on at runtime.
     """
     address, token, _ = live_probe_node
 
@@ -237,13 +237,13 @@ def test_real_sdk_node_round_trips_into_typed_diffsync_model(
 
     data = adapter.infrahub_node_to_diffsync(node=node)
 
-    # Feeding the adapter's output into a Pydantic-typed model is the
-    # contract that the original bug broke. It must not raise.
+    # Pydantic-typed DiffSync model construction is the consumer contract
+    # under test. Construction must not raise.
     instance = AdapterProbe(**data)
 
-    # Value + type checks per kind. The original bug surfaced as
-    # `Input should be a valid list ... input_value='[]', input_type=str`
-    # — both halves of that contract (value AND type) are asserted here.
+    # Value + type checks per kind. Pydantic ``list[str]`` and
+    # ``dict[str, Any]`` fields reject string inputs outright, so both
+    # halves of the contract (value AND Python type) are asserted here.
     assert instance.name == _NODE_VALUES["name"]
     assert instance.tags == _NODE_VALUES["tags"]
     assert isinstance(instance.tags, list)
