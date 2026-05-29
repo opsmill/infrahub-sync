@@ -343,11 +343,17 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             if has_field(config=self.config, name=node._schema.kind, field=attr_name):
                 attr = getattr(node, attr_name)
                 val = attr.value
-                # Convert IP types and other non-string values to strings for DiffSync models
+                # IP types come back from the Infrahub SDK as ipaddress
+                # objects; DiffSync models store them as their string form
+                # (e.g. "10.0.0.1/32"), so normalise here. Other non-string
+                # kinds — List, Number, Boolean, DateTime — pass through
+                # unchanged: stringifying them turns a real list `[]` into
+                # the four-character literal `"[]"`, which then fails
+                # Pydantic validation on `list[str]`-typed fields.
                 if isinstance(
                     val,
                     (ipaddress.IPv4Interface, ipaddress.IPv6Interface, ipaddress.IPv4Network, ipaddress.IPv6Network),
-                ) or (val is not None and not isinstance(val, str)):
+                ):
                     data[attr_name] = str(val)
                 else:
                     data[attr_name] = val
