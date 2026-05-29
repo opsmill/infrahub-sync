@@ -253,3 +253,133 @@ def test_mixed_kinds_round_trip_together() -> None:
     # Explicit type checks on the ones that the original bug mangled.
     assert isinstance(data["sans"], list)
     assert isinstance(data["is_revoked"], bool)
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: the real consumer of this method's output is
+# ``DiffSyncModel(**data)`` inside ``InfrahubAdapter.load``. Validating the
+# dict shape alone misses the layer that actually breaks in practice —
+# Pydantic typed-field validation on the DiffSync model. These tests feed
+# the adapter's output straight into a model and prove the model
+# constructs without error, with values of the right Python type.
+# ---------------------------------------------------------------------------
+
+
+from diffsync import DiffSyncModel  # noqa: E402
+
+from infrahub_sync import DiffSyncModelMixin  # noqa: E402
+
+
+class TypedCertModel(DiffSyncModelMixin, DiffSyncModel):
+    """A Pydantic-typed DiffSync model shaped like the real F5
+    ``CertificateCertificate`` that triggered the original bug.
+
+    The point: every attribute is typed *exactly* (``list[str]`` not
+    ``list``; ``int`` not ``int | str``). Before the fix, the adapter's
+    output failed Pydantic validation on the ``sans`` field. After the
+    fix it constructs cleanly.
+    """
+
+    _modelname = "TypedCert"
+    _identifiers = ("serial",)
+    _attributes = (
+        "subject_dn",
+        "expiration",
+        "port",
+        "enabled",
+        "sans",
+        "metadata",
+        "validation",
+    )
+
+    serial: str
+    subject_dn: str
+    expiration: str
+    port: int
+    enabled: bool
+    sans: list[str]
+    metadata: dict[str, Any]
+    validation: str | None = None
+    local_id: str | None = None
+    local_data: Any | None = None
+
+
+def test_adapter_output_constructs_pydantic_diffsync_model() -> None:
+    """The output of ``infrahub_node_to_diffsync`` must be directly
+    consumable by ``DiffSyncModel(**data)``.
+
+    This is what ``InfrahubAdapter.load`` does at runtime and the layer
+    that the original bug actually broke. The other tests in this module
+    check dict shape; this one checks the contract that matters:
+    Pydantic-typed model construction.
+    """
+    field_names = ["serial", "subject_dn", "expiration", "port", "enabled", "sans", "metadata", "validation"]
+    adapter = _make_adapter("TypedCert", field_names)
+    node = FakeNode(
+        node_id="cert-real",
+        kind="TypedCert",
+        attrs={
+            "serial": "abc123",
+            "subject_dn": "CN=app.example.com",
+            "expiration": "2027-08-21T08:21:16Z",
+            "port": 443,
+            "enabled": True,
+            "sans": ["app.example.com", "alt.example.com"],
+            "metadata": {"issuer": "demo-ca", "chain_depth": 2},
+            "validation": None,
+        },
+    )
+
+    data = adapter.infrahub_node_to_diffsync(node)
+
+    # This is the line that raises pydantic.ValidationError before the
+    # fix and succeeds after.
+    instance = TypedCertModel(**data)
+
+    # Values survive intact.
+    assert instance.serial == "abc123"
+    assert instance.subject_dn == "CN=app.example.com"
+    assert instance.port == 443
+    assert instance.enabled is True
+    assert instance.sans == ["app.example.com", "alt.example.com"]
+    assert instance.metadata == {"issuer": "demo-ca", "chain_depth": 2}
+    assert instance.validation is None
+
+    # Types survive intact on the previously-mangled fields.
+    assert isinstance(instance.sans, list)
+    assert isinstance(instance.port, int)
+    assert isinstance(instance.enabled, bool)
+    assert isinstance(instance.metadata, dict)
+
+
+def test_adapter_output_constructs_model_with_empty_list() -> None:
+    """The original reported failure: empty list arriving as ``"[]"``.
+
+    With the buggy adapter, ``TypedCertModel(**data)`` raises:
+    ``ValidationError: 1 validation error for TypedCertModel
+    sans: Input should be a valid list [type=list_type,
+    input_value='[]', input_type=str]``
+    """
+    field_names = ["serial", "subject_dn", "expiration", "port", "enabled", "sans", "metadata"]
+    adapter = _make_adapter("TypedCert", field_names)
+    node = FakeNode(
+        node_id="cert-empty",
+        kind="TypedCert",
+        attrs={
+            "serial": "empty-sans",
+            "subject_dn": "CN=no-sans.example.com",
+            "expiration": "2027-08-21T08:21:16Z",
+            "port": 443,
+            "enabled": True,
+            "sans": [],
+            "metadata": {},
+        },
+    )
+
+    data = adapter.infrahub_node_to_diffsync(node)
+    instance = TypedCertModel(**data)
+
+    assert instance.sans == []
+    assert isinstance(instance.sans, list)
+    assert instance.metadata == {}
+    assert isinstance(instance.metadata, dict)
