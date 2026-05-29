@@ -56,6 +56,11 @@ def _collect_optional_edges(
 _MAX_CYCLE_BREAK_ATTEMPTS = 50
 
 
+def _consecutive_pairs(nodes: list[str]) -> list[tuple[str, str]]:
+    """Yield successive `(nodes[i], nodes[i+1])` edges along a reported cycle."""
+    return [(nodes[i], nodes[i + 1]) for i in range(len(nodes) - 1)]
+
+
 def compute_tiers(
     schema_mapping: list[SchemaMappingModel],
 ) -> tuple[list[set[str]], list[tuple[str, str]]]:
@@ -77,20 +82,22 @@ def compute_tiers(
         try:
             return topological_sort(deps), dropped
         except DependencyCycleExistsError as exc:
-            broken = False
-            for cycle in exc.cycles:
-                cycle_list = list(cycle)
-                for i in range(len(cycle_list) - 1):
-                    src, dst = cycle_list[i], cycle_list[i + 1]
-                    if (src, dst) in optional and dst in deps.get(src, set()):
-                        deps[src].discard(dst)
-                        dropped.append((src, dst))
-                        broken = True
-                        break
-                if broken:
-                    break
-            if not broken:
+            # Drop every optional edge appearing in *any* reported cycle in one
+            # pass, then retry — typically resolves in a single extra sort
+            # instead of one-edge-per-iteration (O(n_cycles) sorts). The bounded
+            # loop remains only as a safety net should dropping these edges
+            # expose a fresh cycle. Sorted for deterministic `dropped` output.
+            to_drop = {
+                (src, dst)
+                for cycle in exc.cycles
+                for src, dst in _consecutive_pairs(list(cycle))
+                if (src, dst) in optional and dst in deps.get(src, set())
+            }
+            if not to_drop:
                 raise
+            for src, dst in sorted(to_drop):
+                deps[src].discard(dst)
+                dropped.append((src, dst))
     msg = "Exceeded cycle-break budget; aborting tier computation."
     raise RuntimeError(msg)
 

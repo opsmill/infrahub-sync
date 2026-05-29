@@ -28,12 +28,18 @@ def cache_root_for(sync_name: str) -> Path:
 
     Defaults to `<cwd>/.infrahub-sync-cache/<sync_name>/`. Override with the
     `INFRAHUB_SYNC_CACHE_DIR` environment variable to point at a shared
-    location (e.g., an NFS mount used by a fleet of runners).
+    location (e.g., an NFS mount used by a fleet of runners). The override is
+    expanded (`~`) and rejected if it contains `..` traversal segments, so a
+    misconfigured value can't silently redirect the cache outside its root.
     """
     _require_safe_segment(sync_name, "sync_name")
     base = os.environ.get("INFRAHUB_SYNC_CACHE_DIR")
     if base:
-        return Path(base) / sync_name
+        base_path = Path(base).expanduser()
+        if ".." in base_path.parts:
+            msg = f"INFRAHUB_SYNC_CACHE_DIR must not contain '..' traversal segments (got {base!r})"
+            raise ValueError(msg)
+        return base_path / sync_name
     return Path.cwd() / ".infrahub-sync-cache" / sync_name
 
 

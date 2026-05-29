@@ -117,8 +117,20 @@ class SyncConfig(pydantic.BaseModel):
 
         Logs the tier layout and any dropped optional edges at INFO level.
         """
+        order, _tiers = self.compute_order_and_tiers()
+        return order
+
+    def compute_order_and_tiers(self) -> tuple[list[str], list[set[str]] | None]:
+        """Return `(flat_order, tiers)` from a single topological pass.
+
+        `tiers` is `None` when an explicit `order` is configured. Callers that
+        need both the flat order and the tier layout should use this rather
+        than calling `compute_order()` and `compute_tiers()` separately, which
+        would sort the graph twice. Logs the tier layout and any dropped
+        optional edges at INFO level.
+        """
         if self.order:
-            return list(self.order)
+            return list(self.order), None
         # Imported here to avoid a circular import at module load.
         from infrahub_sync.dependency_graph import compute_tiers, flatten_tiers
 
@@ -130,7 +142,7 @@ class SyncConfig(pydantic.BaseModel):
                 "dropped optional edges to break cycles: %s",
                 dropped,
             )
-        return flatten_tiers(tiers)
+        return flatten_tiers(tiers), tiers
 
 
 class SyncInstance(SyncConfig):

@@ -84,14 +84,19 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
         element: SchemaMappingModel,
         model: type[NetboxModel],
         raw_records: list[dict],
+        already_filtered: bool = False,
     ) -> Iterator[dict]:
         """Filter+transform NetBox records and yield diffsync-ready dicts.
 
         Same transformation flow as model_loader, factored out for reuse by
-        list_changed_since.
+        list_changed_since. Pass `already_filtered=True` when the caller has
+        run `filter_records` itself (e.g. to log a filtered count) so records
+        aren't filtered twice.
         """
         if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
-            filtered = model.filter_records(records=raw_records, schema_mapping=element)
+            filtered = (
+                raw_records if already_filtered else model.filter_records(records=raw_records, schema_mapping=element)
+            )
             transformed = model.transform_records(records=filtered, schema_mapping=element)
         else:
             transformed = raw_records
@@ -160,13 +165,17 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
             total = len(raw_records)
 
             if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
-                filtered_count = len(model.filter_records(records=raw_records, schema_mapping=element))
-                logger.info("%s: Loading %d/%d %s", self.type, filtered_count, total, resource_name)
+                filtered = model.filter_records(records=raw_records, schema_mapping=element)
+                logger.info("%s: Loading %d/%d %s", self.type, len(filtered), total, resource_name)
             else:
+                filtered = raw_records
                 logger.info("%s: Loading all %d %s", self.type, total, resource_name)
 
-            # Create model instances after filtering and transforming
-            for data in self._records_to_diffsync(element=element, model=model, raw_records=raw_records):
+            # Create model instances after transforming — records are already
+            # filtered above, so `_records_to_diffsync` must not filter again.
+            for data in self._records_to_diffsync(
+                element=element, model=model, raw_records=filtered, already_filtered=True
+            ):
                 item = model(**data)
                 self.add(item)
 

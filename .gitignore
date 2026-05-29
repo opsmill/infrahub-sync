@@ -15,3 +15,6 @@ node_modules/*
 .envrc
 dist/
 .infrahub-sync-cache/
+# invoke bench.run artifacts (default to repo root)
+bench-results.csv
+.bench-filtered-config.yml

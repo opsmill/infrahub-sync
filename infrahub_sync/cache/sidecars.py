@@ -80,7 +80,10 @@ class RunFile:
         if not path.exists():
             return cls(path=path)
         data = json.loads(path.read_text(encoding="utf-8"))
-        return cls(path=path, **{k: data.get(k) for k in cls.KEYS if data.get(k) is not None})
+        # Use `k in data` (not `is not None`) so a genuinely-stored null is kept
+        # rather than silently reset to the dataclass default — a stored
+        # `{"status": null}` should surface as corruption, not masquerade as "pending".
+        return cls(path=path, **{k: data[k] for k in cls.KEYS if k in data})
 
     def save(self) -> None:
         payload = {k: getattr(self, k) for k in self.KEYS}

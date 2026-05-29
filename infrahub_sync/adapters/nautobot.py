@@ -29,12 +29,14 @@ if TYPE_CHECKING:
 
 
 def _is_unknown_filter_error(exc: pynautobot.core.query.RequestError, field: str) -> bool:
-    """True if `exc` is a 400 mentioning `field` as an unknown filter.
+    """True if `exc` is a 400 rejecting `field` as an unknown filter.
 
-    Checks the response JSON when available so the predicate survives
-    wording tweaks in Nautobot's error string ("Unknown filter field"
-    vs. "is not a valid filter", etc.). Falls back to substring match
-    on the rendered message for transports that didn't return JSON.
+    Prefers the response JSON, where Nautobot reports the offending filter
+    as a top-level key (e.g. ``{"last_updated__gte": ["Unknown filter field"]}``),
+    so the predicate survives wording tweaks in the error string. Only when the
+    body isn't JSON do we fall back to a substring match, and even then we
+    require both the field name *and* an unknown-filter phrase so an unrelated
+    400 that merely happens to mention the field can't trigger a false positive.
     """
     req = getattr(exc, "req", None)
     if req is None or getattr(req, "status_code", None) != 400:
@@ -42,10 +44,13 @@ def _is_unknown_filter_error(exc: pynautobot.core.query.RequestError, field: str
     try:
         payload = req.json()
     except (ValueError, AttributeError):
-        return field in str(exc)
-    if isinstance(payload, dict) and field in payload:
-        return True
-    return field in str(exc)
+        payload = None
+    if isinstance(payload, dict):
+        # Authoritative signal: the rejected filter appears as a key in the body.
+        return field in payload
+    # No JSON body — require the field name and filter-rejection wording.
+    text = str(exc)
+    return field in text and "filter" in text.lower()
 
 
 class NautobotAdapter(DiffSyncMixin, Adapter):
@@ -103,14 +108,19 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
         element: SchemaMappingModel,
         model: type[NautobotModel],
         raw_records: list[dict],
+        already_filtered: bool = False,
     ) -> Iterator[dict]:
         """Filter+transform Nautobot records and yield diffsync-ready dicts.
 
         Same transformation flow as model_loader, factored out for reuse by
-        list_changed_since.
+        list_changed_since. Pass `already_filtered=True` when the caller has
+        run `filter_records` itself (e.g. to log a filtered count) so records
+        aren't filtered twice.
         """
         if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
-            filtered = model.filter_records(records=raw_records, schema_mapping=element)
+            filtered = (
+                raw_records if already_filtered else model.filter_records(records=raw_records, schema_mapping=element)
+            )
             transformed = model.transform_records(records=filtered, schema_mapping=element)
         else:
             transformed = raw_records
@@ -185,12 +195,19 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
             total = len(raw_records)
             resource_name = element.mapping.split(".")[-1]
             if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
-                logger.info("%s: Loading %d %s", self.type, total, resource_name)
+                filtered = model.filter_records(records=raw_records, schema_mapping=element)
+                # Mirror the NetBox adapter's filtered/total log so operators see
+                # the same detail regardless of source system.
+                logger.info("%s: Loading %d/%d %s", self.type, len(filtered), total, resource_name)
             else:
+                filtered = raw_records
                 logger.info("%s: Loading all %d %s", self.type, total, resource_name)
 
             continue_on_error = getattr(self, "continue_on_error", False)
-            for data in self._records_to_diffsync(element=element, model=model, raw_records=raw_records):
+            # Records are already filtered above; don't filter again.
+            for data in self._records_to_diffsync(
+                element=element, model=model, raw_records=filtered, already_filtered=True
+            ):
                 try:
                     item = model(**data)
                 except ValidationError as exc:

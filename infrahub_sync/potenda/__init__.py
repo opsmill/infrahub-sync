@@ -33,6 +33,9 @@ class Potenda:
         verbosity: int | None = None,
         tiers: list[set[str]] | None = None,
         run_dir: Path | None = None,
+        run_id: str | None = None,
+        cache_root: Path | None = None,
+        schema_subhash: str = "",
         continue_on_error: bool = False,
         concurrent_load: bool = True,
     ):
@@ -43,17 +46,18 @@ class Potenda:
         if self.tiers:
             for idx, tier in enumerate(self.tiers):
                 logger.info("Potenda tier %d (%d): %s", idx, len(tier), sorted(tier))
+        # Cache/run identity — passed at construction so the object is fully
+        # valid on return rather than mutated into shape by the caller.
         self.run_dir: Path | None = run_dir
-        self.run_id: str | None = None
+        self.run_id: str | None = run_id
+        self.cache_root: Path | None = cache_root
+        self._schema_subhash: str = schema_subhash
         self._counts: dict[str, int] = {}
         self._did_full_extract: bool = False
         self._side_extract_ts: dict[str, datetime] = {}
         self._prev_run_resolved: bool = False
         self._prev_run_cached: Path | None = None
-        # Incremental-extract knobs — set by callers (CLI / get_potenda_from_instance)
-        # rather than at construction time. Declared here so mypy can see them.
-        self.cache_root: Path | None = None
-        self._schema_subhash: str = ""
+        # Runtime toggle set per-command by the CLI just before load.
         self.force_full_extract: bool = False
 
         self.config = config

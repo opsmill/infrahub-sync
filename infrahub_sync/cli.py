@@ -116,7 +116,6 @@ def diff_cmd(
     sync_instance = get_instance(name=name, config_file=config_file, directory=directory)
     if not sync_instance:
         print_error_and_abort("Failed to load sync instance.")
-    assert sync_instance is not None  # type-narrowing; print_error_and_abort raises
 
     # Add adapter paths from CLI to the sync instance if specified
     if adapter_path is not None:
@@ -141,7 +140,9 @@ def diff_cmd(
             print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}")
 
         ptd.force_full_extract = full_extract
-        assert ptd.run_dir is not None  # get_potenda_from_instance always allocates one
+        if ptd.run_dir is None:  # get_potenda_from_instance always allocates one
+            msg = "get_potenda_from_instance did not allocate a run_dir"
+            raise RuntimeError(msg)
         run_file = RunFile(path=ptd.run_dir / "run.json", status="running", mode="diff")
         run_file.save()
 
@@ -213,7 +214,6 @@ def sync_cmd(
     sync_instance = get_instance(name=name, config_file=config_file, directory=directory)
     if not sync_instance:
         print_error_and_abort("Failed to load sync instance.")
-    assert sync_instance is not None  # type-narrowing; print_error_and_abort raises
 
     # Add adapter paths from CLI to the sync instance if specified
     if adapter_path is not None:
@@ -238,7 +238,9 @@ def sync_cmd(
             print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}")
 
         ptd.force_full_extract = full_extract
-        assert ptd.run_dir is not None  # get_potenda_from_instance always allocates one
+        if ptd.run_dir is None:  # get_potenda_from_instance always allocates one
+            msg = "get_potenda_from_instance did not allocate a run_dir"
+            raise RuntimeError(msg)
         run_file = RunFile(path=ptd.run_dir / "run.json", status="running", mode="sync")
         run_file.save()
 
@@ -305,7 +307,6 @@ def apply_cmd(
     sync_instance = get_instance(name=name, config_file=config_file, directory=directory)
     if not sync_instance:
         print_error_and_abort("Failed to load sync instance.")
-    assert sync_instance is not None  # type-narrowing; print_error_and_abort raises
     verbosity_level = ctx.obj.get("verbosity", logging.INFO) if ctx.obj else logging.INFO
 
     with pipeline_lock(sync_instance.name):
@@ -315,7 +316,9 @@ def apply_cmd(
             verbosity=verbosity_level,
             run_id=run_id,
         )
-        assert ptd.run_dir is not None  # get_potenda_from_instance always allocates one
+        if ptd.run_dir is None:  # get_potenda_from_instance always allocates one
+            msg = "get_potenda_from_instance did not allocate a run_dir"
+            raise RuntimeError(msg)
         run_file = RunFile(path=ptd.run_dir / "run.json", status="running", mode="apply")
         run_file.save()
         # Check that the cached plan was built against the same schema we
