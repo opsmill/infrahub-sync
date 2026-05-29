@@ -6,7 +6,7 @@ source:
   # name: genericrestapi
   settings:
     url: "https://demo.peering-manager.net"
-    token: "13bf6338aed52d172e33750d39717fff5a5f5d18"
+    token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     # When using the genericrestapi adapter
     # we need to specify the api_endpoint, auth_method and response_key_pattern
     # with peeringmanager adapter, these are set by default

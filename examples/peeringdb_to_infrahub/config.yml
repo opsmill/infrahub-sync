@@ -9,7 +9,7 @@ source:
     # auth_method: "none"
     # If you need authentication
     auth_method: "api-key"
-    token: "BdW624dP.fBkFmpt3gPAj0z3t2PcQE7FQvhfn1IKV"
+    token: "aaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     response_key_pattern: "data"  # PeeringDB wraps lists under "data"
 
 
@@ -19,7 +19,7 @@ destination:
     url: "http://localhost:8000"
 
 # Optional: Skip objects in the source that don't exist in the destination (prevents creation)
-dyffsync_flags: ["SKIP_UNMATCHED_SRC"]
+diffsync_flags: ["SKIP_UNMATCHED_SRC"]
 
 # order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
 # Uncomment and edit only if you need to override the computed order:
