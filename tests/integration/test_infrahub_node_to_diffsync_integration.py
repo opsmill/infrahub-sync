@@ -24,8 +24,7 @@ are not set. Run locally with::
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import requests
@@ -39,6 +38,9 @@ from infrahub_sync import (
     SyncConfig,
 )
 from infrahub_sync.adapters.infrahub import InfrahubAdapter
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 pytestmark = pytest.mark.integration
 
@@ -97,7 +99,8 @@ def _graphql(address: str, token: str, query: str) -> dict[str, Any]:
     response.raise_for_status()
     body = response.json()
     if body.get("errors"):
-        raise RuntimeError(f"GraphQL errors: {body['errors']}")
+        msg = f"GraphQL errors: {body['errors']}"
+        raise RuntimeError(msg)
     return body
 
 
@@ -116,10 +119,7 @@ def live_probe_node() -> Iterator[tuple[str, str, str]]:
     schema_response.raise_for_status()
 
     # Create one probe node with one attribute of each kind populated.
-    inputs = ", ".join(
-        f"{name}: {{value: {_graphql_literal(value)}}}"
-        for name, value in _NODE_VALUES.items()
-    )
+    inputs = ", ".join(f"{name}: {{value: {_graphql_literal(value)}}}" for name, value in _NODE_VALUES.items())
     created = _graphql(
         address,
         token,
@@ -137,7 +137,7 @@ def live_probe_node() -> Iterator[tuple[str, str, str]]:
         )
 
 
-def _graphql_literal(value: Any) -> str:
+def _graphql_literal(value: Any) -> str:  # noqa: ANN401 — heterogeneous Python types by design
     """Render a Python value as a GraphQL literal for our input shape.
 
     Handles only the kinds the test fixture uses; the dict / list / scalar
@@ -153,9 +153,10 @@ def _graphql_literal(value: Any) -> str:
     if isinstance(value, list):
         return "[" + ", ".join(_graphql_literal(v) for v in value) + "]"
     if isinstance(value, dict):
-        items = ", ".join(f'{k}: {_graphql_literal(v)}' for k, v in value.items())
+        items = ", ".join(f"{k}: {_graphql_literal(v)}" for k, v in value.items())
         return "{" + items + "}"
-    raise TypeError(f"Unsupported literal kind: {type(value).__name__}")
+    msg = f"Unsupported literal kind: {type(value).__name__}"
+    raise TypeError(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +199,9 @@ def test_real_sdk_node_round_trips_into_typed_diffsync_model(
         name="integration",
         source=SyncAdapter(name="src", adapter="x:x"),
         destination=SyncAdapter(
-            name="dst", adapter="x:x", settings={"url": address, "token": token},
+            name="dst",
+            adapter="x:x",
+            settings={"url": address, "token": token},
         ),
         order=["TestAdapterProbe"],
         schema_mapping=[
@@ -223,7 +226,7 @@ def test_real_sdk_node_round_trips_into_typed_diffsync_model(
     adapter.target = "dst"
     adapter.client = _make_infrahub_client(address, token)
     adapter.schema = adapter.client.schema.all(branch="main")
-    adapter.store = type("S", (), {"get": lambda self, **k: None})()
+    adapter.store = type("S", (), {"get": lambda _self, **_k: None})()
     adapter.source_node = None
     adapter.owner_node = None
 
@@ -261,7 +264,7 @@ def test_real_sdk_node_round_trips_into_typed_diffsync_model(
     assert isinstance(instance.address, str)
 
 
-def _make_infrahub_client(address: str, token: str) -> Any:
+def _make_infrahub_client(address: str, token: str) -> Any:  # noqa: ANN401 — SDK client is dynamically typed
     """Build a sync Infrahub client. Imported lazily so unit-only test
     runs aren't forced to install the SDK extras."""
     from infrahub_sdk import Config, InfrahubClientSync

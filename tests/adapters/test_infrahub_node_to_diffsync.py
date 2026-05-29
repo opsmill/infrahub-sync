@@ -28,6 +28,11 @@ from infrahub_sync import (
 )
 from infrahub_sync.adapters.infrahub import InfrahubAdapter
 
+# Test constant — extracted to avoid PLR2004 (magic-value) warnings on the
+# repeated literal. 443 is just a representative HTTPS port for the Number
+# kind; no significance beyond exercising int round-trip.
+HTTPS_PORT = 443
+
 
 # ---------------------------------------------------------------------------
 # Lightweight stand-ins for ``InfrahubNodeSync`` and its schema. We only
@@ -99,6 +104,18 @@ def _make_adapter(kind: str, field_names: list[str]) -> InfrahubAdapter:
     return adapter
 
 
+def _serialise(adapter: InfrahubAdapter, node: FakeNode) -> dict[str, Any]:
+    """Call ``adapter.infrahub_node_to_diffsync`` on a duck-typed fake node.
+
+    The method's parameter annotation is ``InfrahubNodeSync``, but the
+    function body only reads ``node.id``, ``node._schema``, and per-name
+    attribute managers — all of which ``FakeNode`` provides. The type
+    suppression below is a single, scoped location rather than once per
+    test.
+    """
+    return adapter.infrahub_node_to_diffsync(node=node)  # ty: ignore[invalid-argument-type]
+
+
 # ---------------------------------------------------------------------------
 # Tests — one per attribute kind. The pass-through cases assert both the
 # value AND the resulting Python type. Pydantic's downstream validation
@@ -113,7 +130,7 @@ def test_always_sets_local_id_from_node_id() -> None:
     """``local_id`` must be the stringified node id, regardless of attrs."""
     adapter = _make_adapter("Thing", [])
     node = FakeNode(node_id="abc-123", kind="Thing", attrs={})
-    data = adapter.infrahub_node_to_diffsync(node)
+    data = _serialise(adapter, node)
     assert data == {"local_id": "abc-123"}
 
 
@@ -121,7 +138,7 @@ def test_text_value_passes_through_unchanged() -> None:
     """``kind: Text`` is already str — no transformation needed."""
     adapter = _make_adapter("Thing", ["label"])
     node = FakeNode(node_id="1", kind="Thing", attrs={"label": "hello"})
-    data = adapter.infrahub_node_to_diffsync(node)
+    data = _serialise(adapter, node)
     assert data["label"] == "hello"
     assert isinstance(data["label"], str)
 
@@ -135,7 +152,7 @@ def test_list_value_passes_through_as_list() -> None:
     """
     adapter = _make_adapter("Thing", ["tags"])
     node = FakeNode(node_id="1", kind="Thing", attrs={"tags": ["foo", "bar"]})
-    data = adapter.infrahub_node_to_diffsync(node)
+    data = _serialise(adapter, node)
     assert data["tags"] == ["foo", "bar"]
     assert isinstance(data["tags"], list)
 
@@ -144,7 +161,7 @@ def test_empty_list_value_passes_through_as_empty_list() -> None:
     """Empty list is a separate code path under ``str()`` — exercise it explicitly."""
     adapter = _make_adapter("Thing", ["tags"])
     node = FakeNode(node_id="1", kind="Thing", attrs={"tags": []})
-    data = adapter.infrahub_node_to_diffsync(node)
+    data = _serialise(adapter, node)
     assert data["tags"] == []
     assert isinstance(data["tags"], list)
 
@@ -152,9 +169,9 @@ def test_empty_list_value_passes_through_as_empty_list() -> None:
 def test_number_value_passes_through_as_int() -> None:
     """``kind: Number`` must stay numeric, not become a stringified int."""
     adapter = _make_adapter("Thing", ["port"])
-    node = FakeNode(node_id="1", kind="Thing", attrs={"port": 443})
-    data = adapter.infrahub_node_to_diffsync(node)
-    assert data["port"] == 443
+    node = FakeNode(node_id="1", kind="Thing", attrs={"port": HTTPS_PORT})
+    data = _serialise(adapter, node)
+    assert data["port"] == HTTPS_PORT
     assert isinstance(data["port"], int)
 
 
@@ -162,7 +179,7 @@ def test_boolean_value_passes_through_as_bool() -> None:
     """``kind: Boolean`` must stay bool, not become ``"True"`` / ``"False"``."""
     adapter = _make_adapter("Thing", ["enabled"])
     node = FakeNode(node_id="1", kind="Thing", attrs={"enabled": True})
-    data = adapter.infrahub_node_to_diffsync(node)
+    data = _serialise(adapter, node)
     assert data["enabled"] is True
     assert isinstance(data["enabled"], bool)
 
@@ -171,7 +188,7 @@ def test_dict_value_passes_through_as_dict() -> None:
     """``kind: JSON`` arrives from the SDK as a dict — must not be stringified."""
     adapter = _make_adapter("Thing", ["payload"])
     node = FakeNode(node_id="1", kind="Thing", attrs={"payload": {"a": 1, "b": [2, 3]}})
-    data = adapter.infrahub_node_to_diffsync(node)
+    data = _serialise(adapter, node)
     assert data["payload"] == {"a": 1, "b": [2, 3]}
     assert isinstance(data["payload"], dict)
 
@@ -180,7 +197,7 @@ def test_datetime_string_value_passes_through() -> None:
     """``kind: DateTime`` already arrives from the SDK as an ISO-8601 string."""
     adapter = _make_adapter("Thing", ["expires_at"])
     node = FakeNode(node_id="1", kind="Thing", attrs={"expires_at": "2027-08-21T08:21:16Z"})
-    data = adapter.infrahub_node_to_diffsync(node)
+    data = _serialise(adapter, node)
     assert data["expires_at"] == "2027-08-21T08:21:16Z"
     assert isinstance(data["expires_at"], str)
 
@@ -189,7 +206,7 @@ def test_none_value_passes_through_as_none() -> None:
     """A null attribute must stay None, not become the string ``"None"``."""
     adapter = _make_adapter("Thing", ["nickname"])
     node = FakeNode(node_id="1", kind="Thing", attrs={"nickname": None})
-    data = adapter.infrahub_node_to_diffsync(node)
+    data = _serialise(adapter, node)
     assert data["nickname"] is None
 
 
@@ -202,11 +219,11 @@ def test_none_value_passes_through_as_none() -> None:
         (ipaddress.IPv6Network("2001:db8::/64"), "2001:db8::/64"),
     ],
 )
-def test_ip_types_are_stringified(raw: Any, expected: str) -> None:
+def test_ip_types_are_stringified(raw: Any, expected: str) -> None:  # noqa: ANN401 — heterogeneous ipaddress types
     """IP types: stringified intentionally — DiffSync models store them as str."""
     adapter = _make_adapter("Thing", ["address"])
     node = FakeNode(node_id="1", kind="Thing", attrs={"address": raw})
-    data = adapter.infrahub_node_to_diffsync(node)
+    data = _serialise(adapter, node)
     assert data["address"] == expected
     assert isinstance(data["address"], str)
 
@@ -215,7 +232,7 @@ def test_field_not_in_schema_mapping_is_skipped() -> None:
     """``has_field`` filters out attributes not in the schema_mapping config."""
     adapter = _make_adapter("Thing", ["wanted"])  # only "wanted" is in the mapping
     node = FakeNode(node_id="1", kind="Thing", attrs={"wanted": "yes", "ignored": "no"})
-    data = adapter.infrahub_node_to_diffsync(node)
+    data = _serialise(adapter, node)
     assert "wanted" in data
     assert "ignored" not in data
 
@@ -241,7 +258,7 @@ def test_mixed_kinds_round_trip_together() -> None:
             "is_revoked": False,
         },
     )
-    data = adapter.infrahub_node_to_diffsync(node)
+    data = _serialise(adapter, node)
     assert data == {
         "local_id": "cert-1",
         "serial": "abc123",
@@ -322,7 +339,7 @@ def test_adapter_output_constructs_pydantic_diffsync_model() -> None:
             "serial": "abc123",
             "subject_dn": "CN=app.example.com",
             "expiration": "2027-08-21T08:21:16Z",
-            "port": 443,
+            "port": HTTPS_PORT,
             "enabled": True,
             "sans": ["app.example.com", "alt.example.com"],
             "metadata": {"issuer": "demo-ca", "chain_depth": 2},
@@ -330,7 +347,7 @@ def test_adapter_output_constructs_pydantic_diffsync_model() -> None:
         },
     )
 
-    data = adapter.infrahub_node_to_diffsync(node)
+    data = _serialise(adapter, node)
 
     # The adapter's dict must satisfy strict Pydantic field types — any
     # cross-type coercion here would surface as ``ValidationError``.
@@ -339,7 +356,7 @@ def test_adapter_output_constructs_pydantic_diffsync_model() -> None:
     # Values survive intact.
     assert instance.serial == "abc123"
     assert instance.subject_dn == "CN=app.example.com"
-    assert instance.port == 443
+    assert instance.port == HTTPS_PORT
     assert instance.enabled is True
     assert instance.sans == ["app.example.com", "alt.example.com"]
     assert instance.metadata == {"issuer": "demo-ca", "chain_depth": 2}
@@ -369,14 +386,14 @@ def test_adapter_output_constructs_model_with_empty_list() -> None:
             "serial": "empty-sans",
             "subject_dn": "CN=no-sans.example.com",
             "expiration": "2027-08-21T08:21:16Z",
-            "port": 443,
+            "port": HTTPS_PORT,
             "enabled": True,
             "sans": [],
             "metadata": {},
         },
     )
 
-    data = adapter.infrahub_node_to_diffsync(node)
+    data = _serialise(adapter, node)
     instance = TypedCertModel(**data)
 
     assert instance.sans == []
