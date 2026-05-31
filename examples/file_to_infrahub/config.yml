@@ -1,0 +1,49 @@
+---
+name: from-file
+
+source:
+  name: file
+  settings:
+    # Base directory used to resolve relative file paths below.
+    # Defaults to this config's directory when omitted.
+    directory: "examples/file_to_infrahub/data"
+    # CSV options (applied to all .csv files)
+    delimiter: ","
+    encoding: "utf-8"
+
+destination:
+  name: infrahub
+  settings:
+    url: "http://localhost:8000"
+
+# Skip objects in the source that don't exist in the destination (prevents creation)
+diffsync_flags: ["SKIP_UNMATCHED_SRC"]
+
+order: [
+  "OrganizationGeneric",
+  "InfraDevice",
+]
+
+schema_mapping:
+  # Sites/organizations exported to organizations.csv
+  - name: OrganizationGeneric
+    mapping: organizations.csv
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: name
+      - name: description
+        mapping: description
+
+  # Devices exported to devices.csv, referencing an organization by name
+  - name: InfraDevice
+    mapping: devices.csv
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: name
+      - name: description
+        mapping: description
+      - name: organization
+        mapping: organization
+        reference: OrganizationGeneric

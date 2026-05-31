@@ -1,0 +1,145 @@
+---
+title: File adapter
+---
+
+import ReferenceLink from "../../src/components/Card";
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+The File adapter loads data from local file exports and synchronizes it into Infrahub. It is designed for the common case where another system can export flat files (CSV today) that you want to ingest without standing up an API integration.
+
+The adapter is built around a small, pluggable reader registry, so support for additional formats (JSON, YAML, Excel) can be added without changing the adapter logic.
+
+## Key features
+
+- Reads local CSV exports into Infrahub models
+- File format inferred from the file extension, with an optional `format` override
+- Configurable base directory, delimiter, and encoding
+- Filtering and transformation support (shared with the other adapters)
+- Scalar and list references to other models by identifier
+
+## Sync directions supported
+
+- File → Infrahub
+
+:::info
+
+The File adapter currently supports only **one-way synchronization** from local files into Infrahub.
+Writing data back to files is not yet supported.
+
+:::
+
+## Supported formats
+
+| Format | Extension | Status |
+|--------|-----------|--------|
+| CSV | `.csv` | Supported |
+| JSON | `.json` | Planned |
+| YAML | `.yml`, `.yaml` | Planned |
+| Excel | `.xlsx` | Planned |
+
+If a file uses an unrecognized extension, set the `format` setting explicitly. An unsupported format raises a clear error listing the formats that are available.
+
+## Configuration
+
+### Basic configuration
+
+To use the File adapter, specify `file` as the source name and point the schema mapping at your exported files:
+
+```yaml
+source:
+  name: file
+  settings:
+    directory: "examples/file_to_infrahub/data"
+    delimiter: ","
+    encoding: "utf-8"
+```
+
+### Configuration parameters
+
+| Parameter | Description | Default | Required |
+|-----------|-------------|---------|----------|
+| `directory` | Base directory used to resolve relative file paths | Config directory, then CWD | No |
+| `format` | Force a format instead of inferring from the extension (for example, `csv`) | Inferred from extension | No |
+| `delimiter` | CSV field separator | `,` | No |
+| `encoding` | File encoding | `utf-8` | No |
+| `empty_as_none` | Treat empty CSV cells as `null` instead of `""` | `true` | No |
+| `list_separator` | Separator used to split list/reference fields | `;` | No |
+
+## Schema mapping
+
+The `mapping` key of each schema mapping entry is the file to read, interpreted relative to the configured `directory` (or as an absolute path):
+
+```yaml
+order:
+  - OrganizationGeneric
+  - InfraDevice
+
+schema_mapping:
+  - name: OrganizationGeneric
+    mapping: organizations.csv
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: name
+      - name: description
+        mapping: description
+
+  - name: InfraDevice
+    mapping: devices.csv
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: name
+      - name: organization
+        mapping: organization
+        reference: OrganizationGeneric
+```
+
+### Field mapping types
+
+- **Direct mapping**: Maps a column to an Infrahub field.
+- **Static value**: Sets a constant value for an Infrahub field.
+- **Reference**: Links to another Infrahub model. For flat files the referenced column holds the target object's identifier (for example, the organization name).
+
+### List and reference values
+
+A column that maps to a list attribute (or a list reference) is split using `list_separator` (default `;`). For example, a `tags` column with the value `core;edge` becomes `["core", "edge"]`.
+
+### Identifiers
+
+Files rarely carry a database `id`. The adapter derives a source-local identifier in this order:
+
+1. An `id` column, or any `*_id` column with a value.
+2. The configured `identifiers` joined together.
+3. The row index as a last resort.
+
+## Example data
+
+Given `organizations.csv`:
+
+```csv
+name,description
+Acme,Acme headquarters
+Globex,Globex regional office
+```
+
+and `devices.csv`:
+
+```csv
+name,description,organization
+device-001,Core router,Acme
+device-002,Access switch,Acme
+```
+
+the `organization` column on each device resolves to the matching `OrganizationGeneric` object.
+
+## Common errors
+
+| Error | Cause | Resolution |
+|-------|-------|------------|
+| `File not found: ...` | The mapped file does not exist relative to `directory` | Check the `directory` setting and the `mapping` path |
+| `Unsupported file format for ...` | The extension is not recognized and no `format` is set | Use a `.csv` file or set the `format` setting |
+| `Error reading data from ...` | The file could not be parsed (for example, malformed CSV) | Verify the delimiter, encoding, and file contents |
+
+<ReferenceLink title="Example configuration" url="https://github.com/opsmill/infrahub-sync/tree/main/examples/file_to_infrahub" />
