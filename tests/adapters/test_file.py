@@ -156,6 +156,41 @@ def test_unsupported_format_raises(tmp_path: Path) -> None:
         adapter.model_loader(model_name="InfraDevice", model=InfraDevice)
 
 
+def test_duplicate_identifiers_are_deduped(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Multiple rows producing the same identifier load once instead of aborting the sync."""
+    (tmp_path / "organizations.csv").write_text("name,description\nAcme,HQ\n", encoding="utf-8")
+    (tmp_path / "devices.csv").write_text(
+        "name,description,organization,tags\ndevice-1,Router,Acme,\ndevice-2,Switch,Acme,\ndevice-3,Firewall,Acme,\n",
+        encoding="utf-8",
+    )
+    instance = SyncInstance.model_validate(
+        {
+            "name": "from-file-test",
+            "directory": str(tmp_path),
+            "source": {"name": "file", "settings": {"directory": str(tmp_path)}},
+            "destination": {"name": "infrahub", "settings": {}},
+            "order": ["OrganizationGeneric"],
+            "schema_mapping": [
+                {
+                    "name": "OrganizationGeneric",
+                    "mapping": "devices.csv",
+                    "identifiers": ["name"],
+                    "fields": [
+                        {"name": "name", "mapping": "organization"},
+                    ],
+                },
+            ],
+        }
+    )
+    adapter = _FileSync(target="source", adapter=instance.source, config=instance, internal_storage_engine=LocalStore())
+    with caplog.at_level("INFO", logger="infrahub_sync.adapters.file"):
+        adapter.load()
+
+    orgs = adapter.get_all("OrganizationGeneric")
+    assert [o.get_unique_id() for o in orgs] == ["Acme"]
+    assert "skipped 2 duplicate OrganizationGeneric" in caplog.text
+
+
 def test_missing_file_raises(tmp_path: Path) -> None:
     """A missing mapped file raises a descriptive error."""
     instance = _single_model_instance(directory=tmp_path, mapping="missing.csv")

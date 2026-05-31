@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from diffsync import Adapter, DiffSyncModel
+from diffsync.exceptions import ObjectAlreadyExists
 from typing_extensions import Self
 
 from infrahub_sync import (
@@ -155,11 +156,25 @@ class FileAdapter(DiffSyncMixin, Adapter):
                 logger.info("%s: Loading all %d %s", self.type, total, element.mapping)
                 transformed_objs = objs
 
-            # Create model instances after filtering and transforming
+            # Flat-file rows often repeat the same identifier when a model is derived from a
+            # foreign-key column (e.g. every device row carries the same site name).
+            # Keep the first occurrence and skip subsequent duplicates so the load completes.
+            duplicates = 0
             for index, obj in enumerate(transformed_objs):
                 data = self.obj_to_diffsync(obj=obj, mapping=element, model=model, index=index)
                 item = model(**data)
-                self.add(item)
+                try:
+                    self.add(item)
+                except ObjectAlreadyExists:
+                    duplicates += 1
+            if duplicates:
+                logger.info(
+                    "%s: skipped %d duplicate %s in %s (first occurrence kept)",
+                    self.type,
+                    duplicates,
+                    model_name,
+                    element.mapping,
+                )
 
     def _derive_local_id(self, obj: dict[str, Any], mapping: SchemaMappingModel, index: int) -> str:
         """Derive a source-local identifier for a record.
