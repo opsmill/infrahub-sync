@@ -3,13 +3,7 @@ name: from-file
 
 source:
   name: file
-  settings:
-    # Base directory used to resolve relative file paths below.
-    # Defaults to this config's directory when omitted.
-    directory: "examples/file_to_infrahub/data"
-    # CSV options (applied to all .csv files)
-    delimiter: ","
-    encoding: "utf-8"
+  settings: {}
 
 destination:
   name: infrahub
@@ -27,7 +21,7 @@ order: [
 schema_mapping:
   # Sites/organizations exported to organizations.csv
   - name: OrganizationGeneric
-    mapping: organizations.csv
+    mapping: data/organizations.csv
     identifiers: ["name"]
     fields:
       - name: name
@@ -37,7 +31,7 @@ schema_mapping:
 
   # Devices exported to devices.csv, referencing an organization by name
   - name: InfraDevice
-    mapping: devices.csv
+    mapping: data/devices.csv
     identifiers: ["name"]
     fields:
       - name: name

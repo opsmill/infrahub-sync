@@ -100,6 +100,17 @@ def test_read_csv_respects_delimiter(tmp_path: Path) -> None:
     assert records == [{"name": "Acme", "description": "HQ"}]
 
 
+@pytest.mark.parametrize(
+    ("content", "case"),
+    [("", "fully-empty"), ("name,description\n", "header-only")],
+)
+def test_read_csv_empty_returns_no_records(tmp_path: Path, content: str, case: str) -> None:
+    """A CSV with no data rows yields an empty list whether or not a header is present."""
+    path = tmp_path / f"orgs-{case}.csv"
+    path.write_text(content, encoding="utf-8")
+    assert read_csv(path, settings={}) == []
+
+
 def test_model_loader_loads_records_and_resolves_reference(data_dir: Path) -> None:
     """Records load, identifiers seed local_id, and a scalar reference is kept as the target identifier."""
     instance = _build_instance(directory=data_dir)
