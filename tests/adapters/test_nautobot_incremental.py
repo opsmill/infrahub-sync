@@ -9,6 +9,11 @@ from infrahub_sync.cache.cursors import CursorState, CursorTier
 if TYPE_CHECKING:
     from infrahub_sync.adapters.nautobot import NautobotAdapter
 
+# The nautobot adapter hard-imports `pynautobot`, an optional dependency that is
+# not part of the `dev` extra. Skip this module when it is unavailable instead
+# of erroring during collection.
+pytest.importorskip("pynautobot")
+
 
 class _FakeRecord(UserDict):
     """`dict(MagicMock())` returns {}, so use UserDict to make `dict(node)` work."""

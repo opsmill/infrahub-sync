@@ -3,11 +3,23 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
 
 PACKAGE_DIR = Path(__file__).resolve().parent.parent / "infrahub_sync"
+
+# Typer renders --help through rich, which in some environments (e.g. CI with
+# color forced on) styles each hyphen of an option as its own ANSI span, so the
+# literal flag string is absent from the raw output. Strip SGR codes before
+# asserting on flag names.
+_ANSI_SGR_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    """Return *text* with ANSI SGR (color) escape sequences removed."""
+    return _ANSI_SGR_RE.sub("", text)
 
 
 def _python_files() -> list[Path]:
@@ -108,9 +120,10 @@ def test_cli_has_verbosity_flag() -> None:
     runner = CliRunner()
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    assert "--verbosity" in result.output
-    assert "-v" in result.output
-    assert "-q" in result.output
+    output = _strip_ansi(result.output)
+    assert "--verbosity" in output
+    assert "-v" in output
+    assert "-q" in output
 
 
 def test_cli_has_show_progress_flag() -> None:
@@ -123,7 +136,7 @@ def test_cli_has_show_progress_flag() -> None:
     # Check in diff subcommand help
     result = runner.invoke(app, ["diff", "--help"])
     assert result.exit_code == 0
-    assert "--show-progress" in result.output
+    assert "--show-progress" in _strip_ansi(result.output)
 
 
 @pytest.mark.parametrize("flag", ["-v", "-q", "--verbosity quiet", "--verbosity verbose"])

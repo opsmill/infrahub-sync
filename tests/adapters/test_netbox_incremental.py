@@ -9,6 +9,11 @@ from infrahub_sync.cache.cursors import CursorState, CursorTier
 if TYPE_CHECKING:
     from infrahub_sync.adapters.netbox import NetboxAdapter
 
+# The netbox adapter hard-imports `pynetbox`, an optional dependency that is not
+# part of the `dev` extra. Skip this module when it is unavailable instead of
+# erroring during collection.
+pytest.importorskip("pynetbox")
+
 
 def _make_adapter(mappings: list[dict]) -> "NetboxAdapter":
     """Build a NetboxAdapter with stubbed schema_mapping.
