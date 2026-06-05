@@ -1,40 +1,138 @@
 ---
 title: Infrahub Sync
 ---
-import Tabs from '@theme/Tabs';
-import TabItem from '@theme/TabItem';
 
-Infrahub Sync is a versatile Python package that synchronizes data between a source and a destination system. It builds on the robust capabilities of `diffsync` to offer flexible and efficient data synchronization across different platforms, including Netbox, Nautobot, and Infrahub. This package features a Typer-based CLI for ease of use, supporting operations such as listing available sync projects, generating diffs, and executing sync processes.
+Infrahub Sync synchronizes infrastructure data between Infrahub and external systems — NetBox, Nautobot, IP Fabric, Slurp’it, Cisco ACI, Peering Manager, ServiceNow-style CMDBs, and any system with a REST/JSON API. Use it to migrate from a legacy system of record, run two systems side-by-side, or keep Infrahub in sync with another source of truth. Define a sync project declaratively in YAML, and the CLI generates the adapter code, calculates the diff, and applies only the deltas on each run.
 
-## Guides
+Infrahub Sync is open source under Apache 2.0, distributed on [PyPI](https://pypi.org/project/infrahub-sync/), and maintained on [GitHub](https://github.com/opsmill/infrahub-sync).
 
-- [Installing Infrahub Sync](./guides/installation.mdx)
-- [Creating a new sync instance](./guides/creation.mdx)
-- [Support adapters with custom CA certificates](./guides/custom-certificates.mdx)
-- [Run a sync instance](./guides/run.mdx)
+Infrahub Sync supports the following:
 
-## Reference
+- **Migration from an existing system of record** — data moves from NetBox, Nautobot, or another source into Infrahub one model at a time, on the schedule the team chooses. The legacy system continues to operate during the migration.
+- **Recurring synchronization between systems** — a sync project runs as often as the environment requires. Each run calculates a fresh diff and applies only the deltas.
+- **Inventory population from network discovery** — adapters for IP Fabric and Slurp’it bring discovered network state into Infrahub as the source of truth, rather than requiring inventory to be entered by hand.
+- **Outbound data movement from Infrahub** — Infrahub data is published into monitoring, observability, or CMDB systems that need a current view of infrastructure.
+- **Translation between data models** — source fields map to destination fields through a declarative YAML configuration. Identifiers, relationships, and static values are handled in the same file.
+- **Diff preview before changes are applied** — `infrahub-sync diff` shows the differences between source and destination state without modifying either system.
 
-- [Sync instance configuration](./reference/config.mdx)
-- [Sync CLI](./reference/cli.mdx)
+## How it works
 
-## Adapters
+### Concepts
 
-- [Infrahub](./adapters/infrahub.mdx)
-- [NetBox](./adapters/netbox.mdx)
-- [Nautobot](./adapters/nautobot.mdx)
-- [IP Fabric](./adapters/ipfabric.mdx)
-- [Cisco ACI](./adapters/aci.mdx)
-- [LibreNMS](./adapters/librenms.mdx)
-- [Observium](./adapters/observium.mdx)
-- [Peering Manager](./adapters/peering-manager.mdx)
-- [Prometheus](./adapters/prometheus.mdx)
-<!-- vale Infrahub.spelling = NO -->
-- [Slurp'it](./adapters/slurpit.mdx)
-<!-- vale Infrahub.spelling = YES -->
-- [Generic REST API](./adapters/genericrestapi.mdx)
-- [Local Adapters](./adapters/local-adapters.mdx)
+- **Sync project** — a directory containing a YAML configuration file (`config.yml`) that defines one synchronization between two systems. A project specifies the source, the destination, the sync order, and the per-model schema mapping. A team can have many sync projects, each managing a different source-destination pair.
+- **Adapter** — the component that connects Infrahub Sync to a specific system. Each adapter handles both communication (API calls, authentication, request handling) and translation (converting the system's data into the internal sync engine's format). Infrahub Sync ships with adapters for common systems and supports custom adapters for systems without a pre-built one.
+- **Schema mapping** — the part of the project configuration that defines how source fields map to destination fields. Direct field mappings, references between models, identifiers, and static values are all declared in YAML.
 
-## Contributing
+Three CLI commands operate on a sync project: `generate`, `diff`, and `sync`.
 
-- [Development guide](./development.mdx) - Set up a development environment, run tests, and publish releases
+### Define a sync project
+
+Each sync project consists of a directory and a `config.yml` describing the sync. The configuration specifies the source adapter and destination adapter with their connection details, the order in which models should be synchronized, and how each source field maps to a destination field. Credentials reference environment variables rather than being embedded in the file.
+
+→ [Create a sync project](./creating-a-sync-project.mdx) · [Sync instance configuration](./reference/config.mdx)
+
+### Generate the adapter code
+
+`infrahub-sync generate --name <project> --directory <dir>` reads the YAML configuration and produces the Python adapter and model code that `diff` and `sync` use. Re-run `generate` whenever the configuration or the schema mapping changes.
+
+### Preview with `diff`
+
+`infrahub-sync diff --name <project> --directory <dir>` reads both the source and destination, calculates what would change, and prints the result to the terminal. The destination is not modified. The `diff` command is read-only and is typically run before applying any sync — particularly during initial setup or when adjusting mappings.
+
+### Execute the sync
+
+`infrahub-sync sync --name <project> --directory <dir>` applies the changes calculated by the diff, in the order defined by the project's `order` key — independent models first, then dependent models, then models that reference earlier ones. The sync is idempotent: if a run fails partway through, re-running calculates a fresh diff and applies whatever is still outstanding.
+
+Three `diffsync_flags` (`SKIP_UNMATCHED_DST` by default, `SKIP_UNMATCHED_SRC`, `SKIP_MODIFIED`) and per-mapping filters control what each run is allowed to change.
+
+→ [Run a sync](./running-a-sync.mdx) · [Sync CLI](./reference/cli.mdx)
+
+## Who it's for
+
+### Implementing Infrahub alongside an existing system of record
+
+Data lives in NetBox, Nautobot, IP Fabric, or another tool, and the team is adopting Infrahub. Infrahub Sync provides a path that does not require all teams to move at the same time, and that does not require writing integration code.
+
+→ [Install Infrahub Sync](./installation.mdx) · [Create a sync project](./creating-a-sync-project.mdx)
+
+### Operating Infrahub at steady state
+
+Infrahub is deployed and needs to stay current with the other systems the team uses — IPAM, ITSM, monitoring, network discovery, or in-house databases. One sync project per source, run on the cadence the environment requires.
+
+→ [Create a sync project](./creating-a-sync-project.mdx) · [Run a sync](./running-a-sync.mdx)
+
+### Building inventory from network discovery
+
+Infrahub is populated from what is actually deployed in the network rather than from manually curated inventory. IP Fabric and Slurp’it adapters connect to discovery tools and bring discovered state into Infrahub.
+
+→ [IP Fabric adapter](./adapters/ipfabric.mdx) · [Slurp’it adapter](./adapters/slurpit.mdx)
+
+## What's included
+
+- **Pre-built adapter library** — adapters for Infrahub, NetBox, Nautobot, IP Fabric, Cisco ACI, LibreNMS, Observium, Peering Manager, Prometheus, and Slurp’it, plus a Generic REST API adapter for systems with HTTP/JSON APIs. Each adapter handles both communication and translation for its target system.
+- **Declarative YAML configuration** — a single file per sync project defines source, destination, sync order, and per-model schema mapping. Mappings support 14 filter operations (including `regex` and `is_ip_within`), per-field transforms, custom Jinja filters, and ordered cross-reference resolution.
+- **Sync engine** — built on the `diffsync` framework. Diffs and applies only deltas; three flags control what each run is allowed to change (creates, deletes, modifications).
+- **Typer-based CLI** — four commands: `list` (show available projects), `generate` (produce adapter code from the configuration), `diff` (preview changes), `sync` (apply changes).
+- **Custom adapter support** — for systems without a pre-built adapter, write a local custom adapter and load it from a filesystem path, a Python module path, or an installed entry point (`INFRAHUB_SYNC_ADAPTER_PATHS`).
+- **Custom CA certificate support** — connect to systems with self-signed or internal CA-issued TLS certificates.
+
+### Adapter reference
+
+| Adapter | Direction supported |
+|---|---|
+| Infrahub | source or destination |
+| NetBox | NetBox → Infrahub |
+| Nautobot | Nautobot → Infrahub |
+| IP Fabric | IP Fabric → Infrahub |
+| Cisco ACI | Cisco ACI → Infrahub |
+| Peering Manager | Peering Manager → Infrahub · Infrahub → Peering Manager |
+| Prometheus | Prometheus → Infrahub |
+| Slurp’it | Slurp’it → Infrahub |
+| LibreNMS | LibreNMS → Infrahub |
+| Observium | Observium → Infrahub |
+| Generic REST API | external system → Infrahub |
+
+## Get started
+
+1. **Prerequisites**
+    - A running [Infrahub](https://github.com/opsmill/infrahub) instance
+    - Python 3.10–3.13
+    - Credentials and network access for the source and destination systems
+2. **Install Infrahub Sync.** See [Install Infrahub Sync](./installation.mdx) for the full setup steps. The short version: `pip install infrahub-sync` into a virtual environment.
+3. **Choose your starting point.**
+    - Setting up a sync project for the first time? → [Create a sync project](./creating-a-sync-project.mdx)
+    - Running an existing project? → [Run a sync](./running-a-sync.mdx)
+
+## Common questions
+
+**Do I have to migrate everything at once?**
+No. Infrahub Sync is designed to move data one model at a time, on the team's own schedule. The legacy system keeps running throughout — there is no required cutover moment.
+
+**Does Infrahub Sync replace my scheduler?**
+No. Infrahub Sync runs as a CLI and is designed to plug into whatever scheduling tooling the team already uses — cron, CI jobs, Prefect, Dagster, or similar. There is no built-in scheduler by design.
+
+**What happens if a sync run fails partway through?**
+Sync runs are idempotent. Re-running the sync calculates a fresh diff against the current destination state and applies only what is still outstanding. Retries on failure are safe.
+
+**Can changes in the destination be overwritten by a sync?**
+By default, `SKIP_UNMATCHED_DST` is enabled, which preserves destination objects that have no corresponding object in the source. For destination objects that do have a source match, the sync's behavior depends on the configured `diffsync_flags`. Decide upfront which system is authoritative for each model and configure the flags accordingly.
+
+**What if my source system doesn't have a pre-built adapter?**
+Most systems with a REST/JSON API can use the Generic REST API adapter without modifications. For systems with non-standard APIs or custom logic requirements, build a local custom adapter. See [Local Adapters](./adapters/local-adapters.mdx).
+
+**Can I run two sync projects at the same time?**
+Yes. Each sync project is independent — a separate directory, configuration, and CLI invocation. Schedule and operate each project on its own cadence.
+
+## Additional resources
+
+| What you want to do | Where to go |
+|---|---|
+| Set up your environment | [Install Infrahub Sync](./installation.mdx) |
+| Configure a sync project | [Create a sync project](./creating-a-sync-project.mdx) · [Sync instance configuration](./reference/config.mdx) |
+| Run a sync | [Run a sync](./running-a-sync.mdx) |
+| CLI reference | [Sync CLI](./reference/cli.mdx) |
+| All adapters | See the **Adapters** section in the sidebar |
+| Custom CA certificates | [Use custom CA certificates](./custom-certificates.mdx) |
+| Build a custom adapter | [Local Adapters](./adapters/local-adapters.mdx) |
+| Contribute | [Contributing guide](./contributing.mdx) |
+| Source code | [github.com/opsmill/infrahub-sync](https://github.com/opsmill/infrahub-sync) |

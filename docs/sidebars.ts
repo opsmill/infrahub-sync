@@ -5,18 +5,30 @@ const sidebars: SidebarsConfig = {
     'readme',
     {
       type: 'category',
+      label: 'Get started',
+      items: [
+        'installation',
+        'creating-a-sync-project',
+        'running-a-sync',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Guides',
       items: [
-        'guides/installation',
-        'guides/creation',
-        'guides/run',
+        'using-netbox-or-nautobot-with-infrahub',
+        'migrating-from-netbox-or-nautobot',
+        'orchestration',
+        'custom-certificates',
       ],
     },
     {
       type: 'category',
       label: 'Adapters',
       items: [
+        'adapters/choosing-an-adapter',
         'adapters/aci',
+        'adapters/device42',
         'adapters/genericrestapi',
         'adapters/infrahub',
         'adapters/ipfabric',
@@ -26,6 +38,7 @@ const sidebars: SidebarsConfig = {
         'adapters/netbox',
         'adapters/observium',
         'adapters/peering-manager',
+        'adapters/peeringdb',
         'adapters/prometheus',
         'adapters/slurpit',
       ],
@@ -35,11 +48,12 @@ const sidebars: SidebarsConfig = {
       label: 'Reference',
       items: [
         'reference/config',
+        'reference/schema-mapping',
         'reference/cli',
         'reference/incremental-extraction',
       ],
     },
-    'development',
+    'contributing',
   ]
 };
 

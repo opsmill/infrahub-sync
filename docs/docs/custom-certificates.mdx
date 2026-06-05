@@ -1,0 +1,32 @@
+---
+title: Use custom CA certificates
+---
+
+For sync sources or destinations that use TLS certificates signed by an internal CA — common in enterprise networks — install the CA in the system trust store, then point Python's HTTP client at that store.
+
+## Add the certificate to the system trust store
+
+Create a subdirectory for the custom CA and copy the root certificate into it:
+
+```bash
+sudo mkdir /usr/local/share/ca-certificates/custom-ca
+sudo cp customRCA.crt /usr/local/share/ca-certificates/custom-ca/
+```
+
+Then load the certificates into the trusted root store:
+
+```bash
+sudo update-ca-certificates
+```
+
+The exact paths above are for Debian/Ubuntu systems. On other distributions the trust store lives elsewhere (`/etc/pki/ca-trust/source/anchors/` on RHEL/Fedora, for example) — adapt accordingly.
+
+## Point Python's HTTP client at the trust store
+
+Infrahub Sync uses `requests` under the hood, which reads the `REQUESTS_CA_BUNDLE` environment variable to find a custom certificate bundle:
+
+```bash
+export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+```
+
+Set this in the same shell environment where `infrahub-sync` runs — either exported in the user's shell profile, set in the scheduler that runs the sync, or passed in the container environment if running containerized.
