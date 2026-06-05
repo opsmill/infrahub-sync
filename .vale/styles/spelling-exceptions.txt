@@ -11,6 +11,7 @@ boolean
 check_definitions
 class_name
 CloudFormation
+CMDBs
 codespace
 codespaces
 combobox
@@ -105,6 +106,7 @@ Prefetch
 profile_name
 PyPI
 query_peers
+queryable
 rebase
 rebased
 Redoc
