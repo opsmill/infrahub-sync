@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -14,17 +15,28 @@ if TYPE_CHECKING:
 EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
 runner = CliRunner()
 
+# Typer renders --help through rich, which in some environments (e.g. CI with
+# color forced on) styles each hyphen of an option as its own ANSI span, so the
+# literal flag string is absent from the raw output. Strip SGR codes before
+# asserting on flag names.
+_ANSI_SGR_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    """Return *text* with ANSI SGR (color) escape sequences removed."""
+    return _ANSI_SGR_RE.sub("", text)
+
 
 def test_full_extract_flag_accepted() -> None:
     result = runner.invoke(app, ["sync", "--help"])
     assert result.exit_code == 0
-    assert "--full-extract" in result.output
+    assert "--full-extract" in _strip_ansi(result.output)
 
 
 def test_full_extract_flag_diff() -> None:
     result = runner.invoke(app, ["diff", "--help"])
     assert result.exit_code == 0
-    assert "--full-extract" in result.output
+    assert "--full-extract" in _strip_ansi(result.output)
 
 
 def _make_fake_potenda(run_dir: Path) -> MagicMock:
