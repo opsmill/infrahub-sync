@@ -50,6 +50,7 @@ const sidebars: SidebarsConfig = {
         'reference/config',
         'reference/schema-mapping',
         'reference/cli',
+        'reference/incremental-extraction',
       ],
     },
     'contributing',

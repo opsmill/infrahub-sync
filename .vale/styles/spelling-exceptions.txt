@@ -46,6 +46,7 @@ eslint
 excalidraw
 fanout
 file_path
+filelock
 generator_definition
 generator_definitions
 github
@@ -110,6 +111,8 @@ Redoc
 repo
 ressources
 REST
+rowcount
+Rowcount
 schema_mapping
 sdk
 Slurp'it

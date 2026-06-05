@@ -1,0 +1,58 @@
+---
+title: Cache layout
+---
+
+`infrahub-sync diff` and `infrahub-sync apply` persist run state under:
+
+```text
+.infrahub-sync-cache/<sync-name>/
+├── .lock                              # per-pipeline filelock (held during runs)
+├── last-successful-rowcounts.json     # baseline for the rowcount guardrail
+└── <run_id>/
+    ├── A/                              # source snapshot
+    │   ├── BuiltinTag.parquet
+    │   └── ...
+    ├── B/                              # destination snapshot
+    │   └── ...
+    ├── plan.parquet                    # the diff plan
+    ├── errors.parquet                  # only when errors > 0
+    ├── cursors.json                    # {A: {Resource: cursor}, B: {Resource: cursor}}
+    ├── schema-sub-hash.txt             # invalidates the cache when shape changes
+    └── run.json                        # status, mode, summary, finished_at
+```
+
+Override the root with `INFRAHUB_SYNC_CACHE_DIR=/path/to/shared/cache`.
+
+## plan.parquet
+
+One row per change. The columns are:
+
+| Column | Description |
+| --- | --- |
+| `action` | `create`, `update`, or `delete`. Empty for no-op elements (which are skipped during serialization). |
+| `resource` | Kind name as declared in `schema_mapping[].name`. |
+| `source_id` | DiffSync `unique_id` of the source-side element. |
+| `dest_id` | Reserved for the destination's primary key once adapters return it. Empty today. |
+| `attribute` | Reserved for per-attribute granularity. Empty today (rows are per-element). |
+| `old_value` | JSON-encoded mapping of `{attr: prior_value}` from `element.get_attrs_diffs()["-"]`. Populated on `update` actions. |
+| `new_value` | JSON-encoded mapping of `{attr: new_value}` from `element.get_attrs_diffs()["+"]`. Populated on `create` and `update`. |
+| `owner` | Reserved for sync-identity-based skip logic. Empty today. |
+| `skip_reason` | Empty unless the engine deliberately skipped a row. |
+| `conflict_class` | Empty unless the engine flagged a write conflict. |
+
+Query with DuckDB without any import step:
+
+```bash
+duckdb -c "SELECT action, resource, source_id, new_value FROM read_parquet('.infrahub-sync-cache/from-netbox/<run_id>/plan.parquet') WHERE action <> 'create' LIMIT 20"
+```
+
+## Commands
+
+- `infrahub-sync diff --name X` — writes side A, side B, and `plan.parquet`.
+- `infrahub-sync sync --name X` — runs diff then sync; writes the same cache artifacts as `diff` plus updates `last-successful-rowcounts.json` on success.
+- `infrahub-sync apply --name X --run-id <id>` — dispatches the cached plan
+  against the destination without re-extracting the source. Refuses if the
+  destination's schema sub-hash has drifted.
+- `--allow-rowcount-drop` (on `sync`) bypasses the rowcount guardrail when the operator knows the source has legitimately shrunk.
+- `--continue-on-error` (on `sync`) skips peer relationships missing identifier values rather than aborting; the engine logs each skip so you can review what was dropped.
+- `--no-concurrent-load` (on `diff` and `sync`) falls back to loading source then destination sequentially. The default (concurrent) is safe with all built-in adapters and roughly halves load wall-clock time on real APIs.

@@ -19,9 +19,32 @@ Describes the overall synchronization configuration.
 | `store` | `SyncStore` | Configuration for the optional storage mechanism. | No |
 | `source` | `SyncAdapter` | Configuration for the source adapter. | Yes |
 | `destination` | `SyncAdapter` | Configuration for the destination adapter. | Yes |
-| `order` | List of strings | Specifies the order in which objects should be synchronized. | Yes |
+| `order` | List of strings | Order in which objects should be synchronized. Optional — when omitted, infrahub-sync auto-computes tiers from schema_mapping. | No |
 | `schema_mapping` | List of `SchemaMappingModel` | Defines how data is mapped from source to destination. | Yes |
 | `diffsync_flags` | List of `DiffSyncFlags` | Instruct Infrahub Sync how to handle some specific situation without changing the data  | No |
+
+### Auto-tiered execution
+
+`order:` is now optional. When it is omitted, infrahub-sync derives a
+write-order graph from the `reference:` entries in each `schema_mapping`
+field and groups kinds into **tiers**:
+
+- Tier 0: kinds with no outgoing references.
+- Tier N: kinds whose references all live in tiers `0..N-1`.
+
+The flattened tier order replaces the manual `order:` list. Tiers and any
+optional edges dropped to break cycles are logged at `INFO` level when
+`diff` or `sync` runs.
+
+`infrahub-sync sync` runs with `--parallel` on by default: the engine
+narrows the destination's `top_level` to one tier at a time so no tier
+starts before the previous tier's writes have completed. Pass
+`--no-parallel` to disable the tier boundary and fall back to the legacy
+single-pass code path.
+
+If you must override the computed order (because it doesn't match an
+adapter quirk), keep the `order:` list — it always wins, and `--parallel`
+will warn and fall back to serial when an explicit order is set.
 
 ### Sync store
 
