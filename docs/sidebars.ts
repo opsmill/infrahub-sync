@@ -36,6 +36,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'reference/config',
         'reference/cli',
+        'reference/incremental-extraction',
       ],
     },
     'development',

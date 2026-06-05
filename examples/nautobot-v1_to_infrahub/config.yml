@@ -10,30 +10,32 @@ destination:
   settings:
     url: "http://localhost:8000"
 
-order: [
-  "BuiltinTag",
-  "RoleGeneric",
-  # "StatusGeneric",
-  "CoreStandardGroup",
-  "ChoiceLocationType",
-  "OgranizationGeneric",
-  "LocationGeneric",
-  "InfraRack",
-  "ChoiceDeviceType",
-  "InfraPlatform",
-  "InfraProviderNetwork",
-  "ChoiceCircuitType",
-  "InfraCircuit",
-  "InfraRouteTarget",
-  "InfraVRF",
-  "InfraDevice",
-  "InfraVLAN",
-  "InfraPrefix",
-  "InfraIPAddress",
-  "InfraRearPort",
-  "InfraFrontPort",
-  "InfraInterfaceL2L3"
-]
+# order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
+# Uncomment and edit only if you need to override the computed order:
+# order: [
+#   "BuiltinTag",
+#   "RoleGeneric",
+#   # "StatusGeneric",
+#   "CoreStandardGroup",
+#   "ChoiceLocationType",
+#   "OgranizationGeneric",
+#   "LocationGeneric",
+#   "InfraRack",
+#   "ChoiceDeviceType",
+#   "InfraPlatform",
+#   "InfraProviderNetwork",
+#   "ChoiceCircuitType",
+#   "InfraCircuit",
+#   "InfraRouteTarget",
+#   "InfraVRF",
+#   "InfraDevice",
+#   "InfraVLAN",
+#   "InfraPrefix",
+#   "InfraIPAddress",
+#   "InfraRearPort",
+#   "InfraFrontPort",
+#   "InfraInterfaceL2L3"
+# ]
 
 schema_mapping:
   # Tags
