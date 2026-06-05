@@ -15,6 +15,7 @@ from infrahub_sdk.exceptions import NodeNotFoundError
 from infrahub_sdk.node.property import NodeProperty
 from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
 from infrahub_sdk.utils import compare_lists
+from pydantic import ValidationError
 from typing_extensions import Self
 
 from infrahub_sync import (
@@ -23,12 +24,19 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
+from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.generator import has_field
 
 logger = logging.getLogger(__name__)
 
+# GraphQL filter kwarg for timestamp-based incremental queries.
+# Verified against a live Infrahub via __type introspection — every node
+# exposes the metadata-prefixed `node_metadata__updated_at__after` arg.
+# Adjust if the server renames this field.
+_TIMESTAMP_FILTER_KW = "node_metadata__updated_at__after"
+
 if TYPE_CHECKING:
-    from collections.abc import Mapping, MutableMapping
+    from collections.abc import Iterator, Mapping, MutableMapping
 
     from infrahub_sdk.node import InfrahubNodeSync, RelatedNodeSync, RelationshipManagerSync
     from infrahub_sdk.schema import MainSchemaTypesAPI
@@ -226,8 +234,50 @@ def diffsync_to_infrahub(
     return data
 
 
+class PeerIdentifierError(ValueError):
+    """Raised when an Infrahub peer node is missing a value required to build its DiffSync identifier.
+
+    Carries enough context (parent kind/id, relationship name, peer kind/id, missing keys,
+    identifiers schema, values that were present) for the user to fix the schema_mapping
+    or seed the missing data without re-running the failing job.
+    """
+
+    def __init__(
+        self,
+        *,
+        parent_kind: str,
+        parent_id: str | None,
+        rel_name: str,
+        peer_kind: str,
+        peer_id: str | None,
+        identifiers: tuple[str, ...],
+        missing_keys: tuple[str, ...],
+        present_keys: tuple[str, ...],
+    ) -> None:
+        self.parent_kind = parent_kind
+        self.parent_id = parent_id
+        self.rel_name = rel_name
+        self.peer_kind = peer_kind
+        self.peer_id = peer_id
+        self.identifiers = identifiers
+        self.missing_keys = missing_keys
+        self.present_keys = present_keys
+        msg = (
+            f"Cannot build unique_id for peer {peer_kind}[{peer_id}] "
+            f"(relationship {parent_kind}.{rel_name}, parent id={parent_id}): "
+            f"missing identifier key(s) {list(missing_keys)}; "
+            f"required identifiers={list(identifiers)}, present keys={list(present_keys)}. "
+            "Likely cause: schema_mapping does not declare a 'fields:' entry for the missing "
+            "key, or the peer record was not loaded with that field populated. "
+            "Re-run with --continue-on-error to skip these peers."
+        )
+        super().__init__(msg)
+
+
 class InfrahubAdapter(DiffSyncMixin, Adapter):
     type = "Infrahub"
+
+    continue_on_error: bool = False
 
     def __init__(
         self,
@@ -294,6 +344,67 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         # We will keep a copy of the schema
         self.schema: MutableMapping[str, MainSchemaTypesAPI] = self.client.schema.all(branch=infrahub_branch)
 
+    def cursor_tier_for(self, model_name: str) -> CursorTier:
+        """TIMESTAMP for any kind present in the live Infrahub schema.
+
+        Every Infrahub node carries `node_metadata.updated_at`, so the
+        `node_metadata__updated_at__after` filter works for any kind the
+        destination schema knows about. Kinds absent from `self.schema`
+        fall back to NONE — defensive guard so the engine never attempts
+        an incremental query for an unknown kind.
+        """
+        if model_name in self.schema:
+            return CursorTier.TIMESTAMP
+        return CursorTier.NONE
+
+    def list_changed_since(self, model_name: str, cursor: CursorState) -> Iterator[dict]:
+        """Yield Infrahub nodes changed since `cursor.value`.
+
+        Uses the `node_metadata__updated_at__after` GraphQL filter
+        (see `_TIMESTAMP_FILTER_KW`).
+        """
+        if model_name not in self.schema:
+            msg = f"Infrahub: model {model_name!r} not in schema; cursor tier NONE"
+            raise NotImplementedError(msg)
+
+        filter_kwargs = {_TIMESTAMP_FILTER_KW: cursor.value}
+        nodes = self.client.filters(  # ty: ignore[no-matching-overload]
+            kind=model_name,
+            populate_store=True,
+            prefetch_relationships=True,
+            **filter_kwargs,
+        )
+        for node in nodes:
+            yield self.infrahub_node_to_diffsync(node=node)
+
+    def list_existing_ids(self, model_name: str) -> Iterator[str]:
+        """Yield unique IDs for all Infrahub nodes of `model_name`.
+
+        Used by soft-delete sweeps: timestamp-filtered queries miss DELETEs,
+        so an occasional ID-only scan catches removed peers.
+        """
+        if model_name not in self.schema:
+            msg = f"Infrahub: model {model_name!r} not in schema; cursor tier NONE"
+            raise NotImplementedError(msg)
+
+        model_cls = getattr(self, model_name, None)
+        if model_cls is None:
+            msg = f"Infrahub: adapter has no model class for {model_name!r}"
+            raise NotImplementedError(msg)
+
+        # `include` is the list of attribute fields the diffsync model
+        # treats as identifiers. Pulling just those keeps the GraphQL
+        # response small.
+        identifiers = list(getattr(model_cls, "_identifiers", ()) or ())
+        nodes = self.client.all(
+            kind=model_name,
+            include=identifiers or None,
+            populate_store=False,
+        )
+        for node in nodes:
+            payload = self.infrahub_node_to_diffsync(node=node)
+            yield model_cls(**payload).get_unique_id()
+
     def model_loader(self, model_name: str, model: type[InfrahubModel]) -> None:
         """
         Load and process models using schema mapping filters and transformations.
@@ -326,10 +437,69 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             # Create model instances after filtering and transforming
             for transformed_obj in transformed_objs:
                 original_node: InfrahubNodeSync = next(node for node, obj in node_dict_pairs if obj == transformed_obj)
-                item = model(**transformed_obj)
+                try:
+                    item = model(**transformed_obj)
+                except ValidationError as exc:
+                    if not self.continue_on_error:
+                        raise
+                    logger.warning(
+                        "Skipping %s[%s]: cannot build DiffSync model "
+                        "(likely a required peer was skipped earlier). Pydantic errors: %s",
+                        model_name,
+                        transformed_obj.get("local_id"),
+                        exc.errors(include_url=False),
+                    )
+                    continue
                 unique_id = item.get_unique_id()
                 self.client.store.set(key=unique_id, node=original_node)
                 self.update_or_add_model_instance(item)
+
+    def _resolve_peer_unique_id(
+        self,
+        *,
+        parent_node: InfrahubNodeSync,
+        rel_name: str,
+        peer_node: InfrahubNodeSync,
+    ) -> str | None:
+        """Resolve a peer node to its DiffSync unique_id.
+
+        Returns None if the peer cannot be mapped (no DiffSync model, or
+        `continue_on_error` is set and the peer is missing identifier values).
+        Raises ``PeerIdentifierError`` otherwise so the operator sees actionable
+        context instead of a bare ``KeyError``.
+        """
+        peer_kind = peer_node._schema.kind
+        peer_model = getattr(self, peer_kind, None)
+        if not peer_model:
+            logger.warning("Unable to map '%s' with kind '%s' - Ignored", peer_node, peer_kind)
+            return None
+
+        peer_data = self.infrahub_node_to_diffsync(peer_node)
+        identifiers = tuple(peer_model._identifiers)
+        missing = tuple(k for k in identifiers if k not in peer_data)
+        if missing:
+            err = PeerIdentifierError(
+                parent_kind=parent_node._schema.kind,
+                parent_id=str(getattr(parent_node, "id", None)),
+                rel_name=rel_name,
+                peer_kind=peer_kind,
+                peer_id=str(getattr(peer_node, "id", None)),
+                identifiers=identifiers,
+                missing_keys=missing,
+                present_keys=tuple(peer_data.keys()),
+            )
+            if self.continue_on_error:
+                logger.warning("Skipping peer relationship: %s", err)
+                return None
+            raise err
+
+        unique_id = peer_model.create_unique_id(**{k: peer_data[k] for k in identifiers})
+        peer_item = self.store.get(model=peer_kind, identifier=unique_id)
+        if not peer_item:
+            peer_item = peer_model(**peer_data)
+            self.update_or_add_model_instance(peer_item)
+            self.client.store.set(key=unique_id, node=peer_node)
+        return peer_item.get_unique_id()
 
     def infrahub_node_to_diffsync(self, node: InfrahubNodeSync) -> dict[str, Any]:
         """
@@ -379,29 +549,12 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 )
                 if not peer_node:
                     continue
-
-                # First, get the peer model class to access identifiers
-                peer_model = getattr(self, peer_node._schema.kind, None)
-                if not peer_model:
-                    logger.warning("Unable to map '%s' with kind '%s'", peer_node, peer_node._schema.kind)
+                unique_id = self._resolve_peer_unique_id(
+                    parent_node=node, rel_name=rel_schema.name, peer_node=peer_node
+                )
+                if unique_id is None:
                     continue
-
-                # Convert peer_node to dict to extract identifier values
-                peer_data = self.infrahub_node_to_diffsync(peer_node)
-                # Create the unique_id using the peer model's identifier schema
-                unique_id = peer_model.create_unique_id(**{k: peer_data[k] for k in peer_model._identifiers})
-
-                # Try to get existing item from store using the unique identifier
-                peer_item = self.store.get(model=peer_node._schema.kind, identifier=unique_id)
-
-                # If not found in store, create and add it
-                if not peer_item:
-                    peer_item = peer_model(**peer_data)
-                    self.update_or_add_model_instance(peer_item)
-                    # Also store in Infrahub client store for future lookups
-                    self.client.store.set(key=unique_id, node=peer_node)
-
-                data[rel_schema.name] = peer_item.get_unique_id()
+                data[rel_schema.name] = unique_id
 
             elif rel_schema.cardinality == "many":
                 values = []
@@ -419,29 +572,12 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                     )
                     if not peer_node:
                         continue
-
-                    # First, get the peer model class to access identifiers
-                    peer_model = getattr(self, peer_node._schema.kind, None)
-                    if not peer_model:
-                        logger.warning("Unable to map '%s' with kind '%s' - Ignored", peer_node, peer_node._schema.kind)
+                    unique_id = self._resolve_peer_unique_id(
+                        parent_node=node, rel_name=rel_schema.name, peer_node=peer_node
+                    )
+                    if unique_id is None:
                         continue
-
-                    # Convert peer_node to dict to extract identifier values
-                    peer_data = self.infrahub_node_to_diffsync(peer_node)
-                    # Create the unique_id using the peer model's identifier schema
-                    unique_id = peer_model.create_unique_id(**{k: peer_data[k] for k in peer_model._identifiers})
-
-                    # Try to get existing item from store using the unique identifier
-                    peer_item = self.store.get(model=peer_node._schema.kind, identifier=unique_id)
-
-                    # If not found in store, create and add it
-                    if not peer_item:
-                        peer_item = peer_model(**peer_data)
-                        self.update_or_add_model_instance(peer_item)
-                        # Also store in Infrahub client store for future lookups
-                        self.client.store.set(key=unique_id, node=peer_node)
-
-                    values.append(peer_item.get_unique_id())
+                    values.append(unique_id)
                 data[rel_schema.name] = sorted(values)
 
         return data

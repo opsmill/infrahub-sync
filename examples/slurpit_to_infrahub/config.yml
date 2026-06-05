@@ -12,20 +12,22 @@ destination:
     url: "http://localhost:8000"
     token: "06438eb2-8019-4776-878c-0941b1f1d1ec"
 
-order: [
-  "OrganizationGeneric",
-  "LocationGeneric",
-  "ChoiceDeviceType",
-  "InfraPlatform",
-  "InfraDevice",
-  "InfraHardwareInfo",
-  "InfraVersion",
-  "InfraVLAN",
-  "InfraVRF",
-  "InfraInterface",
-  "InfraPrefix",
-  "InfraIPAddress"
-]
+# order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
+# Uncomment and edit only if you need to override the computed order:
+# order: [
+#   "OrganizationGeneric",
+#   "LocationGeneric",
+#   "ChoiceDeviceType",
+#   "InfraPlatform",
+#   "InfraDevice",
+#   "InfraHardwareInfo",
+#   "InfraVersion",
+#   "InfraVLAN",
+#   "InfraVRF",
+#   "InfraInterface",
+#   "InfraPrefix",
+#   "InfraIPAddress"
+# ]
 
 schema_mapping:
   - name: OrganizationGeneric

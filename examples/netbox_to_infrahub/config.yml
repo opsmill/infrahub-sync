@@ -1,4 +1,21 @@
 ---
+# from-netbox — demonstrates the two newest features of infrahub-sync:
+#
+#   1. Auto-tiered write order. The `order:` list has been removed; the engine
+#      derives tiers from `schema_mapping[].fields[].reference` and groups
+#      kinds that can be written in parallel. Add `--parallel` to `sync` to
+#      enforce a hard barrier between tiers.
+#
+#   2. Parquet sidecar cache. Every `diff` writes per-resource snapshots and
+#      a `plan.parquet` under `.infrahub-sync-cache/from-netbox/<run_id>/`.
+#      The run_id is logged at INFO; pass it to `apply` to re-dispatch the
+#      cached plan without re-extracting the source.
+#
+# Usage:
+#   uv run infrahub-sync diff --name from-netbox --directory examples/
+#   uv run infrahub-sync apply --name from-netbox --run-id <run_id> --directory examples/
+#   uv run infrahub-sync sync --name from-netbox --directory examples/ --parallel
+
 name: from-netbox
 
 source:
@@ -12,25 +29,12 @@ destination:
   settings:
     url: "http://localhost:8000"
 
-order: [
-  "BuiltinTag",
-  "RoleGeneric",
-  "CoreStandardGroup",
-  "OrganizationGeneric",
-  "LocationGeneric",
-  "InfraRack",
-  "ChoiceDeviceType",
-  "InfraProviderNetwork",
-  "ChoiceCircuitType",
-  "InfraCircuit",
-  "InfraRouteTarget",
-  "InfraVRF",
-  "InfraDevice",
-  "InfraVLAN",
-  "InfraPrefix",
-  # "InfraIPAddress",
-  "InfraInterfaceL2L3",
-]
+# order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
+# Uncomment and edit only if you need to override the computed order:
+# order:
+#   - BuiltinTag
+#   - RoleGeneric
+#   ...
 
 schema_mapping:
   # Tags

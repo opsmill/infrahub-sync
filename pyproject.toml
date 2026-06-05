@@ -1,6 +1,6 @@
 [project]
 name = "infrahub-sync"
-version = "1.6.1"
+version = "2.0.0"
 description = "Infrahub-Sync is a versatile Python package that synchronizes data between a source and a destination system"
 authors = [{ name = "OpsMill", email = "info@opsmill.com" }]
 readme = "README.md"
@@ -20,6 +20,9 @@ dependencies = [
     "diffsync[redis]>=2.1,<3.0",
     "netutils>=1.9,<2.0",
     "tqdm>=4.67",
+    "pyarrow>=17,<22",
+    "fsspec>=2024.6",
+    "filelock>=3.13",
 ]
 
 [project.urls]
@@ -292,6 +295,15 @@ max-complexity = 33
     "PGH003",  # Use specific rule codes when ignoring type issues
     "S101",    # Use of `assert` detected (standard in pytest)
     "PLC0415", # `import` should be at the top-level of a file
+    "TC003",   # Path used only in annotations — acceptable in test files
+    "ANN001",  # Missing type annotation for function argument
+    "ANN202",  # Missing return type annotation for private function
+    "ANN204",  # Missing return type annotation for special method
+    "PLR2004", # Magic value used in comparison — common in assertions
+    "SLF001",  # Private member accessed — tests legitimately probe internals
+    "PT011",   # pytest.raises match — broad raises acceptable in tests
+    "B903",    # Class could be dataclass — test helpers don't need it
+    "B905",    # zip() without strict= — relaxed in tests
 ]
 
 "tasks/**.py" = [
