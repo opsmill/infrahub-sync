@@ -17,6 +17,7 @@ const sidebars: SidebarsConfig = {
       label: 'Adapters',
       items: [
         'adapters/aci',
+        'adapters/file',
         'adapters/genericrestapi',
         'adapters/infrahub',
         'adapters/ipfabric',
