@@ -1,0 +1,40 @@
+.github/workflows/sync-docs.yml
+  s_44a5681d71572d::t_68e78f07eeabb1 39,44
+  s_44a5681d71572d::t_92cf39088bbcea 2,4,13-14,16-36,50,52,55-63
+.github/workflows/labels.yml
+  s_44a5681d71572d::t_ff272288b4a521 1-24
+.yamllint.yml
+  s_44a5681d71572d::t_dc83c9b6c81acc 8
+.github/workflows/release.yml
+  s_44a5681d71572d::t_14dbae79c817aa 1-42
+.github/workflows/workflow-release-drafter.yml
+  s_44a5681d71572d::t_c0b3f0124836ca 20-23
+.github/workflows/labeler.yml
+  s_44a5681d71572d::t_caf54f2559125d 1-20
+.github/workflows/trigger-push-stable.yml
+  s_44a5681d71572d::t_80fc022cb22895 78-79
+  s_44a5681d71572d::t_31673ae8f950a8 104
+  s_44a5681d71572d::t_c7d67bcd212e28 34-35
+  s_44a5681d71572d::t_ace7886a1d3aa4 151-152
+.github/workflows/ci.yml
+  s_44a5681d71572d::t_f0ec18089d271f 1-84,86-87,89-106,108-111,113-125
+  s_44a5681d71572d::t_448185c7c43aab 85,107
+  s_44a5681d71572d::t_8aae90abe0e5d9 112
+  s_44a5681d71572d::t_7d7af4634c61d3 88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "49433c63406dc00ec4fb0883821bc5a1248c528c",
+  "prompts": {},
+  "sessions": {
+    "s_44a5681d71572d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55f90437-5430-45ba-8b47-8eed2c547f4d",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Benoit Kohler <bkohler@mbpbenoitkohler.tailc018d.ts.net>"
+    }
+  }
+}
