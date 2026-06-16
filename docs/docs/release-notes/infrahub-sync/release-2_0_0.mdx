@@ -1,0 +1,105 @@
+---
+title: Release 2.0.0
+---
+<table>
+  <tbody>
+    <tr>
+      <th>Release Number</th>
+      <td>2.0.0</td>
+    </tr>
+    <tr>
+      <th>Release Date</th>
+      <td>June 8th, 2026</td>
+    </tr>
+    <tr>
+      <th>Tag</th>
+      <td>[2.0.0](https://github.com/opsmill/infrahub-sync/releases/tag/2.0.0)</td>
+    </tr>
+  </tbody>
+</table>
+
+We're excited to announce the release of Infrahub Sync, v2.0.0!
+
+This release focuses on making large and recurring sync runs easier to operate. Infrahub Sync can now derive write order from schema mappings, load source and destination data concurrently, write inspectable cache artifacts, and use incremental extraction on warm runs for supported adapters.
+
+Together, these changes reduce manual configuration work for large dependency graphs, reduce load time for recurring syncs, and add guardrails that help operators catch suspicious source-side changes before they affect the destination.
+
+## Main changes
+
+### Less manual ordering for large syncs
+
+Infrahub Sync can now compute sync order from `reference` relationships in `schema_mapping`, so most projects no longer need a manually maintained `order` list in `config.yml`. The engine builds a dependency graph, groups kinds into tiers, and writes one tier at a time.
+
+The `sync` command enables `--parallel` by default. When `order` is omitted, Infrahub Sync writes each computed tier before moving to the next tier, so dependent kinds do not start before their referenced kinds are in place. Existing configurations with an explicit `order` list still work; in that case, Infrahub Sync logs a warning and uses the serial order because the user-supplied sequence remains authoritative.
+
+### Cached snapshots and diff plans
+
+`diff` and `sync` now write run artifacts under `.infrahub-sync-cache/<sync-name>/<run-id>/`. The cache includes source and destination snapshots, `plan.parquet`, run metadata, cursors, schema sub-hash information, and rowcount baselines. See the [cache layout reference](../../reference/cache-layout.mdx) for the file structure and plan columns.
+
+Operators can inspect the generated plan with tools such as DuckDB before running another sync or investigating an unexpected diff:
+
+```bash
+uv run infrahub-sync diff --name from-netbox --directory examples/
+duckdb -c "SELECT action, resource, source_id FROM read_parquet('.infrahub-sync-cache/from-netbox/<run-id>/plan.parquet') LIMIT 20"
+```
+
+The new `apply` command introduces the foundation for replaying a cached plan without extracting the source again. In 2.0.0, this requires destination adapter support for cached-row application; use `sync` for built-in adapter workflows until that support is available. `apply` refuses to run when the destination schema shape no longer matches the cached schema sub-hash.
+
+### Faster recurring syncs
+
+`diff` and `sync` load source and destination data concurrently by default. Built-in adapters load into separate stores and cache directories, so this reduces load-phase wall-clock time without changing the sync result. Use `--no-concurrent-load` for custom adapters that are not thread-safe.
+
+Warm sync runs can also use cursor-based extraction for supported adapters. NetBox, Nautobot, and Infrahub support timestamp-based cursors:
+
+- NetBox and Nautobot use `last_updated__gte`.
+- Infrahub uses `node_metadata__updated_at__after`.
+
+The default remains `--full-extract`, which re-extracts every resource on each run. Pass `--no-full-extract` to enable the incremental warm path. Infrahub Sync falls back to a full extract when the schema mapping changes, when a prior successful run is unavailable, when the adapter does not support cursors for a resource, or when the configured full-resync cadence is reached. See the [incremental extraction reference](../../reference/incremental-extraction.mdx) for details.
+
+Timestamp-based incremental extraction does not detect deletes immediately, because deleted records have no updated timestamp to query. Infrahub Sync periodically forces a full extract, every 10 runs by default, to reconcile deletes.
+
+### Safety guardrails for destructive changes
+
+`sync` records rowcount baselines after successful runs and refuses to proceed when a later run sees a resource drop by more than 50 percent. This helps catch source-side outages, partial restores, or permission changes before they remove valid destination data. Use `--allow-rowcount-drop` only when the source intentionally shrank.
+
+The new `--continue-on-error` flag lets a run log and skip peer relationships whose identifier values are missing instead of aborting the entire run. Use it for partial source data, then review the warnings before relying on the result.
+
+### Contributor workflow updates
+
+The development workflow now uses [ty](https://github.com/astral-sh/ty) instead of mypy. The `invoke lint` workflow runs ty alongside ruff, pylint, and yamllint, and the repository no longer carries ty override blocks to hide diagnostics.
+
+During the migration, type fixes also removed several real failure paths in CLI narrowing, adapter peer resolution, resource-name handling, and Slurp’it conversion return types.
+
+## Upgrade notes
+
+- `order` is now optional when `schema_mapping` contains enough `reference` information to derive the dependency graph. Keep `order` when you need a hand-authored sequence.
+- `--parallel`, `--concurrent-load`, and `--full-extract` are enabled by default. Use `--no-concurrent-load` for custom adapters that are not thread-safe.
+- Incremental extraction is opt-in with `--no-full-extract`.
+- `.infrahub-sync-cache/` is now part of normal operation and is ignored by Git.
+- Review automation that parses command output. The new cache workflow adds run identifiers and cache paths to successful `diff` and `sync` runs.
+- Review retention and cleanup for `.infrahub-sync-cache/` in scheduled environments, because recurring runs now persist snapshots and plans.
+
+## Full changelog
+
+### Added
+
+- Added automatic sync ordering from `schema_mapping` reference relationships, making `order` optional for configurations with enough dependency information. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Added tier-by-tier sync execution with `--parallel` enabled by default when `order` is omitted. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Added per-run cache artifacts under `.infrahub-sync-cache/<sync-name>/<run-id>/`, including source and destination snapshots, run metadata, cursors, schema-sub-hash data, and rowcount baselines. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Added Parquet diff plans for `diff` and `sync`, making run output easier to inspect with external tools. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Added the `infrahub-sync apply` command as the foundation for replaying cached plans with destination adapters that support cached-row application. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Added cursor-based incremental extraction for NetBox, Nautobot, and Infrahub, enabled with `--no-full-extract`. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Added rowcount guardrails that stop `sync` when a resource count drops by more than 50 percent from the previous successful baseline. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Added `--continue-on-error` to skip peer relationships with missing identifier values while logging warnings. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+
+### Changed
+
+- Enabled concurrent source and destination loading by default for `diff` and `sync`, with `--no-concurrent-load` available for custom adapters that are not thread-safe. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Enabled `--parallel` and `--full-extract` by default for `sync`. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Updated example configurations to omit `order` by default and show how to opt back into a manual sequence. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Replaced mypy with ty in the development and CI linting workflow. ([#126](https://github.com/opsmill/infrahub-sync/pull/126))
+
+### Fixed
+
+- Improved peer identifier handling so missing peer identifier values produce clearer errors, or warnings when `--continue-on-error` is used. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Fixed several type-checker-discovered runtime failure paths in CLI narrowing, resource-name handling, Infrahub peer resolution, and Slurp’it conversion return values. ([#126](https://github.com/opsmill/infrahub-sync/pull/126))

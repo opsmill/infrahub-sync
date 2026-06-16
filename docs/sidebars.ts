@@ -53,6 +53,31 @@ const sidebars: SidebarsConfig = {
         'reference/incremental-extraction',
       ],
     },
+    {
+      type: 'category',
+      label: 'Release Notes',
+      collapsible: true,
+      collapsed: true,
+      link: {
+        type: 'generated-index',
+        slug: 'release-notes',
+      },
+      items: [
+        {
+          type: 'category',
+          label: 'Infrahub Sync',
+          link: {
+            type: 'generated-index',
+            slug: 'release-notes/infrahub-sync',
+          },
+          items: [
+            'release-notes/infrahub-sync/release-2_0_0',
+            'release-notes/infrahub-sync/release-1_6_0',
+            'release-notes/infrahub-sync/release-1_5_6',
+          ],
+        },
+      ],
+    },
     'contributing',
   ]
 };
