@@ -26,9 +26,9 @@ This release updates CLI, engine, and adapter messages to use Python logging ins
 
 ### Automation-friendly logging
 
-Infrahub Sync no longer mixes plain printed lines with application logs during a run. If you embed Infrahub Sync in Python automation, CI, cron, or workflow schedulers, use one consistent logging path.
+The package CLI, sync engine, and built-in adapters now emit operational messages through Python logging instead of writing directly to the terminal. A run produces one consistent log stream rather than a mix of printed lines and application logs.
 
-The package CLI, sync engine, and built-in adapters now emit operational messages through Python logging. The default CLI format remains human-readable. Embedded usage can attach custom handlers and formatters.
+The default CLI format remains human-readable. When you embed Infrahub Sync in Python automation, CI, cron, or workflow schedulers, attach your own handlers and formatters to route logs alongside the rest of your pipeline.
 
 ### Verbosity and progress controls
 

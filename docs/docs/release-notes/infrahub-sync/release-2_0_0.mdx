@@ -20,9 +20,9 @@ title: Release 2.0.0
 
 Infrahub Sync 2.0.0 is available.
 
-This release changes how Infrahub Sync handles large and recurring sync runs. It can derive write order from schema mappings, load source and destination data concurrently, write cache artifacts for each run, and use incremental extraction on warm runs for supported adapters.
+This release changes how Infrahub Sync handles large and recurring sync runs. It derives write order from schema mappings. It loads source and destination data concurrently. It writes cache artifacts for each run. And on supported adapters, warm runs can extract incrementally.
 
-Use these changes to reduce configuration for large dependency graphs, reduce load time for recurring syncs, and catch suspicious source-side changes before they affect the destination.
+Together, these changes reduce configuration for large dependency graphs, cut load time on recurring syncs, and surface suspicious source-side changes before they reach the destination.
 
 ## Main changes
 
@@ -45,7 +45,7 @@ uv run infrahub-sync diff --name from-netbox --directory examples/
 duckdb -c "SELECT action, resource, source_id FROM read_parquet('.infrahub-sync-cache/from-netbox/<run-id>/plan.parquet') LIMIT 20"
 ```
 
-The new `apply` command introduces the foundation for replaying a cached plan without extracting the source again. In 2.0.0, this requires destination adapter support for cached-row application. Use `sync` for built-in adapter workflows until that support is available. `apply` refuses to run when the destination schema shape no longer matches the cached schema sub-hash.
+The new `apply` command is the first step toward replaying a cached plan directly from cache, with no second extraction from the source. In 2.0.0, this requires destination adapter support for cached-row application. Use `sync` for built-in adapter workflows until that support lands. `apply` refuses to run when the destination schema shape no longer matches the cached schema sub-hash.
 
 ### Faster recurring syncs
 
@@ -70,7 +70,7 @@ The new `--continue-on-error` flag logs and skips peer relationships whose ident
 
 The development workflow now uses [ty](https://github.com/astral-sh/ty) instead of mypy. The `invoke lint` workflow runs ty alongside ruff, pylint, and yamllint. The repository no longer carries ty override blocks to hide diagnostics.
 
-During the migration, type fixes removed failure paths in CLI narrowing, adapter peer resolution, resource-name handling, and Slurp’it conversion return types.
+Fixing the type errors surfaced by the migration also resolved latent runtime issues in CLI narrowing, adapter peer resolution, resource-name handling, and Slurp’it conversion return types.
 
 ## Upgrade notes
 
