@@ -20,4 +20,4 @@ title: Release 1.5.6
 
 ## Fixed
 
-- Fixed Slurp’it interface processing so interface records are loaded one at a time instead of concurrently. This removes a race in interface handling and makes Slurp’it sync runs more predictable. ([#115](https://github.com/opsmill/infrahub-sync/pull/115))
+- Fixed Slurp’it interface processing so interface records load one at a time instead of concurrently. This removes a race in interface handling. Slurp’it sync runs now have deterministic interface processing. ([#115](https://github.com/opsmill/infrahub-sync/pull/115))
