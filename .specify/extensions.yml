@@ -1,0 +1,13 @@
+installed: []
+settings:
+  auto_execute_hooks: true
+hooks:
+  after_taskstoissues:
+  - extension: opsmill
+    command: speckit.opsmill.summary
+    enabled: true
+    optional: true
+    prompt: Produce a session summary in the feature directory?
+    description: Flow-level timeline next to spec.md/plan.md, capturing the handoff
+      to the issue tracker.
+    condition: null
