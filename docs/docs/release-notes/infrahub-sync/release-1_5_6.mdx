@@ -1,0 +1,23 @@
+---
+title: Release 1.5.6
+---
+<table>
+  <tbody>
+    <tr>
+      <th>Release Number</th>
+      <td>1.5.6</td>
+    </tr>
+    <tr>
+      <th>Release Date</th>
+      <td>February 18th, 2026</td>
+    </tr>
+    <tr>
+      <th>Tag</th>
+      <td>[1.5.6](https://github.com/opsmill/infrahub-sync/releases/tag/1.5.6)</td>
+    </tr>
+  </tbody>
+</table>
+
+## Fixed
+
+- Fixed a race in the Slurp’it adapter by processing interface records sequentially instead of concurrently. Slurp’it sync runs now produce deterministic interface output. ([#115](https://github.com/opsmill/infrahub-sync/pull/115))

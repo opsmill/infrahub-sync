@@ -1,0 +1,136 @@
+---
+title: Release 2.0.0
+---
+<table>
+  <tbody>
+    <tr>
+      <th>Release Number</th>
+      <td>2.0.0</td>
+    </tr>
+    <tr>
+      <th>Release Date</th>
+      <td>June 8th, 2026</td>
+    </tr>
+    <tr>
+      <th>Tag</th>
+      <td>[2.0.0](https://github.com/opsmill/infrahub-sync/releases/tag/2.0.0)</td>
+    </tr>
+  </tbody>
+</table>
+
+Infrahub Sync 2.0.0 is available.
+
+This release focuses on recurring synchronization at scale. Run large syncs on a schedule, automate them safely, and inspect exactly what changed on every run.
+
+The focus of 2.0 is operational reliability: faster incremental syncs, automatic dependency ordering, built-in safety guardrails, and on-disk run artifacts. Together these make it practical to run synchronization as a recurring part of infrastructure operations.
+
+## Release highlights
+
+- **Schedule recurring syncs without re-reading entire datasets.** Recurring syncs used to re-read the full source and destination on every run. After the first run, `--no-full-extract` lets supported adapters extract only changed records, so large sync jobs stay fast enough to run on a schedule. See [Incremental syncs for large datasets](#incremental-syncs-for-large-datasets).
+- **Add and evolve models without maintaining a write order.** Sync ordering used to be maintained manually in `config.yml` and updated on every schema change. It is now derived from your schema mapping automatically. Evolve data models, onboard new systems, and extend integrations without updating sync configuration on every change. See [Write ordering derived from schema mapping](#write-ordering-derived-from-schema-mapping).
+- **Run synchronization safely in unattended environments.** Source system outages, permission issues, or incomplete datasets no longer risk deleting valid destination data. Built-in guardrails detect unexpected source drops and stop the run, or skip the affected records, before writing to the destination. Run scheduled syncs in CI/CD pipelines and cron jobs without risking accidental data loss from source anomalies. See [Row count guardrails for unattended runs](#row-count-guardrails-for-unattended-runs).
+- **Inspect, audit, and troubleshoot every sync run.** Every `diff` and `sync` used to be discarded after execution. Both are now saved to disk. Review exactly what changed, investigate unexpected results, and build repeatable operational workflows around sync. See [Per-run artifacts for diff and sync](#per-run-artifacts-for-diff-and-sync).
+
+:::note What to expect after upgrading
+
+Your existing sync projects keep working without changes, and most run faster, because loading and writing now happen in parallel by default. Three situations need action:
+
+- If you use a custom adapter that is not thread-safe, pass `--no-concurrent-load`.
+- If a sync depends on a specific write order, set an explicit `order` list in `config.yml`.
+- `diff` and `sync` now write a cache under `.infrahub-sync-cache/`. In scheduled environments, plan to clean it up so per-run artifacts do not accumulate.
+
+The [upgrade notes](#upgrade-notes) list every default that changed.
+
+:::
+
+## Main changes
+
+### Incremental syncs for large datasets
+
+Large synchronization jobs previously required reading both source and destination systems in full on every run, so execution time grew with the dataset. Infrahub Sync now loads both systems concurrently and, after the first run, can extract only changed records on supported adapters. Run large syncs on a schedule and keep systems in sync as datasets change.
+
+The approved benchmark for [#127](https://github.com/opsmill/infrahub-sync/pull/127) used the `nautobot-v2` demo dataset with interfaces omitted and about 14 object kinds:
+
+| Scenario | Cold | Warm |
+| --- | ---: | ---: |
+| Baseline, serial, no concurrent load | 463.8s | 154.3s |
+| `--parallel` with `--concurrent-load` | 437.5s | 132.3s |
+| `--no-full-extract`, cursor-driven warm run | 434.5s | 6.3s |
+
+- Pass `--no-concurrent-load` for custom adapters that are not thread-safe. Concurrent loading is on by default and does not change the sync result.
+- Enable incremental extraction with `--no-full-extract` to read only changed records after the first run. The default `--full-extract` re-reads every resource on each run. On supported adapters it uses timestamp cursors: NetBox and Nautobot use `last_updated__gte`, and Infrahub uses `node_metadata__updated_at__after`.
+- Infrahub Sync falls back to a full extract when the schema mapping changes, when no prior successful run exists, when an adapter has no cursor for a resource, or when the full-resync cadence is reached.
+- Timestamp cursors do not detect deletes. Infrahub Sync forces a full extract every 10 runs by default to reconcile them.
+
+See the [incremental extraction reference](../../reference/incremental-extraction.mdx) for details.
+
+### Write ordering derived from schema mapping
+
+Add and evolve models without updating sync configuration. Synchronization writes objects in dependency order, and that order used to be maintained manually in `config.yml` and updated on every schema change. Infrahub Sync now derives it from the `reference` relationships in your schema mapping.
+
+- Infrahub Sync builds the dependency graph from the `reference` relationships in your `schema_mapping`. It groups object kinds into tiers; objects within a tier have no cross-dependencies.
+- When `order` is omitted, Infrahub Sync writes each tier in full before starting the next, so no object is created before what it references. `--parallel` is on by default and writes objects within a tier concurrently.
+- Set an explicit `order` list when you need a specific sequence; Infrahub Sync logs a warning and uses it.
+
+### Row count guardrails for unattended runs
+
+Schedule syncs in CI jobs or cron without manually reviewing each run for source anomalies. An outage, a partial restore, or a permissions change can make a source return far fewer records than it holds. Previously, a sync would apply that drop as a deletion. Infrahub Sync now checks record counts against a baseline before writing and stops the run, or skips the affected records, when the drop exceeds the configured threshold.
+
+- Pass `--allow-rowcount-drop` only when the source intentionally shrank. By default, the rowcount check stops a run when a resource drops by more than 50 percent from its last successful baseline.
+- Pass `--continue-on-error` to log and skip a record that links to an object it cannot find, such as a peer relationship with a missing identifier, instead of aborting the run. Use it for partial source data, then review the warnings before relying on the result.
+
+### Per-run artifacts for diff and sync
+
+Review, audit, and troubleshoot any run after it completes. `diff` used to print to the terminal and keep nothing. Every `diff` and `sync` now saves its snapshots and change plan to disk, so you can inspect what changed and investigate an unexpected result.
+
+- Find each run's source snapshot, destination snapshot, `plan.parquet`, run metadata, cursors, and schema sub-hash under `.infrahub-sync-cache/<sync-name>/<run-id>/`. The sync-level rowcount baseline is stored at `.infrahub-sync-cache/<sync-name>/last-successful-rowcounts.json`. See the [cache layout reference](../../reference/cache-layout.mdx) for the file structure and plan columns.
+- Query the plan with tools such as DuckDB before the next run, or to investigate an unexpected diff:
+
+```bash
+uv run infrahub-sync diff --name from-netbox --directory examples/
+duckdb -c "SELECT action, resource, source_id FROM read_parquet('.infrahub-sync-cache/from-netbox/<run-id>/plan.parquet') LIMIT 20"
+```
+
+- Use `apply` (preview) to replay a cached plan without re-extracting the source. In 2.0.0 it requires destination adapter support for cached-row application, so use `sync` for built-in adapter workflows until that support is available. `apply` refuses to run when the current schema mapping and destination schema shape no longer match the cached schema sub-hash.
+
+### Type checking uses ty in invoke lint
+
+Run `invoke lint` with stricter type checking and no override blocks. The project used mypy with overrides that hid known type errors. Migrating to ty removed those overrides and fixed several latent runtime bugs in the process.
+
+- [ty](https://github.com/astral-sh/ty) runs alongside ruff, pylint, and yamllint in `invoke lint`.
+- The migration also fixed latent runtime failures in CLI narrowing, adapter peer resolution, resource-name handling, and Slurp'it conversion return types.
+
+## Upgrade notes
+
+- `order` is now optional when `schema_mapping` contains enough `reference` information to derive the dependency graph. Keep `order` when you need a configured sequence.
+- `--parallel`, `--concurrent-load`, and `--full-extract` are enabled by default. Use `--no-concurrent-load` for custom adapters that are not thread-safe.
+- Incremental extraction is opt-in with `--no-full-extract`.
+- `.infrahub-sync-cache/` is now part of normal operation and is ignored by Git.
+- Review automation that parses command output. The new cache workflow adds run identifiers and cache paths to successful `diff` and `sync` runs.
+- Review retention and cleanup for `.infrahub-sync-cache/` in scheduled environments, because recurring runs now persist snapshots and plans.
+
+## Full changelog
+
+### Added
+
+- Added automatic sync ordering from `schema_mapping` reference relationships, making `order` optional for configurations with enough dependency information. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Added tier-by-tier sync execution with `--parallel` enabled by default when `order` is omitted. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Added per-run cache artifacts under `.infrahub-sync-cache/<sync-name>/<run-id>/`, including source and destination snapshots, run metadata, cursors, and schema-sub-hash data. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Added sync-level rowcount baselines under `.infrahub-sync-cache/<sync-name>/last-successful-rowcounts.json`. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Added Parquet diff plans for `diff` and `sync`, so run output can be inspected with external tools. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Added the `infrahub-sync apply` command (preview) as the foundation for replaying cached plans with destination adapters that support cached-row application. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Added cursor-based incremental extraction for NetBox, Nautobot, and Infrahub, enabled with `--no-full-extract`. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Added rowcount guardrails that stop `sync` when a resource count drops by more than 50 percent from the previous successful baseline. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Added `--continue-on-error` to skip peer relationships with missing identifier values while logging warnings. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+
+### Changed
+
+- Enabled concurrent source and destination loading by default for `diff` and `sync`, with `--no-concurrent-load` available for custom adapters that are not thread-safe. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Enabled `--parallel` and `--full-extract` by default for `sync`. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Updated example configurations to omit `order` by default and show how to opt back into a manual sequence. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Replaced mypy with ty in the development and CI linting workflow. ([#126](https://github.com/opsmill/infrahub-sync/pull/126))
+
+### Fixed
+
+- Improved peer identifier handling so missing peer identifier values produce clearer errors, or warnings when `--continue-on-error` is used. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Fixed several type-checker-discovered runtime failure paths in CLI narrowing, resource-name handling, Infrahub peer resolution, and Slurp'it conversion return values. ([#126](https://github.com/opsmill/infrahub-sync/pull/126))
