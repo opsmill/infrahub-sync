@@ -1,0 +1,64 @@
+---
+title: Release 1.6.0
+---
+<table>
+  <tbody>
+    <tr>
+      <th>Release Number</th>
+      <td>1.6.0</td>
+    </tr>
+    <tr>
+      <th>Release Date</th>
+      <td>March 26th, 2026</td>
+    </tr>
+    <tr>
+      <th>Tag</th>
+      <td>[1.6.0](https://github.com/opsmill/infrahub-sync/releases/tag/1.6.0)</td>
+    </tr>
+  </tbody>
+</table>
+
+Infrahub Sync 1.6.0 is available.
+
+This release updates CLI, engine, and adapter messages to use Python logging instead of direct terminal printing. It also adds verbosity and progress controls for scheduled runs and interactive troubleshooting.
+
+## Main changes
+
+### Automation-friendly logging
+
+The package CLI, sync engine, and built-in adapters now emit operational messages through Python logging instead of writing directly to the terminal. A run produces one consistent log stream rather than a mix of printed lines and application logs.
+
+The default CLI format remains human-readable. When you embed Infrahub Sync in Python automation, CI, cron, or workflow schedulers, attach your own handlers and formatters to route logs alongside the rest of your pipeline.
+
+### Verbosity and progress controls
+
+The CLI now includes global verbosity controls:
+
+```bash
+infrahub-sync --verbosity quiet ...
+infrahub-sync --verbosity verbose ...
+infrahub-sync -q ...
+infrahub-sync -v ...
+```
+
+Commands that show progress now support `--show-progress / --no-show-progress`. Progress bars are auto-detected for interactive terminals by default. Use `--no-show-progress` in automation that needs stable, machine-readable output.
+
+## Upgrade notes
+
+- No configuration changes are required.
+- Review any scripts that parse human-readable output from `list`, `diff`, `sync`, or `generate`. Operational messages now flow through Python logging.
+- Use `--quiet`, `--verbose`, or `--verbosity` to tune log volume for automation and troubleshooting.
+- Use `--no-show-progress` in non-interactive environments that require stable log output.
+
+## Full changelog
+
+### Added
+
+- Added global `--verbosity`, `--verbose`/`-v`, and `--quiet`/`-q` controls. ([#117](https://github.com/opsmill/infrahub-sync/pull/117))
+- Added `--show-progress / --no-show-progress` to `diff` and `sync`, with terminal auto-detection by default. ([#117](https://github.com/opsmill/infrahub-sync/pull/117))
+
+### Changed
+
+- Replaced direct `print()` and Rich console output with Python logging in the package CLI, sync engine, and built-in adapters. ([#117](https://github.com/opsmill/infrahub-sync/pull/117))
+- Updated adapter documentation command examples from Poetry to uv. ([#117](https://github.com/opsmill/infrahub-sync/pull/117))
+- Updated development guidance for the uv-based workflow and Python 3.13 support. ([#117](https://github.com/opsmill/infrahub-sync/pull/117))
