@@ -99,6 +99,11 @@ jobs:
     steps:
       - name: "Check out repository code"
         uses: "actions/checkout@v5"
+      # The globs below exclude vendored/agentic tooling trees (spec-kit engine,
+      # agent source-of-truth, adapters, constitution). Those are managed by
+      # spec-kit / the agentic structure, not hand-authored here, so they follow
+      # their own formatting conventions. Note: markdownlint-cli2 globs do not
+      # support inline "#" comments, so this rationale lives here instead.
       - name: "Linting: markdownlint"
         uses: DavidAnson/markdownlint-cli2-action@v19
         with:
@@ -106,6 +111,11 @@ jobs:
           globs: |
             **/*.{md,mdx}
             !changelog/*.md
+            !.specify/**
+            !.agents/**
+            !.claude/**
+            !.codex/**
+            !dev/constitution.md
 
   action-lint:
     if: needs.files-changed.outputs.github_workflows == 'true'
