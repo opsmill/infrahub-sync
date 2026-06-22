@@ -1,0 +1,22 @@
+.yamllint.yml
+  s_d4fa043cf03c6b::t_83f2691d0f7b44 8-14
+.github/workflows/workflow-linter.yml
+  s_d4fa043cf03c6b::t_24d6f80cff0e7f 102-106
+  s_d4fa043cf03c6b::t_895db624f9637b 114-118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "b45a9b12f360f615f5b7373d58a1aa137387962d",
+  "prompts": {},
+  "sessions": {
+    "s_d4fa043cf03c6b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ea0237b3-e565-4e3f-85b3-410acc56eff8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
