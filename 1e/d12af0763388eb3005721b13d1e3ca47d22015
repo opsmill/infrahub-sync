@@ -1,0 +1,136 @@
+.agents/skills/speckit-plan/SKILL.md
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1-152
+.specify/extensions/.registry
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-48
+.specify/memory/constitution.md
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1
+.specify/extensions/opsmill/commands/retrospect.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-175
+.specify/extensions/opsmill/extension.yml
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-55
+.specify/extensions/opsmill/presets/taskstoissues-jira/preset.yml
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-28
+.specify/extensions/opsmill/presets/taskstoissues-jira/README.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-57
+.specify/extensions/opsmill/commands/auto.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-71
+.agents/skills/speckit-opsmill-implement/SKILL.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-132
+.specify/templates/tasks-template.md
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1-251
+.specify/presets/.registry
+  s_d4fa043cf03c6b::t_1f243e3a11af06 1-30
+.specify/presets/taskstoissues-jira/README.md
+  s_d4fa043cf03c6b::t_1f243e3a11af06 1-57
+.agents/commands/speckit.opsmill.summary.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-144
+.agents/skills/speckit-checklist/SKILL.md
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1-372
+.specify/init-options.json
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1-10
+.specify/integration.json
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1-4
+.specify/extensions/opsmill/presets/taskstoissues-jira/templates/jira.example.yml
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-38
+.agents/commands/speckit.opsmill.prep.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-154
+.specify/extensions/opsmill/presets/CHANGELOG.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-46
+.agents/commands/speckit.opsmill.implement.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-130
+.agents/skills/speckit-tasks/SKILL.md
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1-202
+.agents/skills/speckit-opsmill-auto/SKILL.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-78
+CLAUDE.md
+  s_d4fa043cf03c6b::t_6b1617b50356d5 4-8
+AGENTS.md
+  s_d4fa043cf03c6b::t_7d791653ac33f0 180
+.agents/commands/speckit.taskstoissues.md
+  s_d4fa043cf03c6b::t_1f243e3a11af06 1-192
+.specify/presets/taskstoissues-jira/templates/jira.example.yml
+  s_d4fa043cf03c6b::t_1f243e3a11af06 1-38
+.agents/skills/speckit-clarify/SKILL.md
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1-254
+.agents/commands/speckit.opsmill.extract.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-344
+.specify/extensions/opsmill/commands/extract.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-340
+.specify/extensions.yml
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-13
+.agents/skills/speckit-analyze/SKILL.md
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1-260
+.agents/skills/speckit-taskstoissues/SKILL.md
+  s_d4fa043cf03c6b::t_1f243e3a11af06 2-4,6-7,12,59-165
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1,5,8-11,13-58,166-198
+.specify/templates/checklist-template.md
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1-40
+.specify/extensions/opsmill/CHANGELOG.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-74
+.agents/skills/speckit-opsmill-retrospect/SKILL.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-181
+.specify/templates/plan-template.md
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1-104
+.agents/commands/speckit.opsmill.auto.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-76
+.specify/extensions/opsmill/README.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-149
+.agents/skills/speckit-constitution/SKILL.md
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1-157
+.agents/skills/speckit-opsmill-prep/SKILL.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-156
+.specify/extensions/opsmill/commands/prep.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-150
+.agents/skills/speckit-opsmill-summary/SKILL.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-143
+dev/constitution.md
+  s_d4fa043cf03c6b::t_ee43fd4432cb05 1-212
+.specify/workflows/workflow-registry.json
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1-13
+.agents/skills/speckit-specify/SKILL.md
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1-330
+.agents/commands/speckit.opsmill.retrospect.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-179
+.agents/skills/speckit-opsmill-extract/SKILL.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-346
+.specify/extensions/opsmill/LICENSE
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-201
+.gitignore
+  s_d4fa043cf03c6b::t_17af55c662a334 20-22
+.specify/templates/constitution-template.md
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1-50
+.agents/skills/speckit-implement/SKILL.md
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1-209
+.specify/integrations/speckit.manifest.json
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1-16
+.specify/templates/spec-template.md
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1-128
+.specify/presets/taskstoissues-jira/commands/speckit.taskstoissues.md
+  s_d4fa043cf03c6b::t_1f243e3a11af06 1-190
+.specify/presets/taskstoissues-jira/preset.yml
+  s_d4fa043cf03c6b::t_1f243e3a11af06 1-28
+.specify/integrations/claude.manifest.json
+  s_d4fa043cf03c6b::t_6b1617b50356d5 1-16
+.specify/extensions/opsmill/commands/implement.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-126
+.specify/extensions/opsmill/commands/summary.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-139
+.specify/extensions/opsmill/presets/taskstoissues-jira/commands/speckit.taskstoissues.md
+  s_d4fa043cf03c6b::t_8c5563491fa327 1-190
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "1ed12af0763388eb3005721b13d1e3ca47d22015",
+  "prompts": {},
+  "sessions": {
+    "s_d4fa043cf03c6b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ea0237b3-e565-4e3f-85b3-410acc56eff8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
