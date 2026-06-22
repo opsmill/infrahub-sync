@@ -1,0 +1,19 @@
+CLAUDE.md
+  s_24b58cfa6f2bd2::t_cd5ca99af81c69 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "6c74ef9a7156641c8a4533a39fd58ec63b792dbc",
+  "prompts": {},
+  "sessions": {
+    "s_24b58cfa6f2bd2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97b2873d-26ac-4677-ac2b-c86ffa83590c",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
