@@ -5,45 +5,22 @@
 
 ## Agent Operating Principles
 
-1. **Plan → Ask → Act → Verify → Record**
-   Plan briefly, ask for missing context, act with the smallest change, verify locally, then record with a concise commit or PR note.
+1. **Plan → Ask → Act → Verify → Record** — plan briefly, ask for missing context, act with the smallest change, verify locally, then record with a concise commit or PR note.
+2. **Default to read-only and dry runs** — prefer `list`, `diff`, and `generate` before `sync`. Write/apply only with explicit instruction and human approval.
+3. **Be specific and reversible** — small, scoped commits. Don't mix large refactors with behavior changes in one PR.
+4. **Match existing patterns** — keep CLI, adapters, examples, and directory structure consistent with the codebase.
+5. **Idempotency and safety** — favor operations safe to re-run. Never print or guess secrets. Handle timeouts, auth, and network errors explicitly.
 
-2. **Default to read-only and dry runs**
-   Prefer `list`, `diff`, and `generate` before `sync`. Write/apply only with explicit instruction and human approval.
-
-3. **Be specific and reversible**
-   Use small, scoped commits. Do not mix large refactors with behavior changes in the same PR.
-
-4. **Match existing patterns**
-   Keep CLI, adapters, examples, and directory structure consistent with the codebase.
-
-5. **Idempotency and safety**
-   Favor operations that are safe to re-run. Use dry runs. Never print or guess secrets. Handle timeouts, auth, and network errors explicitly.
-
-## Quickstart
+## Setup
 
 ```bash
-# Setup
 pyenv local 3.12.x || use system Python 3.10–3.13
 uv sync
-
-# Validate dev environment
-uv run infrahub-sync --help
-uv run infrahub-sync list --directory examples/
-
-# Make a change, then:
-uv run invoke format
-uv run invoke lint
-uv run infrahub-sync list --directory examples/
-
-# If docs/CLI changed:
-uv run invoke docs.generate
-uv run invoke docs.docusaurus
 ```
 
 ## Required Development Workflow
 
-Run these in order before committing.
+Run in order before committing:
 
 ```bash
 uv sync
@@ -53,12 +30,6 @@ uv run invoke lint
 
 `invoke lint` runs ruff → pylint → yamllint → ty.
 
-**Policy:**
-
-- New or changed code is Ruff-clean and typed where touched (docstrings, specific exceptions).
-- The codebase is clean under ty with no `[[tool.ty.overrides]]` blocks. Don't reintroduce overrides to mask type errors — fix the underlying issue, or use a targeted `# ty: ignore[<rule>]` with a short TODO at the call site.
-- If you add tests, run `uv run pytest -q`.
-
 **CLI sanity after changes:**
 
 ```bash
@@ -67,12 +38,18 @@ uv run infrahub-sync list --directory examples/
 uv run infrahub-sync generate --name from-netbox --directory examples/
 ```
 
-**Docs:** (only if user-facing changes)
+**Docs** (only if user-facing changes — see [Documentation](#documentation)):
 
 ```bash
 uv run invoke docs.generate
 uv run invoke docs.docusaurus
 ```
+
+**Policy:**
+
+- New or changed code is Ruff-clean and typed where touched (docstrings, specific exceptions).
+- The codebase is clean under ty with no `[[tool.ty.overrides]]` blocks in `pyproject.toml`. Don't reintroduce overrides to mask type errors — fix the underlying issue, or use a targeted `# ty: ignore[<rule>]` with a short TODO at the call site. Ad-hoc check: `uv run ty check .`.
+- If you add tests, run `uv run pytest -q`.
 
 ## Repository Structure
 
@@ -82,9 +59,9 @@ infrahub-sync/
 │  ├─ cli.py                     # Typer entrypoint
 │  ├─ __init__.py                # Public API
 │  ├─ utils.py                   # Utilities
-│  ├─ potenda/                   # Core sync engine
-│  └─ adapters/                  # NetBox/Nautobot/Infrahub adapters
-├─ examples/                     # Example sync configs
+│  ├─ potenda/                   # Core sync engine — orchestrates list/diff/generate/sync
+│  └─ adapters/                  # Per-system connectors (use existing ones as patterns)
+├─ examples/                     # Example sync configs and templates
 ├─ tasks/                        # Invoke task definitions
 ├─ docs/                         # Docusaurus (npm project)
 ├─ tests/                        # Unit and integration tests
@@ -92,16 +69,11 @@ infrahub-sync/
 └─ .github/workflows/            # CI
 ```
 
-## Core Surfaces
+Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`, `aci`, `prometheus`, `peeringmanager`, `ipfabricsync`, `slurpitsync`, `genericrestapi`.
 
-- **Adapters** (`infrahub_sync/adapters/`): per-system connectors. Use existing ones as patterns.
-    - Available: `infrahub`, `netbox`, `nautobot`, `aci`, `prometheus`, `peeringmanager`, `ipfabricsync`, `slurpitsync`, `genericrestapi`
-- **Engine** (`infrahub_sync/potenda/`): orchestrates `list`, `diff`, `generate`, and `sync`.
-- **Examples** (`examples/`): runnable configs and templates.
+## CLI Commands
 
-**CLI commands:**
-
-- `infrahub-sync list` — show available sync projects.
+- `infrahub-sync list` — show available sync projects (safe).
 - `infrahub-sync diff` — compute differences (safe).
 - `infrahub-sync generate` — generate Python from YAML config (servers required).
 - `infrahub-sync sync` — perform synchronization (servers and approval required).
@@ -112,17 +84,16 @@ infrahub-sync/
 - `source` and `destination` specify adapter names and connection settings.
 - `order` defines the sync sequence of object types.
 - Defaults often target `localhost`; adjust for real deployments.
-- Credentials must come from environment or a secret manager. Never commit secrets.
+- Credentials must come from environment variables or a secret manager. Never commit, print, or log secrets. Keep example configs authentic but sanitized.
 
 ## Code Standards
 
 ### Python (3.10–3.13)
 
-- Prefer explicit types on new or changed code.
+- Prefer explicit types on new or changed code; public functions and classes get concise docstrings.
 - Ruff: formatted and lint-clean. Honor `pyproject.toml`.
 - Pylint: fix actionable issues in touched code; some warnings are expected.
-- ty: included in `uv run invoke lint`; do not increase the error count. For an ad-hoc check, `uv run ty check .` works too.
-- Public functions and classes require concise docstrings.
+- ty: included in `uv run invoke lint`; do not increase the error count.
 - Raise specific exceptions; avoid broad `except Exception:`.
 
 ### CLI and UX
@@ -131,16 +102,18 @@ infrahub-sync/
 - No secrets in logs or tracebacks.
 - Prefer explicit flags over implicit behavior.
 
+### Logging
+
+- Use `structlog` for structured logging (not `print`). Include context (request IDs, endpoints, object counts) but never secrets.
+
 ## Testing
 
-If you introduce features or bug fixes, add targeted tests.
+Add targeted tests for new features or bug fixes:
 
 - Unit tests for `utils` and adapter edge cases (timeouts, 401/403, empty pages).
-- Parametrized tests for config parsing.
-- Mark network or integration tests and keep them opt-in (for example, `-m integration`).
-- Keep tests atomic and single-purpose. Use parametrization rather than loops.
-
-Run:
+- Parametrized tests for config parsing; prefer parametrization over loops.
+- Mark network/integration tests opt-in (e.g. `-m integration`).
+- Keep tests atomic and single-purpose.
 
 ```bash
 uv run pytest -q
@@ -148,91 +121,39 @@ uv run pytest -q
 
 ## Documentation
 
-- Update `docs/` for any user-visible changes (flags, config, adapters).
-- Generate CLI docs:
+- Update `docs/` for any user-visible changes (flags, config, adapters). Keep examples minimal, accurate, and redacted.
+- Generate CLI docs: `uv run invoke docs.generate`
+- Build site (run `cd docs && npm install` once): `uv run invoke docs.docusaurus`
+- Lint Markdown/MDX with `markdownlint-cli2` (also via `uv run invoke docs.markdownlint`):
 
 ```bash
-uv run invoke docs.generate
-```
-
-- Build site (ensure `cd docs && npm install` once):
-
-```bash
-uv run invoke docs.docusaurus
-```
-
-- Keep examples minimal, accurate, and redacted.
-
-### Linting documentation (markdownlint)
-
-Use `markdownlint-cli2` for Markdown and MDX files (also available via `uv run invoke docs.markdownlint`).
-
-```bash
-# Check Markdown and MDX in docs
-markdownlint-cli2 "docs/docs/**/*.{md,mdx}"
-# Fix automatically
-markdownlint-cli2 "docs/docs/**/*.{md,mdx}" --fix
+markdownlint-cli2 "docs/docs/**/*.{md,mdx}"        # check
+markdownlint-cli2 "docs/docs/**/*.{md,mdx}" --fix  # fix
 ```
 
 ## Invoke Tasks (reference)
 
-```bash
-uv run invoke --list
-# Top-level
-# format                          Run all formatters
-# lint                            Run all linters
-#
-# linter.*
-# linter.format-ruff              Format Python code with ruff
-# linter.lint-ruff                Lint Python code with ruff
-# linter.lint-pylint              Lint Python code with pylint
-# linter.lint-yaml                Lint YAML files with yamllint
-# linter.lint-ty                  Type-check Python code with ty
-#
-# docs.*
-# docs.generate                   Generate CLI documentation
-# docs.docusaurus                 Build documentation website
-# docs.markdownlint               Lint Markdown/MDX with markdownlint-cli2
-# docs.format-markdownlint        Fix Markdown/MDX with markdownlint-cli2
-# docs.format                     Run all doc formatters
-# docs.lint                       Run all doc linters
-#
-# tests.*
-# tests.tests-unit                Run unit tests
-# tests.tests-integration         Run integration tests
-```
+`uv run invoke --list` for the full set. Key tasks:
+
+- `format` / `lint` — run all formatters / linters.
+- `linter.format-ruff`, `linter.lint-ruff`, `linter.lint-pylint`, `linter.lint-yaml`, `linter.lint-ty`.
+- `docs.generate`, `docs.docusaurus`, `docs.markdownlint`, `docs.format-markdownlint`, `docs.format`, `docs.lint`.
+- `tests.tests-unit`, `tests.tests-integration`.
 
 ## Known Issues and Limitations
 
-- Optional dependencies (for example, `pynetbox`, `pynautobot`) may be missing, producing import warnings.
+- Optional dependencies (e.g. `pynetbox`, `pynautobot`) may be missing, producing import warnings.
 - `generate` and `sync` require running servers (Infrahub, NetBox, Nautobot).
-- The codebase is clean under ty; there are no `[[tool.ty.overrides]]` blocks in `pyproject.toml`. Prefer real type fixes over reintroducing overrides.
 - Docs npm audit may flag dev-only vulnerabilities; they do not affect the Python package.
 
-## Development Rules
+## Git and PR Process
 
-### Git and CI
-
-- Do not force-push on shared branches.
-- Do not amend to hide pre-commit fixes; use a follow-up commit.
-- Apply PR labels: `bugs`, `breaking`, `enhancements`, `features` (default to `enhancements`).
-- Always run the required workflow (format → lint → CLI sanity) before a PR. `invoke lint` now includes ty alongside ruff, pylint, and yamllint.
-
-### Commit and PR Messages
-
-- Agents must identify themselves (for example, `Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>` or `🤖 Generated with Copilot`).
+- Do not force-push on shared branches. Do not amend to hide pre-commit fixes; use a follow-up commit.
+- Apply PR labels: `bugs`, `breaking`, `enhancements`, `features` (default `enhancements`).
+- Run the required workflow (format → lint → CLI sanity) before a PR.
+- Agents must identify themselves (e.g. `Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>` or `🤖 Generated with Copilot`).
 - Commit subject: imperative "what changed." Rationale goes in the PR body.
-- PR body includes:
-    - Problem or tension and the solution in one to two short paragraphs.
-    - Minimal code example or before/after snippet.
-    - Note any user-visible changes (CLI flags, config keys).
-
-## Review Process
-
-- Read surrounding code and examples. Align with established patterns.
-- Verify claims via the smallest reproduction (CLI or unit).
-- Consider edge cases: auth failures, empty inputs, pagination, rate limits, timeouts.
-- Provide specific, actionable feedback.
+- PR body: problem/tension and solution in one to two short paragraphs; a minimal before/after snippet; any user-visible changes (CLI flags, config keys).
 
 **Approval checklist:**
 
@@ -242,31 +163,21 @@ uv run invoke --list
 - [ ] Docs updated if flags or config changed.
 - [ ] Error handling uses specific exception types and clear messages.
 
-## Operational and Safety Guidelines
+## Review Process
 
-- Prefer dry runs (`diff`, `list`, `generate`) and include outputs in PRs when helpful.
-- Least privilege: only touch minimal required resources.
-- Idempotency: ensure safe re-runs and guard against partial failures.
-- Observability: use `structlog` for structured logging (not `print`). Include context (request IDs, endpoints, object counts) but never secrets.
-- Concurrency: avoid collisions with live migrations or active syncs. Coordinate via PRs.
+- Read surrounding code and examples; align with established patterns.
+- Verify claims via the smallest reproduction (CLI or unit).
+- Consider edge cases: auth failures, empty inputs, pagination, rate limits, timeouts.
+- Provide specific, actionable feedback.
+- Least privilege: touch only the minimal required resources. Avoid collisions with live migrations or active syncs; coordinate via PRs.
 
 If unsure, stop and ask with a concrete question.
-
-## Security and Secrets
-
-- Configure credentials via environment variables or secret managers.
-- Never print tokens or keys in logs, exceptions, or PRs. Redact examples and tests.
-- Keep example configs authentic but sanitized.
 
 ## Platform-Specific Notes
 
 This file (`AGENTS.md`) is the single source of truth. Platform-specific files should point here and only contain overrides:
 
-- `CLAUDE.md` — points to this file
-- `.github/copilot-instructions.md`
-- `GEMINI.md`
-- `GPT.md`
-- `.cursor/rules/dev-standard.mdc`
+- `CLAUDE.md`, `.github/copilot-instructions.md`, `GEMINI.md`, `GPT.md`, `.cursor/rules/dev-standard.mdc`
 
 Each should include the "Required Development Workflow" block and the "Approval checklist" verbatim.
 
@@ -276,12 +187,4 @@ Each should include the "Required Development Workflow" block and the "Approval 
 2. Add connection config schema and an example under `examples/`.
 3. Provide `list` and `diff` pathways before enabling `sync`.
 4. Document required environment variables and expected error cases.
-5. Create a documentation page for the adapter in `docs/docs/adapters/`.
-   - Include overview, configuration keys, environment variables, example YAML, and common errors.
-   - Add it to the sidebar or navigation as needed.
-   - Validate with markdownlint:
-
-   ```bash
-   markdownlint-cli2 "docs/docs/adapters/**/*.{md,mdx}"
-   markdownlint-cli2 "docs/docs/adapters/**/*.{md,mdx}" --fix
-   ```
+5. Create a documentation page in `docs/docs/adapters/` (overview, config keys, env vars, example YAML, common errors), add it to the sidebar, and validate with `markdownlint-cli2 "docs/docs/adapters/**/*.{md,mdx}"`.
