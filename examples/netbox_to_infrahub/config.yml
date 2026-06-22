@@ -241,7 +241,7 @@ schema_mapping:
         mapping: tags
         reference: BuiltinTag
     # Showcase Filters
-    # It will import the ones with dmu01 in their name *AND* without pdu
+    # It will import the ones with dmi01 in their name *AND* without pdu
     filters:
       - field: name
         operation: "contains"
@@ -254,7 +254,7 @@ schema_mapping:
       - field: name
         expression: "{{ name.lower() if name else '' }}"
       - field: serial_number
-        expression: "{{ serial.lower() if serial else '' }}}"
+        expression: "{{ serial.lower() if serial else '' }}"
 
   # Interfaces (interfaces, rear port, front port)
   - name: InfraInterfaceL2L3
