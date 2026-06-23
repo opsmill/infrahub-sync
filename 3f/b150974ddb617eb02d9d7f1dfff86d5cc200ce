@@ -1,0 +1,41 @@
+.agents/skills/speckit-implement/SKILL.md
+  s_9638dcaefb1e4f::t_7beb9cefe46d07 98
+.specify/templates/plan-template.md
+  s_9638dcaefb1e4f::t_7beb9cefe46d07 4,21-28,30-36
+.specify/templates/tasks-template.md
+  s_9638dcaefb1e4f::t_7beb9cefe46d07 9,29,32,38,43
+.specify/integrations/claude.manifest.json
+  s_9638dcaefb1e4f::t_7beb9cefe46d07 3-4,10,12-13
+.specify/scripts/bash/setup-tasks.sh
+  s_9638dcaefb1e4f::t_7beb9cefe46d07 1-96
+.specify/presets/.registry
+  s_9638dcaefb1e4f::t_769709364d4fac 27
+.specify/integrations/speckit.manifest.json
+  s_9638dcaefb1e4f::t_7beb9cefe46d07 3,12-15
+.agents/skills/speckit-specify/SKILL.md
+  s_9638dcaefb1e4f::t_7beb9cefe46d07 188
+.specify/init-options.json
+  s_9638dcaefb1e4f::t_7beb9cefe46d07 9
+.specify/templates/spec-template.md
+  s_9638dcaefb1e4f::t_7beb9cefe46d07 3-8,17,91
+.agents/skills/speckit-tasks/SKILL.md
+  s_9638dcaefb1e4f::t_7beb9cefe46d07 59,77
+.specify/integration.json
+  s_9638dcaefb1e4f::t_7beb9cefe46d07 2-15,17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "3fb150974ddb617eb02d9d7f1dfff86d5cc200ce",
+  "prompts": {},
+  "sessions": {
+    "s_9638dcaefb1e4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a439987-f068-4a14-a924-bdf6f64b96b7",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
