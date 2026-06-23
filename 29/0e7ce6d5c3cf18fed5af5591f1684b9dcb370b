@@ -1,0 +1,21 @@
+.agents/skills/speckit-taskstoissues/SKILL.md
+  s_9638dcaefb1e4f::t_12daf40ac1c557 3-4
+.specify/presets/.registry
+  s_9638dcaefb1e4f::t_12daf40ac1c557 27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "290e7ce6d5c3cf18fed5af5591f1684b9dcb370b",
+  "prompts": {},
+  "sessions": {
+    "s_9638dcaefb1e4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a439987-f068-4a14-a924-bdf6f64b96b7",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
