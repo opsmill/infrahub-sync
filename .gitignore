@@ -18,3 +18,5 @@ dist/
 # invoke bench.run artifacts (default to repo root)
 bench-results.csv
 .bench-filtered-config.yml
+# spec-kit transient download cache (extensions/presets)
+.specify/**/.cache/

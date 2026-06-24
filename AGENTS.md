@@ -177,7 +177,7 @@ If unsure, stop and ask with a concrete question.
 
 This file (`AGENTS.md`) is the single source of truth. Platform-specific files should point here and only contain overrides:
 
-- `CLAUDE.md`, `.github/copilot-instructions.md`, `GEMINI.md`, `GPT.md`, `.cursor/rules/dev-standard.mdc`
+- `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/dev-standard.mdc`
 
 Each should include the "Required Development Workflow" block and the "Approval checklist" verbatim.
 
