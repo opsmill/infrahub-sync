@@ -1,0 +1,41 @@
+dev/knowledge/sync-architecture.md
+  s_a2c6da39eac147::t_e9501c260b3c43 1-76
+dev/knowledge/adapter-anatomy.md
+  s_a2c6da39eac147::t_ed443beea178de 1-105
+dev/guidelines/writing-an-adapter.md
+  s_a2c6da39eac147::t_5afbf5dda9d856 1-114
+dev/guidelines/testing-adapters.md
+  s_a2c6da39eac147::t_b2489b0ef8948e 1-82
+AGENTS.md
+  s_a2c6da39eac147::t_9068d1ed86ca66 186-193
+dev/guides/adding-an-adapter.md
+  s_a2c6da39eac147::t_9f1d9539a359aa 1-189
+dev/knowledge/incremental-and-cache.md
+  s_a2c6da39eac147::t_afbcf638728894 1-79
+dev/guides/README.md
+  s_a2c6da39eac147::t_0177ae1ea85a18 3-18
+dev/guides/testing-an-adapter.md
+  s_a2c6da39eac147::t_28e8116db6c82c 1-147
+dev/guidelines/README.md
+  s_a2c6da39eac147::t_a54fcb15329389 3-18
+dev/knowledge/README.md
+  s_a2c6da39eac147::t_8801b08d0e7dd9 3-24
+dev/knowledge/schema-mapping.md
+  s_a2c6da39eac147::t_c2b28ba40f934f 1-105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.11",
+  "base_commit_sha": "c4c25f38a855b590474b0c52729fa495d6e3a1da",
+  "prompts": {},
+  "sessions": {
+    "s_a2c6da39eac147": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0776bb64-ea16-4ae5-a6c5-3a63175e95cc",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
