@@ -183,8 +183,11 @@ Each should include the "Required Development Workflow" block and the "Approval 
 
 ## Adding a New Adapter
 
-1. Create `infrahub_sync/adapters/<name>.py` following existing adapter patterns.
-2. Add connection config schema and an example under `examples/`.
-3. Provide `list` and `diff` pathways before enabling `sync`.
-4. Document required environment variables and expected error cases.
-5. Create a documentation page in `docs/docs/adapters/` (overview, config keys, env vars, example YAML, common errors), add it to the sidebar, and validate with `markdownlint-cli2 "docs/docs/adapters/**/*.{md,mdx}"`.
+See [`dev/guides/adding-an-adapter.md`](dev/guides/adding-an-adapter.md) for the full
+step-by-step procedure. Supporting developer reference lives under `dev/`:
+
+- [Adapter knowledge](dev/knowledge/README.md) — how the sync engine, the adapter contract, schema mapping, and the incremental cache work.
+- [Adapter guidelines](dev/guidelines/README.md) — the rules for writing and testing an adapter.
+- [Adapter guides](dev/guides/README.md) — adding and testing an adapter, step by step.
+
+Core rule unchanged: provide read-only `list` / `diff` pathways and validate them before enabling `sync`.
