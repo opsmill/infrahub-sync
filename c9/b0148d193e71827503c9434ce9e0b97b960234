@@ -1,0 +1,21 @@
+.github/workflows/update-infrahub-sdk.yml
+  s_a245e7f734a5d5::t_b08b23049d03ef 56-58
+  s_a245e7f734a5d5::t_0cb42ffe5c4067 33-34
+  s_a245e7f734a5d5::t_f20ff471ce8f0f 74-76,79-80,84-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "c9b0148d193e71827503c9434ce9e0b97b960234",
+  "prompts": {},
+  "sessions": {
+    "s_a245e7f734a5d5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88f092a8-cc99-4deb-9ade-4a1e7241b593",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
