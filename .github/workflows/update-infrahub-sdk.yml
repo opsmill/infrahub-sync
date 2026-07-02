@@ -8,11 +8,6 @@ on:
       version:
         description: "infrahub-sdk version to test"
         required: true
-      run:
-        description: "Whether to run integration tests"
-        required: false
-        type: boolean
-        default: true
 
   repository_dispatch:
     types: [trigger-infrahub-sdk-python-update]
@@ -35,6 +30,8 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -56,9 +53,9 @@ jobs:
       - name: Prepare the branch for the update
         id: prepare-branch
         run: |
-          echo "Checking if branch ${{ env.BRANCH_NAME }} exists..."
-          BRANCH_EXISTS=$(git ls-remote --heads origin ${{ env.BRANCH_NAME }} | wc -l)
-          echo "BRANCH_EXISTS=$BRANCH_EXISTS" >> $GITHUB_ENV
+          echo "Checking if branch ${BRANCH_NAME} exists..."
+          BRANCH_EXISTS=$(git ls-remote --heads origin "${BRANCH_NAME}" | wc -l)
+          echo "BRANCH_EXISTS=$BRANCH_EXISTS" >> "$GITHUB_ENV"
 
       - name: Commit and push changes
         uses: github-actions-x/commit@v2.9
@@ -74,15 +71,17 @@ jobs:
           rebase: ${{ env.BRANCH_EXISTS == 1 }}
 
       - name: Create a pull request
+        env:
+          GH_TOKEN: ${{ secrets.GH_UPDATE_PACKAGE_OTTO }}
+          MATRIX_BRANCH: ${{ matrix.branch-name }}
         run: |
-          echo ${{ secrets.GH_UPDATE_PACKAGE_OTTO }} | gh auth login --with-token
           # Skip create if a PR already exists for this head branch (re-runs against the same version).
-          if [ -n "$(gh pr list --head "${{ env.BRANCH_NAME }}" --state open --json number --jq '.[0].number')" ]; then
-            echo "PR for ${{ env.BRANCH_NAME }} already open, skipping create"
+          if [ -n "$(gh pr list --head "${BRANCH_NAME}" --state open --json number --jq '.[0].number')" ]; then
+            echo "PR for ${BRANCH_NAME} already open, skipping create"
             exit 0
           fi
           gh pr create \
-            --title "update infrahub-sdk to version ${{ env.INFRAHUB_SDK_VERSION }} against ${{ matrix.branch-name }}" \
-            --body "This PR updates infrahub-sdk to version ${{ env.INFRAHUB_SDK_VERSION }}." \
-            --base ${{ matrix.branch-name }} \
-            --head ${{ env.BRANCH_NAME }}
+            --title "update infrahub-sdk to version ${INFRAHUB_SDK_VERSION} against ${MATRIX_BRANCH}" \
+            --body "This PR updates infrahub-sdk to version ${INFRAHUB_SDK_VERSION}." \
+            --base "${MATRIX_BRANCH}" \
+            --head "${BRANCH_NAME}"
