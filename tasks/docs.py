@@ -64,7 +64,7 @@ def lint(context: Context) -> None:
 @task
 def docusaurus(context: Context) -> None:
     """Build documentation website."""
-    exec_cmd = "npm run build"
+    exec_cmd = "pnpm run build"
 
     with context.cd(DOCUMENTATION_DIRECTORY):
         output = context.run(exec_cmd)

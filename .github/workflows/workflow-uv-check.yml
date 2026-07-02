@@ -8,6 +8,10 @@ on:
         type: "string"
         description: "Directory in which uv check will be executed"
         default: "./"
+
+permissions:
+  contents: read
+
 jobs:
   files-changed:
     name: Detect which file has changed
