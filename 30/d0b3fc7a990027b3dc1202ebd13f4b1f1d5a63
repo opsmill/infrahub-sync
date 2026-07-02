@@ -1,0 +1,39 @@
+tasks/docs.py
+  s_a245e7f734a5d5::t_0347c12b8ed64f 67
+.github/workflows/workflow-uv-check.yml
+  s_a245e7f734a5d5::t_0e99cd0c4481c7 11-14
+docs/package.json
+  s_a245e7f734a5d5::t_ca9cf21403d7a5 5
+.github/build-docs.sh
+  s_a245e7f734a5d5::t_1eff09f8dbaafc 3
+.yamllint.yml
+  s_a245e7f734a5d5::t_d5961deca96def 20-21
+  s_a245e7f734a5d5::t_bb98e324200f7e 8
+.github/workflows/workflow-linter.yml
+  s_a245e7f734a5d5::t_7d4312b7771300 156-159,164-165,167
+  s_a245e7f734a5d5::t_4ae3bf1ead5d8a 18-21
+.github/workflows/workflow-tests.yml
+  s_a245e7f734a5d5::t_016dc627ea3afd 17-19
+docs/pnpm-workspace.yaml
+  s_a245e7f734a5d5::t_c3e965005ba6f0 1
+  s_a245e7f734a5d5::t_ec3945fbb81b58 2-4,6
+  s_a245e7f734a5d5::t_f049b1cbe89559 5
+docs/pnpm-lock.yaml
+  s_a245e7f734a5d5::t_6c2dcc9890e99e 1-11725
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "30d0b3fc7a990027b3dc1202ebd13f4b1f1d5a63",
+  "prompts": {},
+  "sessions": {
+    "s_a245e7f734a5d5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88f092a8-cc99-4deb-9ade-4a1e7241b593",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
