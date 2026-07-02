@@ -1,0 +1,21 @@
+.github/CODEOWNERS
+  s_a245e7f734a5d5::t_82847266f3d2a1 1-4
+.pre-commit-config.yaml
+  s_a245e7f734a5d5::t_a3c49253e3c9e5 1-23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "27d2506f96a6a7a7a97f938d14a3ddb0e11246c6",
+  "prompts": {},
+  "sessions": {
+    "s_a245e7f734a5d5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88f092a8-cc99-4deb-9ade-4a1e7241b593",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
