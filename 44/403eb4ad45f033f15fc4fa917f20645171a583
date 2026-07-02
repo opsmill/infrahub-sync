@@ -1,0 +1,39 @@
+.github/workflows/workflow-uv-check.yml
+  s_a245e7f734a5d5::t_6bc2e9b5db8cf8 22
+.github/file-filters.yml
+  s_a245e7f734a5d5::t_857e98f8ccf6cc 12-15
+  s_a245e7f734a5d5::t_3809c46217d0e5 32,34
+pyproject.toml
+  s_a245e7f734a5d5::t_4fd50d904aa830 322-368
+  s_a245e7f734a5d5::t_ed072b344a457b 55
+changelog/.gitignore
+  s_a245e7f734a5d5::t_94a5d74f7abe75 1
+changelog/towncrier.md.template
+  s_a245e7f734a5d5::t_93ef1ee67bb6a0 1-53
+.github/workflows/workflow-tests.yml
+  s_a245e7f734a5d5::t_c29c3cd9e0faf3 28
+.github/workflows/workflow-linter.yml
+  s_a245e7f734a5d5::t_0779612aa37a17 35
+.github/workflows/update-infrahub-sdk.yml
+  s_a245e7f734a5d5::t_ef344408fd92c7 1-88
+.gitignore
+  s_a245e7f734a5d5::t_2a9b131347258e 22-29
+uv.lock
+  s_a245e7f734a5d5::t_6110094faaf83f 609,638,1659-1672
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "44403eb4ad45f033f15fc4fa917f20645171a583",
+  "prompts": {},
+  "sessions": {
+    "s_a245e7f734a5d5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88f092a8-cc99-4deb-9ade-4a1e7241b593",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
