@@ -52,6 +52,7 @@ dev = [
     "pytest-xdist>=3.8",
     "ty==0.0.32",
     "types-python-slugify>=8.0.2.20240310",
+    "towncrier>=24.8,<25",
 ]
 
 [build-system]
@@ -317,4 +318,51 @@ exclude = ["examples/**"]
 
 [tool.ty.environment]
 python-version = "3.10"
+
+[tool.towncrier]
+# `infrahub_sync` does not expose `__version__`, so `package` is intentionally
+# omitted; pass `--version X.Y.Z` to `towncrier build` at release time.
+directory = "changelog"
+filename = "CHANGELOG.md"
+start_string = "<!-- towncrier release notes start -->\n"
+underlines = ["", "", ""]
+title_format = "## [Infrahub Sync - v{version}](https://github.com/opsmill/infrahub-sync/tree/{version}) - {project_date}"
+issue_format = "[#{issue}](https://github.com/opsmill/infrahub-sync/issues/{issue})"
+orphan_prefix = "+"
+template = "changelog/towncrier.md.template"
+
+[[tool.towncrier.type]]
+directory = "security"
+name = "Security"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "removed"
+name = "Removed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "deprecated"
+name = "Deprecated"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "added"
+name = "Added"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "changed"
+name = "Changed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "fixed"
+name = "Fixed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "housekeeping"
+name = "Housekeeping"
+showcontent = true
 

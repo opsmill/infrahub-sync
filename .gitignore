@@ -20,3 +20,10 @@ bench-results.csv
 .bench-filtered-config.yml
 # spec-kit transient download cache (extensions/presets)
 .specify/**/.cache/
+# Virtual environments
+.venv/
+venv/
+# Secrets (never commit)
+*.pem
+*.key
+credentials.json
