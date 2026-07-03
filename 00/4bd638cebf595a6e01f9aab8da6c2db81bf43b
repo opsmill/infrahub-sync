@@ -1,0 +1,53 @@
+docs/docs/adapters/observium.mdx
+  s_a245e7f734a5d5::t_b61121fc47548e 11
+docs/docs/release-notes/infrahub-sync/release-2_0_0.mdx
+  s_a245e7f734a5d5::t_b61121fc47548e 4
+AGENTS.md
+  s_a245e7f734a5d5::t_4fd99b539be572 140
+  s_a245e7f734a5d5::t_73f2d66dad0edb 126-127,130-131
+docs/docs/adapters/ipfabric.mdx
+  s_a245e7f734a5d5::t_b61121fc47548e 4
+README.md
+  s_a245e7f734a5d5::t_f3e35e53a6c697 1,3
+tasks/docs.py
+  s_a245e7f734a5d5::t_21aabfb915a73f 6
+  s_a245e7f734a5d5::t_0ebda2d9166241 30-33,39-42,50,56
+docs/docs/adapters/aci.mdx
+  s_a245e7f734a5d5::t_b61121fc47548e 4
+.github/workflows/workflow-linter.yml
+  s_a245e7f734a5d5::t_87d99d311d84c7 105-106,108-114
+dev/guides/adding-an-adapter.md
+  s_a245e7f734a5d5::t_0449b63966cbf7 155
+docs/docs/release-notes/infrahub-sync/release-1_6_0.mdx
+  s_a245e7f734a5d5::t_b61121fc47548e 4
+.pre-commit-config.yaml
+  s_a245e7f734a5d5::t_b95ed415b15569 24-32
+pyproject.toml
+  s_a245e7f734a5d5::t_4875356f15538c 345
+  s_a245e7f734a5d5::t_83f0a39f5ad22c 56
+  s_a245e7f734a5d5::t_f95d0aba84bec8 323-344,346-351
+docs/docs/adapters/slurpit.mdx
+  s_a245e7f734a5d5::t_b61121fc47548e 4
+docs/docs/reference/config.mdx
+  s_a245e7f734a5d5::t_b61121fc47548e 4,61,69,71,73,112
+docs/docs/release-notes/infrahub-sync/release-1_5_6.mdx
+  s_a245e7f734a5d5::t_b61121fc47548e 4
+uv.lock
+  s_a245e7f734a5d5::t_803cbe089ab4ef 609,638,1572-1586
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.9",
+  "base_commit_sha": "004bd638cebf595a6e01f9aab8da6c2db81bf43b",
+  "prompts": {},
+  "sessions": {
+    "s_a245e7f734a5d5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88f092a8-cc99-4deb-9ade-4a1e7241b593",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
