@@ -1,6 +1,7 @@
 ---
 title: Sync instance configuration
 ---
+
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
@@ -57,6 +58,7 @@ Optional configuration for a storage mechanism used for stateful synchronization
 
 <!-- vale off -->
 ### Source and Destination
+
 <!-- vale on -->
 Configuration for source and destination adapters.
 
@@ -64,8 +66,11 @@ Configuration for source and destination adapters.
 | -------- | ---- | ----------- | --------- |
 | name | string | Identifier for the adapter. | Yes |
 | settings | Dictionary | Adapter-specific settings like `url` and `token`. If not provided, values will be loaded from environment variables. | No |
+
 <!-- vale off -->
+
 ### Schema Mapping
+
 <!-- vale on -->
 Defines the mappings from source to destination schemas. The tables below are the structural field reference. For the mapping syntax in depth — direct mappings, references, identifiers, filters, transforms, and worked NetBox and Nautobot examples — see [Schema mapping reference](./schema-mapping.mdx).
 

@@ -152,7 +152,7 @@ Create a page under `docs/docs/adapters/` (overview, config keys, env vars, exam
 common errors), add it to the sidebar, and lint it:
 
 ```bash
-markdownlint-cli2 "docs/docs/adapters/**/*.{md,mdx}"
+uv run rumdl check docs/docs/adapters/
 ```
 
 ## Verification

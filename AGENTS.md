@@ -123,12 +123,12 @@ uv run pytest -q
 
 - Update `docs/` for any user-visible changes (flags, config, adapters). Keep examples minimal, accurate, and redacted.
 - Generate CLI docs: `uv run invoke docs.generate`
-- Build site (run `cd docs && npm install` once): `uv run invoke docs.docusaurus`
-- Lint Markdown/MDX with `markdownlint-cli2` (also via `uv run invoke docs.markdownlint`):
+- Build site (run `cd docs && pnpm install` once): `uv run invoke docs.docusaurus`
+- Lint Markdown/MDX with `rumdl` (config in `pyproject.toml`; also via `uv run invoke docs.rumdl`):
 
 ```bash
-markdownlint-cli2 "docs/docs/**/*.{md,mdx}"        # check
-markdownlint-cli2 "docs/docs/**/*.{md,mdx}" --fix  # fix
+uv run rumdl check .   # check
+uv run rumdl fmt .     # fix
 ```
 
 ## Invoke Tasks (reference)
@@ -137,7 +137,7 @@ markdownlint-cli2 "docs/docs/**/*.{md,mdx}" --fix  # fix
 
 - `format` / `lint` — run all formatters / linters.
 - `linter.format-ruff`, `linter.lint-ruff`, `linter.lint-pylint`, `linter.lint-yaml`, `linter.lint-ty`.
-- `docs.generate`, `docs.docusaurus`, `docs.markdownlint`, `docs.format-markdownlint`, `docs.format`, `docs.lint`.
+- `docs.generate`, `docs.docusaurus`, `docs.rumdl`, `docs.format-rumdl`, `docs.format`, `docs.lint`.
 - `tests.tests-unit`, `tests.tests-integration`.
 
 ## Known Issues and Limitations
