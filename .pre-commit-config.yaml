@@ -21,3 +21,12 @@ repos:
       - id: ruff-format
       - id: ruff-check
         args: [--fix]
+
+  - repo: local
+    hooks:
+      - id: rumdl
+        name: rumdl
+        entry: uv run rumdl check
+        language: system
+        pass_filenames: false
+        files: \.(md|mdx)$

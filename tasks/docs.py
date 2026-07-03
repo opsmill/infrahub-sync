@@ -3,7 +3,7 @@ from pathlib import Path
 
 from invoke import Context, task
 
-from .utils import ESCAPED_REPO_PATH, check_if_command_available
+from .utils import ESCAPED_REPO_PATH
 
 NAMESPACE = "INFRAHUB-SYNC-DOCS"
 CURRENT_DIRECTORY = Path(__file__).parent.resolve()
@@ -27,24 +27,19 @@ def _generate_infrahubsync_documentation(context: Context) -> None:
 
 
 @task
-def markdownlint(context: Context) -> None:
-    has_markdownlint = check_if_command_available(context=context, command_name="markdownlint-cli2")
-
-    if not has_markdownlint:
-        print("Warning, markdownlint-cli2 is not installed")
-        return
-    exec_cmd = "markdownlint-cli2 **/*.{md,mdx} '#**/node_modules/**'"
-    print(" - [docs] Lint docs with markdownlint-cli2")
+def rumdl(context: Context) -> None:
+    """Lint all Markdown/MDX files with rumdl (config in pyproject.toml)."""
+    print(" - [docs] Lint docs with rumdl")
+    exec_cmd = "rumdl check ."
     with context.cd(ESCAPED_REPO_PATH):
         context.run(exec_cmd)
 
 
 @task
-def format_markdownlint(context: Context) -> None:
-    """Run markdownlint-cli2 to format all .md/mdx files."""
-
-    print(" - [docs] Format code with markdownlint-cli2")
-    exec_cmd = "markdownlint-cli2 **/*.{md,mdx} --fix"
+def format_rumdl(context: Context) -> None:
+    """Auto-fix all Markdown/MDX files with rumdl."""
+    print(" - [docs] Format docs with rumdl")
+    exec_cmd = "rumdl fmt ."
     with context.cd(ESCAPED_REPO_PATH):
         context.run(exec_cmd)
 
@@ -52,13 +47,13 @@ def format_markdownlint(context: Context) -> None:
 @task
 def format(context: Context) -> None:  # noqa: A001
     """This will run all formatters."""
-    format_markdownlint(context)
+    format_rumdl(context)
 
 
 @task
 def lint(context: Context) -> None:
     """This will run all linters."""
-    markdownlint(context)
+    rumdl(context)
 
 
 @task
