@@ -23,9 +23,9 @@ jobs:
       sync: ${{ steps.changes.outputs.sync_all }}
     steps:
       - name: "Check out repository code"
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@v7"
       - name: Check for file changes
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         id: changes
         with:
           token: ${{ github.token }}
@@ -46,10 +46,10 @@ jobs:
           - "3.13"
     steps:
       - name: "Check out repository code"
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@v7"
 
       - name: "Install uv"
-        uses: "astral-sh/setup-uv@v4"
+        uses: "astral-sh/setup-uv@v7"
         with:
           version: "latest"
 
