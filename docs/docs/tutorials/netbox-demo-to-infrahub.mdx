@@ -82,7 +82,7 @@ The first run takes a few minutes while Docker downloads the container images.
 You should see the Infrahub web interface with a navigation menu on the left side.
 :::
 
-## Install Infrahub Sync
+## Install infrahub-sync
 
 1. Install the Python dependencies with uv:
 
@@ -284,7 +284,7 @@ uv run invoke stop
 
 ## Troubleshooting
 
-### `infrahub-sync` fails with "Both url and token must be specified"
+### `infrahub-sync` fails with `Both url and token must be specified`
 
 ```text
 ERROR | infrahub_sync.cli | Failed to initialize the Sync Instance: Error initializing InfrahubAdapter: Both url and token must be specified!
@@ -305,11 +305,11 @@ This error names whichever adapter (NetBox or Infrahub) is missing its variables
 
 Now that you have completed a first sync, you have covered some of the basic objects in NetBox.
 
-This is only the first step. You will likely want to bring in the parts that are unique to your own NetBox instance (e.g. roles, custom fields).
+This is only the first step. You will likely want to bring in the parts that are unique to your own NetBox instance (for example, roles or custom fields).
 
 Other guides will soon be available to cover:
 
 - How to sync locations/regions
 - How to deal with VLAN/Prefix/Device roles
 - How to cover custom attributes / relationships
-- Migrate config context
+- Migrate configuration context

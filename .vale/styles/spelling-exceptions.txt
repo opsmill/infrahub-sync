@@ -113,6 +113,7 @@ Redoc
 repo
 ressources
 REST
+RIRs
 rowcount
 Rowcount
 schema_mapping
