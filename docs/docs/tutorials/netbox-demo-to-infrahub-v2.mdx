@@ -3,19 +3,23 @@ title: Sync NetBox to Infrahub
 description: Set up a local Infrahub instance, load a data model, and synchronize infrastructure data from the public NetBox demo.
 ---
 
-In this tutorial we will use Infrahub Sync to copy data from the [public NetBox demo](https://demo.netbox.dev) into Infrahub. We will start from scratch, installing and configuring everything we need along the way. This tutorial covers the fundamental work needed to get started; more advanced topics will be covered in subsequent guides.
+This tutorial is for people getting started with Infrahub: it starts from a blank page, with no existing Infrahub instance or schema required. We will use Infrahub Sync to copy data from the [public NetBox demo](https://demo.netbox.dev) into Infrahub, installing and configuring everything we need along the way. This tutorial covers the fundamental work needed to get started; more advanced topics will be covered in subsequent guides.
+
+:::tip Already running Infrahub?
+If you already have an Infrahub instance running, you can skip straight to the [NetBox adapter documentation](../adapters/netbox.mdx).
+:::
 
 By the end of this tutorial, you will know how to:
 
-- install Infrahub Sync
 - run Infrahub in a Docker container
-- load the example NetBox schema into Infrahub
+- install Infrahub Sync
+- load a schema into Infrahub
 - create a NetBox → Infrahub sync project
 - synchronize NetBox objects into Infrahub
 
 **Time**: ~30 minutes
 
-**What you will build**: A running Infrahub instance with a NetBox-derived data model, populated with locations, devices, interfaces, IPAM, and organization data synchronized from the public NetBox demo.
+**What you will build**: A running Infrahub instance with a production-grade schema covering the same core domains as NetBox (locations, devices, interfaces, IPAM, and organizations), populated with data synchronized from the public NetBox demo.
 
 **Prerequisites**:
 
@@ -24,9 +28,7 @@ By the end of this tutorial, you will know how to:
 - [Python 3.10+](https://www.python.org/downloads/)
 
 :::warning Public demo data
-
-The NetBox demo instance is public and resets regularly. Object counts, names, and sample data may differ from the examples in this tutorial.
-
+The NetBox demo instance is public and resets regularly. Object counts, names, and sample data may differ from the examples in this tutorial. Because anyone can edit it, it can also contain malformed or unexpected data that breaks the sync — see [Troubleshooting](#troubleshooting) if you run into errors.
 :::
 
 ## Create a project
@@ -102,11 +104,11 @@ For more about supported adapters and their Python requirements, see the [NetBox
 
 Infrahub stores data according to its schema. Before we can import any data, we need Infrahub to know the kinds of objects that the sync will create.
 
-We provide a collection of schemas that support basic DCIM and IPAM features. This is not an exact one-to-one mapping with NetBox, but that's not the goal either.
+We provide a production-grade Infrahub schema covering DCIM and IPAM features similar to NetBox's. It is not a one-to-one port of NetBox's own data model, and that's intentional.
 
 :::info
 
-The example schema is a practical starting point. It does not try to reproduce NetBox one-to-one. Infrahub gives you a flexible graph model, so a real migration can preserve the parts of NetBox that matter while adapting the model to your future workflows.
+This is a production-grade Infrahub schema, not a copy of NetBox's data model. Infrahub gives you a flexible graph model, so a real migration can preserve the parts of NetBox that matter to you while adapting the model to your own workflows.
 
 :::
 
@@ -190,7 +192,7 @@ curl -L \
   -o sync-projects/netbox-demo/config.yml
 ```
 
-The downloaded configuration is named `netbox-demo-to-infrahub`. It maps selected NetBox objects to the example Infrahub NetBox schema.
+The downloaded configuration is named `netbox-demo-to-infrahub`. It maps selected NetBox objects onto the Infrahub schema.
 
 Open `sync-projects/netbox-demo/config.yml` in an editor and scan the top-level keys:
 
