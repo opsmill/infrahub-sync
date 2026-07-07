@@ -1,5 +1,5 @@
 ---
-# from-netbox — demonstrates the two newest features of infrahub-sync:
+# netbox-demo-to-infrahub — demonstrates the two newest features of infrahub-sync:
 #
 #   1. Auto-tiered write order. The `order:` list has been removed; the engine
 #      derives tiers from `schema_mapping[].fields[].reference` and groups
@@ -7,14 +7,14 @@
 #      enforce a hard barrier between tiers.
 #
 #   2. Parquet sidecar cache. Every `diff` writes per-resource snapshots and
-#      a `plan.parquet` under `.infrahub-sync-cache/from-netbox/<run_id>/`.
+#      a `plan.parquet` under `.infrahub-sync-cache/netbox-demo-to-infrahub/<run_id>/`.
 #      The run_id is logged at INFO; pass it to `apply` to re-dispatch the
 #      cached plan without re-extracting the source.
 #
 # Usage:
-#   uv run infrahub-sync diff --name from-netbox --directory examples/
-#   uv run infrahub-sync apply --name from-netbox --run-id <run_id> --directory examples/
-#   uv run infrahub-sync sync --name from-netbox --directory examples/ --parallel
+#   uv run infrahub-sync diff --name netbox-demo-to-infrahub --directory sync-projects
+#   uv run infrahub-sync apply --name netbox-demo-to-infrahub --run-id <run_id> --directory sync-projects
+#   uv run infrahub-sync sync --name netbox-demo-to-infrahub --directory sync-projects --parallel
 #
 # ---------------------------------------------------------------------------
 
@@ -78,13 +78,13 @@ schema_mapping:
   # -----------------------------------------------------------------------
   # Netbox "region" model is relatively loose and could accommodate multiple layers of nested objects (e.g. continent > country > city).
   # In Infrahub you have to explicitly define this hierarchy in the schema.
-  # As every organization has a different way to organize this we do not provide out of the box support for that even tho we provide a couple of example in the schema library / marketplace.
-  # For the sake of having a first working sync we have a very basic site node defined in the schema that will be able to build upon once your hierarchy is clear.
+  # As every organization organizes this differently, we don't provide out-of-the-box support for it, even though we provide a couple of examples in the schema library / marketplace.
+  # For the sake of having a first working sync, we've defined a very basic site node in the schema that you can build upon once your hierarchy is clear.
   # To fully support region you would need to:
   # - Create the hierarchy in the schema
   # - Uncomment the lines below and adjust to your specific data <> schema
   #
-  # For example here region is top level (so has no parent)
+  # For example, here the region is top-level (it has no parent)
   # - name: LocationRegion
   #   mapping: dcim.regions
   #   identifiers: ["name"]
@@ -97,7 +97,7 @@ schema_mapping:
   #     - field: parent
   #       operation: "is_empty"
   #
-  # For example here country are right below the region (so has depth = 1)
+  # For example, here countries sit directly below the region (depth = 1)
   # - name: LocationCountry
   #   mapping: dcim.regions
   #   identifiers: ["name"]
@@ -190,11 +190,11 @@ schema_mapping:
 
   # ---------------------------------------------------------------------
   # Netbox roles are user-defined/arbitrary, so there's no guarantee the
-  # netbox slug matches one of the fixed choices below — sync will fail for
+  # Netbox slug matches one of the fixed choices below — sync will fail for
   # values (roles) that don't match one of the schema's dropdown choices.
   # TODO: decide whether to (a) map role.slug directly per node below and
   # accept failures on non-matching values, (b) extend the schema's choice
-  # lists to cover your netbox roles, or (c) drop role sync entirely.
+  # lists to cover your Netbox roles, or (c) drop role sync entirely.
   # dcim.rack_roles has no destination at all anymore (Rack has no role
   # field in the new schema) — not mapped below.
   # ---------------------------------------------------------------------
@@ -243,7 +243,7 @@ schema_mapping:
         mapping: primary_ip
         reference: IpamIPAddress
     filters:
-      - field: parent_device # Most lickely for sub-devices (e.g. stacks...) you'd have a dedicated node in Infrahub
+      - field: parent_device # For sub-devices (e.g. stacks), you'd most likely have a dedicated node in Infrahub
         operation: "is_empty"
       - field: rack
         operation: "is_not_empty"
@@ -456,7 +456,7 @@ schema_mapping:
         mapping: commit_rate
       - name: status
         mapping: status.value
-      # NOTE: similar to roles, circuit type have to be defined in the schema
+      # NOTE: similar to roles, circuit types have to be defined in the schema
       # - name: circuit_type
       #   mapping: type.slug
       - name: provider
@@ -553,15 +553,16 @@ schema_mapping:
       - name: vrf
         mapping: vrf
         reference: IpamVRF
-      - name: vlan
-        mapping: vlan
-        reference: IpamVLAN
+      # TODO: Make sure no vlan is skipped due to missing group then enable this
+      # - name: vlan
+      #   mapping: vlan
+      #   reference: IpamVLAN
       # TODO: `scope` (peer IpamPrefixScope: Region/Site/Rack/etc.) needs
       # resolving Netbox's polymorphic scope_type/scope_id — not mapped yet.
       # - name: scope
       #   mapping: scope
       #   reference: LocationSite
-    transforms: # These transforms accomodate different way of dealing with container
+    transforms: # These transforms accommodate different ways of dealing with containers
       - field: resolved_status
         expression: "{{ 'active' if status.value == 'container' else status.value }}"
       - field: resolved_member_type
@@ -581,7 +582,7 @@ schema_mapping:
       - name: vrf
         mapping: vrf
         reference: IpamVRF
-      # NOTE: This is not enforced on netbox side, might create validation issues
+      # NOTE: This isn't enforced on the Netbox side, and might create validation issues
       # - name: fqdn
       #   mapping: dns_name
       # NOTE: schema changes are required to support role sync (see related note)
