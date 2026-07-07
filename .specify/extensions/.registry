@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "extensions": {
+    "opsmill": {
+      "version": "1.1.0",
+      "source": "local",
+      "manifest_hash": "sha256:e4681b338e7176e0ad5e85af4bcfbd31e6a457432ce3a9fbeedeb6ce62e12e0e",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "agy": [
+          "speckit.opsmill.extract",
+          "speckit.opsmill.retrospect",
+          "speckit.opsmill.summary",
+          "speckit.opsmill.auto",
+          "speckit.opsmill.prep",
+          "speckit.opsmill.implement"
+        ],
+        "amp": [
+          "speckit.opsmill.extract",
+          "speckit.opsmill.retrospect",
+          "speckit.opsmill.summary",
+          "speckit.opsmill.auto",
+          "speckit.opsmill.prep",
+          "speckit.opsmill.implement"
+        ],
+        "claude": [
+          "speckit.opsmill.extract",
+          "speckit.opsmill.retrospect",
+          "speckit.opsmill.summary",
+          "speckit.opsmill.auto",
+          "speckit.opsmill.prep",
+          "speckit.opsmill.implement"
+        ],
+        "codex": [
+          "speckit.opsmill.extract",
+          "speckit.opsmill.retrospect",
+          "speckit.opsmill.summary",
+          "speckit.opsmill.auto",
+          "speckit.opsmill.prep",
+          "speckit.opsmill.implement"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-06-22T10:44:58.407504+00:00"
+    }
+  }
+}

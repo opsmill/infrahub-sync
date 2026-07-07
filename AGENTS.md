@@ -123,12 +123,12 @@ uv run pytest -q
 
 - Update `docs/` for any user-visible changes (flags, config, adapters). Keep examples minimal, accurate, and redacted.
 - Generate CLI docs: `uv run invoke docs.generate`
-- Build site (run `cd docs && npm install` once): `uv run invoke docs.docusaurus`
-- Lint Markdown/MDX with `markdownlint-cli2` (also via `uv run invoke docs.markdownlint`):
+- Build site (run `cd docs && pnpm install` once): `uv run invoke docs.docusaurus`
+- Lint Markdown/MDX with `rumdl` (config in `pyproject.toml`; also via `uv run invoke docs.rumdl`):
 
 ```bash
-markdownlint-cli2 "docs/docs/**/*.{md,mdx}"        # check
-markdownlint-cli2 "docs/docs/**/*.{md,mdx}" --fix  # fix
+uv run rumdl check .   # check
+uv run rumdl fmt .     # fix
 ```
 
 ## Invoke Tasks (reference)
@@ -137,7 +137,7 @@ markdownlint-cli2 "docs/docs/**/*.{md,mdx}" --fix  # fix
 
 - `format` / `lint` — run all formatters / linters.
 - `linter.format-ruff`, `linter.lint-ruff`, `linter.lint-pylint`, `linter.lint-yaml`, `linter.lint-ty`.
-- `docs.generate`, `docs.docusaurus`, `docs.markdownlint`, `docs.format-markdownlint`, `docs.format`, `docs.lint`.
+- `docs.generate`, `docs.docusaurus`, `docs.rumdl`, `docs.format-rumdl`, `docs.format`, `docs.lint`.
 - `tests.tests-unit`, `tests.tests-integration`.
 
 ## Known Issues and Limitations
@@ -177,14 +177,17 @@ If unsure, stop and ask with a concrete question.
 
 This file (`AGENTS.md`) is the single source of truth. Platform-specific files should point here and only contain overrides:
 
-- `CLAUDE.md`, `.github/copilot-instructions.md`, `GEMINI.md`, `GPT.md`, `.cursor/rules/dev-standard.mdc`
+- `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/dev-standard.mdc`
 
 Each should include the "Required Development Workflow" block and the "Approval checklist" verbatim.
 
 ## Adding a New Adapter
 
-1. Create `infrahub_sync/adapters/<name>.py` following existing adapter patterns.
-2. Add connection config schema and an example under `examples/`.
-3. Provide `list` and `diff` pathways before enabling `sync`.
-4. Document required environment variables and expected error cases.
-5. Create a documentation page in `docs/docs/adapters/` (overview, config keys, env vars, example YAML, common errors), add it to the sidebar, and validate with `markdownlint-cli2 "docs/docs/adapters/**/*.{md,mdx}"`.
+See [`dev/guides/adding-an-adapter.md`](dev/guides/adding-an-adapter.md) for the full
+step-by-step procedure. Supporting developer reference lives under `dev/`:
+
+- [Adapter knowledge](dev/knowledge/README.md) — how the sync engine, the adapter contract, schema mapping, and the incremental cache work.
+- [Adapter guidelines](dev/guidelines/README.md) — the rules for writing and testing an adapter.
+- [Adapter guides](dev/guides/README.md) — adding and testing an adapter, step by step.
+
+Core rule unchanged: provide read-only `list` / `diff` pathways and validate them before enabling `sync`.
