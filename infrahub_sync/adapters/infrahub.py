@@ -94,6 +94,23 @@ def resolve_peer_node(
     return peer_node
 
 
+def _relationship_input_data(peer_id: str | None, source: str | None, owner: str | None) -> dict[str, Any]:
+    """Build relationship input data (peer id + optional source/owner attribution).
+
+    Assigning a plain peer node to a relationship leaves its ``source``/``owner``
+    metadata unset, so a relationship updated by a sync would carry no lineage
+    back to the sync's source/owner. Passing this dict to ``setattr`` (one) or
+    ``RelationshipManagerSync.add`` (many) stamps the same attribution the
+    attribute-update path applies, matching what the create path already does.
+    """
+    data: dict[str, Any] = {"id": peer_id}
+    if source:
+        data["source"] = source
+    if owner:
+        data["owner"] = owner
+    return data
+
+
 def update_node(
     node: InfrahubNodeSync,
     attrs: Mapping[str, Any],
@@ -109,8 +126,8 @@ def update_node(
     Args:
         node: The node to update.
         attrs: The attributes and relationships to update.
-        source: Optional source ID to set on updated attributes.
-        owner: Optional owner ID to set on updated attributes.
+        source: Optional source ID to set on updated attributes and relationships.
+        owner: Optional owner ID to set on updated attributes and relationships.
     """
     schemas: Mapping[str, MainSchemaTypesAPI] = node._client.schema.all(branch=node._branch)
     for attr_name, attr_value in attrs.items():
@@ -141,7 +158,9 @@ def update_node(
                         if not peer_node:
                             logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, attr_value)
                             continue
-                        setattr(node, attr_name, peer_node)
+                        # Assign via a data dict (not the bare peer) so source/owner
+                        # attribution is stamped on the updated relationship.
+                        setattr(node, attr_name, _relationship_input_data(peer_node.id, source, owner))
                     else:
                         # TODO: delete the old relationship data ?
                         pass
@@ -172,7 +191,9 @@ def update_node(
                         attr_manager.remove(existing_id)
 
                     for new_id in new_only:
-                        attr_manager.add(new_id)
+                        # Add via a data dict so source/owner attribution is stamped
+                        # on the newly added relationship peer.
+                        attr_manager.add(_relationship_input_data(new_id, source, owner))
 
     return node
 
