@@ -178,7 +178,7 @@ schema_mapping:
       - name: height
         mapping: integer_height
       - name: weight
-        mapping: weight
+        mapping: integer_weight
         # NOTE: Netbox tracks weight_unit separately (kg/lb/g/oz); schema
         # has no unit field, so mixed-unit sources will be inconsistent.
       - name: manufacturer
@@ -187,7 +187,8 @@ schema_mapping:
     transforms:
       - field: integer_height
         expression: "{{ u_height|float|round(0, 'ceil') }}"
-
+      - field: integer_weight
+        expression: "{{ weight|float|round(0, 'ceil') }}"
   # ---------------------------------------------------------------------
   # Netbox roles are user-defined/arbitrary, so there's no guarantee the
   # Netbox slug matches one of the fixed choices below — sync will fail for
@@ -312,12 +313,13 @@ schema_mapping:
       - name: ip_addresses
         mapping: ip_addresses
         reference: IpamIPAddress
-      - name: untagged_vlan
-        mapping: untagged_vlan
-        reference: IpamVLAN
-      - name: tagged_vlan
-        mapping: tagged_vlans
-        reference: IpamVLAN
+      # TODO: Make sure no vlan is skipped due to missing group then enable this
+      # - name: untagged_vlan
+      #   mapping: untagged_vlan
+      #   reference: IpamVLAN
+      # - name: tagged_vlan
+      #   mapping: tagged_vlans
+      #   reference: IpamVLAN
       - name: device
         mapping: device
         reference: DcimDevice
