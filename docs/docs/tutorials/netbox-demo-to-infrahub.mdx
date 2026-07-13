@@ -301,6 +301,14 @@ export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
 
 This error names whichever adapter (NetBox or Infrahub) is missing its variables — the same message is raised for either one.
 
+### `infrahub-sync` fails with `Object ... already present`
+
+```text
+ValueError: An error occurred while loading Netbox: ('Object 172.16.0.2/24__Alpha already present', IpamIPAddress "172.16.0.2/24__Alpha")
+```
+
+Two source objects map to the same identifier — here, two IP addresses sharing an address and VRF. Delete one of the duplicates in NetBox (**IPAM > IP Addresses**, search the address from the message), then re-run the command.
+
 ## Next steps
 
 Now that you have completed a first sync, you have covered some of the basic objects in NetBox.
