@@ -16,10 +16,11 @@ By the end of this tutorial, you will know how to:
 - load a schema into Infrahub
 - create a NetBox → Infrahub sync project
 - synchronize NetBox objects into Infrahub
+- review the import in a branch and open a proposed change
 
 **Time**: ~30 minutes
 
-**What you will build**: A running Infrahub instance with a production-grade schema covering the same core domains as NetBox (locations, devices, interfaces, IPAM, and organizations), populated with data synchronized from the public NetBox demo.
+**What you will build**: A running Infrahub instance with a production-grade schema covering the same core domains as NetBox (locations, devices, interfaces, IPAM, and organizations), populated with data synchronized from the public NetBox demo into a branch, ready to review as a proposed change.
 
 **Prerequisites**:
 
@@ -219,47 +220,55 @@ The `generate` command reads the sync configuration and the destination schema, 
 
 For more about the command flow, see [Run a sync](../running-a-sync.mdx).
 
-## Preview the changes
+## Create a branch
 
-Run a dry-run diff before writing data to Infrahub.
+Infrahub tracks changes through branches, so you can review a batch of imported data as a proposed change before it lands on `main`. Create a branch to hold this import:
 
 ```bash
-uv run infrahub-sync diff --name netbox-demo-to-infrahub --directory sync-projects
+uv run infrahubctl branch create netbox-import
+```
+
+The rest of this tutorial runs `diff` and `sync` against this branch with `--branch netbox-import`, so the import can be reviewed before merging. For more about branches and proposed changes, see [Infrahub version control](https://docs.infrahub.app/topics/version-control/).
+
+## Preview the changes
+
+Run a dry-run diff against the `netbox-import` branch before writing any data to Infrahub.
+
+```bash
+uv run infrahub-sync diff --name netbox-demo-to-infrahub --directory sync-projects --branch netbox-import
 ```
 
 The `diff` command loads data from NetBox and Infrahub, compares both sides, and prints the planned changes. It also writes a cached plan under `.infrahub-sync-cache/netbox-demo-to-infrahub/<run-id>/plan.parquet`.
 
-Review the output before continuing. On a first run against an empty local Infrahub instance, most planned changes should be creates. Exact counts depend on the current public NetBox demo data.
+Review the output before continuing. On a first run against an empty branch, most planned changes should be creates. Exact counts depend on the current public NetBox demo data.
 
 ## Sync the data
 
-After reviewing the diff, run the sync.
+After reviewing the diff, run the sync against the same branch.
 
 ```bash
-uv run infrahub-sync sync --name netbox-demo-to-infrahub --directory sync-projects --diff
+uv run infrahub-sync sync --name netbox-demo-to-infrahub --directory sync-projects --branch netbox-import --diff
 ```
 
-The `--diff` option prints the diff before applying the changes. The first sync can take a few minutes because it writes the imported objects and relationships into Infrahub. Because this configuration omits `order:`, Infrahub Sync derives the write order from the mapping references.
+The `--diff` option prints the diff before applying the changes. The first sync can take a few minutes because it writes the imported objects and relationships into the `netbox-import` branch — `main` is untouched until you merge the resulting proposed change. Because this configuration omits `order:`, Infrahub Sync derives the write order from the mapping references.
 
 ## Verify the imported data
 
-Open [the local Infrahub web interface](http://localhost:8000) and check for imported objects from the NetBox demo. Depending on the current demo data and the example mapping, you may see objects such as:
+The imported data lives on the `netbox-import` branch, not on `main`. Open [the local Infrahub web interface](http://localhost:8000):
 
-- tags and organizations (manufacturers, providers, RIRs)
-- sites and racks
-- devices and interfaces
-- VRFs, VLANs, and VLAN groups
-- prefixes, IP addresses, and aggregates
-- circuits
+1. Use the branch selector in the top-left corner to switch from `main` to `netbox-import`.
+2. Browse the left navigation for imported objects from the NetBox demo. Depending on the current demo data and the example mapping, you may see objects such as:
 
-You can also verify from the CLI:
+   - tags and organizations (manufacturers, providers, RIRs)
+   - sites and racks
+   - devices and interfaces
+   - VRFs, VLANs, and VLAN groups
+   - prefixes, IP addresses, and aggregates
+   - circuits
 
-```bash
-uv run infrahubctl object get LocationSite --limit 5
-uv run infrahubctl object get IpamPrefix --limit 5
-```
+3. Once you're happy with the data, open a proposed change from `netbox-import` toward `main` so the import can be reviewed before it's merged.
 
-If these commands return objects, the sync imported data successfully.
+If you switch back to `main`, none of this data is there yet — that's expected, since it's still isolated in the branch.
 
 ## What happened
 
@@ -267,12 +276,13 @@ You used Infrahub Sync to move data from NetBox into Infrahub in a controlled se
 
 1. Infrahub provided the destination graph and schema.
 2. NetBox provided the source data.
-3. `config.yml` described the adapters, field mappings, references, filters, and Transformations.
-4. `generate` converted the configuration into runnable sync code.
-5. `diff` compared the source and destination without writing changes.
-6. `sync` applied the reviewed changes to Infrahub.
+3. A branch isolated the import from `main` so it could be reviewed first.
+4. `config.yml` described the adapters, field mappings, references, filters, and Transformations.
+5. `generate` converted the configuration into runnable sync code.
+6. `diff` compared the source and destination without writing changes.
+7. `sync` applied the reviewed changes to the branch.
 
-The same pattern applies to larger migrations: start with a clear schema, map a small set of objects, condition source data where needed, review the diff, and then synchronize.
+The same pattern applies to larger migrations: start with a clear schema, map a small set of objects, condition source data where needed, review the diff inside a branch, and then synchronize before opening a proposed change toward `main`.
 
 ## Stop the local Infrahub instance
 
