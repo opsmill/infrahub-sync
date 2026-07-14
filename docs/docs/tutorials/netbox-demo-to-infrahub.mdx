@@ -266,6 +266,10 @@ The imported data lives on the `netbox-import` branch, not on `main`. Open [the 
    - prefixes, IP addresses, and aggregates
    - circuits
 
+   :::info This is a minimal mapping
+   Some records and relationships may be missing — that doesn't mean the sync failed.
+   :::
+
 3. Once you're happy with the data, open a proposed change from `netbox-import` toward `main` so the import can be reviewed before it's merged.
 
 If you switch back to `main`, none of this data is there yet — that's expected, since it's still isolated in the branch.
