@@ -1,0 +1,337 @@
+---
+title: Sync NetBox to Infrahub
+description: Set up a local Infrahub instance, load a data model, and synchronize infrastructure data from the public NetBox demo.
+---
+
+This tutorial is for people getting started with Infrahub: it starts from a blank page, with no existing Infrahub instance or schema required. We will use Infrahub Sync to copy data from the [public NetBox demo](https://demo.netbox.dev) into Infrahub, installing and configuring everything we need along the way. This tutorial covers the fundamental work needed to get started; more advanced topics will be covered in subsequent guides.
+
+:::tip Already running Infrahub?
+If you already have an Infrahub instance running, you can skip straight to the [NetBox adapter documentation](../adapters/netbox.mdx).
+:::
+
+By the end of this tutorial, you will know how to:
+
+- run Infrahub in a Docker container
+- install Infrahub Sync
+- load a schema into Infrahub
+- create a NetBox → Infrahub sync project
+- synchronize NetBox objects into Infrahub
+- review the import in a branch and open a proposed change
+
+**Time**: ~30 minutes
+
+**What you will build**: A running Infrahub instance with a production-grade schema covering the same core domains as NetBox (locations, devices, interfaces, IPAM, and organizations), populated with data synchronized from the public NetBox demo into a branch, ready to review as a proposed change.
+
+**Prerequisites**:
+
+- [Docker](https://docs.docker.com/get-docker/) installed and running (Docker Desktop or OrbStack)
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) (Python package manager)
+- [Python 3.11+](https://www.python.org/downloads/)
+
+:::warning Public demo data
+The NetBox demo instance is public and resets regularly. Object counts, names, and sample data may differ from the examples in this tutorial. Because anyone can edit it, it can also contain malformed or unexpected data that breaks the sync — see [Troubleshooting](#troubleshooting) if you run into errors.
+:::
+
+## Create a project
+
+[Copier](https://copier.readthedocs.io/) is a project scaffolding tool. Use it to create a new Infrahub project from the official template, which includes the standard file structure, task definitions, and a `schemas/` folder:
+
+1. Run the following command to create a new project directory:
+
+```bash
+uv tool run --from 'copier' copier copy https://github.com/opsmill/infrahub-template infrahub-automation
+```
+
+When prompted, enter a project name (for example, `infrahub-automation`), then press **Enter** to accept the default for every remaining prompt (they all default to **No**).
+
+2. Navigate to the project directory:
+
+```bash
+cd infrahub-automation
+```
+
+3. Open the project in your IDE. If you have Visual Studio Code installed, you can run:
+
+```bash
+code .
+```
+
+:::success Verification
+Run `ls` in the project directory. You should see files including `pyproject.toml`, `tasks.py`, and a `schemas/` folder.
+:::
+
+## Start Infrahub
+
+The project template includes [Invoke](https://www.pyinvoke.org/) tasks that wrap Docker Compose commands.
+
+1. Start all Infrahub services with a single command:
+
+```bash
+uv run invoke start
+```
+
+The first run takes a few minutes while Docker downloads the container images.
+
+2. Open your browser and go to [http://localhost:8000](http://localhost:8000).
+
+3. Log in from the bottom-left corner using the default credentials:
+
+    - Username: `admin`
+    - Password: `infrahub`
+
+:::success Verification
+You should see the Infrahub web interface with a navigation menu on the left side.
+:::
+
+## Install infrahub-sync
+
+1. Install the Python dependencies with uv:
+
+```bash
+uv add "infrahub-sync==2.0.0" pynetbox
+```
+
+This installs the `infrahub-sync` command. `pynetbox` is required by the NetBox adapter.
+
+2. Verify infrahub-sync command is available:
+
+```bash
+uv run infrahub-sync --help
+```
+
+For more about supported adapters and their Python requirements, see the [NetBox adapter documentation](../adapters/netbox.mdx).
+
+## Load a schema into Infrahub
+
+Infrahub stores data according to its schema. Before we can import any data, we need Infrahub to know the kinds of objects that the sync will create.
+
+We provide a production-grade Infrahub schema covering DCIM and IPAM features similar to NetBox's. It is not a one-to-one port of NetBox's own data model, and that's intentional.
+
+:::info
+
+This is a production-grade Infrahub schema, not a copy of NetBox's data model. Infrahub gives you a flexible graph model, so a real migration can preserve the parts of NetBox that matter to you while adapting the model to your own workflows.
+
+:::
+
+This collection of schemas is still a work in progress; eventually it will be available through the marketplace. For now, download the files directly:
+
+```bash
+BRANCH="bgi-schema-library-v2"
+DEST="schemas"
+BASE_URL="https://raw.githubusercontent.com/opsmill/schema-library/${BRANCH}"
+
+FILES=(
+  "base/dcim.yml"
+  "base/location.yml"
+  "base/ipam.yml"
+  "base/organization.yml"
+  "extensions/aggregate/aggregate.yml"
+  "extensions/cable/cable.yml"
+  "extensions/circuit/circuit.yml"
+  "extensions/compute/compute.yml"
+  "extensions/cluster/cluster.yml"
+  "extensions/hosting_cluster/hosting_cluster.yml"
+  "extensions/lag/lag.yml"
+  "extensions/location_site/location_site.yml"
+  "extensions/vlan/vlan.yml"
+  "extensions/qinq/qinq.yml"
+  "extensions/rack/rack.yml"
+  "extensions/vrf/vrf.yml"
+)
+
+for f in "${FILES[@]}"; do
+  curl -sSL --create-dirs -o "${DEST}/${f}" "${BASE_URL}/${f}"
+done
+```
+
+Export the local Infrahub address and API token. Infrahub Sync will need them later to authenticate against your instance:
+
+```bash
+export INFRAHUB_ADDRESS="http://localhost:8000"
+export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
+```
+
+This is the default admin token that the project's Docker Compose stack seeds automatically, and it matches the default already configured in `infrahubctl.toml`. Do not reuse it for an internet-facing or shared Infrahub instance.
+
+Then load the schema into Infrahub using the project's `load-schema` task:
+
+```bash
+uv run invoke load-schema
+```
+
+Refresh [the local Infrahub web interface](http://localhost:8000). You should see additional schema objects in the left navigation. You can also open the schema view in the UI to explore the kinds and relationships that were loaded.
+
+## Create a NetBox API token
+
+Create a token in the public NetBox demo instance so Infrahub Sync can read data from NetBox.
+
+1. Open the [public NetBox demo](https://demo.netbox.dev).
+2. Log in with username `admin` and password `admin`.
+3. Open your user profile.
+4. Create an API token.
+5. Copy the complete generated token value.
+
+Export the token locally:
+
+```bash
+export NETBOX_URL="https://demo.netbox.dev"
+export NETBOX_TOKEN="nbt_..."
+```
+
+Export the complete `nbt_...` token value. Do not include an authorization prefix such as `Bearer`, and do not copy only the short **Key** field.
+
+## Create the sync project
+
+A sync project is a directory containing a `config.yml` file. The configuration names the source and destination adapters, maps source fields to destination fields, and includes references that let Infrahub Sync compute write order.
+
+From your project directory (`infrahub-automation`), create a sync project directory and download the example NetBox to Infrahub configuration.
+
+```bash
+mkdir -p sync-projects/netbox-demo
+curl -L \
+  https://raw.githubusercontent.com/opsmill/infrahub-sync/refs/heads/main/examples/netbox_to_infrahub/config.yml \
+  -o sync-projects/netbox-demo/config.yml
+```
+
+The downloaded configuration is named `netbox-demo-to-infrahub`. It maps selected NetBox objects onto the Infrahub schema.
+
+Open `sync-projects/netbox-demo/config.yml` in an editor and scan the top-level keys:
+
+- `name` identifies the sync project.
+- `source` configures the NetBox adapter.
+- `destination` configures the Infrahub adapter.
+- `schema_mapping` defines how NetBox API resources become Infrahub objects.
+
+The configuration includes default endpoint values, but the environment variables exported above take precedence for tokens and URLs.
+
+The example configuration comments also mention `apply`, `--run-id`, and `--parallel`. This tutorial uses the beginner path: preview with `diff`, then write with `sync --diff`. See [Run a sync](../running-a-sync.mdx) for cached plans and parallel execution.
+
+For a fuller explanation of this file, see [Create a sync project](../creating-a-sync-project.mdx) and the [schema mapping reference](../reference/schema-mapping.mdx).
+
+## Generate the sync code
+
+Generate the Python models and adapter code for this sync project.
+
+```bash
+uv run infrahub-sync generate --name netbox-demo-to-infrahub --directory sync-projects
+```
+
+The `generate` command reads the sync configuration and the destination schema, then writes the Python code used at runtime. Run `generate` again any time you edit `config.yml`.
+
+For more about the command flow, see [Run a sync](../running-a-sync.mdx).
+
+## Create a branch
+
+Infrahub tracks changes through branches, so you can review a batch of imported data as a proposed change before it lands on `main`. Create a branch to hold this import:
+
+```bash
+uv run infrahubctl branch create netbox-import
+```
+
+The rest of this tutorial runs `diff` and `sync` against this branch with `--branch netbox-import`, so the import can be reviewed before merging. For more about branches and proposed changes, see [Infrahub version control](https://docs.infrahub.app/topics/version-control/).
+
+## Preview the changes
+
+Run a dry-run diff against the `netbox-import` branch before writing any data to Infrahub.
+
+```bash
+uv run infrahub-sync diff --name netbox-demo-to-infrahub --directory sync-projects --branch netbox-import
+```
+
+The `diff` command loads data from NetBox and Infrahub, compares both sides, and prints the planned changes. It also writes a cached plan under `.infrahub-sync-cache/netbox-demo-to-infrahub/<run-id>/plan.parquet`.
+
+Review the output before continuing. On a first run against an empty branch, most planned changes should be creates. Exact counts depend on the current public NetBox demo data.
+
+## Sync the data
+
+After reviewing the diff, run the sync against the same branch.
+
+```bash
+uv run infrahub-sync sync --name netbox-demo-to-infrahub --directory sync-projects --branch netbox-import --diff
+```
+
+The `--diff` option prints the diff before applying the changes. The first sync can take a few minutes because it writes the imported objects and relationships into the `netbox-import` branch — `main` is untouched until you merge the resulting proposed change. Because this configuration omits `order:`, Infrahub Sync derives the write order from the mapping references.
+
+## Verify the imported data
+
+The imported data lives on the `netbox-import` branch, not on `main`. Open [the local Infrahub web interface](http://localhost:8000):
+
+1. Use the branch selector in the top-left corner to switch from `main` to `netbox-import`.
+2. Browse the left navigation for imported objects from the NetBox demo. Depending on the current demo data and the example mapping, you may see objects such as:
+
+   - tags and organizations (manufacturers, providers, RIRs)
+   - sites and racks
+   - devices and interfaces
+   - VRFs, VLANs, and VLAN groups
+   - prefixes, IP addresses, and aggregates
+   - circuits
+
+   :::info This is a minimal mapping
+   Some records and relationships may be missing — that doesn't mean the sync failed.
+   :::
+
+3. Once you're happy with the data, open a proposed change from `netbox-import` toward `main` so the import can be reviewed before it's merged.
+
+If you switch back to `main`, none of this data is there yet — that's expected, since it's still isolated in the branch.
+
+## What happened
+
+You used Infrahub Sync to move data from NetBox into Infrahub in a controlled sequence:
+
+1. Infrahub provided the destination graph and schema.
+2. NetBox provided the source data.
+3. A branch isolated the import from `main` so it could be reviewed first.
+4. `config.yml` described the adapters, field mappings, references, filters, and Transformations.
+5. `generate` converted the configuration into runnable sync code.
+6. `diff` compared the source and destination without writing changes.
+7. `sync` applied the reviewed changes to the branch.
+
+The same pattern applies to larger migrations: start with a clear schema, map a small set of objects, condition source data where needed, review the diff inside a branch, and then synchronize before opening a proposed change toward `main`.
+
+## Stop the local Infrahub instance
+
+When you are finished, stop the Docker Compose stack.
+
+```bash
+uv run invoke stop
+```
+
+## Troubleshooting
+
+### `infrahub-sync` fails with `Both url and token must be specified`
+
+```text
+ERROR | infrahub_sync.cli | Failed to initialize the Sync Instance: Error initializing InfrahubAdapter: Both url and token must be specified!
+```
+
+The NetBox and/or Infrahub adapter can't find credentials. `generate`, `diff`, `sync`, and `apply` all read them from the environment, not from `config.yml`, so make sure every variable is exported in the shell you're running the command from:
+
+```bash
+export NETBOX_URL="https://demo.netbox.dev"
+export NETBOX_TOKEN="<your-netbox-token>"
+export INFRAHUB_ADDRESS="http://localhost:8000"
+export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
+```
+
+This error names whichever adapter (NetBox or Infrahub) is missing its variables — the same message is raised for either one.
+
+### `infrahub-sync` fails with `Object ... already present`
+
+```text
+ValueError: An error occurred while loading Netbox: ('Object 172.16.0.2/24__Alpha already present', IpamIPAddress "172.16.0.2/24__Alpha")
+```
+
+Two source objects map to the same identifier — here, two IP addresses sharing an address and VRF. Delete one of the duplicates in NetBox (**IPAM > IP Addresses**, search the address from the message), then re-run the command.
+
+## Next steps
+
+Now that you have completed a first sync, you have covered some of the basic objects in NetBox.
+
+This is only the first step. You will likely want to bring in the parts that are unique to your own NetBox instance (for example, roles or custom fields).
+
+Other guides will soon be available to cover:
+
+- How to sync locations/regions
+- How to deal with VLAN/Prefix/Device roles
+- How to cover custom attributes / relationships
+- Migrate configuration context

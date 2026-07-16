@@ -1,5 +1,5 @@
 ---
-# from-netbox — demonstrates the two newest features of infrahub-sync:
+# netbox-demo-to-infrahub — demonstrates the two newest features of infrahub-sync:
 #
 #   1. Auto-tiered write order. The `order:` list has been removed; the engine
 #      derives tiers from `schema_mapping[].fields[].reference` and groups
@@ -7,33 +7,40 @@
 #      enforce a hard barrier between tiers.
 #
 #   2. Parquet sidecar cache. Every `diff` writes per-resource snapshots and
-#      a `plan.parquet` under `.infrahub-sync-cache/from-netbox/<run_id>/`.
+#      a `plan.parquet` under `.infrahub-sync-cache/netbox-demo-to-infrahub/<run_id>/`.
 #      The run_id is logged at INFO; pass it to `apply` to re-dispatch the
 #      cached plan without re-extracting the source.
 #
 # Usage:
-#   uv run infrahub-sync diff --name from-netbox --directory examples/
-#   uv run infrahub-sync apply --name from-netbox --run-id <run_id> --directory examples/
-#   uv run infrahub-sync sync --name from-netbox --directory examples/ --parallel
+#   uv run infrahub-sync diff --name netbox-demo-to-infrahub --directory sync-projects
+#   uv run infrahub-sync apply --name netbox-demo-to-infrahub --run-id <run_id> --directory sync-projects
+#   uv run infrahub-sync sync --name netbox-demo-to-infrahub --directory sync-projects --parallel
+#
+# ---------------------------------------------------------------------------
 
-name: from-netbox
+name: netbox-demo-to-infrahub
 
 source:
   name: netbox
   settings:
     url: "https://demo.netbox.dev"
-    token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 destination:
   name: infrahub
   settings:
     url: "http://localhost:8000"
 
+# Credentials are read from the environment, not this file:
+#   export NETBOX_URL="https://demo.netbox.dev"
+#   export NETBOX_TOKEN="nbt_..."
+#   export INFRAHUB_ADDRESS="http://localhost:8000"
+#   export INFRAHUB_API_TOKEN="..."
+
 # order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
 # Uncomment and edit only if you need to override the computed order:
 # order:
 #   - BuiltinTag
-#   - RoleGeneric
+#   - CoreStandardGroup
 #   ...
 
 schema_mapping:
@@ -47,135 +54,96 @@ schema_mapping:
       - name: description
         mapping: description
 
-  # Roles (DCIM, IPAM, Devices)
-  - name: RoleGeneric
-    mapping: dcim.device_roles
-    identifiers: ["name"]
-    fields:
-      - name: name
-        mapping: name
-      - name: description
-        mapping: description
-  - name: RoleGeneric
-    mapping: dcim.rack_roles
-    identifiers: ["name"]
-    fields:
-      - name: name
-        mapping: name
-      - name: description
-        mapping: description
-  - name: RoleGeneric
-    mapping: ipam.roles
-    identifiers: ["name"]
-    fields:
-      - name: name
-        mapping: name
-      - name: description
-        mapping: description
-
-  # Tenancy (tenants, tenant groups)
-  - name: CoreStandardGroup
-    mapping: tenancy.tenant-groups
-    identifiers: ["name"]
-    fields:
-      - name: name
-        mapping: name
-      - name: description
-        mapping: description
-  - name: OrganizationGeneric
-    mapping: tenancy.tenants
-    identifiers: ["name"]
-    fields:
-      - name: name
-        mapping: name
-      - name: description
-        mapping: description
-      - name: group
-        mapping: group
-        reference: CoreStandardGroup
-
-  # Sites (Site Groups, Region, Sites, Location)
-  - name: CoreStandardGroup
-    mapping: dcim.site-groups
-    identifiers: ["name"]
-    fields:
-      - name: name
-        mapping: name
-      - name: description
-        mapping: description
-  - name: LocationGeneric
-    mapping: dcim.regions
-    fields:
-      - name: name
-        mapping: slug
-      - name: description
-        mapping: name
-      - name: type
-        static: "Region"
-      - name: tags
-        mapping: tags
-        reference: BuiltinTag
-  - name: LocationGeneric
+  # Sites / Regions / Locations
+  - name: LocationSite
     mapping: dcim.sites
+    identifiers: ["name"]
     fields:
       - name: name
         mapping: slug
       - name: description
         mapping: name
-      - name: type
-        static: "Site"
-      - name: group
-        mapping: group
-        reference: CoreStandardGroup
-      - name: organization
-        mapping: tenant
-        reference: OrganizationGeneric
+      - name: status
+        mapping: status.value
+      - name: facility
+        mapping: facility
+      - name: physical_address
+        mapping: physical_address
+      - name: timezone
+        mapping: time_zone
       - name: tags
         mapping: tags
         reference: BuiltinTag
-  - name: LocationGeneric
-    mapping: dcim.locations
-    fields:
-      - name: name
-        mapping: slug
-      - name: description
-        mapping: name
-      - name: type
-        static: "Location"
-      - name: organization
-        mapping: tenant
-        reference: OrganizationGeneric
-      - name: tags
-        mapping: tags
-        reference: BuiltinTag
+
+  # -----------------------------------------------------------------------
+  # Netbox "region" model is relatively loose and could accommodate multiple layers of nested objects (e.g. continent > country > city).
+  # In Infrahub you have to explicitly define this hierarchy in the schema.
+  # As every organization organizes this differently, we don't provide out-of-the-box support for it, even though we provide a couple of examples in the schema library / marketplace.
+  # For the sake of having a first working sync, we've defined a very basic site node in the schema that you can build upon once your hierarchy is clear.
+  # To fully support region you would need to:
+  # - Create the hierarchy in the schema
+  # - Uncomment the lines below and adjust to your specific data <> schema
+  #
+  # For example, here the region is top-level (it has no parent)
+  # - name: LocationRegion
+  #   mapping: dcim.regions
+  #   identifiers: ["name"]
+  #   fields:
+  #     - name: name
+  #       mapping: name
+  #     - name: description
+  #       mapping: description
+  #   filters:
+  #     - field: parent
+  #       operation: "is_empty"
+  #
+  # For example, here countries sit directly below the region (depth = 1)
+  # - name: LocationCountry
+  #   mapping: dcim.regions
+  #   identifiers: ["name"]
+  #   fields:
+  #     - name: name
+  #       mapping: name
+  #     - name: description
+  #       mapping: description
+  #     - name: parent
+  #       mapping: region
+  #       reference: LocationRegion
+  #   filters:
+  #     - field: _depth
+  #       operation: "=="
+  #       value: 1
+  # -----------------------------------------------------------------------
 
   # Racks
-  - name: InfraRack
+  - name: LocationRack
     mapping: dcim.racks
-    identifiers: ["name", "location"]
+    identifiers: ["name", "site"]
     fields:
       - name: name
         mapping: name
-      - name: location
+      - name: site
         mapping: site
-        reference: LocationGeneric
+        reference: LocationSite
       - name: height
         mapping: u_height
+      - name: facility_id
+        mapping: facility_id
+      - name: status
+        mapping: status.value
+      - name: tags
+        mapping: tags
+        reference: BuiltinTag
       - name: serial_number
         mapping: serial
       - name: asset_tag
         mapping: asset_tag
-      - name: facility_id
-        mapping: facility_id
-      - name: role
-        mapping: role
-        reference: RoleGeneric
-      - name: tags
-        mapping: tags
-        reference: BuiltinTag
+      # NOTE: current schema doesn't support role for racks (see related note)
+      # - name: role
+      #   mapping: role.slug
 
-  # Device (manufacturer, device types, devices, interfaces)
-  - name: OrganizationGeneric
+  # Manufacturers / Platforms / Device Types
+  - name: OrganizationManufacturer
     mapping: dcim.manufacturers
     identifiers: ["name"]
     fields:
@@ -183,7 +151,21 @@ schema_mapping:
         mapping: name
       - name: description
         mapping: description
-  - name: ChoiceDeviceType
+      - name: tags
+        mapping: tags
+        reference: BuiltinTag
+
+  - name: DcimPlatform
+    mapping: dcim.platforms
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: name
+      - name: manufacturer
+        mapping: manufacturer
+        reference: OrganizationManufacturer
+
+  - name: DcimDeviceType
     mapping: dcim.device-types
     identifiers: ["name", "manufacturer"]
     fields:
@@ -195,69 +177,126 @@ schema_mapping:
         mapping: is_full_depth
       - name: height
         mapping: integer_height
-      - name: tags
-        mapping: tags
-        reference: BuiltinTag
+      - name: weight
+        mapping: integer_weight
+        # NOTE: Netbox tracks weight_unit separately (kg/lb/g/oz); schema
+        # has no unit field, so mixed-unit sources will be inconsistent.
       - name: manufacturer
         mapping: manufacturer
-        reference: OrganizationGeneric
+        reference: OrganizationManufacturer
     transforms:
       - field: integer_height
         expression: "{{ u_height|float|round(0, 'ceil') }}"
-  # -> The netbox constraint is `dcim_device_unique_name_site_tenant`
-  # Reusing device_name + site + Organization as identifiers
-  # /!\ Seem like Netbox allowed device to have the same name if there is a virtual-chassis
-  - name: InfraDevice
-    identifiers: ["location", "rack", "organization", "name"]
+      - field: integer_weight
+        expression: "{{ weight|float|round(0, 'ceil') }}"
+  # ---------------------------------------------------------------------
+  # Netbox roles are user-defined/arbitrary, so there's no guarantee the
+  # Netbox slug matches one of the fixed choices below — sync will fail for
+  # values (roles) that don't match one of the schema's dropdown choices.
+  # TODO: decide whether to (a) map role.slug directly per node below and
+  # accept failures on non-matching values, (b) extend the schema's choice
+  # lists to cover your Netbox roles, or (c) drop role sync entirely.
+  # dcim.rack_roles has no destination at all anymore (Rack has no role
+  # field in the new schema) — not mapped below.
+  # ---------------------------------------------------------------------
+
+  # Devices
+  # -----------------------------------------------------------------------
+  # Netbox splits location across `site` (mandatory) and `rack` (optional).
+  # Infrahub consolidates both under a single `location` relationship that
+  # can point to either a LocationRack or a LocationSite. Split into two
+  # entries over the same dcim.devices source with complementary filters:
+  # racked devices use the rack, everything else falls back to the site.
+  # TODO: Find a better way to support this
+  # -----------------------------------------------------------------------
+  - name: DcimDevice
+    identifiers: ["location", "name"]
+    mapping: dcim.devices
+    fields:
+      - name: name # /!\ Netbox allows duplicate device names within a virtual-chassis.
+        mapping: name
+      - name: serial
+        mapping: serial
+      - name: description
+        mapping: description
+      - name: position
+        mapping: position
+      - name: rack_face
+        mapping: face.value
+      - name: status
+        mapping: status.value
+      # NOTE: schema changes are required to support role sync (see related note)
+      # - name: role
+      #   mapping: role.slug
+      - name: device_type
+        mapping: device_type
+        reference: DcimDeviceType
+      - name: platform
+        mapping: platform
+        reference: DcimPlatform
+      - name: location
+        mapping: rack
+        reference: LocationRack
+      - name: tags
+        mapping: tags
+        reference: BuiltinTag
+      - name: primary_address
+        mapping: primary_ip
+        reference: IpamIPAddress
+    filters:
+      - field: parent_device # For sub-devices (e.g. stacks), you'd most likely have a dedicated node in Infrahub
+        operation: "is_empty"
+      - field: rack
+        operation: "is_not_empty"
+      - field: name # /!\ Netbox allows empty name for devices
+        operation: "is_not_empty"
+
+  - name: DcimDevice
+    identifiers: ["location", "name"]
     mapping: dcim.devices
     fields:
       - name: name
         mapping: name
-      - name: serial_number
+      - name: serial
         mapping: serial
-      - name: asset_tag
-        mapping: asset_tag
       - name: description
         mapping: description
-      - name: model
+      - name: position
+        mapping: position
+      - name: rack_face
+        mapping: face.value
+      - name: status
+        mapping: status.value
+      # NOTE: schema changes are required to support role sync (see related note)
+      # - name: role
+      #   mapping: role.slug
+      - name: device_type
         mapping: device_type
-        reference: ChoiceDeviceType
-      - name: organization
-        mapping: tenant
-        reference: OrganizationGeneric
-      - name: role
-        mapping: role
-        reference: RoleGeneric
-      # - name: status
-      #   mapping: status
-      #   reference: StatusGeneric
+        reference: DcimDeviceType
+      - name: platform
+        mapping: platform
+        reference: DcimPlatform
       - name: location
         mapping: site
-        reference: LocationGeneric
-      - name: rack
-        mapping: rack
-        reference: InfraRack
+        reference: LocationSite
       - name: tags
         mapping: tags
         reference: BuiltinTag
-    # Showcase Filters
-    # It will import the ones with dmu01 in their name *AND* without pdu
+      - name: primary_address
+        mapping: primary_ip
+        reference: IpamIPAddress
     filters:
-      - field: name
-        operation: "contains"
-        value: "dmi01"
-      - field: name
-        operation: "not contains"
-        value: "pdu"
-    # Showcase Transforms
-    transforms:
-      - field: name
-        expression: "{{ name.lower() if name else '' }}"
-      - field: serial_number
-        expression: "{{ serial.lower() if serial else '' }}}"
+      - field: parent_device
+        operation: "is_empty"
+      - field: rack
+        operation: "is_empty"
+      - field: name # /!\ Netbox allows empty name for devices
+        operation: "is_not_empty"
 
-  # Interfaces (interfaces, rear port, front port)
-  - name: InfraInterfaceL2L3
+  # TODO: Add support for cluster, VM, servers ...
+
+  # Interfaces (Physical / Virtual / LAG)
+  - name: InterfacePhysical
     identifiers: ["device", "name"]
     mapping: dcim.interfaces
     fields:
@@ -265,42 +304,136 @@ schema_mapping:
         mapping: name
       - name: description
         mapping: description
-      - name: interface_type
-        mapping: type.label
-      - name: l2_mode
-        mapping: mode.label
       - name: mac_address
         mapping: mac_address
-      # - name: ip_addresses
-      #   mapping: ip_addresses
-      #   reference: InfraIPAddress
-      - name: mgmt_only
-        mapping: mgmt_only
-      - name: untagged_vlan
-        mapping: untagged_vlan
-        reference: InfraVLAN
-      - name: tagged_vlan
-        mapping: tagged_vlans
-        reference: InfraVLAN
+      - name: l2_mode
+        mapping: mode.value
+      - name: mtu
+        mapping: mtu
+      - name: ip_addresses
+        mapping: ip_addresses
+        reference: IpamIPAddress
+      # TODO: Make sure no vlan is skipped due to missing group then enable this
+      # - name: untagged_vlan
+      #   mapping: untagged_vlan
+      #   reference: IpamVLAN
+      # - name: tagged_vlan
+      #   mapping: tagged_vlans
+      #   reference: IpamVLAN
       - name: device
         mapping: device
-        reference: InfraDevice
-      - name: tags
-        mapping: tags
-        reference: BuiltinTag
-      # - name: status
-      #   mapping: status
-      #   reference: StatusGeneric
-    filters:
-      - field: device.name
-        operation: "contains"
-        value: "dmi01"
-      - field: device.name
+        reference: DcimDevice
+      - name: bundle
+        mapping: lag
+        reference: InterfaceLag
+      # TODO: many fields are not implemented in the schema (mgmt_only, type, duplex ...)
+    filters: # Filters to only get the "physical interfaces"
+      # NOTE: Netbox's `type` is a nested {value, label} object, not a plain
+      # string — filtering on bare `type` compares against the dict itself
+      # (dict membership checks keys, dict == string is always False), which
+      # silently let every interface through here and matched none below.
+      - field: type.value
         operation: "not contains"
-        value: "pdu"
+        value: "virtual"
+      - field: type.value
+        operation: "not contains"
+        value: "lag"
+      # NOTE: must mirror the DcimDevice-level exclusions — otherwise an
+      # interface can reference a device that was filtered out of the sync,
+      # and the `device` reference lookup fails ("Unable to locate the node").
+      # Only `name` can be checked here: Netbox's interface payload embeds a
+      # *brief* device object (id/url/display/name/description only), which
+      # never carries `parent_device` — so we can't replicate the
+      # `parent_device is_empty` exclusion at this level. Not an issue today
+      # (no devices in this dataset have parent_device set), but if you add
+      # sub-devices later, their interfaces will need filtering out some
+      # other way (e.g. a follow-up id-based exclusion list).
+      - field: device.name
+        operation: "is_not_empty"
 
-  # Circuits (Provider, Provider Network, Circuits Types, Circuits)
-  - name: OrganizationGeneric
+  - name: InterfaceVirtual
+    identifiers: ["device", "name"]
+    mapping: dcim.interfaces
+    fields:
+      - name: name
+        mapping: name
+      - name: description
+        mapping: description
+      - name: mac_address
+        mapping: mac_address
+      - name: l2_mode
+        mapping: mode.value
+      - name: ip_addresses
+        mapping: ip_addresses
+        reference: IpamIPAddress
+      - name: untagged_vlan
+        mapping: untagged_vlan
+        reference: IpamVLAN
+      - name: tagged_vlan
+        mapping: tagged_vlans
+        reference: IpamVLAN
+      - name: device
+        mapping: device
+        reference: DcimDevice
+      # TODO: many fields are not implemented in the schema (mgmt_only, type, duplex ...)
+    filters: # Filters to only get the "virtual interfaces"
+      - field: type.value
+        operation: "=="
+        value: "virtual"
+      # NOTE: must mirror the DcimDevice-level `name` exclusion — see
+      # InterfacePhysical for why `parent_device` can't be checked here too.
+      - field: device.name
+        operation: "is_not_empty"
+
+  - name: InterfaceLag
+    identifiers: ["device", "name"]
+    mapping: dcim.interfaces
+    fields:
+      - name: name
+        mapping: name
+      - name: bundle_number
+        mapping: bundle_number
+        # Capture the number at the end of the name (e.g. Po1 -> 1)
+      - name: description
+        mapping: description
+      - name: mac_address
+        mapping: mac_address
+      - name: l2_mode
+        mapping: mode.value
+      - name: ip_addresses
+        mapping: ip_addresses
+        reference: IpamIPAddress
+      - name: untagged_vlan
+        mapping: untagged_vlan
+        reference: IpamVLAN
+      - name: tagged_vlan
+        mapping: tagged_vlans
+        reference: IpamVLAN
+      - name: device
+        mapping: device
+        reference: DcimDevice
+      # TODO: many fields are not implemented in the schema (mgmt_only, type, duplex ...)
+      # TODO: many fields are not available in Netbox
+      # - name: lacp_rate
+      # - name: lacp_mode
+    transforms:
+      - field: bundle_number
+        expression: |-
+          {% set suffix = name[(name.rstrip('0123456789'))|length:] %}
+          {{ suffix | int if suffix else None }}
+    filters: # Filters to only get the "lag interfaces"
+      - field: type.value
+        operation: "=="
+        value: "lag"
+      # NOTE: must mirror the DcimDevice-level `name` exclusion — see
+      # InterfacePhysical for why `parent_device` can't be checked here too.
+      - field: device.name
+        operation: "is_not_empty"
+
+  # TODO: Many other types of interface to handle
+
+  # Provider
+  - name: OrganizationProvider
     mapping: circuits.providers
     identifiers: ["name"]
     fields:
@@ -308,77 +441,41 @@ schema_mapping:
         mapping: name
       - name: description
         mapping: description
-  - name: InfraProviderNetwork
-    mapping: circuits.provider-networks
-    identifiers: ["name"]
-    fields:
-      - name: name
-        mapping: name
-      - name: vendor_id
-        mapping: service_id
-      - name: provider
-        mapping: provider
-        reference: OrganizationGeneric
-      - name: description
-        mapping: description
-      # - name: status
-      #   mapping: status
-      #   reference: StatusGeneric
       - name: tags
         mapping: tags
         reference: BuiltinTag
-      - name: provider
-        mapping: provider
-        reference: OrganizationGeneric
-  - name: ChoiceCircuitType
-    mapping: circuits.circuit-types
-    identifiers: ["name"]
-    fields:
-      - name: name
-        mapping: name
-      - name: description
-        mapping: description
-      - name: tags
-        mapping: tags
-        reference: BuiltinTag
-  - name: InfraCircuit
+
+  # Circuit
+  - name: DcimCircuit
     mapping: circuits.circuits
     identifiers: ["circuit_id"]
     fields:
       - name: circuit_id
         mapping: cid
-      - name: vendor_id
-        mapping: cid
-      - name: provider
-        mapping: provider
-        reference: OrganizationGeneric
       - name: description
         mapping: description
-      # - name: status
-      #   mapping: status
-      #   reference: StatusGeneric
-      - name: type
-        mapping: type.name
+      - name: commit_rate
+        mapping: commit_rate
+      - name: status
+        mapping: status.value
+      # NOTE: similar to roles, circuit types have to be defined in the schema
+      # - name: circuit_type
+      #   mapping: type.slug
       - name: provider
         mapping: provider
-        reference: OrganizationGeneric
-      - name: tags
-        mapping: tags
-        reference: BuiltinTag
+        reference: OrganizationProvider
 
-# IPAM (VRF, VLANs Groups, VLANs, Prefixes, IPs)
-  - name: InfraRouteTarget
+  # IPAM (VRF, Route Targets, VLAN Groups, VLANs, Prefixes, IPs)
+  - name: IpamRouteTarget
     mapping: ipam.route-targets
-    identifiers: ["name", "organization"]
+    identifiers: ["name"]
     fields:
       - name: name
         mapping: name
       - name: description
         mapping: description
-      - name: organization
-        mapping: tenant
-        reference: OrganizationGeneric
-  - name: InfraVRF
+
+  - name: IpamVRF
     mapping: ipam.vrfs
     identifiers: ["name"]
     fields:
@@ -386,18 +483,18 @@ schema_mapping:
         mapping: name
       - name: description
         mapping: description
-      - name: organization
-        mapping: tenant
-        reference: OrganizationGeneric
       - name: vrf_rd
         mapping: rd
+      - name: enforce_unique
+        mapping: enforce_unique
       - name: import_rt
         mapping: import_targets
-        reference: InfraRouteTarget
+        reference: IpamRouteTarget
       - name: export_rt
         mapping: export_targets
-        reference: InfraRouteTarget
-  - name: CoreStandardGroup
+        reference: IpamRouteTarget
+
+  - name: IpamVLANGroup
     mapping: ipam.vlan-groups
     identifiers: ["name"]
     fields:
@@ -405,26 +502,42 @@ schema_mapping:
         mapping: name
       - name: description
         mapping: description
-  - name: InfraVLAN
+      # TODO: `scope` (peer IpamVLANGroupScope: Region/Site/Rack/etc.) needs
+      # resolving Netbox's polymorphic scope_type/scope_id — not mapped yet.
+      # - name: scope
+      #   mapping: scope
+      #   reference: LocationSite
+
+  - name: IpamVLAN
     mapping: ipam.vlans
-    identifiers: ["name", "vlan_id", "location", "vlan_group"]
+    identifiers: ["name", "vlan_id", "vlan_group"]
     fields:
       - name: name
         mapping: name
       - name: vlan_id
         mapping: vid
-      - name: organization
-        mapping: tenant
-        reference: OrganizationGeneric
       - name: description
         mapping: description
-      - name: location
-        mapping: site
-        reference: LocationGeneric
+      - name: status
+        mapping: status.value
+      # NOTE: schema changes are required to support role sync (see related note)
+      # - name: role
+      #   mapping: role.slug
       - name: vlan_group
         mapping: group
-        reference: CoreStandardGroup
-  - name: InfraPrefix
+        reference: IpamVLANGroup
+    # vlan_group is required (optional: false) in the schema, but Netbox
+    # VLANs can have no group at all — skip those rather than fail the sync.
+    filters:
+      - field: group
+        operation: "is_not_empty"
+
+  # TODO: add support for provider-network
+  # TODO: add support for tenant
+  # TODO: add support for device types -> object templates
+  # TODO: add support for DcimCircuitEndpoint
+
+  - name: IpamPrefix
     mapping: ipam.prefixes
     identifiers: ["prefix", "vrf"]
     fields:
@@ -432,26 +545,32 @@ schema_mapping:
         mapping: prefix
       - name: description
         mapping: description
-      - name: organization
-        mapping: tenant
-        reference: OrganizationGeneric
-      - name: role
-        mapping: role
-        reference: RoleGeneric
+      - name: status
+        mapping: resolved_status
+      - name: member_type
+        mapping: resolved_member_type
+      # NOTE: schema changes are required to support role sync (see related note)
+      # - name: role
+      #   mapping: role.slug
       - name: vrf
         mapping: vrf
-        reference: InfraVRF
-      - name: location
-        mapping: site
-        reference: LocationGeneric
-      # - name: status
-      #   mapping: status
-      #   reference: StatusGeneric
+        reference: IpamVRF
+      # TODO: Make sure no vlan is skipped due to missing group then enable this
       # - name: vlan
-      #   mapping: vlan.name
-      # - name: location
-      #   mapping: location.slug
-  - name: InfraIPAddress
+      #   mapping: vlan
+      #   reference: IpamVLAN
+      # TODO: `scope` (peer IpamPrefixScope: Region/Site/Rack/etc.) needs
+      # resolving Netbox's polymorphic scope_type/scope_id — not mapped yet.
+      # - name: scope
+      #   mapping: scope
+      #   reference: LocationSite
+    transforms: # These transforms accommodate different ways of dealing with containers
+      - field: resolved_status
+        expression: "{{ 'active' if status.value == 'container' else status.value }}"
+      - field: resolved_member_type
+        expression: "{{ 'prefix' if status.value == 'container' else 'address' }}"
+
+  - name: IpamIPAddress
     mapping: ipam.ip-addresses
     identifiers: ["address", "vrf"]
     fields:
@@ -459,15 +578,70 @@ schema_mapping:
         mapping: address
       - name: description
         mapping: description
-      - name: organization
-        mapping: tenant
-        reference: OrganizationGeneric
-      # Not the same as ipam.role
-      # - name: role
-      #   mapping: role.value
-      # - name: status
-      #   mapping: status
-      #   reference: StatusGeneric
+      - name: status
+        mapping: status.value
+        # NOTE: Netbox also has dhcp/slaac statuses with no schema equivalent.
       - name: vrf
         mapping: vrf
-        reference: InfraVRF
+        reference: IpamVRF
+      # NOTE: This isn't enforced on the Netbox side, and might create validation issues
+      # - name: fqdn
+      #   mapping: dns_name
+      # NOTE: schema changes are required to support role sync (see related note)
+      # - name: role
+      #   mapping: role.value
+
+  # IPAM — Aggregates / RIRs (new in schema, no prior mapping existed)
+  - name: OrganizationRIR
+    mapping: ipam.rirs
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: name
+      - name: description
+        mapping: description
+      - name: is_private
+        mapping: is_private
+      - name: tags
+        mapping: tags
+        reference: BuiltinTag
+
+  - name: IpamAggregate
+    mapping: ipam.aggregates
+    identifiers: ["prefix"]
+    fields:
+      - name: prefix
+        mapping: prefix
+      - name: description
+        mapping: description
+      - name: date_added
+        mapping: date_added
+      - name: rir
+        mapping: rir
+        reference: OrganizationRIR
+
+  # -----------------------------------------------------------------------
+  # New schema extensions with NO mapping below — none of these existed in
+  # the previous config, and each needs a real design decision rather than
+  # a guess:
+  #
+  #   - ClusterGeneric / ClusterHosting (schemas/extensions/cluster,
+  #     hosting_cluster): Netbox source would be virtualization.clusters,
+  #     but `technology` is a fixed Dropdown (vmware/kvm/hyper_v/xen/
+  #     nutanix/openstack/kubernetes/public_cloud) while Netbox's
+  #     cluster.type is a free-form ClusterType object — needs a mapping
+  #     table, not a direct field copy.
+  #   - ComputePhysicalServer / VirtualizationVirtualMachine
+  #     (schemas/extensions/compute): virtualization.virtual-machines would
+  #     feed VirtualizationVirtualMachine, but `host` is polymorphic
+  #     (ClusterHosting or ComputePhysicalServer) and memory units differ
+  #     (Netbox MB vs schema's documented GB) — needs a transform.
+  #     ComputePhysicalServer has no obvious Netbox source at all (would
+  #     require picking out dcim.devices by role, which is arbitrary).
+  #   - DcimCable (schemas/extensions/cable): Netbox dcim.cables uses
+  #     polymorphic multi-sided terminations (cable-terminations endpoint)
+  #     that don't map cleanly onto DcimCable's simpler two-endpoint
+  #     Connector model — needs real design work.
+  #   - IpamSVLAN / IpamCVLAN (schemas/extensions/qinq): Infrahub-only
+  #     concept (802.1ad Q-in-Q split), no equivalent Netbox source field.
+  # -----------------------------------------------------------------------

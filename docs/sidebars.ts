@@ -14,6 +14,13 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Tutorials',
+      items: [
+        'tutorials/netbox-demo-to-infrahub',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Guides',
       items: [
         'using-netbox-or-nautobot-with-infrahub',
