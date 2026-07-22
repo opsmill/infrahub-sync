@@ -1,0 +1,1 @@
+../../../.specify/extensions/review/.specify-dev/agent-commands/zed/speckit-review-code/SKILL.md

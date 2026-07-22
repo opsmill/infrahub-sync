@@ -1,0 +1,1 @@
+../../../.specify/extensions/critique/.specify-dev/agent-commands/zed/speckit-critique-run/SKILL.md

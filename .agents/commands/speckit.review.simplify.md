@@ -1,0 +1,1 @@
+../../.specify/extensions/review/.specify-dev/agent-commands/amp/speckit.review.simplify.md

@@ -1,0 +1,1 @@
+../../.specify/extensions/critique/.specify-dev/agent-commands/amp/speckit.critique.run.md
