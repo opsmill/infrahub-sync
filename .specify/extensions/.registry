@@ -151,6 +151,52 @@
       },
       "registered_skills": [],
       "installed_at": "2026-07-22T23:09:21.291400+00:00"
+    },
+    "git": {
+      "version": "1.0.0",
+      "source": "local",
+      "manifest_hash": "sha256:9731aa8143a72fbebfdb440f155038ab42642517c2b2bdbbf67c8fdbe076ed79",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "agy": [
+          "speckit.git.feature",
+          "speckit.git.validate",
+          "speckit.git.remote",
+          "speckit.git.initialize",
+          "speckit.git.commit"
+        ],
+        "amp": [
+          "speckit.git.feature",
+          "speckit.git.validate",
+          "speckit.git.remote",
+          "speckit.git.initialize",
+          "speckit.git.commit"
+        ],
+        "claude": [
+          "speckit.git.feature",
+          "speckit.git.validate",
+          "speckit.git.remote",
+          "speckit.git.initialize",
+          "speckit.git.commit"
+        ],
+        "codex": [
+          "speckit.git.feature",
+          "speckit.git.validate",
+          "speckit.git.remote",
+          "speckit.git.initialize",
+          "speckit.git.commit"
+        ],
+        "zed": [
+          "speckit.git.feature",
+          "speckit.git.validate",
+          "speckit.git.remote",
+          "speckit.git.initialize",
+          "speckit.git.commit"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-07-22T23:09:55.331998+00:00"
     }
   }
 }
