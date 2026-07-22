@@ -2,6 +2,7 @@ installed:
 - agent-context
 - critique
 - git
+- jpd
 - review
 settings:
   auto_execute_hooks: true
@@ -92,13 +93,23 @@ hooks:
     description: Initialize Git repository before constitution setup
     condition: null
   before_specify:
+  # Disabled in favor of the jpd extension's hook below, which wraps the same
+  # create-new-feature.sh but enforces a Jira/JPD ticket ref in the branch name.
   - extension: git
     command: speckit.git.feature
-    enabled: true
+    enabled: false
     optional: false
     priority: 10
     prompt: Execute speckit.git.feature?
     description: Create feature branch before specification
+    condition: null
+  - extension: jpd
+    command: speckit.jpd.feature
+    enabled: true
+    optional: false
+    priority: 10
+    prompt: Execute speckit.jpd.feature?
+    description: Validate Jira/JPD reference and create feature branch
     condition: null
   before_clarify:
   - extension: git

@@ -1,0 +1,1 @@
+../../.specify/extensions/jpd/.specify-dev/agent-commands/amp/speckit.jpd.feature.md

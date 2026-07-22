@@ -1,0 +1,31 @@
+schema_version: "1.0"
+
+extension:
+  id: jpd
+  name: "OpsMill JPD Workflow"
+  version: "1.0.0"
+  description: "OpsMill-specific SpecKit customization: enforces a Jira/JPD ticket reference on feature branch creation"
+  author: opsmill
+  license: MIT
+
+requires:
+  speckit_version: ">=0.6.0"
+  extensions:
+    - git
+
+provides:
+  commands:
+    - name: speckit.jpd.feature
+      file: commands/speckit.jpd.feature.md
+      description: "Validate Jira/JPD ticket reference and create a feature branch"
+
+hooks:
+  before_specify:
+    command: speckit.jpd.feature
+    optional: false
+    description: "Validate Jira/JPD reference and create feature branch"
+
+tags:
+  - "opsmill"
+  - "jira"
+  - "branching"

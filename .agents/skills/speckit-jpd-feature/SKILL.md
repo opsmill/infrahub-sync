@@ -1,0 +1,1 @@
+../../../.specify/extensions/jpd/.specify-dev/agent-commands/zed/speckit-jpd-feature/SKILL.md

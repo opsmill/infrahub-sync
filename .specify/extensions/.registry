@@ -197,6 +197,32 @@
       },
       "registered_skills": [],
       "installed_at": "2026-07-22T23:09:55.331998+00:00"
+    },
+    "jpd": {
+      "version": "1.0.0",
+      "source": "local",
+      "manifest_hash": "sha256:bc01477e0edfe4b57a3966991efc7646a8fdd594aa6f62053f30f88d09e4743d",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "agy": [
+          "speckit.jpd.feature"
+        ],
+        "amp": [
+          "speckit.jpd.feature"
+        ],
+        "claude": [
+          "speckit.jpd.feature"
+        ],
+        "codex": [
+          "speckit.jpd.feature"
+        ],
+        "zed": [
+          "speckit.jpd.feature"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-07-22T23:11:40.431549+00:00"
     }
   }
 }
