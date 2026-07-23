@@ -27,3 +27,5 @@ venv/
 *.pem
 *.key
 credentials.json
+# SpecKit per-feature working state (matches core infrahub convention)
+.specify/feature.json
