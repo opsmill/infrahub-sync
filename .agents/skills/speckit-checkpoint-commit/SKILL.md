@@ -42,7 +42,7 @@ every phase so each phase is independently reviewable and revertable.
 Stage the changes attributable to the phase that just finished:
 
 - Preparation phases (specify / plan / critique / tasks): the feature's spec
-  directory (`specs/<feature>/**`) and any files those phases legitimately
+  directory (`dev/specs/<feature>/**`) and any files those phases legitimately
   regenerate (e.g. agent context files).
 - Implement chunks and review fixes: the source, test, and doc files the chunk
   changed, plus its tasks.md checkbox updates.
@@ -51,7 +51,9 @@ Inspect `git status --porcelain` before staging, then stage **explicit paths
 only** — name each file or directory you are committing (`git add <path> ...`).
 Never use `git add -A`, `git add .`, or `git add -u`: the working tree may
 carry changes the phase did not produce, and a checkpoint must never absorb
-them. If the status output lists changes that are clearly unrelated to the
+them. Staging must use the canonical paths exactly as `git status --porcelain`
+reports them (always `dev/specs/...`) — never paths through the `specs`
+symlink, which `git add` rejects. If the status output lists changes that are clearly unrelated to the
 phase (files the phase could not have touched), leave them unstaged and
 mention the leftovers in your report.
 

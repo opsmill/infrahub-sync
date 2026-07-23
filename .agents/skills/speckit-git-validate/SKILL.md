@@ -40,6 +40,7 @@ If on a feature branch (matches any of the patterns):
 - Check if the corresponding spec directory exists under `specs/`:
   - For sequential branches, look for `specs/<prefix>-*` where prefix matches the numeric portion
   - For timestamp branches, look for `specs/<prefix>-*` where prefix matches the `YYYYMMDD-HHMMSS` portion
+  - For ticket-suffixed branches, resolve the spec directory from `.specify/feature.json` (`feature_directory` field) when that file exists and parses; otherwise fall back to globbing `dev/specs/*<ticket>*` where `<ticket>` is the branch's ticket suffix
 - If spec directory exists: `✓ Spec directory found: <path>`
 - If spec directory missing: `⚠ No spec directory found for prefix <prefix>`
 
