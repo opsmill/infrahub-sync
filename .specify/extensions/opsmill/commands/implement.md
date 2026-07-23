@@ -46,6 +46,13 @@ Loop over the chunks identified in Phase 0. For **each chunk**:
 2. **Brief the subagent self-contained.** The orchestrator has read context the subagent does not. The prompt to the subagent must include:
    - Absolute path to the spec directory.
    - Absolute path to the repository root.
+   - An explicit instruction to run every speckit command and script with
+     `SPECIFY_FEATURE_DIRECTORY="<absolute-spec-dir>"` set in its environment.
+     `check-prerequisites.sh` resolves the feature only from that variable or
+     from `.specify/feature.json` — and the latter is gitignored, so a fresh
+     worktree or clean checkout has neither. Without the variable, the
+     subagent's first speckit invocation fails and the chunk may be reported
+     blocked.
    - Pointers to project context files the subagent should read first, when present at the repo root or in their conventional locations: `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md`, and the project constitution (commonly `.specify/memory/constitution.md`, `dev/constitution.md`, or `constitution.md`). The orchestrator should resolve which of these actually exist before dispatch and pass the resolved absolute paths — do not ask the subagent to guess. If none exist, say so explicitly so the subagent does not waste a turn searching.
    - The **exact chunk** of tasks to implement, copied verbatim from `tasks.md` (task IDs, descriptions, and any `[P]` parallel markers).
    - An explicit instruction to invoke the `speckit-implement` skill scoped to **only those task IDs** — not the full `tasks.md`.
