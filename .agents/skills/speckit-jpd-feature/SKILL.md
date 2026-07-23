@@ -72,4 +72,4 @@ GIT_BRANCH_NAME="embeddable-python-library-infp-646" .specify/extensions/git/scr
 The script outputs JSON with:
 
 - `BRANCH_NAME`: The branch name (e.g., `embeddable-python-library-infp-646`)
-- `FEATURE_NUM`: The ticket ID
+- `FEATURE_NUM`: For non-numeric branch names like these, the script echoes the full branch name here, not the bare ticket ID. SpecKit 0.11.9 does not derive the spec directory from this value; treat `BRANCH_NAME` as the identifier.
