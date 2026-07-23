@@ -19,10 +19,12 @@ $ARGUMENTS
 
 ## Step 1: Resolve Ticket Reference
 
-Parse `$ARGUMENTS` for a ticket ID matching either of these formats:
+Parse `$ARGUMENTS` for a ticket ID matching either of these formats, **case-insensitively** — tickets are usually written uppercase (`INFP-646`), but any case is valid input:
 
-- JPD format: `infp-[0-9]+` (e.g., `infp-646`)
-- Jira epic format: `ifc-[0-9]+` (e.g., `ifc-2140`)
+- JPD format: `infp-[0-9]+` (e.g., `INFP-646`, `infp-646`)
+- Jira epic format: `ifc-[0-9]+` (e.g., `IFC-2140`, `ifc-2140`)
+
+Normalize the matched ticket ID to **lowercase** before using it anywhere: the branch suffix is always lowercase (input `INFP-646` -> suffix `infp-646`), matching git branch conventions and the patterns `speckit.git.validate` accepts.
 
 If no ticket ID is found in the arguments, prompt the user:
 
@@ -43,7 +45,7 @@ Generate a concise short name (2-4 words) from the feature description:
 
 ## Step 3: Create Branch
 
-Construct the branch name as `<short-name>-<ticket-id>` (e.g., `embeddable-python-library-infp-646`), then pass it as `GIT_BRANCH_NAME` to bypass the script's automatic numbering:
+Construct the branch name as `<short-name>-<ticket-id>` — all lowercase, using the normalized ticket ID (e.g., `embeddable-python-library-infp-646`), then pass it as `GIT_BRANCH_NAME` to bypass the script's automatic numbering:
 
 ```bash
 GIT_BRANCH_NAME="<short-name>-<ticket-id>" .specify/extensions/git/scripts/bash/create-new-feature.sh --json "<feature description>"
