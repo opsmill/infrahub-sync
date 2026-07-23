@@ -77,5 +77,3 @@ defaults:
     errors: true
     types: true
     simplify: true
-
-
