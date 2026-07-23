@@ -35,15 +35,26 @@ every phase so each phase is independently reviewable and revertable.
    orchestrator log records it. (Hard-blocking here would break legitimate
    runs on hand-named branches; the hard guards above cover the dangerous
    cases.)
-5. Never push. Never amend. One new commit per invocation, nothing else.
+5. Check the index before staging anything: run `git diff --cached
+   --name-only`. If it lists files that are not attributable to the phase
+   that just finished, **abort without committing and without modifying the
+   index** — never `git reset`, unstage, or otherwise touch pre-staged
+   entries; they are someone else's work in flight. Surface the offending
+   paths in your report. If the pre-staged entries are all phase-attributable
+   (e.g. a prior invocation staged but failed before committing), proceed and
+   note this in the report.
+6. Never push. Never amend. One new commit per invocation, nothing else.
 
 ## What to stage
 
 Stage the changes attributable to the phase that just finished:
 
-- Preparation phases (specify / plan / critique / tasks): the feature's spec
-  directory (`dev/specs/<feature>/**`) and any files those phases legitimately
-  regenerate (e.g. agent context files).
+- Preparation phases (specify / plan / critique / tasks): the feature
+  directory's contents. Resolve the feature directory the way the tooling
+  does: `SPECIFY_FEATURE_DIRECTORY` when set, else the `feature_directory`
+  key from `.specify/feature.json` when present and parseable, else
+  `dev/specs/<feature>/` (the default). Also stage any files those phases
+  legitimately regenerate (e.g. agent context files).
 - Implement chunks and review fixes: the source, test, and doc files the chunk
   changed, plus its tasks.md checkbox updates.
 
@@ -51,11 +62,13 @@ Inspect `git status --porcelain` before staging, then stage **explicit paths
 only** — name each file or directory you are committing (`git add <path> ...`).
 Never use `git add -A`, `git add .`, or `git add -u`: the working tree may
 carry changes the phase did not produce, and a checkpoint must never absorb
-them. Staging must use the canonical paths exactly as `git status --porcelain`
-reports them (always `dev/specs/...`) — never paths through the `specs`
-symlink, which `git add` rejects. If the status output lists changes that are clearly unrelated to the
-phase (files the phase could not have touched), leave them unstaged and
-mention the leftovers in your report.
+them. Stage paths exactly as `git status --porcelain` reports them — never
+through a symlink alias (e.g. `specs` -> `dev/specs`), which `git add`
+rejects.
+
+If the status output lists changes that are clearly unrelated to the phase
+(files the phase could not have touched), leave them unstaged and mention the
+leftovers in your report.
 
 If there is nothing to commit, say so and return — that is a success, not an error.
 
