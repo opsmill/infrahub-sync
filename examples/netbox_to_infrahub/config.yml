@@ -1,5 +1,5 @@
 ---
-# netbox-demo-to-infrahub — demonstrates the two newest features of infrahub-sync:
+# from-netbox — demonstrates the two newest features of infrahub-sync:
 #
 #   1. Auto-tiered write order. The `order:` list has been removed; the engine
 #      derives tiers from `schema_mapping[].fields[].reference` and groups
@@ -7,18 +7,18 @@
 #      enforce a hard barrier between tiers.
 #
 #   2. Parquet sidecar cache. Every `diff` writes per-resource snapshots and
-#      a `plan.parquet` under `.infrahub-sync-cache/netbox-demo-to-infrahub/<run_id>/`.
+#      a `plan.parquet` under `.infrahub-sync-cache/from-netbox/<run_id>/`.
 #      The run_id is logged at INFO; pass it to `apply` to re-dispatch the
 #      cached plan without re-extracting the source.
 #
 # Usage:
-#   uv run infrahub-sync diff --name netbox-demo-to-infrahub --directory sync-projects
-#   uv run infrahub-sync apply --name netbox-demo-to-infrahub --run-id <run_id> --directory sync-projects
-#   uv run infrahub-sync sync --name netbox-demo-to-infrahub --directory sync-projects --parallel
+#   uv run infrahub-sync diff --name from-netbox --directory sync-projects
+#   uv run infrahub-sync apply --name from-netbox --run-id <run_id> --directory sync-projects
+#   uv run infrahub-sync sync --name from-netbox --directory sync-projects --parallel
 #
 # ---------------------------------------------------------------------------
 
-name: netbox-demo-to-infrahub
+name: from-netbox
 
 source:
   name: netbox
