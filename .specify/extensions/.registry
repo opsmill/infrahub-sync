@@ -99,7 +99,7 @@
     "review": {
       "version": "1.0.1",
       "source": "local",
-      "manifest_hash": "sha256:3f9eedfc8079662edfb8d1f9c07a161be4e66111ea57621061f1658e91710d83",
+      "manifest_hash": "sha256:03280a72362451b931aa867f9b3ea1441e9c0dde274f90d95e382dc3845ad79a",
       "enabled": true,
       "priority": 10,
       "registered_commands": {
