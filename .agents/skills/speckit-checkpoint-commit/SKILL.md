@@ -23,19 +23,27 @@ every phase so each phase is independently reviewable and revertable.
 2. Reject detached HEAD: if `git symbolic-ref -q HEAD` fails, **abort without
    committing** and surface the problem — a checkpoint on a detached HEAD is
    unreachable the moment anything else is checked out.
-3. Hard-deny protected branches. If `git rev-parse --abbrev-ref HEAD` returns
-   `main`, `master`, `develop`, `stable`, `trunk`, or anything under
-   `release/`, **abort without committing** and surface the problem to the
+3. Abort during in-progress git operations: if a merge, rebase, cherry-pick,
+   revert, or bisect is in progress — `git status` reports it, or any of
+   `.git/MERGE_HEAD`, `.git/rebase-merge`, `.git/rebase-apply`,
+   `.git/CHERRY_PICK_HEAD`, `.git/REVERT_HEAD`, `.git/BISECT_LOG` exist —
+   **abort without committing** and surface it: a commit here finalizes or
+   corrupts that operation.
+4. Hard-deny protected branches. If `git rev-parse --abbrev-ref HEAD` returns
+   `main`, `master`, `develop`, `dev`, `stable`, `trunk`, anything under
+   `release/` or `releases/`, anything matching `release-*`, or the remote's
+   default branch (`git symbolic-ref refs/remotes/origin/HEAD`, when set),
+   **abort without committing** and surface the problem to the
    caller — the pipeline should have created a feature branch (jpd extension
    `before_specify` hook) before any phase ran.
-4. Soft-check the branch name. If it does not match one of the speckit
+5. Soft-check the branch name. If it does not match one of the speckit
    feature-branch patterns — sequential `^[0-9]{3,}-`, timestamp
    `^[0-9]{8}-[0-9]{6}-`, or ticket-suffixed `-(infp|ifc)-[0-9]+$` — proceed,
    but flag the non-standard name prominently in your report so the
    orchestrator log records it. (Hard-blocking here would break legitimate
    runs on hand-named branches; the hard guards above cover the dangerous
    cases.)
-5. Check the index before staging anything: run `git diff --cached
+6. Check the index before staging anything: run `git diff --cached
    --name-only`. If it lists files that are not attributable to the phase
    that just finished, **abort without committing and without modifying the
    index** — never `git reset`, unstage, or otherwise touch pre-staged
@@ -43,17 +51,19 @@ every phase so each phase is independently reviewable and revertable.
    paths in your report. If the pre-staged entries are all phase-attributable
    (e.g. a prior invocation staged but failed before committing), proceed and
    note this in the report.
-6. Never push. Never amend. One new commit per invocation, nothing else.
+7. Never push. Never amend. One new commit per invocation, nothing else.
 
 ## What to stage
 
 Stage the changes attributable to the phase that just finished:
 
 - Preparation phases (specify / plan / critique / tasks): the feature
-  directory's contents. Resolve the feature directory the way the tooling
-  does: `SPECIFY_FEATURE_DIRECTORY` when set, else the `feature_directory`
-  key from `.specify/feature.json` when present and parseable, else
-  `dev/specs/<feature>/` (the default). Also stage any files those phases
+  directory's contents. Resolve the feature directory with the canonical
+  resolver — `bash -c 'source .specify/scripts/bash/common.sh &&
+  get_feature_paths'` — and read `FEATURE_DIR` from its output. If it exits
+  non-zero (no `SPECIFY_FEATURE_DIRECTORY` and no parseable
+  `.specify/feature.json`), **abort without committing and without modifying
+  anything** — never guess a directory. Also stage any files those phases
   legitimately regenerate (e.g. agent context files).
 - Implement chunks and review fixes: the source, test, and doc files the chunk
   changed, plus its tasks.md checkbox updates.
