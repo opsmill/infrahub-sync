@@ -193,7 +193,7 @@ curl -L \
   -o sync-projects/netbox-demo/config.yml
 ```
 
-The downloaded configuration is named `netbox-demo-to-infrahub`. It maps selected NetBox objects onto the Infrahub schema.
+The downloaded configuration is named `from-netbox`. It maps selected NetBox objects onto the Infrahub schema.
 
 Open `sync-projects/netbox-demo/config.yml` in an editor and scan the top-level keys:
 
@@ -213,7 +213,7 @@ For a fuller explanation of this file, see [Create a sync project](../creating-a
 Generate the Python models and adapter code for this sync project.
 
 ```bash
-uv run infrahub-sync generate --name netbox-demo-to-infrahub --directory sync-projects
+uv run infrahub-sync generate --name from-netbox --directory sync-projects
 ```
 
 The `generate` command reads the sync configuration and the destination schema, then writes the Python code used at runtime. Run `generate` again any time you edit `config.yml`.
@@ -235,10 +235,10 @@ The rest of this tutorial runs `diff` and `sync` against this branch with `--bra
 Run a dry-run diff against the `netbox-import` branch before writing any data to Infrahub.
 
 ```bash
-uv run infrahub-sync diff --name netbox-demo-to-infrahub --directory sync-projects --branch netbox-import
+uv run infrahub-sync diff --name from-netbox --directory sync-projects --branch netbox-import
 ```
 
-The `diff` command loads data from NetBox and Infrahub, compares both sides, and prints the planned changes. It also writes a cached plan under `.infrahub-sync-cache/netbox-demo-to-infrahub/<run-id>/plan.parquet`.
+The `diff` command loads data from NetBox and Infrahub, compares both sides, and prints the planned changes. It also writes a cached plan under `.infrahub-sync-cache/from-netbox/<run-id>/plan.parquet`.
 
 Review the output before continuing. On a first run against an empty branch, most planned changes should be creates. Exact counts depend on the current public NetBox demo data.
 
@@ -247,7 +247,7 @@ Review the output before continuing. On a first run against an empty branch, mos
 After reviewing the diff, run the sync against the same branch.
 
 ```bash
-uv run infrahub-sync sync --name netbox-demo-to-infrahub --directory sync-projects --branch netbox-import --diff
+uv run infrahub-sync sync --name from-netbox --directory sync-projects --branch netbox-import --diff
 ```
 
 The `--diff` option prints the diff before applying the changes. The first sync can take a few minutes because it writes the imported objects and relationships into the `netbox-import` branch — `main` is untouched until you merge the resulting proposed change. Because this configuration omits `order:`, Infrahub Sync derives the write order from the mapping references.
