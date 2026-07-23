@@ -17,12 +17,27 @@ $ARGUMENTS
 - Verify Git is available by running `git rev-parse --is-inside-work-tree 2>/dev/null`
 - If Git is not available, warn the user and skip branch creation
 
+## Step 0: Check Current Branch
+
+Run `git rev-parse --abbrev-ref HEAD`. If the current branch already matches
+`-(infp|ifc)-[0-9]+$` AND either no ticket ID is present in `$ARGUMENTS`, or
+the branch's ticket suffix equals the normalized ticket ID from `$ARGUMENTS`,
+output:
+
+> "✓ Reusing feature branch: <branch>"
+
+and stop — do not call the script. Only fall through to Step 1 and branch
+creation otherwise.
+
 ## Step 1: Resolve Ticket Reference
 
 Parse `$ARGUMENTS` for a ticket ID matching either of these formats, **case-insensitively** — tickets are usually written uppercase (`INFP-646`), but any case is valid input:
 
-- JPD format: `infp-[0-9]+` (e.g., `INFP-646`, `infp-646`)
-- Jira epic format: `ifc-[0-9]+` (e.g., `IFC-2140`, `ifc-2140`)
+- JPD format: `\b(?:infp)-[0-9]+\b` (e.g., `INFP-646`, `infp-646`)
+- Jira epic format: `\b(?:ifc)-[0-9]+\b` (e.g., `IFC-2140`, `ifc-2140`)
+
+Both patterns are word-bounded: a ticket embedded in a longer token (e.g.
+`notinfp-646x`) must be **rejected**, not extracted.
 
 Normalize the matched ticket ID to **lowercase** before using it anywhere: the branch suffix is always lowercase (input `INFP-646` -> suffix `infp-646`), matching git branch conventions and the patterns `speckit.git.validate` accepts.
 
@@ -61,7 +76,7 @@ GIT_BRANCH_NAME="embeddable-python-library-infp-646" .specify/extensions/git/scr
 
 - Always construct `GIT_BRANCH_NAME` as `<short-name>-<ticket-id>` — ticket ID is the suffix
 - Always include `--json` so output can be parsed reliably
-- Run this script exactly once per feature
+- Run this script at most once per feature; skip when Step 0 reuses the branch
 - For single quotes in args, use escape syntax: `'I'\''m Groot'`
 
 ## Output

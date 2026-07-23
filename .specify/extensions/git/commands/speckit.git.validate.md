@@ -40,7 +40,7 @@ If on a feature branch (matches any of the patterns):
 
 If NOT on a feature branch:
 - Output: `✗ Not on a feature branch. Current branch: <branch-name>`
-- Output: `Feature branches should be named like: 001-feature-name or 20260319-143022-feature-name`
+- Output: `Feature branches should be named like: 001-feature-name, 20260319-143022-feature-name, or short-name-infp-646`
 
 ## Graceful Degradation
 
