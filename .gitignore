@@ -20,6 +20,8 @@ bench-results.csv
 .bench-filtered-config.yml
 # spec-kit transient download cache (extensions/presets)
 .specify/**/.cache/
+# spec-kit per-feature working state
+.specify/feature.json
 # Virtual environments
 .venv/
 venv/
