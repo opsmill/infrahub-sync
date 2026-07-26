@@ -8,7 +8,7 @@
 
 ## Content Quality
 
-- [x] No implementation details (languages, frameworks, APIs)
+- [ ] No implementation details (languages, frameworks, APIs)
 - [x] Focused on user value and business needs
 - [x] Written for non-technical stakeholders
 - [x] All mandatory sections completed
@@ -29,7 +29,7 @@
 - [x] All functional requirements have clear acceptance criteria
 - [x] User scenarios cover primary flows
 - [x] Feature meets measurable outcomes defined in Success Criteria
-- [x] No implementation details leak into specification
+- [ ] No implementation details leak into specification
 
 ## Notes
 
@@ -42,7 +42,19 @@
   acceptance criterion (DBA-001..DBA-013) is mapped in the spec's Requirements Traceability table.
   No brief item is unmapped, and no functional requirement or success criterion was added that the
   brief does not carry.
-- **Deliberate deferrals**: two design commitments are recorded under Open Design Decisions rather
-  than resolved — the plan artifact's concrete on-disk encoding, and which existing commands carry
-  review. Both are noted as planning-phase decisions, not clarification gaps, because the brief
-  either explicitly leaves them open or the choice binds nine downstream outcomes.
+- **Deliberate deferrals**: two design commitments were originally recorded under Open Design
+  Decisions rather than resolved — the plan artifact's concrete on-disk encoding, and which existing
+  commands carry review. The clarification session of 2026-07-26 answered both, plus three further
+  commitments it surfaced, and recorded all five as provisional decisions AD001–AD005.
+- **Two content-quality items regressed in the clarification session, for one reason.** "No
+  implementation details" and "No implementation details leak into specification" are now unchecked
+  because the Clarifications section names a concrete encoding, a checksum algorithm, and CLI flag
+  spellings. That is the deliberate output of clarification, not drift: five design commitments that
+  nine downstream outcomes consume are better stated than left to be chosen silently at
+  implementation time. The functional requirements themselves were kept behavior-level and point at
+  the decision IDs rather than restating them. Re-evaluate both items once AD001–AD005 are ratified
+  and the `[PROVISIONAL ...]` markers are stripped; if the decisions belong in the plan rather than
+  the spec, that is the moment to move them.
+- **`[PROVISIONAL ADnnn]` is not a `[NEEDS CLARIFICATION]` marker.** The former records an answered
+  decision awaiting ratification; the latter records an unanswered question. No marker of the latter
+  kind remains.

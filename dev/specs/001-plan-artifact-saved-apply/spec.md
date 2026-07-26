@@ -24,6 +24,65 @@ the run recomputes everything at apply time. Teams in change-managed environment
 and approve every set of changes before they are written, and must be able to show that what
 was applied is what was approved.
 
+## Clarifications
+
+### Session 2026-07-26
+
+Five underspecified areas were resolved. All five are implementation decisions the brief either
+delegates explicitly or does not reach; none changes scope. Each is **provisional** pending
+ratification — the `[PROVISIONAL AD0NN]` markers below are the ratification handles and are
+removed once the decision is confirmed.
+
+- Q: What is the plan artifact's concrete on-disk encoding and file layout, how is its checksum
+  computed, and how is a pre-existing v1 plan detected? → A: A `plan/` directory inside the
+  existing per-run directory holds `manifest.json` and `operations.jsonl`. Both are canonical
+  JSON — UTF-8, keys sorted, no insignificant whitespace, LF line endings — with
+  `operations.jsonl` carrying exactly one operation object per line in dependency-tier order and,
+  within a tier, ascending operation-identifier order. A single manifest field `plan_checksum`
+  holds a SHA-256 over the canonical manifest with `plan_checksum`, the run identifier, and the
+  creation timestamp excluded, concatenated with the bytes of `operations.jsonl`; the excluded set
+  is exactly the set SC-006 masks, which is what makes the manifest byte-identical across
+  re-plans. A manifest field `operations_count` distinguishes an empty plan (file present, zero
+  lines, count 0) from a torn one (file absent or line count disagreeing with the manifest). The
+  pre-existing `plan.parquet` is left in place untouched and is not read by the new apply path; a
+  run directory with `plan.parquet` but no `plan/manifest.json` is what identifies a v1 plan.
+  `[PROVISIONAL AD001]`
+- Q: How is an operation identifier derived? → A: `op_` followed by the first 16 hex characters of
+  a SHA-256 over the canonical JSON of the triple (action, destination kind, destination identity).
+  The payload is deliberately excluded, so the identifier names the logical operation and stays
+  stable across re-plans; exactness of the payload is already guaranteed by `plan_checksum`. The
+  identifier is derived, never random or positional, so re-planning identical input reproduces it
+  byte-for-byte. Uniqueness within a plan is asserted at write time rather than assumed.
+  `[PROVISIONAL AD002]`
+- Q: How does a planned operation reference its relationship peers so they can be resolved at apply
+  time with no comparison store loaded? → A: Each reference records the peer's kind and the peer's
+  identity values — never a destination-assigned identifier, which does not exist yet at plan time
+  for peers this same plan creates and which would not survive being moved between environments.
+  A cardinality-one reference is a single object; a cardinality-many reference is a list ordered
+  canonically by the peer identity, so it is stable for SC-006. At apply time peers are resolved
+  through a per-apply cache keyed by (kind, identity), populated as each planned create or update
+  completes and, on a miss, by querying the destination for that identity and memoizing the
+  result. Dependency-tier ordering guarantees a peer is written before anything referring to it.
+  `[PROVISIONAL AD003]`
+- Q: How are delete operations recorded in the plan without changing what the write path writes?
+  → A: Delete operations are derived from the loaded destination state — the destination-only
+  identities remaining after the source identities are removed — and are materialized only into
+  plan records. They are never placed into the comparison result that the write path consumes, so
+  a delete is structurally incapable of reaching the destination rather than merely being
+  suppressed by configuration. The comparison flags configured for a project keep their present
+  meaning for the write path and are not loosened. Deletes are recorded from this one source only,
+  so an operation cannot be recorded twice and collide on its identifier.
+  `[PROVISIONAL AD004]`
+- Q: Which existing commands carry plan review, and what is the exact spelling? → A: The existing
+  non-mutating `diff` command gains a read-from-artifact mode: `--run-id <id> --from-plan` prints
+  the summary, `--detail` expands to per-object records, and `--kind <kind>` narrows the detail to
+  one kind. In that mode no adapter is constructed and neither side is extracted, which is what
+  lets review run in a process that did not produce the plan. No command is added and no command
+  group is added. Review output is written to standard output rather than the log stream, since it
+  is the command's product and must be capturable for the credential scan. The in-process reader is
+  the single implementation; the command is a thin renderer over it, so both paths in SC-009
+  exercise the same code. `[PROVISIONAL AD005]`
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Review a saved plan, then apply it by run ID (Priority: P1)
@@ -177,11 +236,15 @@ references.
   planned operations fails with a clear, actionable error naming the adapter — the behavior the
   engine already has today.
 - **Empty plan.** A plan with zero operations is a valid artifact; applying it is a successful
-  no-op.
+  no-op. It is recorded as a present-but-empty operations section with a count of zero, which is
+  what keeps it distinguishable from the torn case below.
 - **Torn artifact.** A plan whose manifest exists but whose operations or source snapshot are
-  absent or truncated is refused, not partially applied.
+  absent or truncated is refused, not partially applied. An operations section whose length
+  disagrees with the count the manifest records is torn.
 - **Identifier collision.** Two operations must never share an operation identifier within one
-  plan.
+  plan. Since the identifier is derived from the action, kind, and destination identity, a
+  collision means two operations target the same object with the same action; the plan run fails
+  rather than emitting a plan whose identifiers do not address one operation each.
 - **Non-unique destination identifier.** Convergence rides on the destination unique-constraining
   the identifier attribute; without that constraint an upsert produces duplicates. This is
   detected and reported at plan time, as a warning naming the affected kind and identifier.
@@ -203,28 +266,44 @@ references.
   *(DBR-001)*
 - **FR-002**: The plan artifact format MUST be defined, and MUST carry, per operation: a stable
   operation identifier, the action, the destination kind, destination identity, the required
-  source values as a full payload, relationship references, and a dependency tier. *(DBR-008,
-  DBR-011)*
+  source values as a full payload, relationship references, and a dependency tier. Each
+  relationship reference MUST identify its peer by kind and identity values, never by a
+  destination-assigned identifier. *(DBR-008, DBR-011; encoding and layout per AD001, reference
+  shape per AD003)*
 - **FR-003**: Every operation MUST carry a stable identifier that links review, application,
-  audit, and recovery records for that operation. *(DBR-005)*
+  audit, and recovery records for that operation. The identifier MUST be derived from the
+  operation's action, destination kind, and destination identity — never randomly generated and
+  never derived from the operation's position in the plan — so that re-planning identical input
+  reproduces it and a plan that gains or loses an operation does not renumber the others.
+  *(DBR-005; derivation per AD002)*
 - **FR-004**: The artifact MUST include a plan manifest binding it to its run, its configuration
-  version, and the source snapshot it was planned against, with a deterministic checksum over the
-  manifest and the ordered operations. *(DBR-006, DBR-008)*
-- **FR-005**: The manifest and the ordered operations MUST be serialized deterministically, so
-  the checksum is stable across re-serialization of identical content. *(DBR-014)*
+  version, and the source snapshot it was planned against, with a single deterministic checksum
+  over the manifest and the ordered operations. The checksum MUST exclude only the checksum field
+  itself, the run identifier, and the creation timestamp, so that the fields SC-006 masks are
+  exactly the fields the checksum does not cover. *(DBR-006, DBR-008; computation per AD001)*
+- **FR-005**: The manifest and the ordered operations MUST be serialized deterministically — a
+  fixed key order, no insignificant whitespace, a fixed ordering of the operations, and a fixed
+  ordering of every ordered collection inside them — so the checksum is stable across
+  re-serialization of identical content. *(DBR-014; encoding per AD001)*
 - **FR-006**: A saved plan MUST be reviewable at two depths: a summary giving counts by action and
   by kind, and per-object detail for the operations it contains. *(DBR-002)*
 - **FR-007**: The plan MUST be readable from the stored artifact at any time after the run,
   including after the process that produced it has exited. *(DBR-012)*
 - **FR-008**: Both review depths MUST be reachable in-process and by extending CLI commands that
-  already exist. No new CLI command group is introduced. *(DBR-020)*
+  already exist. No new CLI command is added and no new CLI command group is introduced. Review
+  MUST be carried by the existing non-mutating command, MUST NOT construct an adapter or extract
+  either side, and MUST write its output to standard output so it can be captured and scanned. The
+  in-process reader MUST be the single implementation, with the command a thin renderer over it.
+  *(DBR-020; command and flag spelling per AD005)*
 - **FR-009**: Before any destination write, an apply MUST verify that the plan checksum, the
   configuration version, and the source-snapshot binding still match. A plan that fails any of
   these MUST be refused, naming the failed check, and the run MUST NOT reach an applied state.
   *(DBR-003, DBR-006)*
 - **FR-010**: The plan and its source snapshot MUST be bound so the pair cannot tear. A plan whose
   manifest exists but whose operations or source snapshot are absent or truncated MUST be refused
-  on the same path as a mismatch. *(DBR-015)*
+  on the same path as a mismatch. The manifest MUST carry an operation count so that a plan with
+  no operations is distinguishable from a plan whose operations are missing, rather than the two
+  presenting identically. *(DBR-015; count field per AD001)*
 - **FR-011**: The manifest's configuration-version field MUST hold a deterministic content
   checksum computed over the configuration the run used, unless the caller supplies a version
   identifier explicitly, in which case that value MUST be stored verbatim. Either way the value
@@ -237,23 +316,39 @@ references.
   convergently, so that repeating an operation does not create a second object. *(DBR-013,
   DBR-011)*
 - **FR-014**: Relationship peers MUST be resolvable at apply time without a loaded comparison
-  store. *(DBR-007, DBR-011)*
+  store, from the peer kind and identity the plan itself carries. Resolution MUST be memoized
+  within one apply, MUST take an operation's own result as the resolution for later operations
+  referring to it, and MUST fall back to querying the destination for that identity on a miss.
+  Dependency-tier ordering MUST guarantee a peer is written before anything referring to it.
+  *(DBR-007, DBR-011; resolution shape per AD003)*
 - **FR-015**: Delete operations MUST be recorded in the plan, changing today's default of
-  suppressing them. Test fixtures and documentation affected by that change MUST be updated in
-  the same change. *(DBR-009)*
-- **FR-016**: A delete MUST NOT be applied to the destination. *(DBR-010)*
+  suppressing them. They MUST be derived from the destination-only identities in the loaded
+  destination state and materialized only into plan records, never into the comparison result the
+  write path consumes. The comparison flags a project configures MUST keep their present meaning
+  for the write path and MUST NOT be loosened to make deletes visible. Deletes MUST come from that
+  one source only, so no operation is recorded twice. Test fixtures and documentation affected by
+  the change in plan content MUST be updated in the same change. *(DBR-009; mechanism per AD004)*
+- **FR-016**: A delete MUST NOT be applied to the destination by the saved-plan apply path. The
+  existing write path's behavior under a project's configured comparison flags is unchanged by this
+  feature. *(DBR-010)*
 - **FR-017**: An unsupported operation in a plan MUST be reported at apply time and MUST fail the
   run; it MUST NOT be silently skipped. Supported operations in the same plan are still applied.
   *(DBR-016)*
 - **FR-018**: No secret value MUST appear in the plan artifact or in any review output. *(DBR-017)*
 - **FR-019**: A plan artifact in the pre-existing v1 row format MUST be detected and rejected with
   a message directing the operator to re-plan. The reader MUST NOT accept v1 rows, v1 plans MUST
-  NOT be migrated, and no second apply path with weaker guarantees may be built. *(DBR-019)*
+  NOT be migrated, and no second apply path with weaker guarantees may be built. Detection MUST NOT
+  depend on parsing a v1 artifact: a run holding only the pre-existing plan file and no new-format
+  manifest is a v1 plan. The pre-existing file MUST be left in place rather than deleted or
+  rewritten. *(DBR-019; detection rule per AD001)*
 - **FR-020**: The identifiers of operations reported as applied MUST be recorded on the run
   result. *(scope boundary: run result only, not a durable ledger)*
-- **FR-021**: Two operations within one plan MUST NOT share an operation identifier.
+- **FR-021**: Two operations within one plan MUST NOT share an operation identifier. Because the
+  identifier is derived rather than allocated, uniqueness MUST be asserted when the plan is written
+  and MUST fail the plan run if it does not hold, rather than being assumed.
 - **FR-022**: A plan with zero operations MUST be a valid artifact, and applying it MUST be a
-  successful no-op.
+  successful no-op. It MUST be represented as a present-but-empty operations section with a
+  recorded count of zero, not as an absent one.
 - **FR-023**: Applying a plan against an adapter with no planned-write surface MUST fail with a
   clear, actionable error naming the adapter, before any write is attempted.
 - **FR-024**: When a destination identifier attribute is not unique-constrained, the plan run MUST
@@ -266,14 +361,19 @@ references.
 ### Key Entities
 
 - **Plan artifact**: The durable output of a plan run — a manifest plus an ordered set of planned
-  operations, readable independently of the process that wrote it, and versioned so a
-  pre-existing v1 plan is recognizable and refusable.
+  operations, held together in the run's own directory, readable independently of the process that
+  wrote it and readable without loading all of it at once, and versioned so a pre-existing v1 plan
+  is recognizable and refusable. *(concrete layout per AD001)*
 - **Plan manifest**: The artifact's header. Binds the artifact to its run identifier, the
-  configuration version it ran with, and the source snapshot it was planned against, and carries
-  the deterministic checksum over itself and the ordered operations.
+  configuration version it ran with, and the source snapshot it was planned against; records the
+  format version and the operation count; and carries the deterministic checksum over itself and
+  the ordered operations. *(fields and checksum rule per AD001)*
 - **Planned operation**: One proposed change. Carries a stable operation identifier, the action
   (create, update, delete, or relationship change), the destination kind, destination identity,
   the required source values as a full payload, relationship references, and a dependency tier.
+- **Relationship reference**: A peer named by kind and identity values rather than by any
+  destination-assigned identifier, so it is resolvable at apply time and does not depend on which
+  destination instance the plan is applied to. *(per AD003)*
 - **Source snapshot**: The extracted source-side state the plan was computed against, bound to
   the plan so the pair cannot tear.
 - **Run**: The unit a plan belongs to and the handle an apply is requested by. Carries the run
@@ -385,7 +485,8 @@ Carried verbatim from the brief. None of the following is delivered here.
 - The configuration-version value is consumed as an opaque input. Before a version registry
   exists, a checksum over the configuration's declared content satisfies the binding.
 - Which existing commands carry review, and their exact flag spelling, is an implementation choice
-  within one fixed constraint: no new top-level command group.
+  within one fixed constraint: no new top-level command group. That choice is now recorded as
+  AD005 rather than left open.
 
 ## Dependencies
 
@@ -440,14 +541,27 @@ Brief requirements (DBR) and acceptance criteria (DBA) to the sections that carr
 
 ## Open Design Decisions
 
-Deferred deliberately — these are design commitments other outcomes consume, not choices to make
-silently during implementation.
+Both items previously deferred here are now answered in [Clarifications](#clarifications) and
+carried into the requirements above. They are recorded as **provisional** decisions rather than
+silent implementation choices, because they are design commitments other outcomes consume:
 
-- **The plan artifact's concrete on-disk encoding.** The brief fixes what the format must carry
-  and that it must serialize deterministically, but not the encoding. Nine later outcomes consume
-  this format and any later change to it is a breaking change for all of them, so the encoding is
-  a decision for the planning phase, recorded explicitly rather than assumed.
-- **Which existing commands carry review, and the exact flag spelling.** The brief states this is
-  an implementation choice within one fixed constraint (no new top-level command group), and that
-  whatever is chosen will later be folded into a `plan` group without changing behavior. It is
-  user-visible, so it is named here rather than left implicit.
+- **The plan artifact's concrete on-disk encoding** — decided as AD001. Nine later outcomes consume
+  this format and any later change to it is a breaking change for all of them, so it is recorded
+  explicitly and marked provisional until ratified.
+- **Which existing commands carry review, and the exact flag spelling** — decided as AD005. It is
+  user-visible and will later be folded into a `plan` group without changing behavior, so it is
+  named rather than left implicit.
+
+Three further design commitments were surfaced during clarification and recorded the same way:
+AD002 (operation-identifier derivation), AD003 (relationship-reference shape and apply-time peer
+resolution), and AD004 (how deletes are recorded without changing what the write path writes).
+
+Nothing here remains open. What remains genuinely deferred is not a design commitment:
+
+- **Plan size and review performance.** The brief sets no volume or latency target, so none is
+  invented here. The encoding chosen in AD001 is line-oriented specifically so a large plan can be
+  summarized and detailed without loading all of it, which is the property a later target would
+  need; no threshold is asserted.
+- **How a missing destination unique constraint is detected** for the FR-024 warning. The
+  requirement and the warning's content are fixed; the detection mechanism is a planning-phase
+  choice with no cross-outcome contract attached.
