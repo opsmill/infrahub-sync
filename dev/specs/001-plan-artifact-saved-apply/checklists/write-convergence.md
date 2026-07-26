@@ -21,66 +21,66 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 
 ## Requirement Completeness
 
-- [ ] CHK001 Is it stated whether convergent planned writes are required of any destination adapter other than Infrahub, given FR-013 names only the Infrahub adapter while SC-002 is worded adapter-agnostically? [Completeness, Spec §FR-013, §SC-002, §FR-023]
-- [ ] CHK002 Are requirements defined for what a planned update must do with destination attributes that are present in the destination but absent from the plan payload — leave, clear, or unspecified? [Gap, Spec §FR-002, §FR-013]
-- [ ] CHK003 Are requirements defined for the semantics of a cardinality-many relationship write — does the plan's peer list replace the destination's peer set or add to it? [Gap, Spec §FR-014, §SC-008, §Clarifications AD003]
-- [ ] CHK004 Is the peer-resolution miss path complete — what happens when the destination query for a peer identity returns nothing, and what happens when it returns more than one match? [Gap, Spec §FR-014]
-- [ ] CHK005 Is tier assignment specified sufficiently to underwrite FR-014's guarantee that a peer is written before anything referring to it, including self-references and cycles? [Gap, Spec §FR-014, §FR-002]
+- [X] CHK001 Is it stated whether convergent planned writes are required of any destination adapter other than Infrahub, given FR-013 names only the Infrahub adapter while SC-002 is worded adapter-agnostically? [Completeness, Spec §FR-013, §SC-002, §FR-023]
+- [X] CHK002 Are requirements defined for what a planned update must do with destination attributes that are present in the destination but absent from the plan payload — leave, clear, or unspecified? [Gap, Spec §FR-002, §FR-013]
+- [X] CHK003 Are requirements defined for the semantics of a cardinality-many relationship write — does the plan's peer list replace the destination's peer set or add to it? [Gap, Spec §FR-014, §SC-008, §Clarifications AD003]
+- [X] CHK004 Is the peer-resolution miss path complete — what happens when the destination query for a peer identity returns nothing, and what happens when it returns more than one match? [Gap, Spec §FR-014]
+- [X] CHK005 Is tier assignment specified sufficiently to underwrite FR-014's guarantee that a peer is written before anything referring to it, including self-references and cycles? [Gap, Spec §FR-014, §FR-002]
 - [ ] CHK006 Is the consequence of the FR-024 warning stated — does the plan run still succeed, and is the warning recorded in the artifact or only emitted? [Clarity, Spec §FR-024, §Edge Cases/Non-unique destination identifier]
 - [ ] CHK007 Is the FR-024 warning's output destination specified, so it is observable and cannot leak into the review output that SC-010 scans? [Gap, Spec §FR-024, §FR-008, §FR-018]
-- [ ] CHK008 Are requirements defined for what the apply reports per operation on success — enough for SC-005's identifier comparison and SC-003's per-class matrix to be built? [Completeness, Spec §FR-020, §SC-003, §SC-005]
-- [ ] CHK009 Is it stated whether the recorded-delete change affects only the plan artifact, or also every existing renderer of plan content, and is the fixture/documentation update obligation scoped? [Completeness, Spec §FR-015, §Edge Cases/Recorded deletes change existing output]
+- [X] CHK008 Are requirements defined for what the apply reports per operation on success — enough for SC-005's identifier comparison and SC-003's per-class matrix to be built? [Completeness, Spec §FR-020, §SC-003, §SC-005]
+- [X] CHK009 Is it stated whether the recorded-delete change affects only the plan artifact, or also every existing renderer of plan content, and is the fixture/documentation update obligation scoped? [Completeness, Spec §FR-015, §Edge Cases/Recorded deletes change existing output]
 
 ## Requirement Clarity
 
-- [ ] CHK010 Is "convergently" defined by an observable postcondition (the same object, the same identity, no duplicate) rather than by a mechanism? [Clarity, Spec §FR-013, §SC-002]
-- [ ] CHK011 Is "no duplicate" defined against a stated notion of identity — the destination's unique constraint, or the plan's destination identity? [Clarity, Spec §SC-002, §Assumptions]
-- [ ] CHK012 Is "with no loaded comparison store" expressed as an externally checkable condition rather than an internal process state? [Measurability, Spec §FR-014, §SC-008]
+- [X] CHK010 Is "convergently" defined by an observable postcondition (the same object, the same identity, no duplicate) rather than by a mechanism? [Clarity, Spec §FR-013, §SC-002]
+- [X] CHK011 Is "no duplicate" defined against a stated notion of identity — the destination's unique constraint, or the plan's destination identity? [Clarity, Spec §SC-002, §Assumptions]
+- [X] CHK012 Is "with no loaded comparison store" expressed as an externally checkable condition rather than an internal process state? [Measurability, Spec §FR-014, §SC-008]
 - [ ] CHK013 Is "memoized within one apply" clear about the cache's lifetime and invalidation — in particular whether a failed write may leave a resolution cached? [Clarity, Spec §FR-014, §Clarifications AD003]
-- [ ] CHK014 Is "takes an operation's own result as the resolution for later operations" clear for an update that matched an existing object versus one that created it? [Clarity, Spec §FR-014]
-- [ ] CHK015 Is "relationship operations" used consistently to mean one thing — a distinct operation class, or relationship fields carried on create/update operations? [Ambiguity, Spec §FR-014, §FR-002, §SC-003]
+- [X] CHK014 Is "takes an operation's own result as the resolution for later operations" clear for an update that matched an existing object versus one that created it? [Clarity, Spec §FR-014]
+- [X] CHK015 Is "relationship operations" used consistently to mean one thing — a distinct operation class, or relationship fields carried on create/update operations? [Ambiguity, Spec §FR-014, §FR-002, §SC-003]
 
 ## Requirement Consistency
 
-- [ ] CHK016 Are FR-015 (deletes materialized only into plan records) and FR-016 (a delete is never applied) stated so that neither depends on a project's configuration to hold? [Consistency, Spec §FR-015, §FR-016, §Clarifications AD004]
-- [ ] CHK017 Is FR-015's derivation of deletes from "the destination-only identities in the loaded destination state" consistent with any case where the destination load is partial, filtered, or paginated short? [Coverage, Gap, Spec §FR-015]
-- [ ] CHK018 Is SC-003's enumeration of create, update, and relationship as *write classes* consistent with FR-002's model of relationships as fields of an operation? [Consistency, Spec §SC-003, §FR-002]
+- [X] CHK016 Are FR-015 (deletes materialized only into plan records) and FR-016 (a delete is never applied) stated so that neither depends on a project's configuration to hold? [Consistency, Spec §FR-015, §FR-016, §Clarifications AD004]
+- [X] CHK017 Is FR-015's derivation of deletes from "the destination-only identities in the loaded destination state" consistent with any case where the destination load is partial, filtered, or paginated short? [Coverage, Gap, Spec §FR-015]
+- [X] CHK018 Is SC-003's enumeration of create, update, and relationship as *write classes* consistent with FR-002's model of relationships as fields of an operation? [Consistency, Spec §SC-003, §FR-002]
 - [ ] CHK019 Is FR-016's scope boundary ("the existing write path's behavior under configured comparison flags is unchanged") consistent with FR-015's change to plan content for a mode that both plans and writes in one run? [Consistency, Spec §FR-015, §FR-016]
-- [ ] CHK020 Are User Story 3's convergence obligation and FR-013's adapter-scoped obligation consistent about what must converge — the adapter surface, or the whole apply path including relationships? [Consistency, Spec §User Story 3, §FR-013, §FR-014]
-- [ ] CHK021 Is the Out of Scope exclusion of batched destination writes consistent with FR-026's promise that batching remains possible without a plan-format change? [Dependency, Consistency, Spec §Out of Scope, §FR-026]
+- [X] CHK020 Are User Story 3's convergence obligation and FR-013's adapter-scoped obligation consistent about what must converge — the adapter surface, or the whole apply path including relationships? [Consistency, Spec §User Story 3, §FR-013, §FR-014]
+- [X] CHK021 Is the Out of Scope exclusion of batched destination writes consistent with FR-026's promise that batching remains possible without a plan-format change? [Dependency, Consistency, Spec §Out of Scope, §FR-026]
 
 ## Acceptance Criteria Quality and Measurability
 
-- [ ] CHK022 Is SC-003's "clean-single-run counts" defined against a stated baseline — the destination state after one uninterrupted apply of the same plan? [Measurability, Spec §SC-003]
-- [ ] CHK023 Are the two crash windows specified precisely enough to inject deterministically, given "before it is recorded" refers to a record the Out of Scope section says is not durable? [Measurability, Conflict, Spec §SC-003, §Out of Scope, §FR-020]
-- [ ] CHK024 Does SC-008 specify which relationship attributes are compared and how peer ordering is treated in the comparison? [Measurability, Spec §SC-008, §Clarifications AD003]
+- [X] CHK022 Is SC-003's "clean-single-run counts" defined against a stated baseline — the destination state after one uninterrupted apply of the same plan? [Measurability, Spec §SC-003]
+- [X] CHK023 Are the two crash windows specified precisely enough to inject deterministically, given "before it is recorded" refers to a record the Out of Scope section says is not durable? [Measurability, Conflict, Spec §SC-003, §Out of Scope, §FR-020]
+- [X] CHK024 Does SC-008 specify which relationship attributes are compared and how peer ordering is treated in the comparison? [Measurability, Spec §SC-008, §Clarifications AD003]
 - [ ] CHK025 Does FR-013 have a success criterion that exercises the adapter surface itself, distinct from SC-002 which measures the end-to-end apply path? [Traceability, Spec §FR-013, §SC-002]
-- [ ] CHK026 Does FR-024 have any success criterion or acceptance scenario in the spec? [Traceability, Gap, Spec §FR-024, §Requirements Traceability]
-- [ ] CHK027 Is SC-007's "does not delete from the destination" measurable as stated — are the object counts compared before and after defined over which kinds? [Measurability, Spec §SC-007, §FR-016]
-- [ ] CHK028 Is SC-002's "same object identities" comparison defined over an enumerable set (which kinds, which attributes) rather than left open? [Measurability, Spec §SC-002]
+- [X] CHK026 Does FR-024 have any success criterion or acceptance scenario in the spec? [Traceability, Gap, Spec §FR-024, §Requirements Traceability]
+- [X] CHK027 Is SC-007's "does not delete from the destination" measurable as stated — are the object counts compared before and after defined over which kinds? [Measurability, Spec §SC-007, §FR-016]
+- [X] CHK028 Is SC-002's "same object identities" comparison defined over an enumerable set (which kinds, which attributes) rather than left open? [Measurability, Spec §SC-002]
 
 ## Scenario and Edge-Case Coverage
 
-- [ ] CHK029 Are requirements defined for a relationship whose peer exists in the plan only as a recorded delete, which will never be applied? [Gap, Coverage, Spec §FR-014, §FR-016]
-- [ ] CHK030 Are requirements defined for a plan containing only delete operations — does the apply perform no writes and still end in a failed state? [Coverage, Spec §FR-017, §SC-007, §FR-022]
-- [ ] CHK031 Is the crash-window expectation stated for relationship writes specifically, where a crash may leave an object created but its peers unlinked? [Coverage, Spec §SC-003, §FR-014]
-- [ ] CHK032 Are requirements defined for a peer identity that resolves to multiple destination objects because the unique constraint is missing — the FR-024 condition surfacing at apply time rather than plan time? [Gap, Coverage, Spec §FR-024, §FR-014]
+- [X] CHK029 Are requirements defined for a relationship whose peer exists in the plan only as a recorded delete, which will never be applied? [Gap, Coverage, Spec §FR-014, §FR-016]
+- [X] CHK030 Are requirements defined for a plan containing only delete operations — does the apply perform no writes and still end in a failed state? [Coverage, Spec §FR-017, §SC-007, §FR-022]
+- [X] CHK031 Is the crash-window expectation stated for relationship writes specifically, where a crash may leave an object created but its peers unlinked? [Coverage, Spec §SC-003, §FR-014]
+- [X] CHK032 Are requirements defined for a peer identity that resolves to multiple destination objects because the unique constraint is missing — the FR-024 condition surfacing at apply time rather than plan time? [Gap, Coverage, Spec §FR-024, §FR-014]
 - [ ] CHK033 Is behavior specified when a planned update's target no longer exists in the destination at apply time, given destination freshness checks are out of scope? [Gap, Coverage, Spec §FR-012, §Out of Scope]
 - [ ] CHK034 Are requirements defined for a planned create whose object already exists in the destination with a different payload — is that convergence, an update, or a conflict? [Gap, Coverage, Spec §FR-013, §SC-002]
-- [ ] CHK035 Are requirements defined for a relationship reference whose peer kind is not part of the plan or the configuration at all? [Gap, Coverage, Spec §FR-014, §FR-002]
+- [X] CHK035 Are requirements defined for a relationship reference whose peer kind is not part of the plan or the configuration at all? [Gap, Coverage, Spec §FR-014, §FR-002]
 
 ## Dependencies
 
-- [ ] CHK036 Is the dependency on the Infrahub adapter's existing identifier-keyed converging write path recorded with the evidence it rests on and the impact if it does not converge? [Dependency, Assumption, Spec §Assumptions, §FR-013]
-- [ ] CHK037 Is the dependency on dependency tiers existing — whether produced by this outcome or already present — stated rather than presumed by FR-014? [Dependency, Gap, Spec §FR-002, §FR-014, §Assumptions]
-- [ ] CHK038 Is the boundary with the later load-path reference-scan replacement stated in requirement terms, so an implementer can tell which resolution path FR-014 must *not* touch? [Dependency, Spec §Out of Scope, §FR-014]
+- [X] CHK036 Is the dependency on the Infrahub adapter's existing identifier-keyed converging write path recorded with the evidence it rests on and the impact if it does not converge? [Dependency, Assumption, Spec §Assumptions, §FR-013]
+- [X] CHK037 Is the dependency on dependency tiers existing — whether produced by this outcome or already present — stated rather than presumed by FR-014? [Dependency, Gap, Spec §FR-002, §FR-014, §Assumptions]
+- [X] CHK038 Is the boundary with the later load-path reference-scan replacement stated in requirement terms, so an implementer can tell which resolution path FR-014 must *not* touch? [Dependency, Spec §Out of Scope, §FR-014]
 
 ## Assumptions
 
-- [ ] CHK039 Is the unique-constraint assumption scoped — every kind in the qualified configuration, or only the kinds a given plan touches? [Assumption, Spec §Assumptions, §FR-024]
-- [ ] CHK040 Is it stated which convergence requirements depend on provisional AD003 and AD004, and which must be revisited if either is not ratified? [Assumption, Spec §Clarifications AD003, AD004, §Open Design Decisions]
-- [ ] CHK041 Is the assumption recorded that the qualified NetBox → Infrahub configuration contains at least one relationship-bearing kind adequate to evidence SC-008? [Assumption, Spec §Assumptions, §SC-008]
-- [ ] CHK042 Is the deferral of the FR-024 detection mechanism recorded with a statement of what remains fixed (the requirement and the warning's content) versus open (how detection happens)? [Assumption, Spec §Open Design Decisions, §FR-024]
+- [X] CHK039 Is the unique-constraint assumption scoped — every kind in the qualified configuration, or only the kinds a given plan touches? [Assumption, Spec §Assumptions, §FR-024]
+- [X] CHK040 Is it stated which convergence requirements depend on provisional AD003 and AD004, and which must be revisited if either is not ratified? [Assumption, Spec §Clarifications AD003, AD004, §Open Design Decisions]
+- [X] CHK041 Is the assumption recorded that the qualified NetBox → Infrahub configuration contains at least one relationship-bearing kind adequate to evidence SC-008? [Assumption, Spec §Assumptions, §SC-008]
+- [X] CHK042 Is the deferral of the FR-024 detection mechanism recorded with a statement of what remains fixed (the requirement and the warning's content) versus open (how detection happens)? [Assumption, Spec §Open Design Decisions, §FR-024]
 
 ## Notes
 
@@ -129,3 +129,20 @@ remain unchecked; verification is a separate pass.
   discloses that they were not computed. The incremental hydrate path replays the prior run's
   snapshot plus changed-since rows, so an out-of-band destination delete would otherwise surface as a
   phantom delete and force a spurious failed apply under SC-007. Criterion SC-017.
+
+### Independent verification 2026-07-26
+
+35 of 42 items verified satisfied and marked `[X]`; 7 left unchecked. Every `[X]` was confirmed
+against `../spec.md` text, and every code anchor the spec cites was re-checked against the tree —
+including the corrected FR-013 / Assumptions claims about the create-path upsert
+(`adapters/infrahub.py:611-612`), the `local_id`-keyed update path (`:622`, `:510`), the replace-set
+relationship write (`:166-175`) and the HFID key (`infrahub_sdk/node/node.py:295-298`, `:128-138`).
+All are accurate.
+
+- CHK006 — FR-024 (spec.md:654-660) and SC-014 (:791-796) now state that the plan run still succeeds, but neither says whether the warning is recorded in the plan artifact or emitted only; FR-004's manifest field set does not include it. Spec defect, partially fixed.
+- CHK007 — the FR-024 warning's output stream is still unspecified, so it is undecided whether it lands in the log stream or in the stdout surface SC-010 scans (spec.md:771-776). Spec defect.
+- CHK013 — FR-014's memoization (spec.md:575-578) and AD003 (:69-72) still do not say whether a failed write or a failed lookup may leave a resolution cached; negative caching is unaddressed. Spec defect.
+- CHK019 — nothing states whether a `sync`-mode run (which plans and writes in one run, `potenda/__init__.py:458-472`) records deletes in its plan and, if so, that the recorded-versus-written divergence is intended; FR-017's "at apply time" (spec.md:613) leaves it implicit. Spec defect.
+- CHK025 — FR-013 (spec.md:563-573) still has no criterion exercising the adapter's planned-write surface directly, and no statement that it is verified through SC-002 only. Spec defect.
+- CHK033 — a planned update whose target no longer exists at apply is still unspecified; FR-013 routes updates through the upsert, which creates on no match (`infrahub_sdk/node/node.py:295-298`), so a reviewed `update` may silently become a create and nothing says so. Spec defect (the evaluator's sharpest code-level finding).
+- CHK034 — a planned create whose destination identity already exists with a different payload is still unspecified: convergence, implicit update, or conflict. Spec defect / brief-level product ambiguity (conflict policies are out of scope, spec.md:838, which makes overwrite an inference rather than a requirement).

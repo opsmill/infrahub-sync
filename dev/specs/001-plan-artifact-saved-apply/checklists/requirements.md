@@ -58,3 +58,33 @@
 - **`[PROVISIONAL ADnnn]` is not a `[NEEDS CLARIFICATION]` marker.** The former records an answered
   decision awaiting ratification; the latter records an unanswered question. No marker of the latter
   kind remains.
+
+### Independent verification 2026-07-26
+
+Both content-quality items remain unchecked, on a narrower basis than the previous pass recorded.
+
+- **The plan artifact format is not the problem.** The concrete encoding, the checksum rule, the
+  operation-identifier derivation and the CLI flag spelling are all product-level shared contract:
+  the brief assigns "Define the plan artifact's format, including per-operation identifiers and
+  checksums" to this outcome (DBR-008), its "Shared contracts this brief owns" section states the
+  format is owned here and consumed by nine later outcomes, and its Constraints delegate the review
+  carrier and flag spelling explicitly. Those passages stay.
+- **What still fails both items is internal detail inside normative requirement text.** Six
+  functional requirements carry `file:line` code anchors, Python module names, class names and method
+  names in their MUST clauses. That is implementation detail belonging to `plan.md`, not to a
+  specification "written for non-technical stakeholders":
+    1. **FR-005**, spec.md:505 — `` (`generator/__init__.py:28`) `` and the `list[Any]` type name.
+    2. **FR-008**, spec.md:524 — `` cache_root_for(<sync name>)/<run_id> `` and `` (`cache/paths.py:56-59`) ``.
+    3. **FR-009**, spec.md:538 and :541 — `` (`cache/sidecars.py:71`) ``, `` (`cli.py:336-340` …) `` and `` `cli.py:322` ``. The run-state vocabulary itself (`pending | running | dry-run | applied | failed`) is operator-observable and may stay; the anchors may not.
+    4. **FR-013**, spec.md:566-571 — `client.create(...)`, `save(allow_upsert=True)`, `InfrahubModel.update`, `client.get(id=self.local_id, ...)`, `local_id`, and the four anchors `` adapters/infrahub.py:611-612 ``, `:622`, `:510`, `:166-175`, plus `` infrahub_sync/__init__.py:232 ``. The behavioral content — planned creates and updates converge through the destination kind's human-friendly ID, cardinality-many relationships are a replace-set, an update payload is authoritative for the mapped fields it carries — is product-level and stays.
+    5. **FR-014**, spec.md:581-583 — `` (`dependency_graph.py:33-34`) ``, `` (`dependency_graph.py:81-98`) ``, `` (`infrahub_sync/__init__.py:132-133`) ``. The three qualification cases (self-reference, cycle-dropped optional edge, explicit `order:`) are product-level and stay.
+    6. **FR-023**, spec.md:651 — `` (`potenda/__init__.py:354-360`) ``.
+- Every one of those anchors was re-verified against the tree during this pass and is factually
+  correct, so relocation is a placement fix, not a correction.
+- The Clarifications, Assumptions and Dependencies sections also carry code anchors. Those are
+  decision records and recorded before-state facts rather than normative requirement text, and the
+  spec's Open Design Decisions section states that several decisions exist precisely to correct
+  statements this specification made about existing code, so they are left in place.
+- Note for the next pass: **"Written for non-technical stakeholders" is marked `[x]` above but sits
+  uneasily with the same six passages.** It was not unmarked here, because this pass's mandate covered
+  the two unchecked items; it should be re-evaluated once Phase 3 relocates them.
