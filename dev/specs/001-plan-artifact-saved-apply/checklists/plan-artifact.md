@@ -84,16 +84,37 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 
 - Items are intentionally all unchecked. Marking them is a reviewer action, not an authoring action.
 - Spec defects observed and recorded here rather than corrected, per this run's append-only rule:
-  - **Identifier derivation may collide on legitimate plans** (CHK021). FR-003 derives the identifier
-    from action, kind, and identity only; two relationship-change operations against the same object
-    would share all three, yet FR-021 makes a collision fail the plan run.
-  - **The action vocabulary is internally inconsistent** (CHK013). Relationship change is listed as
-    an action in Key Entities and as a write class in SC-003, while FR-002 models relationship
-    references as fields of an operation.
-  - **The snapshot binding has no stated representation** (CHK007, CHK008). SC-004 requires a
-    snapshot-binding-mismatch case and a truncated-snapshot case, but no requirement says what value
-    binds the pair or what detects truncation; the AD001 checksum does not cover snapshot bytes.
-  - **FR-011 is self-tensioned** (CHK018): a caller may supply a version identifier explicitly, yet
-    no new user-facing input is introduced, and the supplying surface is unnamed.
-  - **FR-021, FR-022, and FR-026 carry no acceptance criterion** (CHK025), and FR-026 as worded may
-    not be verifiable at all (CHK024).
+    - **Identifier derivation may collide on legitimate plans** (CHK021). FR-003 derives the identifier
+  from action, kind, and identity only; two relationship-change operations against the same object
+  would share all three, yet FR-021 makes a collision fail the plan run.
+    - **The action vocabulary is internally inconsistent** (CHK013). Relationship change is listed as
+  an action in Key Entities and as a write class in SC-003, while FR-002 models relationship
+  references as fields of an operation.
+    - **The snapshot binding has no stated representation** (CHK007, CHK008). SC-004 requires a
+  snapshot-binding-mismatch case and a truncated-snapshot case, but no requirement says what value
+  binds the pair or what detects truncation; the AD001 checksum does not cover snapshot bytes.
+    - **FR-011 is self-tensioned** (CHK018): a caller may supply a version identifier explicitly, yet
+  no new user-facing input is introduced, and the supplying surface is unnamed.
+    - **FR-021, FR-022, and FR-026 carry no acceptance criterion** (CHK025), and FR-026 as worded may
+  not be verifiable at all (CHK024).
+
+### Remediation applied 2026-07-26
+
+The spec defects above were repaired in `../spec.md` by the delivery-apply remediation pass. Boxes
+remain unchecked; verification is a separate pass.
+
+- CHK007, CHK008 — closed by the `source_snapshot` manifest field (per-file path, SHA-256 digest,
+  row count) added to FR-004, FR-010, Key Entities and the Torn-artifact edge case. `[AD008]`
+- CHK013, CHK021 — closed by closing the action vocabulary to `create | update | delete` in FR-002
+  and Key Entities, restating SC-003's third write class as operations whose payload carries
+  relationship references, and correcting the Identifier-collision edge case. `[AD009]`
+- CHK019 — FR-004 and the AD001 clarification no longer claim the checksum's excluded set equals
+  SC-006's masked set; both now state why the two sets differ.
+- CHK016 — FR-005's ordering rule is now scoped to the operations sequence and relationship-reference
+  lists; order-bearing payload list attributes must not be re-sorted.
+- CHK024, CHK025 — FR-026 is restated as a format constraint; FR-020 through FR-026 each now carry
+  either a criterion or an explicit note, and all appear in the traceability tables.
+- CHK009, CHK010, CHK022, CHK032 — FR-019 now requires manifest-last writing and makes a `plan/`
+  present without a complete manifest torn rather than v1. `[AD014]`
+- CHK011 — resolved as scope: mapped source values only; credentials live in `settings`. `[AD018]`
+- CHK033 — FR-014's tier guarantee is qualified to the computed graph. `[AD022]`

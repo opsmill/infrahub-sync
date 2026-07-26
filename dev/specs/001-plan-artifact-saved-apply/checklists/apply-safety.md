@@ -86,18 +86,40 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 
 - Items are intentionally all unchecked. Marking them is a reviewer action, not an authoring action.
 - Spec defects observed and recorded here rather than corrected, per this run's append-only rule:
-  - **The refused-run state is never named** (CHK001, CHK012). FR-009 says the run must not reach an
-    applied state and SC-004 requires the resulting run state to be asserted, but no state name or
-    transition is specified, so the criterion has no definite pass condition.
-  - **v1 detection collides with a crashed new-format plan write** (CHK016). Both present as the
-    pre-existing plan file with no new manifest, so the two conditions are not separable by the
-    stated rule.
-  - **FR-025 and the ledger exclusion pull against each other** (CHK020, CHK026). The run must record
-    the last operation reported as applied after an interrupted apply, while a durable
-    crash-surviving record is explicitly out of scope.
-  - **SC-004's five negative cases and User Story 2 scenario 1 enumerate different sets** (CHK015):
-    the story names a removed snapshot; the criterion names a binding mismatch and a truncated
-    snapshot.
-  - **Destination-side write failures are unaddressed** (CHK032): FR-017 covers unsupported
-    operations and FR-025 covers stopping partway, but neither covers an operation the destination
-    rejects.
+    - **The refused-run state is never named** (CHK001, CHK012). FR-009 says the run must not reach an
+  applied state and SC-004 requires the resulting run state to be asserted, but no state name or
+  transition is specified, so the criterion has no definite pass condition.
+    - **v1 detection collides with a crashed new-format plan write** (CHK016). Both present as the
+  pre-existing plan file with no new manifest, so the two conditions are not separable by the
+  stated rule.
+    - **FR-025 and the ledger exclusion pull against each other** (CHK020, CHK026). The run must record
+  the last operation reported as applied after an interrupted apply, while a durable
+  crash-surviving record is explicitly out of scope.
+    - **SC-004's five negative cases and User Story 2 scenario 1 enumerate different sets** (CHK015):
+  the story names a removed snapshot; the criterion names a binding mismatch and a truncated
+  snapshot.
+    - **Destination-side write failures are unaddressed** (CHK032): FR-017 covers unsupported
+  operations and FR-025 covers stopping partway, but neither covers an operation the destination
+  rejects.
+
+### Remediation applied 2026-07-26
+
+The spec defects above were repaired in `../spec.md` by the delivery-apply remediation pass. Boxes
+remain unchecked; verification is a separate pass.
+
+- CHK001, CHK012 — FR-009, SC-004, SC-007 and Key Entities/Run now name the existing run-state
+  vocabulary: a refused apply records `failed`, "an applied state" means `status: applied`, and the
+  pre-existing schema-subhash refusal path must record `failed` too. `[AD010]`
+- CHK011 — closed by the `source_snapshot` manifest field in FR-004 and FR-010. `[AD008]`
+- CHK020, CHK026, CHK039 — FR-025 now scopes "stops partway" to in-process termination with a
+  reported error, marks the record best-effort and explicitly not crash-surviving, and carries the
+  ledger scope boundary; SC-003 states its crash windows are measured destination-side. `[AD011]`
+- CHK035 — FR-009 gains a fourth check on the manifest's run identifier, with SC-015 and User Story
+  2 scenario 6 as its criterion. `[AD012]`
+- CHK038 — FR-011 now names the apply-side supplier: recomputed by the same default rule, or
+  compared verbatim when an in-process caller supplies one. `[AD013]`
+- CHK016 — v1 versus torn is made disjoint by manifest-last writing in FR-019. `[AD014]`
+- CHK029 — FR-008 forbids creating a run directory on the review path and requires an error naming
+  an unknown or plan-less run identifier. `[AD021]`
+- CHK030 — the pipeline lock is recorded in Dependencies and the review path is exempted. `[AD021]`
+- CHK027 — SC-005's evidence now reads the apply-side identifiers from the FR-020 record.

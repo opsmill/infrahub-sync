@@ -26,12 +26,17 @@ was applied is what was approved.
 
 ## Clarifications
 
-### Session 2026-07-26
+### Session 2026-07-26 — specification clarification
 
 Five underspecified areas were resolved. All five are implementation decisions the brief either
 delegates explicitly or does not reach; none changes scope. Each is **provisional** pending
 ratification — the `[PROVISIONAL AD0NN]` markers below are the ratification handles and are
 removed once the decision is confirmed.
+
+If a decision is not ratified, every requirement citing it must be revisited: AD001 → FR-002,
+FR-004, FR-005, FR-010, FR-019; AD002 → FR-003, FR-021; AD003 → FR-002, FR-014; AD004 → FR-015,
+FR-016; AD005 → FR-008. The revisit sets for AD008–AD023 are the requirements carrying each
+marker.
 
 - Q: What is the plan artifact's concrete on-disk encoding and file layout, how is its checksum
   computed, and how is a pre-existing v1 plan detected? → A: A `plan/` directory inside the
@@ -40,13 +45,15 @@ removed once the decision is confirmed.
   `operations.jsonl` carrying exactly one operation object per line in dependency-tier order and,
   within a tier, ascending operation-identifier order. A single manifest field `plan_checksum`
   holds a SHA-256 over the canonical manifest with `plan_checksum`, the run identifier, and the
-  creation timestamp excluded, concatenated with the bytes of `operations.jsonl`; the excluded set
-  is exactly the set SC-006 masks, which is what makes the manifest byte-identical across
-  re-plans. A manifest field `operations_count` distinguishes an empty plan (file present, zero
-  lines, count 0) from a torn one (file absent or line count disagreeing with the manifest). The
-  pre-existing `plan.parquet` is left in place untouched and is not read by the new apply path; a
-  run directory with `plan.parquet` but no `plan/manifest.json` is what identifies a v1 plan.
-  `[PROVISIONAL AD001]`
+  creation timestamp excluded, concatenated with the bytes of `operations.jsonl`. The checksum
+  therefore excludes three fields while SC-006 masks two: SC-006 needs no mask for `plan_checksum`
+  because `plan_checksum` is a function of the checksummed bytes alone and is already byte-identical
+  across re-plans of identical content. Excluding the run identifier and the creation timestamp is
+  what makes the manifest byte-identical across re-plans. A manifest field `operations_count`
+  distinguishes an empty plan (file present, zero lines, count 0) from a torn one (file absent or
+  line count disagreeing with the manifest). The pre-existing `plan.parquet` is left in place
+  untouched and is not read by the new apply path; the absence of the whole `plan/` directory is
+  what identifies a v1 plan, per AD014. `[PROVISIONAL AD001]`
 - Q: How is an operation identifier derived? → A: `op_` followed by the first 16 hex characters of
   a SHA-256 over the canonical JSON of the triple (action, destination kind, destination identity).
   The payload is deliberately excluded, so the identifier names the logical operation and stays
@@ -82,6 +89,179 @@ removed once the decision is confirmed.
   is the command's product and must be capturable for the credential scan. The in-process reader is
   the single implementation; the command is a thin renderer over it, so both paths in SC-009
   exercise the same code. `[PROVISIONAL AD005]`
+
+### Session 2026-07-26 — checklist evaluation
+
+Sixteen further areas were resolved after four independent evaluations worked 166 checklist items
+against this specification and the repository. Each resolution takes the reading that does **not**
+expand scope; where the brief's own text settles the matter it is followed rather than re-decided.
+All sixteen are **provisional** on the same basis as AD001–AD005, and the `[PROVISIONAL ADnnn]`
+markers are the ratification handles.
+
+- Q: What value binds the plan to its source snapshot, and how is a truncated snapshot detected? →
+  A: A manifest field `source_snapshot` records, per source-snapshot file the plan was computed
+  against, that file's run-relative path, a SHA-256 digest of its content, and its row count. "Match"
+  is recomputed equality of all three; an absent recorded file, or a disagreeing digest or row count,
+  is a refusal. One field yields both a binding-mismatch signal and a truncation signal, and the row
+  count is already computed on the load path. The source snapshot is one Parquet file per resource
+  rather than a single file — `write_resource_side` writes `<run_dir>/A/<resource>.parquet`
+  (`cache/parquet_io.py:92-142`, called from `_write_side_snapshot`, `potenda/__init__.py:123`) —
+  which is why the field is per file. Because `plan_checksum` covers the canonical manifest, tampering
+  with the recorded digests fails the checksum, so the pair cannot tear without the snapshot bytes
+  themselves entering the checksum. `[PROVISIONAL AD008]`
+- Q: Is "relationship change" a fourth action, or a field carried on a create or update? → A: The
+  action vocabulary is closed to `create | update | delete`. A relationship change travels as
+  relationship references on the owning object's create or update operation, never as a separate
+  action, which matches the brief's In-scope wording ("relationship references" as a per-operation
+  field) and matches the generated models, which are flat and carry relationships as fields
+  (`generator/templates/diffsync_models.j2:29-48`). SC-003's third write class is therefore
+  "operations whose payload carries relationship references". AD002's identifier triple is unchanged:
+  under this model exactly one operation exists per (action, kind, identity), so a collision is always
+  pathological and FR-021's assertion is correct as written. `[PROVISIONAL AD009]`
+- Q: What run state does a refused apply record, and what is "an applied state"? → A: A refused apply
+  records run state `failed`, and "an applied state" means `status: applied`, in the existing run
+  sidecar vocabulary `pending | running | dry-run | applied | failed` (`cache/sidecars.py:71`). No new
+  state is introduced, because `previous_successful_run_dir` consumes that vocabulary through
+  `_SUCCESS_STATUSES = frozenset({"applied", "dry-run"})` (`cache/incremental.py:24`) and adding one
+  would be a compatibility change this outcome does not authorize; `failed` is already outside that
+  set, which is the behavior that matters. The pre-existing schema-subhash refusal path, which today
+  aborts via `print_error_and_abort` (`cli.py:336-340`) after the run sidecar was written with
+  `status: running` (`cli.py:322`) and therefore leaves `running` on disk permanently, must record
+  `failed` too. `[PROVISIONAL AD010]`
+- Q: How can FR-025's partial-apply record hold while a durable crash-surviving ledger is out of
+  scope? → A: "Stops partway" means an apply that terminates in-process with a reported error. The
+  record is best-effort at that point and is explicitly **not** required to survive abnormal process
+  termination. SC-003's crash windows stay evaluable without a durable ledger because their
+  measurement is destination-side — object counts and identities — so the windows remain meaningful as
+  injection points even though no persisted record distinguishes them afterwards.
+  `[PROVISIONAL AD011]`
+- Q: What stops a `plan/` directory copied into a different run directory from verifying clean? →
+  A: A fourth pre-apply check: the manifest's recorded run identifier must equal the run being
+  applied. This is a separate equality comparison rather than a checksum input, because AD001
+  deliberately excludes the run identifier from `plan_checksum` so the manifest can be byte-identical
+  across re-plans (SC-006) — which is exactly what leaves the copied-plan hole. DBA-004 names three
+  checks but does not forbid a fourth, and refusing a mis-filed plan is inside DBR-003's "safe to
+  apply". `[PROVISIONAL AD012]`
+- Q: At apply, the stored configuration-version value is compared for equality — against what? →
+  A: The apply recomputes the value by the same default rule (a deterministic content checksum over
+  the configuration it is applying with) and compares for equality, unless an in-process caller
+  supplies one verbatim, in which case the supplied value is compared verbatim. The value is never
+  parsed either way, and no new user-facing input is added: the CLI apply path uses the default rule
+  only. `[PROVISIONAL AD013]`
+- Q: A crashed new-format plan write leaves `plan.parquet` with no `plan/manifest.json` — is that a v1
+  plan or a torn one, and do new plan runs keep writing `plan.parquet`? → A: `plan/operations.jsonl`
+  is written first and `plan/manifest.json` **last**, so the manifest's presence is the commit point,
+  matching the atomicity discipline the existing sidecars already use (`cache/sidecars.py:13-24`,
+  tmp+replace). A v1 verdict then requires the absence of the whole `plan/` directory; a `plan/`
+  directory present without a complete manifest is TORN, not v1, which makes the two cases disjoint by
+  construction rather than by heuristic. New plan runs keep writing `plan.parquet` unchanged — it is
+  written unconditionally today (`cli.py:152`, `cli.py:271`, `potenda/__init__.py:462`, `:496-499`)
+  and this outcome authorizes no removal — and the new reader never reads it, so DBR-019's "no second
+  apply path" still holds structurally. `[PROVISIONAL AD014]`
+- Q: How does the adapter execute a planned update, given the existing update path cannot run without
+  a destination load? → A: Planned creates **and** updates both route through the HFID-keyed
+  convergent upsert — `client.create(...)` followed by `save(allow_upsert=True)`
+  (`adapters/infrahub.py:611-612`) — and never through `InfrahubModel.update`, which opens with
+  `client.get(id=self.local_id, ...)` (`adapters/infrahub.py:622`) on a `local_id` populated only by a
+  destination load (`adapters/infrahub.py:510`, `infrahub_sync/__init__.py:232`) that DBR-004 forbids.
+  Cardinality-many relationships are **replace-set**, which is the existing behavior: `update_node`
+  computes `compare_lists(existing_peer_ids, new_peer_ids)` and then removes `existing_only` and adds
+  `new_only` (`adapters/infrahub.py:166-175`). An update payload is authoritative for the mapped
+  fields it carries and does not touch unmapped destination fields. `[PROVISIONAL AD015]`
+- Q: What happens when a planned relationship peer matches no destination object, or more than one? →
+  A: A **zero** match refuses the operation and fails the run, naming the peer kind, the peer identity,
+  and the referring operation identifier. A **multiple** match refuses, naming the peer kind, the peer
+  identity, and the match count. Never a silent skip: "a silent skip would make the applied set differ
+  from the reviewed set" is the brief's own reasoning for DBR-016 and it governs a dropped relationship
+  exactly as it governs a dropped operation. This replaces today's behavior, which drops a zero match
+  with a log warning (`adapters/infrahub.py:141-143`, `:212-214`, `:229-231`) and surfaces a
+  multi-match as a bare `IndexError("More than 1 node returned")` from the SDK
+  (`infrahub_sdk/client.py:566`). `[PROVISIONAL AD016]`
+- Q: FR-024 warns when a destination identifier attribute is not unique-constrained — is that the
+  observable convergence actually rides on? → A: No. Convergence rides on Infrahub's
+  `human_friendly_id`: the upsert mutation is keyed on `data["id"]` if set, else `data["hfid"]`
+  (`infrahub_sdk/node/node.py:295-298`), and `get_human_friendly_id` returns `None` when the
+  destination schema declares no `human_friendly_id` or any component is missing
+  (`infrahub_sdk/node/node.py:128-138`) — in which case the upsert is unkeyed and duplicates. FR-024
+  is therefore restated in those terms: warn at plan time when the destination kind declares no
+  `human_friendly_id`, or when the plan's destination identity does not supply every HFID component.
+  It stays a **warning**, not a failure, because the brief says "Detect and report it — at plan time,
+  as a warning". Detection is feasible: the adapter already caches the whole destination schema
+  (`adapters/infrahub.py:345`) and `human_friendly_id` is a field on it
+  (`infrahub_sdk/schema/main.py:272`), though nothing in `infrahub_sync/` reads it today.
+  `[PROVISIONAL AD017]`
+- Q: What marks a value secret, and what does redaction do? → A: The artifact carries mapped source
+  field values only. Credentials live in the configuration's `settings` and are never written to the
+  artifact or to review output. No field-level secret-classification model with omit, mask, or refuse
+  behavior is built — that would be new user-visible behavior, a new configuration surface, and a new
+  failure mode, none of which the brief's In-scope list authorizes. DBA-010's canary is injected as a
+  credential in `settings`, which is where secrets actually enter this system. `[PROVISIONAL AD018]`
+- Q: FR-008 forbids a new CLI command; the brief forbids only a new command group. Which binds? →
+  A: The brief's bar: no new command **group**. DBR-020, DBA-012, D026 and D002 all forbid a group,
+  and the brief's Constraints leave the carrier free. A specification must not assert a constraint
+  stricter than the brief, even a conservative one, because it would make a future in-scope choice
+  look like a violation. AD005 nonetheless extends `diff` by choice, so in fact no command is added
+  either. The distinction is live because the CLI has no groups at all today (`cli.py:31`, a single
+  flat `typer.Typer()` with no `add_typer` anywhere in the package), so the group bar is trivially met
+  and the command bar is the only one doing work. `[PROVISIONAL AD019]`
+- Q: What must per-object review output show? → A: Per operation, at least the operation identifier,
+  the action, the destination kind, and the destination identity. Without this, SC-005's comparison of
+  "the identifiers shown at review" against the apply result has no review-side source.
+  `[PROVISIONAL AD020]`
+- Q: `diff` already has a `--run-id` meaning "re-use a specific cache run id", an unknown run id
+  silently creates the directory, and `diff` takes an exclusive lock. How does review mode behave? →
+  A: In `--from-plan` mode, `--run-id` selects the stored run to read, MUST NOT create a run
+  directory, and an unknown or plan-less run id is an error naming the run identifier and the expected
+  artifact path. The mode constructs no adapter, extracts nothing, and takes no pipeline lock. The
+  existing live-path meaning of `--run-id` (`cli.py:98`) is unchanged. Without this, reviewing a
+  typo'd run id renders as a valid zero-operation plan — the most dangerous possible output for a
+  review-before-write feature, since an empty plan is also a legitimate artifact — because
+  `get_potenda_from_instance` creates the run directory with `mkdir(parents=True, exist_ok=True)`
+  before any check (`utils.py:244-246`) and then writes `schema-sub-hash.txt` into it
+  (`utils.py:256-263`). Not taking the lock is what makes review usable while a sync is running
+  (`cli.py:129`, `cache/locks.py:21-33`, 60-second timeout) and is safe because the mode only reads.
+  `[PROVISIONAL AD021]`
+- Q: Is FR-014's tier guarantee true unconditionally? → A: No — it is qualified to references present
+  in the computed dependency graph. Self-references are excluded from write-order edges
+  (`dependency_graph.py:33-34`), optional edges are dropped to break cycles
+  (`dependency_graph.py:81-98`), and a configuration supplying an explicit `order:` yields no tiers at
+  all (`infrahub_sync/__init__.py:132-133`). In those three cases the peer may be unresolved at apply,
+  which AD016's zero-match arm then refuses rather than silently skipping. The qualification is safe
+  precisely because the miss is loud; an absolute guarantee the graph machinery falsifies would remove
+  the reason to implement AD016's refusal at all. `[PROVISIONAL AD022]`
+- Q: AD005 sends review output to stdout. Does the existing live `diff` output move too? → A: No.
+  Only the new `--from-plan` mode writes to stdout; the existing live `diff` output keeps using the
+  logger, unchanged (`cli.py:153`). Moving existing output is a user-visible change to an existing
+  path that the brief does not authorize, and DBA-010's scan only needs the new outputs capturable.
+  `[PROVISIONAL AD023]`
+
+### Session 2026-07-26 — remediation follow-up
+
+One residue surfaced while the decisions above were being applied and was resolved separately.
+
+- Q: FR-015 derives deletes from "the destination-only identities in the loaded destination state",
+  which presumes a complete destination enumeration. The engine has a warm path that does not provide
+  one. What happens then? → A: Deletes are derived only when the **destination side** ran a full
+  extract. When it did not, no delete operations are derived, and the manifest records that deletes
+  were not computed for this plan, so the omission is explicit and reviewable rather than silent.
+  The problem is real: `load_one_side` takes the incremental path whenever `should_use_incremental`
+  allows (`potenda/__init__.py:189-200`, `cache/incremental.py:51`), in which case
+  `hydrate_from_parquet` replays the **prior** run's snapshot, skipping tombstoned rows
+  (`cache/incremental.py:135-170`, tombstone skip at `:164-165`), and only rows from
+  `list_changed_since(resource, cursor)` are added on top (`potenda/__init__.py:227-228`). So the
+  destination store is prior snapshot plus changed-since, not a live full read, and an object deleted
+  at the destination out-of-band since the prior run remains in it — making a destination-minus-source
+  difference over-inclusive. That phantom delete matters more than ordinary staleness because FR-017
+  and SC-007 turn any delete in a plan into a **failed** apply, so a stale cache would become a
+  spurious operator-facing run failure in the one feature whose purpose is trustworthy
+  review-before-write. Recording the omission is what keeps FR-017's "never silently skipped"
+  contract true: nothing is dropped quietly, because the manifest says deletes were not computed.
+  Implementation note: the signal exists but is not per-side today —
+  `self._did_full_extract = self._did_full_extract or (not use_inc)` OR-accumulates across both sides
+  (`potenda/__init__.py:200`, consumed at `:430`), deliberately so per the comment at `:197-199`, so
+  it cannot answer "did the destination run a full extract". The requirement is stated in terms of the
+  destination side's extraction completeness rather than in terms of that flag.
+  `[PROVISIONAL AD024]`
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -140,8 +320,8 @@ run state.
 
 1. **Given** a saved plan whose source snapshot has been removed, or whose stored checksum no
    longer matches the artifact, **When** an apply is requested for that run, **Then** the apply
-   is refused before any destination write, naming which verification failed, and the run does
-   not enter an applied state.
+   is refused before any destination write, naming which verification failed, and the run is
+   recorded `failed` rather than reaching `status: applied`. `[PROVISIONAL AD010]`
 2. **Given** a saved plan whose recorded configuration-version value differs from the current
    one, **When** an apply is requested, **Then** the apply is refused without that value being
    parsed or interpreted.
@@ -154,6 +334,10 @@ run state.
 5. **Given** an unchanged source and destination, **When** the plan is produced twice in
    succession, **Then** the operations section and the manifest are byte-identical, excluding
    only the fields that necessarily vary per run.
+6. **Given** a plan directory copied out of one run and into another run's directory, **When** an
+   apply is requested for the receiving run, **Then** the apply is refused because the manifest's
+   recorded run identifier does not equal the run being applied, and no destination write occurs.
+   `[PROVISIONAL AD012]`
 
 ---
 
@@ -240,22 +424,43 @@ references.
   what keeps it distinguishable from the torn case below.
 - **Torn artifact.** A plan whose manifest exists but whose operations or source snapshot are
   absent or truncated is refused, not partially applied. An operations section whose length
-  disagrees with the count the manifest records is torn.
+  disagrees with the count the manifest records is torn. A source snapshot file the manifest
+  records but which is absent, or whose recomputed digest or row count disagrees with the recorded
+  value, is likewise torn. A `plan/` directory present without a complete manifest is torn, not a
+  v1 plan. `[PROVISIONAL AD008]` `[PROVISIONAL AD014]`
 - **Identifier collision.** Two operations must never share an operation identifier within one
-  plan. Since the identifier is derived from the action, kind, and destination identity, a
-  collision means two operations target the same object with the same action; the plan run fails
-  rather than emitting a plan whose identifiers do not address one operation each.
-- **Non-unique destination identifier.** Convergence rides on the destination unique-constraining
-  the identifier attribute; without that constraint an upsert produces duplicates. This is
-  detected and reported at plan time, as a warning naming the affected kind and identifier.
-  Documenting it as a precondition is not sufficient, because the failure is silent data
-  duplication.
-- **Partial apply.** If apply stops partway, the operations already written stay written and the
-  run records the last operation it reported as applied. Durable crash-surviving progress and
-  resumption are out of scope.
-- **Recorded deletes change existing output.** Because deletes are suppressed from the plan
-  today, recording them makes previously hidden operations appear in the plan and in anything
-  that renders it. Affected test fixtures and documentation are updated in the same change.
+  plan. Because the action vocabulary is closed to `create | update | delete` and relationship
+  changes travel as references on the owning create or update, exactly one operation exists per
+  (action, kind, destination identity), so a collision genuinely means two operations address the
+  same object with the same action — a pathological plan. The plan run fails rather than emitting a
+  plan whose identifiers do not address one operation each. `[PROVISIONAL AD009]`
+- **Destination kind with no usable convergence key.** Convergence rides on the destination kind's
+  human-friendly ID: the upsert is keyed on it, and an absent or incomplete human-friendly ID makes
+  the upsert unkeyed, which produces duplicates. This is detected and reported at plan time, as a
+  warning naming the affected kind and the missing component. Documenting it as a precondition is
+  not sufficient, because the failure is silent data duplication. `[PROVISIONAL AD017]`
+- **Relationship peer that does not resolve at apply.** A planned relationship reference whose peer
+  matches no destination object refuses that operation and fails the run, naming the peer kind, the
+  peer identity, and the referring operation identifier. A reference whose peer identity matches
+  more than one destination object refuses, naming the peer kind, the peer identity, and the match
+  count. Neither case is ever a silent skip. `[PROVISIONAL AD016]`
+- **Partial apply.** If apply stops partway — meaning it terminates in-process with a reported
+  error — the operations already written stay written and the run records, best effort, the last
+  operation it reported as applied. The record is explicitly not required to survive abnormal
+  process termination. Durable crash-surviving progress and resumption are out of scope.
+  `[PROVISIONAL AD011]`
+- **Destination side loaded incrementally.** The delete derivation is a set difference needing a
+  complete destination enumeration, which the engine's incremental path does not provide: it replays
+  the prior run's snapshot plus changed-since rows, so an object deleted at the destination
+  out-of-band since that run is still present and would yield a phantom delete — which FR-017 and
+  SC-007 would turn into a spurious failed apply. When the destination side did not run a full
+  extract, no delete operations are derived and the manifest records that deletes were not computed,
+  so the omission is disclosed rather than silent. `[PROVISIONAL AD024]`
+- **Recorded deletes change the plan artifact's content.** Because deletes are suppressed from the
+  plan today, recording them makes previously hidden operations appear in the plan artifact and in
+  anything that renders that artifact. The existing live comparison rendering is unchanged, because
+  deletes never enter the comparison result. Affected test fixtures and documentation are updated
+  in the same change. `[PROVISIONAL AD004]` `[PROVISIONAL AD023]`
 
 ## Requirements *(mandatory)*
 
@@ -266,10 +471,13 @@ references.
   *(DBR-001)*
 - **FR-002**: The plan artifact format MUST be defined, and MUST carry, per operation: a stable
   operation identifier, the action, the destination kind, destination identity, the required
-  source values as a full payload, relationship references, and a dependency tier. Each
-  relationship reference MUST identify its peer by kind and identity values, never by a
-  destination-assigned identifier. *(DBR-008, DBR-011; encoding and layout per AD001, reference
-  shape per AD003)*
+  source values as a full payload, relationship references, and a dependency tier. The action MUST
+  be exactly one of `create`, `update`, or `delete`; the vocabulary is closed. A relationship change
+  MUST be carried as relationship references on the create or update operation for the owning
+  object, never as a separate operation or a fourth action value. Each relationship reference MUST
+  identify its peer by kind and identity values, never by a destination-assigned identifier.
+  *(DBR-008, DBR-011; encoding and layout per AD001, reference shape per AD003, closed action
+  vocabulary per AD009)* `[PROVISIONAL AD009]`
 - **FR-003**: Every operation MUST carry a stable identifier that links review, application,
   audit, and recovery records for that operation. The identifier MUST be derived from the
   operation's action, destination kind, and destination identity — never randomly generated and
@@ -279,84 +487,191 @@ references.
 - **FR-004**: The artifact MUST include a plan manifest binding it to its run, its configuration
   version, and the source snapshot it was planned against, with a single deterministic checksum
   over the manifest and the ordered operations. The checksum MUST exclude only the checksum field
-  itself, the run identifier, and the creation timestamp, so that the fields SC-006 masks are
-  exactly the fields the checksum does not cover. *(DBR-006, DBR-008; computation per AD001)*
+  itself, the run identifier, and the creation timestamp. Those three exclusions and SC-006's two
+  masked fields are deliberately not the same set: SC-006 needs no mask for the checksum field,
+  because the checksum is a function of the checksummed bytes alone and is therefore already
+  byte-identical whenever those bytes are. The source-snapshot binding MUST be a manifest field
+  recording, per source-snapshot file the plan was computed against, that file's run-relative path,
+  a SHA-256 digest of its content, and its row count; the binding matches when every recorded path
+  exists and its recomputed digest and row count equal the recorded values. The manifest MUST also
+  carry a field recording whether delete operations were computed for this plan, per FR-015.
+  *(DBR-006, DBR-008, DBR-015; computation per AD001, snapshot binding per AD008, delete-computation
+  disclosure per AD024)* `[PROVISIONAL AD008]` `[PROVISIONAL AD024]`
 - **FR-005**: The manifest and the ordered operations MUST be serialized deterministically — a
-  fixed key order, no insignificant whitespace, a fixed ordering of the operations, and a fixed
-  ordering of every ordered collection inside them — so the checksum is stable across
-  re-serialization of identical content. *(DBR-014; encoding per AD001)*
-- **FR-006**: A saved plan MUST be reviewable at two depths: a summary giving counts by action and
-  by kind, and per-object detail for the operations it contains. *(DBR-002)*
+  fixed key order, no insignificant whitespace, and a fixed ordering of the operations sequence — so
+  the checksum is stable across re-serialization of identical content. Canonical ordering applies to
+  the operations sequence and to relationship-reference lists only. Collections whose order is part
+  of the value — a payload's list-valued attributes, which the generator maps as `list[Any]`
+  (`generator/__init__.py:28`) — MUST be serialized in source order and MUST NOT be re-sorted,
+  because sorting them would make the applied value differ from the reviewed source value.
+  *(DBR-014; encoding per AD001, reference-list ordering per AD003)*
+- **FR-006**: A saved plan MUST be reviewable at two depths: a summary giving a count per action
+  and a count per kind, and per-object detail for the operations it contains. Per-object detail MUST
+  present, per operation, at least its operation identifier, its action, its destination kind, and
+  its destination identity, and MUST be narrowable to a single destination kind. *(DBR-002, DBR-005;
+  minimum field set per AD020)* `[PROVISIONAL AD020]`
 - **FR-007**: The plan MUST be readable from the stored artifact at any time after the run,
   including after the process that produced it has exited. *(DBR-012)*
 - **FR-008**: Both review depths MUST be reachable in-process and by extending CLI commands that
-  already exist. No new CLI command is added and no new CLI command group is introduced. Review
-  MUST be carried by the existing non-mutating command, MUST NOT construct an adapter or extract
-  either side, and MUST write its output to standard output so it can be captured and scanned. The
-  in-process reader MUST be the single implementation, with the command a thin renderer over it.
-  *(DBR-020; command and flag spelling per AD005)*
-- **FR-009**: Before any destination write, an apply MUST verify that the plan checksum, the
-  configuration version, and the source-snapshot binding still match. A plan that fails any of
-  these MUST be refused, naming the failed check, and the run MUST NOT reach an applied state.
-  *(DBR-003, DBR-006)*
+  already exist. No new CLI command **group** is introduced — that is the brief's bar, and this
+  specification MUST NOT assert a stricter one. AD005 additionally chooses to extend the existing
+  non-mutating command rather than add a sibling command, so in fact no command is added either.
+  Review MUST be carried by that existing non-mutating command, MUST NOT construct an adapter or
+  extract either side, MUST NOT take the pipeline lock, and MUST NOT create or modify anything in the
+  run directory. In the read-from-artifact mode, review output MUST be written to standard output so
+  it can be captured and scanned; the existing live comparison path's output channel is unchanged.
+  Review remains configuration-bound, because a stored run is located only as
+  `cache_root_for(<sync name>)/<run_id>` (`cache/paths.py:56-59`). The run identifier selects the
+  stored run to read; an unknown run identifier, or one whose run holds no plan artifact, MUST be an
+  error naming the run identifier and the expected artifact path, and MUST NOT be presented as a plan
+  with zero operations. The in-process reader MUST be the single implementation, with the command a
+  thin renderer over it. *(DBR-020; command and flag spelling per AD005, group-only bar per AD019,
+  run-identifier and lock behavior per AD021, output channel per AD023)* `[PROVISIONAL AD019]`
+  `[PROVISIONAL AD021]` `[PROVISIONAL AD023]`
+- **FR-009**: Before any destination write, an apply MUST verify four things: that the plan checksum
+  still matches, that the configuration version still matches, that the source-snapshot binding still
+  matches, and that the manifest's recorded run identifier equals the run being applied. The
+  run-identifier check MUST be a separate equality comparison rather than a checksum input, because
+  SC-006 requires the run identifier to be excluded from the checksum — which is what would otherwise
+  let a plan directory copied into a different run verify clean. A plan that fails any of these MUST
+  be refused, naming the failed check. A refused apply MUST record the run as `failed` in the existing
+  run-state vocabulary `pending | running | dry-run | applied | failed` (`cache/sidecars.py:71`);
+  "an applied state" means `status: applied`, and a refusal MUST NOT leave the run in `running`. The
+  pre-existing schema-subhash refusal path, which today aborts leaving `status: running` on disk
+  (`cli.py:336-340`, after the sidecar is written `running` at `cli.py:322`), MUST record `failed` too.
+  *(DBR-003, DBR-006; run-identifier check per AD012, run state per AD010)* `[PROVISIONAL AD010]`
+  `[PROVISIONAL AD012]`
 - **FR-010**: The plan and its source snapshot MUST be bound so the pair cannot tear. A plan whose
   manifest exists but whose operations or source snapshot are absent or truncated MUST be refused
   on the same path as a mismatch. The manifest MUST carry an operation count so that a plan with
   no operations is distinguishable from a plan whose operations are missing, rather than the two
-  presenting identically. *(DBR-015; count field per AD001)*
+  presenting identically. A source snapshot file the manifest records but which is absent, or whose
+  recomputed digest or row count disagrees with the recorded value, is truncated or tampered with and
+  MUST be refused on that same path. *(DBR-015; count field per AD001, snapshot digest and row count
+  per AD008)* `[PROVISIONAL AD008]`
 - **FR-011**: The manifest's configuration-version field MUST hold a deterministic content
   checksum computed over the configuration the run used, unless the caller supplies a version
   identifier explicitly, in which case that value MUST be stored verbatim. Either way the value
-  MUST be treated as opaque at apply: compared for equality and never parsed. No new user-facing
-  input is introduced. *(DBR-018)*
+  MUST be treated as opaque at apply: compared for equality and never parsed. At apply, the
+  comparison value MUST be recomputed by the same default rule, unless an in-process caller supplies
+  one verbatim, in which case the supplied value is compared verbatim; the CLI apply path uses the
+  default rule only. No new user-facing input is introduced. *(DBR-018; apply-side supplier per
+  AD013)* `[PROVISIONAL AD013]`
 - **FR-012**: A saved plan MUST be applicable by run ID, executing exactly the stored operations
   in dependency order, without re-extracting either side and without recomputing the comparison.
   *(DBR-004)*
 - **FR-013**: The Infrahub destination adapter MUST be able to execute a planned create or update
-  convergently, so that repeating an operation does not create a second object. *(DBR-013,
-  DBR-011)*
+  convergently, so that repeating an operation does not create a second object. Planned creates and
+  planned updates MUST both route through the adapter's human-friendly-ID-keyed convergent upsert
+  (`client.create(...)` followed by `save(allow_upsert=True)`, `adapters/infrahub.py:611-612`) and
+  MUST NOT route through `InfrahubModel.update`, whose `client.get(id=self.local_id, ...)`
+  (`adapters/infrahub.py:622`) is keyed on a `local_id` populated only by a destination load
+  (`adapters/infrahub.py:510`, `infrahub_sync/__init__.py:232`) that FR-012 forbids. Cardinality-many
+  relationships MUST be written as a replace-set, which is the existing behavior
+  (`adapters/infrahub.py:166-175`). An update payload is authoritative for the mapped fields it
+  carries and MUST NOT touch unmapped destination fields. *(DBR-013, DBR-011; write path per AD015)*
+  `[PROVISIONAL AD015]`
 - **FR-014**: Relationship peers MUST be resolvable at apply time without a loaded comparison
   store, from the peer kind and identity the plan itself carries. Resolution MUST be memoized
   within one apply, MUST take an operation's own result as the resolution for later operations
   referring to it, and MUST fall back to querying the destination for that identity on a miss.
-  Dependency-tier ordering MUST guarantee a peer is written before anything referring to it.
-  *(DBR-007, DBR-011; resolution shape per AD003)*
+  Dependency-tier ordering MUST guarantee a peer is written before anything referring to it, for
+  references carried in the computed dependency graph. That guarantee does not extend to three cases
+  the existing tier machinery cannot express: a self-reference, which is excluded from write-order
+  edges (`dependency_graph.py:33-34`); a reference reachable only through an optional edge dropped to
+  break a cycle (`dependency_graph.py:81-98`); and any reference in a configuration that supplies an
+  explicit `order:`, which yields no tiers at all (`infrahub_sync/__init__.py:132-133`). In those
+  cases the peer may be unresolved at apply, and the resolution-failure behavior below governs.
+  A peer identity that matches **no** destination object MUST refuse that operation and fail the run,
+  naming the peer kind, the peer identity, and the referring operation identifier. A peer identity
+  that matches **more than one** destination object MUST refuse, naming the peer kind, the peer
+  identity, and the match count. Neither case may be a silent skip. *(DBR-007, DBR-011; resolution
+  shape per AD003, resolution failures per AD016, tier qualification per AD022)*
+  `[PROVISIONAL AD016]` `[PROVISIONAL AD022]`
 - **FR-015**: Delete operations MUST be recorded in the plan, changing today's default of
   suppressing them. They MUST be derived from the destination-only identities in the loaded
   destination state and materialized only into plan records, never into the comparison result the
   write path consumes. The comparison flags a project configures MUST keep their present meaning
   for the write path and MUST NOT be loosened to make deletes visible. Deletes MUST come from that
   one source only, so no operation is recorded twice. Test fixtures and documentation affected by
-  the change in plan content MUST be updated in the same change. *(DBR-009; mechanism per AD004)*
+  the change in plan content MUST be updated in the same change. Deletes MUST be derived only when
+  the **destination side** ran a full extract, because the derivation is a set difference that
+  requires a complete destination enumeration and the engine's incremental path does not provide one.
+  When the destination side was loaded incrementally, no delete operation MUST be derived, and the
+  manifest MUST record that deletes were not computed for this plan, so the omission is explicit and
+  reviewable rather than silent — which is what keeps FR-017's "never silently skipped" contract true.
+  That field is part of the canonical manifest and is therefore covered by the FR-004 checksum and not
+  masked by SC-006, so comparing two plans for byte-identity requires both runs to have used the same
+  extraction mode on both sides. This requirement is stated in terms of the destination side's
+  extraction completeness; the engine's existing full-extract flag is accumulated across both sides
+  and cannot answer it per side. No input is added for requesting that deletes be computed, and
+  extraction behavior is unchanged. *(DBR-009; mechanism per AD004, extraction precondition and
+  disclosure per AD024)* `[PROVISIONAL AD024]`
 - **FR-016**: A delete MUST NOT be applied to the destination by the saved-plan apply path. The
   existing write path's behavior under a project's configured comparison flags is unchanged by this
   feature. *(DBR-010)*
 - **FR-017**: An unsupported operation in a plan MUST be reported at apply time and MUST fail the
   run; it MUST NOT be silently skipped. Supported operations in the same plan are still applied.
   *(DBR-016)*
-- **FR-018**: No secret value MUST appear in the plan artifact or in any review output. *(DBR-017)*
+- **FR-018**: No secret value MUST appear in the plan artifact or in any review output. The artifact
+  carries mapped source field values only. Credentials live in the configuration's `settings` and MUST
+  never be written to the artifact or to review output. No field-level secret-classification model —
+  omit, mask, or refuse behavior over mapped data fields — is built here; that is scope this outcome
+  does not carry. *(DBR-017; scope and mechanism per AD018)* `[PROVISIONAL AD018]`
 - **FR-019**: A plan artifact in the pre-existing v1 row format MUST be detected and rejected with
-  a message directing the operator to re-plan. The reader MUST NOT accept v1 rows, v1 plans MUST
-  NOT be migrated, and no second apply path with weaker guarantees may be built. Detection MUST NOT
-  depend on parsing a v1 artifact: a run holding only the pre-existing plan file and no new-format
-  manifest is a v1 plan. The pre-existing file MUST be left in place rather than deleted or
-  rewritten. *(DBR-019; detection rule per AD001)*
+  a message directing the operator to re-plan. The plan reader — review and apply alike — MUST NOT
+  accept v1 rows, v1 plans MUST NOT be migrated, and no second apply path with weaker guarantees may
+  be built. Detection MUST NOT depend on parsing a v1 artifact: a v1 verdict requires the absence of
+  the whole new-format plan directory. A plan directory present without a complete manifest is a torn
+  new-format artifact under FR-010, not a v1 plan, and MUST be refused with a message distinct from
+  the v1 message. To make those cases disjoint by construction, the operations section MUST be written
+  first and the manifest MUST be written last and atomically, so the manifest's presence is the commit
+  point. A new plan run MAY continue to write the pre-existing plan file unchanged; the pre-existing
+  file MUST be left in place rather than deleted or rewritten, and it is never read by the new reader
+  and is not part of the plan artifact for FR-004, FR-018, SC-006 or SC-010. *(DBR-019; detection rule
+  per AD001, write order and v1/torn disjointness per AD014)* `[PROVISIONAL AD014]`
 - **FR-020**: The identifiers of operations reported as applied MUST be recorded on the run
-  result. *(scope boundary: run result only, not a durable ledger)*
+  result. *(scope boundary: run result only, not a durable ledger. Verified through SC-005, whose
+  evidence reads the apply-side identifier set from this record.)*
 - **FR-021**: Two operations within one plan MUST NOT share an operation identifier. Because the
   identifier is derived rather than allocated, uniqueness MUST be asserted when the plan is written
-  and MUST fail the plan run if it does not hold, rather than being assumed.
+  and MUST fail the plan run if it does not hold, rather than being assumed. Under FR-002's closed
+  action vocabulary exactly one operation exists per (action, kind, destination identity), so a
+  collision is always pathological. *(Carries the brief's "Identifier collision" edge case; no
+  separate acceptance criterion, because the brief states no criterion for it and the obligation is
+  a write-time assertion rather than an observable outcome.)* `[PROVISIONAL AD009]`
 - **FR-022**: A plan with zero operations MUST be a valid artifact, and applying it MUST be a
   successful no-op. It MUST be represented as a present-but-empty operations section with a
-  recorded count of zero, not as an absent one.
+  recorded count of zero, not as an absent one. A summary of a plan with zero operations MUST state
+  that the plan contains no operations rather than producing empty output. *(Carries the brief's
+  "Empty plan" edge case; its apply behavior is exercised by User Story 3 scenario 3, with no
+  separate acceptance criterion because the brief states none.)*
 - **FR-023**: Applying a plan against an adapter with no planned-write surface MUST fail with a
-  clear, actionable error naming the adapter, before any write is attempted.
-- **FR-024**: When a destination identifier attribute is not unique-constrained, the plan run MUST
-  warn at plan time, naming the affected kind and identifier.
-- **FR-025**: If an apply stops partway, the operations already written MUST stay written and the
-  run MUST record the last operation it reported as applied.
-- **FR-026**: The plan contract MUST order operations without prescribing write granularity, so
-  batched destination writes remain possible later without a plan-format change.
+  clear, actionable error naming the adapter, before any write is attempted — the behavior the engine
+  already has today (`potenda/__init__.py:354-360`). *(Carries the brief's "Missing destination write
+  surface" edge case; no separate acceptance criterion, because the brief states none and the
+  behavior is pre-existing.)*
+- **FR-024**: When a destination kind declares no human-friendly ID, or when the plan's destination
+  identity for that kind does not supply every human-friendly-ID component, the plan run MUST warn at
+  plan time, naming the affected kind and the missing component. This is the observable convergence
+  actually rides on: the upsert is keyed on the human-friendly ID and is unkeyed — and therefore
+  duplicates — when it is absent or incomplete. The plan run MUST still succeed; this is a warning,
+  not a failure, per the brief. *(Carries the brief's non-unique-destination-identifier edge case,
+  restated on the real convergence key per AD017; criterion SC-014.)* `[PROVISIONAL AD017]`
+- **FR-025**: If an apply stops partway — meaning it terminates in-process with a reported error —
+  the operations already written MUST stay written and the run MUST record, best effort, the last
+  operation it reported as applied, where "last" means last in the dependency order actually
+  executed. The record is explicitly NOT required to survive abnormal process termination.
+  *(scope boundary: run result only, not a durable ledger. Carries the brief's "Partial apply" edge
+  case; no separate acceptance criterion, because SC-003's crash windows are measured
+  destination-side and a durable per-operation record is out of scope.)* `[PROVISIONAL AD011]`
+- **FR-026**: The plan format MUST express ordering only as the operation sequence and each
+  operation's dependency tier, and MUST NOT record any grouping of operations into write units. This
+  is a constraint on the format, carried from the brief; it is not a testable requirement about later
+  work. Whether destination writes are later batched is out of scope here, and the format does not
+  prescribe write granularity either way. *(Carries the brief's Constraint "The plan contract orders
+  operations; it does not prescribe write granularity"; inspectable as the absence of any grouping
+  field in the artifact, with no separate acceptance criterion.)*
 
 ### Key Entities
 
@@ -367,18 +682,26 @@ references.
 - **Plan manifest**: The artifact's header. Binds the artifact to its run identifier, the
   configuration version it ran with, and the source snapshot it was planned against; records the
   format version and the operation count; and carries the deterministic checksum over itself and
-  the ordered operations. *(fields and checksum rule per AD001)*
-- **Planned operation**: One proposed change. Carries a stable operation identifier, the action
-  (create, update, delete, or relationship change), the destination kind, destination identity,
-  the required source values as a full payload, relationship references, and a dependency tier.
+  the ordered operations. The source-snapshot binding is a per-file record of run-relative path,
+  content digest, and row count. Also records whether delete operations were computed for this plan,
+  which is false when the destination side was loaded incrementally. *(fields and checksum rule per
+  AD001, snapshot binding per AD008, delete-computation disclosure per AD024)* `[PROVISIONAL AD008]`
+  `[PROVISIONAL AD024]`
+- **Planned operation**: One proposed change. Carries a stable operation identifier, the action —
+  exactly one of `create`, `update`, or `delete` — the destination kind, destination identity, the
+  required source values as a full payload, relationship references, and a dependency tier. A
+  relationship change is not an action; it is carried as relationship references on the owning
+  object's create or update operation. *(closed action vocabulary per AD009)* `[PROVISIONAL AD009]`
 - **Relationship reference**: A peer named by kind and identity values rather than by any
   destination-assigned identifier, so it is resolvable at apply time and does not depend on which
   destination instance the plan is applied to. *(per AD003)*
-- **Source snapshot**: The extracted source-side state the plan was computed against, bound to
-  the plan so the pair cannot tear.
+- **Source snapshot**: The extracted source-side state the plan was computed against — one file per
+  extracted resource under the run's source side — bound to the plan by the manifest's per-file path,
+  digest, and row count so the pair cannot tear. *(per AD008)*
 - **Run**: The unit a plan belongs to and the handle an apply is requested by. Carries the run
-  state, including whether the plan reached an applied state and which operations were reported
-  as applied.
+  state, drawn from the existing vocabulary `pending | running | dry-run | applied | failed`,
+  including whether the plan reached `status: applied` and which operations were reported as applied.
+  A refused apply is recorded `failed`. *(per AD010)* `[PROVISIONAL AD010]`
 - **Configuration-version value**: An opaque, equality-compared string in the manifest —
   by default a deterministic content checksum over the configuration the run used, or a
   caller-supplied identifier stored verbatim. Never parsed or interpreted.
@@ -392,54 +715,103 @@ references.
   trace or inspection showing no comparison-engine diff/sync call on the apply path. *(DBA-001)*
 - **SC-002**: Re-applying an identical saved plan converges: the same object, the same identity,
   no duplicate — evidenced by apply-once and apply-twice object counts and identities recorded
-  against a live destination. *(DBA-002)*
-- **SC-003**: The create, update, and relationship write classes end at clean-single-run counts
-  across apply-once, apply-twice, and both crash-window variants (a crash injected after a write
-  commits but before it is recorded, and one injected before the write) — evidenced by a per-class
-  conformance matrix. Delete is excluded, because applying deletes is out of scope. *(DBA-003, as
-  narrowed by the brief)*
+  against a live destination, for every kind for which the applied plan contains an operation.
+  "The same identity" means the plan's destination-identity values for the operation, which the
+  Assumptions section binds to the destination's convergence key. *(DBA-002)*
+- **SC-003**: The create and update write classes, and the class of operations whose payload carries
+  relationship references, all end at clean-single-run counts across apply-once, apply-twice, and both
+  crash-window variants — a crash injected after the destination write commits and before the apply
+  advances to the next operation, and one injected before the destination write is issued — evidenced
+  by a per-class conformance matrix. "Clean-single-run counts" means the per-kind destination object
+  counts and identities observed after one uninterrupted apply of the same plan against the same
+  starting state. The crash windows are injection points measured destination-side; no durable
+  per-operation record distinguishes them, and none is required. For the relationship class the
+  measurement is SC-008's peer-set comparison rather than object counts, since an object created with
+  its peers unlinked leaves counts correct and relationships wrong. Delete is excluded, because
+  applying deletes is out of scope. *(DBA-003, as narrowed by the brief; third class named per AD009,
+  crash-window measurement per AD011)* `[PROVISIONAL AD009]` `[PROVISIONAL AD011]`
 - **SC-004**: A plan whose checksum, configuration version, or source-snapshot binding no longer
-  matches is refused before any destination write, naming the failed check, and the run does not
-  reach an applied state; a plan whose manifest exists but whose operations or source snapshot are
-  absent or truncated is refused the same way — evidenced by five negative cases (checksum
-  mismatch, configuration-version mismatch, snapshot-binding mismatch, absent operations,
-  truncated snapshot), each asserting refusal, zero destination writes, and the resulting run
-  state. *(DBA-004)*
+  matches is refused before any destination write, naming the failed check, and the run is recorded
+  `failed` rather than reaching `status: applied`; a plan whose manifest exists but whose operations or
+  source snapshot are absent or truncated is refused the same way — evidenced by five negative cases
+  (checksum mismatch, configuration-version mismatch, snapshot-binding mismatch, absent operations,
+  truncated snapshot), each asserting refusal, zero destination writes observed as unchanged
+  destination object counts, and the resulting run state read from the run sidecar. *(DBA-004; run
+  state per AD010)* `[PROVISIONAL AD010]`
 - **SC-005**: The operation identifiers shown at review are the identifiers reported against each
   operation in the apply result — evidenced by a review-then-apply trace comparing both identifier
-  sets. *(DBA-005)*
+  sets per operation, with the review-side set read from per-object review output (FR-006) and the
+  apply-side set read from the FR-020 record on the run result. *(DBA-005; review-side field set per
+  AD020)* `[PROVISIONAL AD020]`
 - **SC-006**: Re-planning an unchanged source and destination produces a byte-identical operations
   section and a byte-identical manifest, excluding the fields that necessarily vary per run (the
   run identifier and the creation timestamp) — evidenced by two consecutive plan runs and a byte
   comparison with the varying fields masked. *(DBA-006)*
 - **SC-007**: A plan containing a delete operation applies its non-delete operations, does not
-  delete from the destination, and ends in a failed state naming the unsupported operation —
-  evidenced by destination object counts before and after plus the recorded run state and message.
-  *(DBA-007)*
+  delete from the destination, and ends in run state `failed` naming the unsupported operation's
+  identifier and action — evidenced by destination object counts before and after, scoped to the kinds
+  appearing in the applied plan, the direct assertion that the object named by each delete operation is
+  still present, plus the recorded run state and message. *(DBA-007; run state per AD010)*
+  `[PROVISIONAL AD010]`
 - **SC-008**: A relationship-bearing kind from the qualified configuration applies with no loaded
   comparison store, and the resulting relationships on the destination match those the plan
-  specified — evidenced by destination relationships read back and compared against the plan's
-  relationship references. *(DBA-008)*
+  specified — evidenced by, for each relationship the schema mapping declares for the kind under test,
+  the destination's peer set read back and compared against the plan's reference list as an **unordered
+  set of (peer kind, peer identity) pairs**. The no-comparison-store precondition is evidenced as
+  SC-001 evidences its own: no source or destination extraction call on the apply path. *(DBA-008)*
 - **SC-009**: A saved plan can be summarized by action and kind, and expanded to per-object
   detail, at any time after the run and after the originating process has exited — reachable both
   in-process and from the CLI. Evidenced by four cases: summary and per-object detail, each
-  produced in-process and from the CLI, all against a stored artifact read in a new process.
-  *(DBA-009)*
+  produced in-process and from the CLI, all against a stored artifact read in a new process. Each
+  case passes when the summary presents a count per action and a count per kind, and the detail
+  presents one record per operation carrying at least its operation identifier, action, destination
+  kind, and destination identity. Every case is produced with neither source nor destination
+  reachable, which evidences that no adapter is constructed. *(DBA-009; field set per AD020)*
+  `[PROVISIONAL AD020]`
 - **SC-010**: No secret value appears in the plan artifact, in summary output, or in per-object
-  output — evidenced by a canary-credential scan over the artifact and both review outputs.
-  *(DBA-010)*
+  output — evidenced by a canary-credential scan over the artifact and both review outputs, with the
+  canary injected as a credential in the configuration's `settings`, which is where credentials enter
+  this system. The artifact files are scanned directly; the CLI outputs are scanned from captured
+  standard output; the in-process reader's return value is scanned as data. *(DBA-010; injection point
+  per AD018)* `[PROVISIONAL AD018]`
 - **SC-011**: A v1-format plan is rejected with a message directing the operator to re-plan, and
   no destination write occurs — evidenced by an apply attempted against a v1 fixture plan,
   asserting refusal, the message, and zero writes. *(DBA-011)*
 - **SC-012**: The CLI command set gains no new command group, and review is reachable through
-  commands that already exist — evidenced by the top-level command list compared before and after
-  showing no group added, plus the SC-009 CLI cases demonstrating that both review depths are
-  reachable from existing commands. *(DBA-012)*
+  commands that already exist — evidenced by the top-level command listing captured before and after
+  and compared as text, showing no group added, plus the SC-009 CLI cases demonstrating that both
+  review depths are reachable from existing commands. *(DBA-012; group-only bar per AD019)*
+  `[PROVISIONAL AD019]`
 - **SC-013**: Applying a plan whose configuration-version value differs from the one recorded at
   plan time is refused without the value being parsed or interpreted, and an arbitrary opaque
   string round-trips unchanged through manifest write and apply comparison — evidenced by a
-  round-trip test using a deliberately opaque value, plus the mismatch refusal from SC-004.
-  *(DBA-013)*
+  round-trip test using a deliberately opaque value supplied verbatim by an in-process caller and
+  compared verbatim at apply, plus the mismatch refusal from SC-004. *(DBA-013; apply-side supplier
+  per AD013)* `[PROVISIONAL AD013]`
+- **SC-014**: A plan run against a destination kind that declares no human-friendly ID, or whose
+  plan identity does not supply every human-friendly-ID component, emits a warning naming that kind
+  and the missing component, and the plan run still succeeds — evidenced by a plan run against such a
+  kind, asserting the warning's content and the run's successful outcome. *(FR-024, per AD017; the
+  brief raises this edge case from documentation to detection but states no criterion for it)*
+  `[PROVISIONAL AD017]`
+- **SC-015**: An apply whose manifest records a run identifier other than the run being applied is
+  refused before any destination write, naming that check, and the run is recorded `failed` —
+  evidenced by copying a plan directory from one run into another and asserting refusal, zero
+  destination writes, and the resulting run state. *(FR-009, per AD012; beyond DBA-004's five cases,
+  which do not include the run binding)* `[PROVISIONAL AD012]`
+- **SC-016**: A planned relationship reference whose peer matches no destination object, and one
+  whose peer identity matches more than one destination object, each refuse the operation and fail the
+  run with a message naming the peer kind and the peer identity — the zero-match message also naming
+  the referring operation identifier, the multi-match message also naming the match count — and
+  neither is silently skipped. *(FR-014, per AD016)* `[PROVISIONAL AD016]`
+- **SC-017**: A plan run whose destination side ran a full extract records delete operations and
+  records in the manifest that deletes were computed; a plan run whose destination side was loaded
+  incrementally records no delete operations and records in the manifest that deletes were not
+  computed — evidenced by two plan runs against the same source and destination, one with a full
+  destination extract and one incremental, comparing in each the presence of delete operations and
+  the manifest's delete-computation field, and asserting that the incremental run's plan does not
+  drive its apply into a failed state through a phantom delete. *(FR-015, per AD024)*
+  `[PROVISIONAL AD024]`
 
 ## Out of Scope
 
@@ -466,11 +838,25 @@ Carried verbatim from the brief. None of the following is delivered here.
 - Destination freshness checks, plan expiration, and conflict policies.
 - Branch review mode.
 
+One further boundary is recorded here rather than carried from the brief, because a checklist
+evaluation raised it as a candidate for expansion and it was declined:
+
+- **A field-level secret-classification model** over mapped data fields — a declared secret-field
+  list, a name-pattern rule, or omit / mask / refuse-to-plan behavior. FR-018 is satisfied by never
+  writing the configuration's `settings` credentials into the artifact or review output; classifying
+  mapped data values would be new user-visible behavior, a new configuration surface, and a new
+  failure mode, none of which the brief's In-scope list carries. *(per AD018)* `[PROVISIONAL AD018]`
+
 ## Assumptions
 
-- Destination identifier attributes are unique-constrained on the qualified path. If they are not,
-  create and update converge into duplicates instead of converging, which invalidates SC-002 —
-  hence the plan-time warning in FR-024.
+- For every kind for which the plan under test contains an operation, the destination kind's
+  convergence key — its human-friendly ID — covers the plan's destination identity for that kind. This
+  is the correspondence SC-002's "the same identity" rides on: the upsert is keyed on the
+  human-friendly ID, so if that key does not correspond to the plan's destination identity an upsert
+  can converge onto a different object than the plan named, or not converge at all. If the
+  correspondence does not hold, create and update produce duplicates instead of converging, which
+  invalidates SC-002 — hence the plan-time warning in FR-024. *(restated on the real convergence key
+  per AD017)* `[PROVISIONAL AD017]`
 - Review is reachable by extending existing CLI commands, without any new command group. If
   extending existing commands proves impossible, that is a scope change requiring a new decision,
   not an implementer's call.
@@ -480,17 +866,60 @@ Carried verbatim from the brief. None of the following is delivered here.
   dispatched per row to the destination's planned-write method, and per-side snapshots and run
   sidecars are already written. The planned-write surface currently has no implementation on any
   adapter, and today's plan rows are lossy.
-- The Infrahub destination adapter already has an identifier-keyed write path that converges on
-  repeat; FR-013 routes planned creates and updates through it rather than inventing a new one.
+- The Infrahub destination adapter's **create** path is identifier-keyed and convergent, via the
+  destination kind's human-friendly ID (`client.create(...)` then `save(allow_upsert=True)`,
+  `adapters/infrahub.py:611-612`). Its existing **update** path is not: it is keyed on a
+  destination-assigned node id captured only during a destination load
+  (`adapters/infrahub.py:622`, `:510`; `infrahub_sync/__init__.py:232`) and is therefore unusable from
+  a saved plan, which performs no destination load. FR-013 accordingly routes planned creates **and**
+  planned updates through the upsert path rather than inventing a new one. If that path turns out not
+  to converge for a planned update, SC-002 and SC-003 fail and the write surface needs a decision this
+  specification does not carry. *(corrected per AD015)* `[PROVISIONAL AD015]`
+- The engine computes kind-level dependency tiers from `schema_mapping[].fields[].reference`
+  (`dependency_graph.py:25-36`), and this outcome derives each operation's tier from them. Tiers are
+  absent entirely when a configuration declares an explicit `order:`
+  (`infrahub_sync/__init__.py:132-133`), and the graph excludes self-edges and drops optional edges to
+  break cycles — which is why FR-014's tier guarantee is qualified. On the qualified configuration the
+  computation yields six tiers with no dropped edges and no active self-references, and the
+  configuration contains relationship-bearing kinds of both cardinalities, which is what SC-008 needs.
+  *(per AD022)* `[PROVISIONAL AD022]`
+- Secrets enter this system as credentials in the configuration's `settings`, not as mapped source
+  data. FR-018 is defended by never writing `settings` values into the artifact or review output, and
+  SC-010's canary is injected as a credential in `settings` accordingly. Source record data on the
+  qualified path is assumed to carry no credential values; if that assumption fails, handling it would
+  require the field-level classification model AD018 places out of scope. *(per AD018)*
+  `[PROVISIONAL AD018]`
 - The configuration-version value is consumed as an opaque input. Before a version registry
-  exists, a checksum over the configuration's declared content satisfies the binding.
+  exists, a checksum over the configuration's declared content satisfies the binding. At apply the
+  comparison value is recomputed by the same rule, so the rule must be stable for an unchanged
+  configuration; a benign reformat of the configuration that the rule is sensitive to invalidates
+  saved plans and requires a re-plan. *(per AD013)* `[PROVISIONAL AD013]`
 - Which existing commands carry review, and their exact flag spelling, is an implementation choice
   within one fixed constraint: no new top-level command group. That choice is now recorded as
   AD005 rather than left open.
+- SC-010's scan is performed over the artifact files and over the CLI's captured standard output.
+  The in-process reader returns data rather than writing to a stream, and is scanned as data.
 
 ## Dependencies
 
 - No in-batch dependencies. This outcome can be completed independently.
+- **The existing non-mutating command this outcome extends.** Four properties of it are load-bearing
+  for FR-008 and are recorded here rather than presumed:
+    1. `--run-id` already exists on that command, meaning "Re-use a specific cache run id" for a live
+       comparison (`cli.py:98`). The read-from-artifact mode gives the same option a select-the-stored-run
+       meaning, mode-switched by the new flag; the live-path meaning is unchanged.
+    2. Its plan output is emitted through the logger today (`cli.py:153`), which is why FR-008's stdout
+       clause is scoped to the read-from-artifact mode only and the live path's channel is unchanged.
+    3. It requires a sync name or configuration file, and review still needs one, because a stored run
+       is located only as `cache_root_for(<sync name>)/<run_id>` (`cache/paths.py:56-59`) — so review is
+       adapter-free but remains configuration-bound.
+    4. It wraps its whole body in an exclusive per-pipeline file lock with a 60-second timeout
+       (`cli.py:129`, `cache/locks.py:21-33`). FR-008 exempts the read-only review path from that lock,
+       so review of a stored plan neither blocks nor is blocked by a running sync.
+
+  Today the run directory is also created before any check
+  (`utils.py:244-246`, `mkdir(parents=True, exist_ok=True)`, followed by `schema-sub-hash.txt` at
+  `utils.py:256-263`); FR-008 forbids that on the review path. *(per AD021)* `[PROVISIONAL AD021]`
 - **This specification owns a shared contract.** The plan artifact format — the manifest fields,
   the per-operation record, the deterministic serialization, and the checksum rule — is owned here
   and consumed by nine later outcomes: the public API's apply, the configuration-version binding,
@@ -509,17 +938,17 @@ Brief requirements (DBR) and acceptance criteria (DBA) to the sections that carr
 | DBR-002 | FR-006; User Story 1 scenario 2 |
 | DBR-003 | FR-009; User Story 2 |
 | DBR-004 | FR-012; User Story 1 scenario 1 |
-| DBR-005 | FR-003, FR-021; SC-005 |
+| DBR-005 | FR-003, FR-006, FR-021; SC-005 |
 | DBR-006 | FR-004, FR-009; User Story 2 scenario 1 |
 | DBR-007 | FR-014; User Story 5 |
 | DBR-008 | FR-002, FR-004; Key Entities |
-| DBR-009 | FR-015; User Story 4 |
+| DBR-009 | FR-015; SC-017; User Story 4 |
 | DBR-010 | FR-016; User Story 4 |
 | DBR-011 | FR-002, FR-013, FR-014 |
 | DBR-012 | FR-007; User Story 1 scenario 2 |
 | DBR-013 | FR-013; User Story 3 |
 | DBR-014 | FR-005; SC-006 |
-| DBR-015 | FR-010; User Story 2 scenario 3 |
+| DBR-015 | FR-004, FR-010; User Story 2 scenario 3; Edge Cases (Torn artifact) |
 | DBR-016 | FR-017; User Story 4 |
 | DBR-017 | FR-018; SC-010 |
 | DBR-018 | FR-011; Key Entities (configuration-version value); SC-013 |
@@ -539,6 +968,26 @@ Brief requirements (DBR) and acceptance criteria (DBA) to the sections that carr
 | DBA-012 | SC-012; User Story 1 scenario 3 |
 | DBA-013 | SC-013; User Story 2 scenario 2 |
 
+The brief's edge cases and constraints do not carry DBR or DBA identifiers, so they are traced
+separately. Every requirement in this specification appears in one of the two tables.
+
+| Brief edge case or constraint | Carried by |
+|---|---|
+| Edge case: Missing destination write surface | FR-023; Edge Cases (Missing destination write surface) |
+| Edge case: Empty plan | FR-022; User Story 3 scenario 3; Edge Cases (Empty plan) |
+| Edge case: Torn artifact | FR-004, FR-010, FR-019; SC-004; Edge Cases (Torn artifact) |
+| Edge case: Identifier collision | FR-002, FR-021; Edge Cases (Identifier collision) |
+| Edge case: Non-unique destination identifier | FR-024; SC-014; Edge Cases (Destination kind with no usable convergence key) |
+| Edge case: Partial apply | FR-020, FR-025; SC-003; Edge Cases (Partial apply) |
+| Constraint: the plan contract orders operations without prescribing write granularity | FR-026 |
+| Constraint: no v1 compatibility; detect and reject | FR-019; SC-011 |
+| Constraint: recording deletes changes existing plan content | FR-015; Edge Cases (Recorded deletes change the plan artifact's content) |
+| Derived from DBR-009 and DBR-016: the delete derivation's extraction precondition | FR-004, FR-015; SC-017; Edge Cases (Destination side loaded incrementally) |
+| Constraint: which existing commands carry review is an implementation choice, within no new command group | FR-008; SC-012; Assumptions; Dependencies |
+| Constraint: the qualified path is NetBox → Infrahub | Assumptions |
+| Derived from DBR-007 at apply time: peer resolution failures | FR-014; SC-016 |
+| Derived from DBR-003/DBR-006: the plan's run binding | FR-009; SC-015; User Story 2 scenario 6 |
+
 ## Open Design Decisions
 
 Both items previously deferred here are now answered in [Clarifications](#clarifications) and
@@ -555,6 +1004,16 @@ silent implementation choices, because they are design commitments other outcome
 Three further design commitments were surfaced during clarification and recorded the same way:
 AD002 (operation-identifier derivation), AD003 (relationship-reference shape and apply-time peer
 resolution), and AD004 (how deletes are recorded without changing what the write path writes).
+
+If AD003 is not ratified, FR-002's reference shape and FR-014's resolution mechanism reopen. If
+AD004 is not ratified, FR-015's derivation source and FR-016's structural boundary reopen.
+
+A further sixteen commitments — AD008 through AD023 — were recorded after the checklist evaluation
+and are carried in [Clarifications](#session-2026-07-26--checklist-evaluation). Each is marked at
+every requirement that encodes it, so the revisit set for any one of them is the set of requirements
+carrying its marker. None of them expands scope: each either names a representation the brief
+delegates, corrects a statement this specification made about existing code, or picks the reading
+that keeps the brief's own text true.
 
 Nothing here remains open. What remains genuinely deferred is not a design commitment:
 

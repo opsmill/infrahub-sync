@@ -86,15 +86,42 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 
 - Items are intentionally all unchecked. Marking them is a reviewer action, not an authoring action.
 - Spec defects observed and recorded here rather than corrected, per this run's append-only rule:
-  - **SC-005 depends on an unstated review requirement** (CHK001, CHK037). The criterion compares
-    identifiers "shown at review" against those reported at apply, but neither FR-006 nor FR-008
-    requires the identifier to appear in review output.
-  - **FR-008 and SC-012 may state different bars** (CHK017): "no new CLI command is added" versus
-    "the command set gains no new command group".
-  - **The redaction rule for FR-018 is undefined** (CHK007, CHK042). The requirement states an
-    outcome; nothing states what marks a value as secret, which matters because FR-002 requires full
-    source payloads in the artifact.
-  - **The stdout requirement's scope is ambiguous** (CHK011): it is unclear whether the existing
-    command's live output moves to standard output too, which would be a further user-visible change.
-  - **The review path's own failure behavior is unspecified** (CHK008, CHK031, CHK033): unknown run,
-    absent artifact, and v1 plan are all specified for apply but not for review.
+    - **SC-005 depends on an unstated review requirement** (CHK001, CHK037). The criterion compares
+  identifiers "shown at review" against those reported at apply, but neither FR-006 nor FR-008
+  requires the identifier to appear in review output.
+    - **FR-008 and SC-012 may state different bars** (CHK017): "no new CLI command is added" versus
+  "the command set gains no new command group".
+    - **The redaction rule for FR-018 is undefined** (CHK007, CHK042). The requirement states an
+  outcome; nothing states what marks a value as secret, which matters because FR-002 requires full
+  source payloads in the artifact.
+    - **The stdout requirement's scope is ambiguous** (CHK011): it is unclear whether the existing
+  command's live output moves to standard output too, which would be a further user-visible change.
+    - **The review path's own failure behavior is unspecified** (CHK008, CHK031, CHK033): unknown run,
+  absent artifact, and v1 plan are all specified for apply but not for review.
+
+### Remediation applied 2026-07-26
+
+The spec defects above were repaired in `../spec.md` by the delivery-apply remediation pass. Boxes
+remain unchecked; verification is a separate pass.
+
+- CHK001, CHK037 — FR-006 now requires per-object detail to present at least the operation
+  identifier, action, destination kind and destination identity; FR-006 is added to the DBR-005
+  traceability row and SC-005 names its review-side source. `[AD020]`
+- CHK007, CHK042 — resolved as scope: the artifact carries mapped source field values only,
+  credentials live in `settings`, and no field-level classification model is built. Recorded in
+  FR-018, Assumptions and SC-010's injection point. `[AD018]`
+- CHK017 — FR-008 is restated to the brief's bar, no new command *group*, noting that AD005 extends
+  the existing command by choice so no command is added either. `[AD019]`
+- CHK011 — the stdout requirement is scoped to the read-from-artifact mode; the live path's channel
+  is unchanged. `[AD023]`
+- CHK002, CHK003, CHK023, CHK029 — FR-006 fixes the summary breakdown as a count per action and a
+  count per kind, requires kind narrowing, and FR-022 requires an explicit zero-operations summary;
+  SC-009 gains per-case pass conditions.
+- CHK008, CHK031, CHK032, CHK033 — FR-008 requires an error naming an unknown or plan-less run
+  identifier and forbids presenting it as an empty plan; FR-019 binds the plan reader for review and
+  apply alike. `[AD021]`
+- CHK013 — SC-009's cases are produced with neither side reachable, evidencing no adapter is built.
+- CHK036 — Dependencies now records the extended command's contract: the pre-existing `--run-id`
+  meaning, the log-stream output channel, the configuration-bound run-directory location, and the
+  pipeline lock. `[AD021]`
+- CHK024, CHK041 — SC-010 names the canary injection point and how each output is captured.

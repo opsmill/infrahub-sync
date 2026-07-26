@@ -86,15 +86,46 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 
 - Items are intentionally all unchecked. Marking them is a reviewer action, not an authoring action.
 - Spec defects observed and recorded here rather than corrected, per this run's append-only rule:
-  - **Update payload semantics are undefined** (CHK002). Nothing says what happens to destination
-    attributes absent from the plan payload, which decides whether an apply is additive or
-    authoritative.
-  - **Cardinality-many relationship semantics are undefined** (CHK003): replace-set versus add-to-set
-    changes the destination outcome that SC-008 compares against.
-  - **The crash-window criterion references a record the spec excludes** (CHK023). SC-003's "after a
-    write commits but before it is recorded" presumes a per-operation record, while a durable
-    crash-surviving ledger is out of scope.
-  - **FR-024 has no acceptance criterion** (CHK026), and neither the warning's effect on the plan run
-    nor its output destination is specified (CHK006, CHK007).
-  - **Peer-resolution ambiguity and multiplicity are unhandled** (CHK004, CHK032): a miss that finds
-    zero peers and a miss that finds several have no stated behavior.
+    - **Update payload semantics are undefined** (CHK002). Nothing says what happens to destination
+  attributes absent from the plan payload, which decides whether an apply is additive or
+  authoritative.
+    - **Cardinality-many relationship semantics are undefined** (CHK003): replace-set versus add-to-set
+  changes the destination outcome that SC-008 compares against.
+    - **The crash-window criterion references a record the spec excludes** (CHK023). SC-003's "after a
+  write commits but before it is recorded" presumes a per-operation record, while a durable
+  crash-surviving ledger is out of scope.
+    - **FR-024 has no acceptance criterion** (CHK026), and neither the warning's effect on the plan run
+  nor its output destination is specified (CHK006, CHK007).
+    - **Peer-resolution ambiguity and multiplicity are unhandled** (CHK004, CHK032): a miss that finds
+  zero peers and a miss that finds several have no stated behavior.
+
+### Remediation applied 2026-07-26
+
+The spec defects above were repaired in `../spec.md` by the delivery-apply remediation pass. Boxes
+remain unchecked; verification is a separate pass.
+
+- CHK036, CHK011, CHK002, CHK003 — FR-013 and the Assumptions row are corrected: the existing
+  convergent upsert is create-path-only and HFID-keyed, the existing update path is `local_id`-keyed
+  and unusable from a saved plan, planned creates and updates both route through the upsert,
+  cardinality-many relationships are replace-set, and an update payload is authoritative for the
+  mapped fields it carries. SC-002's "same identity" is defined and SC-008 compares unordered sets of
+  (peer kind, peer identity). `[AD015]` `[AD017]`
+- CHK004, CHK032 — FR-014 and SC-016 add the zero-match and multi-match refusal arms; neither is
+  ever a silent skip. `[AD016]`
+- CHK005 — FR-014's tier guarantee is qualified to references in the computed dependency graph, with
+  self-references, cycle-dropped optional edges and explicit `order:` named. `[AD022]`
+- CHK015, CHK018 — the action vocabulary is closed and SC-003's third write class restated.
+  `[AD009]`
+- CHK023 — SC-003's crash windows are restated destination-side and FR-025 is scoped in-process.
+  `[AD011]`
+- CHK026 — FR-024 is restated on the human-friendly ID and given SC-014 plus traceability rows.
+  `[AD017]`
+- CHK022, CHK027, CHK028, CHK024 — SC-002, SC-003, SC-007 and SC-008 now state their comparison
+  scope and baseline.
+- CHK037, CHK041 — the tier computation and the qualified configuration's relationship cardinalities
+  are recorded in Assumptions.
+- CHK017 — subsequently decided as AD024 and applied. FR-015 now derives deletes only when the
+  destination side ran a full extract; when it did not, no deletes are derived and the manifest
+  discloses that they were not computed. The incremental hydrate path replays the prior run's
+  snapshot plus changed-since rows, so an out-of-band destination delete would otherwise surface as a
+  phantom delete and force a spurious failed apply under SC-007. Criterion SC-017.
