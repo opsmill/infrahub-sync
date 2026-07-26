@@ -18,7 +18,7 @@ hooks:
   before_specify:
   - extension: git
     command: speckit.git.feature
-    enabled: true
+    enabled: false
     optional: false
     prompt: Execute speckit.git.feature?
     description: Create feature branch before specification
@@ -129,7 +129,7 @@ hooks:
     condition: null
   - extension: critique
     command: speckit.critique.run
-    enabled: true
+    enabled: false
     optional: true
     priority: 10
     prompt: Run spec critique before proceeding to tasks?
