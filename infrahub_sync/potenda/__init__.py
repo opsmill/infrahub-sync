@@ -12,6 +12,7 @@ from infrahub_sync import IncrementalConfig
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from datetime import datetime
     from pathlib import Path
 
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
     from diffsync.diff import Diff
 
     from infrahub_sync import SyncInstance
+    from infrahub_sync.plan.models import PlanManifest
 
 
 class Potenda:
@@ -54,6 +56,13 @@ class Potenda:
         self._schema_subhash: str = schema_subhash
         self._counts: dict[str, int] = {}
         self._did_full_extract: bool = False
+        # Per-side extraction mode, recorded alongside the OR-accumulated
+        # `_did_full_extract` rather than in place of it. FR-015 derives deletes only
+        # when the *destination* side ran a full extract, and the OR-accumulated flag
+        # cannot answer for one side: it is deliberately true when either side ran
+        # full, which is what `persist_baseline_counts` needs and what a per-side
+        # question must not be answered with. Absent side means "did not load".
+        self._side_full_extract: dict[str, bool] = {}
         self._side_extract_ts: dict[str, datetime] = {}
         self._prev_run_resolved: bool = False
         self._prev_run_cached: Path | None = None
@@ -198,6 +207,10 @@ class Potenda:
         # first side's True (persist_baseline_counts resets the run-counter
         # only when no side ran the incremental path).
         self._did_full_extract = self._did_full_extract or (not use_inc)
+        # Per-side answer for FR-015. `should_use_incremental` already returns False
+        # when there is no prior run, so `not use_inc` is exactly "this side ran a
+        # full extract" for both arms of the branch below.
+        self._side_full_extract[side] = not use_inc
 
         if not use_inc or prev_run is None:
             adapter.load()
@@ -331,12 +344,101 @@ class Potenda:
         return rows
 
     def write_plan(self, diff: Any) -> None:
-        """Serialize the diffsync Diff into <run_dir>/plan.parquet."""
+        """Write both plan representations for a single-diff run.
+
+        `plan.parquet` is written exactly as before (V23) — it is still the row set
+        `apply` and operators read today, and the new artifact never replaces it. The
+        saved plan artifact is written alongside it, because this method is the one call
+        site common to every non-tier path that produces a plan: the `diff` command
+        (`infrahub_sync/cli.py:152`), the serial `sync` command (`:271`) and
+        `sync_in_tiers`' no-tiers branch — and on all three it runs before any
+        destination write, which is what FR-001 requires. The tier branch of
+        `sync_in_tiers` writes the artifact itself, from every tier's retained diff.
+        """
         if not self.run_dir:
             return
         from infrahub_sync.cache.parquet_io import write_plan
 
         write_plan(run_dir=self.run_dir, rows=self._diff_to_rows(diff))
+        self.write_plan_artifact([diff])
+
+    def write_plan_artifact(self, diffs: Sequence[Any]) -> PlanManifest | None:
+        """Derive and write `<run_dir>/plan/` for `diffs`, before any destination write.
+
+        Composes the derivation (creates and updates from every diff handed in, then the
+        derived deletes, then the convergence-key warning) with the source-snapshot
+        binding and the configuration version, and hands the result to the artifact
+        writer. Returns the manifest that was written, or `None` when this run has no
+        cache identity to write into.
+
+        `diffs` is a sequence rather than a single diff because the tier path retains one
+        diff per tier and the artifact records the whole change set, once.
+
+        A derivation or write failure propagates: it fails the command on `diff` exactly
+        as on `sync` (FR-030, AD047).
+        """
+        if not self.run_dir or not self.run_id or self.config is None:
+            # No cache identity or no parsed configuration — the latter only happens in
+            # tests, which construct Potenda with `config=None`.
+            logger.debug("Plan artifact: skipped, this run has no run_dir/run_id/config")
+            return None
+
+        from functools import partial
+
+        from infrahub_sync.plan.checksum import source_snapshot_records
+        from infrahub_sync.plan.config_version import default_config_version
+        from infrahub_sync.plan.derive import (
+            derive_deletes,
+            operations_from_diff,
+            tier_of,
+            warn_missing_convergence_key,
+        )
+        from infrahub_sync.plan.models import SourceSnapshotRecord
+        from infrahub_sync.plan.writer import write_plan_artifact as write_artifact
+
+        resolve_tier = partial(tier_of, tiers=self.tiers, top_level=self.top_level)
+        operations = []
+        for diff in diffs:
+            operations.extend(
+                operations_from_diff(
+                    diff,
+                    config=self.config,
+                    tier_of=resolve_tier,
+                    source_adapter=self.source,
+                )
+            )
+
+        # FR-015: deletes are derived only where the destination side holds a complete
+        # picture, and the manifest records which of the two happened.
+        deletes_computed = self._side_full_extract.get("B", False)
+        operations.extend(
+            derive_deletes(
+                kinds=list(self.top_level),
+                source_adapter=self.source,
+                destination_adapter=self.destination,
+                config=self.config,
+                tier_of=resolve_tier,
+                destination_full_extract=deletes_computed,
+            )
+        )
+
+        warn_missing_convergence_key(destination=self.destination, operations=operations)
+
+        manifest = write_artifact(
+            run_dir=self.run_dir,
+            run_id=self.run_id,
+            config_version=default_config_version(self.config),
+            source_snapshot=[SourceSnapshotRecord(**record) for record in source_snapshot_records(self.run_dir)],
+            deletes_computed=deletes_computed,
+            operations=operations,
+        )
+        logger.info(
+            "Plan artifact: wrote %d operation(s) to %s (deletes computed: %s)",
+            manifest.operations_count,
+            self.run_dir / "plan",
+            deletes_computed,
+        )
+        return manifest
 
     def apply_plan(self) -> None:
         """Dispatch each row in plan.parquet to the destination adapter.
@@ -450,10 +552,22 @@ class Potenda:
         """Run diff+sync one tier at a time.
 
         When `parallel=False`, falls back to the existing serial pathway.
-        When `parallel=True`, narrows the destination's top_level to each
-        tier in turn and runs them sequentially. Aggregates per-tier diff
-        rows into a single plan.parquet so `apply` and operators can
-        review the whole change set.
+        When `parallel=True`, computes **every** tier's diff first, writes the plan
+        artifact, and only then executes the retained diffs tier by tier. The two loops
+        are what makes FR-001's "the artifact exists before anything is written" true in
+        tier mode: interleaving diff and sync — as this branch used to — writes the first
+        tier before the second tier has even been compared, so no complete artifact can
+        precede the first write, and `sync --parallel` is the default.
+
+        The `top_level` narrowing stays in the **compute** loop, restored afterwards. It
+        governs diff computation, not execution: only the comparison differ reads it
+        (`.venv/…/diffsync/helpers.py:79-88`), while the synchronizer walks the children of
+        whatever `Diff` it is handed. Narrowing in the execution loop instead would compute
+        six identical full-destination diffs rather than six disjoint per-tier ones, and the
+        artifact would record every operation once per tier (AD039, PD-009).
+
+        Aggregates per-tier diff rows into a single plan.parquet, unchanged, so `apply` and
+        operators can review the whole change set.
         """
         if not self.tiers:
             self.load_both_sides()
@@ -474,20 +588,35 @@ class Potenda:
         self.load_both_sides()
         self.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
         saved_top = self.destination.top_level
-        aggregated_rows: list[dict[str, str]] = []
-        any_writes = False
+
+        # Compute loop: every tier's diff, each computed against its own narrowed
+        # destination top_level, retained for the execution loop below.
+        retained: list[tuple[list[str], Any]] = []
         try:
             for idx, tier in enumerate(self.tiers):
                 tier_list = sorted(tier)
-                logger.info("Sync tier %d (%d): %s", idx, len(tier), tier_list)
+                logger.info("Diff tier %d (%d): %s", idx, len(tier), tier_list)
                 self.destination.top_level = tier_list  # ty: ignore[invalid-attribute-access]
-                diff = self.diff()
-                aggregated_rows.extend(self._diff_to_rows(diff))
-                if diff.has_diffs():
-                    self.sync(diff=diff)
-                    any_writes = True
+                retained.append((tier_list, self.diff()))
         finally:
             self.destination.top_level = saved_top  # ty: ignore[invalid-attribute-access]
+
+        aggregated_rows: list[dict[str, str]] = []
+        for _tier_list, diff in retained:
+            aggregated_rows.extend(self._diff_to_rows(diff))
+
+        # Before the first destination write, and after top_level is restored so the
+        # derived deletes cover every kind rather than the last tier's (FR-001, AD039).
+        self.write_plan_artifact([diff for _tier_list, diff in retained])
+
+        # Execution loop: replay the retained diffs in tier order. `top_level` is
+        # irrelevant here — the synchronizer walks the Diff it is handed.
+        any_writes = False
+        for idx, (tier_list, diff) in enumerate(retained):
+            logger.info("Sync tier %d (%d): %s", idx, len(tier_list), tier_list)
+            if diff.has_diffs():
+                self.sync(diff=diff)
+                any_writes = True
 
         if any_writes:
             # Same reasoning as the no-tiers branch — capture post-sync
