@@ -35,8 +35,12 @@ removed once the decision is confirmed.
 
 If a decision is not ratified, every requirement citing it must be revisited: AD001 → FR-002,
 FR-004, FR-005, FR-010, FR-019; AD002 → FR-003, FR-021; AD003 → FR-002, FR-014; AD004 → FR-015,
-FR-016; AD005 → FR-008. The revisit sets for AD008–AD048 are the requirements carrying each
-marker.
+FR-016; AD005 → FR-008. The revisit sets for AD008–AD064 are the requirements carrying each
+marker. Two of the later decisions carry a wider set and are called out: if **AD055** is not ratified,
+FR-016, FR-017, FR-020, SC-007 and User Story 4 revert to the failed-run reading and DBR-016 and DBA-007
+revert to the brief's own derivation; if **AD056** is not ratified, FR-006's disclosure clause and
+FR-015's "explicit and reviewable" claim both reopen, and AD024's justification for omitting the delete
+class stands on nothing.
 
 - Q: What is the plan artifact's concrete on-disk encoding and file layout, how is its checksum
   computed, and how is a pre-existing v1 plan detected? → A: A `plan/` directory inside the
@@ -84,7 +88,10 @@ marker.
 - Q: Which existing commands carry plan review, and what is the exact spelling? → A: The existing
   non-mutating `diff` command gains a read-from-artifact mode: `--run-id <id> --from-plan` prints
   the summary, `--detail` expands to per-object records, and `--kind <kind>` narrows the detail to
-  one kind. In that mode no adapter is constructed and neither side is extracted, which is what
+  one kind. **The two-option spelling is superseded by AD057**, which folds the run identifier into the
+  review option's own value — `--from-plan <run-id>` — because `--run-id` otherwise carries two inverse
+  meanings behind an omissible flag. `--detail` and `--kind` are unchanged, as is everything else this
+  decision fixes. In that mode no adapter is constructed and neither side is extracted, which is what
   lets review run in a process that did not produce the plan. No command is added and no command
   group is added. Review output is written to standard output rather than the log stream, since it
   is the command's product and must be capturable for the credential scan. The in-process reader is
@@ -142,10 +149,13 @@ markers are the ratification handles.
   state is introduced, because `previous_successful_run_dir` consumes that vocabulary through
   `_SUCCESS_STATUSES = frozenset({"applied", "dry-run"})` (`cache/incremental.py:24`) and adding one
   would be a compatibility change this outcome does not authorize; `failed` is already outside that
-  set, which is the behavior that matters. The pre-existing schema-subhash refusal path, which today
-  aborts via `print_error_and_abort` (`cli.py:336-340`) after the run sidecar was written with
-  `status: running` (`cli.py:322`) and therefore leaves `running` on disk permanently, must record
-  `failed` too. `[PROVISIONAL AD010]`
+  set, which is the behavior that matters. **Superseded in one clause by AD063**: this decision also
+  folded in a repair of the pre-existing schema-subhash refusal path, on the reading that it aborts via
+  `print_error_and_abort` (`cli.py:336-340`) leaving `running` on disk permanently. That path is
+  **unreachable** — the block imports a resolver the package does not define (`cli.py:330`) and the
+  `except ImportError: pass` at `:341-342` swallows it — so the repair is dropped and the record
+  corrected. The run-state decision itself stands unchanged for the **new** refusal paths, which is what
+  DBA-004 needs. `[PROVISIONAL AD010]` `[PROVISIONAL AD063]`
 - Q: How can FR-025's partial-apply record hold while a durable crash-surviving ledger is out of
   scope? → A: "Stops partway" means an apply that terminates in-process with a reported error. The
   record is best-effort at that point and is explicitly **not** required to survive abnormal process
@@ -234,10 +244,14 @@ markers are the ratification handles.
   `[PROVISIONAL AD020]`
 - Q: `diff` already has a `--run-id` meaning "re-use a specific cache run id", an unknown run id
   silently creates the directory, and `diff` takes an exclusive lock. How does review mode behave? →
-  A: In `--from-plan` mode, `--run-id` selects the stored run to read, MUST NOT create a run
+  A: In review mode the run identifier selects the stored run to read, MUST NOT create a run
   directory, and an unknown or plan-less run id is an error naming the run identifier and the expected
   artifact path. The mode constructs no adapter, extracts nothing, and takes no pipeline lock. The
-  existing live-path meaning of `--run-id` (`cli.py:98`) is unchanged. Without this, reviewing a
+  existing live-path meaning of `--run-id` (`cli.py:98`) is unchanged. **AD057 supersedes how the
+  stored run is named**: the run identifier is the review option's own value rather than a separate
+  `--run-id`, which is what removes the two-inverse-meanings overload this decision worked around by
+  scoping behavior to a mode. Everything this decision fixes about that mode's behavior is unchanged.
+  Without this, reviewing a
   typo'd run id renders as a valid zero-operation plan — the most dangerous possible output for a
   review-before-write feature, since an empty plan is also a legitimate artifact — because
   `get_potenda_from_instance` creates the run directory with `mkdir(parents=True, exist_ok=True)`
@@ -275,11 +289,14 @@ One residue surfaced while the decisions above were being applied and was resolv
   `list_changed_since(resource, cursor)` are added on top (`potenda/__init__.py:227-228`). So the
   destination store is prior snapshot plus changed-since, not a live full read, and an object deleted
   at the destination out-of-band since the prior run remains in it — making a destination-minus-source
-  difference over-inclusive. That phantom delete matters more than ordinary staleness because FR-017
-  and SC-007 turn any delete in a plan into a **failed** apply, so a stale cache would become a
-  spurious operator-facing run failure in the one feature whose purpose is trustworthy
-  review-before-write. Recording the omission is what keeps FR-017's "never silently skipped"
-  contract true: nothing is dropped quietly, because the manifest says deletes were not computed.
+  difference over-inclusive. That phantom delete matters more than ordinary staleness because it puts a
+  delete in front of a reviewer for an object that no longer exists and inflates the skipped-delete count
+  FR-017 records, in the one feature whose purpose is trustworthy review-before-write. **Under AD055 the
+  consequence is a misleading plan and an overstated count rather than a spurious run failure**, which is
+  a smaller harm than the earlier reading assumed but is still a reason to derive no deletes at all.
+  Recording the omission is what keeps FR-017's "never silently skipped" contract true: nothing is
+  dropped quietly, because the manifest says deletes were not computed — and, under AD056, both review
+  depths say so too.
   Implementation note: the signal exists but is not per-side today —
   `self._did_full_extract = self._did_full_extract or (not use_inc)` OR-accumulates across both sides
   (`potenda/__init__.py:200`, consumed at `:430`), deliberately so per the comment at `:197-199`, so
@@ -384,11 +401,16 @@ on the same basis as AD001–AD024.
   write path still cannot delete because AD004 makes that structural; FR-013 is verified through
   SC-002 and SC-008; a planned create whose destination identity already exists converges through
   the upsert, with conflict policy out of scope; a `--kind` filter matching no operation or naming a
-  kind absent from the configuration is an error naming it rather than empty output; `--from-plan`
-  without a run identifier is an error naming the required option; FR-018's "any review output" and
+  kind absent from the configuration is an error naming it rather than empty output — **the raise/empty
+  split refined by AD058 and the enumeration added by AD059**; FR-018's "any review output" and
   SC-010's enumeration name the same surfaces; an unreadable run directory is an error naming the
-  path; SC-012's before-and-after command listing is captured as `--help` output to a file; and the
-  new review flags carry a documentation obligation. `[PROVISIONAL AD036]`
+  path; SC-012's before-and-after command listing is captured as `--help` output to a file — **captured
+  from the committed baseline fixture per AD060, not from a stash**; and the
+  new review options carry a documentation obligation — **their help text specified per AD061**. Two
+  items in this set are **retired**: the "`--from-plan` without a run identifier" error case, which
+  AD057 makes unreachable by folding the run identifier into the review option's value; and the
+  next-action obligation's confinement to refusals, which AD059 extends to the whole error taxonomy.
+  `[PROVISIONAL AD036]`
 
 ### Session 2026-07-26 — planning-phase decisions
 
@@ -419,9 +441,13 @@ on the same basis as AD001–AD036.
   or merges a relationship list cannot be determined without a live Infrahub (AD007). So replace-set
   is **enforced explicitly after the upsert** rather than assumed of it: the planned write performs
   the upsert and then reconciles each cardinality-many peer set against the saved node using the only
-  verified replace-set implementation in the tree. If the upsert already replaces, the reconciliation
-  is a no-op. FR-013's "which is the existing behavior" is corrected accordingly.
-  `[PROVISIONAL AD038]`
+  replace-set implementation in the tree. If the upsert already replaces, the reconciliation
+  is a no-op. FR-013's "which is the existing behavior" is corrected accordingly. **Corrected further by
+  AD054**: "the only *verified* replace-set implementation" was itself too generous. That implementation
+  reads the peer set at `adapters/infrahub.py:151` and only fetches it at `:168-169`, so it compares the
+  desired set against an unloaded one and adds without removing. The reconciliation this decision
+  mandates therefore has to **re-read the destination peer set before comparing**, and the pre-existing
+  ordering is corrected while the helper is extracted. `[PROVISIONAL AD038]` `[PROVISIONAL AD054]`
 - Q: FR-001 requires the artifact to exist before anything is written to the destination. Does the
   tiered write path allow that? → A: Not as written. The tier branch interleaves per-tier comparison
   and per-tier write and writes the aggregated plan only after every write has completed
@@ -502,13 +528,18 @@ expands scope. All seven are **provisional** on the same basis as AD001–AD041.
   full, plus the live half of DBA-007) and one, SC-016's live half, derived by this specification
   rather than stated by the brief. That is against a brief completion condition demanding inspectable
   passing evidence for every criterion. What is done about it? → A: Both halves of a two-part answer, and neither is a
-  substitute for the other. First, a **local conformance harness** against a mocked destination SDK
-  asserts the *mutation payloads* rather than the destination state: that every human-friendly-ID
-  component of the destination kind is accounted for in the data handed to each create call, by the
-  per-component rule AD051 fixes; that the replace-set reconciliation is issued for every
-  cardinality-many relationship; and that a repeated operation produces no second create. That catches
+  substitute for the other. First, a **local conformance harness** asserts the *mutation the destination
+  library renders* rather than the destination state: that the rendered mutation input carries either a
+  destination-assigned identifier or a human-friendly identifier, so an unkeyed write is visible; that
+  the replace-set reconciliation is issued for every cardinality-many relationship; and that a repeated
+  operation produces no second create. That catches
   a whole class of defect offline — AD042 is exactly such a defect, and it is the class those deferred
-  criteria exist to catch. Second, the deferral is **stated, not implied**: the brief's DBA-001,
+  criteria exist to catch. **Rebuilt by AD054**: as first written the harness asserted against the
+  *assembled* data and against a wholly mocked destination library, which makes two of its three
+  assertions unfalsifiable — the assembled data cannot show keyedness, and a mock holds no destination
+  state against which "no second create" or "the peer set was replaced" could fail. The harness is built
+  against a real destination node constructed from a **committed schema fixture** instead, and asserts
+  the rendered mutation input. Second, the deferral is **stated, not implied**: the brief's DBA-001,
   DBA-002, DBA-003 and DBA-008 and the live half of its DBA-007, together with the live half of this
   specification's own SC-016, remain deferred to a run against a live Infrahub, and the brief's
   completion condition is therefore not met at merge time. `[PROVISIONAL AD045]`
@@ -628,6 +659,165 @@ same basis as AD001–AD048.
   rule instead of serving it. Once the gate passes, all four remaining checks are evaluated and every
   failure is named, unchanged. `[PROVISIONAL AD053]`
 
+### Session 2026-07-27 — critique round one, ratified
+
+Eleven decisions were ratified after three independent critique lenses worked this specification, the
+plan and the tasks against the brief and the repository. Ten correct a defect in this specification's
+own delivery — an assertion that proves nothing, a disclosure that never reaches a review surface, an
+option with two inverse meanings, a contract that does not match its own API, a failure with no next
+action, a walkthrough step that does not execute, help text left to the implementer, a record with no
+home, a repair applied to unreachable code, or a criterion reported as carried when it is carried
+conditionally. The eleventh, AD055, re-derives two derived requirements and is recorded in its own
+session below. None expands scope. All eleven are **provisional** on the same basis as AD001–AD053.
+
+- Q: The offline conformance harness compensates for five brief criteria that cannot be evidenced
+  without a live destination. Two of its three assertions prove only that a mock was called. What
+  replaces it? → A: The harness is **rebuilt to assert the rendered mutation input**, not the assembled
+  data. It constructs a real destination node from a committed schema fixture and asserts that the
+  rendered mutation input carries a node identifier or a human-friendly identifier — which is where
+  keyedness is actually observable, because the destination library renders the mutation locally and
+  keys it on `data["id"]` if set, else `data["hfid"]`
+  (`.venv/…/infrahub_sdk/node/node.py:295-298`, rendered on the upsert path at `:1843-1846`). Asserting
+  against the assembled `data` cannot see keyedness at all: a relationship-crossing component is a
+  resolved identifier string by then. Two further corrections travel with it. **First**, the replace-set
+  reconciliation MUST **re-read the destination's peer set before comparing**. A locally built node
+  reports the desired set as its existing set — `self.initialized = data is not None`
+  (`.venv/…/infrahub_sdk/node/relationship.py:264`), and `fetch()` returns immediately once initialized
+  (`:286-299`) — so a comparison made without re-reading is a guaranteed no-op that can only pass
+  against a mock. **Second**, the pre-existing additive ordering in the live update path is corrected
+  while we are there: it reads the peer set at `infrahub_sync/adapters/infrahub.py:151` and only then
+  fetches at `:168-169`, so its "replace-set" adds without removing. Code fact V12 overstates today's
+  behavior as a replace-set and is corrected in the plan. `[PROVISIONAL AD054]`
+- Q: AD024 records the delete-computation flag in the manifest, and DBR-009 makes recording deletes the
+  default, but no requirement puts either on a review surface — so a plan missing its entire delete
+  class is indistinguishable from a plan with no deletes. Is the omission reviewable? → A: **Not as
+  written, and it must be.** Both review depths MUST surface the delete-computation record and say
+  plainly when deletes were not computed for the plan, and a non-zero delete count MUST be annotated
+  inline in both the summary and the per-object detail to say that no delete will be executed by this
+  release. This is the disclosure that makes AD024 defensible; without it AD024's own justification —
+  that the omission is "explicit and reviewable" — is delivered by no obligation at all. It is carried
+  into FR-006, the plan-summary contract, SC-009's pass condition, and the review-rendering task.
+  `[PROVISIONAL AD056]`
+- Q: In read-from-artifact mode the run identifier is a read source that errors on an unknown value;
+  on the live path the same option is a write target whose unknown value is silently created and whose
+  existing plan is overwritten. The discriminator is an omissible flag. Is that a contract an operator
+  can hold? → A: **No.** The review option **takes the run identifier as its value**, so there is one
+  option with one meaning rather than two inverse meanings behind an omissible flag. Forgetting the mode
+  flag can no longer turn a read into a destructive write against the artifact being read. The brief
+  makes option spelling an implementation choice within one fixed constraint — no new command group — so
+  this is fully inside scope, and it retires the separately specified "review mode requested with no run
+  identifier" error case, which can no longer arise. The live path's own run-identifier option keeps its
+  existing meaning, untouched. `[PROVISIONAL AD057]`
+- Q: Three contracts call operations their own documents do not declare. Which side is authoritative?
+  → A: **The declared interface.** Three concrete mismatches are corrected. The destination write
+  surface MUST use the peer resolver's single declared entry point rather than two singular/plural
+  variants declared nowhere. The pre-apply verifier MUST receive the **adapter's name** rather than a
+  boolean, because the message it promises names the adapter and a boolean cannot supply it. And
+  per-object detail narrowed to a kind the configuration **does** declare but for which the plan holds no
+  operation MUST return an empty result from the reading interface and MUST NOT raise: the never-empty
+  rule is a presentation obligation and belongs to the renderer, not to the reader that FR-029 requires
+  callers to consume without parsing output. Raising is reserved for a kind the configuration does not
+  declare at all. `[PROVISIONAL AD058]`
+- Q: AD036 attached the next-action obligation to *refusals*. Nine other failures name a cause and
+  stop there. Does the obligation extend to them? → A: **Yes — to the whole error taxonomy.** Every
+  failure this feature introduces MUST name the operator's next action: a torn artifact, an unrecognized
+  format version, an unreadable path, an unknown run identifier, a kind narrowing that matches nothing,
+  a plan-derivation failure on the non-mutating path, a peer that matches no destination object, a peer
+  that matches more than one, and a payload value the canonical encoding cannot represent. Where an
+  enumeration is already in hand the message MUST list it: the kinds the plan actually holds for a kind
+  narrowing, the run identifiers that actually exist for an unknown run identifier. Echoing the
+  operator's own input back while withholding an enumeration the command already holds is a failure that
+  reads as an answer. `[PROVISIONAL AD059]`
+- Q: Two validation steps were reproduced as broken as written. Do they stay? → A: **No — the
+  validation walkthrough must execute as written.** Two are corrected. A checksum-recomputation snippet
+  that reads its target from an argument it is never passed resolves a path at the repository root and
+  cannot succeed; it MUST be passed the run directory. A baseline capture that relies on stashing an
+  uncommitted change is a no-op on a committed tree, which makes the command-set comparison diff a file
+  against itself and pass with no baseline at all; the "before" listing MUST come from the committed
+  baseline fixture captured before any command-line change, which is the only form of that evidence that
+  cannot silently degrade. The third broken step was the apply walkthrough, which AD055 rewrites.
+  `[PROVISIONAL AD060]`
+- Q: No artifact specifies the new options' help text, and the existing run-identifier option's help
+  string becomes incomplete once it also selects a stored run — yet a task regenerates the
+  command-line reference documentation from whatever strings appear. Where is that text decided? → A:
+  **In the command-line contract, before it is generated.** The help text for each new option, and the
+  corrected text for the run-identifier option, are specified there so the generated reference is
+  reviewed rather than discovered after the fact. `[PROVISIONAL AD061]`
+- Q: FR-020 requires the applied-operation identifiers on the run result; the run record's persisted
+  key set is closed, and this outcome declares the run-directory layer unchanged. Where do they live?
+  → A: **In the run's recorded summary, under one named key.** The summary is already a free-form
+  mapping inside the run record's existing key set (`infrahub_sync/cache/sidecars.py:73`, `:76`), so
+  nothing in a persisted schema other code reads has to change, and the location is named once rather
+  than left for each reader to infer. FR-020 is a contract a later outcome consumes, so it cannot stay
+  implicit. The same rule governs AD055's skipped-delete record. `[PROVISIONAL AD062]`
+- Q: AD010 folded a repair of the pre-existing schema-subhash refusal path into this outcome. Is that
+  path reachable? → A: **No — and the record is corrected rather than the code.** The block imports a
+  resolver that does not exist anywhere in the package (`infrahub_sync/cli.py:330`, called `:332`; the
+  comment at `:325` says a later outcome will provide it), so the import raises and the
+  `except ImportError: pass` at `:341-342` swallows the whole block — the abort at `:336-340` cannot
+  execute. Code fact V22 is wrong and is corrected in the plan. The repair task and its test case are
+  **dropped**: fixing unreachable code yields a test that can only pass against an injected stub and a
+  changelog entry that misleads. AD010's run-state decision stands unchanged for the **new** refusal
+  paths, which is what DBA-004 actually needs. Making the dead check live is unrelated scope and is not
+  done here. `[PROVISIONAL AD063]`
+- Q: The traceability table reports DBA-006 as plainly carried while SC-006 rescues it with a
+  pinned-extraction-mode precondition, and a user-story scenario restates the brief's unconditional
+  wording. Which is true? → A: **Conditionally carried, and it must be reported that way.** DBA-006
+  holds on the condition that both plan runs used the same extraction mode on each side — the
+  delete-computation record is inside the checksum and outside the brief's two-field mask, so two runs
+  at different extraction modes are expected to differ. The engineering rescue is sound; only the
+  reporting overstated it. The condition is named in the traceability table and in the scenario that
+  restates the brief's wording. `[PROVISIONAL AD064]`
+
+### Session 2026-07-27 — the delete-bearing apply, re-derived
+
+One decision was ratified at the decision gate, overriding the recommendation put forward. It is
+recorded in its own session because it re-derives two requirements rather than closing a detail, and
+because the basis it now carries is the whole of its authority.
+
+- Q: DBR-009 makes recording deletes the default and DBR-010 forbids applying them. DBR-016 and
+  DBA-007 then make any plan containing a delete end the apply in a failed state. Under the comparison
+  engine's fallback flag set (`infrahub_sync/potenda/__init__.py:92-93`) any destination holding mapped
+  objects absent from the source now yields deletes, so the qualified path's default posture would be a
+  failed apply. Which side gives? → A: **The derived side, because it is the derived side.** DBR-009 and
+  DBR-010 are **quoted** brief requirements and are untouched. DBR-016 and DBA-007 are both **derived**,
+  and approved decision D020 ratified derived requirements as batch policy on the proviso that each
+  carries its basis — so they are **re-derived** here, carrying their new basis, rather than the quoted
+  pair being softened.
+  **The re-derivation.** A plan containing a delete applies every non-delete operation, does not delete
+  from the destination, and ends in run state `applied`, with a non-zero skipped-delete count recorded
+  in the run's summary and an operator-visible warning naming that count. **An operation this release
+  does not execute is a designed limitation, not a run failure.** The limitation is the brief's own —
+  DBR-010 puts applying deletes out of scope and assigns the capability to a later outcome — so a run
+  that behaves exactly as designed must not be reported as a failure.
+  **What DBR-016 protects is preserved, and that is the constraint the re-derivation is built around.**
+  DBR-016 exists so the applied set stays *provably knowable* against the reviewed set; the failed state
+  was one way of achieving that, not the thing being protected. Knowability is preserved by recording, on
+  the run, both the identifiers of the operations that were applied and the count and identifiers of the
+  deletes that were skipped: the reviewed set minus the applied set is then a recorded value rather than
+  an inference, which is exactly why this is not the silent skip DBR-016 forbids. A skip is silent when
+  nothing records it; this one is recorded twice over and warned about.
+  **New basis for DBR-016**: DBR-009 requires recording deletes while DBR-010 forbids applying them, so
+  the applied set necessarily differs from the reviewed set on every delete-bearing plan; that difference
+  must be provably knowable rather than inferred, which the applied-operation identifiers together with
+  the recorded skipped-delete count and identifiers supply. A **genuinely** unsupported operation — one
+  whose action this release does not recognize at all — still fails the run, because nothing about it is
+  designed and its effect on the destination is unknown.
+  **New basis for DBA-007**: DBR-009, DBR-010 and the re-derived DBR-016, measured as the non-delete
+  operations landing, the delete targets surviving, run state `applied`, the recorded non-zero
+  skipped-delete count, and the warning naming it.
+  **No new run status.** The vocabulary stays `pending | running | dry-run | applied | failed`
+  (`infrahub_sync/cache/sidecars.py:71`); the count goes in the run **summary**, consistent with AD062
+  putting FR-020's applied-operation set there rather than extending a persisted schema. One consequence
+  is recorded rather than left to be discovered: an apply that skipped deletes records `applied`, which
+  the incremental path's success set already contains (`infrahub_sync/cache/incremental.py:24`), so such
+  a run counts as a successful prior run for a later warm start. That is correct — the apply succeeded at
+  everything it executes — and it is stated here so it is reviewable.
+  **Successor note.** A later outcome, DB-005, replaces the run record with durable storage behind
+  provider interfaces; it should promote the skipped-delete count from a summary key to a first-class
+  run-record field. That is recorded here and at FR-017 so a future reader finds it.
+  `[PROVISIONAL AD055]`
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Review a saved plan, then apply it by run ID (Priority: P1)
@@ -697,8 +887,12 @@ run state.
    **Then** it is rejected with a message directing the operator to re-plan, and no destination
    write occurs.
 5. **Given** an unchanged source and destination, **When** the plan is produced twice in
-   succession, **Then** the operations section and the manifest are byte-identical, excluding
-   only the fields that necessarily vary per run.
+   succession **with both runs having extracted the same way on each side**, **Then** the operations
+   section and the manifest are byte-identical, excluding only the fields that necessarily vary per
+   run. The same-extraction-mode condition is stated here rather than left implicit, because the
+   manifest's delete-computation record sits inside the checksum and outside the two masked fields, so
+   two runs at different extraction modes are expected to differ and comparing them would make this
+   scenario's own evidence unsound. `[PROVISIONAL AD064]`
 6. **Given** a plan directory copied out of one run and into another run's directory, **When** an
    apply is requested for the receiving run, **Then** the apply is refused because the manifest's
    recorded run identifier does not equal the run being applied, and no destination write occurs.
@@ -737,24 +931,39 @@ the identical plan again, and compare.
 
 An object present in the destination has been removed from the source. The plan run records a
 delete operation for it, with a stable operation identifier, so a reviewer can see it. Applying
-that plan executes every non-delete operation, does not delete the object, and ends in a failed
-state naming the unsupported operation.
+that plan executes every non-delete operation, does not delete the object, and completes
+successfully — with the number of deletes it did not execute recorded on the run and named in a
+warning the operator sees.
 
 **Why this priority**: Recording deletes is a deliberate change to what the plan shows, and the
-gap between "recorded" and "not applied" must be loud. A silent skip would make the applied set
-differ from the reviewed set, which contradicts the outcome.
+gap between "recorded" and "not applied" must be loud. A silent skip would leave the applied set
+merely inferable from the reviewed set instead of provably knowable against it, which contradicts the
+outcome. Recording the count and the identifiers of what was skipped is what makes the difference a
+value rather than a guess — and a limitation this release designed in is not the same thing as a run
+that went wrong, so the apply completes rather than failing. `[PROVISIONAL AD055]`
 
 **Independent Test**: Plan against a source from which a destination-present object has been
 removed, confirm the delete operation appears in the artifact with an identifier, apply, and
-assert destination object counts before and after plus the recorded run state and message.
+assert destination object counts before and after, the recorded run state, the recorded
+skipped-delete count and identifiers, and the warning naming that count.
 
 **Acceptance Scenarios**:
 
 1. **Given** a source dataset from which an object present in the destination has been removed,
    **When** a plan run completes and that plan is applied, **Then** the plan artifact contains a
    delete operation for that object with a stable operation identifier; the apply executes every
-   non-delete operation, does not delete the object, and completes in a **failed** state naming
-   the unsupported operation.
+   non-delete operation, does not delete the object, and completes in an **applied** state, with a
+   non-zero skipped-delete count recorded on the run alongside the skipped operations' identifiers,
+   and a warning the operator sees naming that count. `[PROVISIONAL AD055]`
+2. **Given** an applied plan that contained deletes, **When** the operations recorded as applied are
+   compared against the operations that were reviewed, **Then** every operation the two sets differ by
+   is accounted for by the recorded skipped-delete identifiers, so the difference is a recorded value
+   rather than an inference. `[PROVISIONAL AD055]`
+3. **Given** a plan carrying an operation whose action this release does not recognize at all,
+   **When** an apply is requested, **Then** the apply is refused before any destination write, naming
+   the operation identifier, the unrecognized action and the operator's next action, and the run is
+   recorded `failed` — which is the case a designed limitation is not.
+   `[PROVISIONAL AD055]` `[PROVISIONAL AD059]`
 
 ---
 
@@ -827,13 +1036,28 @@ references.
   operation it reported as applied. The record is explicitly not required to survive abnormal
   process termination. Durable crash-surviving progress and resumption are out of scope.
   `[PROVISIONAL AD011]`
+- **A recorded delete at apply time.** The apply executes every non-delete operation, executes no
+  delete, and completes in an applied state. The number of deletes it did not execute is recorded on
+  the run alongside their identifiers, and a warning the operator sees names that count. This is a
+  designed limitation of this release rather than a run failure: applying deletes is explicitly out of
+  scope and assigned to a later outcome, so a run that behaves exactly as designed is not reported as
+  having gone wrong. What the recording preserves is that the applied set stays provably knowable
+  against the reviewed set — the two differ by exactly the recorded skipped identifiers, which is a
+  value rather than an inference. `[PROVISIONAL AD055]`
+- **An operation whose action this release does not recognize.** Distinct from a recorded delete, and
+  the case that does fail. An operation carrying an action outside the closed vocabulary is refused
+  before any destination write, naming the operation identifier, the action found, the actions
+  recognized, and the operator's next action; the run is recorded `failed`. Nothing about such an
+  operation is designed, so its effect on the destination is unknown and the run cannot claim to have
+  applied what was reviewed. `[PROVISIONAL AD055]` `[PROVISIONAL AD059]`
 - **Destination side loaded incrementally.** The delete derivation is a set difference needing a
   complete destination enumeration, which the engine's incremental path does not provide: it replays
   the prior run's snapshot plus changed-since rows, so an object deleted at the destination
-  out-of-band since that run is still present and would yield a phantom delete — which FR-017 and
-  SC-007 would turn into a spurious failed apply. When the destination side did not run a full
-  extract, no delete operations are derived and the manifest records that deletes were not computed,
-  so the omission is disclosed rather than silent. `[PROVISIONAL AD024]`
+  out-of-band since that run is still present and would yield a phantom delete — which would inflate
+  the skipped-delete count and put a delete in front of a reviewer for an object that no longer exists.
+  When the destination side did not run a full extract, no delete operations are derived and the
+  manifest records that deletes were not computed, and both review depths say so plainly, so the
+  omission is disclosed rather than silent. `[PROVISIONAL AD024]` `[PROVISIONAL AD056]`
 - **Recorded deletes change the plan artifact's content.** Because deletes are suppressed from the
   plan today, recording them makes previously hidden operations appear in the plan artifact and in
   anything that renders that artifact. The existing live comparison rendering is unchanged, because
@@ -882,8 +1106,19 @@ references.
   `[PROVISIONAL AD036]`
 - **A kind filter that matches nothing.** A per-object review narrowed to a destination kind for
   which the plan holds no operation, or to a kind the configuration does not declare, is an error
-  naming that kind. It is never empty output, for the same reason a mistyped run identifier is not an
-  empty plan. `[PROVISIONAL AD036]`
+  naming that kind, listing the kinds the plan does hold, and naming the operator's next action. It is
+  never empty output, for the same reason a mistyped run identifier is not an empty plan. The obligation
+  belongs to the **rendering** of review, not to the reading interface underneath it: a kind the
+  configuration declares but the plan has no operation for is an empty result from the reader and an
+  error from the renderer, because FR-029 requires a caller to consume the reader without parsing
+  output. `[PROVISIONAL AD036]` `[PROVISIONAL AD058]` `[PROVISIONAL AD059]`
+- **A failure that names a cause but no remedy.** Every failure this feature introduces names the
+  operator's next action, not only the refusals AD036 reached: a torn artifact, an unrecognized format
+  version, an unreadable path, an unknown run identifier, a kind narrowing that matches nothing, a
+  plan-derivation failure on the non-mutating path, a peer matching no destination object, a peer
+  matching more than one, and a payload value the canonical encoding cannot represent. Where the command
+  already holds an enumeration it lists it rather than echoing the operator's input back: the kinds the
+  plan holds, and the run identifiers that exist. `[PROVISIONAL AD059]`
 
 ## Requirements *(mandatory)*
 
@@ -968,9 +1203,23 @@ references.
   present, per operation, at least its operation identifier, its action, its destination kind, and
   its destination identity, and MUST be narrowable to a single destination kind. A narrowing that
   names a destination kind for which the plan holds no operation, or a kind the configuration does not
-  declare, MUST be an error naming that kind and MUST NOT be presented as empty detail. *(DBR-002,
-  DBR-005; minimum field set per AD020, filter-miss behavior per AD036)* `[PROVISIONAL AD020]`
-  `[PROVISIONAL AD036]`
+  declare, MUST be an error naming that kind, listing the kinds the plan does hold, and naming the
+  operator's next action; it MUST NOT be presented as empty detail. That obligation is a property of
+  the **rendering**: the reading interface FR-029 fixes MUST return an empty result for a kind the
+  configuration declares and the plan has no operation for, and MUST raise only for a kind the
+  configuration does not declare at all, because a caller consuming data rather than rendered text
+  cannot be served by a presentation rule.
+  **Both depths MUST also surface the delete-computation record FR-015 puts in the manifest**, stating
+  plainly when delete operations were not computed for this plan — without which a plan missing its
+  entire delete class is indistinguishable from a plan that genuinely has no deletes, and FR-015's
+  claim that the omission is explicit and reviewable is carried by nothing. A **non-zero** delete count
+  MUST additionally be annotated inline, in the summary and in the per-object detail alike, stating that
+  no delete will be executed against the destination by this release, so a reviewer approving a plan sees
+  what will and will not be written from the same output they approve. *(DBR-002,
+  DBR-005; minimum field set per AD020, filter-miss behavior per AD036, delete-computation and
+  delete-count disclosure per AD056, the empty-versus-raise split per AD058, next action and the kind
+  enumeration per AD059)* `[PROVISIONAL AD020]`
+  `[PROVISIONAL AD036]` `[PROVISIONAL AD056]` `[PROVISIONAL AD058]` `[PROVISIONAL AD059]`
 - **FR-007**: The plan MUST be readable from the stored artifact at any time after the run,
   including after the process that produced it has exited. *(DBR-012)*
 - **FR-008**: Both review depths MUST be reachable in-process and by extending CLI commands that
@@ -984,19 +1233,31 @@ references.
   through the command framework's echo facility rather than the language's built-in print, which is
   what reconciles this requirement with the project's structured-logging standard; the existing live
   comparison path's output channel is unchanged. Review remains configuration-bound, because a stored
-  run is located only by sync name and run identifier under the cache root. The run identifier selects
-  the stored run to read; an unknown run identifier, or one whose run holds no plan artifact, MUST be
-  an error naming the run identifier and the expected artifact path, and MUST NOT be presented as a
-  plan with zero operations. Requesting the read-from-artifact mode with **no** run identifier MUST be
-  an error naming the required option. A run directory or artifact file that cannot be read — a
-  permission or I/O failure — MUST be an error naming the path that could not be read. Because these
-  review flags are a user-visible CLI change, the same change MUST update the user documentation for
-  the command they extend. The in-process reader MUST be the single implementation, with the command a
-  thin renderer over it; FR-029 fixes that reader's contract. *(DBR-020; command and flag spelling per
-  AD005, group-only bar per AD019, run-identifier and lock behavior per AD021, output channel per
-  AD023, echo mechanism per AD032, missing-option, unreadable-path and documentation obligations per
-  AD036)* `[PROVISIONAL AD019]` `[PROVISIONAL AD021]` `[PROVISIONAL AD023]` `[PROVISIONAL AD032]`
-  `[PROVISIONAL AD036]`
+  run is located only by sync name and run identifier under the cache root.
+  **The read-from-artifact mode MUST be requested by an option that takes the run identifier as its own
+  value**, so one option carries one meaning. It MUST NOT be a bare mode flag sitting beside the existing
+  live-path run-identifier option: that spelling gives one option two inverse meanings — a write target
+  whose unknown value is silently created and whose stored plan is overwritten without the mode flag, and
+  a read source that errors on an unknown value with it — discriminated by a flag the operator can omit,
+  so a single omission turns a read into a destructive write against the very artifact being read. The
+  existing live-path run-identifier option keeps its present meaning unchanged, and the "mode requested
+  with no run identifier" error case ceases to exist, because the mode cannot be requested without one.
+  An unknown run identifier, or one whose run holds no plan artifact, MUST be an error naming the run
+  identifier, the expected artifact path, the run identifiers that do exist for that sync, and the
+  operator's next action, and MUST NOT be presented as a plan with zero operations. A run directory or
+  artifact file that cannot be read — a permission or I/O failure — MUST be an error naming the path that
+  could not be read and the operator's next action. Because these
+  review options are a user-visible CLI change, the same change MUST update the user documentation for
+  the command they extend, and **each new option's help text MUST be specified before the reference
+  documentation is generated from it** rather than discovered afterwards; the existing run-identifier
+  option's help text MUST be corrected in the same change, because it no longer describes everything that
+  option does. The in-process reader MUST be the single implementation, with the command a
+  thin renderer over it; FR-029 fixes that reader's contract. *(DBR-020; command and option spelling per
+  AD005 as corrected by AD057, group-only bar per AD019, run-identifier and lock behavior per AD021,
+  output channel per AD023, echo mechanism per AD032, unreadable-path and documentation obligations per
+  AD036, next actions and the run-identifier enumeration per AD059, specified help text per AD061)*
+  `[PROVISIONAL AD019]` `[PROVISIONAL AD021]` `[PROVISIONAL AD023]` `[PROVISIONAL AD032]`
+  `[PROVISIONAL AD036]` `[PROVISIONAL AD057]` `[PROVISIONAL AD059]` `[PROVISIONAL AD061]`
 - **FR-009**: Before any destination write, an apply MUST verify five things, in this order: that the
   manifest's declared format version is recognized (FR-027), that the manifest's recorded run
   identifier equals the run being applied, that the plan checksum still matches, that the source-
@@ -1028,23 +1289,29 @@ references.
   `pending | running | dry-run | applied | failed`; "an applied state" means `status: applied`, and a
   refusal MUST NOT leave the run in `running`. A refused apply MUST record an **empty** applied-
   operation set on the run result under FR-020, rather than recording nothing, so a refusal and an
-  apply that wrote nothing are not distinguishable only by an absent field. The pre-existing
-  schema-subhash refusal path, which today aborts leaving `status: running` on disk after the run
-  sidecar was already written `running`, MUST record `failed` too. *(DBR-003, DBR-006; run-identifier
+  apply that wrote nothing are not distinguishable only by an absent field. This obligation is on the
+  **new** refusal paths, which are the paths DBA-004 measures. It is deliberately **not** extended to the
+  pre-existing schema-subhash abort: that block imports a resolver this package does not define, so the
+  import raises and the surrounding handler swallows the whole check — the abort cannot execute, and
+  repairing unreachable code would produce a test that can only pass against an injected stub. Making
+  that check live is unrelated scope and is not done here. *(DBR-003, DBR-006; run-identifier
   check per AD012, run state per AD010, format-version check per AD028, order and full-failure
   reporting, message content and empty applied set per AD036, write-ordering scope per AD034,
-  format-version gate per AD053)*
+  format-version gate per AD053, the unreachable pre-existing path per AD063)*
   `[PROVISIONAL AD010]` `[PROVISIONAL AD012]` `[PROVISIONAL AD028]` `[PROVISIONAL AD034]`
-  `[PROVISIONAL AD036]` `[PROVISIONAL AD053]`
+  `[PROVISIONAL AD036]` `[PROVISIONAL AD053]` `[PROVISIONAL AD063]`
 - **FR-010**: The plan and its source snapshot MUST be bound so the pair cannot tear. A plan whose
   manifest exists but whose operations or source snapshot are absent or truncated MUST be refused
   on the same path as a mismatch. The manifest MUST carry an operation count so that a plan with
   no operations is distinguishable from a plan whose operations are missing, rather than the two
   presenting identically. A source snapshot file the manifest records but which is absent, or whose
   recomputed logical-row digest or row count disagrees with the recorded value, is truncated or
-  tampered with and MUST be refused on that same path. *(DBR-015; count field per AD001, snapshot
-  digest and row count per AD008, logical-row digest per AD037)* `[PROVISIONAL AD008]`
-  `[PROVISIONAL AD037]`
+  tampered with and MUST be refused on that same path. Every torn-artifact refusal MUST name which part
+  is torn, the expected and found values, and the operator's next action — on the review path as well as
+  the apply path, since a torn artifact is reachable from both. *(DBR-015; count field per AD001, snapshot
+  digest and row count per AD008, logical-row digest per AD037, next action per AD059)*
+  `[PROVISIONAL AD008]`
+  `[PROVISIONAL AD037]` `[PROVISIONAL AD059]`
 - **FR-011**: The manifest's configuration-version field MUST hold a deterministic content
   checksum computed over the configuration the run used, unless the caller supplies a version
   identifier explicitly, in which case that value MUST be stored verbatim. The default rule MUST
@@ -1080,11 +1347,17 @@ references.
   data, which MUST carry every component however it arrived.
   Cardinality-many relationships MUST be written as a replace-set, and that replace-set MUST be
   **enforced explicitly after the convergent write rather than assumed of it**. The earlier reading
-  that replace-set "is the existing behavior" was false: the only replace-set this repository
-  implements sits on the update path this requirement forbids, and whether the convergent write's own
-  mutation replaces or merges a peer list is not determinable without a live destination. Enforcing it
-  makes the clause true by construction; where the convergent write already replaces, the enforcement
-  is a no-op. An update payload is authoritative for the mapped fields it carries and MUST NOT touch
+  that replace-set "is the existing behavior" was false twice over: the only replace-set this repository
+  implements sits on the update path this requirement forbids, and that implementation is not in fact a
+  replace-set at all — it reads the destination peer set before loading it, so it adds without removing.
+  Whether the convergent write's own
+  mutation replaces or merges a peer list is not determinable without a live destination. The enforcement
+  MUST therefore **re-read the destination's own peer set before comparing**: a node built locally from
+  the write payload already reports the desired set as its existing set, so a comparison made without
+  re-reading is a guaranteed no-op that can pass only against a test double. Enforcing it with the
+  re-read makes the clause true by construction; where the convergent write already replaces, the
+  enforcement is a no-op for the right reason rather than by accident.
+  An update payload is authoritative for the mapped fields it carries and MUST NOT touch
   unmapped destination fields. Two consequences of that mandated write path are recorded here rather
   than left to inference. First, a planned `create` whose destination identity already exists converges
   onto the existing object rather than producing a duplicate; whether that object's payload differs is
@@ -1096,14 +1369,22 @@ references.
   This requirement is verified through SC-002 and SC-008 rather than by a criterion of its own: SC-002
   measures convergence and SC-008 measures the relationship semantics, and between them they exercise
   every clause here. Because both of those criteria need a live destination and none is reachable, an
-  offline conformance check over the write mutations themselves — every convergence-key component
-  accounted for in each create call's data, the replace-set enforcement issued, and a repeated operation
-  producing no second create — is required alongside them, so a defect of this class is caught without
-  waiting for the deferred evidence. *(DBR-013, DBR-011; write path per AD015, create-on-no-match
+  offline conformance check is required alongside them, so a defect of this class is caught without
+  waiting for the deferred evidence — and that check MUST assert the **rendered mutation the destination
+  library produces**, not the payload assembled before it. Keyedness is a property of the rendered
+  mutation: it carries either a destination-assigned identifier or a human-friendly identifier, and it
+  carries neither when a convergence-key component is missing. The assembled payload cannot show that,
+  because by then a relationship-crossing component is a resolved identifier string from which no
+  attribute can be read. The check MUST therefore build the operation against a **committed destination
+  schema fixture** and assert on the rendered mutation, assert that the replace-set enforcement re-reads
+  the destination peer set before comparing, and assert that a repeated operation produces no second
+  create. An assertion that merely observes the write surface being called proves that a test double was
+  invoked and nothing about convergence. *(DBR-013, DBR-011; write path per AD015, create-on-no-match
   consequences per AD025, verification route per AD036, convergence-key payload per AD042, explicit
-  replace-set enforcement per AD038, offline conformance check per AD045)* `[PROVISIONAL AD015]`
+  replace-set enforcement per AD038, offline conformance check per AD045 as rebuilt by AD054)*
+  `[PROVISIONAL AD015]`
   `[PROVISIONAL AD025]` `[PROVISIONAL AD036]` `[PROVISIONAL AD038]` `[PROVISIONAL AD042]`
-  `[PROVISIONAL AD045]`
+  `[PROVISIONAL AD045]` `[PROVISIONAL AD054]`
 - **FR-014**: Relationship peers MUST be resolvable at apply time without a loaded comparison
   store, from the peer kind and identity the plan itself carries. Resolution MUST be memoized
   within one apply, MUST take an operation's own result as the resolution for later operations
@@ -1118,9 +1399,10 @@ references.
   reference in a configuration that supplies an explicit `order:`, which yields no tiers at all. In
   those cases the peer may be unresolved at apply, and the resolution-failure behavior below governs.
   A peer identity that matches **no** destination object MUST refuse that operation and fail the run,
-  naming the peer kind, the peer identity, and the referring operation identifier. A peer identity
-  that matches **more than one** destination object MUST refuse, naming the peer kind, the peer
-  identity, and the match count. Neither case may be a silent skip. Both refusals are scoped to
+  naming the peer kind, the peer identity, the referring operation identifier, and the operator's next
+  action. A peer identity that matches **more than one** destination object MUST refuse, naming the peer
+  kind, the peer identity, the match count, and the operator's next
+  action. Neither case may be a silent skip. Both refusals are scoped to
   **this saved-plan apply resolver only**. The existing live write path's warn-and-continue on an
   unresolvable peer is unchanged by this feature: it is existing behavior on an existing path that
   this outcome does not authorize touching, and the refusal is a property of resolving a peer from a
@@ -1129,8 +1411,9 @@ references.
   plan records under FR-002 and MUST NOT recover an identity by splitting a unique identifier on its
   separator. *(DBR-007, DBR-011; resolution shape per AD003, resolution failures per AD016, tier
   qualification per AD022, memo negative-caching rule per AD036, recursive peer identity per AD043,
-  scope of the refusal per AD048)* `[PROVISIONAL AD016]` `[PROVISIONAL AD022]` `[PROVISIONAL AD036]`
-  `[PROVISIONAL AD043]` `[PROVISIONAL AD048]`
+  scope of the refusal per AD048, next-action obligation on both refusals per AD059)*
+  `[PROVISIONAL AD016]` `[PROVISIONAL AD022]` `[PROVISIONAL AD036]`
+  `[PROVISIONAL AD043]` `[PROVISIONAL AD048]` `[PROVISIONAL AD059]`
 - **FR-015**: Delete operations MUST be recorded in the plan, changing today's default of
   suppressing them. They MUST be derived from the destination-only identities in the loaded
   destination state and materialized only into plan records, never into the comparison result the
@@ -1154,6 +1437,9 @@ references.
   When the destination side was loaded incrementally, no delete operation MUST be derived, and the
   manifest MUST record that deletes were not computed for this plan, so the omission is explicit and
   reviewable rather than silent — which is what keeps FR-017's "never silently skipped" contract true.
+  "Reviewable" MUST be delivered rather than asserted: FR-006 requires both review depths to surface
+  that record and to say plainly when deletes were not computed, without which a plan missing its whole
+  delete class is indistinguishable from a plan that has no deletes.
   That field is part of the canonical manifest and is therefore covered by the FR-004 checksum and not
   masked by SC-006, so comparing two plans for byte-identity requires both runs to have used the same
   extraction mode on both sides. This requirement is stated in terms of the destination side's
@@ -1165,14 +1451,41 @@ references.
   configuration setting: deletes never enter the comparison result the write path consumes, so the
   recorded-but-not-written divergence is structural and intended in both modes. *(DBR-009; mechanism
   per AD004, extraction precondition and disclosure per AD024, `sync`-mode parity per AD036,
-  destination-side identity canonicalisation per AD049)*
-  `[PROVISIONAL AD024]` `[PROVISIONAL AD036]` `[PROVISIONAL AD049]`
-- **FR-016**: A delete MUST NOT be applied to the destination by the saved-plan apply path. The
-  existing write path's behavior under a project's configured comparison flags is unchanged by this
-  feature. *(DBR-010)*
-- **FR-017**: An unsupported operation in a plan MUST be reported at apply time and MUST fail the
-  run; it MUST NOT be silently skipped. Supported operations in the same plan are still applied.
-  *(DBR-016)*
+  destination-side identity canonicalisation per AD049, the review-surface disclosure per AD056)*
+  `[PROVISIONAL AD024]` `[PROVISIONAL AD036]` `[PROVISIONAL AD049]` `[PROVISIONAL AD056]`
+- **FR-016**: A delete MUST NOT be applied to the destination by the saved-plan apply path. Not
+  executing it is a **designed limitation of this release**, not a fault condition: applying deletes is
+  out of scope here and is assigned to a later outcome, so the apply path is correct precisely when it
+  declines to execute one. What FR-017 requires of that decline is that it be recorded and reported, not
+  that it end the run. The existing write path's behavior under a project's configured comparison flags
+  is unchanged by this feature. *(DBR-010; the designed-limitation framing per AD055)*
+  `[PROVISIONAL AD055]`
+- **FR-017**: A plan operation the apply path does not execute MUST be reported and MUST be recorded;
+  it MUST NOT be silently skipped. Two classes exist and they are treated differently, because one is
+  designed and the other is not.
+    1. **A recorded delete** is a designed limitation of this release under FR-016. The apply MUST
+       execute every non-delete operation in the same plan, MUST NOT delete from the destination, and
+       MUST end in the applied run state. It MUST record on the run, in the same place FR-020's
+       applied-operation record lives, both the **count** of deletes it did not execute and their
+       operation identifiers, and it MUST emit an operator-visible warning naming that count. A
+       delete-bearing plan MUST NOT fail the run, and no new run state is introduced for it.
+    2. **A genuinely unsupported operation** — one carrying an action this release does not recognize —
+       MUST be refused before any destination write, MUST name the operation identifier, the action
+       found, the actions recognized and the operator's next action, and MUST fail the run. Nothing
+       about such an operation is designed, so what it would do to the destination is unknown and the
+       run cannot claim to have applied what was reviewed.
+  **The basis this re-derivation carries**, as the batch's derived-requirement policy requires: DBR-009
+  requires recording deletes while DBR-010 forbids applying them, so on every delete-bearing plan the
+  applied set necessarily differs from the reviewed set. What DBR-016 protects is that the difference be
+  **provably knowable** rather than inferred — and the applied-operation identifiers together with the
+  recorded skipped-delete count and identifiers make it a recorded value, which is what distinguishes
+  this from the silent skip DBR-016 forbids. A skip is silent when nothing records it. The failed state
+  was one way of forcing the difference into view, not the property being protected, and it is the wrong
+  way here because it reports a designed limitation as a fault.
+  *(DBR-016, re-derived per AD055; DBR-009 and DBR-010 are quoted and unchanged. **Successor note**: a
+  later outcome replaces the run record with durable storage behind provider interfaces and should
+  promote the skipped-delete count from a summary key to a first-class run-record field.)*
+  `[PROVISIONAL AD055]` `[PROVISIONAL AD059]`
 - **FR-018**: No secret value MUST appear in the plan artifact or in any review output. The artifact
   carries mapped source field values only. Credentials live in the configuration's `settings` and MUST
   never be written to the artifact or to review output. No field-level secret-classification model —
@@ -1193,9 +1506,17 @@ references.
 - **FR-020**: The identifiers of operations reported as applied MUST be recorded on the run result
   as an **ordered** sequence, in the order the operations were reported applied. The ordering is what
   makes "the last operation reported as applied" well defined: FR-025's last-applied pointer is the
-  final element of this sequence rather than a separate recorded field. *(scope boundary: run result
+  final element of this sequence rather than a separate recorded field. The record MUST have **one named
+  home**, stated once here rather than left for each reader to infer: it lives under a named key of the
+  run's recorded summary, which is already a free-form mapping inside the run record's existing key set,
+  so no persisted schema other code reads is extended and the run-directory layer stays unchanged as this
+  outcome's plan declares. FR-017's skipped-delete count and identifiers live under their own named keys
+  in that same summary, so the reviewed set, the applied set and the difference between them are all
+  readable from one place. *(scope boundary: run result
   only, not a durable ledger. Verified through SC-005, whose evidence reads the apply-side identifier
-  set from this record. Ordering and the last-applied pointer per AD036.)* `[PROVISIONAL AD036]`
+  set from this record. Ordering and the last-applied pointer per AD036; the named home per AD062;
+  the skipped-delete companion keys per AD055.)* `[PROVISIONAL AD036]` `[PROVISIONAL AD055]`
+  `[PROVISIONAL AD062]`
 - **FR-021**: Two operations within one plan MUST NOT share an operation identifier. Because the
   identifier is derived rather than allocated, uniqueness MUST be asserted when the plan is written
   and MUST fail the plan run if it does not hold, rather than being assumed. Under FR-002's closed
@@ -1275,7 +1596,8 @@ references.
        manifest bytes and the operations bytes are joined with no separator between them.
 
   A manifest whose declared format version is not one the reader recognizes MUST be refused, with a
-  message naming the version found and the versions supported. That message MUST be distinct from the
+  message naming the version found, the versions supported, and the operator's next action. That message
+  MUST be distinct from the
   message FR-019 requires for a plan in the pre-existing format, because the two conditions have
   different operator remedies: a pre-existing-format plan is re-planned, while an unrecognized version
   means the artifact was written by a different version of the tool. Unknown **additional** manifest
@@ -1285,8 +1607,8 @@ references.
   consolidates the manifest obligations FR-004, FR-010 and FR-015 state field by field; where they and
   this requirement describe the same field they are one obligation, not two. *(DBR-006, DBR-008;
   consolidated field set, format-version field and unknown-field tolerance per AD028; the individual
-  field rules per AD001, AD008 and AD024; canonicalization details per AD035; criterion SC-018)*
-  `[PROVISIONAL AD028]`
+  field rules per AD001, AD008 and AD024; canonicalization details per AD035; next action per AD059;
+  criterion SC-018)* `[PROVISIONAL AD028]` `[PROVISIONAL AD059]`
 - **FR-028**: The per-operation record MUST fix, for each field FR-002 names, the rules that make two
   readers of the same plan agree about it:
     1. **Obligation level.** The operation identifier, the action, the destination kind, the
@@ -1328,18 +1650,25 @@ references.
   artifact, and produces both review depths FR-006 defines — the summary and the per-object detail.
   It MUST return that content to its caller as data rather than writing it to any output stream, so a
   caller consumes it without parsing rendered text and so SC-010's credential scan can scan the
-  returned value as data. The command-line review mode MUST be a thin renderer over that same entry
+  returned value as data. Because it returns data rather than rendered text, it MUST NOT carry
+  presentation obligations: narrowing to a kind the configuration declares but the plan holds no
+  operation for MUST return an empty result, and MUST NOT raise. Raising is reserved for a kind the
+  configuration does not declare at all, which is a caller error rather than an empty result. FR-006's
+  never-empty-output rule is discharged by the renderer above this interface, which is where an operator
+  is the audience. The command-line review mode MUST be a thin renderer over that same entry
   point and MUST NOT re-implement reading, filtering, or summarizing, so both of SC-009's
   reachability cases — in-process and from the command line — exercise one code path. Nothing beyond
   this single reader is specified as a supported surface: no broader programmatic interface for
   plans, runs, or applies is designed here. *(DBR-002, DBR-012, DBR-020; single reader entry point per
-  AD029; verified through SC-009 and SC-010 rather than by a criterion of its own)*
-  `[PROVISIONAL AD029]`
+  AD029, the empty-versus-raise split per AD058; verified through SC-009 and SC-010 rather than by a
+  criterion of its own)*
+  `[PROVISIONAL AD029]` `[PROVISIONAL AD058]`
 - **FR-030**: A failure while deriving the plan — an operation for which no destination identity value
   can be formed, a relationship peer that cannot be located in the loaded state the operation is
   derived from, or whose kind cannot be established unambiguously there under FR-002's rule, a payload
   value the canonical encoding cannot represent, or a duplicate operation identifier — MUST fail the
-  command that was run, with a clear, actionable error naming the destination kind and the cause. This
+  command that was run, with a clear, actionable error naming the destination kind, the cause, and the
+  operator's next action. This
   holds on the **non-mutating** command as well as the mutating one: derivation MUST NOT degrade to
   warn-and-skip there, and no error-tolerance option is added to the non-mutating command, because a
   silently incomplete plan is exactly the divergence between the reviewed set and the applied set that
@@ -1350,7 +1679,8 @@ references.
   writes only inside the run directory. *(Carries FR-002's, FR-014's and FR-021's failure obligations
   onto the non-mutating path, where the mutating path's error-tolerance option does not exist. No
   separate acceptance criterion, because the brief states none and each failure is already asserted at
-  the requirement that produces it. Per AD047.)* `[PROVISIONAL AD047]`
+  the requirement that produces it. Per AD047; the next-action obligation per AD059.)*
+  `[PROVISIONAL AD047]` `[PROVISIONAL AD059]`
 
 ### Key Entities
 
@@ -1390,9 +1720,15 @@ references.
   logical-row digest, and row count so the pair cannot tear. *(per AD008, digest scope per AD037)*
   `[PROVISIONAL AD037]`
 - **Run**: The unit a plan belongs to and the handle an apply is requested by. Carries the run
-  state, drawn from the existing vocabulary `pending | running | dry-run | applied | failed`,
-  including whether the plan reached `status: applied` and which operations were reported as applied.
-  A refused apply is recorded `failed`. *(per AD010)* `[PROVISIONAL AD010]`
+  state, drawn from the existing vocabulary `pending | running | dry-run | applied | failed` — no member
+  is added — including whether the plan reached `status: applied`. Its recorded summary is where this
+  outcome's apply record lives, under named keys: the ordered identifiers of the operations reported as
+  applied (FR-020), the count of deletes the apply did not execute, and those deletes' identifiers
+  (FR-017). Those three together are what make the applied set knowable against the reviewed set. A
+  refused apply is recorded `failed` with an empty applied set; an apply that skipped deletes is recorded
+  `applied` with a non-zero skipped-delete count. *(per AD010; the summary as the record's home per
+  AD062; the skipped-delete keys per AD055)* `[PROVISIONAL AD010]` `[PROVISIONAL AD055]`
+  `[PROVISIONAL AD062]`
 - **Configuration-version value**: An opaque, equality-compared string in the manifest —
   by default a deterministic content checksum over the configuration the run used, or a
   caller-supplied identifier stored verbatim. Never parsed or interpreted.
@@ -1447,12 +1783,20 @@ references.
   FR-015 makes byte-identity conditional on both runs having extracted the same way. Two runs at
   different extraction modes are expected to differ, and comparing them would make this criterion's own
   test unsound. *(DBA-006; same-extraction-mode precondition per AD024)* `[PROVISIONAL AD024]`
-- **SC-007**: A plan containing a delete operation applies its non-delete operations, does not
-  delete from the destination, and ends in run state `failed` naming the unsupported operation's
-  identifier and action — evidenced by destination object counts before and after, scoped to the kinds
-  appearing in the applied plan, the direct assertion that the object named by each delete operation is
-  still present, plus the recorded run state and message. *(DBA-007; run state per AD010)*
-  `[PROVISIONAL AD010]`
+- **SC-007**: A plan containing a delete operation applies every non-delete operation, does not
+  delete from the destination, and ends in run state `applied`, with a **non-zero skipped-delete count**
+  recorded on the run and an **operator-visible warning naming that count** — evidenced by destination
+  object counts before and after, scoped to the kinds appearing in the applied plan; the direct assertion
+  that the object named by each delete operation is still present; the recorded run state read back as
+  `applied`; the recorded skipped-delete count equal to the number of delete operations in the plan,
+  alongside their operation identifiers; the captured warning naming that same count; and the assertion
+  that the identifiers recorded as applied plus the identifiers recorded as skipped account for **every**
+  operation the plan contained, so the applied set is knowable against the reviewed set as a recorded
+  value rather than an inference. A run state of `failed` **fails this criterion**: not executing a
+  delete is a designed limitation of this release, and the criterion measures that the limitation is
+  disclosed, not that the run is reported as broken. *(DBA-007, re-derived per AD055; run state per
+  AD010; the recorded record's home per AD062)* `[PROVISIONAL AD010]` `[PROVISIONAL AD055]`
+  `[PROVISIONAL AD062]`
 - **SC-008**: A relationship-bearing kind from the qualified configuration applies with no loaded
   comparison store, and the resulting relationships on the destination match those the plan
   specified — evidenced by, for each relationship the schema mapping declares for the kind under test,
@@ -1470,9 +1814,14 @@ references.
   produced in-process and from the CLI, all against a stored artifact read in a new process. Each
   case passes when the summary presents a count per action and a count per kind, and the detail
   presents one record per operation carrying at least its operation identifier, action, destination
-  kind, and destination identity. Every case is produced with neither source nor destination
-  reachable, which evidences that no adapter is constructed. *(DBA-009; field set per AD020)*
-  `[PROVISIONAL AD020]`
+  kind, and destination identity, **and** when both depths state the plan's delete-computation record —
+  saying plainly that deletes were not computed where that is what the manifest records — and annotate a
+  non-zero delete count inline to say no delete will be executed. Two of the four cases are produced
+  against a plan whose destination side was loaded incrementally, so the not-computed wording is asserted
+  rather than assumed reachable. Every case is produced with neither source nor destination
+  reachable, which evidences that no adapter is constructed. *(DBA-009; field set per AD020;
+  delete-computation and delete-count disclosure per AD056)*
+  `[PROVISIONAL AD020]` `[PROVISIONAL AD056]`
 - **SC-010**: No secret value appears in the plan artifact, in summary output, or in per-object
   output — evidenced by a canary-credential scan over the artifact and both review outputs, with the
   canary injected as a credential in the configuration's `settings`, which is where credentials enter
@@ -1483,10 +1832,14 @@ references.
   no destination write occurs — evidenced by an apply attempted against a v1 fixture plan,
   asserting refusal, the message, and zero writes. *(DBA-011)*
 - **SC-012**: The CLI command set gains no new command group, and review is reachable through
-  commands that already exist — evidenced by the top-level command listing captured before and after
-  and compared as text, showing no group added, plus the SC-009 CLI cases demonstrating that both
-  review depths are reachable from existing commands. *(DBA-012; group-only bar per AD019)*
-  `[PROVISIONAL AD019]`
+  commands that already exist — evidenced by the top-level command listing captured after the change and
+  compared as text against a **committed baseline fixture** captured before any command-line change,
+  showing no group added, plus the SC-009 CLI cases demonstrating that both
+  review depths are reachable from existing commands. The baseline must be a committed fixture rather
+  than one recovered at comparison time by reverting the working tree: a revert that no-ops on a
+  committed tree makes the comparison diff the post-change listing against itself, which passes with no
+  baseline at all. *(DBA-012; group-only bar per AD019; committed baseline per AD060)*
+  `[PROVISIONAL AD019]` `[PROVISIONAL AD060]`
 - **SC-013**: Applying a plan whose configuration-version value differs from the one recorded at
   plan time is refused without the value being parsed or interpreted, and an arbitrary opaque
   string round-trips unchanged through manifest write and apply comparison — evidenced by a
@@ -1510,19 +1863,23 @@ references.
   which do not include the run binding)* `[PROVISIONAL AD012]`
 - **SC-016**: A planned relationship reference whose peer matches no destination object, and one
   whose peer identity matches more than one destination object, each refuse the operation and fail the
-  run with a message naming the peer kind and the peer identity — the zero-match message also naming
-  the referring operation identifier, the multi-match message also naming the match count — and
+  run with a message naming the peer kind, the peer identity and the operator's next action — the
+  zero-match message also naming the referring operation identifier, the multi-match message also naming
+  the match count — and
   neither is silently skipped. The evidence is scoped to the saved-plan apply path; the same evidence
   asserts that the live write path's existing warn-and-continue behavior is unchanged. *(FR-014, per
-  AD016; scope per AD048)* `[PROVISIONAL AD016]` `[PROVISIONAL AD048]`
+  AD016; scope per AD048; next action per AD059)* `[PROVISIONAL AD016]` `[PROVISIONAL AD048]`
+  `[PROVISIONAL AD059]`
 - **SC-017**: A plan run whose destination side ran a full extract records delete operations and
   records in the manifest that deletes were computed; a plan run whose destination side was loaded
   incrementally records no delete operations and records in the manifest that deletes were not
   computed — evidenced by two plan runs against the same source and destination, one with a full
   destination extract and one incremental, comparing in each the presence of delete operations and
-  the manifest's delete-computation field, and asserting that the incremental run's plan does not
-  drive its apply into a failed state through a phantom delete. *(FR-015, per AD024)*
-  `[PROVISIONAL AD024]`
+  the manifest's delete-computation field; asserting that the incremental run's plan records a
+  skipped-delete count of zero at apply, so no phantom delete inflates it; and asserting that both review
+  depths of the incremental run's plan state plainly that deletes were not computed. *(FR-015, per AD024;
+  the zero-count assertion per AD055, the review-surface assertion per AD056)*
+  `[PROVISIONAL AD024]` `[PROVISIONAL AD055]` `[PROVISIONAL AD056]`
 - **SC-018**: An apply whose manifest declares a format version the reader does not recognize is
   refused before any destination write, with a message naming the version found and the versions
   supported, and the run is recorded `failed`; that message differs from the message a plan in the
@@ -1538,8 +1895,11 @@ Carried verbatim from the brief. None of the following is delivered here.
 
 - **Applying a delete to the destination.** The plan records delete operations; executing them is
   explicitly excluded, and doing so safely requires an ownership grammar this outcome does not
-  define. Until that lands, a plan containing a delete behaves as FR-017 and SC-007 specify: the
-  delete is reported and the run fails, never silently skipped.
+  define. Until that lands, a plan containing a delete behaves as FR-017 and SC-007 specify: every
+  non-delete operation is applied, no delete is executed, the run ends in the applied state, and the
+  number of skipped deletes is recorded on the run and named in a warning the operator sees. It is never
+  silently skipped, and it is never reported as a run failure either — this is the exclusion working as
+  designed, which is a different thing from a run that went wrong. `[PROVISIONAL AD055]`
 - The shared execution core refactor — it is not a prerequisite here, and this outcome must not
   require it to land first.
 - Durable run/artifact storage behind provider interfaces; this outcome uses the per-run directory
@@ -1639,7 +1999,8 @@ is the whole of what is done: none of the capabilities below is built here.
   to converge for a planned update, SC-002 and SC-003 fail and the write surface needs a decision this
   specification does not carry. Two properties of that path are **not** assumed and are handled
   instead: whether its mutation replaces or merges a cardinality-many peer set is unverifiable here, so
-  FR-013 enforces the replace-set explicitly afterwards (AD038); and the identity components the key is
+  FR-013 enforces the replace-set explicitly afterwards, re-reading the destination's own peer set before
+  comparing so the enforcement cannot be a silent no-op (AD038, AD054); and the identity components the key is
   formed from are not present in the comparison engine's attribute set, so FR-002 puts them into the
   payload deliberately rather than inheriting them (AD042). *(corrected per AD015, AD038, AD042)*
   `[PROVISIONAL AD015]` `[PROVISIONAL AD038]` `[PROVISIONAL AD042]`
@@ -1659,8 +2020,11 @@ is the whole of what is done: none of the capabilities below is built here.
   rather than took from the brief, SC-016's live half. None is reachable in the
   development environment, so their evidence is **deferred**, not produced: the brief's completion
   condition — inspectable passing evidence for every criterion — is not met at merge time. The offline
-  conformance check FR-013 requires narrows what the deferral can hide, but does not close it.
-  *(per AD045)* `[PROVISIONAL AD045]`
+  conformance check FR-013 requires narrows what the deferral can hide, but does not close it — and it
+  narrows it only in the form AD054 rebuilds, asserting the rendered mutation against a committed schema
+  fixture; in its earlier form it narrowed nothing, because an assertion against the assembled payload and
+  a wholly mocked destination cannot fail for the right reason. *(per AD045, as rebuilt by AD054)*
+  `[PROVISIONAL AD045]` `[PROVISIONAL AD054]`
 - The engine computes kind-level dependency tiers from `schema_mapping[].fields[].reference`
   (`dependency_graph.py:25-36`), and this outcome derives each operation's tier from them. Tiers are
   absent entirely when a configuration declares an explicit `order:`
@@ -1680,9 +2044,14 @@ is the whole of what is done: none of the capabilities below is built here.
   comparison value is recomputed by the same rule, so the rule must be stable for an unchanged
   configuration; a benign reformat of the configuration that the rule is sensitive to invalidates
   saved plans and requires a re-plan. *(per AD013)* `[PROVISIONAL AD013]`
-- Which existing commands carry review, and their exact flag spelling, is an implementation choice
+- Which existing commands carry review, and their exact option spelling, is an implementation choice
   within one fixed constraint: no new top-level command group. That choice is now recorded as
-  AD005 rather than left open.
+  AD005, as corrected by AD057, rather than left open. `[PROVISIONAL AD057]`
+- An apply that skipped deletes records the applied run state, which the incremental path's success set
+  already contains, so such a run counts as a successful prior run for a later warm start. This is
+  accepted rather than mitigated: the apply did succeed at everything this release executes, and
+  introducing a distinct state to say otherwise would be the compatibility change AD010 declines.
+  *(per AD055)* `[PROVISIONAL AD055]`
 - SC-010's scan is performed over the artifact files and over the CLI's captured standard output.
   The in-process reader returns data rather than writing to a stream, and is scanned as data.
 
@@ -1692,8 +2061,12 @@ is the whole of what is done: none of the capabilities below is built here.
 - **The existing non-mutating command this outcome extends.** Four properties of it are load-bearing
   for FR-008 and are recorded here rather than presumed:
     1. `--run-id` already exists on that command, meaning "Re-use a specific cache run id" for a live
-       comparison (`cli.py:98`). The read-from-artifact mode gives the same option a select-the-stored-run
-       meaning, mode-switched by the new flag; the live-path meaning is unchanged.
+       comparison (`cli.py:98`), and an unknown value is silently created rather than refused. The
+       read-from-artifact mode therefore does **not** reuse it: per AD057 the review option takes the run
+       identifier as its own value, so the existing option keeps exactly one meaning and a forgotten mode
+       flag cannot turn a read into a write against the artifact being read. Its help string is corrected
+       in the same change only insofar as the new option is documented beside it.
+       `[PROVISIONAL AD057]`
     2. Its plan output is emitted through the logger today (`cli.py:153`), which is why FR-008's stdout
        clause is scoped to the read-from-artifact mode only and the live path's channel is unchanged.
     3. It requires a sync name or configuration file, and review still needs one, because a stored run
@@ -1735,7 +2108,7 @@ Brief requirements (DBR) and acceptance criteria (DBA) to the sections that carr
 | DBR-013 | FR-013; User Story 3 |
 | DBR-014 | FR-005, FR-028; SC-006 |
 | DBR-015 | FR-004, FR-010; User Story 2 scenario 3; Edge Cases (Torn artifact) |
-| DBR-016 | FR-017; User Story 4 |
+| DBR-016 | FR-017; User Story 4 scenarios 1–3 — **re-derived** (AD055): the applied set stays provably knowable against the reviewed set through the recorded applied identifiers plus the recorded skipped-delete count and identifiers, rather than through a failed run state |
 | DBR-017 | FR-018; SC-010 |
 | DBR-018 | FR-011; Key Entities (configuration-version value); SC-013 |
 | DBR-019 | FR-019; User Story 2 scenario 4 |
@@ -1745,14 +2118,31 @@ Brief requirements (DBR) and acceptance criteria (DBA) to the sections that carr
 | DBA-003 | SC-003; User Story 3 scenario 2 |
 | DBA-004 | SC-004; User Story 2 scenarios 1 and 3 |
 | DBA-005 | SC-005; User Story 1 scenario 1 |
-| DBA-006 | SC-006; User Story 2 scenario 5 |
-| DBA-007 | SC-007; User Story 4 scenario 1 |
+| DBA-006 | SC-006; User Story 2 scenario 5 — **carried conditionally**: it holds only when both plan runs extracted the same way on each side, because the manifest's delete-computation record is inside the checksum and outside the brief's two-field mask, so two runs at different extraction modes are expected to differ. The condition is named at both carriers (AD064) |
+| DBA-007 | SC-007; User Story 4 scenarios 1 and 2 — **re-derived** (AD055): the run ends `applied` with a recorded non-zero skipped-delete count and a warning naming it, not `failed` |
 | DBA-008 | SC-008; User Story 5 scenario 1 |
 | DBA-009 | SC-009; User Story 1 scenario 2 |
 | DBA-010 | SC-010; User Story 1 scenario 4 |
 | DBA-011 | SC-011; User Story 2 scenario 4 |
 | DBA-012 | SC-012; User Story 1 scenario 3 |
 | DBA-013 | SC-013; User Story 2 scenario 2 |
+
+### Derived brief items re-derived here
+
+The batch's approved policy ratifies derived brief requirements and criteria on the proviso that each
+carries its basis. Two of them are re-derived by this specification rather than carried as the brief
+states them, and each carries its new basis here so the proviso is met at the point of change. Nothing
+**quoted** is touched: DBR-009 and DBR-010 stand exactly as the brief states them, and re-deriving the
+two derived items is what makes that possible.
+
+| Re-derived item | Brief's original basis | New basis carried here |
+|---|---|---|
+| **DBR-016** — an unsupported operation is reported at apply time and fails the run, never silently skipped | DBR-009 requires recording deletes while DBR-010 forbids applying them; a silent skip would make the applied set differ from the reviewed set | DBR-009 requires recording deletes while DBR-010 forbids applying them, so on every delete-bearing plan the applied set **necessarily** differs from the reviewed set. What must hold is that the difference be **provably knowable** rather than inferred — which the applied-operation identifiers together with the recorded skipped-delete count and identifiers supply. A skip is silent when nothing records it; this one is recorded twice over and warned about. An operation this release does not execute **by design** is a limitation, not a fault, so it does not fail the run; an operation whose action this release does not recognize **at all** still does, because nothing about it is designed. Carried by FR-016, FR-017 and FR-020 (AD055) |
+| **DBA-007** — a delete-bearing plan applies its non-deletes, does not delete, and ends in a failed state naming the unsupported operation | DBR-009, DBR-010, DBR-016 | DBR-009, DBR-010 and the re-derived DBR-016, measured as: the non-delete operations landing, the delete targets surviving, run state `applied`, a recorded non-zero skipped-delete count with the skipped identifiers alongside it, and an operator-visible warning naming that count. Carried by SC-007 and User Story 4 (AD055) |
+
+A successor note travels with both, recorded so a later reader finds it: the outcome that replaces the
+run record with durable storage behind provider interfaces should promote the skipped-delete count from
+a summary key to a first-class run-record field.
 
 The brief's edge cases and constraints do not carry DBR or DBA identifiers, so they are traced
 separately. Every requirement in this specification appears in one of the two tables.
@@ -1769,6 +2159,9 @@ separately. Every requirement in this specification appears in one of the two ta
 | Constraint: no v1 compatibility; detect and reject | FR-019; SC-011 |
 | Constraint: recording deletes changes existing plan content | FR-015; Edge Cases (Recorded deletes change the plan artifact's content) |
 | Derived from DBR-009 and DBR-016: the delete derivation's extraction precondition | FR-004, FR-015; SC-017; Edge Cases (Destination side loaded incrementally) |
+| Derived from DBR-009 and DBR-016: the delete-computation record and the delete count must reach both review surfaces | FR-006, FR-015; SC-009, SC-017 (AD056) |
+| Derived from DBR-009, DBR-010 and DBR-016: a recorded delete at apply is a designed limitation, not a run failure | FR-016, FR-017, FR-020; SC-007; User Story 4; Edge Cases (A recorded delete at apply time) (AD055) |
+| Derived from DBR-016: an operation whose action this release does not recognize fails the run | FR-017; User Story 4 scenario 3; Edge Cases (An operation whose action this release does not recognize) (AD055) |
 | Constraint: which existing commands carry review is an implementation choice, within no new command group | FR-008; SC-012; Assumptions; Dependencies |
 | Constraint: the qualified path is NetBox → Infrahub | Assumptions |
 | Derived from DBR-007 at apply time: peer resolution failures | FR-014; SC-016 |
@@ -1820,6 +2213,24 @@ constraint is met rather than changing it: AD039, AD045 and AD047. If AD042 is n
 payload extent, FR-013's convergence clause and FR-028.4 reopen, and SC-002 and SC-003 become
 unachievable. If AD043 is not ratified, FR-002's reference shape and FR-014's resolution mechanism
 reopen for a second time.
+
+A further eleven — **AD054 through AD064** — were ratified after three independent critique lenses
+worked this specification, the plan and the tasks against the brief and the tree. They are carried in
+the [critique](#session-2026-07-27--critique-round-one-ratified) and
+[delete-bearing apply](#session-2026-07-27--the-delete-bearing-apply-re-derived) sessions and are marked
+the same way. Ten correct this specification's own delivery rather than changing what ships: AD054 (the
+offline harness asserted the wrong thing, and two code facts about the replace-set were wrong), AD056
+(the delete-computation disclosure reached no review surface), AD057 (one option carried two inverse
+meanings), AD058 (three contracts called operations their own documents did not declare), AD059 (nine
+failures named a cause and no remedy), AD060 (two validation steps did not execute), AD061 (help text was
+left to be discovered), AD062 (FR-020's record had no home), AD063 (a repair was applied to unreachable
+code) and AD064 (a conditionally carried criterion was reported as plainly carried). One, **AD055**,
+re-derives DBR-016 and DBA-007 — both **derived** brief items, so re-deriving them touches nothing
+quoted, and each carries its new basis in
+[Derived brief items re-derived here](#derived-brief-items-re-derived-here) as the batch's policy
+requires. If AD055 is not ratified, FR-016, FR-017, FR-020, SC-007 and User Story 4 revert to the
+failed-run reading and the tension between the quoted DBR-009/DBR-010 pair and the derived pair reopens
+as an unresolved brief-gap.
 
 Nothing here remains open. What remains genuinely deferred is not a design commitment:
 

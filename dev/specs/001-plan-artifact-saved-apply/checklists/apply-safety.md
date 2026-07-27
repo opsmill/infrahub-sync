@@ -1,5 +1,14 @@
 # Apply Safety Requirements Checklist: Saved plan artifact and apply-exactly-what-was-reviewed
 
+> **Superseded in part, 2026-07-27 — round-one critique remediation.** This checklist records an
+> evaluation performed against the specification as it stood on 2026-07-26. No box below has been
+> changed. Ratified decisions **AD054–AD064** have since moved several of the requirements it
+> interrogates, so where an item's wording and the current specification disagree, the specification
+> is authoritative. The moved requirements are FR-006, FR-008, FR-013, FR-016, FR-017, FR-020, FR-029,
+> SC-007, SC-009, SC-012 and SC-017 — most consequentially **AD055**, under which a plan containing a
+> delete now applies its non-deletes and ends in the **`applied`** state with a recorded skipped-delete
+> count and a warning naming it, rather than ending `failed`.
+
 **Purpose**: Validate the quality of the *requirements* governing pre-apply verification and
 refusal — checksum, configuration version, snapshot binding, torn artifacts, v1 rejection,
 zero-write guarantees, run state on refusal, unsupported-operation failure, and partial apply.

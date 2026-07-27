@@ -13,8 +13,11 @@ SC-016, have no passing evidence at merge time. **Five** of those six are the br
 DBA-001, DBA-002, DBA-003 and DBA-008 in full, plus the live half of DBA-007; the sixth, SC-016's live
 half, this specification derived rather than took from the brief. The brief's completion condition is
 therefore **not met**. Track 1
-includes an offline mutation-payload conformance harness that catches the class of defect those
-criteria were the only other check on, but it does not substitute for them.
+includes an offline **rendered-mutation** conformance harness that catches the class of defect those
+criteria were the only other check on, but it does not substitute for them. It only narrows anything in the
+form AD054 rebuilds it — asserting the mutation the SDK renders, against a committed schema fixture. Its
+earlier form asserted the assembled payload against a wholly mocked SDK, which cannot fail for the right
+reason and therefore narrowed nothing.
 
 ## Prerequisites
 
@@ -54,16 +57,22 @@ uv run infrahub-sync list --directory examples/
 uv run infrahub-sync generate --name from-netbox --directory examples/
 ```
 
-### SC-012 — no command group was added
+### SC-012 — no command group was added (AD060)
 
 ```bash
-git stash && uv run infrahub-sync --help > /tmp/help-before.txt && git stash pop
 uv run infrahub-sync --help > /tmp/help-after.txt
-diff /tmp/help-before.txt /tmp/help-after.txt      # expected: no difference at the command list
+diff tests/data/cli_help_baseline.txt /tmp/help-after.txt   # expected: no difference at the command list
 uv run infrahub-sync diff --help | grep -E 'from-plan|detail|kind'
 ```
 
-Five commands before, five after, no group. The new flags appear only under `diff --help`.
+Five commands before, five after, no group. The new options appear only under `diff --help`.
+
+The "before" listing is the **committed** baseline `tests/data/cli_help_baseline.txt`, captured by T002 in
+the setup phase before any CLI change. Do **not** try to recover it at comparison time by stashing:
+`git stash` on a committed tree stashes nothing and exits 0, so the "before" capture that follows it runs
+against the *post-change* binary, the comparison diffs a file against itself, and the step passes without
+a baseline at all — while the trailing `git stash pop` fails in a way that reads as unrelated noise. This
+was reproduced, not theorized.
 
 ### Unit and CLI suites
 
@@ -84,19 +93,21 @@ table task for task; the two must not drift.
 | SC | Test (task) | What it asserts |
 |---|---|---|
 | SC-004 | `tests/plan/test_verify.py` (T025) + `tests/test_cli_plan_review.py` (T065) | Six cases — checksum mismatch, config-version mismatch, snapshot-binding mismatch, absent operations, truncated snapshot, **absent snapshot**. T025 asserts the verifier's verdict per case; T065 asserts each one on the CLI apply path with zero destination writes and `failed` in `run.json`, which a Phase C unit test cannot, because no apply exists in that phase |
-| SC-005 | `tests/plan/test_review.py` + `tests/adapters/test_infrahub_planned_write.py` (T056) | The identifier set from per-object review equals the FR-020 record from the apply, in order. Fixture is delete-free: a delete is reviewed but never applied, so it would break the comparison for an unrelated reason |
+| SC-005 | `tests/plan/test_review.py` + `tests/adapters/test_infrahub_planned_write.py` (T056) | The identifier set from per-object review equals the FR-020 record (`summary["applied_operations"]`) from the apply, in order. Fixture is delete-free: a delete is reviewed but never applied, so it lands in `summary["skipped_delete_operations"]` instead and would break an order-sensitive equality for a reason unrelated to SC-005. T054 is where a delete-bearing plan is exercised |
 | SC-006 | `tests/test_potenda_plan_artifact.py` (T041); `tests/plan/test_writer.py` (T018) supports at writer level | Two derivations over identical input, same extraction mode pinned and asserted: byte-identical `operations.jsonl`, and a manifest byte-identical after removing `run_id` and `created_at` from both sides |
-| SC-007 (local half) | `tests/adapters/test_infrahub_planned_write.py` (T054) | Non-deletes applied, the delete never dispatched, run `failed`, message names the identifier and action |
-| SC-009 | `tests/plan/test_review.py` (T027, in-process) + `tests/test_cli_plan_review.py` (T061, CLI) | Four cases — summary and detail, in-process and CLI — against a stored artifact read in a **new process** with source and destination unreachable |
+| SC-007 (local half) | `tests/adapters/test_infrahub_planned_write.py` (T054) | Non-deletes applied, the delete never dispatched, run **`applied`**, `skipped_delete_count` non-zero with the identifiers recorded, and a captured warning naming the count. `applied` ∪ `skipped` covers the plan's whole identifier set. A run state of `failed` fails this test (AD055) |
+| SC-009 | `tests/plan/test_review.py` (T027, in-process) + `tests/test_cli_plan_review.py` (T061, CLI) + `tests/test_cli_plan_review.py` (T087, disclosure) | Four cases — summary and detail, in-process and CLI — against a stored artifact read in a **new process** with source and destination unreachable. Both depths also state the delete-computation record and annotate a non-zero delete count; two cases run against an incrementally-loaded plan so the not-computed wording is asserted reachable (AD056) |
 | SC-010 | `tests/plan/test_canary.py` or equivalent (T072) | Canary credential in `settings`; absent from the artifact files, the captured stdout, and the reader's returned data — and the test fails if the canary is planted into a payload |
 | SC-011 | `tests/plan/test_reader.py` (T024) + `tests/test_cli_plan_review.py` (T065) | T024: a run directory with `plan.parquet` and no `plan/` raises with the re-plan message. T065: the same case on the apply path, with zero writes and `failed` |
 | SC-013 | `tests/plan/test_config_version.py` (T014 plan side, T057 apply side) | An opaque printable-ASCII value supplied verbatim round-trips through write and apply comparison, never parsed |
 | SC-014 | `tests/test_potenda_plan_artifact.py` (T039, T085) | **Four** cases: no `human_friendly_id`; an identity missing an HFID component; a complete HFID with **no uniqueness constraint** over the plan's identity attributes; and a destination exposing **no schema at all**. The first three warn naming the kind and what is missing; the fourth skips the warning without erroring (AD052). The plan run succeeds in all four, and T085 asserts the same for a full `diff` against a non-Infrahub destination |
 | SC-015 | `tests/plan/test_verify.py` (T025) + `tests/test_cli_plan_review.py` (T065) | A `plan/` directory copied between run directories yields a `run_binding` failure (T025) and is refused on the apply path with zero writes and `failed` (T065) |
 | SC-016 (local half) | `tests/adapters/test_infrahub_planned_write.py` (T053) | Zero-match names the peer kind, peer identity and referring operation id; multi-match names the peer kind, peer identity and match count; and the live `sync` path's warn-and-continue is asserted **unchanged** (AD048) |
-| SC-017 | `tests/test_potenda_plan_artifact.py` (T037) | Full destination extract → deletes recorded and `delete_operations_computed: true`; incremental → no deletes and `false`, and the apply is not driven to `failed` by a phantom delete |
+| SC-017 | `tests/test_potenda_plan_artifact.py` (T037) | Full destination extract → deletes recorded and `delete_operations_computed: true`; incremental → no deletes and `false`, the apply records a `skipped_delete_count` of **zero** so no phantom delete inflates it, and both review depths state that deletes were not computed (AD055, AD056) |
 | SC-018 | `tests/plan/test_reader.py` (T024) + `tests/test_cli_plan_review.py` (T065) | T024: `format_version: 99` raises naming version found and versions supported, textually distinct from the SC-011 message. T065: the same case refused on the apply path with zero writes and `failed` |
-| *(no SC)* | `tests/plan/test_apply_conformance.py` (T081) | Offline mutation-payload conformance: every HFID component present in each `client.create` call's data; the replace-set reconciliation issued for every cardinality-many relationship; a repeated operation producing no second create |
+| *(no SC)* | `tests/plan/test_apply_conformance.py` (T081) | Offline **rendered-mutation** conformance (AD054): the mutation input the SDK renders carries `id` or `hfid`, built against a committed `NodeSchemaAPI` fixture rather than a mock; the replace-set reconciliation re-reads the destination peer set before comparing; a repeated operation producing no second create |
+| *(no SC)* | `tests/test_cli_plan_review.py` (T089) | Every error in the plan taxonomy names a next action; the unknown-kind and unknown-run-id messages list the values that exist (AD059) |
+| *(no SC)* | `tests/test_cli_plan_review.py` (T090) | Each new option's help text matches the CLI contract, and the `--run-id` help text carries its corrected cross-reference (AD061) |
 | *(no SC)* | `tests/test_potenda_plan_artifact.py` (T082, T083) | A kind declared by two schema-mapping entries resolves each peer's kind from the source store, not the mapping (AD046); and each plan-derivation failure fails `diff` with a named error rather than degrading to a warning (FR-030, AD047) |
 
 ### Inspecting an artifact by hand
@@ -110,12 +121,14 @@ head -3 "$RUN/plan/operations.jsonl" | python -c 'import sys,json;[print(json.lo
 wc -l "$RUN/plan/operations.jsonl"    # must equal manifest.operations_count
 ```
 
-Recompute the checksum independently:
+Recompute the checksum independently. **Pass `$RUN` as an argument (AD060)** — the earlier form read
+`sys.argv[1]`, which `python -` never receives from a bare heredoc, so it silently fell back to `.` and
+looked for `./plan/manifest.json` at the repository root. It could not succeed:
 
 ```bash
-uv run python - <<'PY'
+uv run python - "$RUN" <<'PY'
 import hashlib, json, pathlib, sys
-run = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".")
+run = pathlib.Path(sys.argv[1])
 m = json.loads((run / "plan/manifest.json").read_text())
 recorded = m.pop("plan_checksum"); m.pop("run_id"); m.pop("created_at")
 body = json.dumps(m, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
@@ -124,6 +137,9 @@ print("recorded  ", recorded)
 print("recomputed", hashlib.sha256(body + ops).hexdigest())
 PY
 ```
+
+`sys.argv[1]` is now required rather than defaulted, so a missing argument fails loudly instead of
+reporting a checksum for a path that does not exist.
 
 ## Track 2 — live destination (`integration` marker)
 
@@ -146,33 +162,51 @@ condition is unmet. Do not report them as covered on the strength of the offline
 | SC-001 | Patches `Adapter.diff_from` and `Adapter.sync_from` to fail if called, applies a stored plan, asserts the apply completed and neither was invoked |
 | SC-002 | Applies once, records per-kind counts and HFID identities, applies the identical plan again, compares — no duplicates |
 | SC-003 | Per-class matrix over create / update / relationship-bearing, across apply-once, apply-twice, a crash injected **after** the destination write commits and before the loop advances, and one injected **before** the write is issued. Every class ends at clean-single-run counts. Relationship class measured by SC-008's peer-set comparison, since an object created with its peers unlinked leaves counts correct and relationships wrong |
-| SC-007 (live half) | Applies a plan containing a delete; destination object counts before and after, scoped to the kinds in the plan; asserts the delete target is still present and the run is `failed` |
+| SC-007 (live half) | Applies a plan containing a delete; destination object counts before and after, scoped to the kinds in the plan; asserts the delete target is still present, the run is **`applied`**, the recorded `skipped_delete_count` equals the plan's delete count, and the warning names it (AD055) |
 | SC-008 | Applies a relationship-bearing kind with no comparison store loaded; reads the destination peer sets back; compares against the plan's reference list as an unordered set of `(peer kind, peer identity)` pairs. **At least one referenced peer pre-exists at the destination and is absent from the plan**, and the test asserts the destination-query path was taken for it — otherwise tier ordering fills the resolver's memo, the query path never runs, and the test passes while apply-time peer resolution is broken |
 | SC-016 (live half) | Seeds a genuinely ambiguous peer; asserts the multi-match refusal names the real count |
 
 ### Manual walkthrough of the headline scenario
 
 ```bash
+RUN_ID=20260726T1804-9f3ac210
+
 # 1. Produce a plan. Writes A/, B/, plan.parquet, and the new plan/ artifact.
 uv run infrahub-sync diff --name from-netbox --directory examples/
 #    → "Cached run 20260726T1804-9f3ac210 at .infrahub-sync-cache/from-netbox/..."
 
 # 2. Review the summary — no adapter is constructed, nothing is extracted.
-uv run infrahub-sync diff --name from-netbox --directory examples/ \
-    --run-id 20260726T1804-9f3ac210 --from-plan
+#    --from-plan TAKES the run id (AD057): one option, one meaning.
+uv run infrahub-sync diff --name from-netbox --directory examples/ --from-plan "$RUN_ID"
+#    → "deletes computed: yes" and, when the plan carries deletes, the NOTE naming how many
+#      will NOT be executed (AD056).
 
 # 3. Expand one kind to per-object detail.
 uv run infrahub-sync diff --name from-netbox --directory examples/ \
-    --run-id 20260726T1804-9f3ac210 --from-plan --detail --kind LocationSite
+    --from-plan "$RUN_ID" --detail --kind LocationSite
 
 # 4. Apply exactly what was reviewed, by run ID.
-uv run infrahub-sync apply --name from-netbox --directory examples/ \
-    --run-id 20260726T1804-9f3ac210
+uv run infrahub-sync apply --name from-netbox --directory examples/ --run-id "$RUN_ID"
+#    → exits 0. On a destination holding objects absent from the source the plan carries
+#      deletes; none is executed, and the apply warns naming the skipped count (AD055).
 
-# 5. Apply again — converges, no duplicates.
-uv run infrahub-sync apply --name from-netbox --directory examples/ \
-    --run-id 20260726T1804-9f3ac210
+# 5. Check what the run recorded.
+python -c "import json;s=json.load(open('.infrahub-sync-cache/from-netbox/$RUN_ID/run.json'));\
+print(s['status'], s['summary']['skipped_delete_count'], len(s['summary']['applied_operations']))"
+#    → "applied 4 33"   — status applied, 4 deletes skipped, 33 operations applied.
+#      33 + 4 == manifest.operations_count, which is what makes the applied set
+#      knowable against the reviewed set as a value rather than a guess.
+
+# 6. Apply again — converges, no duplicates.
+uv run infrahub-sync apply --name from-netbox --directory examples/ --run-id "$RUN_ID"
 ```
+
+**Step 4 exits 0 and records `applied`, not `failed` (AD055).** Not executing a delete is a designed
+limitation of this release — DBR-010 puts applying deletes out of scope — so the apply reports it rather
+than failing on it. Under the comparison engine's fallback flag set
+(`infrahub_sync/potenda/__init__.py:92-93`) any destination holding mapped objects absent from the source
+yields deletes, so this is the ordinary case on a non-pristine destination, not an exception. What makes it
+not a silent skip is step 5: the count and the identifiers are recorded, and the warning names the count.
 
 Step 2 works with `INFRAHUB_ADDRESS` and `NETBOX_URL` unset and while another `sync` holds the
 pipeline lock — that is the FR-008 obligation, and the local suite asserts both.
@@ -180,22 +214,32 @@ pipeline lock — that is the FR-008 obligation, and the local suite asserts bot
 ### Negative walkthrough
 
 ```bash
-RUN=.infrahub-sync-cache/from-netbox/20260726T1804-9f3ac210
+RUN=.infrahub-sync-cache/from-netbox/"$RUN_ID"
 
 # Corrupt the checksum → refused, run recorded failed, zero writes.
-python - <<PY
-import json, pathlib
-p = pathlib.Path("$RUN/plan/manifest.json"); m = json.loads(p.read_text())
+uv run python - "$RUN" <<'PY'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1]) / "plan/manifest.json"; m = json.loads(p.read_text())
 m["plan_checksum"] = "0" * 64
 p.write_text(json.dumps(m, sort_keys=True, separators=(",", ":")))
 PY
-uv run infrahub-sync apply --name from-netbox --directory examples/ --run-id 20260726T1804-9f3ac210
-python -c "import json;print(json.load(open('$RUN/run.json'))['status'])"   # → failed
+uv run infrahub-sync apply --name from-netbox --directory examples/ --run-id "$RUN_ID"
+python -c "import json,sys;print(json.load(open(sys.argv[1]+'/run.json'))['status'])" "$RUN"   # → failed
 
 # A v1 plan → the re-plan message, distinct from the version message.
 rm -rf "$RUN/plan"
-uv run infrahub-sync apply --name from-netbox --directory examples/ --run-id 20260726T1804-9f3ac210
+uv run infrahub-sync apply --name from-netbox --directory examples/ --run-id "$RUN_ID"
+
+# An unknown run id → names the identifier, the expected path, AND the run ids that exist (AD059).
+uv run infrahub-sync diff --name from-netbox --directory examples/ --from-plan not-a-run-id
+
+# A kind the plan holds no operation for → names the kind AND lists the kinds it does hold (AD058, AD059).
+uv run infrahub-sync diff --name from-netbox --directory examples/ \
+    --from-plan "$RUN_ID" --detail --kind CoreStandardGroup
 ```
+
+Every one of these names the operator's next action, not only the cause — that is AD059's obligation across
+the whole taxonomy, not just the pre-apply refusals.
 
 ## Documentation check
 

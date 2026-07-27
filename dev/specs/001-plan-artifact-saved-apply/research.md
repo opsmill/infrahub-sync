@@ -19,6 +19,15 @@ prerequisite of PD-004 and is noted there; AD046 (a peer's kind comes from the s
 mapping) closes an ambiguity PD-004's own table exposed; and PD-009's `top_level` placement is
 corrected in that entry.
 
+A ratified three-lens critique round then added **AD054–AD064**. Two land inside entries here and are
+folded in rather than duplicated: **AD054** corrects PD-005, whose claim that the existing replace-set is
+"verified" and that its extraction is "behavior-preserving" turned out to be false in both halves — the
+existing code adds without removing, and the reconciliation must re-read the destination peer set before
+comparing or it is a guaranteed no-op; and **AD055** adds a consequence to the "where deletes go today"
+non-question, since the flag set that hides deletes is the *fallback*, which makes a delete-bearing plan
+the ordinary case. The remaining nine are contract- and requirement-level and are carried in `spec.md`,
+`plan.md`, the contracts and `tasks.md`.
+
 ---
 
 ## PD-001 — The operation-identifier hash input is a JSON array
@@ -236,21 +245,41 @@ determined without a live Infrahub (AD007).
 **Decision**: `apply_planned_operation` performs the upsert, then, for every cardinality-many
 relationship the operation carries, reconciles the saved node's peer set explicitly using the same
 `compare_lists` remove/add logic, extracted from `update_node` into a shared
-`_replace_relationship_set(node, rel_name, peer_ids)` helper. The extraction is behavior-preserving for
-the existing caller.
+`_replace_relationship_set(node, rel_name, peer_ids)` helper.
+
+**Corrected by AD054 in two places.** This entry originally added that "the extraction is
+behavior-preserving for the existing caller" and that it "reuses the only verified implementation in the
+tree". Neither holds:
+
+1. **The existing code is not a replace-set.** It reads `attr_manager.peer_ids` at
+   `infrahub_sync/adapters/infrahub.py:151` and only calls `fetch()` at `:168-169`, so it compares the
+   desired peer set against an unloaded one and **adds without removing**. Corrected code fact V12.
+2. **A locally built node reports the desired set as its existing set.** A relationship manager sets
+   `self.initialized = data is not None` (`.venv/…/infrahub_sdk/node/relationship.py:264`) and `fetch()`
+   returns immediately once initialized (`:286-299`), so on the node this reconciliation runs against —
+   built from the write payload — `peer_ids` **is** `new_peer_ids`. `compare_lists` returns two empty
+   difference sets and the reconciliation removes nothing. It is a guaranteed no-op that can pass only
+   against a mock.
+
+So the helper must **fetch the relationship manager from the destination first, then read `peer_ids`, then
+compare**. That is deliberately **not** ordering-preserving: it corrects a pre-existing defect on the live
+update path, which is in scope precisely because the helper is shared and cannot be correct for one caller
+and wrong for the other.
 
 **Rationale**: it makes FR-013's replace-set clause true by construction instead of by assumption
-about server behavior nobody here can test, it reuses the only verified implementation in the tree, and
-it costs one extra round trip per cardinality-many relationship on operations that carry one. If the
-upsert already replaces, the reconciliation is a no-op and `compare_lists` returns empty
-`existing_only`/`new_only` sets.
+about server behavior nobody here can test, and it costs one extra round trip per cardinality-many
+relationship on operations that carry one. If the upsert already replaces, the reconciliation is a no-op —
+and, with the re-read, a no-op **for the right reason**: the difference sets are empty because the
+destination already holds the desired set, not because the comparison never looked.
 
 **Alternatives considered**: trust the upsert to replace (rejected: unverifiable, and a silent merge
 would leave stale peers attached, which SC-008 would catch only against a live server — i.e. late);
-always use `update_node` (rejected: it requires `client.get(id=local_id)`, which FR-012 forbids, V11).
+always use `update_node` (rejected: it requires `client.get(id=local_id)`, which FR-012 forbids, V11);
+keep the extraction ordering-preserving and add the re-read only on the new caller (rejected: it leaves a
+helper that is a replace-set on one path and additive on the other, which is the shape defects hide in).
 
 **Materiality**: **medium-high — reported upward.** It adds a step AD015 does not describe to the
-mandated write path.
+mandated write path, and under AD054 it also corrects existing behavior on the live update path.
 
 ---
 
@@ -443,7 +472,11 @@ Recorded so a later reader does not re-investigate them.
   `DiffSyncFlags.SKIP_UNMATCHED_DST` when a project configures no flags
   (`infrahub_sync/potenda/__init__.py:92-93`), and diffsync drops destination-only objects under that
   flag before an element is ever created (`.venv/…/diffsync/helpers.py:191-192`). AD004's set-difference
-  derivation is therefore the only way to see them without loosening the flag, exactly as it says.
+  derivation is therefore the only way to see them without loosening the flag, exactly as it says. **One
+  consequence, surfaced by the critique round and resolved by AD055**: because that flag set is the
+  *fallback*, every destination holding mapped objects absent from the source now yields deletes, so a
+  delete-bearing plan is the ordinary case rather than an exception. Under AD055 an apply over such a plan
+  completes `applied` with a recorded skipped-delete count and a warning naming it, rather than failing.
 - **Whether the full payload is available at plan time.** Yes, but **not from `source_attrs` alone** —
   this was a near-miss and is now AD042. `DiffElement.source_attrs` is the complete source *attribute*
   set rather than the delta (V4), and today's writer does not use it, taking `get_attrs_diffs()`

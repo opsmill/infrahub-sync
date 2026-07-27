@@ -18,7 +18,7 @@ All types live in `infrahub_sync/plan/models.py` as Pydantic v2 models, matching
 |---|---|---|
 | `PLAN_FORMAT_VERSION` | `2` | FR-027.1; `1` is reserved for the pre-existing row format the reader refuses (FR-019) |
 | `SUPPORTED_FORMAT_VERSIONS` | `frozenset({2})` | FR-027's version refusal |
-| `ACTIONS` | `("create", "update", "delete")` | FR-002's closed vocabulary (AD009) |
+| `ACTIONS` | `("create", "update", "delete")` | FR-002's closed vocabulary (AD009). An operation record whose `action` falls outside it is the **genuinely unsupported** operation FR-017 fails the run for, and it is caught at read time by the `Literal` below — before any destination write, which is where FR-017 needs it (AD055) |
 | `CHECKSUM_EXCLUDED_FIELDS` | `("plan_checksum", "run_id", "created_at")` | FR-004; removed, not blanked (AD035) |
 | `SC006_MASKED_FIELDS` | `("run_id", "created_at")` | SC-006; deliberately not the same set |
 
@@ -139,6 +139,12 @@ One proposed change. This is the record nine later outcomes consume.
 - Unknown fields on read are **not** tolerated at the operation level (unlike the manifest): the
   operation record's field set is closed, because FR-027's forward-compatibility carve-out is written
   about the manifest, where the schema-fingerprint field lands.
+- An `action` outside `ACTIONS` is rejected at construction and surfaces as
+  `UnsupportedOperationActionError` naming the operation identifier, the action found, the actions
+  recognized and the operator's next action. This is the **only** class FR-017 fails the run for, and it
+  is caught while the artifact is being read — before any destination write, which is where FR-017 needs
+  it. A recorded **delete** is a valid action and never reaches this path: it is a designed limitation
+  handled by the apply loop, not a malformed record (FR-017, AD055, AD059).
 
 ---
 
@@ -199,9 +205,36 @@ What FR-029's single reader entry point returns. Data, never rendered text.
 | `checksum_ok` | `bool` | Review verifies the checksum and reports it prominently, but renders regardless (AD031) |
 | `verification_notes` | `list[str]` | Human-readable notes about any check that did not pass; review never mutates run state |
 | `summary()` | `PlanSummary` | Counts per action and counts per kind (FR-006). A zero-operation plan produces a summary that *states* the plan contains no operations rather than empty output (FR-022) |
-| `operations(kind=None)` | `list[PlannedOperation]` | Per-object detail; `kind` narrows to one destination kind. A `kind` matching no operation, or naming a kind the configuration does not declare, raises `UnknownPlanKindError` naming the kind (FR-006, AD036) |
+| `operations(kind=None)` | `list[PlannedOperation]` | Per-object detail; `kind` narrows to one destination kind. A `kind` the configuration **declares** but the plan holds no operation for returns `[]`; only a `kind` the configuration does **not** declare raises `UnknownPlanKindError` (FR-006, FR-029, AD036, AD058) |
 
-`PlanSummary` carries `by_action: dict[str, int]`, `by_kind: dict[str, int]`, and `total: int`.
+### `operations(kind=…)`: empty for a declared kind, raise for an undeclared one (AD058)
+
+The never-empty rule is FR-006's, and it is a **presentation** obligation discharged by the renderer, not
+by this interface. FR-029 requires a caller to consume the reader as data without parsing rendered
+output; raising on an empty result forces every programmatic caller to catch an exception to learn a
+count, which is the presentation rule leaking into the data API.
+
+| `kind` | Declared by the configuration? | Plan holds operations for it? | Behavior |
+|---|---|---|---|
+| `LocationSite` | yes | yes | returns those operations |
+| `BuiltinTag` | yes | no | returns `[]` — a legitimate answer |
+| `NotAKind` | no | — | raises `UnknownPlanKindError` naming the kind, the kinds the plan holds, and the next action (AD059) |
+
+The renderer turns the middle row into FR-006's error, listing the kinds the plan does hold, because at
+that point an operator is the audience.
+
+### `PlanSummary` (AD056)
+
+| Field | Type | Rule |
+|---|---|---|
+| `by_action` | `dict[str, int]` | e.g. `{"create": 21, "update": 12, "delete": 4}` |
+| `by_kind` | `dict[str, int]` | e.g. `{"BuiltinTag": 3, "LocationSite": 6}` |
+| `total` | `int` | Sum of `by_action` |
+| `delete_operations_computed` | `bool` | Carried up from `manifest.delete_operations_computed` (FR-015). **Required**: without it a plan missing its whole delete class renders identically to a plan that has no deletes, and FR-015's "explicit and reviewable" claim is carried by nothing (AD056) |
+| `deletes_not_executed` | `int` | `by_action.get("delete", 0)`. Non-zero means the renderer must annotate, inline in summary and in detail, that no delete will be executed against the destination by this release (FR-006, FR-017, AD055, AD056) |
+
+Both fields are **derived on read** from the manifest and the operation set; neither is a new artifact
+field, so the format and `plan_checksum` are unaffected.
 
 ---
 
@@ -215,7 +248,26 @@ One per failed pre-apply check. The apply refuses when the list is non-empty.
 | `run_id` | `str` | The run identifier refused — a refusal naming only the check leaves an operator applying several runs unable to tell which one was refused (AD036) |
 | `expected` | `str \| None` | Present only where neither value is secret (FR-009, FR-018) |
 | `found` | `str \| None` | Same |
-| `next_action` | `str` | The operator's remedy, e.g. "re-run `diff` to rebuild the plan" |
+| `next_action` | `str` | The operator's remedy, e.g. "re-run `diff` to rebuild the plan". **Required, never empty** |
+
+### The next-action obligation covers the whole taxonomy (AD059)
+
+AD036 attached `next_action` to *refusals*, so `VerificationFailure` carries it and the nine other
+failures did not. Every error in
+[contracts/plan-reader-api.md](./contracts/plan-reader-api.md)'s taxonomy now carries one, and where the
+raising site already holds an enumeration the message lists it rather than echoing the operator's input
+back. `PlanArtifactError` therefore declares `next_action: str` on the base class, so a subclass cannot
+be added without one.
+
+| Failure | Enumeration the message must list |
+|---|---|
+| `UnknownPlanKindError` | the destination kinds the plan actually holds |
+| Unknown run identifier | the run identifiers that exist under `cache_root_for(sync_name)` |
+| `PlanFormatVersionError` | `SUPPORTED_FORMAT_VERSIONS` |
+| `UnsupportedOperationActionError` | `ACTIONS` |
+
+The remaining five — torn artifact, unreadable path, derivation failure, peer zero-match, peer
+multi-match — have no enumeration in hand and carry a next action only.
 
 ---
 
@@ -228,10 +280,13 @@ No new state is introduced. The existing vocabulary in `RunFile.status`
 adding a member would be a compatibility change this outcome does not authorize (AD010).
 
 ```text
-pending ─▶ running ─▶ applied      (apply succeeded)
+pending ─▶ running ─▶ applied      (apply succeeded — including an apply that
+                   │                skipped recorded deletes, which is a designed
+                   │                limitation and not a fault, AD055)
                    ├▶ dry-run      (diff / plan-only run)
-                   └▶ failed       (refused apply, unsupported operation,
-                                    destination rejection, or any raised error)
+                   └▶ failed       (refused apply, an operation whose action is
+                                    not recognized, destination rejection, or any
+                                    raised error)
 ```
 
 Transitions this feature adds or corrects:
@@ -239,11 +294,51 @@ Transitions this feature adds or corrects:
 | Event | State recorded | Requirement |
 |---|---|---|
 | Pre-apply verification fails | `failed`, with an **empty** applied-operation set rather than no field at all | FR-009, AD010, AD036 |
-| A plan containing a delete finishes applying its non-deletes | `failed`, message naming the unsupported operation's identifier and action | FR-017, SC-007 |
-| The destination rejects an operation, or transport fails | `failed`, message naming the failing operation identifier and the underlying error; already-written operations stay written | AD027, FR-025 |
-| The pre-existing schema-subhash mismatch abort | `failed` — today it aborts leaving `running` on disk permanently (`infrahub_sync/cli.py:322-323`, `:336-340`) | AD010 |
+| A plan containing a delete finishes applying its non-deletes | **`applied`**, with a non-zero `skipped_delete_count` and the skipped identifiers recorded, and an operator-visible warning naming the count. **Not `failed`** — an operation this release does not execute by design is a limitation, not a fault (AD055) | FR-016, FR-017, SC-007 |
+| An operation carries an action outside `ACTIONS` | `failed`, refused before any destination write, naming the operation identifier, the action found, the actions recognized and the next action. This is the class that *is* genuinely unsupported | FR-017, AD055, AD059 |
+| The destination rejects an operation, or transport fails | `failed`, message naming the failing operation identifier, the underlying error and the next action; already-written operations stay written | AD027, FR-025, AD059 |
 | A run already at `applied` is applied again | Permitted; verification runs unconditionally regardless of operation count | AD033 |
 | Any review operation | **No transition.** Review never mutates run state | AD031 |
+
+**Not a transition this feature touches (AD063).** AD010 also folded in a repair of the pre-existing
+schema-subhash abort, on the reading that it leaves `running` on disk permanently. That path is
+**unreachable**: the block imports `infrahub_sync.utils._resolve_infrahub_schema`, which is defined
+nowhere in the package (`infrahub_sync/cli.py:330`, called `:332`; the comment at `:325` says a later
+outcome will provide it), so the import raises `ImportError` and the `except ImportError: pass` at
+`:341-342` swallows the whole block — the abort at `:336-340` cannot execute. The repair is **dropped**
+and the record corrected; AD010's run-state rule stands for the new refusal paths, which is what DBA-004
+measures. Making the check live is unrelated scope.
+
+**One consequence of the `applied` state, recorded rather than discovered (AD055).**
+`previous_successful_run_dir` treats `applied` as successful
+(`_SUCCESS_STATUSES = frozenset({"applied", "dry-run"})`, `infrahub_sync/cache/incremental.py:24`), so an
+apply that skipped deletes counts as a successful prior run for a later warm start. That is correct — the
+apply succeeded at everything this release executes — and introducing a distinct state to say otherwise
+would be exactly the compatibility change AD010 declines.
+
+## The apply record on the run (AD062, AD055)
+
+`RunFile.KEYS` is a closed tuple — `("status", "mode", "summary", "finished_at")`
+(`infrahub_sync/cache/sidecars.py:76`) — and `summary` is already `dict[str, Any]` (`:73`). The apply
+record therefore lives inside `summary` under named keys, so no persisted schema other code reads is
+extended and the `cache/` layer stays unchanged as plan.md declares.
+
+| Summary key | Type | Rule |
+|---|---|---|
+| `summary["applied_operations"]` | `list[str]` | FR-020's **ordered** applied-operation identifiers, in the order reported. FR-025's last-applied pointer is its final element, not a separate field. Recorded as `[]` — present and empty — on a refusal, never absent (FR-009, AD036, AD062) |
+| `summary["skipped_delete_count"]` | `int` | FR-017's count of delete operations the apply did not execute. `0` on a delete-free plan. Non-zero drives the operator-visible warning, which names this number (AD055) |
+| `summary["skipped_delete_operations"]` | `list[str]` | The skipped deletes' operation identifiers, in stored order. Together with `applied_operations` this makes the reviewed set minus the applied set a **recorded value** rather than an inference — which is what DBR-016 protects and what distinguishes this from a silent skip (AD055) |
+
+**Invariant**, asserted at apply and by SC-007: `len(applied_operations) + skipped_delete_count` equals
+the plan's `operations_count` whenever the apply completes without a rejection, and
+`set(applied_operations) | set(skipped_delete_operations)` equals the plan's full identifier set. A
+partial apply (AD027) breaks the first equality by construction and records `failed`, which is how the two
+cases stay distinguishable.
+
+**Successor note (DB-005).** The outcome that replaces the run record with durable storage behind
+provider interfaces should promote `skipped_delete_count` from a summary key to a first-class
+run-record field. It is a summary key here only because this outcome declares the run-directory layer
+unchanged.
 
 ## Relationships between entities
 
