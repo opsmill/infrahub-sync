@@ -119,3 +119,33 @@ Both content-quality items are now **satisfied** and marked `[X]`. Checklist sta
 - Every code anchor still present in the specification — 40 distinct `file:line` references across
   Clarifications, Assumptions and Dependencies — was re-verified line-by-line against the working
   tree during this pass. All 40 are factually correct; none required correction.
+
+### Final verification round 2 2026-07-26
+
+Both content-quality items **re-confirmed `[X]`** after roughly 150 lines of new normative text
+(FR-027, FR-028, FR-029, SC-018, six Out-of-scope exclusions, and edits to FR-005, FR-009, FR-020
+and FR-024). Checklist stands at **16 / 16**.
+
+- The scan was re-run over the whole normative body, now `spec.md:616-1110` covering 29 functional
+  requirements, Key Entities and 18 success criteria. It returns **no** `file:line` anchor, no module
+  path, no class name and no method name. The surviving backticked-token set is unchanged from the
+  previous pass: the `[PROVISIONAL ADnnn]` markers, `create` / `update` / `delete`,
+  `pending | running | dry-run | applied | failed` with `status: applied` and `status: running`,
+  `plan` and `sync`, and `order:` and `settings`.
+- A whole-file scan confirms every remaining `file:line` anchor sits inside Clarifications
+  (`spec.md:27-368`) or the Assumptions-through-Dependencies block (`:1186-1266`) — the two homes the
+  first pass ruled correct. Nothing leaked back out.
+- The three new requirements were read specifically for this risk. FR-027 (`spec.md:879-909`)
+  describes manifest fields in product terms — "format version", "run identifier", "content digest",
+  "operation count" — and names no encoding, file, or symbol. FR-028 (`:911-940`) describes
+  obligation levels, absent-versus-empty, an ordered mapping of identity attribute name to value, and
+  payload authority, with no type names. FR-029 (`:942-952`) describes a reader by what it accepts,
+  returns and guarantees, and deliberately does **not** name a module, class, or function — which is
+  the right resolution given the requirement's whole subject is a code surface.
+- The six new Out-of-scope lines (`spec.md:1146`, `:1153`, `:1158`, `:1163`, `:1171`, `:1178`)
+  likewise carry no implementation detail; their only technical references are to AD001's
+  line-oriented encoding and to FR-027's format-version field, both of which are product-level
+  format contract this specification owns.
+- FR-024's new output-channel clause (`spec.md:857-860`) says "the run's **log stream**" and "the
+  standard-output channel FR-008 reserves", not a logger object or a library call — consistent with
+  the abstraction FR-008 already uses for the echo facility.

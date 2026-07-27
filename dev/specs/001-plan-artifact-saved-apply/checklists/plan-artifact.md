@@ -21,10 +21,10 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 
 ## Requirement Completeness
 
-- [ ] CHK001 Is the complete set of manifest fields enumerated in a normative requirement, rather than only in Key Entities prose and a provisional decision? [Completeness, Spec §FR-004, §Key Entities/Plan manifest, §Clarifications AD001]
-- [ ] CHK002 Is a manifest format-version field required by any functional requirement, or is it only implied by Key Entities and by FR-019's detection rule? [Gap, Spec §FR-004, §FR-019, §Key Entities/Plan manifest]
+- [X] CHK001 Is the complete set of manifest fields enumerated in a normative requirement, rather than only in Key Entities prose and a provisional decision? [Completeness, Spec §FR-004, §Key Entities/Plan manifest, §Clarifications AD001]
+- [X] CHK002 Is a manifest format-version field required by any functional requirement, or is it only implied by Key Entities and by FR-019's detection rule? [Gap, Spec §FR-004, §FR-019, §Key Entities/Plan manifest]
 - [X] CHK003 Is reader behavior specified for a manifest whose declared format version is newer or otherwise unrecognized, as distinct from the v1 case? [Gap, Spec §FR-019]
-- [ ] CHK004 Are the fields of a per-operation record enumerated with their obligation level — which are always present, and which may legitimately be absent or empty (for example relationship references on a flat create)? [Completeness, Spec §FR-002]
+- [X] CHK004 Are the fields of a per-operation record enumerated with their obligation level — which are always present, and which may legitimately be absent or empty (for example relationship references on a flat create)? [Completeness, Spec §FR-002]
 - [X] CHK005 Is the set of permissible action values fixed and enumerated normatively in a requirement, rather than appearing only in Key Entities? [Completeness, Spec §FR-002, §Key Entities/Planned operation]
 - [X] CHK006 Is how a dependency tier is derived — or at minimum the property a tier assignment must satisfy — specified anywhere, given FR-014 relies on tier ordering for peer availability? [Gap, Spec §FR-002, §FR-014]
 - [X] CHK007 Is the representation of the source-snapshot binding in the manifest specified — what value is stored, and what makes it "match" at apply? [Gap, Spec §FR-004, §FR-009, §SC-004]
@@ -35,7 +35,7 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 
 ## Requirement Clarity
 
-- [ ] CHK012 Is "the required source values as a full payload" defined — required by what authority (the configuration's mapping, the destination schema, or the source record)? [Clarity, Spec §FR-002]
+- [X] CHK012 Is "the required source values as a full payload" defined — required by what authority (the configuration's mapping, the destination schema, or the source record)? [Clarity, Spec §FR-002]
 - [X] CHK013 Is "relationship change" unambiguously either a distinct action value or a property of a create/update record, given FR-002 carries relationship references inside every operation while Key Entities and SC-003 treat relationship change as its own class? [Ambiguity, Spec §FR-002, §Key Entities/Planned operation, §SC-003]
 - [X] CHK014 Is "destination identity" defined precisely enough to be the same value in all three places the spec uses it — the operation record, the identifier derivation, and a relationship reference? [Clarity, Spec §FR-002, §FR-003, §Clarifications AD002, AD003]
 - [X] CHK015 Is the checksum's input scoped unambiguously — exactly which bytes, from which files, in which order, with which separator? [Clarity, Spec §FR-004, §FR-005, §Clarifications AD001]
@@ -66,12 +66,12 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 - [X] CHK031 Is the empty-plan case separated from the torn case by a rule the reader applies, and is the checksum well-defined over a zero-line operations section? [Coverage, Spec §FR-010, §FR-022, §Edge Cases/Empty plan, §Edge Cases/Torn artifact]
 - [X] CHK032 Are requirements defined for what the plan-write path leaves on disk when FR-021's uniqueness assertion fails — and whether that residue is then indistinguishable from a torn artifact? [Gap, Spec §FR-021, §FR-010]
 - [X] CHK033 Are cyclic or self-referential dependencies between kinds addressed for tier assignment, or explicitly excluded? [Gap, Coverage, Spec §FR-002, §FR-014]
-- [ ] CHK034 Is plan size addressed either by a stated requirement or by an explicit exclusion inside the requirements, rather than only as a deferral note? [Coverage, Spec §Open Design Decisions/Plan size and review performance]
+- [X] CHK034 Is plan size addressed either by a stated requirement or by an explicit exclusion inside the requirements, rather than only as a deferral note? [Coverage, Spec §Open Design Decisions/Plan size and review performance]
 - [X] CHK035 Are requirements defined for an operation whose destination identity is absent or empty in the source data, given the identifier is derived from it? [Gap, Coverage, Spec §FR-003, §FR-002]
 
 ## Dependencies
 
-- [ ] CHK036 Is the obligation this format carries to the nine consuming outcomes expressed as a requirement on the artifact (an explicit version field plus a change policy), or only as narrative in the Dependencies section? [Dependency, Spec §Dependencies]
+- [X] CHK036 Is the obligation this format carries to the nine consuming outcomes expressed as a requirement on the artifact (an explicit version field plus a change policy), or only as narrative in the Dependencies section? [Dependency, Spec §Dependencies]
 - [X] CHK037 Is an extensibility rule stated for fields later outcomes will add (a schema fingerprint, a richer configuration version) — specifically how a reader treats unknown manifest or operation fields? [Dependency, Gap, Spec §Dependencies]
 - [X] CHK038 Is the dependency on the existing per-run directory layout — which must be able to host the plan artifact — recorded as a precondition for FR-001 and FR-004? [Dependency, Spec §Assumptions]
 
@@ -211,3 +211,75 @@ CHK033's three tier-qualification cases survived the anchor relocation intact (F
 `spec.md:653-657`, FR-014 `:767-772`), and CHK006's tier-derivation statement is still carried in
 Assumptions (`:1071-1078`), which retained its anchors. CHK039's revisit map was correctly widened
 from "AD008–AD023" to "AD008–AD036" (`:38-39`).
+
+### Final verification round 2 2026-07-26
+
+All 6 remaining items verified satisfied and marked `[X]`. Checklist stands at **40 / 40**.
+
+- CHK001 — FR-027 (`spec.md:879-896`) enumerates the complete manifest field set in one normative
+  place: format version, run identifier, creation timestamp, configuration-version value,
+  source-snapshot binding, operation count, delete-computation record, plan checksum.
+- CHK002 — FR-027 field 1 (`spec.md:882-883`) makes a format version "required on every manifest",
+  and FR-027 (`:898-902`) states the unrecognized-version refusal with a message distinct from the
+  pre-existing-format rejection. SC-018 (`:1103-1110`) measures it.
+- CHK004 — FR-028 rule 1 (`spec.md:913-918`) gives every per-operation field an obligation level —
+  identifier, action, kind, identity and tier always required; payload required on create and
+  update and omitted on delete; relationship references optional — and rule 2 (`:919-924`) states
+  the absent-versus-empty rule with a two-way MUST NOT.
+- CHK012 — FR-028 rule 4 (`spec.md:931-936`) names the authority directly: "'Full' means complete
+  with respect to the configuration's field mapping, not complete with respect to the destination
+  schema." That answers the three-way question the item poses.
+- CHK034 — Out of Scope now carries "Plan-volume and review-latency targets" (`spec.md:1158-1162`)
+  as an explicit exclusion inside the requirements, with the brief's silence on volume and latency
+  cited at the exclusion.
+- CHK036 — both halves are now answered in requirement terms. The version field is FR-027 field 1
+  (`spec.md:882-883`), with unknown-field tolerance at `:902-905` as the second forward-compatibility
+  mechanism. The change policy is explicitly excluded at Out of Scope (`:1171-1177`), which cites the
+  brief correctly: the brief states the consequence — any format change after this ships breaks all
+  nine consumers — and states no process for managing it.
+
+**Consolidation regression check — FR-027 against FR-004, FR-010 and FR-015, field by field.**
+FR-027 claims that "where they and this requirement describe the same field they are one obligation,
+not two" (`spec.md:906-907`). Verified; the claim holds:
+
+- *Run identifier, creation timestamp* — no prior requirement mandated either as a field; FR-004
+  only presupposed them through its exclusion list (`spec.md:640-641`) and SC-006 through its mask
+  (`:1028-1030`). FR-027 fills the gap. No conflict.
+- *Configuration-version value* — FR-027 defers to FR-011 (`spec.md:732-739`). Identical.
+- *Source-snapshot binding* — FR-027 (`:887-888`) says "run-relative path, a content digest, and its
+  row count" and defers to FR-004; FR-004 (`:644-647`) says the same three with the digest specified
+  as SHA-256 and adds the match rule. Deference, not divergence: FR-027 is the more general
+  statement of the same obligation and names FR-004 as its source.
+- *Operation count* — FR-027 (`:889-890`) and FR-010 (`:726-728`) state the same field with the same
+  rationale. Identical.
+- *Delete-computation record* — FR-027 (`:891-892`) makes it a required field carrying **whether**
+  deletes were computed; FR-004 (`:647-648`) says the same. FR-015 (`:791-793`) states only the
+  negative-case obligation, which is a subset of the always-present field, not a competing rule; and
+  SC-017 (`:1095-1102`) already asserts both directions. No conflict.
+- *Plan checksum* — FR-027 (`:893-896`) repeats FR-004's exclusion list verbatim (`:640-641`) and
+  adds the removal-not-blanking and no-separator rules. FR-027's "unknown additional manifest fields
+  MUST be included in the bytes the checksum is computed over" (`:902-904`) is entailed by FR-004's
+  "exclude **only**" those three, not in tension with it.
+- *Cross-reference integrity* — FR-005 (`spec.md:657-659`) now points canonicalization at FR-027 and
+  identity representation at FR-028, and both targets exist.
+
+**FR-028 against FR-002 and FR-013.** No contradiction. FR-002's seven-field list
+(`spec.md:620-622`) reads as a field inventory rather than a per-operation presence mandate because
+FR-002 itself defers obligation levels to FR-028 (`:626-629`); FR-028's "payload omitted on a
+delete" is therefore a refinement, not a conflict, and it is the only coherent reading given FR-015
+derives deletes from destination-only identities that have no source values. FR-028 rule 4's payload
+authority is stated as "the same authority FR-013 states for a planned update" and matches FR-013
+(`:746-748`) word for word in substance. Rule 2's empty-collection semantics — a deliberately empty
+peer set that the replace-set write acts on — is consistent with FR-013's replace-set mandate and
+with FR-014's peer resolution, which has nothing to resolve for an empty list.
+
+Two observations, neither a contradiction and neither blocking:
+
+- **FR-028 rule 1 and rule 2 need to be read at different levels.** Rule 1 makes relationship
+  references "absent when it carries none"; rule 2 forbids omitting "a field whose value is an empty
+  collection". These reconcile only if rule 1 governs the operation's references field and rule 2's
+  example governs one reference's peer list. That reading is the intended one and is derivable, but
+  a reader who takes "carries none" to mean "the peer set is empty" would read the two as opposed.
+- **Key Entities/Planned operation (`spec.md:969-973`) still lists the seven fields flat**, with no
+  obligation levels and no pointer to FR-028, unlike FR-002 which does defer. Descriptive prose
+  against a governing requirement, so not a conflict — but the two now differ in completeness.

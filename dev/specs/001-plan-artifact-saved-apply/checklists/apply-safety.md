@@ -41,7 +41,7 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 
 ## Requirement Consistency
 
-- [ ] CHK015 Do User Story 2 scenario 1 (a snapshot that has been *removed*) and SC-004's five enumerated negative cases (which name snapshot-binding mismatch and truncated snapshot, but not absent snapshot) describe the same coverage set? [Consistency, Spec §User Story 2 scenario 1, §SC-004]
+- [X] CHK015 Do User Story 2 scenario 1 (a snapshot that has been *removed*) and SC-004's five enumerated negative cases (which name snapshot-binding mismatch and truncated snapshot, but not absent snapshot) describe the same coverage set? [Consistency, Spec §User Story 2 scenario 1, §SC-004]
 - [X] CHK016 Is FR-019's v1 detection rule — the pre-existing plan file present with no new-format manifest — distinguishable from a new-format plan run that crashed before writing its manifest? [Conflict, Spec §FR-019, §FR-010, §Clarifications AD001]
 - [X] CHK017 Are FR-017 (supported operations still applied, run fails) and FR-009 ("refused before any destination write") consistent in making an unsupported operation explicitly *not* a pre-apply refusal? [Consistency, Spec §FR-017, §FR-009, §SC-007]
 - [X] CHK018 Do FR-020 (identifiers of applied operations recorded on the run result) and FR-025 (the run records the last operation reported as applied) describe one record or two, and is their relationship stated? [Consistency, Spec §FR-020, §FR-025]
@@ -239,3 +239,47 @@ CHK041. All still hold. CHK001 and CHK012's run-state naming survived the remova
 the pre-apply gate is strengthened, not weakened, by FR-023 being folded into that gate; CHK035's
 run-identifier check is intact at `:695-696` with SC-015 (`:990-994`) and User Story 2 scenario 6
 (`:439-442`) still attached.
+
+### Final verification round 2 2026-07-26
+
+The last remaining item is verified satisfied and marked `[X]`. Checklist stands at **42 / 42**.
+
+- CHK015 — SC-004 has now actually been restated (`spec.md:1012-1022`). Its opening condition reads
+  "**absent, truncated, or mismatched**", and its evidence enumerates **six** negative cases: the
+  five the brief names plus an absent source snapshot, explicitly identified as "the case User Story
+  2 scenario 1 names and which 'no longer matches' alone did not reach". The claim AD036 made in the
+  previous round is now backed by the text. Checked against the brief: DBA-004's own statement
+  already covers "a plan whose manifest exists but whose operations or source snapshot are absent or
+  truncated", so the sixth evidence case is inside the brief's criterion rather than an expansion of
+  it; the underlying refusal path is unchanged.
+
+Both soft residues recorded in the previous note are also closed:
+
+- **Refusal messages now name the run.** FR-009 (`spec.md:705-708`) requires each refusal message to
+  name "the run identifier it refused, the failed check, the expected and the found value where
+  neither is secret, and the operator's next action", with the reason stated. This was the one
+  sub-part of CHK006 that was missing.
+- **FR-020 is now explicitly ordered.** FR-020 (`spec.md:829-834`) records the applied identifiers
+  "as an **ordered** sequence, in the order the operations were reported applied", and states that
+  FR-025's last-applied pointer is the final element of that sequence rather than a separate field.
+  This was the presupposition CHK018 rested on. Cross-checked against FR-025 (`:865-871`), whose
+  "last in the dependency order actually executed" coincides with FR-020's report order because
+  FR-012 executes in dependency order, and against FR-009's empty-set-on-refusal rule
+  (`:715-718`), which an ordered sequence satisfies as an empty sequence.
+
+The two consistency findings from the previous note are also resolved:
+
+- **AD012's stale ordinal is corrected** (`spec.md:139-144`): it no longer calls the run-identifier
+  check "a fourth pre-apply check" and now reads "one of the five FR-009 now enumerates, once AD028
+  added the format-version check ahead of it", with "does not forbid additional ones" replacing
+  "does not forbid a fourth".
+- **FR-009's first check now has a criterion.** SC-018 (`spec.md:1103-1110`) measures refusal on an
+  unrecognized format version, asserts the message content, zero destination writes and the run
+  state, and requires the message text to differ from the pre-existing-format rejection SC-011
+  asserts. It is traced at the new Requirements Traceability row for the format-version check
+  (`:1326`).
+
+No regression found in any previously-checked item on this checklist. The pre-apply gate is now
+five checks (FR-009 `spec.md:695-699`) plus FR-023's write-surface check in the same gate
+(`:711-713`) plus FR-010's torn conditions on the same refusal path (`:724-731`), with FR-027
+supplying the format-version field the first check reads — internally consistent throughout.

@@ -27,7 +27,7 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 - [X] CHK004 Is the peer-resolution miss path complete — what happens when the destination query for a peer identity returns nothing, and what happens when it returns more than one match? [Gap, Spec §FR-014]
 - [X] CHK005 Is tier assignment specified sufficiently to underwrite FR-014's guarantee that a peer is written before anything referring to it, including self-references and cycles? [Gap, Spec §FR-014, §FR-002]
 - [X] CHK006 Is the consequence of the FR-024 warning stated — does the plan run still succeed, and is the warning recorded in the artifact or only emitted? [Clarity, Spec §FR-024, §Edge Cases/Non-unique destination identifier]
-- [ ] CHK007 Is the FR-024 warning's output destination specified, so it is observable and cannot leak into the review output that SC-010 scans? [Gap, Spec §FR-024, §FR-008, §FR-018]
+- [X] CHK007 Is the FR-024 warning's output destination specified, so it is observable and cannot leak into the review output that SC-010 scans? [Gap, Spec §FR-024, §FR-008, §FR-018]
 - [X] CHK008 Are requirements defined for what the apply reports per operation on success — enough for SC-005's identifier comparison and SC-003's per-class matrix to be built? [Completeness, Spec §FR-020, §SC-003, §SC-005]
 - [X] CHK009 Is it stated whether the recorded-delete change affects only the plan artifact, or also every existing renderer of plan content, and is the fixture/documentation update obligation scoped? [Completeness, Spec §FR-015, §Edge Cases/Recorded deletes change existing output]
 
@@ -212,3 +212,43 @@ three tier-qualification cases (CHK005) at `:767-772`. The evidence CHK036 rests
 with its anchors in Assumptions (`:1062-1070`), all of which were re-verified against the tree
 (`infrahub_sync/adapters/infrahub.py:611-612`, `:622`, `:510`, `:166-175`;
 `infrahub_sync/__init__.py:232`) and are accurate.
+
+### Final verification round 2 2026-07-26
+
+The last remaining item is verified satisfied and marked `[X]`. Checklist stands at **42 / 42**.
+
+- CHK007 — FR-024 now names the warning's output destination (`spec.md:857-860`): it "MUST be
+  emitted on the run's **log stream**, which is where the plan path already emits its operational
+  output, and not on the standard-output channel FR-008 reserves for read-from-artifact review
+  output", and "It is emitted only: it MUST NOT be recorded as a manifest field, so it stays outside
+  the FR-004 checksum and outside SC-006's byte comparison." Both halves of the item — observable,
+  and cannot leak into the output SC-010 scans — are now answered in the requirement itself rather
+  than only in AD036.
+
+Two checks on that new clause:
+
+- **The code claim is accurate.** The plan path does emit its operational output through the logger:
+  `infrahub_sync/cli.py:153` is `logger.info("\n%s", mydiff.str())`. The stdout reservation matches
+  AD023 (`spec.md:232-236`), which confines stdout to the read-from-artifact mode.
+- **No conflict with the surrounding requirements.** Excluding the warning from the manifest keeps
+  FR-027's field set (`spec.md:879-896`) closed at eight fields with no warning field, keeps FR-004's
+  checksum input unchanged, and keeps SC-006's byte comparison unaffected. Routing it to the log
+  stream keeps it outside the surfaces FR-018 and SC-010 bind, which AD036 (`:363-364`) aligned.
+  SC-014 (`:1079-1084`) still asserts the warning's content and the run's success, and is unaffected
+  by the channel choice.
+
+The consistency finding from the previous note is also resolved:
+
+- **SC-006 now carries FR-015's precondition.** SC-006 (`spec.md:1028-1037`) requires its two plan
+  runs to have "**used the same extraction mode on each side**" and explains why: the
+  delete-computation field is inside the checksum and is not masked, and the engine may legitimately
+  take the incremental path on a second run. This is a soundness precondition on DBA-006's evidence
+  procedure, not a weakening of the outcome DBA-006 asserts. Note that FR-015's own sentence
+  (`:794-796`) still says "the same extraction mode on both sides" where the manifest field records
+  only the destination side's completeness; SC-006 inherits that same phrasing. Harmless
+  over-specification of the test precondition, recorded rather than corrected.
+
+No regression found in any previously-checked item on this checklist. FR-028's arrival was checked
+against FR-013 specifically: rule 4's payload authority restates FR-013's update-payload authority
+and generalizes it to creates, and rule 2's deliberately-empty peer set is exactly what FR-013's
+replace-set write acts on.

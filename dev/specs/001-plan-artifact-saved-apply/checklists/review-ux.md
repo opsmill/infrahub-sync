@@ -24,8 +24,8 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 - [X] CHK001 Does FR-006 specify which fields a per-object detail record must present — in particular the operation identifier, which SC-005 depends on being visible at review time? [Gap, Spec §FR-006, §SC-005]
 - [X] CHK002 Does FR-006's summary specify whether counts are per action, per kind, or the action-by-kind cross product? [Clarity, Spec §FR-006, §SC-009]
 - [X] CHK003 Is the kind-narrowing capability recorded in AD005 carried by any functional requirement or success criterion, or does it exist only in the clarification? [Gap, Spec §FR-008, §Clarifications AD005]
-- [ ] CHK004 Are requirements defined for the shape and stability of review output, given later outcomes and a UI are named as consumers of plan summaries? [Gap, Spec §FR-006, §Dependencies]
-- [ ] CHK005 Is the in-process reader's contract stated beyond "the single implementation" — what it accepts (a run identifier, a path) and what it returns? [Completeness, Spec §FR-008]
+- [X] CHK004 Are requirements defined for the shape and stability of review output, given later outcomes and a UI are named as consumers of plan summaries? [Gap, Spec §FR-006, §Dependencies]
+- [X] CHK005 Is the in-process reader's contract stated beyond "the single implementation" — what it accepts (a run identifier, a path) and what it returns? [Completeness, Spec §FR-008]
 - [X] CHK006 Are requirements defined for reviewing a plan that would fail apply verification — may a torn or checksum-mismatched plan be reviewed, or is review refused on the same path? [Gap, Coverage, Spec §FR-007, §FR-009, §FR-010]
 - [X] CHK007 Is a redaction rule specified for FR-018 — what constitutes a secret value in a source payload, and whether it is omitted, masked, or never collected? [Gap, Spec §FR-018, §SC-010, §FR-002]
 - [X] CHK008 Are requirements defined for the review path's own failure messages (unknown run, absent artifact, v1 plan) at the actionability bar FR-023 sets for apply? [Gap, Spec §FR-007, §FR-019, §FR-023]
@@ -39,7 +39,7 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 - [X] CHK013 Is "MUST NOT construct an adapter or extract either side" checkable from outside the process, or does it require inspecting internals? [Measurability, Spec §FR-008, §SC-009]
 - [X] CHK014 Is "operator-actionable" given any content bar in the requirements that assert it? [Clarity, Spec §FR-019, §FR-023]
 - [X] CHK015 Is "any review output" in FR-018 defined by enumeration — summary, per-object detail, warnings, refusal messages, logs — or left open? [Clarity, Spec §FR-018, §SC-010]
-- [ ] CHK016 Is "at any time after the run" bounded by any retention or lifecycle statement, or is indefinite availability implied? [Clarity, Spec §FR-007]
+- [X] CHK016 Is "at any time after the run" bounded by any retention or lifecycle statement, or is indefinite availability implied? [Clarity, Spec §FR-007]
 
 ## Requirement Consistency
 
@@ -56,7 +56,7 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 - [X] CHK024 Is SC-010's canary-credential scan specified — which credential values, injected where, and which outputs are captured for scanning? [Measurability, Spec §SC-010, §FR-018]
 - [X] CHK025 Is SC-012's before-and-after command-list comparison specified as a reproducible artifact — which command list, captured how, at which level? [Measurability, Spec §SC-012]
 - [X] CHK026 Does FR-006 have an acceptance criterion that measures review *content*, as opposed to SC-009 which measures reachability? [Traceability, Spec §FR-006, §SC-009]
-- [ ] CHK027 Are review latency and plan-size expectations either quantified or explicitly excluded inside the requirements themselves, rather than only noted as a deferral? [Measurability, Spec §Open Design Decisions/Plan size and review performance]
+- [X] CHK027 Are review latency and plan-size expectations either quantified or explicitly excluded inside the requirements themselves, rather than only noted as a deferral? [Measurability, Spec §Open Design Decisions/Plan size and review performance]
 - [X] CHK028 Is FR-018's obligation verifiable for the negative case — can "no secret value appears" be evidenced beyond the specific canaries SC-010 injects? [Measurability, Spec §FR-018, §SC-010]
 
 ## Scenario and Edge-Case Coverage
@@ -66,14 +66,14 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 - [X] CHK031 Are requirements defined for reviewing a v1 plan, as distinct from applying one — is the same rejection and re-plan message required on the review path? [Gap, Coverage, Spec §FR-019, §FR-007]
 - [X] CHK032 Are requirements defined for review when the run directory is readable but the manifest is absent? [Coverage, Spec §FR-010, §FR-019]
 - [X] CHK033 Is behavior specified when review is requested with no run identifier, or with a run identifier that does not exist? [Gap, Coverage, Spec §FR-008, §FR-007]
-- [ ] CHK034 Are requirements defined for review of a plan large enough that per-object detail cannot reasonably be rendered in full — pagination, truncation, or an explicit exclusion? [Gap, Coverage, Spec §FR-006, §Open Design Decisions]
+- [X] CHK034 Are requirements defined for review of a plan large enough that per-object detail cannot reasonably be rendered in full — pagination, truncation, or an explicit exclusion? [Gap, Coverage, Spec §FR-006, §Open Design Decisions]
 - [X] CHK035 Are requirements defined for review output when the operator lacks read access to part of the run directory? [Gap, Coverage, Spec §FR-007]
 
 ## Dependencies
 
 - [X] CHK036 Is the dependency on the existing non-mutating command's current contract — its flags, its output, its existing consumers — recorded, given the review flags extend it? [Dependency, Spec §FR-008, §Clarifications AD005]
 - [X] CHK037 Is the dependency of SC-005 on review output carrying operation identifiers stated in FR-006 or FR-008, rather than only implied by the success criterion? [Dependency, Traceability, Spec §SC-005, §FR-006, §FR-008]
-- [ ] CHK038 Is the relationship to the later command-group rework stated in requirement terms, so an implementer can tell what must remain foldable into it without behavior change? [Dependency, Spec §Out of Scope, §FR-008]
+- [X] CHK038 Is the relationship to the later command-group rework stated in requirement terms, so an implementer can tell what must remain foldable into it without behavior change? [Dependency, Spec §Out of Scope, §FR-008]
 
 ## Assumptions
 
@@ -223,3 +223,61 @@ output channel is unchanged" (`spec.md:681-682`). CHK017's group-only bar is int
 still matches SC-012 (`:973-974`). CHK036's dependency record kept the anchors the relocation moved
 out of FR-008 (Dependencies, `:1099-1115`), so nothing was lost. CHK021 still holds; note only that
 FR-008's single-implementation clause now ends in a pointer to the non-existent FR-029.
+
+### Final verification round 2 2026-07-26
+
+All 6 remaining items verified satisfied and marked `[X]`. Checklist stands at **42 / 42**.
+
+- CHK004 — Out of Scope now carries "Rendered review output as a stability or compatibility
+  contract" (`spec.md:1163-1170`): the summary and per-object renderings are operator-facing text
+  whose wording, field order and layout may change without that being a breaking change, and the
+  contract this outcome owns is named as the plan artifact format instead. Checked against the
+  brief's "Shared contracts this brief owns", which names the artifact format — manifest fields,
+  per-operation record, deterministic serialization, checksum rule — and not the rendering; and
+  against DB-019, which the line correctly identifies as owning its own presentation. No conflict
+  with FR-006's minimum field set (`:661-664`) or SC-009's pass conditions (`:1050-1058`): those
+  bind content, the exclusion frees only presentation.
+- CHK005 — FR-029 (`spec.md:942-953`) states the contract the item asked for. It **accepts** the
+  sync name and the run identifier locating a stored run; it **returns** both review depths FR-006
+  defines, as data rather than to any output stream; the command-line mode is a thin renderer over
+  it that MUST NOT re-implement reading, filtering or summarizing; and nothing beyond that single
+  reader is a supported surface. This resolves FR-008's previously dangling pointer (`:691-692`).
+- CHK016 — Out of Scope now carries "Artifact retention, lifecycle, and pruning"
+  (`spec.md:1146-1152`). Consistent with the brief, which puts durable run/artifact storage behind
+  provider interfaces in DB-005 and plan expiration out of scope alongside destination freshness
+  checks and conflict policies. "At any time after the run" is now bounded by the life of the run
+  directory, stated explicitly.
+- CHK027 — Out of Scope now carries "Plan-volume and review-latency targets" (`spec.md:1158-1162`),
+  excluded inside the requirements rather than deferred. The Open Design Decisions deferral note
+  (`:1360-1364`) now cross-references it rather than standing alone.
+- CHK034 — Out of Scope now carries "Pagination or truncation of per-object review output"
+  (`spec.md:1153-1157`): no page size, no record limit, no elision, no continuation handle, with
+  FR-006's kind narrowing named as the only supported reduction.
+- CHK038 — resolved by declining rather than by asserting, which is the correct resolution. Out of
+  Scope now carries "Folding the review flags into a command group" (`spec.md:1178-1185`), and the
+  Open Design Decisions entry (`:1335-1342`) has had its previous claim — that the spelling "will
+  later be folded into a `plan` group without changing behavior" — **removed** and replaced with an
+  explicit non-assertion. That old sentence asserted a property of work this specification does not
+  own; deleting it is a correction, not a gap. Consistent with the brief, which assigns the
+  command-group rework to DB-004 under D002 and D026.
+
+**Regression check on FR-029 against FR-006 and FR-008.** No contradiction found.
+
+- FR-029's "return as data rather than writing to any output stream" (`spec.md:945-947`) and
+  FR-008's "review output MUST be written to standard output" (`:679-682`) bind different things —
+  the reader versus the command-line renderer — and both AD005 (`:88-91`) and AD029 (`:305-309`) say
+  so. FR-008's own text now closes with "FR-029 fixes that reader's contract" (`:691-692`).
+- FR-029's inputs match FR-008's configuration-bound locating rule — sync name plus run identifier
+  under the cache root (`:684-686`). Consistent.
+- FR-029 produces "both review depths FR-006 defines", and FR-006 (`:661-668`) defines exactly two.
+  No third vocabulary introduced.
+- One observation, not a contradiction: FR-029 states the reader's inputs as the sync name and the
+  run identifier, while its renderer clause forbids the command line from re-implementing
+  **filtering** — which implies the reader owns FR-006's kind narrowing, but no filter input is
+  named among the reader's stated inputs. The obligation is derivable from the negative clause;
+  naming the filter input would make it explicit.
+
+No regression found in any previously-checked item on this checklist. In particular CHK010's
+"supported entry point" reading is now carried by a requirement rather than only by AD029, and
+CHK015's alignment of FR-018's "any review output" with SC-010's surfaces is unaffected by the new
+material.
