@@ -196,10 +196,10 @@ advice.
 **Purpose**: the package skeleton and the one baseline that must be captured *before* the CLI
 changes, because SC-012's evidence is a before/after comparison.
 
-- [ ] T001 Create the `infrahub_sync/plan/` package with an empty-but-importable `infrahub_sync/plan/__init__.py`, and the test package `tests/plan/__init__.py` — plan.md Project Structure.
+- [X] T001 Create the `infrahub_sync/plan/` package with an empty-but-importable `infrahub_sync/plan/__init__.py`, and the test package `tests/plan/__init__.py` — plan.md Project Structure.
   **Done when**: `uv run python -c "import infrahub_sync.plan"` exits 0 and `uv run pytest -q` is
   unchanged from the pre-task run.
-- [ ] T002 [P] **[AD060]** Create the `tests/data/` directory (it does not exist in the tree today) and capture the pre-change top-level command list into it as a **committed** fixture at `tests/data/cli_help_baseline.txt`, produced by `uv run infrahub-sync --help` on the current tree — SC-012.
+- [X] T002 [P] **[AD060]** Create the `tests/data/` directory (it does not exist in the tree today) and capture the pre-change top-level command list into it as a **committed** fixture at `tests/data/cli_help_baseline.txt`, produced by `uv run infrahub-sync --help` on the current tree — SC-012.
   **Done when**: `tests/data/` exists and the file inside it lists exactly the five commands `list`,
   `diff`, `sync`, `apply`, `generate` (V19), and contains no Typer group heading. T064 diffs against
   it. **The fixture must be committed, and T064 must diff against it rather than recovering a baseline at
