@@ -22,17 +22,17 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 ## Requirement Completeness
 
 - [X] CHK001 Is the run state that results from a refused apply named anywhere, given SC-004 requires the resulting run state to be asserted? [Gap, Spec §FR-009, §SC-004]
-- [ ] CHK002 Is the pre-apply verification set stated exhaustively — does it include the manifest's format version, the operation count, and the presence of the operations section, or only the checksum, configuration version, and snapshot binding? [Completeness, Spec §FR-009, §FR-010, §FR-019]
-- [ ] CHK003 Is the ordering of verifications specified, including which failure is reported when several hold at once and whether all failed checks are named or only the first? [Gap, Spec §FR-009, §SC-004]
-- [ ] CHK004 Are requirements defined for whether an apply may be requested for a run that already reached an applied state — which User Story 3 presumes but no functional requirement permits? [Gap, Spec §FR-012, §User Story 3, §FR-009]
-- [ ] CHK005 Is "before any destination write" stated as an obligation on the ordering of work (verification precedes adapter construction and connection), or only asserted as an evidence condition? [Clarity, Spec §FR-009, §SC-004]
-- [ ] CHK006 Are requirements stated for refusal-message content beyond "naming the failed check" — that it identifies the run, is operator-actionable, and carries no secret value? [Completeness, Spec §FR-009, §FR-018, §FR-023]
-- [ ] CHK007 Is the classification rule stated that separates conditions which refuse before any write (FR-009, FR-019, FR-023) from conditions which fail only after operations have been applied (FR-017)? [Gap, Consistency, Spec §FR-009, §FR-017, §FR-019, §FR-023]
-- [ ] CHK008 Are requirements defined for what the apply path records on the run result when it refuses — whether an empty applied-identifier set is written, or nothing is? [Gap, Spec §FR-009, §FR-020]
+- [X] CHK002 Is the pre-apply verification set stated exhaustively — does it include the manifest's format version, the operation count, and the presence of the operations section, or only the checksum, configuration version, and snapshot binding? [Completeness, Spec §FR-009, §FR-010, §FR-019]
+- [X] CHK003 Is the ordering of verifications specified, including which failure is reported when several hold at once and whether all failed checks are named or only the first? [Gap, Spec §FR-009, §SC-004]
+- [X] CHK004 Are requirements defined for whether an apply may be requested for a run that already reached an applied state — which User Story 3 presumes but no functional requirement permits? [Gap, Spec §FR-012, §User Story 3, §FR-009]
+- [X] CHK005 Is "before any destination write" stated as an obligation on the ordering of work (verification precedes adapter construction and connection), or only asserted as an evidence condition? [Clarity, Spec §FR-009, §SC-004]
+- [X] CHK006 Are requirements stated for refusal-message content beyond "naming the failed check" — that it identifies the run, is operator-actionable, and carries no secret value? [Completeness, Spec §FR-009, §FR-018, §FR-023]
+- [X] CHK007 Is the classification rule stated that separates conditions which refuse before any write (FR-009, FR-019, FR-023) from conditions which fail only after operations have been applied (FR-017)? [Gap, Consistency, Spec §FR-009, §FR-017, §FR-019, §FR-023]
+- [X] CHK008 Are requirements defined for what the apply path records on the run result when it refuses — whether an empty applied-identifier set is written, or nothing is? [Gap, Spec §FR-009, §FR-020]
 
 ## Requirement Clarity
 
-- [ ] CHK009 Is "the configuration version still matches" defined as equality against a value recomputed by the same rule, including which configuration inputs the rule covers (a single file, included templates, environment substitutions)? [Clarity, Spec §FR-009, §FR-011]
+- [X] CHK009 Is "the configuration version still matches" defined as equality against a value recomputed by the same rule, including which configuration inputs the rule covers (a single file, included templates, environment substitutions)? [Clarity, Spec §FR-009, §FR-011]
 - [X] CHK010 Is "never parsed or interpreted" expressed in checkable terms, so SC-013 has a definite pass condition? [Measurability, Spec §FR-011, §SC-013]
 - [X] CHK011 Is "truncated" defined separately for the operations section and for the source snapshot, each with a stated detection rule? [Clarity, Spec §FR-010, §SC-004, §Edge Cases/Torn artifact]
 - [X] CHK012 Is "applied state" defined as a named run state with stated transitions, so "the run MUST NOT reach an applied state" is objectively checkable? [Clarity, Spec §FR-009, §FR-020]
@@ -44,8 +44,8 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 - [ ] CHK015 Do User Story 2 scenario 1 (a snapshot that has been *removed*) and SC-004's five enumerated negative cases (which name snapshot-binding mismatch and truncated snapshot, but not absent snapshot) describe the same coverage set? [Consistency, Spec §User Story 2 scenario 1, §SC-004]
 - [X] CHK016 Is FR-019's v1 detection rule — the pre-existing plan file present with no new-format manifest — distinguishable from a new-format plan run that crashed before writing its manifest? [Conflict, Spec §FR-019, §FR-010, §Clarifications AD001]
 - [X] CHK017 Are FR-017 (supported operations still applied, run fails) and FR-009 ("refused before any destination write") consistent in making an unsupported operation explicitly *not* a pre-apply refusal? [Consistency, Spec §FR-017, §FR-009, §SC-007]
-- [ ] CHK018 Do FR-020 (identifiers of applied operations recorded on the run result) and FR-025 (the run records the last operation reported as applied) describe one record or two, and is their relationship stated? [Consistency, Spec §FR-020, §FR-025]
-- [ ] CHK019 Is FR-023's "before any write is attempted" placed relative to FR-009's verifications — is the write-surface check part of pre-apply verification or a separate later failure? [Consistency, Spec §FR-023, §FR-009]
+- [X] CHK018 Do FR-020 (identifiers of applied operations recorded on the run result) and FR-025 (the run records the last operation reported as applied) describe one record or two, and is their relationship stated? [Consistency, Spec §FR-020, §FR-025]
+- [X] CHK019 Is FR-023's "before any write is attempted" placed relative to FR-009's verifications — is the write-surface check part of pre-apply verification or a separate later failure? [Consistency, Spec §FR-023, §FR-009]
 - [X] CHK020 Is the Out of Scope exclusion of a durable crash-surviving apply ledger consistent with FR-025's obligation that the run record the last applied operation after an interrupted apply? [Conflict, Spec §Out of Scope, §FR-025, §Edge Cases/Partial apply]
 - [X] CHK021 Is FR-012's "without recomputing the comparison" consistent with FR-009's verification work, so that verification is clearly not a recomputation? [Consistency, Spec §FR-012, §FR-009, §SC-001]
 
@@ -61,14 +61,14 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 
 ## Scenario and Edge-Case Coverage
 
-- [ ] CHK029 Are requirements defined for an apply request naming a run identifier that does not exist? [Gap, Coverage, Spec §FR-012]
+- [X] CHK029 Are requirements defined for an apply request naming a run identifier that does not exist? [Gap, Coverage, Spec §FR-012]
 - [X] CHK030 Are requirements defined for two concurrent applies of the same run, or for a plan being read while another process writes it? [Gap, Coverage, Spec §FR-012, §FR-007]
-- [ ] CHK031 Is the expected outcome specified when the destination becomes unreachable partway through an apply — is that the FR-025 partial-apply path or a distinct failure? [Coverage, Spec §FR-025, §FR-017]
-- [ ] CHK032 Is behavior specified when an individual operation is rejected by the destination (a write error rather than an unsupported action) — does the run stop or continue? [Gap, Coverage, Spec §FR-017, §FR-025]
-- [ ] CHK033 Is the zero-operation apply's interaction with pre-apply verification stated — is an empty plan still checksum- and snapshot-verified before succeeding as a no-op? [Coverage, Spec §FR-022, §FR-009]
+- [X] CHK031 Is the expected outcome specified when the destination becomes unreachable partway through an apply — is that the FR-025 partial-apply path or a distinct failure? [Coverage, Spec §FR-025, §FR-017]
+- [X] CHK032 Is behavior specified when an individual operation is rejected by the destination (a write error rather than an unsupported action) — does the run stop or continue? [Gap, Coverage, Spec §FR-017, §FR-025]
+- [X] CHK033 Is the zero-operation apply's interaction with pre-apply verification stated — is an empty plan still checksum- and snapshot-verified before succeeding as a no-op? [Coverage, Spec §FR-022, §FR-009]
 - [X] CHK034 Are requirements defined for an operations section whose line count disagrees with the manifest count in *both* directions — more lines than recorded and fewer? [Coverage, Spec §FR-010, §Edge Cases/Torn artifact]
 - [X] CHK035 Are requirements defined for a plan whose manifest is present and self-consistent but whose recorded run identifier does not match the run being applied? [Gap, Coverage, Spec §FR-004, §FR-012]
-- [ ] CHK036 Is the interaction between a refused apply and a subsequent retry specified — may the same run be applied again after a refusal is corrected? [Gap, Coverage, Spec §FR-009, §FR-019]
+- [X] CHK036 Is the interaction between a refused apply and a subsequent retry specified — may the same run be applied again after a refusal is corrected? [Gap, Coverage, Spec §FR-009, §FR-019]
 
 ## Dependencies
 
@@ -80,7 +80,7 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 
 - [X] CHK040 Is the assumption recorded that the configuration-version value recomputes identically at apply time, together with the consequence when the configuration is legitimately reformatted without semantic change? [Assumption, Spec §FR-011, §Assumptions]
 - [X] CHK041 Is it stated which apply-safety requirements depend on provisional AD001 — the checksum rule, the torn-artifact rule, and the v1 detection rule — and must be revisited if it is not ratified? [Assumption, Spec §Clarifications AD001, §Open Design Decisions]
-- [ ] CHK042 Is the assumption recorded that a refusal can be made before any adapter is constructed, given the constitution treats the mutating path as the deliberate one and the non-mutating path as always safe? [Assumption, Spec §FR-009; Constitution §I]
+- [X] CHK042 Is the assumption recorded that a refusal can be made before any adapter is constructed, given the constitution treats the mutating path as the deliberate one and the non-mutating path as always safe? [Assumption, Spec §FR-009; Constitution §I]
 
 ## Notes
 
@@ -146,3 +146,96 @@ against `../spec.md` text, and every code anchor the spec cites was re-checked a
 - CHK033 — nothing states that pre-apply verification is unconditional and independent of the operation count, so an empty plan with a broken checksum remains unresolved between FR-009 (spec.md:531) and FR-022 (:643-646). Spec defect.
 - CHK036 — retry after a corrected refusal is still unstated; the run-state fix landed but no clause says a refusal is not terminal for the run identifier. Spec defect (nit).
 - CHK042 — no assumption records that a refusal can be made before any adapter is constructed; the CHK005 clause it depends on was not added, and the current call order (`utils.py:183-235` before `cli.py:322-340`) contradicts it. Spec defect.
+
+### Final verification 2026-07-26
+
+16 of the 17 previously-unchecked items verified satisfied and marked `[X]`; 1 left unchecked.
+Checklist stands at 41 / 42. No previously-checked item was found to have been invalidated by the
+second edit round.
+
+Verified satisfied:
+
+- CHK002 — the pre-apply set is now enumerated: FR-009's five checks (`spec.md:694-698`), FR-023's
+  write-surface check explicitly folded into the same pre-write gate (`:708-710`), and FR-010's torn
+  conditions explicitly routed to "the same path as a mismatch" (`:721-727`). Format version is now
+  check one. Residue: FR-009's "MUST verify five things" reads as exhaustive while two further
+  pre-write conditions live in FR-023 and FR-010; the cross-references reconcile it, but the count
+  is loose wording.
+- CHK003 — FR-009 now states the evaluation order, its rationale, and that **all** checks are
+  evaluated and **every** failure named, not only the first (`spec.md:694-701`).
+- CHK004 — re-applying a run already at `status: applied` is now explicitly permitted (Edge Cases
+  `spec.md:590-593`, AD033 `:325-330`).
+- CHK005 — FR-009 now states the obligation and its exact scope: verification completes before any
+  destination **write**, and does *not* order verification before adapter construction or before a
+  destination connection, which are permitted beforehand (`spec.md:705-707`). Verified against the
+  code: `get_potenda_from_instance` builds both adapters at `infrahub_sync/utils.py:183-235`, before
+  the apply command's own checks at `infrahub_sync/cli.py:322-340`.
+- CHK006 — FR-009 now sets a content bar: each refusal message names the failed check, the expected
+  and found value where neither is secret, and the operator's next action (`spec.md:703-704`).
+  Residue: the message is not required to identify the run itself, which is one of the three
+  sub-parts this item names; the run *is* named for the absent-artifact case (`:577-580`).
+- CHK007 — the pre-write gate is now closed and named (FR-009 `spec.md:694-710`), which classifies
+  by exhaustion; each post-gate failure mode is separately placed — unsupported operation at FR-017
+  (`:806-808`), destination rejection or transport failure at Edge Cases (`:585-589`, AD027).
+- CHK008 — a refused apply MUST record an **empty** applied-operation set on the run result rather
+  than recording nothing (FR-009, `spec.md:712-714`).
+- CHK009 — the rule's coverage is now stated: the declared content of the configuration the run
+  used, **as parsed**, not the file's bytes (AD035, `spec.md:345-346`), compared against a value
+  recomputed by the same default rule (FR-011, `:733-735`).
+- CHK018 — the relationship is now stated: FR-025's last-applied pointer is the final element of
+  FR-020's ordered set rather than a separate field (AD036, `spec.md:353-354`). Residue: FR-020
+  itself (`:826-828`) does not describe its record as ordered, which AD036's phrasing presumes.
+- CHK019 — FR-023's check is now explicitly placed inside FR-009's pre-write gate, "evaluated with
+  these five", "rather than surfacing as a later per-operation failure" (`spec.md:708-710`).
+- CHK029 — now covered for apply, not only review: an apply naming a run identifier that does not
+  exist, or whose run holds no plan artifact, is an error naming the run identifier and the expected
+  artifact path and creates no run directory (Edge Cases `spec.md:577-580`, AD026 `:282-288`). This
+  closes the "claimed fixed, not fixed for apply" finding of the previous pass. The behavior it
+  overrides is real: `infrahub_sync/utils.py:244-246` still creates the directory unconditionally
+  and `:256-263` writes `schema-sub-hash.txt` into it.
+- CHK031, CHK032 — both closed by AD027: the apply fails fast at the first operation the destination
+  rejects or that fails in transport, operations already reported applied stay recorded, the run is
+  recorded `failed`, the failure names the failing operation identifier and the underlying error,
+  and there is no continue-past and no rollback (Edge Cases `spec.md:585-589`, AD027 `:289-295`).
+  Note this is deliberately a different policy from FR-017's unsupported-operation case, where
+  supported operations in the same plan are still applied; the two triggers are distinct and both
+  are stated.
+- CHK033 — pre-apply verification is now unconditional on every apply attempt whatever the operation
+  count, so an empty plan with a broken checksum is still refused (Edge Cases `spec.md:590-592`).
+- CHK036 — a refusal is now explicitly not terminal for the run identifier; the same run may be
+  applied again once the cause is corrected (Edge Cases `spec.md:592-593`).
+- CHK042 — resolved by explicit decision rather than by recording the assumption. FR-009
+  (`spec.md:705-707`) and AD034 (`:331-335`) state that verification is **not** ordered before
+  adapter construction, so the assumption this item asks about is no longer load-bearing and its
+  absence is deliberate and documented. That matches the code's actual order (see CHK005).
+
+Left unchecked:
+
+- CHK015 — **remediation claim not delivered, and factually false as written.** AD036 asserts
+  "SC-004 enumerates 'absent, truncated, or mismatched' so the *absent* snapshot User Story 2 names
+  is covered" (`spec.md:355-356`). SC-004 was not edited by the second round: it still enumerates
+  the same five negative cases (`:929-931`) — checksum mismatch, configuration-version mismatch,
+  snapshot-binding mismatch, absent operations, truncated snapshot — with no absent-snapshot case.
+  The gap is in practice reachable through FR-004's binding rule, which makes a recorded path that
+  does not exist a binding mismatch (`:644-646`), but SC-004's evidence list still does not say so
+  and User Story 2 scenario 1 (`:423-426`) still names a removed snapshot. Spec defect,
+  brief-originated (DBA-004 enumerates the same five).
+
+Two further consistency findings, recorded here rather than corrected:
+
+- **AD012's ordinal is now stale.** AD012 (`spec.md:138-144`) still calls the run-identifier check
+  "A fourth pre-apply check" and argues "DBA-004 names three checks but does not forbid a fourth".
+  After AD028 added the format-version check, FR-009 makes it the **second** of five
+  (`:695-696`). The behavior is unchanged; only the ordinal is wrong.
+- **FR-009's first check has no success criterion.** SC-004 covers checksum, configuration version
+  and snapshot binding; SC-015 covers the run-identifier check; nothing covers refusal on an
+  unrecognized `format_version`. The behavior is stated at Edge Cases `spec.md:581-584` but is not
+  measured.
+
+Spot-check of previously-checked items in this checklist, chosen where the second round edited
+nearby text — CHK001, CHK011, CHK012, CHK016, CHK017, CHK020, CHK021, CHK022, CHK034, CHK035,
+CHK041. All still hold. CHK001 and CHK012's run-state naming survived the removal of the
+`cache/sidecars.py:71` anchor from FR-009 (`spec.md:710-712`); CHK017's separation of FR-017 from
+the pre-apply gate is strengthened, not weakened, by FR-023 being folded into that gate; CHK035's
+run-identifier check is intact at `:695-696` with SC-015 (`:990-994`) and User Story 2 scenario 6
+(`:439-442`) still attached.

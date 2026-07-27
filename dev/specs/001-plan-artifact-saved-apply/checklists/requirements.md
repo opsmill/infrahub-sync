@@ -8,7 +8,7 @@
 
 ## Content Quality
 
-- [ ] No implementation details (languages, frameworks, APIs)
+- [X] No implementation details (languages, frameworks, APIs)
 - [x] Focused on user value and business needs
 - [x] Written for non-technical stakeholders
 - [x] All mandatory sections completed
@@ -29,7 +29,7 @@
 - [x] All functional requirements have clear acceptance criteria
 - [x] User scenarios cover primary flows
 - [x] Feature meets measurable outcomes defined in Success Criteria
-- [ ] No implementation details leak into specification
+- [X] No implementation details leak into specification
 
 ## Notes
 
@@ -88,3 +88,34 @@ Both content-quality items remain unchecked, on a narrower basis than the previo
 - Note for the next pass: **"Written for non-technical stakeholders" is marked `[x]` above but sits
   uneasily with the same six passages.** It was not unmarked here, because this pass's mandate covered
   the two unchecked items; it should be re-evaluated once Phase 3 relocates them.
+
+### Final verification 2026-07-26
+
+Both content-quality items are now **satisfied** and marked `[X]`. Checklist stands at 16 / 16.
+
+- The relocation the previous pass required has been applied in full. A token scan over the whole
+  normative body — Functional Requirements, Key Entities and Success Criteria, `spec.md:614-1007` —
+  returns **no** `file:line` anchor, no module path, no class name and no method name. The complete
+  set of backticked tokens surviving in that range is: the `[PROVISIONAL ADnnn]` markers; the action
+  values `create` / `update` / `delete`; the run states `pending | running | dry-run | applied |
+  failed` with `status: applied` and `status: running`; the run modes `plan` and `sync`; and the two
+  configuration surfaces `order:` and `settings`. Every one of those is operator- or
+  config-observable vocabulary, which the previous pass explicitly ruled admissible.
+- Each of the six passages the previous pass itemised was re-checked individually. FR-005
+  (`spec.md:650-659`) keeps the order-bearing-collection rule and has dropped `list[Any]` and
+  `generator/__init__.py:28`. FR-008 (`:670-693`) has dropped `cache_root_for(...)` and
+  `cache/paths.py:56-59`; the same facts now sit in Dependencies (`:1099-1115`). FR-009 (`:694-720`)
+  keeps the run-state vocabulary and has dropped `cache/sidecars.py:71`, `cli.py:336-340` and
+  `cli.py:322`. FR-013 (`:740-759`) keeps every behavioral clause and has dropped `client.create`,
+  `save(allow_upsert=True)`, `InfrahubModel.update`, `local_id` and its five anchors. FR-014
+  (`:760-778`) keeps the three tier-qualification cases and has dropped all three anchors. FR-023
+  (`:842-846`) has dropped `potenda/__init__.py:354-360`.
+- Nothing was lost in the move. The relocated facts are still carried, in Clarifications
+  (`spec.md:41-366`), Assumptions (`:1043-1094`) and Dependencies (`:1096-1122`), which the previous
+  pass ruled the correct home for them.
+- **"Written for non-technical stakeholders" is re-confirmed `[X]`.** The previous pass flagged it as
+  sitting uneasily with the same six passages and asked for re-evaluation after relocation. Re-read
+  after relocation, the six requirements are behavior-level throughout and the unease is resolved.
+- Every code anchor still present in the specification — 40 distinct `file:line` references across
+  Clarifications, Assumptions and Dependencies — was re-verified line-by-line against the working
+  tree during this pass. All 40 are factually correct; none required correction.

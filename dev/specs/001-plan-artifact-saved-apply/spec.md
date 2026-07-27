@@ -136,12 +136,13 @@ markers are the ratification handles.
   injection points even though no persisted record distinguishes them afterwards.
   `[PROVISIONAL AD011]`
 - Q: What stops a `plan/` directory copied into a different run directory from verifying clean? →
-  A: A fourth pre-apply check: the manifest's recorded run identifier must equal the run being
+  A: An additional pre-apply check — one of the five FR-009 now enumerates, once AD028 added the
+  format-version check ahead of it: the manifest's recorded run identifier must equal the run being
   applied. This is a separate equality comparison rather than a checksum input, because AD001
   deliberately excludes the run identifier from `plan_checksum` so the manifest can be byte-identical
   across re-plans (SC-006) — which is exactly what leaves the copied-plan hole. DBA-004 names three
-  checks but does not forbid a fourth, and refusing a mis-filed plan is inside DBR-003's "safe to
-  apply". `[PROVISIONAL AD012]`
+  checks but does not forbid additional ones, and refusing a mis-filed plan is inside DBR-003's "safe
+  to apply". `[PROVISIONAL AD012]`
 - Q: At apply, the stored configuration-version value is compared for equality — against what? →
   A: The apply recomputes the value by the same default rule (a deterministic content checksum over
   the configuration it is applying with) and compares for equality, unless an in-process caller
@@ -653,10 +654,10 @@ references.
   the operations sequence and to relationship-reference lists only. Collections whose order is part
   of the value — a payload's list-valued attributes — MUST be serialized in source order and MUST NOT
   be re-sorted, because sorting them would make the applied value differ from the reviewed source
-  value. The remaining canonicalization details — how the checksum-excluded fields are removed, how
-  the two byte sequences are joined, and the single canonical representation of destination identity —
-  are fixed by FR-028. *(DBR-014; encoding per AD001, reference-list ordering per AD003, remaining
-  determinism details per AD035)* `[PROVISIONAL AD035]`
+  value. The remaining canonicalization details are fixed elsewhere: how the checksum-excluded fields
+  are removed and how the two byte sequences are joined by FR-027, and the single canonical
+  representation of destination identity by FR-028. *(DBR-014; encoding per AD001, reference-list
+  ordering per AD003, remaining determinism details per AD035)* `[PROVISIONAL AD035]`
 - **FR-006**: A saved plan MUST be reviewable at two depths: a summary giving a count per action
   and a count per kind, and per-object detail for the operations it contains. Per-object detail MUST
   present, per operation, at least its operation identifier, its action, its destination kind, and
@@ -701,8 +702,10 @@ references.
   operator everything that is wrong. The run-identifier check MUST be a separate equality comparison
   rather than a checksum input, because SC-006 requires the run identifier to be excluded from the
   checksum — which is what would otherwise let a plan directory copied into a different run verify
-  clean. A plan that fails any of these MUST be refused. Each refusal message MUST name the failed
-  check, the expected and the found value where neither is secret, and the operator's next action.
+  clean. A plan that fails any of these MUST be refused. Each refusal message MUST name the run
+  identifier it refused, the failed check, the expected and the found value where neither is secret,
+  and the operator's next action — the run identifier because a refusal that names only the check
+  leaves an operator applying several runs unable to tell which one was refused.
   Verification MUST complete before any destination **write**; it does not order verification before
   adapter construction or before a destination connection is opened, which are permitted beforehand.
   FR-023's write-surface check is part of the same pre-write gate: it is evaluated with these five and
@@ -823,9 +826,12 @@ references.
   file MUST be left in place rather than deleted or rewritten, and it is never read by the new reader
   and is not part of the plan artifact for FR-004, FR-018, SC-006 or SC-010. *(DBR-019; detection rule
   per AD001, write order and v1/torn disjointness per AD014)* `[PROVISIONAL AD014]`
-- **FR-020**: The identifiers of operations reported as applied MUST be recorded on the run
-  result. *(scope boundary: run result only, not a durable ledger. Verified through SC-005, whose
-  evidence reads the apply-side identifier set from this record.)*
+- **FR-020**: The identifiers of operations reported as applied MUST be recorded on the run result
+  as an **ordered** sequence, in the order the operations were reported applied. The ordering is what
+  makes "the last operation reported as applied" well defined: FR-025's last-applied pointer is the
+  final element of this sequence rather than a separate recorded field. *(scope boundary: run result
+  only, not a durable ledger. Verified through SC-005, whose evidence reads the apply-side identifier
+  set from this record. Ordering and the last-applied pointer per AD036.)* `[PROVISIONAL AD036]`
 - **FR-021**: Two operations within one plan MUST NOT share an operation identifier. Because the
   identifier is derived rather than allocated, uniqueness MUST be asserted when the plan is written
   and MUST fail the plan run if it does not hold, rather than being assumed. Under FR-002's closed
@@ -849,8 +855,13 @@ references.
   plan time, naming the affected kind and the missing component. This is the observable convergence
   actually rides on: the upsert is keyed on the human-friendly ID and is unkeyed — and therefore
   duplicates — when it is absent or incomplete. The plan run MUST still succeed; this is a warning,
-  not a failure, per the brief. *(Carries the brief's non-unique-destination-identifier edge case,
-  restated on the real convergence key per AD017; criterion SC-014.)* `[PROVISIONAL AD017]`
+  not a failure, per the brief. The warning MUST be emitted on the run's **log stream**, which is
+  where the plan path already emits its operational output, and not on the standard-output channel
+  FR-008 reserves for read-from-artifact review output. It is emitted only: it MUST NOT be recorded as
+  a manifest field, so it stays outside the FR-004 checksum and outside SC-006's byte comparison.
+  *(Carries the brief's non-unique-destination-identifier edge case, restated on the real convergence
+  key per AD017; emitted-only, non-manifest status and output channel per AD036; criterion SC-014.)*
+  `[PROVISIONAL AD017]` `[PROVISIONAL AD036]`
 - **FR-025**: If an apply stops partway — meaning it terminates in-process with a reported error —
   the operations already written MUST stay written and the run MUST record, best effort, the last
   operation it reported as applied, where "last" means last in the dependency order actually
@@ -865,6 +876,81 @@ references.
   prescribe write granularity either way. *(Carries the brief's Constraint "The plan contract orders
   operations; it does not prescribe write granularity"; inspectable as the absence of any grouping
   field in the artifact, with no separate acceptance criterion.)*
+- **FR-027**: The plan manifest MUST carry the following field set, stated here in one place because
+  it is the format contract nine later outcomes consume and must be readable without being assembled
+  from the requirements that each touch one part of it:
+    1. A **format version**, required on every manifest, declaring which revision of this artifact
+       format the manifest was written to.
+    2. The **run identifier** the plan was produced under.
+    3. The **creation timestamp** of the plan.
+    4. The **configuration-version value** the run planned with, per FR-011.
+    5. The **source-snapshot binding**, per FR-004: one record per source-snapshot file the plan was
+       computed against, holding that file's run-relative path, a content digest, and its row count.
+    6. The **operation count**, per FR-010, which is what keeps a plan with no operations
+       distinguishable from a plan whose operations are missing.
+    7. The **delete-computation record**, per FR-015, stating whether delete operations were computed
+       for this plan.
+    8. The **plan checksum**, per FR-004: one deterministic value over the manifest and the ordered
+       operations, excluding only itself, the run identifier, and the creation timestamp. Those three
+       are **removed** before the manifest is canonicalized rather than blanked, and the canonical
+       manifest bytes and the operations bytes are joined with no separator between them.
+
+  A manifest whose declared format version is not one the reader recognizes MUST be refused, with a
+  message naming the version found and the versions supported. That message MUST be distinct from the
+  message FR-019 requires for a plan in the pre-existing format, because the two conditions have
+  different operator remedies: a pre-existing-format plan is re-planned, while an unrecognized version
+  means the artifact was written by a different version of the tool. Unknown **additional** manifest
+  fields MUST be tolerated on read rather than refused, and MUST be included in the bytes the checksum
+  is computed over — a later outcome adds a schema-fingerprint field to this same manifest, and a
+  reader that rejected fields it did not know would refuse that artifact on arrival. This requirement
+  consolidates the manifest obligations FR-004, FR-010 and FR-015 state field by field; where they and
+  this requirement describe the same field they are one obligation, not two. *(DBR-006, DBR-008;
+  consolidated field set, format-version field and unknown-field tolerance per AD028; the individual
+  field rules per AD001, AD008 and AD024; canonicalization details per AD035; criterion SC-018)*
+  `[PROVISIONAL AD028]`
+- **FR-028**: The per-operation record MUST fix, for each field FR-002 names, the rules that make two
+  readers of the same plan agree about it:
+    1. **Obligation level.** The operation identifier, the action, the destination kind, the
+       destination identity, and the dependency tier are required on every operation. The payload is
+       required on a create and on an update, and is omitted on a delete, which proposes no source
+       values. Relationship references are optional: present when the operation carries any, absent
+       when it carries none. FR-014's qualification of the tier ordering guarantee concerns what the
+       tier guarantees, not whether the field is present.
+    2. **Absent versus empty.** An absent field means the operation carries no value of that kind at
+       all; an empty collection means the operation carries that kind of value and the value is empty
+       — for a cardinality-many relationship reference, that the peer set is deliberately empty, which
+       the replace-set write FR-013 mandates then acts on. The two MUST NOT be used interchangeably: a
+       writer MUST NOT emit an empty collection where the field is absent, nor omit a field whose
+       value is an empty collection.
+    3. **One representation of destination identity.** "Destination identity" has a single canonical
+       representation everywhere it appears — an ordered mapping of identity attribute name to value,
+       sorted by attribute name. That one representation is what FR-003's identifier derivation
+       hashes, what FR-005's canonical ordering of relationship-reference lists sorts by, and what
+       per-object review presents under FR-006, so the identity an operator reads is the identity the
+       operation identifier was derived from.
+    4. **The authority of the payload.** "The required source values as a full payload" is
+       authoritative for the mapped fields it carries and silent about every other destination field:
+       applying it MUST set the fields it carries and MUST NOT touch unmapped destination fields,
+       which is the same authority FR-013 states for a planned update. "Full" means complete with
+       respect to the configuration's field mapping, not complete with respect to the destination
+       schema.
+
+  *(DBR-008, DBR-011, DBR-014; obligation levels, the absent-versus-empty rule, the single identity
+  representation and the payload's authority per AD035; payload authority consistent with AD015;
+  verified through SC-002, SC-005, SC-006 and SC-008 rather than by a criterion of its own)*
+  `[PROVISIONAL AD035]`
+- **FR-029**: Reading a stored plan MUST have exactly one supported entry point: an in-process plan
+  reader that takes the sync name and the run identifier locating a stored run, reads that run's plan
+  artifact, and produces both review depths FR-006 defines — the summary and the per-object detail.
+  It MUST return that content to its caller as data rather than writing it to any output stream, so a
+  caller consumes it without parsing rendered text and so SC-010's credential scan can scan the
+  returned value as data. The command-line review mode MUST be a thin renderer over that same entry
+  point and MUST NOT re-implement reading, filtering, or summarizing, so both of SC-009's
+  reachability cases — in-process and from the command line — exercise one code path. Nothing beyond
+  this single reader is specified as a supported surface: no broader programmatic interface for
+  plans, runs, or applies is designed here. *(DBR-002, DBR-012, DBR-020; single reader entry point per
+  AD029; verified through SC-009 and SC-010 rather than by a criterion of its own)*
+  `[PROVISIONAL AD029]`
 
 ### Key Entities
 
@@ -923,14 +1009,17 @@ references.
   its peers unlinked leaves counts correct and relationships wrong. Delete is excluded, because
   applying deletes is out of scope. *(DBA-003, as narrowed by the brief; third class named per AD009,
   crash-window measurement per AD011)* `[PROVISIONAL AD009]` `[PROVISIONAL AD011]`
-- **SC-004**: A plan whose checksum, configuration version, or source-snapshot binding no longer
-  matches is refused before any destination write, naming the failed check, and the run is recorded
-  `failed` rather than reaching `status: applied`; a plan whose manifest exists but whose operations or
-  source snapshot are absent or truncated is refused the same way — evidenced by five negative cases
-  (checksum mismatch, configuration-version mismatch, snapshot-binding mismatch, absent operations,
-  truncated snapshot), each asserting refusal, zero destination writes observed as unchanged
-  destination object counts, and the resulting run state read from the run sidecar. *(DBA-004; run
-  state per AD010)* `[PROVISIONAL AD010]`
+- **SC-004**: A plan whose checksum, configuration version, or source-snapshot binding is **absent,
+  truncated, or mismatched** is refused before any destination write, naming the failed check, and the
+  run is recorded `failed` rather than reaching `status: applied`; a plan whose manifest exists but
+  whose operations or source snapshot are absent or truncated is refused the same way — evidenced by
+  six negative cases: the five the brief names (checksum mismatch, configuration-version mismatch,
+  snapshot-binding mismatch, absent operations, truncated snapshot) plus an **absent source
+  snapshot**, the case User Story 2 scenario 1 names and which "no longer matches" alone did not
+  reach. Each case asserts refusal, zero destination writes observed as unchanged destination object
+  counts, and the resulting run state read from the run sidecar. *(DBA-004; run state per AD010;
+  absent-truncated-or-mismatched enumeration and the sixth case per AD036)* `[PROVISIONAL AD010]`
+  `[PROVISIONAL AD036]`
 - **SC-005**: The operation identifiers shown at review are the identifiers reported against each
   operation in the apply result — evidenced by a review-then-apply trace comparing both identifier
   sets per operation, with the review-side set read from per-object review output (FR-006) and the
@@ -938,8 +1027,14 @@ references.
   AD020)* `[PROVISIONAL AD020]`
 - **SC-006**: Re-planning an unchanged source and destination produces a byte-identical operations
   section and a byte-identical manifest, excluding the fields that necessarily vary per run (the
-  run identifier and the creation timestamp) — evidenced by two consecutive plan runs and a byte
-  comparison with the varying fields masked. *(DBA-006)*
+  run identifier and the creation timestamp) — evidenced by two consecutive plan runs **that both
+  used the same extraction mode on each side** and a byte comparison with the varying fields masked.
+  Fixing the extraction mode is part of the evidence procedure rather than an incidental detail: the
+  manifest records whether deletes were computed, that field is inside the checksum and is not one of
+  the two masked fields, and the engine may legitimately take the incremental path on a second run, so
+  FR-015 makes byte-identity conditional on both runs having extracted the same way. Two runs at
+  different extraction modes are expected to differ, and comparing them would make this criterion's own
+  test unsound. *(DBA-006; same-extraction-mode precondition per AD024)* `[PROVISIONAL AD024]`
 - **SC-007**: A plan containing a delete operation applies its non-delete operations, does not
   delete from the destination, and ends in run state `failed` naming the unsupported operation's
   identifier and action — evidenced by destination object counts before and after, scoped to the kinds
@@ -1005,6 +1100,14 @@ references.
   the manifest's delete-computation field, and asserting that the incremental run's plan does not
   drive its apply into a failed state through a phantom delete. *(FR-015, per AD024)*
   `[PROVISIONAL AD024]`
+- **SC-018**: An apply whose manifest declares a format version the reader does not recognize is
+  refused before any destination write, with a message naming the version found and the versions
+  supported, and the run is recorded `failed`; that message differs from the message a plan in the
+  pre-existing format is rejected with — evidenced by an apply attempted against a fixture manifest
+  carrying an unrecognized format version, asserting refusal, the message content, zero destination
+  writes, and the resulting run state, and by comparing that message text against the pre-existing-
+  format rejection message SC-011 asserts. *(FR-009, FR-027, per AD028; FR-009's first check had no
+  criterion — SC-004 covers three of the five and SC-015 the run identifier)* `[PROVISIONAL AD028]`
 
 ## Out of Scope
 
@@ -1031,14 +1134,54 @@ Carried verbatim from the brief. None of the following is delivered here.
 - Destination freshness checks, plan expiration, and conflict policies.
 - Branch review mode.
 
-One further boundary is recorded here rather than carried from the brief, because a checklist
-evaluation raised it as a candidate for expansion and it was declined:
+Seven further boundaries are recorded here rather than carried from the brief, because checklist
+evaluations raised each as a candidate for expansion and each was declined. Recording the exclusion
+is the whole of what is done: none of the capabilities below is built here.
 
 - **A field-level secret-classification model** over mapped data fields — a declared secret-field
   list, a name-pattern rule, or omit / mask / refuse-to-plan behavior. FR-018 is satisfied by never
   writing the configuration's `settings` credentials into the artifact or review output; classifying
   mapped data values would be new user-visible behavior, a new configuration surface, and a new
   failure mode, none of which the brief's In-scope list carries. *(per AD018)* `[PROVISIONAL AD018]`
+- **Artifact retention, lifecycle, and pruning.** No expiry, age-out, quota, retention policy, or
+  prune-old-plans behavior is defined for saved plans. The brief's Out-of-scope list puts durable
+  run and artifact storage behind provider interfaces elsewhere — this outcome uses the per-run
+  directory layout the engine already writes — and puts plan expiration out of scope alongside
+  destination freshness checks and conflict policies. A stored plan therefore lives exactly as long as
+  its run directory does, by whatever means the operator already manages that directory.
+  *(per AD030)* `[PROVISIONAL AD030]`
+- **Pagination or truncation of per-object review output.** Per-object detail is narrowable to a
+  single destination kind under FR-006 and by nothing else: no page size, no record limit, no elision
+  of a large result, and no continuation handle. The brief's In-scope list names summary review and
+  per-object review with no volume qualifier and states no output-size obligation, so none is
+  invented. *(per AD030)* `[PROVISIONAL AD030]`
+- **Plan-volume and review-latency targets.** No maximum operation count, artifact size, review
+  response time, or apply throughput is asserted here, and none is tested. The brief sets no volume or
+  latency target. The line-oriented encoding AD001 chose is what a later target would build on,
+  because it allows a large plan to be summarized and detailed without loading all of it, but no
+  threshold is set. *(per AD030)* `[PROVISIONAL AD030]`
+- **Rendered review output as a stability or compatibility contract.** The summary and per-object
+  renderings are operator-facing text, not a format other software may depend on: their wording,
+  field order, and layout may change without that being a breaking change, and nothing here obliges a
+  later outcome to preserve them. What this outcome owns as a contract is the plan artifact format —
+  the manifest fields, the per-operation record, the deterministic serialization, and the checksum
+  rule — which is the shared contract the brief names and which nine later outcomes consume.
+  Presenting plan summaries in a user interface is one of those later outcomes and owns its own
+  presentation. *(per AD030)* `[PROVISIONAL AD030]`
+- **A cross-outcome policy governing changes to the plan artifact format.** No versioning process,
+  deprecation window, migration procedure, or change-negotiation protocol between this outcome and
+  its nine consumers is defined. The brief states the consequence — any change to the format after
+  this ships is a breaking change for all nine — and states no process for managing it. FR-027's
+  format-version field and its tolerance of unknown fields are the two mechanisms this outcome
+  provides; the governance around them is not this outcome's to write. *(per AD030)*
+  `[PROVISIONAL AD030]`
+- **Folding the review flags into a command group.** This outcome adds no command group (FR-008) and
+  asserts nothing about a later outcome folding whichever review spelling is chosen into one. The
+  brief's Constraints assign that rework to a later outcome; whether such a fold preserves behavior is
+  that outcome's obligation to establish, not a property this specification requires, tests, or
+  guarantees. Recording the exclusion is preferred over stating a preservation requirement, because a
+  requirement here would bind work the brief has already assigned elsewhere. *(per AD019)*
+  `[PROVISIONAL AD019]`
 
 ## Assumptions
 
@@ -1128,25 +1271,25 @@ Brief requirements (DBR) and acceptance criteria (DBA) to the sections that carr
 | Brief item | Carried by |
 |---|---|
 | DBR-001 | FR-001; User Story 1 |
-| DBR-002 | FR-006; User Story 1 scenario 2 |
+| DBR-002 | FR-006, FR-029; User Story 1 scenario 2 |
 | DBR-003 | FR-009; User Story 2 |
 | DBR-004 | FR-012; User Story 1 scenario 1 |
 | DBR-005 | FR-003, FR-006, FR-021; SC-005 |
-| DBR-006 | FR-004, FR-009; User Story 2 scenario 1 |
+| DBR-006 | FR-004, FR-009, FR-027; User Story 2 scenario 1 |
 | DBR-007 | FR-014; User Story 5 |
-| DBR-008 | FR-002, FR-004; Key Entities |
+| DBR-008 | FR-002, FR-004, FR-027, FR-028; Key Entities |
 | DBR-009 | FR-015; SC-017; User Story 4 |
 | DBR-010 | FR-016; User Story 4 |
-| DBR-011 | FR-002, FR-013, FR-014 |
-| DBR-012 | FR-007; User Story 1 scenario 2 |
+| DBR-011 | FR-002, FR-013, FR-014, FR-028 |
+| DBR-012 | FR-007, FR-029; User Story 1 scenario 2 |
 | DBR-013 | FR-013; User Story 3 |
-| DBR-014 | FR-005; SC-006 |
+| DBR-014 | FR-005, FR-028; SC-006 |
 | DBR-015 | FR-004, FR-010; User Story 2 scenario 3; Edge Cases (Torn artifact) |
 | DBR-016 | FR-017; User Story 4 |
 | DBR-017 | FR-018; SC-010 |
 | DBR-018 | FR-011; Key Entities (configuration-version value); SC-013 |
 | DBR-019 | FR-019; User Story 2 scenario 4 |
-| DBR-020 | FR-008; User Story 1 scenario 3 |
+| DBR-020 | FR-008, FR-029; User Story 1 scenario 3 |
 | DBA-001 | SC-001 |
 | DBA-002 | SC-002; User Story 3 scenario 1 |
 | DBA-003 | SC-003; User Story 3 scenario 2 |
@@ -1180,6 +1323,7 @@ separately. Every requirement in this specification appears in one of the two ta
 | Constraint: the qualified path is NetBox → Infrahub | Assumptions |
 | Derived from DBR-007 at apply time: peer resolution failures | FR-014; SC-016 |
 | Derived from DBR-003/DBR-006: the plan's run binding | FR-009; SC-015; User Story 2 scenario 6 |
+| Derived from DBR-003/DBR-006 and DBR-019: the manifest's format-version check | FR-009, FR-027; SC-018; Edge Cases (A manifest declaring an unrecognized format version) |
 
 ## Open Design Decisions
 
@@ -1191,8 +1335,11 @@ silent implementation choices, because they are design commitments other outcome
   this format and any later change to it is a breaking change for all of them, so it is recorded
   explicitly and marked provisional until ratified.
 - **Which existing commands carry review, and the exact flag spelling** — decided as AD005. It is
-  user-visible and will later be folded into a `plan` group without changing behavior, so it is
-  named rather than left implicit.
+  user-visible, so it is named rather than left implicit. Whether a later outcome can fold that
+  spelling into a command group without changing behavior is **not** asserted here: it is recorded as
+  an explicit exclusion in [Out of Scope](#out-of-scope), because the brief assigns the command-group
+  rework to a later outcome and a requirement here would bind work this specification does not own.
+  *(per AD019)* `[PROVISIONAL AD019]`
 
 Three further design commitments were surfaced during clarification and recorded the same way:
 AD002 (operation-identifier derivation), AD003 (relationship-reference shape and apply-time peer
@@ -1213,7 +1360,8 @@ Nothing here remains open. What remains genuinely deferred is not a design commi
 - **Plan size and review performance.** The brief sets no volume or latency target, so none is
   invented here. The encoding chosen in AD001 is line-oriented specifically so a large plan can be
   summarized and detailed without loading all of it, which is the property a later target would
-  need; no threshold is asserted.
+  need; no threshold is asserted. The exclusion itself is recorded in
+  [Out of Scope](#out-of-scope). *(per AD030)* `[PROVISIONAL AD030]`
 - **How a missing destination unique constraint is detected** for the FR-024 warning. The
   requirement and the warning's content are fixed; the detection mechanism is a planning-phase
   choice with no cross-outcome contract attached.

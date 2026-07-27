@@ -26,25 +26,25 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 - [X] CHK003 Is the kind-narrowing capability recorded in AD005 carried by any functional requirement or success criterion, or does it exist only in the clarification? [Gap, Spec §FR-008, §Clarifications AD005]
 - [ ] CHK004 Are requirements defined for the shape and stability of review output, given later outcomes and a UI are named as consumers of plan summaries? [Gap, Spec §FR-006, §Dependencies]
 - [ ] CHK005 Is the in-process reader's contract stated beyond "the single implementation" — what it accepts (a run identifier, a path) and what it returns? [Completeness, Spec §FR-008]
-- [ ] CHK006 Are requirements defined for reviewing a plan that would fail apply verification — may a torn or checksum-mismatched plan be reviewed, or is review refused on the same path? [Gap, Coverage, Spec §FR-007, §FR-009, §FR-010]
+- [X] CHK006 Are requirements defined for reviewing a plan that would fail apply verification — may a torn or checksum-mismatched plan be reviewed, or is review refused on the same path? [Gap, Coverage, Spec §FR-007, §FR-009, §FR-010]
 - [X] CHK007 Is a redaction rule specified for FR-018 — what constitutes a secret value in a source payload, and whether it is omitted, masked, or never collected? [Gap, Spec §FR-018, §SC-010, §FR-002]
 - [X] CHK008 Are requirements defined for the review path's own failure messages (unknown run, absent artifact, v1 plan) at the actionability bar FR-023 sets for apply? [Gap, Spec §FR-007, §FR-019, §FR-023]
-- [ ] CHK009 Is the documentation obligation for the new review flags stated as a requirement, given the constitution requires user-visible CLI changes to update docs in the same change? [Dependency, Gap, Spec §FR-008; Constitution §Documentation]
+- [X] CHK009 Is the documentation obligation for the new review flags stated as a requirement, given the constitution requires user-visible CLI changes to update docs in the same change? [Dependency, Gap, Spec §FR-008; Constitution §Documentation]
 
 ## Requirement Clarity
 
-- [ ] CHK010 Is "reachable in-process" defined — a supported public entry point, or any importable function? [Clarity, Spec §FR-008, §SC-009]
+- [X] CHK010 Is "reachable in-process" defined — a supported public entry point, or any importable function? [Clarity, Spec §FR-008, §SC-009]
 - [X] CHK011 Is FR-008's standard-output requirement scoped to the read-from-artifact mode only, or does it also change the existing command's live output? [Ambiguity, Spec §FR-008, §Clarifications AD005]
 - [X] CHK012 Is "no new CLI command group" precise enough to verify — does it constrain top-level groups only, or also new subcommands and new flags? [Clarity, Spec §FR-008, §SC-012, §Out of Scope]
 - [X] CHK013 Is "MUST NOT construct an adapter or extract either side" checkable from outside the process, or does it require inspecting internals? [Measurability, Spec §FR-008, §SC-009]
 - [X] CHK014 Is "operator-actionable" given any content bar in the requirements that assert it? [Clarity, Spec §FR-019, §FR-023]
-- [ ] CHK015 Is "any review output" in FR-018 defined by enumeration — summary, per-object detail, warnings, refusal messages, logs — or left open? [Clarity, Spec §FR-018, §SC-010]
+- [X] CHK015 Is "any review output" in FR-018 defined by enumeration — summary, per-object detail, warnings, refusal messages, logs — or left open? [Clarity, Spec §FR-018, §SC-010]
 - [ ] CHK016 Is "at any time after the run" bounded by any retention or lifecycle statement, or is indefinite availability implied? [Clarity, Spec §FR-007]
 
 ## Requirement Consistency
 
 - [X] CHK017 Are FR-008's "no new CLI command is added" and SC-012's "gains no new command group" the same bar, or does one permit a new command inside an existing group while the other forbids it? [Conflict, Spec §FR-008, §SC-012, §Out of Scope]
-- [ ] CHK018 Is the constitution's structlog-not-print logging standard reconciled with FR-008's requirement that review output go to standard output, and is the reconciliation recorded? [Consistency, Spec §FR-008; Constitution §Logging]
+- [X] CHK018 Is the constitution's structlog-not-print logging standard reconciled with FR-008's requirement that review output go to standard output, and is the reconciliation recorded? [Consistency, Spec §FR-008; Constitution §Logging]
 - [X] CHK019 Does the spec state consistently that the existing non-mutating command's output changes because deletes now appear, and where that user-visible change is documented? [Consistency, Spec §FR-015, §Edge Cases/Recorded deletes change existing output]
 - [X] CHK020 Do FR-007 ("at any time after the run, including after the process has exited") and SC-009 ("a stored artifact read in a new process") state the same obligation, without one being materially stronger? [Consistency, Spec §FR-007, §SC-009]
 - [X] CHK021 Is FR-008's "the in-process reader MUST be the single implementation" consistent with SC-009's four-case matrix, which treats in-process and CLI as separately evidenced paths? [Consistency, Spec §FR-008, §SC-009]
@@ -54,7 +54,7 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 
 - [X] CHK023 Does SC-009 state the pass condition for each of its four cases — what must appear in each output for the case to pass? [Measurability, Spec §SC-009]
 - [X] CHK024 Is SC-010's canary-credential scan specified — which credential values, injected where, and which outputs are captured for scanning? [Measurability, Spec §SC-010, §FR-018]
-- [ ] CHK025 Is SC-012's before-and-after command-list comparison specified as a reproducible artifact — which command list, captured how, at which level? [Measurability, Spec §SC-012]
+- [X] CHK025 Is SC-012's before-and-after command-list comparison specified as a reproducible artifact — which command list, captured how, at which level? [Measurability, Spec §SC-012]
 - [X] CHK026 Does FR-006 have an acceptance criterion that measures review *content*, as opposed to SC-009 which measures reachability? [Traceability, Spec §FR-006, §SC-009]
 - [ ] CHK027 Are review latency and plan-size expectations either quantified or explicitly excluded inside the requirements themselves, rather than only noted as a deferral? [Measurability, Spec §Open Design Decisions/Plan size and review performance]
 - [X] CHK028 Is FR-018's obligation verifiable for the negative case — can "no secret value appears" be evidenced beyond the specific canaries SC-010 injects? [Measurability, Spec §FR-018, §SC-010]
@@ -62,12 +62,12 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 ## Scenario and Edge-Case Coverage
 
 - [X] CHK029 Are requirements defined for reviewing an empty plan — what the summary presents when the operation count is zero? [Coverage, Spec §FR-022, §FR-006]
-- [ ] CHK030 Are requirements defined for a kind filter naming a kind with no operations, or a kind absent from the configuration? [Gap, Coverage, Spec §Clarifications AD005]
+- [X] CHK030 Are requirements defined for a kind filter naming a kind with no operations, or a kind absent from the configuration? [Gap, Coverage, Spec §Clarifications AD005]
 - [X] CHK031 Are requirements defined for reviewing a v1 plan, as distinct from applying one — is the same rejection and re-plan message required on the review path? [Gap, Coverage, Spec §FR-019, §FR-007]
 - [X] CHK032 Are requirements defined for review when the run directory is readable but the manifest is absent? [Coverage, Spec §FR-010, §FR-019]
-- [ ] CHK033 Is behavior specified when review is requested with no run identifier, or with a run identifier that does not exist? [Gap, Coverage, Spec §FR-008, §FR-007]
+- [X] CHK033 Is behavior specified when review is requested with no run identifier, or with a run identifier that does not exist? [Gap, Coverage, Spec §FR-008, §FR-007]
 - [ ] CHK034 Are requirements defined for review of a plan large enough that per-object detail cannot reasonably be rendered in full — pagination, truncation, or an explicit exclusion? [Gap, Coverage, Spec §FR-006, §Open Design Decisions]
-- [ ] CHK035 Are requirements defined for review output when the operator lacks read access to part of the run directory? [Gap, Coverage, Spec §FR-007]
+- [X] CHK035 Are requirements defined for review output when the operator lacks read access to part of the run directory? [Gap, Coverage, Spec §FR-007]
 
 ## Dependencies
 
@@ -148,3 +148,78 @@ against `../spec.md` text, and every code anchor the spec cites was re-checked a
 - CHK034 — per-object detail for a plan too large to render in full has no pagination, truncation, or explicit exclusion (spec.md:1020-1023 is a deferral note). Spec defect (nit).
 - CHK035 — review output when part of the run directory is unreadable (permission or I/O failure) is still uncovered by FR-007 (spec.md:513-514). Spec defect (nit).
 - CHK038 — the "foldable into a later `plan` group without behavior change" statement is still prose in Open Design Decisions (spec.md:1000-1002); no requirement states what must remain true for that fold. Spec defect (nit).
+
+### Final verification 2026-07-26
+
+9 of the 15 previously-unchecked items verified satisfied and marked `[X]`; 6 left unchecked.
+Checklist stands at 36 / 42. No previously-checked item was found to have been invalidated by the
+second edit round.
+
+Verified satisfied:
+
+- CHK006 — reviewing a plan that would fail apply verification is now specified: review verifies the
+  plan checksum and reports the result prominently, but renders the plan regardless, and never
+  mutates the run state (Edge Cases `spec.md:594-597`, AD031 `:315-319`).
+- CHK009 — FR-008 now carries the documentation obligation explicitly: "Because these review flags
+  are a user-visible CLI change, the same change MUST update the user documentation for the command
+  they extend" (`spec.md:686-688`), which satisfies the constitution's §Documentation rule.
+- CHK010 — "reachable in-process" is now pinned to a supported entry point rather than any
+  importable function: "One supported entry point reads a stored plan and produces both review
+  depths ... a single reader entry point is named and nothing else" (AD029, `spec.md:305-309`).
+- CHK015 — FR-018's "any review output" is now bound to the same surfaces SC-010 enumerates
+  (AD036, `spec.md:363-364`), which places warnings, refusal messages and log lines outside the
+  requirement rather than inside it and outside its criterion.
+- CHK018 — the logging standard and the stdout requirement are now visibly reconciled: output is
+  "emitted through the command framework's echo facility rather than the language's built-in print"
+  (FR-008, `spec.md:679-681`), with AD032 (`:320-324`) naming `typer.echo`. Verified against the
+  code: the enforcement test matches only a call whose function name is the builtin `print`
+  (`tests/test_logging.py:56-64`), and the CLI already uses `typer.echo` for help output
+  (`infrahub_sync/cli.py:69`). The reconciliation is sound.
+- CHK025 — SC-012's before-and-after listing is now a reproducible artifact: captured as `--help`
+  output to a file (AD036, `spec.md:365`), over the top-level command listing SC-012 names
+  (`:973-976`).
+- CHK030 — a kind filter matching no operation, or naming a kind the configuration does not declare,
+  is now an error naming that kind and MUST NOT be presented as empty detail (FR-006,
+  `spec.md:664-666`).
+- CHK033 — now fully closed. FR-008 covers the unknown or plan-less run identifier
+  (`spec.md:682-684`) *and* the previously-missing case: "Requesting the read-from-artifact mode
+  with **no** run identifier MUST be an error naming the required option" (`:684-685`). This closes
+  the "claimed fixed, only half fixed" finding of the previous pass.
+- CHK035 — FR-008 now requires an error naming the path that could not be read on a permission or
+  I/O failure (`spec.md:685-686`), with the Edge Case at `:603-606` adding that it is never
+  presented as an absent plan, a v1 plan, or a zero-operation plan.
+
+Left unchecked:
+
+- CHK004 — **remediation claim not delivered.** AD030 (`spec.md:310-314`) states that an
+  output-stability contract is "recorded as an explicit Out-of-scope line". The Out of Scope section
+  (`:1009-1041`) was not touched by the second round and carries no such line. Whether rendered
+  review output is human-oriented only or itself a compatibility contract is still unstated, while
+  SC-005 (`:934-938`) and SC-010 (`:964-969`) both assert properties of it and "plan summaries in
+  the UI" is named as a consumer (`:1120`). Spec defect.
+- CHK005 — **remediation claim not delivered.** FR-008 (`spec.md:688-689`) defers the in-process
+  reader's contract to **FR-029**, which does not exist. AD029 (`:305-309`) says only that one
+  supported entry point "reads a stored plan", "produces both review depths" and "returns data
+  rather than writing to a stream"; it states no input contract, no return shape, and does not in
+  fact name the surface it claims to name. Spec defect.
+- CHK016 — **remediation claim not delivered.** AD030 declines retention and lifecycle and claims an
+  Out-of-scope line; none was written. "At any time after the run" (`spec.md:668-669`) remains
+  unbounded. Spec defect (nit).
+- CHK027 — **remediation claim not delivered.** Same missing Out-of-scope line. Review latency and
+  plan-size expectations remain only in Open Design Decisions (`spec.md:1213-1216`), neither
+  quantified nor excluded inside the requirements. Spec defect (nit).
+- CHK034 — **remediation claim not delivered.** Same missing Out-of-scope line. Per-object detail
+  for a plan too large to render in full still has no pagination, truncation, or explicit exclusion.
+  Spec defect (nit).
+- CHK038 — untouched by the second round. The "foldable into a later `plan` group without behavior
+  change" statement is still prose in Open Design Decisions (`spec.md:1193-1195`); no requirement
+  states what must remain true for that fold. Spec defect (nit).
+
+Spot-check of previously-checked items in this checklist, chosen where the second round edited
+nearby text — CHK001, CHK002, CHK003, CHK011, CHK012, CHK013, CHK017, CHK019, CHK021, CHK022,
+CHK031, CHK032, CHK036. All still hold. CHK011's scoping survived the FR-008 rewrite — the stdout
+clause is still confined to the read-from-artifact mode and "the existing live comparison path's
+output channel is unchanged" (`spec.md:681-682`). CHK017's group-only bar is intact (`:671-674`) and
+still matches SC-012 (`:973-974`). CHK036's dependency record kept the anchors the relocation moved
+out of FR-008 (Dependencies, `:1099-1115`), so nothing was lost. CHK021 still holds; note only that
+FR-008's single-implementation clause now ends in a pointer to the non-existent FR-029.
