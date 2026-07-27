@@ -68,6 +68,27 @@ class PlanArtifactUnreadableError(PlanArtifactError):
     next_action = "Check permissions and ownership on the named path, then retry."
 
 
+class UnknownRunIdentifierError(PlanArtifactError):
+    """No run with the requested identifier is stored for this synchronization (FR-008, AD073).
+
+    Two arms, because the audiences differ. When runs **do** exist the operator mistyped or
+    is looking at the wrong sync, and the remedy is one of the identifiers the message
+    lists. When the cache root is absent or holds no runs at all the audience is by
+    construction the first-run operator, for whom "pick from the list" is a dead end, so
+    that arm names the command that produces a plan — as the sibling `PlanFormatV1Error`
+    row does. Use `no_runs()` for the second arm.
+    """
+
+    next_action = "Re-run naming one of the run identifiers listed above."
+
+    NO_RUNS_NEXT_ACTION = "Run `infrahub-sync diff --name {sync_name}` for this sync to produce a plan first."
+
+    @classmethod
+    def no_runs(cls, message: str, *, sync_name: str) -> UnknownRunIdentifierError:
+        """Build the arm for a sync whose cache root is absent or holds no run directories."""
+        return cls(message, next_action=cls.NO_RUNS_NEXT_ACTION.format(sync_name=sync_name))
+
+
 class UnknownPlanKindError(PlanArtifactError):
     """A `kind` filter names a kind the configuration does not declare."""
 

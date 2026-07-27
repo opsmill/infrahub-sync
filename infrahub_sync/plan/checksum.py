@@ -62,6 +62,15 @@ def _digest_and_row_count(path: Path) -> tuple[str, int]:
     return hashlib.sha256(joined).hexdigest(), table.num_rows
 
 
+def snapshot_digest_and_row_count(path: Path) -> tuple[str, int]:
+    """Return one snapshot file's logical-row digest and its row count together.
+
+    The pre-apply verifier compares **both** against the manifest, and reading the Parquet
+    file twice to get them separately would double the cost of the check for no benefit.
+    """
+    return _digest_and_row_count(path)
+
+
 def source_snapshot_digest(path: Path) -> str:
     """Digest one source-snapshot Parquet file's logical rows (AD037, PD-008).
 
