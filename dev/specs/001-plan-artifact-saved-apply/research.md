@@ -276,11 +276,35 @@ mechanism (AD065).** "Fetch first, then read `peer_ids`" was the fix this entry 
 performs no read at all: `fetch()` opens with `if not self.initialized:`
 (`.venv/…/infrahub_sdk/node/relationship.py:286-288`) and the manager it is called on already reports
 itself initialized, so the guarded `client.get` inside it (`:290-296`) never runs. The helper must therefore
-**force the manager cold** — set `initialized` false, call `fetch()`, then read `peer_ids` — or issue its own
-scoped `client.get(id=node.id, kind=…, include=[rel_name])` and read the manager off the node that comes
-back. Either satisfies the requirement; the distinction that matters is that a destination read is *issued*,
+**force the manager cold** — set `initialized` false, call `fetch()`, then read `peer_ids`. The distinction
+that matters is that a destination read is *issued*,
 which is also what the test must observe, because "the manager was fetched before `peer_ids` was read" is
 satisfied by the no-op.
+
+**And the reconciliation must be flushed, or it is discarded (AD075).** `RelationshipManagerSync` has **no
+`save`**: `add()` (`.venv/…/infrahub_sdk/node/relationship.py:322-332`) and `remove()` (`:339-357`) only
+mutate `self.peers` and set `_has_update = True`, issuing no client call, so the reconciled set reaches the
+destination **only on a subsequent save of the node**. The helper therefore leaves the node unsaved — the
+same shape as `update_node`, whose flush lives in its caller (`infrahub_sync/adapters/infrahub.py:177`,
+`:625-626`) — and `apply_planned_operation` issues a **plain** `node.save()` once, after the loop over every
+cardinality-many relationship. Plain, not `save(allow_upsert=True)`: the create step has set
+`_existing = True` (`.venv/…/infrahub_sdk/node/node.py:1810-1811`), so a plain save dispatches `update()`
+(`:1533-1534`), which strips unmodified fields (`:1867-1870`) but **keeps** the reconciled relationship
+because its update flag is set (`:352`, relationship arm at `:362`), while the manager renders the full peer
+list (`relationship.py:68-69`) — which is what makes the write a replace. The observable moves onto the
+**issued destination write carrying the reconciled peer list**; manager state is satisfied by a helper that
+never saves.
+
+**And that flush is what withdraws the second re-read mechanism (AD075).** This entry originally offered a
+scoped `client.get(id=node.id, kind=…, include=[rel_name])` with the manager read off the node that comes
+back as equivalent to forcing the manager cold. The two stopped being equivalent once the flush became a
+separate step in the caller: the `add`/`remove` calls would land on the fetched node's manager, while the
+node the caller saves still holds the manager built from the create payload — initialized, with no update
+flag — so the stripping arm cited above pops it and the update carries no relationship at all. **The node
+that is saved must be the node whose manager was reconciled.** Forcing the manager cold satisfies that by
+construction, because `fetch()` assigns the peers it reads back onto the manager it was called on
+(`.venv/…/infrahub_sdk/node/relationship.py:290-299`) — it *is* the scoped read plus the write-back — and it
+is also the only form compatible with one flush per operation rather than one per relationship.
 
 **And the correction stops at this helper (AD070).** `update_node`'s additive ordering is a genuine
 pre-existing defect, and it stays. Its only caller is `InfrahubModel.update`

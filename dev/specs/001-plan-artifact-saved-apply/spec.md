@@ -878,7 +878,8 @@ repairs turned out not to have landed as reported, which is why this session exi
   happens**, so the change and its test would both have passed while changing nothing. The mechanism is
   therefore named rather than implied — discard the locally constructed peer set before fetching, so the
   guarded read actually runs, or issue a scoped destination read for that relationship and compare against
-  its result. Either is acceptable; leaving it as "fetch first" is not. And the test observable moves from
+  its result. Either was acceptable here, and leaving it as "fetch first" was not; AD075 later narrows it to
+  the first route, because the flush that decision adds must save the node whose manager was reconciled. And the test observable moves from
   "the manager was fetched before the peer set was read" — which the no-op satisfies — to **"a destination
   read was issued for that relationship before the peer set was read"**. `[AD065]`
 - Q: The keyedness gate is asserted over the **assembled data**, while the flat guarantee attached to it
@@ -1008,7 +1009,13 @@ is why its closure was verified by a narrow check against the library rather tha
   and the stripping **retains** the relationship precisely because its update flag is set (`:352`, the
   relationship arm at `:362`) — while the manager renders the **full** peer list
   (`relationship.py:68-69`), which is what makes the write a replace. A second upsert would re-render the
-  create instead. And the observable moves off manager state onto **the issued destination write carrying
+  create instead. **And the flush must save the node whose manager was reconciled**, which narrows AD065's
+  two re-read routes to one now that the flush is a separate step in the caller: reconciling the manager on a
+  separately fetched node leaves the saved node's own manager as the payload-built one, with no update flag,
+  so the stripping arm cited above pops it and the update carries no relationship at all — this same defect,
+  silently. Discarding the locally held peer set and fetching keeps the two on one object, because that fetch
+  assigns the peers it reads back onto the manager it was called on (`relationship.py:290-299`).
+  And the observable moves off manager state onto **the issued destination write carrying
   the reconciled peer list**, which is the same correction AD065 already made for the read side: every
   previously specified observable — a mocked unit assertion on removed peers, a conformance assertion that
   "the surplus is removed", a done-condition on manager state — was satisfied without any flush at all,
@@ -1697,7 +1704,14 @@ references.
   reconciliation is complete, and it MUST be an ordinary update of the node just written rather than a
   repeat of the convergent write: by that point the node is already known to exist, so an ordinary update
   is what carries the reconciled relationship, and the library's suppression of unmodified fields retains
-  that relationship precisely because the reconciliation marked it as changed. The evidence for the whole
+  that relationship precisely because the reconciliation marked it as changed. **The write MUST be issued
+  for the same object whose peer set was reconciled.** Suppression of unmodified fields is decided per
+  object: a write issued for any other representation of the destination object carries that
+  representation's own unreconciled peer set, which is not marked as changed and is therefore suppressed,
+  so the write goes out with no relationship in it and the reconciliation is discarded exactly as if it had
+  never been issued. This is why the two re-read routes above are not interchangeable once the write is a
+  separate step: whichever route is taken, the reconciliation and the write MUST meet on one object.
+  The evidence for the whole
   enforcement MUST accordingly be the **destination write carrying the reconciled peer list**, and MUST
   NOT be the state of the in-memory peer set. A reconciliation that is never issued is indistinguishable
   from a correct one wherever the convergent write already replaces the peer set, and **silently wrong
@@ -1728,8 +1742,13 @@ references.
   because by then a relationship-crossing component is a resolved identifier string from which no
   attribute can be read. The check MUST therefore build the operation against a **committed destination
   schema fixture** and assert on the rendered mutation, assert that the replace-set enforcement **issues a
-  destination read for the relationship before reading the peer set** it compares against, and assert that
-  applying the same operation twice renders **byte-identical** mutation inputs. Keyedness is asserted as two
+  destination read for the relationship before reading the peer set** it compares against, assert that the
+  reconciled peer set is then **issued to the destination** — a write carrying the reconciled list, made for
+  the same object the reconciliation acted on, and taking the form of an ordinary update of the object
+  already written rather than a repeat of the convergent write — and assert that
+  applying the same operation twice renders **byte-identical** mutation inputs. The flush assertion is the
+  fourth of these for the same reason the read assertion is the second: without it, an enforcement that
+  reconciles in memory and issues nothing satisfies every other assertion in the set. Keyedness is asserted as two
   cases, not one: for a kind whose convergence key is composed of its own direct attributes it MUST hold,
   and for a kind whose key crosses a relationship the same assertion is made and marked a **strict expected
   failure** against the recorded risk, so it reports the limitation today and turns into a suite failure the
@@ -1739,7 +1758,7 @@ references.
   AD015, create-on-no-match consequences per AD025, verification route per AD036, convergence-key payload
   per AD042, explicit replace-set enforcement per AD038, offline conformance check per AD045 as rebuilt by
   AD054, the read-not-order observable per AD065, the keyedness split per AD067, the repeat assertion per
-  AD068)* `[AD015]`
+  AD068, the flush observable per AD075)* `[AD015]`
   `[AD025]` `[AD036]` `[AD038]` `[AD042]`
   `[AD045]` `[AD054]` `[AD065]` `[AD067]`
   `[AD068]`
@@ -2580,12 +2599,14 @@ separately. Every requirement in this specification appears in one of the two ta
 ## Open Design Decisions
 
 Both items previously deferred here are now answered in [Clarifications](#clarifications) and
-carried into the requirements above. They are recorded as **provisional** decisions rather than
-silent implementation choices, because they are design commitments other outcomes consume:
+carried into the requirements above. **The decision set recorded in this section was ratified at the
+delivery gate** (AD084), so what follows is a record of ratified commitments rather than of provisional
+ones; they are written down rather than left as silent implementation choices because they are design
+commitments other outcomes consume:
 
-- **The plan artifact's concrete on-disk encoding** — decided as AD001. Nine later outcomes consume
-  this format and any later change to it is a breaking change for all of them, so it is recorded
-  explicitly and marked provisional until ratified.
+- **The plan artifact's concrete on-disk encoding** — decided as AD001 and ratified. Nine later outcomes
+  consume this format and any later change to it is a breaking change for all of them, which is why it is
+  recorded explicitly here.
 - **Which existing commands carry review, and the exact flag spelling** — decided as AD005. It is
   user-visible, so it is named rather than left implicit. Whether a later outcome can fold that
   spelling into a command group without changing behavior is **not** asserted here: it is recorded as
@@ -2597,8 +2618,9 @@ Three further design commitments were surfaced during clarification and recorded
 AD002 (operation-identifier derivation), AD003 (relationship-reference shape and apply-time peer
 resolution), and AD004 (how deletes are recorded without changing what the write path writes).
 
-If AD003 is not ratified, FR-002's reference shape and FR-014's resolution mechanism reopen. If
-AD004 is not ratified, FR-015's derivation source and FR-016's structural boundary reopen.
+Both are ratified. The blast radius recorded for them when they were open is kept as the revisit map: were
+AD003 ever revisited, FR-002's reference shape and FR-014's resolution mechanism would reopen; were AD004
+ever revisited, FR-015's derivation source and FR-016's structural boundary would reopen.
 
 A further sixteen commitments — AD008 through AD023 — were recorded after the checklist evaluation
 and are carried in [Clarifications](#session-2026-07-26--checklist-evaluation). Each is marked at
@@ -2617,10 +2639,11 @@ mandated write path), AD040 (the pre-existing dispatch is removed), AD042 (the c
 attribute set carries no identity), AD044 (the brief's condition is uniqueness, not the convergence
 key), AD046 (one kind, two mapping entries) and AD048 (the refusal is scoped to the new resolver).
 Two settle a format detail before the format is written — AD041 and AD043 — and three record how a
-constraint is met rather than changing it: AD039, AD045 and AD047. If AD042 is not ratified, FR-002's
-payload extent, FR-013's convergence clause and FR-028.4 reopen, and SC-002 and SC-003 become
-unachievable. If AD043 is not ratified, FR-002's reference shape and FR-014's resolution mechanism
-reopen for a second time.
+constraint is met rather than changing it: AD039, AD045 and AD047. All twelve are ratified, and their
+revisit maps stand as the record: revisiting AD042 would reopen FR-002's
+payload extent, FR-013's convergence clause and FR-028.4, and would make SC-002 and SC-003
+unachievable; revisiting AD043 would reopen FR-002's reference shape and FR-014's resolution mechanism
+for a second time.
 
 A further eleven — **AD054 through AD064** — were ratified after three independent critique lenses
 worked this specification, the plan and the tasks against the brief and the tree. They are carried in
@@ -2636,9 +2659,11 @@ code) and AD064 (a conditionally carried criterion was reported as plainly carri
 re-derives DBR-016 and DBA-007 — both **derived** brief items, so re-deriving them touches nothing
 quoted, and each carries its new basis in
 [Derived brief items re-derived here](#derived-brief-items-re-derived-here) as the batch's policy
-requires. If AD055 is not ratified, FR-016, FR-017, FR-020, SC-007 and User Story 4 revert to the
-failed-run reading and the tension between the quoted DBR-009/DBR-010 pair and the derived pair reopens
-as an unresolved brief-gap.
+requires. AD055 is ratified on that basis, and AD077 records that the brief owner's override at the
+delivery gate was **necessary** rather than confirmatory; its revisit
+map stands as the record — were it revisited, FR-016, FR-017, FR-020, SC-007 and User Story 4 would revert
+to the failed-run reading and the tension between the quoted DBR-009/DBR-010 pair and the derived pair
+would reopen as an unresolved brief-gap.
 
 A further ten — **AD065 through AD074** — were ratified after the same three lenses re-ran against the
 remediated artifacts. They are carried in the
@@ -2651,9 +2676,10 @@ record, and the loser held it), AD071 (two derivation failures had no named clas
 action), AD072 (a walkthrough case raised the wrong error and so appeared to pass), AD073 (an enumeration
 that was unbounded when full and raised when empty), and AD074 (a miscited authority, corrected). One,
 **AD070**, *removes* scope: it withdraws a correction to the pre-existing update path that would have made
-the existing mutating command start removing destination relationship peers. If AD070 is not ratified, that
-change returns and needs a requirement, a criterion and a documentation entry of its own, plus the brief
-owner's decision, because it changes what an existing command does to destination data.
+the existing mutating command start removing destination relationship peers. It is ratified, and its revisit
+map stands as the record: were it revisited, that change would return and would need a requirement, a
+criterion and a documentation entry of its own, plus the brief owner's decision, because it changes what an
+existing command does to destination data.
 
 A final ten — **AD075 through AD084** — were ratified at the delivery gate after the third and last
 critique round, in which two of the three lenses returned no blocking finding. They are carried in the
