@@ -195,5 +195,3 @@ In `Potenda.apply_plan`, replacing the v1 body:
 |---|---|---|
 | Payload construction, upsert invocation, replace-set reconciliation, memo population, negative-caching refusal, both peer refusals, delete → unsupported, missing surface, ordered applied set, fail-fast on rejection | `tests/adapters/test_infrahub_planned_write.py`, mocked `InfrahubClientSync` | local |
 | SC-001 (no diff/sync call), SC-002 (converge on re-apply), SC-003 (per-class matrix, both crash windows), SC-007 (live counts before/after), SC-008 (peer sets read back), SC-016 (real ambiguity) | `tests/integration/test_saved_plan_apply_integration.py` | **`integration`** (`pyproject.toml:133-135`) |
-
-</content>

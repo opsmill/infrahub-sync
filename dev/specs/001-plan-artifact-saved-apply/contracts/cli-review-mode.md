@@ -127,4 +127,3 @@ The new flags are a user-visible CLI change, so the same change updates
 `docs/docs/reference/cli.mdx` (regenerated with `uv run invoke docs.generate`),
 `docs/docs/running-a-sync.mdx` and `docs/docs/reference/cache-layout.mdx` (AD036, Constitution
 "Documentation").
-</content>

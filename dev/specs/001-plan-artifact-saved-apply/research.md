@@ -384,4 +384,3 @@ Recorded so a later reader does not re-investigate them.
 - **Whether the `integration` marker needs extending.** No. It already exists with the right semantics
   and the right documented environment variables (V28), and `tests/integration/` already contains a
   test using it.
-</content>

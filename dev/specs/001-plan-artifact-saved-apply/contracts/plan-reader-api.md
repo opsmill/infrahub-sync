@@ -136,4 +136,3 @@ Verification runs unconditionally on every apply attempt whatever the operation 
 with a broken checksum is still refused (AD033). Verification must complete before any destination
 **write**; constructing an adapter or opening a destination connection beforehand is permitted, which
 is what the code already does (AD034).
-</content>

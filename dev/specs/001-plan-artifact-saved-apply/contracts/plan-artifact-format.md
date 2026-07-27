@@ -190,4 +190,3 @@ Recorded so a consumer does not read an obligation into the silence:
 - The stability of *rendered* review text — that is operator-facing output, not a format (AD030).
 - A governance process for changing this format. `format_version` and the unknown-field tolerance are
   the two mechanisms provided; the process around them belongs elsewhere (AD030).
-</content>

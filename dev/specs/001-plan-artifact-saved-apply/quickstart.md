@@ -186,4 +186,3 @@ uv run rumdl check .
 `docs/docs/reference/cache-layout.mdx` must describe the `plan/` directory and both files;
 `docs/docs/running-a-sync.mdx` must describe the review-then-apply workflow. Constitution
 "Documentation" makes this part of the same change, not a follow-up.
-</content>

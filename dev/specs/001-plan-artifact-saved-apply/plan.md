@@ -535,5 +535,3 @@ Nine criteria need a live Infrahub and land behind the `integration` marker (V28
 | A source snapshot's raw bytes vary every run because `_extract_ts` is per-run (V7), so a byte-level binding digest would make SC-006 unachievable | DBA-006 unachievable | PD-008 defines the snapshot digest over the logical rows excluding `_extract_ts`. **Material — reported to root** |
 | Restructuring the tier branch changes an existing execution path | Regression in `sync --parallel` | PD-009; the change is a reordering only, guarded by the existing `tests/test_potenda_parallel.py` and `tests/cache/test_sync_cache_flow.py` plus a new call-order assertion |
 | Deletes now appear in plans, changing what operators see | User-visible change | Sanctioned by the brief and FR-015; fixtures and docs updated in Phase G |
-
-</content>

@@ -209,5 +209,3 @@ Run (run.json, existing)
                                             resolved at apply by PeerResolver
                                             ──▶ destination node id
 ```
-
-</content>
