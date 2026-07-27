@@ -4,6 +4,7 @@ import copy
 import ipaddress
 import logging
 import os
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from diffsync import Adapter, DiffSyncModel
@@ -26,6 +27,15 @@ from infrahub_sync import (
 )
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.generator import has_field
+from infrahub_sync.plan.canonical import canonical_json_bytes
+from infrahub_sync.plan.errors import (
+    PeerAmbiguousError,
+    PeerNotFoundError,
+    SkippedDeleteOperation,
+    UnaccountedIdentityComponentError,
+    UnkeyedWriteRefusedError,
+)
+from infrahub_sync.plan.identity import canonical_identity
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +46,13 @@ logger = logging.getLogger(__name__)
 _TIMESTAMP_FILTER_KW = "node_metadata__updated_at__after"
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping, MutableMapping
+    from collections.abc import Iterator, MutableMapping, Sequence
 
     from infrahub_sdk.node import InfrahubNodeSync, RelatedNodeSync, RelationshipManagerSync
     from infrahub_sdk.schema import MainSchemaTypesAPI
     from infrahub_sdk.store import NodeStoreSync
+
+    from infrahub_sync.plan.models import PlannedOperation
 
 
 def _node_has_complete_attributes(node: InfrahubNodeSync) -> bool:
@@ -177,6 +189,318 @@ def update_node(
     return node
 
 
+def _replace_relationship_set(
+    node: InfrahubNodeSync,
+    rel_name: str,
+    peer_ids: Sequence[str],
+) -> None:
+    """Reconcile one cardinality-many relationship on `node` to exactly `peer_ids`.
+
+    An explicit **replace-set**: whether the destination's upsert mutation replaces or
+    merges a relationship list cannot be determined without a live Infrahub, so the
+    semantics are made true by construction rather than assumed (PD-005, AD038).
+
+    This is **new code on the planned-write path**. The same compare-and-reconcile shape
+    exists in the module-level `update_node` above, and it is deliberately not shared or
+    corrected here (AD070). That shape reads `attr_manager.peer_ids` *before* it calls
+    `fetch()`, so it compares the desired peer set against an unloaded one: `existing_only`
+    comes back empty and it adds without ever removing. **That is a real, pre-existing
+    defect, and it is left for a later outcome to own** — `update_node`'s only caller is
+    `InfrahubModel.update`, the live `sync` write path, so correcting its ordering there
+    would make `infrahub-sync sync` start *removing* destination relationship peers absent
+    from the source, on configurations that have never removed one. The roughly eight lines
+    of duplication are the deliberate price of leaving that path untouched.
+
+    **The re-read is a mechanism, not an ordering (AD065).** `RelationshipManagerSync.fetch`
+    opens with `if not self.initialized:` and the `client.get` that reads the destination
+    lives *inside* that guard, while a manager built from local write data reports
+    `initialized = data is not None` — so simply calling `fetch()` earlier reads nothing and
+    `peer_ids` would still be the desired set. The manager is therefore forced **cold** and
+    then fetched, which issues the guarded read and assigns the destination's peers back
+    onto this same manager.
+
+    **This function leaves `node` unsaved, and its caller flushes it (AD075).**
+    `RelationshipManagerSync` has no `save`, and `add()`/`remove()` only mutate the
+    in-memory peer list and set an update flag — they issue no client call. So the
+    reconciled set reaches the destination only on a later save of the node, which
+    `apply_planned_operation` issues **once** after reconciling every cardinality-many
+    relationship, as a plain `node.save()`. Without that flush this function computes the
+    surplus correctly and throws it away.
+    """
+    manager: RelationshipManagerSync = getattr(node, rel_name)
+
+    # Force the manager cold so `fetch()` actually issues its scoped destination read and
+    # writes the peers it reads back onto this manager (AD065).
+    manager.initialized = False
+    manager.fetch()
+
+    existing_peer_ids = manager.peer_ids
+    _, existing_only, new_only = compare_lists(existing_peer_ids, list(peer_ids))
+
+    for existing_id in existing_only:
+        manager.remove(existing_id)
+
+    for new_id in new_only:
+        manager.add(new_id)
+
+
+# An Infrahub schema component path — a human-friendly-ID or uniqueness-constraint entry —
+# is written as `name__value` for a direct attribute and `site__name__value` for one that
+# crosses a relationship. A **schema path** is split on this separator; a **data value**
+# never is, which is the v1 flaw this outcome exists to avoid (PD-004).
+_COMPONENT_PATH_SEPARATOR = "__"
+_COMPONENT_VALUE_SUFFIX = "value"
+
+# Distinguishes "the identity supplies no value for this path" from "it supplies None".
+_UNRESOLVED = object()
+
+
+def _component_segments(component: str) -> list[str]:
+    """Field segments of a schema component path, with a trailing `value` dropped.
+
+    `name__value` is one segment, `site__name__value` is two. A single-segment path is a
+    **direct** component; more than one **crosses a relationship** (AD051).
+    """
+    segments = component.split(_COMPONENT_PATH_SEPARATOR)
+    if len(segments) > 1 and segments[-1] == _COMPONENT_VALUE_SUFFIX:
+        segments = segments[:-1]
+    return segments
+
+
+def _filter_kwarg_name(component: str) -> str:
+    """The GraphQL filter kwarg a schema component path is queried by (PD-004)."""
+    if component.rsplit(_COMPONENT_PATH_SEPARATOR, maxsplit=1)[-1] == _COMPONENT_VALUE_SUFFIX:
+        return component
+    return f"{component}{_COMPONENT_PATH_SEPARATOR}{_COMPONENT_VALUE_SUFFIX}"
+
+
+def _require_node_id(node: InfrahubNodeSync, *, context: str) -> str:
+    """The destination id of a node the SDK has round-tripped, as a `str`.
+
+    `InfrahubNodeSync.id` is optional because a node built locally has none until it is
+    written or read back. Every caller here holds a node the destination has just returned,
+    so an absent id is an SDK invariant violation rather than an operator error, and it is
+    surfaced as one instead of being carried onward as `None`.
+    """
+    node_id = node.id
+    if not isinstance(node_id, str) or not node_id:
+        msg = f"The destination returned no node id {context}, so the node cannot be referred to."
+        raise TypeError(msg)
+    return node_id
+
+
+def _nested_peer_identity(value: Any) -> Mapping[str, Any] | None:
+    """The identity inside a nested `{"peer_kind", "identity"}` pair, or None (AD043).
+
+    A cardinality-many reference records a **list** of such pairs, and a component path
+    cannot cross into a list without naming which peer, so that shape yields nothing here.
+    """
+    if isinstance(value, Mapping) and isinstance(value.get("identity"), Mapping):
+        return value["identity"]
+    return None
+
+
+def _identity_path_value(identity: Mapping[str, Any], segments: Sequence[str]) -> Any:
+    """Walk `segments` through a destination identity, recursing into nested pairs (AD043).
+
+    Returns `_UNRESOLVED` when the identity supplies no value for the path — including
+    when it supplies `None`, or when the path has to cross a component that is not a
+    nested `{"peer_kind", "identity"}` pair. Recursion is what keeps a data value from
+    ever being split on `__`.
+    """
+    if not segments:
+        return _UNRESOLVED
+    head, rest = segments[0], segments[1:]
+    if head not in identity:
+        return _UNRESOLVED
+    value = identity[head]
+    if not rest:
+        return _UNRESOLVED if value is None else value
+    nested = _nested_peer_identity(value)
+    if nested is None:
+        return _UNRESOLVED
+    return _identity_path_value(nested, rest)
+
+
+def _operation_peer_identity(operation: PlannedOperation, field: str) -> Mapping[str, Any] | None:
+    """The nested peer identity the operation records for `field` (AD043, AD051).
+
+    Read from the operation's own **identity** first, where an identity-bearing reference
+    is recorded as a `{"peer_kind", "identity"}` pair, and otherwise from the relationship
+    reference of that name, whose `peers` hold those identities directly. A
+    cardinality-many reference names no single peer, so it supplies no component.
+    """
+    if field in operation.identity:
+        nested = _nested_peer_identity(operation.identity[field])
+        if nested is not None:
+            return nested
+    for reference in operation.relationships or ():
+        if reference.field == field and reference.cardinality == "one" and reference.peers:
+            return reference.peers[0]
+    return None
+
+
+def _hfid_component_accounted_for(
+    *,
+    component: str,
+    data: Mapping[str, Any],
+    operation: PlannedOperation,
+) -> bool:
+    """Whether one human-friendly-ID component is accounted for by the write (AD051).
+
+    Per component **shape**, because "resolves against the create data" is not
+    implementable: by the time this runs, a relationship key in `data` holds a resolved
+    destination node id and no attribute can be read out of it.
+
+    - a **direct** component (`<attr>` / `<attr>__value`): `data` carries `<attr>` non-null;
+    - a **relationship-crossing** component (`<rel>__<attr>__value`): `data` carries `<rel>`
+      non-null **and** the operation's nested `{peer_kind, identity}` for `<rel>` supplies
+      `<attr>`, recursing through the nested identity for deeper paths.
+    """
+    segments = _component_segments(component)
+    if not segments:
+        return False
+    field = segments[0]
+    if data.get(field) is None:
+        return False
+    if len(segments) == 1:
+        return True
+    nested = _operation_peer_identity(operation, field)
+    if nested is None:
+        return False
+    return _identity_path_value(nested, segments[1:]) is not _UNRESOLVED
+
+
+class PeerResolver:
+    """Resolve a plan's peer identities to destination node ids, for one apply (FR-014).
+
+    A memo keyed on `(kind, canonical identity)`, populated from every completed
+    create/update so an operation's own result resolves later operations that refer to it.
+    Its lifetime is **one apply**: it is created at the start and discarded with it, and
+    nothing about it is persisted.
+
+    It never reads `client.store` or the DiffSync store. That store dependency is exactly
+    what `resolve_peer_node` above has and what a saved-plan apply cannot satisfy, since a
+    saved plan is applied without loading either side (FR-012, DBR-007) — which is also why
+    the destination query below passes `populate_store=False`.
+
+    Failed lookups and failed writes are **never** memoized, so a later operation referring
+    to the same peer re-attempts resolution rather than inheriting a negative result
+    (AD036).
+    """
+
+    def __init__(self, adapter: InfrahubAdapter) -> None:
+        self._adapter = adapter
+        # The canonical identity is unhashable, so the memo key carries its canonical JSON
+        # encoding — the same normalization the operation identifier hashes (FR-028.3).
+        self._memo: dict[tuple[str, bytes], str] = {}
+
+    @staticmethod
+    def _key(kind: str, identity: Mapping[str, Any]) -> tuple[str, bytes]:
+        """The memo key for one peer, in the plan's canonical identity form."""
+        return (kind, canonical_json_bytes(canonical_identity(identity, kind=kind)))
+
+    def remember(self, kind: str, identity: Mapping[str, Any], node_id: str) -> None:
+        """Memoize a **completed** write's destination node id (FR-014)."""
+        self._memo[self._key(kind, identity)] = node_id
+
+    def resolve(self, *, peer_kind: str, identity: Mapping[str, Any], referring_operation_id: str) -> str:
+        """Resolve one peer identity to one destination node id (FR-014, AD058).
+
+        The only entry point. Cardinality is the **caller's** concern, read off the
+        relationship reference: this resolves one identity to one id and knows nothing
+        about the shape of the field it is being resolved for.
+
+        Raises:
+            PeerNotFoundError: the peer identity matches no destination object.
+            PeerAmbiguousError: it matches more than one.
+        """
+        key = self._key(peer_kind, identity)
+        memoized = self._memo.get(key)
+        if memoized is not None:
+            return memoized
+        node_id = self._query(
+            peer_kind=peer_kind,
+            identity=identity,
+            referring_operation_id=referring_operation_id,
+        )
+        # Only a successful lookup is memoized (AD036).
+        self._memo[key] = node_id
+        return node_id
+
+    def _filter_kwargs(self, *, peer_kind: str, identity: Mapping[str, Any]) -> dict[str, Any]:
+        """Build the destination query's filter kwargs from the peer kind's HFID (PD-004).
+
+        An `<attr>__value` path takes its value from the identity's scalar under `<attr>`;
+        an `<rel>__<attr>__value` path takes its value from the nested
+        `{peer_kind, identity}` pair the identity records under `<rel>`, read at
+        `identity[<attr>]` and recursing for deeper nesting (AD043). The **schema path** is
+        split; the **data value** never is.
+
+        Two degraded cases, and neither can be silent, because a query that is too loose
+        matches either nothing or more than one and both arms of `_query` refuse:
+
+        - a component whose value the identity does not supply is **skipped**. The
+          specified remedy for a kind whose HFID does not cover its plan identity is the
+          `<rel>__ids` fallback — resolve the reference component's own peer first,
+          recursively through this same resolver, then filter `<rel>__ids=[<id>]` — which
+          this release does not implement; FR-024 already warns at plan time about exactly
+          this condition, so it is the degraded case that warning is about;
+        - a kind that declares no usable HFID component at all falls back to the identity's
+          own direct scalars as `<attr>__value` filters, which is the only thing the apply
+          holds for it.
+        """
+        node_schema = self._adapter.schema.get(peer_kind)
+        components = list(getattr(node_schema, "human_friendly_id", None) or ())
+
+        kwargs: dict[str, Any] = {}
+        for component in components:
+            value = _identity_path_value(identity, _component_segments(component))
+            if value is _UNRESOLVED or isinstance(value, (Mapping, list, tuple)):
+                continue
+            kwargs[_filter_kwarg_name(component)] = value
+        if kwargs:
+            return kwargs
+
+        for name, value in identity.items():
+            if value is None or isinstance(value, (Mapping, list, tuple)):
+                continue
+            kwargs[_filter_kwarg_name(name)] = value
+        return kwargs
+
+    def _query(self, *, peer_kind: str, identity: Mapping[str, Any], referring_operation_id: str) -> str:
+        """Query the destination for one peer, refusing on zero and on more than one.
+
+        The refusals belong to **this** resolver only (AD048). The live `sync` write path's
+        warn-and-continue on an unresolvable peer, and the SDK's bare `IndexError` on a
+        multi-match, are existing behavior on an existing path and are left exactly as they
+        are.
+        """
+        filter_kwargs = self._filter_kwargs(peer_kind=peer_kind, identity=identity)
+        readable = canonical_json_bytes(canonical_identity(identity, kind=peer_kind)).decode("utf-8")
+        results = self._adapter.client.filters(
+            kind=peer_kind,
+            populate_store=False,
+            **filter_kwargs,
+        )
+
+        if len(results) == 1:
+            return _require_node_id(results[0], context=f"for the single {peer_kind!r} matching {readable}")
+        if not results:
+            msg = (
+                f"No object of kind {peer_kind!r} at the destination matches the peer identity "
+                f"{readable}, referenced by operation {referring_operation_id!r}. Queried with: "
+                f"{sorted(filter_kwargs)}."
+            )
+            raise PeerNotFoundError(msg)
+        msg = (
+            f"{len(results)} objects of kind {peer_kind!r} at the destination match the peer identity "
+            f"{readable}, referenced by operation {referring_operation_id!r}, so the peer is ambiguous. "
+            f"Queried with: {sorted(filter_kwargs)}."
+        )
+        raise PeerAmbiguousError(msg)
+
+
 def diffsync_to_infrahub(
     ids: Mapping[Any, Any],
     attrs: Mapping[Any, Any],
@@ -279,6 +603,13 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
     continue_on_error: bool = False
 
+    # AD078 — destination kinds whose rendered mutation has already been reported as
+    # unkeyed. The report is once per kind, not once per operation, because
+    # `apply_planned_operation` is entered once per operation and a four-thousand-operation
+    # apply would otherwise emit one line per row. The set is created at the start of an
+    # apply and discarded with it, the same lifetime as `PeerResolver`'s memo.
+    _unkeyed_render_reported: set[str] | None = None
+
     def __init__(
         self,
         target: str,
@@ -343,6 +674,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         # We will keep a copy of the schema
         self.schema: MutableMapping[str, MainSchemaTypesAPI] = self.client.schema.all(branch=infrahub_branch)
+
+        self._unkeyed_render_reported = set()
 
     def cursor_tier_for(self, model_name: str) -> CursorTier:
         """TIMESTAMP for any kind present in the live Infrahub schema.
@@ -581,6 +914,204 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 data[rel_schema.name] = sorted(values)
 
         return data
+
+    def _report_unkeyed_render(self, *, node: InfrahubNodeSync, node_schema: NodeSchemaAPI) -> None:
+        """The keyedness gate: read the rendered mutation input and branch on it (AD066).
+
+        Keyedness is a property of the **rendered mutation**, not of the assembled data: the
+        SDK keys the upsert on `data["id"]` if the node has one and otherwise on
+        `data["hfid"]`, and `get_human_friendly_id()` returns `None` as soon as any component
+        resolves to `None`. All of that is client-side, so the render is readable before the
+        write is issued.
+
+        **The render is read two levels deep (AD076).** `_generate_input_data` returns
+        `{"data": mutation_payload, "variables": …, "mutation_variables": …}` where
+        `mutation_payload` is itself `{"data": data}` — so a check against `…["data"]` alone
+        tests a one-key mapping, is true for every operation ever rendered, and would make
+        the raising arm below fire on all of them.
+
+        Three arms, by the destination kind's HFID shape:
+
+        - **all components direct** — a render carrying neither key can only mean the payload
+          lost its identity components, so it **raises**;
+        - **a component crosses a relationship** — the render carries neither key today for a
+          reason this outcome does not control (the SDK cannot form the `hfid` from a peer
+          supplied as a resolved node id), so it **warns once per kind and proceeds**;
+          refusing would withdraw every relationship-bearing kind from what this release
+          delivers, and the destination's convergent write may still key server-side;
+        - **no HFID declared at all** — unkeyed is a schema fact rather than a defect, and
+          FR-024 explicitly permits such a kind and requires the run to survive it, so it
+          **warns on the same terms and never raises (AD076)**.
+
+        Raises:
+            UnkeyedWriteRefusedError: the render is unkeyed for an all-direct HFID kind.
+        """
+        rendered = node._generate_input_data(exclude_hfid=False)["data"]["data"]
+        if "id" in rendered or "hfid" in rendered:
+            return
+
+        kind = node_schema.kind
+        components = list(getattr(node_schema, "human_friendly_id", None) or ())
+
+        if components and all(len(_component_segments(component)) == 1 for component in components):
+            msg = (
+                f"The mutation rendered for kind {kind!r} carries neither 'id' nor 'hfid', so the "
+                f"convergent write would be unkeyed and a re-apply would duplicate the object. Every "
+                f"human-friendly-ID component of that kind ({', '.join(components)}) is a direct "
+                f"attribute, so this can only mean the operation's payload lost its identity components."
+            )
+            raise UnkeyedWriteRefusedError(msg)
+
+        condition = (
+            "the kind declares no human-friendly ID, so there is no convergence key to render"
+            if not components
+            else f"the kind's convergence key crosses a relationship ({', '.join(components)}), which the "
+            "client cannot render from a peer supplied as a resolved node id"
+        )
+        reported = self._unkeyed_render_reported
+        if reported is None:
+            reported = self._unkeyed_render_reported = set()
+        if kind in reported:
+            return
+        reported.add(kind)
+        logger.warning(
+            "Planned write: the mutation rendered for destination kind %s carries neither 'id' nor "
+            "'hfid' because %s. The write was issued anyway. Watch for a duplicate object of kind %s at "
+            "the destination if it does not key on the identity components as sent.",
+            kind,
+            condition,
+            kind,
+        )
+
+    def apply_planned_operation(self, *, operation: PlannedOperation, peers: PeerResolver) -> str:
+        """Execute one planned operation convergently. Returns the destination node id.
+
+        The saved-plan write surface (FR-013). Stored order, payload and identity are taken
+        exactly as recorded: nothing is recomputed, and neither side is extracted or loaded
+        (FR-012).
+
+        A `delete` raises `SkippedDeleteOperation` and never touches the destination.
+        Applying deletes is out of scope for this release, so the engine collects those and
+        the run still ends `applied` (AD055).
+
+        A `create` and an `update` both route through the same convergent upsert —
+        `client.create(...)` then `save(allow_upsert=True)` — and neither routes through
+        `InfrahubModel.update`, whose `local_id` keying needs the destination load FR-012
+        forbids. The payload is authoritative for the mapped fields it carries and touches no
+        unmapped destination field.
+
+        Two checks sit before the write and they are different checks (AD066): the
+        per-component **diagnostic** below, which names *which* human-friendly-ID component
+        is unaccounted for, and `_report_unkeyed_render`'s **gate** on the rendered mutation.
+
+        The write is not the last destination interaction: every cardinality-many
+        relationship is then reconciled as an explicit replace-set and flushed by a single
+        plain `node.save()` (AD075).
+
+        Raises:
+            SkippedDeleteOperation: the operation is a recorded delete (a designed
+                limitation, not a failure).
+            UnaccountedIdentityComponentError: a human-friendly-ID component of the
+                destination kind is not accounted for by the payload and the operation.
+            UnkeyedWriteRefusedError: the rendered mutation is unkeyed for a kind whose
+                human-friendly ID is all-direct.
+            PeerNotFoundError: a peer identity matches no destination object.
+            PeerAmbiguousError: a peer identity matches more than one.
+        """
+        if operation.action == "delete":
+            msg = (
+                f"Operation {operation.operation_id!r} is a delete of a {operation.kind!r} object. "
+                "Applying deletes is out of scope for this release, so it was not executed and the "
+                "destination was not touched."
+            )
+            raise SkippedDeleteOperation(msg)
+
+        node_schema = self.client.schema.get(kind=operation.kind)
+        if not isinstance(node_schema, NodeSchemaAPI):
+            msg = f"Expected NodeSchemaAPI for {operation.kind}, got {type(node_schema).__name__}"
+            raise TypeError(msg)
+
+        # The payload is `keys` union `source_attrs`, so it already carries the identity
+        # components the convergent write keys on (AD042).
+        data: dict[str, Any] = dict(operation.payload or {})
+        references = list(operation.relationships or ())
+        for reference in references:
+            peer_ids = [
+                peers.resolve(
+                    peer_kind=reference.peer_kind,
+                    identity=peer,
+                    referring_operation_id=operation.operation_id,
+                )
+                for peer in reference.peers
+            ]
+            data[reference.field] = peer_ids[0] if reference.cardinality == "one" else peer_ids
+
+        self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
+
+        source_id = self.source_node.id if self.source_node else None
+        owner_id = self.owner_node.id if self.owner_node else None
+        create_data = self.client.schema.generate_payload_create(
+            schema=node_schema, data=data, source=source_id, owner=owner_id, is_protected=True
+        )
+        node = self.client.create(kind=operation.kind, data=create_data)
+        self._report_unkeyed_render(node=node, node_schema=node_schema)
+        node.save(allow_upsert=True)
+
+        # Cardinality-many relationships are reconciled as an explicit replace-set rather
+        # than assumed of the upsert (PD-005), and `peers: []` means empty the set.
+        many_references = [reference for reference in references if reference.cardinality == "many"]
+        for reference in many_references:
+            _replace_relationship_set(node, reference.field, data[reference.field])
+        if many_references:
+            # THE FLUSH (AD075). `add`/`remove` are purely local, so without this save the
+            # reconciliation is computed and discarded. Plain, **not**
+            # `save(allow_upsert=True)`: the upsert above set `_existing`, so a plain save
+            # dispatches an update whose unmodified-field stripping keeps the relationship
+            # precisely because the reconciliation set its update flag, and the manager
+            # renders the full peer list — which is what makes the write a replace. A second
+            # upsert would re-render the create instead. One save after the loop, on the same
+            # node object whose managers were reconciled, not one save per relationship.
+            node.save()
+
+        node_id = _require_node_id(node, context=f"for operation {operation.operation_id!r}")
+        peers.remember(operation.kind, operation.identity, node_id)
+        return node_id
+
+    @staticmethod
+    def _assert_identity_components_accounted_for(
+        *,
+        node_schema: NodeSchemaAPI,
+        data: Mapping[str, Any],
+        operation: PlannedOperation,
+    ) -> None:
+        """The diagnostic: every HFID component of the kind is accounted for (AD051).
+
+        FR-024 warns about the same condition at plan time; this is what stops it becoming
+        silent data duplication at apply time when that warning was ignored or the schema
+        changed since. It is the only check that can say *which* component is missing, which
+        is why it is kept alongside the rendered-mutation gate rather than replaced by it.
+
+        A kind that declares no human-friendly ID has no components and so passes here; that
+        case is the gate's third arm (AD076).
+
+        Raises:
+            UnaccountedIdentityComponentError: naming the kind and the missing components.
+        """
+        components = list(getattr(node_schema, "human_friendly_id", None) or ())
+        missing = [
+            component
+            for component in components
+            if not _hfid_component_accounted_for(component=component, data=data, operation=operation)
+        ]
+        if not missing:
+            return
+        msg = (
+            f"Operation {operation.operation_id!r} on destination kind {node_schema.kind!r} does not "
+            f"account for every component of that kind's human-friendly ID. Missing: "
+            f"{', '.join(missing)}. The convergent write is keyed on those components, so it would be "
+            "unkeyed and every re-apply would duplicate the object."
+        )
+        raise UnaccountedIdentityComponentError(msg)
 
 
 class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):

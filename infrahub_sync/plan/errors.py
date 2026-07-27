@@ -11,9 +11,27 @@ Constructing an error whose class declares no non-empty `next_action` raises
 review. Callers may override the declared wording with the `next_action` keyword,
 which is how `SourcePeerUnresolvedError` routes its two conditions to two remedies
 (AD082).
+
+`SkippedDeleteOperation` is the one class here that is **not** a failure. It is the
+control signal a destination write surface raises for a recorded delete, which this
+release does not execute, and it deliberately sits outside `PlanArtifactError` so no
+caller reads it as an error or asks it for a remedy (AD055).
 """
 
 from __future__ import annotations
+
+
+class SkippedDeleteOperation(Exception):  # noqa: N818 — a control signal, not an error
+    """A recorded delete the write surface declines to execute (FR-016, FR-017, AD055).
+
+    Applying deletes is out of scope for this release, so a write surface handed a
+    `delete` operation raises this instead of touching the destination. The engine
+    **collects** these rather than stopping — every non-delete operation in the same
+    plan is still applied — and the run ends `applied`, with the count and the skipped
+    identifiers recorded on the apply record. It is therefore a designed limitation
+    reported as one, which is why this class is not part of the `PlanArtifactError`
+    taxonomy and carries no `next_action`: there is nothing for the operator to repair.
+    """
 
 
 class PlanArtifactError(Exception):
@@ -136,6 +154,39 @@ class PeerAmbiguousError(PlanArtifactError):
     next_action = (
         "The destination kind's identity is not unique for these values: de-duplicate at the "
         "destination, or narrow the mapping's identifiers."
+    )
+
+
+class UnaccountedIdentityComponentError(PlanArtifactError):
+    """A destination kind's human-friendly-ID component is not accounted for (AD051).
+
+    The apply-time counterpart of FR-024's plan-time warning, raised before the write is
+    issued so an AD042-class regression fails loudly instead of duplicating silently. The
+    message names the kind and **which** component is missing, which is the whole reason
+    this check is defined per component rather than as a single keyedness test.
+    """
+
+    next_action = (
+        "Re-plan so the plan's identity for that kind supplies the named component, or add it to that "
+        "kind's `identifiers` in the schema mapping."
+    )
+
+
+class UnkeyedWriteRefusedError(PlanArtifactError):
+    """The rendered mutation carries no key for a kind whose HFID is all-direct (AD066).
+
+    Keyedness is a property of the rendered mutation input, not of the assembled data, so
+    it is read there. For a kind every one of whose human-friendly-ID components is a
+    direct attribute, a render carrying neither `id` nor `hfid` can only mean the payload
+    lost its identity components, so the write is refused. A kind whose components cross a
+    relationship, and a kind that declares no human-friendly ID at all, are **warned**
+    about and proceed — being unkeyed is expected for the first and a schema fact for the
+    second (AD076).
+    """
+
+    next_action = (
+        "Re-plan and re-apply: the operation's payload must carry the identity components. If a fresh "
+        "plan renders the same way, report it — the payload is losing them between derivation and write."
     )
 
 
