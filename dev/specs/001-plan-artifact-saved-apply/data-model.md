@@ -145,6 +145,23 @@ One proposed change. This is the record nine later outcomes consume.
   is caught while the artifact is being read — before any destination write, which is where FR-017 needs
   it. A recorded **delete** is a valid action and never reaches this path: it is a designed limitation
   handled by the apply loop, not a malformed record (FR-017, AD055, AD059).
+  **How the named error is actually raised.** `action` is typed as a `Literal` over `ACTIONS` so `ty` can
+  check it, and a `Literal` mismatch raises pydantic's own `ValidationError`, not the named class — so
+  saying "the `Literal` raises `UnsupportedOperationActionError`" would specify something that does not
+  happen. The named error comes from a `model_validator(mode="before")` that inspects `action` first and
+  reads the **operation identifier out of the raw input mapping**, because the model does not exist yet at
+  that point and the identifier is what the message must name. Pydantic v2 propagates a non-`ValueError`
+  exception raised inside a validator unchanged, so the named class reaches the caller intact. The `Literal`
+  stays for typing.
+- **Any other model-validation failure on an operations line is also a named error.** A line that parses as
+  JSON but fails validation for a reason other than the action — a `create` with no `payload`, a stored
+  `operation_id` that does not match its own triple, a `cardinality: "one"` carrying two peers — is
+  re-raised as `PlanArtifactTornError` naming the **line number** and the field that failed, with its next
+  action. This is stated because it is the most likely corruption class in practice and it reaches the
+  operator *before* the checksum check does; left unstated, a raw pydantic traceback with no next action
+  escapes to the command line, which is what AD059 forbids across the whole taxonomy and what the taxonomy
+  sweep cannot catch, since the sweep walks declared entries. The action case takes precedence over this
+  one, so a hand-edited artifact reports the action rather than a generic tear.
 
 ---
 
@@ -262,12 +279,18 @@ be added without one.
 | Failure | Enumeration the message must list |
 |---|---|
 | `UnknownPlanKindError` | the destination kinds the plan actually holds |
-| Unknown run identifier | the run identifiers that exist under `cache_root_for(sync_name)` |
+| Unknown run identifier | the **most recent twenty** run identifiers under `cache_root_for(sync_name)`, with the total stated when the list truncates; and, when the root is absent or holds no runs, a plain statement of that with "produce a plan for this sync first" as the next action (AD073) |
 | `PlanFormatVersionError` | `SUPPORTED_FORMAT_VERSIONS` |
 | `UnsupportedOperationActionError` | `ACTIONS` |
 
-The remaining five — torn artifact, unreadable path, derivation failure, peer zero-match, peer
-multi-match — have no enumeration in hand and carry a next action only.
+The remaining entries — torn artifact, unreadable path, unformable destination identity, unresolved source
+peer, unserializable payload value, duplicate operation identifier, peer zero-match and peer multi-match —
+have no enumeration in hand and carry a next action only. **Two of those classes are new (AD071)**:
+`UnformableDestinationIdentityError` and `SourcePeerUnresolvedError` cover the two FR-030 derivation
+failures that previously had no class at all, so the taxonomy sweep — which walks declared entries — now
+reaches them, and no implementer is left free to raise a bare exception that bypasses the base class's
+`next_action` guarantee. `SourcePeerUnresolvedError` is deliberately distinct from `PeerNotFoundError`,
+whose remedy is a destination-side one and is wrong for a plan-time source-store miss.
 
 ---
 
@@ -323,17 +346,33 @@ would be exactly the compatibility change AD010 declines.
 record therefore lives inside `summary` under named keys, so no persisted schema other code reads is
 extended and the `cache/` layer stays unchanged as plan.md declares.
 
+**One writer, and it is the CLI (AD069).** `apply_plan` **returns** this record; it does not write
+`run.json`. The CLI merges the returned record into `run_file.summary` before saving. Nothing else is
+sound: `RunFile.save()` writes the whole payload from the in-memory instance with no merge
+(`infrahub_sync/cache/sidecars.py:87-89`), and the CLI constructs its `RunFile` with an empty `summary`
+(`infrahub_sync/cli.py:322-323`) and saves it again after the apply returns (`:350-351`) without ever
+reloading — so an engine that wrote these keys itself would have every one of them deleted moments later,
+destroying FR-020's record while both writers looked correct in isolation. A mid-apply rejection carries its
+**partial** record on the raised error, so the CLI can merge what was written before recording `failed`;
+that is what lets FR-025's last-applied pointer survive a partial apply at all. `RunFile.load_or_default`
+(`:79-85`) exists but is not the mechanism here — the CLI already holds the instance it will save.
+
 | Summary key | Type | Rule |
 |---|---|---|
 | `summary["applied_operations"]` | `list[str]` | FR-020's **ordered** applied-operation identifiers, in the order reported. FR-025's last-applied pointer is its final element, not a separate field. Recorded as `[]` — present and empty — on a refusal, never absent (FR-009, AD036, AD062) |
 | `summary["skipped_delete_count"]` | `int` | FR-017's count of delete operations the apply did not execute. `0` on a delete-free plan. Non-zero drives the operator-visible warning, which names this number (AD055) |
 | `summary["skipped_delete_operations"]` | `list[str]` | The skipped deletes' operation identifiers, in stored order. Together with `applied_operations` this makes the reviewed set minus the applied set a **recorded value** rather than an inference — which is what DBR-016 protects and what distinguishes this from a silent skip (AD055) |
 
-**Invariant**, asserted at apply and by SC-007: `len(applied_operations) + skipped_delete_count` equals
-the plan's `operations_count` whenever the apply completes without a rejection, and
+**Invariant**, asserted at apply and by SC-007. **Both clauses hold only on a completed apply**, and both
+are checked **after** the operation sequence ends rather than inside it: `len(applied_operations) +
+skipped_delete_count` equals the plan's `operations_count`, **and**
 `set(applied_operations) | set(skipped_delete_operations)` equals the plan's full identifier set. A
-partial apply (AD027) breaks the first equality by construction and records `failed`, which is how the two
-cases stay distinguishable.
+partial apply (AD027) breaks **both** by construction — the unattempted operations are in neither set — and
+records `failed`, which is how the two cases stay distinguishable. Conditioning matters here rather than
+being pedantry: an unconditioned union check evaluated on the destination-rejection path would fire inside
+the error handling and replace a clear rejection message with an invariant error, and a check evaluated
+inside the loop fails on the first iteration. Prefer a raised, named error over a bare `assert` for this in
+product code, notwithstanding that `S101` is globally ignored (`pyproject.toml:272`).
 
 **Successor note (DB-005).** The outcome that replaces the run record with durable storage behind
 provider interfaces should promote `skipped_delete_count` from a summary key to a first-class

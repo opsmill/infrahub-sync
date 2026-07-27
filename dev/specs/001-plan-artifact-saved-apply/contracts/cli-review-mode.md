@@ -7,7 +7,9 @@ AD055 (a delete-bearing apply ends `applied` with a recorded skip count), AD056 
 delete-computation record and annotate the delete count), AD057 (`--from-plan` takes the run identifier as
 its value), AD058 (a declared kind with no operations is empty at the reader and an error at the renderer),
 AD059 (every failure names a next action), AD060 (the SC-012 baseline is a committed fixture), AD061 (help
-text is specified here, not discovered), AD063 (the schema-subhash repair is dropped).
+text is specified here, not discovered), AD063 (the schema-subhash repair is dropped), AD069 (this
+command is the single writer of the run record), AD073 (the run-identifier enumeration is bounded and its
+empty case is stated).
 
 ## Baseline, verified
 
@@ -27,13 +29,16 @@ infrahub-sync diff (--name <sync> | --config-file <path>) [--directory <dir>]
 |---|---|---|---|
 | `--from-plan` | string, default unset | **new** | **Takes the run identifier as its value.** Its presence selects review mode; its value selects the stored run to read |
 | `--detail` | flag, default off | **new** | Expand the summary to per-object records |
-| `--kind` | string | **new** | Narrow the per-object detail to one destination kind |
-| `--run-id` | string | **existing** (`infrahub_sync/cli.py:98`) | **Unchanged and unused by review mode.** It keeps exactly its live-path meaning, "re-use a specific cache run id" |
+| `--kind` | string | **new** | Narrow the per-object detail to one destination kind. **Requires `--detail`**: without it there is no per-object listing to narrow, so `--kind` alone is a usage error rather than a silently ignored option (see the errors table) |
+| `--run-id` | string | **existing** (`infrahub_sync/cli.py:98`) | **Unchanged and unused by review mode.** It keeps exactly its live-path meaning, "re-use a specific cache run id". Passing it **together with** `--from-plan` is ignored — and, unlike the other ignored options, **warned about**, naming which option selected the run: it is the only other option that names a run, so `--from-plan A --run-id B` is the one invocation where an operator cannot tell which run they just reviewed. It resolves to `A`. Nothing is destroyed (the mode branches above `get_potenda_from_instance`, so `B` is not even created), which is why this is a warning rather than an error; the file already warns on an ignored option at `infrahub_sync/cli.py:249-252` |
 | `--name` / `--config-file` / `--directory` | existing | unchanged | Still required: a stored run is located only as `cache_root_for(<sync name>)/<run_id>` (`infrahub_sync/cache/paths.py:56-59`), so review is adapter-free but stays configuration-bound |
 
 Every other `diff` option (`--branch`, `--show-progress`, `--adapter-path`, `--concurrent-load`,
 `--full-extract`) is meaningless in review mode and is ignored; passing one is not an error, because
-the mode is a read and rejecting unrelated flags would be gratuitous.
+the mode is a read and rejecting unrelated flags would be gratuitous. `--run-id` is the one exception to
+"ignored silently", for the reason its row above gives: it is the only other option that names a run, so
+ignoring it without saying so leaves the operator unable to tell which run they reviewed — the residue of
+exactly the ambiguity AD057 was created to remove.
 
 ### Why `--from-plan` takes the run identifier rather than pairing with `--run-id` (AD057)
 
@@ -176,13 +181,16 @@ echoing the operator's input back.
 
 | Condition | Behavior | Requirement |
 |---|---|---|
-| Run identifier does not exist | Error naming the run identifier, the expected artifact path, **the run identifiers that do exist for that sync**, and the next action. The cache root is already resolved at this point, so the enumeration costs one directory listing | FR-008, AD021, AD059 |
+| Run identifier does not exist | Error naming the run identifier, the expected artifact path, **the most recent twenty run identifiers for that sync — with the total stated when the list truncates** — and the next action. The cache root is already resolved at this point, so the enumeration costs one directory listing; the bound exists because nothing in the repository prunes a run directory and retention is out of scope, so an hourly pipeline would otherwise answer the commonest typo in this feature with thousands of lines (AD073) | FR-008, AD021, AD059, AD073 |
+| Sync has no stored runs at all | Error naming the run identifier the operator asked for and stating plainly that **this sync has no stored runs**, with "produce a plan for this sync first" as the next action. Not a traceback: `cache_root_for` computes a path and never creates or checks it (`infrahub_sync/cache/paths.py:26-43`), so an unguarded listing raises `FileNotFoundError` on a sync that has never run — which is the *first-run* experience, and the one operator most likely to reach for `--from-plan` before ever having produced a plan (AD073) | FR-008, AD059, AD073 |
+| `--kind` without `--detail` | Error naming the missing prerequisite, which `--kind`'s own help text also states. Not silently ignored: a documented prerequisite that nothing enforces is the defect class the `--detail`-without-`--from-plan` row exists to close | FR-008, AD061 |
 | Run exists but holds no `plan/` | Error naming the run identifier and the expected artifact path, with the re-plan instruction as its next action (`PlanFormatV1Error`) | FR-019, AD059 |
 | Torn artifact | Error naming which part is torn, the expected versus found value, and the next action (re-run `diff`; a partial artifact cannot be repaired) | FR-010, AD059 |
 | Unrecognized `format_version` | Error naming the version found, **listing the versions supported**, and the next action, textually distinct from the v1 message | FR-027, SC-018, AD059 |
 | Run directory or file unreadable | Error naming the path that could not be read and the next action (check permissions and ownership on that path) | AD036, AD059 |
 | `--kind` naming a declared kind the plan holds no operation for | Error naming that kind, **listing the kinds the plan does hold**, and the next action — never empty output, for the same reason a mistyped run identifier is not an empty plan. Raised by the **renderer**; the reader returns `[]` (AD058) | FR-006, AD036, AD058, AD059 |
 | `--kind` naming a kind the configuration does not declare | Same message shape; raised by the reader as `UnknownPlanKindError` | FR-006, AD036, AD058, AD059 |
+| The plan carries an operation whose action is outside the recognized vocabulary | **Review refuses it**, with the same message the apply path shows, because review reads through the same reader and the refusal happens while reading. Stated and tested rather than left implicit: it is the one bound on "review renders a plan it would refuse to apply", which is scoped to *verification* failures | FR-006, FR-017, AD055 |
 | `--detail` or `--kind` without `--from-plan` | Error naming the missing prerequisite, which each option's help text also states | FR-008, AD061 |
 | Neither `--name` nor `--config-file`, or both | Existing behavior, unchanged (`infrahub_sync/cli.py:113-114`) | — |
 
@@ -216,11 +224,12 @@ Not a new surface — the existing `apply` command (`infrahub_sync/cli.py:295-35
 
 | Change | Rule | Requirement |
 |---|---|---|
-| Missing artifact | An apply naming a run that does not exist, or whose run holds no plan artifact, errors naming the run identifier, the expected artifact path, the run identifiers that do exist, and the next action, and **creates no run directory** — today the directory is created unconditionally first (`infrahub_sync/utils.py:244-246`) | AD026, AD059 |
+| Missing artifact | An apply naming a run that does not exist, or whose run holds no plan artifact, errors naming the run identifier, the expected artifact path, the run identifiers that do exist — **bounded and guarded exactly as the review-mode rows above (AD073)** — and the next action, and **creates no run directory**; today the directory is created unconditionally first (`infrahub_sync/utils.py:244-246`) | AD026, AD059, AD073 |
 | Pre-apply gate | The five checks plus the write-surface check run before any destination write; all failures named, each with its next action. The write-surface check receives the **adapter's name**, since its message names the adapter (AD058) | FR-009, AD058 |
 | Refusal state | `failed`, with `summary["applied_operations"]` recorded as `[]` and `summary["skipped_delete_count"]` as `0` | AD010, AD036, AD062 |
+| Who writes the run record | **This command, and only this command (AD069).** `apply_plan` returns the record; `apply` merges it into `run_file.summary` before the save at `infrahub_sync/cli.py:350-351`. Without the merge that save destroys it: it writes the whole payload from an instance whose `summary` is the empty one built at `:322-323` (`infrahub_sync/cache/sidecars.py:87-89`). A rejection mid-apply carries its partial record on the raised error, so the same merge happens before `failed` is recorded — which is what lets FR-025's last-applied pointer survive a partial apply | FR-020, FR-025, AD069 |
 | Unrecognized action | An operation whose action is outside the closed vocabulary is refused at load, before any write, naming the identifier, the action found, the recognized actions and the next action; run recorded `failed` | FR-017, AD055, AD059 |
-| **Delete-bearing plan** | Completes in **`applied`**, having applied every non-delete operation and executed no delete, with `summary["skipped_delete_count"]` non-zero, `summary["skipped_delete_operations"]` recorded, and an operator-visible warning on the run's log stream naming the count. It does **not** exit non-zero and does **not** record `failed` | FR-016, FR-017, SC-007, AD055 |
+| **Delete-bearing plan** | Completes in **`applied`**, having applied every non-delete operation and executed no delete, with `summary["skipped_delete_count"]` non-zero, `summary["skipped_delete_operations"]` recorded, and a warning on the run's log stream at **`logging.WARNING`** naming the count — pinned to that level because `--quiet` floors the package logger there (`infrahub_sync/cli.py:29`), so an `INFO` emission would disappear for precisely the scripted invocations that have no other signal. The command's **completion line** names the count too when it is non-zero, replacing today's bare `Applied run <id>` (`:352`), which is otherwise the last line an operator reads. It does **not** exit non-zero and does **not** record `failed` | FR-016, FR-017, SC-007, AD055 |
 | Re-apply of an `applied` run | Permitted; verification still runs unconditionally | AD033 |
 
 **Not changed here (AD063).** An earlier draft had `apply` also repairing the pre-existing schema-subhash

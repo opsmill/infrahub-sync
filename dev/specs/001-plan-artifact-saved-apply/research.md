@@ -28,6 +28,13 @@ non-question, since the flag set that hides deletes is the *fallback*, which mak
 the ordinary case. The remaining nine are contract- and requirement-level and are carried in `spec.md`,
 `plan.md`, the contracts and `tasks.md`.
 
+A second round added **AD065–AD074**. Two more land inside PD-005 and are folded in there: **AD065**, that
+the re-read prescribed as "fetch first" performs no read at all, so the forcing mechanism is named; and
+**AD070**, which withdraws the correction to `update_node` and confines the enforcement to new code on the
+planned-write path, overruling this entry's own rejection of that option on scope rather than on
+engineering. The other eight are carried in `spec.md`, `plan.md`, the contracts, `tasks.md` and
+`quickstart.md`.
+
 ---
 
 ## PD-001 — The operation-identifier hash input is a JSON array
@@ -244,8 +251,11 @@ determined without a live Infrahub (AD007).
 
 **Decision**: `apply_planned_operation` performs the upsert, then, for every cardinality-many
 relationship the operation carries, reconciles the saved node's peer set explicitly using the same
-`compare_lists` remove/add logic, extracted from `update_node` into a shared
-`_replace_relationship_set(node, rel_name, peer_ids)` helper.
+`compare_lists` remove/add shape, in a **new** `_replace_relationship_set(node, rel_name, peer_ids)` on the
+planned-write path. **Narrowed by AD070**: this was first specified as an *extraction* from `update_node`,
+shared by both callers. It is not. `update_node` keeps its present code and its present behavior; the shape
+is written a second time, roughly eight lines, and that duplication is the price of leaving the live write
+path untouched.
 
 **Corrected by AD054 in two places.** This entry originally added that "the extraction is
 behavior-preserving for the existing caller" and that it "reuses the only verified implementation in the
@@ -261,10 +271,24 @@ tree". Neither holds:
    difference sets and the reconciliation removes nothing. It is a guaranteed no-op that can pass only
    against a mock.
 
-So the helper must **fetch the relationship manager from the destination first, then read `peer_ids`, then
-compare**. That is deliberately **not** ordering-preserving: it corrects a pre-existing defect on the live
-update path, which is in scope precisely because the helper is shared and cannot be correct for one caller
-and wrong for the other.
+So the helper must genuinely read the destination's peer set before comparing. **Ordering is not the
+mechanism (AD065).** "Fetch first, then read `peer_ids`" was the fix this entry first prescribed, and it
+performs no read at all: `fetch()` opens with `if not self.initialized:`
+(`.venv/…/infrahub_sdk/node/relationship.py:286-288`) and the manager it is called on already reports
+itself initialized, so the guarded `client.get` inside it (`:290-296`) never runs. The helper must therefore
+**force the manager cold** — set `initialized` false, call `fetch()`, then read `peer_ids` — or issue its own
+scoped `client.get(id=node.id, kind=…, include=[rel_name])` and read the manager off the node that comes
+back. Either satisfies the requirement; the distinction that matters is that a destination read is *issued*,
+which is also what the test must observe, because "the manager was fetched before `peer_ids` was read" is
+satisfied by the no-op.
+
+**And the correction stops at this helper (AD070).** `update_node`'s additive ordering is a genuine
+pre-existing defect, and it stays. Its only caller is `InfrahubModel.update`
+(`infrahub_sync/adapters/infrahub.py:625`) — the live `sync` write path — so correcting it would make
+`infrahub-sync sync` start **removing** destination relationship peers absent from the source, on
+configurations that have never removed one. That is a data-removing change to an existing command, which
+this outcome does not authorize, no requirement states, no criterion measures and no documentation entry
+discloses. It is recorded here as a **pre-existing defect for a later outcome to own**.
 
 **Rationale**: it makes FR-013's replace-set clause true by construction instead of by assumption
 about server behavior nobody here can test, and it costs one extra round trip per cardinality-many
@@ -275,11 +299,15 @@ destination already holds the desired set, not because the comparison never look
 **Alternatives considered**: trust the upsert to replace (rejected: unverifiable, and a silent merge
 would leave stale peers attached, which SC-008 would catch only against a live server — i.e. late);
 always use `update_node` (rejected: it requires `client.get(id=local_id)`, which FR-012 forbids, V11);
-keep the extraction ordering-preserving and add the re-read only on the new caller (rejected: it leaves a
-helper that is a replace-set on one path and additive on the other, which is the shape defects hide in).
+share one helper between both callers and correct its ordering for both (**ratified first, then overruled by
+AD070**: the objection to leaving the two paths different — that a helper which is a replace-set on one path
+and additive on the other is the shape defects hide in — is sound engineering and is *not* authority to
+change what an existing command does to destination data; the option that keeps the live path byte-for-byte
+identical wins on scope, and the duplication it costs is eight lines).
 
-**Materiality**: **medium-high — reported upward.** It adds a step AD015 does not describe to the
-mandated write path, and under AD054 it also corrects existing behavior on the live update path.
+**Materiality**: **medium — reported upward.** It adds a step AD015 does not describe to the
+mandated write path. Under AD054 it was also going to correct existing behavior on the live update path;
+AD070 withdrew that, so no existing path changes and the materiality drops accordingly.
 
 ---
 

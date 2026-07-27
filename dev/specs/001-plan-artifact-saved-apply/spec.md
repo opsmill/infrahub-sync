@@ -446,8 +446,13 @@ on the same basis as AD001–AD036.
   AD054**: "the only *verified* replace-set implementation" was itself too generous. That implementation
   reads the peer set at `adapters/infrahub.py:151` and only fetches it at `:168-169`, so it compares the
   desired set against an unloaded one and adds without removing. The reconciliation this decision
-  mandates therefore has to **re-read the destination peer set before comparing**, and the pre-existing
-  ordering is corrected while the helper is extracted. `[PROVISIONAL AD038]` `[PROVISIONAL AD054]`
+  mandates therefore has to **re-read the destination peer set before comparing**. **Narrowed by AD070**:
+  the enforcement is new code on the planned-write path and the pre-existing update path is left exactly
+  as it is — correcting it there would change what the existing mutating command does to destination
+  relationships, which this outcome does not authorize. **Sharpened by AD065**: re-reading is a matter of
+  a destination read actually being issued, not of call order, so the mechanism is named rather than left
+  as "fetch first". `[PROVISIONAL AD038]` `[PROVISIONAL AD054]` `[PROVISIONAL AD065]`
+  `[PROVISIONAL AD070]`
 - Q: FR-001 requires the artifact to exist before anything is written to the destination. Does the
   tiered write path allow that? → A: Not as written. The tier branch interleaves per-tier comparison
   and per-tier write and writes the aggregated plan only after every write has completed
@@ -531,15 +536,21 @@ expands scope. All seven are **provisional** on the same basis as AD001–AD041.
   substitute for the other. First, a **local conformance harness** asserts the *mutation the destination
   library renders* rather than the destination state: that the rendered mutation input carries either a
   destination-assigned identifier or a human-friendly identifier, so an unkeyed write is visible; that
-  the replace-set reconciliation is issued for every cardinality-many relationship; and that a repeated
-  operation produces no second create. That catches
+  the replace-set reconciliation issues a destination read for the relationship before reading the peer set
+  it compares against; and that two applies of the same operation render byte-identical mutation inputs.
+  That catches
   a whole class of defect offline — AD042 is exactly such a defect, and it is the class those deferred
   criteria exist to catch. **Rebuilt by AD054**: as first written the harness asserted against the
   *assembled* data and against a wholly mocked destination library, which makes two of its three
   assertions unfalsifiable — the assembled data cannot show keyedness, and a mock holds no destination
   state against which "no second create" or "the peer set was replaced" could fail. The harness is built
   against a real destination node constructed from a **committed schema fixture** instead, and asserts
-  the rendered mutation input. Second, the deferral is **stated, not implied**: the brief's DBA-001,
+  the rendered mutation input. **Sharpened again by AD065, AD067 and AD068**: the replace-set observable is
+  that a destination read was *issued*, because a mechanism expressed as call order performs no read at all;
+  the keyedness assertion is split, holding for kinds whose key is all-direct and standing as a strict
+  expected failure for a kind whose key crosses a relationship, which cannot render keyed today; and the
+  repeat assertion is byte-identity of the rendered inputs, because "two applies produce one create" cannot
+  fail against a double at all. Second, the deferral is **stated, not implied**: the brief's DBA-001,
   DBA-002, DBA-003 and DBA-008 and the live half of its DBA-007, together with the live half of this
   specification's own SC-016, remain deferred to a run against a live Infrahub, and the brief's
   completion condition is therefore not met at merge time. `[PROVISIONAL AD045]`
@@ -684,10 +695,12 @@ session below. None expands scope. All eleven are **provisional** on the same ba
   reports the desired set as its existing set — `self.initialized = data is not None`
   (`.venv/…/infrahub_sdk/node/relationship.py:264`), and `fetch()` returns immediately once initialized
   (`:286-299`) — so a comparison made without re-reading is a guaranteed no-op that can only pass
-  against a mock. **Second**, the pre-existing additive ordering in the live update path is corrected
-  while we are there: it reads the peer set at `infrahub_sync/adapters/infrahub.py:151` and only then
-  fetches at `:168-169`, so its "replace-set" adds without removing. Code fact V12 overstates today's
-  behavior as a replace-set and is corrected in the plan. `[PROVISIONAL AD054]`
+  against a mock. **Second**, code fact V12 overstates today's behavior as a replace-set and is corrected
+  in the plan: the pre-existing update path reads the peer set at
+  `infrahub_sync/adapters/infrahub.py:151` and only then fetches at `:168-169`, so its "replace-set" adds
+  without removing. This decision originally corrected that pre-existing ordering too; **AD070 withdraws
+  that third clause** and confines the correction to the new planned-write path. `[PROVISIONAL AD054]`
+  `[PROVISIONAL AD070]`
 - Q: AD024 records the delete-computation flag in the manifest, and DBR-009 makes recording deletes the
   default, but no requirement puts either on a review surface — so a plan missing its entire delete
   class is indistinguishable from a plan with no deletes. Is the omission reviewable? → A: **Not as
@@ -781,9 +794,30 @@ because the basis it now carries is the whole of its authority.
   objects absent from the source now yields deletes, so the qualified path's default posture would be a
   failed apply. Which side gives? → A: **The derived side, because it is the derived side.** DBR-009 and
   DBR-010 are **quoted** brief requirements and are untouched. DBR-016 and DBA-007 are both **derived**,
-  and approved decision D020 ratified derived requirements as batch policy on the proviso that each
-  carries its basis — so they are **re-derived** here, carrying their new basis, rather than the quoted
-  pair being softened.
+  so re-deriving them, carrying their new basis, softens nothing quoted.
+  **The authority, corrected (AD074).** This decision was first recorded as resting on approved decision
+  D020. It does not, and the citation was wrong in a way worth naming, because a miscited authority is the
+  kind of error that gets copied. D020 ratifies the **planner's** derivations as batch policy on a
+  basis-disclosure proviso; it says nothing about whether a derived row inside an approved brief may be
+  re-derived downstream, and read the way this decision first read it, D020 would license re-deriving 6 of
+  the brief's 20 requirements and 10 of its 13 acceptance criteria — which is not what a `READY` brief with
+  an approver set can mean. The authority is instead the **brief owner's override at the delivery gate**:
+  the person who ratified this decision is the same person recorded as the brief's approver and as D020's,
+  and an approver amending their own approved artifact is scope authority acting rather than scope drift.
+  D020 is cited here for one narrower thing only — the proviso that a re-derivation carry its basis, which
+  this specification meets at four places.
+  **A second and stronger ground, which needs no override at all (AD074).** DBR-016's own term is an
+  **unsupported operation**. A `delete` is a member of the closed action vocabulary and a fully recognized
+  operation; what the brief separately excludes is *executing* it. So the split this specification draws —
+  between an operation this release declines to execute by design and an operation whose action it does not
+  recognize — is arguably a reading of DBR-016's existing term rather than a re-derivation of it, and on
+  that ground DBR-016 never reached a recorded delete in the first place.
+  **The brief now reads false in two places and needs a revision (AD074).** Brief v5's Out-of-scope delete
+  bullet and its User-scenario 4 both restate the superseded "the run fails" outcome. Both are
+  restatements of DBR-016 and DBA-007 rather than normative content of their own, so they move with the
+  re-derived pair and nothing normative is contradicted — but they are on the record as read by other
+  briefs in the batch, and a v6 revision owes them the ratified outcome. That repair belongs to the
+  planner; nothing here edits the brief.
   **The re-derivation.** A plan containing a delete applies every non-delete operation, does not delete
   from the destination, and ends in run state `applied`, with a non-zero skipped-delete count recorded
   in the run's summary and an operator-visible warning naming that count. **An operation this release
@@ -816,7 +850,130 @@ because the basis it now carries is the whole of its authority.
   **Successor note.** A later outcome, DB-005, replaces the run record with durable storage behind
   provider interfaces; it should promote the skipped-delete count from a summary key to a first-class
   run-record field. That is recorded here and at FR-017 so a future reader finds it.
-  `[PROVISIONAL AD055]`
+  `[PROVISIONAL AD055]` `[PROVISIONAL AD074]`
+
+### Session 2026-07-27 — critique round two ratified
+
+Three lenses re-ran against these artifacts after the round-one remediation and found nine blocking
+defects, deduped into ten decisions. All ten are ratified. Every one corrects this run's own delivery;
+**AD070 removes scope this outcome had quietly taken on**, and none adds any. Two of the round-one
+repairs turned out not to have landed as reported, which is why this session exists at all.
+
+- Q: The reconciliation is required to re-read the destination's peer set, and the mechanism specified for
+  doing so is "fetch the relationship manager first". Does that re-read? → A: **No — it is a provable
+  no-op, and the artifacts recorded the fact that defeats it three times over.** `fetch()` opens with
+  `if not self.initialized:` (`.venv/…/infrahub_sdk/node/relationship.py:286-288`) and a manager built
+  from local data reports `initialized is True` (`:264`), so on the node this reconciliation holds,
+  calling `fetch()` first performs no destination read at all. The defect in the earlier fix is
+  instructive: it was expressed in terms of **call order** when the property at stake is **whether a read
+  happens**, so the change and its test would both have passed while changing nothing. The mechanism is
+  therefore named rather than implied — discard the locally constructed peer set before fetching, so the
+  guarded read actually runs, or issue a scoped destination read for that relationship and compare against
+  its result. Either is acceptable; leaving it as "fetch first" is not. And the test observable moves from
+  "the manager was fetched before the peer set was read" — which the no-op satisfies — to **"a destination
+  read was issued for that relationship before the peer set was read"**. `[PROVISIONAL AD065]`
+- Q: The keyedness gate is asserted over the **assembled data**, while the flat guarantee attached to it
+  says an unkeyed write is never issued. Keyedness is a property of the rendered mutation. Which moves —
+  the gate or the claim? → A: **The claim, and the gate's observation point moves as far as it can go
+  without destroying scope.** Moving the gate wholesale onto the rendered mutation input and refusing
+  every unkeyed render was considered and rejected: for a destination kind whose human-friendly ID crosses
+  a relationship the rendered input carries neither identifier today — verified, and recorded as a
+  Material risk — so a hard refusal there would make the apply decline the ten mapping entries of the
+  qualified configuration that carry a reference inside their identity, which is precisely the
+  relationship-bearing capability DBR-013 and DBA-008 require. Refusing them would be scope destruction
+  dressed as rigour. So: the pre-write gate gains a **rendered-mutation check** — the strongest form of the
+  claim that is both observable and free — which **refuses** an unkeyed render for a kind whose
+  human-friendly ID is **all-direct** (that condition can only mean the payload lost its identity
+  components, the AD042 defect class) and, for a kind whose identifier crosses a relationship, emits one
+  operator-visible warning per kind naming the recorded risk and proceeds, because the convergent write may
+  still key server-side and only live evidence can settle it. The per-component check over the assembled
+  data stays as the **diagnostic** that names which component is missing. And the flat guarantee is struck
+  everywhere it appeared, replaced by what the gate actually delivers: **no write is issued whose payload is
+  missing an identifier component, and an unkeyed render is refused wherever it can only be a defect**.
+  `[PROVISIONAL AD066]`
+- Q: The offline conformance harness is required to include a kind whose human-friendly ID crosses a
+  relationship, and then to assert that every operation renders keyed. The artifacts' own verified facts
+  say that operation cannot render keyed. → A: **Split the assertion so the known hole is a live fact
+  rather than prose in a risk table.** For kinds whose identifier is all-direct, every operation MUST
+  render keyed, and a payload built from the comparison engine's attribute set alone MUST fail that — the
+  AD042 regression detector, unchanged. For the relationship-crossing kind, the same keyedness assertion is
+  made and marked a **strict expected failure** citing the recorded Material risk. It fails today, which is
+  honest; the day the write surface closes the hole it passes, the strict marker turns that into a suite
+  failure, and the limitation retires itself instead of being rediscovered. Dropping the fixture was
+  rejected: it is the only offline signal on the path that most needs one. `[PROVISIONAL AD067]`
+- Q: "Two applies produce exactly one create" is asserted against a test double. Can it fail? → A: **No,
+  and the task's own diagnosis says so four lines above the assertion.** A double holds no destination
+  state; two applies simply issue two creates, and no operation-level deduplication exists or is wanted.
+  The assertion becomes the strongest claim that is checkable offline and is the property convergence
+  actually rests on: **two applies of the same operation render byte-identical mutation inputs, and keyed
+  ones wherever keyedness is assertable at all**. That can fail — a payload that varies between renders, or
+  one that renders unkeyed, breaks it — and it regresses if the keyedness split above regresses. Every
+  downstream restatement of the old claim moves with it. `[PROVISIONAL AD068]`
+- Q: Both the engine and the command layer write the run record, and the command layer writes last from an
+  object whose summary is empty. Who owns it? → A: **The command layer owns the file; the engine owns the
+  record.** The run file's save writes the whole payload with no merge
+  (`infrahub_sync/cache/sidecars.py:87-89`) and the command layer's instance is constructed with an empty
+  summary and saved after the apply returns (`infrahub_sync/cli.py:322-323`, `:350-351`), so as specified
+  every key the engine recorded was destroyed — silently deleting FR-020's record, with the tests that would
+  catch it two phases downstream. The engine therefore **returns** an apply record and writes no run file;
+  the command layer **merges** that record into the run file's summary before saving. A mid-apply rejection
+  carries its partial record on the raised error so the command layer can merge what was written before
+  recording the failure — without that, FR-025's last-applied pointer could not survive a partial apply at
+  all. One sentence pins this in the task that produces the record and in every task that reads it. The
+  alternative — moving run-file ownership into the engine — was rejected: it moves a persisted-file
+  responsibility across a layer boundary this outcome does not otherwise touch, and the refusal paths and
+  AD010 both depend on the command layer keeping it. `[PROVISIONAL AD069]`
+- Q: AD054's third clause corrects the pre-existing additive ordering on the existing update path. That
+  path's only caller is the live mutating write path. Does the fix belong here? → A: **No. It is
+  withdrawn.** The correction would make the existing `sync` command start **removing** destination
+  relationship peers that the source does not carry, on configurations that have never removed one — a
+  data-removing change to an existing command, with no requirement stating it, no criterion measuring it,
+  no edge case, and no entry in the documentation sweep that does disclose the delete-recording change. An
+  operator would meet it in production with its only trace in a unit test's expectation. That the fix is
+  obvious and correct does not make it authorized; it is a decision for the brief's owner, and it is the
+  same class of unauthorized existing-path scope that AD048 was written to prevent and AD063 had just
+  retired. So the replace-set enforcement is **new code on the planned-write path only**, the pre-existing
+  path is left byte-for-byte as it is, and its additive ordering is recorded as a **pre-existing defect for
+  a future outcome to own**. The small duplication of the compare-and-reconcile logic that follows is
+  deliberate and is the price of leaving the existing path untouched. The contradiction between the task
+  that changed it and the two tasks that assert the existing path is unchanged goes with it.
+  `[PROVISIONAL AD070]`
+- Q: FR-030 names four derivation failures. Do all four have a named failure class carrying a next action?
+  → A: **Two do not, and the instrumentation that would have caught that only walks classes that exist.**
+  An operation with no formable destination identity has no class at all, and a relationship peer missing
+  from the loaded source state has only a class defined as a **destination** miss whose remedy — create the
+  peer at the destination — is wrong for the condition, since nothing is missing at the destination.
+  Both get their own named class with a next action of their own: one directing the operator at the
+  identity attributes of the schema mapping that resolved to nothing, one at the configuration that does not
+  load the peer's kind, kept textually distinct from the destination-side miss. The derivation task's
+  assertions must cover the **next action**, not only the kind and the cause — this is the most-run command,
+  it has never failed on data, and AD047 deliberately gives it no tolerance switch. `[PROVISIONAL AD071]`
+- Q: The negative walkthrough demonstrates an unknown-kind error. Does the command it runs produce one? →
+  A: **No — it raises the pre-existing-format error instead, and because it errors, it looks like it
+  passed.** The case reads a run whose plan directory two commands earlier removed, and the kind it names
+  is not one the qualified configuration declares, so even repaired it would exercise the reader's
+  undeclared-kind branch rather than the renderer's declared-but-empty one. Those two branches were split
+  deliberately by AD058 and this is the only hand-run demonstration of either. The fix: every review case
+  runs **before** the step that removes the plan directory, the destructive steps go last, each case is
+  **labelled with the branch it exercises**, and the declared-but-empty case names a kind the configuration
+  actually declares. This is the same false-pass shape AD060 was created to eliminate, reappearing in the
+  file AD060 repaired, which is why it is recorded rather than quietly fixed. `[PROVISIONAL AD072]`
+- Q: An unknown run identifier is answered by listing the run identifiers that exist. Is that listing
+  bounded, and what does it do when there are none? → A: **Unbounded, and it raises.** The cache root is
+  computed, never created or checked (`infrahub_sync/cache/paths.py:26-43`), so for a sync that has never
+  run the "one directory listing" both contracts describe as safe raises instead — and the operator most
+  likely to meet that is the first-time one, getting a traceback from a helpful-error path. At the other end
+  nothing prunes a run directory anywhere in the repository and retention is explicitly out of scope, so an
+  hourly pipeline turns the most common typo in the feature into thousands of lines. The enumeration
+  therefore lists the **most recent twenty** identifiers, with the total count stated when it truncates
+  (they sort by time by construction), and when the cache root is absent or holds no runs the message
+  **says so plainly** and its next action is to produce a plan for that sync first. The no-runs case is
+  tested. `[PROVISIONAL AD073]`
+- Q: On what authority was the derived pair re-derived? → A: **Not the one AD055 recorded.** The correction
+  is carried at AD055 itself: the authority is the brief owner's override at the delivery gate, the batch's
+  derived-requirement policy is cited only for the basis proviso, a second and narrower ground is recorded
+  that needs no override at all, and the two brief passages that now read false are named for a planner
+  revision. `[PROVISIONAL AD074]`
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -1215,10 +1372,20 @@ references.
   claim that the omission is explicit and reviewable is carried by nothing. A **non-zero** delete count
   MUST additionally be annotated inline, in the summary and in the per-object detail alike, stating that
   no delete will be executed against the destination by this release, so a reviewer approving a plan sees
-  what will and will not be written from the same output they approve. *(DBR-002,
+  what will and will not be written from the same output they approve.
+  **Review renders a plan it would refuse to apply, with one exception that MUST be stated rather than
+  discovered.** A plan that would fail the pre-apply verification is rendered anyway, annotated with why —
+  review's job is to show. But an operation carrying an action this release does not recognize is refused
+  while the artifact is read, which is what puts FR-017's refusal before any destination write, and review
+  reads through that same interface: so review **also** refuses such a plan, with the same message. That is
+  the intended behavior and not an accident of sharing a reader — a plan whose operation vocabulary this
+  release cannot interpret cannot be honestly summarized either, and the count it would print would be a
+  count of operations it does not understand. It is stated here so no reader takes "review never refuses to
+  show" as absolute, and it is tested. *(DBR-002,
   DBR-005; minimum field set per AD020, filter-miss behavior per AD036, delete-computation and
   delete-count disclosure per AD056, the empty-versus-raise split per AD058, next action and the kind
-  enumeration per AD059)* `[PROVISIONAL AD020]`
+  enumeration per AD059; the review-side refusal stated per the round-two remediation)*
+  `[PROVISIONAL AD020]`
   `[PROVISIONAL AD036]` `[PROVISIONAL AD056]` `[PROVISIONAL AD058]` `[PROVISIONAL AD059]`
 - **FR-007**: The plan MUST be readable from the stored artifact at any time after the run,
   including after the process that produced it has exited. *(DBR-012)*
@@ -1345,6 +1512,23 @@ references.
   all — FR-002 requires it to travel as a relationship reference, and it reaches the write as a
   destination identifier produced by the FR-014 peer resolution. The requirement is on the assembled
   data, which MUST carry every component however it arrived.
+  **Where that requirement is checked, and what the check can promise.** The assembled data MUST be
+  checked component by component before the write is issued, and a component that is unaccounted for MUST
+  raise, naming the destination kind and the component — that is the diagnostic, and it is the only form of
+  the check that can say *which* component is missing. Keyedness itself, however, is a property of the
+  **rendered mutation** rather than of the assembled data, so the rendered mutation MUST also be checked
+  before the write is issued. Where the destination kind's convergence key is composed entirely of its own
+  direct attributes, a rendered mutation carrying neither identifier can only mean the payload lost its
+  identity components, and it MUST be refused. Where the convergence key crosses a relationship, the
+  rendered mutation may carry neither identifier for a reason this outcome does not control — the
+  destination library cannot form the key from a peer supplied as a resolved identifier — and the write is
+  still issued, because the convergent write may key it at the destination and declining to issue it would
+  withdraw relationship-bearing kinds from what this outcome delivers. That case MUST instead be reported
+  once per destination kind on the run's log stream, and it is carried as a recorded risk rather than as a
+  settled mechanism. What this requirement therefore promises is narrower than it once claimed and is
+  stated here rather than overstated: **no write is issued whose payload is missing a convergence-key
+  component, and no rendered mutation is issued unkeyed where being unkeyed can only be a defect.**
+  *(per AD066)* `[PROVISIONAL AD066]`
   Cardinality-many relationships MUST be written as a replace-set, and that replace-set MUST be
   **enforced explicitly after the convergent write rather than assumed of it**. The earlier reading
   that replace-set "is the existing behavior" was false twice over: the only replace-set this repository
@@ -1357,6 +1541,17 @@ references.
   re-reading is a guaranteed no-op that can pass only against a test double. Enforcing it with the
   re-read makes the clause true by construction; where the convergent write already replaces, the
   enforcement is a no-op for the right reason rather than by accident.
+  **What "re-read" requires is a destination read, not an ordering.** The destination library's own
+  peer-loading call declines to do anything when the peer set it holds already reports itself loaded, which
+  is exactly the state a locally built node is in — so an enforcement that merely calls it before reading the
+  peer set still reads nothing. The enforcement MUST discard the locally held peer set before loading, or
+  issue its own scoped destination read for that relationship, and the evidence for it MUST be that a
+  destination read was **issued** rather than that a load was attempted. *(per AD065)*
+  **This enforcement is new behavior on the planned-write path only.** The pre-existing update path's
+  additive ordering is a pre-existing defect and MUST be left exactly as it is: correcting it there would
+  change what the existing mutating command does to destination relationships, which this outcome does not
+  authorize and no requirement, criterion or documentation entry here describes. It is recorded as work for
+  a later outcome. *(per AD070)* `[PROVISIONAL AD065]` `[PROVISIONAL AD070]`
   An update payload is authoritative for the mapped fields it carries and MUST NOT touch
   unmapped destination fields. Two consequences of that mandated write path are recorded here rather
   than left to inference. First, a planned `create` whose destination identity already exists converges
@@ -1376,15 +1571,22 @@ references.
   carries neither when a convergence-key component is missing. The assembled payload cannot show that,
   because by then a relationship-crossing component is a resolved identifier string from which no
   attribute can be read. The check MUST therefore build the operation against a **committed destination
-  schema fixture** and assert on the rendered mutation, assert that the replace-set enforcement re-reads
-  the destination peer set before comparing, and assert that a repeated operation produces no second
-  create. An assertion that merely observes the write surface being called proves that a test double was
-  invoked and nothing about convergence. *(DBR-013, DBR-011; write path per AD015, create-on-no-match
-  consequences per AD025, verification route per AD036, convergence-key payload per AD042, explicit
-  replace-set enforcement per AD038, offline conformance check per AD045 as rebuilt by AD054)*
-  `[PROVISIONAL AD015]`
+  schema fixture** and assert on the rendered mutation, assert that the replace-set enforcement **issues a
+  destination read for the relationship before reading the peer set** it compares against, and assert that
+  applying the same operation twice renders **byte-identical** mutation inputs. Keyedness is asserted as two
+  cases, not one: for a kind whose convergence key is composed of its own direct attributes it MUST hold,
+  and for a kind whose key crosses a relationship the same assertion is made and marked a **strict expected
+  failure** against the recorded risk, so it reports the limitation today and turns into a suite failure the
+  day the limitation is gone. An assertion that merely observes the write surface being called proves that a
+  test double was invoked and nothing about convergence; an assertion that two applies produce one object
+  proves nothing against a test double, which holds no destination state. *(DBR-013, DBR-011; write path per
+  AD015, create-on-no-match consequences per AD025, verification route per AD036, convergence-key payload
+  per AD042, explicit replace-set enforcement per AD038, offline conformance check per AD045 as rebuilt by
+  AD054, the read-not-order observable per AD065, the keyedness split per AD067, the repeat assertion per
+  AD068)* `[PROVISIONAL AD015]`
   `[PROVISIONAL AD025]` `[PROVISIONAL AD036]` `[PROVISIONAL AD038]` `[PROVISIONAL AD042]`
-  `[PROVISIONAL AD045]` `[PROVISIONAL AD054]`
+  `[PROVISIONAL AD045]` `[PROVISIONAL AD054]` `[PROVISIONAL AD065]` `[PROVISIONAL AD067]`
+  `[PROVISIONAL AD068]`
 - **FR-014**: Relationship peers MUST be resolvable at apply time without a loaded comparison
   store, from the peer kind and identity the plan itself carries. Resolution MUST be memoized
   within one apply, MUST take an operation's own result as the resolution for later operations
@@ -1467,7 +1669,11 @@ references.
        execute every non-delete operation in the same plan, MUST NOT delete from the destination, and
        MUST end in the applied run state. It MUST record on the run, in the same place FR-020's
        applied-operation record lives, both the **count** of deletes it did not execute and their
-       operation identifiers, and it MUST emit an operator-visible warning naming that count. A
+       operation identifiers, and it MUST emit an operator-visible warning naming that count. That warning
+       MUST be emitted at a level the command's own quiet verbosity setting does not suppress, because the
+       scripted and automated invocations that run quiet are exactly the ones for which the warning and the
+       run record are the only signals; and the command's completion line MUST name the skipped count when
+       it is non-zero, so the last line an operator reads is not silent about it. A
        delete-bearing plan MUST NOT fail the run, and no new run state is introduced for it.
     2. **A genuinely unsupported operation** — one carrying an action this release does not recognize —
        MUST be refused before any destination write, MUST name the operation identifier, the action
@@ -1481,8 +1687,13 @@ references.
   recorded skipped-delete count and identifiers make it a recorded value, which is what distinguishes
   this from the silent skip DBR-016 forbids. A skip is silent when nothing records it. The failed state
   was one way of forcing the difference into view, not the property being protected, and it is the wrong
-  way here because it reports a designed limitation as a fault.
-  *(DBR-016, re-derived per AD055; DBR-009 and DBR-010 are quoted and unchanged. **Successor note**: a
+  way here because it reports a designed limitation as a fault. A second and narrower ground carries the
+  same conclusion without needing a re-derivation at all: DBR-016 governs an operation this release does
+  not **support**, while a delete is a fully recognized member of the closed action vocabulary whose
+  **execution** the brief excludes separately — so the class DBR-016 names is the second class above, and
+  arguably never reached a recorded delete.
+  *(DBR-016, re-derived per AD055 on the authority corrected at AD074; DBR-009 and DBR-010 are quoted and
+  unchanged. **Successor note**: a
   later outcome replaces the run record with durable storage behind provider interfaces and should
   promote the skipped-delete count from a summary key to a first-class run-record field.)*
   `[PROVISIONAL AD055]` `[PROVISIONAL AD059]`
@@ -1789,13 +2000,19 @@ references.
   object counts before and after, scoped to the kinds appearing in the applied plan; the direct assertion
   that the object named by each delete operation is still present; the recorded run state read back as
   `applied`; the recorded skipped-delete count equal to the number of delete operations in the plan,
-  alongside their operation identifiers; the captured warning naming that same count; and the assertion
+  alongside their operation identifiers; the captured warning naming that same count, **asserted at a level
+  the command's quiet verbosity setting does not suppress** rather than by its text alone; the command's own
+  completion line naming the skipped count; and the assertion
   that the identifiers recorded as applied plus the identifiers recorded as skipped account for **every**
   operation the plan contained, so the applied set is knowable against the reviewed set as a recorded
-  value rather than an inference. A run state of `failed` **fails this criterion**: not executing a
+  value rather than an inference. That closure is asserted **of a completed apply**: an apply stopped by a
+  destination rejection leaves the unattempted operations in neither set, which is how a partial apply stays
+  distinguishable from a completed one, so the closure is checked after the operation sequence ends and not
+  during it. A run state of `failed` **fails this criterion**: not executing a
   delete is a designed limitation of this release, and the criterion measures that the limitation is
   disclosed, not that the run is reported as broken. *(DBA-007, re-derived per AD055; run state per
-  AD010; the recorded record's home per AD062)* `[PROVISIONAL AD010]` `[PROVISIONAL AD055]`
+  AD010; the recorded record's home per AD062; the warning's level, the completion line and the
+  completed-apply scoping pinned in the round-two remediation)* `[PROVISIONAL AD010]` `[PROVISIONAL AD055]`
   `[PROVISIONAL AD062]`
 - **SC-008**: A relationship-bearing kind from the qualified configuration applies with no loaded
   comparison store, and the resulting relationships on the destination match those the plan
@@ -1891,7 +2108,9 @@ references.
 
 ## Out of Scope
 
-Carried verbatim from the brief. None of the following is delivered here.
+Carried from the brief; every exclusion is carried verbatim. The delete bullet's **behavioral clause** is
+restated per AD055, so this list and the brief's differ there on purpose — the exclusion itself is
+identical. None of the following is delivered here.
 
 - **Applying a delete to the destination.** The plan records delete operations; executing them is
   explicitly excluded, and doing so safely requires an ownership grammar this outcome does not
@@ -1999,11 +2218,15 @@ is the whole of what is done: none of the capabilities below is built here.
   to converge for a planned update, SC-002 and SC-003 fail and the write surface needs a decision this
   specification does not carry. Two properties of that path are **not** assumed and are handled
   instead: whether its mutation replaces or merges a cardinality-many peer set is unverifiable here, so
-  FR-013 enforces the replace-set explicitly afterwards, re-reading the destination's own peer set before
-  comparing so the enforcement cannot be a silent no-op (AD038, AD054); and the identity components the key is
+  FR-013 enforces the replace-set explicitly afterwards, issuing its own destination read of the peer set
+  before comparing so the enforcement cannot be a silent no-op (AD038, AD054, AD065) — as new behavior on
+  the planned-write path only, leaving the pre-existing update path's ordering alone (AD070); and the
+  identity components the key is
   formed from are not present in the comparison engine's attribute set, so FR-002 puts them into the
-  payload deliberately rather than inheriting them (AD042). *(corrected per AD015, AD038, AD042)*
-  `[PROVISIONAL AD015]` `[PROVISIONAL AD038]` `[PROVISIONAL AD042]`
+  payload deliberately rather than inheriting them (AD042). *(corrected per AD015, AD038, AD042; scoped per
+  AD065, AD070)*
+  `[PROVISIONAL AD015]` `[PROVISIONAL AD038]` `[PROVISIONAL AD042]` `[PROVISIONAL AD065]`
+  `[PROVISIONAL AD070]`
 - On the qualified path, one destination kind is declared by **two** schema-mapping entries with
   different references for the same identity field (`examples/netbox_to_infrahub/config.yml:212` and
   `:254`), so the configuration's declared reference for a field does not uniquely determine a peer's
@@ -2023,8 +2246,11 @@ is the whole of what is done: none of the capabilities below is built here.
   conformance check FR-013 requires narrows what the deferral can hide, but does not close it — and it
   narrows it only in the form AD054 rebuilds, asserting the rendered mutation against a committed schema
   fixture; in its earlier form it narrowed nothing, because an assertion against the assembled payload and
-  a wholly mocked destination cannot fail for the right reason. *(per AD045, as rebuilt by AD054)*
-  `[PROVISIONAL AD045]` `[PROVISIONAL AD054]`
+  a wholly mocked destination cannot fail for the right reason. What it narrows is also **less than the
+  whole**: for a destination kind whose convergence key crosses a relationship it can only record that the
+  rendered mutation is unkeyed today, as a strict expected failure, so that class of convergence stays
+  entirely on the deferred live evidence (AD067). *(per AD045, as rebuilt by AD054 and split by AD067)*
+  `[PROVISIONAL AD045]` `[PROVISIONAL AD054]` `[PROVISIONAL AD067]`
 - The engine computes kind-level dependency tiers from `schema_mapping[].fields[].reference`
   (`dependency_graph.py:25-36`), and this outcome derives each operation's tier from them. Tiers are
   absent entirely when a configuration declares an explicit `order:`
@@ -2129,11 +2355,24 @@ Brief requirements (DBR) and acceptance criteria (DBA) to the sections that carr
 
 ### Derived brief items re-derived here
 
-The batch's approved policy ratifies derived brief requirements and criteria on the proviso that each
-carries its basis. Two of them are re-derived by this specification rather than carried as the brief
-states them, and each carries its new basis here so the proviso is met at the point of change. Nothing
-**quoted** is touched: DBR-009 and DBR-010 stand exactly as the brief states them, and re-deriving the
-two derived items is what makes that possible.
+Two derived brief items are re-derived by this specification rather than carried as the brief states them.
+Nothing **quoted** is touched: DBR-009 and DBR-010 stand exactly as the brief states them, and re-deriving
+the two derived items is what makes that possible.
+
+**The authority is the brief owner's override at the delivery gate (AD074).** The batch's approved
+derived-requirement policy is *not* the authority and was miscited as such: it ratifies the planner's
+derivations on a basis-disclosure proviso, and read as a licence for downstream re-derivation it would make
+more than half of this brief advisory. It is cited here for the proviso alone — that a re-derivation carry
+its basis, which each row below does. A second and narrower ground needs no override at all: DBR-016
+governs an operation this release does not **support**, and a delete is a recognized action whose
+**execution** the brief excludes separately, so DBR-016 arguably never reached a recorded delete.
+
+**Two brief passages now read false and are named here so the planner has the exact repair target
+(AD074).** Brief v5's §Out-of-scope delete bullet and its §User-scenarios Scenario 4 both restate the
+superseded "the run fails" outcome. Both are restatements of the two items below rather than normative
+content of their own, so they move with them and nothing normative is contradicted — but a v6 revision owes
+them the ratified outcome, because other briefs in the batch read this one. Nothing in this delivery edits
+the brief.
 
 | Re-derived item | Brief's original basis | New basis carried here |
 |---|---|---|
@@ -2231,6 +2470,21 @@ quoted, and each carries its new basis in
 requires. If AD055 is not ratified, FR-016, FR-017, FR-020, SC-007 and User Story 4 revert to the
 failed-run reading and the tension between the quoted DBR-009/DBR-010 pair and the derived pair reopens
 as an unresolved brief-gap.
+
+A further ten — **AD065 through AD074** — were ratified after the same three lenses re-ran against the
+remediated artifacts. They are carried in the
+[round two](#session-2026-07-27--critique-round-two-ratified) session and are marked the same way. All ten
+correct this specification's own delivery and **none adds anything that ships**: AD065 (the prescribed
+re-read mechanism performed no read), AD066 (a flat keyedness guarantee rested on a check that could not
+deliver it), AD067 (a conformance assertion was written as a universal its own mandated fixture must fail),
+AD068 (an idempotence assertion could not fail against a test double), AD069 (two writers of the run
+record, and the loser held it), AD071 (two derivation failures had no named class and therefore no next
+action), AD072 (a walkthrough case raised the wrong error and so appeared to pass), AD073 (an enumeration
+that was unbounded when full and raised when empty), and AD074 (a miscited authority, corrected). One,
+**AD070**, *removes* scope: it withdraws a correction to the pre-existing update path that would have made
+the existing mutating command start removing destination relationship peers. If AD070 is not ratified, that
+change returns and needs a requirement, a criterion and a documentation entry of its own, plus the brief
+owner's decision, because it changes what an existing command does to destination data.
 
 Nothing here remains open. What remains genuinely deferred is not a design commitment:
 

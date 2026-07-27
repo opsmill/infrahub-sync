@@ -17,7 +17,9 @@ includes an offline **rendered-mutation** conformance harness that catches the c
 criteria were the only other check on, but it does not substitute for them. It only narrows anything in the
 form AD054 rebuilds it — asserting the mutation the SDK renders, against a committed schema fixture. Its
 earlier form asserted the assembled payload against a wholly mocked SDK, which cannot fail for the right
-reason and therefore narrowed nothing.
+reason and therefore narrowed nothing. And how much it narrows is bounded: for a destination kind whose
+convergence key crosses a relationship it can only record that the render is unkeyed today, as a strict
+expected failure, so that class rests entirely on the deferred live evidence (AD067).
 
 ## Prerequisites
 
@@ -105,7 +107,7 @@ table task for task; the two must not drift.
 | SC-016 (local half) | `tests/adapters/test_infrahub_planned_write.py` (T053) | Zero-match names the peer kind, peer identity and referring operation id; multi-match names the peer kind, peer identity and match count; and the live `sync` path's warn-and-continue is asserted **unchanged** (AD048) |
 | SC-017 | `tests/test_potenda_plan_artifact.py` (T037) | Full destination extract → deletes recorded and `delete_operations_computed: true`; incremental → no deletes and `false`, the apply records a `skipped_delete_count` of **zero** so no phantom delete inflates it, and both review depths state that deletes were not computed (AD055, AD056) |
 | SC-018 | `tests/plan/test_reader.py` (T024) + `tests/test_cli_plan_review.py` (T065) | T024: `format_version: 99` raises naming version found and versions supported, textually distinct from the SC-011 message. T065: the same case refused on the apply path with zero writes and `failed` |
-| *(no SC)* | `tests/plan/test_apply_conformance.py` (T081) | Offline **rendered-mutation** conformance (AD054): the mutation input the SDK renders carries `id` or `hfid`, built against a committed `NodeSchemaAPI` fixture rather than a mock; the replace-set reconciliation re-reads the destination peer set before comparing; a repeated operation producing no second create |
+| *(no SC)* | `tests/plan/test_apply_conformance.py` (T081) | Offline **rendered-mutation** conformance (AD054): the mutation input the SDK renders carries `id` or `hfid`, built against a committed `NodeSchemaAPI` fixture rather than a mock — required for an all-direct HFID, and a `xfail(strict=True)` for a relationship-crossing one, which cannot render keyed today (AD067); the replace-set reconciliation **issued a destination read** for the relationship before reading the peer set it compares against (AD065); two applies of one operation render **byte-identical** mutation inputs (AD068) |
 | *(no SC)* | `tests/test_cli_plan_review.py` (T089) | Every error in the plan taxonomy names a next action; the unknown-kind and unknown-run-id messages list the values that exist (AD059) |
 | *(no SC)* | `tests/test_cli_plan_review.py` (T090) | Each new option's help text matches the CLI contract, and the `--run-id` help text carries its corrected cross-reference (AD061) |
 | *(no SC)* | `tests/test_potenda_plan_artifact.py` (T082, T083) | A kind declared by two schema-mapping entries resolves each peer's kind from the source store, not the mapping (AD046); and each plan-derivation failure fails `diff` with a named error rather than degrading to a warning (FR-030, AD047) |
@@ -188,7 +190,10 @@ uv run infrahub-sync diff --name from-netbox --directory examples/ \
 # 4. Apply exactly what was reviewed, by run ID.
 uv run infrahub-sync apply --name from-netbox --directory examples/ --run-id "$RUN_ID"
 #    → exits 0. On a destination holding objects absent from the source the plan carries
-#      deletes; none is executed, and the apply warns naming the skipped count (AD055).
+#      deletes; none is executed, and the apply warns naming the skipped count at WARNING
+#      level — the level --quiet floors at, so it survives every verbosity (AD055).
+#      The completion line names the counts too:
+#      "Applied run 20260726T1804-9f3ac210: 33 operations applied, 4 deletes skipped".
 
 # 5. Check what the run recorded.
 python -c "import json;s=json.load(open('.infrahub-sync-cache/from-netbox/$RUN_ID/run.json'));\
@@ -213,10 +218,38 @@ pipeline lock — that is the FR-008 obligation, and the local suite asserts bot
 
 ### Negative walkthrough
 
+**Order matters here, and it did not before (AD072).** Every case that needs to *read* the plan runs first;
+the two that destroy something run last. An earlier version of this section deleted `$RUN/plan` in the middle
+and then ran two review cases against that same run, so the last case raised the pre-existing-format error
+rather than the unknown-kind error it claimed to demonstrate — and because it errored, it looked like it had
+passed. Each case below also **says which branch it exercises**, because AD058 deliberately split two that
+produce similar-looking messages.
+
 ```bash
 RUN=.infrahub-sync-cache/from-netbox/"$RUN_ID"
 
-# Corrupt the checksum → refused, run recorded failed, zero writes.
+# --- Read-only cases first: the plan must still be intact for these. ---
+
+# 1. An unknown run id → names the identifier, the expected path, AND the run ids that exist,
+#    bounded to the most recent 20 with the total when it truncates (AD059, AD073).
+uv run infrahub-sync diff --name from-netbox --directory examples/ --from-plan not-a-run-id
+
+# 2. READER branch — a kind the CONFIGURATION does not declare → UnknownPlanKindError.
+#    CoreStandardGroup appears in examples/netbox_to_infrahub/config.yml only as a commented-out
+#    `order:` example (:43), so it is undeclared and the reader raises (AD058).
+uv run infrahub-sync diff --name from-netbox --directory examples/ \
+    --from-plan "$RUN_ID" --detail --kind CoreStandardGroup
+
+# 3. RENDERER branch — a kind the configuration DOES declare that the plan holds no operation for
+#    → the never-empty rule, raised by the renderer, not the reader (AD058).
+#    Pick any kind the summary in step 2 of the walkthrough above did NOT list a count for;
+#    IpamRouteTarget (config.yml:469) is declared and is usually empty against demo data.
+uv run infrahub-sync diff --name from-netbox --directory examples/ \
+    --from-plan "$RUN_ID" --detail --kind IpamRouteTarget
+
+# --- Destructive cases last: each of these leaves the run unusable for the cases above. ---
+
+# 4. Corrupt the checksum → refused, run recorded failed, zero writes.
 uv run python - "$RUN" <<'PY'
 import json, pathlib, sys
 p = pathlib.Path(sys.argv[1]) / "plan/manifest.json"; m = json.loads(p.read_text())
@@ -224,19 +257,18 @@ m["plan_checksum"] = "0" * 64
 p.write_text(json.dumps(m, sort_keys=True, separators=(",", ":")))
 PY
 uv run infrahub-sync apply --name from-netbox --directory examples/ --run-id "$RUN_ID"
-python -c "import json,sys;print(json.load(open(sys.argv[1]+'/run.json'))['status'])" "$RUN"   # → failed
+uv run python -c "import json,sys;print(json.load(open(sys.argv[1]+'/run.json'))['status'])" "$RUN"  # → failed
 
-# A v1 plan → the re-plan message, distinct from the version message.
+# 5. A v1 plan → the re-plan message, distinct from the version message. Removes plan/ for good;
+#    re-run `diff` if you want a usable run again.
 rm -rf "$RUN/plan"
 uv run infrahub-sync apply --name from-netbox --directory examples/ --run-id "$RUN_ID"
-
-# An unknown run id → names the identifier, the expected path, AND the run ids that exist (AD059).
-uv run infrahub-sync diff --name from-netbox --directory examples/ --from-plan not-a-run-id
-
-# A kind the plan holds no operation for → names the kind AND lists the kinds it does hold (AD058, AD059).
-uv run infrahub-sync diff --name from-netbox --directory examples/ \
-    --from-plan "$RUN_ID" --detail --kind CoreStandardGroup
 ```
+
+Cases 2 and 3 are the pair worth reading carefully: they must produce **different** messages from
+**different** layers — the reader refusing a kind the configuration never declared, and the renderer
+refusing to print empty detail for one it did. If both come back identical, AD058's split has not been
+implemented and the walkthrough has caught it.
 
 Every one of these names the operator's next action, not only the cause — that is AD059's obligation across
 the whole taxonomy, not just the pre-apply refusals.

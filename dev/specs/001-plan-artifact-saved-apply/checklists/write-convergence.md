@@ -2,7 +2,7 @@
 
 > **Superseded in part, 2026-07-27 — round-one critique remediation.** This checklist records an
 > evaluation performed against the specification as it stood on 2026-07-26. No box below has been
-> changed. Ratified decisions **AD054–AD064** have since moved several of the requirements it
+> changed. Ratified decisions **AD054–AD074** have since moved several of the requirements it
 > interrogates, so where an item's wording and the current specification disagree, the specification
 > is authoritative. The moved requirements are FR-006, FR-008, FR-013, FR-016, FR-017, FR-020, FR-029,
 > SC-007, SC-009, SC-012 and SC-017 — most consequentially **AD055**, under which a plan containing a
@@ -71,7 +71,7 @@ reading them. Items are left unchecked deliberately — a separate reviewer mark
 ## Scenario and Edge-Case Coverage
 
 - [X] CHK029 Are requirements defined for a relationship whose peer exists in the plan only as a recorded delete, which will never be applied? [Gap, Coverage, Spec §FR-014, §FR-016]
-- [X] CHK030 Are requirements defined for a plan containing only delete operations — does the apply perform no writes and still end in a failed state? [Coverage, Spec §FR-017, §SC-007, §FR-022]
+- [X] CHK030 Are requirements defined for a plan containing only delete operations — does the apply perform no writes and still end in the **applied** state, recording how many deletes it skipped and which? (**Restated per AD055**, which abolished the failed-state reading this row originally asked about: not executing a delete is a designed limitation, so a delete-only plan applies nothing, skips everything, records the count and the identifiers, and completes.) [Coverage, Spec §FR-017, §SC-007, §FR-022]
 - [X] CHK031 Is the crash-window expectation stated for relationship writes specifically, where a crash may leave an object created but its peers unlinked? [Coverage, Spec §SC-003, §FR-014]
 - [X] CHK032 Are requirements defined for a peer identity that resolves to multiple destination objects because the unique constraint is missing — the FR-024 condition surfacing at apply time rather than plan time? [Gap, Coverage, Spec §FR-024, §FR-014]
 - [X] CHK033 Is behavior specified when a planned update's target no longer exists in the destination at apply time, given destination freshness checks are out of scope? [Gap, Coverage, Spec §FR-012, §Out of Scope]
@@ -137,7 +137,10 @@ remain unchecked; verification is a separate pass.
   destination side ran a full extract; when it did not, no deletes are derived and the manifest
   discloses that they were not computed. The incremental hydrate path replays the prior run's
   snapshot plus changed-since rows, so an out-of-band destination delete would otherwise surface as a
-  phantom delete and force a spurious failed apply under SC-007. Criterion SC-017.
+  phantom delete. When this was written that meant a spurious **failed** apply under SC-007; **under AD055
+  it means a spurious non-zero skipped-delete count** — an operator shown deletes that do not exist,
+  recorded on the run as though they did. The reason for AD024 is unchanged; only the symptom it prevents
+  is. Criterion SC-017, which asserts the incremental run's apply records a skipped count of zero.
 
 ### Independent verification 2026-07-26
 

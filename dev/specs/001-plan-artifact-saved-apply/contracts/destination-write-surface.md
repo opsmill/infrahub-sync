@@ -4,7 +4,11 @@
 here**: AD054 (the replace-set re-read and the rendered-mutation harness), AD055 (a recorded delete ends
 `applied` with a recorded skip count, not `failed`), AD058 (the resolver's declared entry point and the
 verifier's adapter-name argument), AD059 (every failure names a next action), AD062 (the apply record's
-named home in the run summary). **Scope**: implemented on
+named home in the run summary), AD065 (the re-read is a named mechanism, not a call order), AD066 (the
+keyedness gate reads the rendered mutation and the flat guarantee is struck), AD067 (the conformance
+keyedness assertion is split), AD068 (byte-identical rendered inputs replace "one create"), AD069 (one
+writer for the run record), AD070 (the enforcement is new code; the live write path is untouched).
+**Scope**: implemented on
 the Infrahub destination adapter only, which is the brief's scope and is recorded as an accepted
 Principle III tension in [plan.md](../plan.md#complexity-tracking).
 
@@ -17,7 +21,9 @@ Principle III tension in [plan.md](../plan.md#complexity-tracking).
 | The convergent create path is `client.create(...)` then `save(allow_upsert=True)` | `infrahub_sync/adapters/infrahub.py:611-612` |
 | `InfrahubModel.update` opens with `client.get(id=self.local_id, ...)`, and `local_id` is populated only by a destination load | `infrahub_sync/adapters/infrahub.py:622`, `:510` |
 | The only replace-set-shaped code in the tree is `update_node`'s `compare_lists` remove/add — and it is **not** a replace-set: it reads `attr_manager.peer_ids` at `:151` and only calls `fetch()` at `:168-169`, so it compares the desired set against an unloaded one and adds without removing | `infrahub_sync/adapters/infrahub.py:149-175` (read `:151`, compare `:166`, fetch `:168-169`, remove `:171-172`, add `:174-175`) |
-| A relationship manager reports itself initialized from whatever data built it — `self.initialized = data is not None` — and `fetch()` returns immediately once initialized, so a locally built node reports the **desired** peer set as its **existing** one | `.venv/…/infrahub_sdk/node/relationship.py:264`, `:286-299` |
+| A relationship manager reports itself initialized from whatever data built it — `self.initialized = data is not None` — and `fetch()` returns immediately once initialized, so a locally built node reports the **desired** peer set as its **existing** one. The `client.get` that would read the destination lives **inside** that guard, which is why calling `fetch()` earlier reads nothing (AD065) | `.venv/…/infrahub_sdk/node/relationship.py:264`, guard `:286-288`, the read it guards `:290-296` |
+| `update_node`'s only caller is `InfrahubModel.update` — the live `sync` write path — so any change to its ordering is a change to what the existing mutating command does to destination relationships (AD070) | `infrahub_sync/adapters/infrahub.py:625` |
+| `RunFile.save()` writes the whole payload from the in-memory instance with no merge, and the `apply` command constructs its `RunFile` with an empty `summary` and saves it again after the apply returns (AD069) | `infrahub_sync/cache/sidecars.py:87-89`; `infrahub_sync/cli.py:322-323`, `:350-351` |
 | The rendered mutation input is where keyedness is observable: `data["id"]` if set, else `data["hfid"]`, and the upsert path renders with `exclude_hfid=False` | `.venv/…/infrahub_sdk/node/node.py:295-298`; `create(allow_upsert=True)` `:1843-1846`; `save(allow_upsert=True)` dispatches to it `:1533-1535` |
 | Peer resolution today reads the **loaded** SDK node store | `infrahub_sync/adapters/infrahub.py:57-94`, populated at `:454`, `:501`, `:613` |
 | A zero-match peer is silently dropped with a warning | `infrahub_sync/adapters/infrahub.py:141-143`, `:212-214`, `:229-231` |
@@ -56,7 +62,8 @@ a run that behaves as designed must not be reported as broken. What the engine r
 | Run state | `applied` — the same state a delete-free apply reaches. No new state is introduced (AD010, AD055) |
 | Count | `summary["skipped_delete_count"]`, the number of deletes not executed. Non-zero on any delete-bearing plan |
 | Identifiers | `summary["skipped_delete_operations"]`, in stored order |
-| Warning | An operator-visible warning on the run's log stream **naming the count** — not a debug line and not a per-operation trace: one message an operator reading the run's output cannot miss |
+| Warning | One warning on the run's log stream **naming the count** — not a debug line and not a per-operation trace: one message an operator reading the run's output cannot miss. **The level is `logging.WARNING`**, pinned rather than described as "operator-visible": `--quiet` floors the package logger at `logging.WARNING` (`infrahub_sync/cli.py:29`, the `--quiet` shorthand at `:59-60`, `_setup_logging` at `:41-48`), so an `INFO`-level emission would satisfy every prose description of this row and vanish for exactly the scripted and CI invocations where this warning and the run record are the only signals. The test asserts the level, not only the text |
+| Completion line | When the count is non-zero, the command's own completion line names it — today's terminal line is a bare `logger.info("Applied run %s", …)` (`infrahub_sync/cli.py:352`) emitted after the warning, so on a long apply the last thing an operator reads says only "Applied". It must read as, for example, `Applied run <id>: 33 operations applied, 4 deletes skipped` |
 | Knowability | `summary["applied_operations"]` ∪ `summary["skipped_delete_operations"]` equals the plan's full identifier set. That is what DBR-016 protects: the reviewed set minus the applied set is a **recorded value**, not an inference — which is exactly what a silent skip is not (AD055) |
 
 **The class that does still fail the run** is an operation whose `action` is outside `ACTIONS`. It is
@@ -79,15 +86,20 @@ Both route through the same convergent upsert. Neither routes through `InfrahubM
                             referring_operation_id=operation.operation_id)
               for p in ref.peers]
        data[ref.field] = ids[0] if ref.cardinality == "one" else ids
-3b. ASSERT every component path of node_schema.human_friendly_id is ACCOUNTED FOR (rules below)
-       -> otherwise raise, naming the kind and the missing component; never issue an unkeyed write
+3b. DIAGNOSTIC: every component path of node_schema.human_friendly_id is ACCOUNTED FOR (rules below)
+       -> otherwise raise, naming the kind and the missing component        # AD051 — names WHICH component
 4. create_data = client.schema.generate_payload_create(
        schema=node_schema, data=data,
        source=source_node.id, owner=owner_node.id, is_protected=True)       # parity with :608-610
 5. node = client.create(kind=operation.kind, data=create_data)
+5b. GATE: rendered = node._generate_input_data(exclude_hfid=False)["data"]  # AD066 — keyedness lives HERE
+       if "id" not in rendered and "hfid" not in rendered:
+           all-direct HFID      -> raise: the payload lost its identity components (the AD042 class)
+           relationship-crossing -> warn ONCE PER KIND naming the recorded risk, and proceed
 6. node.save(allow_upsert=True)                                             # the convergence point
 7. for ref in operation.relationships where cardinality == "many":
-       _replace_relationship_set(node, ref.field, resolved_peer_ids)        # PD-005 + AD054 re-read
+       _replace_relationship_set(node, ref.field, resolved_peer_ids)        # PD-005 + AD054/AD065 re-read
+                                                                            # NEW code; update_node untouched (AD070)
 8. peers.remember(operation.kind, operation.identity, node.id)
 9. return node.id
 ```
@@ -115,6 +127,30 @@ human-friendly-ID component path of the destination kind is accounted for**, bef
 made. An unaccounted-for component raises, naming the kind and the component. FR-024 warns about the
 same condition at plan time; step 3b is what stops it becoming silent data duplication at apply time if
 the plan-time warning was ignored or the schema changed since.
+
+### Step 5b: where keyedness is actually observable, and what the gate can promise (AD066)
+
+Step 3b is a **diagnostic**, not the keyedness gate, and the difference was papered over by a guarantee the
+check could not deliver. Keyedness is a property of the **rendered mutation input**: the SDK sets
+`data["id"]` if the node has one, else `data["hfid"]` when `exclude_hfid` is false
+(`.venv/…/infrahub_sdk/node/node.py:294-297`), and the upsert path renders with `exclude_hfid=False`
+(`:1843-1844`), dispatching through `save(allow_upsert=True)` (`:1533-1534`). All of that is client-side, so
+the render is readable with no server. Step 3b can hold while that render carries neither key — which is
+exactly the case the fact table below documents — so the gate is read where the property lives.
+
+The gate branches on the destination kind's HFID shape, and the branch is the whole point:
+
+| HFID shape | Rendered input carries neither `id` nor `hfid` | Why |
+|---|---|---|
+| **All direct** components | **Raise**, naming the kind | It can only mean the payload lost its identity components — the AD042 defect class, and always a defect |
+| **Crosses a relationship** | **Warn once per destination kind**, naming the recorded risk, and proceed | It is the expected render today for a reason this outcome does not control (the fact table below): the SDK cannot form the `hfid` from a peer supplied as a resolved id. Refusing would withdraw the ten identity-bearing-reference mapping entries of the qualified configuration from what this outcome delivers — the relationship-bearing capability DBR-013 and DBA-008 require — and the convergent write may still key server-side, which only live evidence can settle |
+
+**The flat claim is struck.** "An unkeyed write is never issued" appeared in three places and was false for
+the second row above. What these two checks deliver, stated once and repeated nowhere in a stronger form:
+**no write is issued whose payload is missing an HFID component, and no render is issued unkeyed where being
+unkeyed can only be a defect.** The warning is per kind rather than per operation so it discloses without
+drowning a large apply, and the same condition is carried as a strict expected failure in the offline
+conformance harness (AD067), so the limitation retires itself when the hole closes.
 
 #### What "accounted for" means, per component (AD051)
 
@@ -153,17 +189,22 @@ mechanism. It is also listed in [plan.md](../plan.md#risks).
 *carries* the nested attribute; it does not make the SDK able to read it. If the server's upsert cannot
 key on the components as sent, the failure surfaces as a duplicate at a live destination — which is
 exactly what the deferred SC-002 and SC-003 measure, and why they are deferred rather than replaced.
-The mitigation available offline is that no unkeyed write is issued blind: an operation whose HFID
-components cannot be accounted for raises at step 3b instead of duplicating silently. The residual —
+The mitigation available offline is narrower than "no unkeyed write is ever issued", and is stated as what it
+is (AD066): an operation whose HFID components cannot be accounted for raises at step 3b instead of
+duplicating silently; an operation whose render comes back unkeyed for a kind with an **all-direct** HFID
+raises at step 5b; and an operation whose render comes back unkeyed for a **relationship-crossing** HFID —
+this case — is **warned about once per kind and issued**, because refusing it would withdraw
+relationship-bearing kinds from what this outcome delivers. The residual —
 whether an accounted-for nested component actually keys the server-side upsert — is unverifiable
-without a live Infrahub (AD007) and is asserted by the `integration`-marked SC-002 and SC-003 tests.
+without a live Infrahub (AD007) and is asserted by the `integration`-marked SC-002 and SC-003 tests, with
+the offline harness carrying it as a strict expected failure in the meantime (AD067).
 
 | Clause | Rule | Requirement |
 |---|---|---|
 | Convergence key | The destination kind's human-friendly ID — the SDK's upsert mutation is keyed on `data["id"]` if set, else `data["hfid"]` (`.venv/…/infrahub_sdk/node/node.py:295-298`) | FR-013, AD017 |
-| Convergence-key presence | Asserted at step 3b by the per-component rule above — direct components checked in `data`, relationship-crossing components checked in `data` **and** in the operation's nested `{peer_kind, identity}`; an unaccounted-for component raises rather than issuing an unkeyed write | FR-013, AD042, AD051 |
+| Convergence-key presence | Two checks, not one (AD066). Step 3b is the **diagnostic**: direct components checked in `data`, relationship-crossing components checked in `data` **and** in the operation's nested `{peer_kind, identity}`; an unaccounted-for component raises, naming which one. Step 5b is the **gate**, read on the rendered mutation input: unkeyed raises for an all-direct HFID and warns once per kind for a relationship-crossing one | FR-013, AD042, AD051, AD066 |
 | Payload authority | Authoritative for the mapped fields it carries; **must not** touch unmapped destination fields. "Full" means complete with respect to the configuration's field mapping, not the destination schema | FR-028.4 |
-| Cardinality-many | **Replace-set**, enforced explicitly at step 7 rather than assumed of the upsert (PD-005), and the enforcement **re-reads the destination peer set before comparing** so it cannot be a silent no-op (AD054). `peers: []` under `cardinality: "many"` means "empty the set", and the replace-set acts on it | FR-013, FR-028.2, AD054 |
+| Cardinality-many | **Replace-set**, enforced explicitly at step 7 rather than assumed of the upsert (PD-005), and the enforcement **issues its own destination read of the peer set before comparing** so it cannot be a silent no-op (AD054, AD065). `peers: []` under `cardinality: "many"` means "empty the set", and the replace-set acts on it. The enforcement is **new code on this path**; the pre-existing `update_node` is untouched (AD070) | FR-013, FR-028.2, AD054, AD065, AD070 |
 | A create whose identity already exists | Converges onto the existing object through the same upsert. Whether that object's payload differs is not examined; conflict policies are out of scope | FR-013, AD025 |
 | An update whose target was deleted out-of-band | Materializes as a create, because the upsert creates when no destination object matches the key. No conflict detection, freshness check or refusal path is built | FR-013, AD025 |
 | Reporting | Either case is reported under the operation's **original** identifier and **original** action, so SC-005's review-to-apply link is unaffected | AD025 |
@@ -175,8 +216,8 @@ on the path AD015 forbids the planned write from using, and whether the *upsert*
 merges a relationship list cannot be determined without a live Infrahub (AD007). Step 7 makes the
 semantics true by construction rather than assuming them.
 
-**It must re-read the destination's peer set before comparing.** `_replace_relationship_set` as extracted
-from `update_node` reads `attr_manager.peer_ids` and only then calls `fetch()`
+**It must re-read the destination's peer set before comparing.** The pre-existing shape in `update_node`
+reads `attr_manager.peer_ids` and only then calls `fetch()`
 (`infrahub_sync/adapters/infrahub.py:151` vs `:168-169`). A relationship manager reports itself
 initialized from whatever data constructed it — `self.initialized = data is not None`
 (`.venv/…/infrahub_sdk/node/relationship.py:264`) — and `fetch()` returns immediately when it is
@@ -184,21 +225,46 @@ initialized from whatever data constructed it — `self.initialized = data is no
 `compare_lists(existing, new)` compares that set against itself, both difference sets come back empty,
 and the reconciliation is a guaranteed no-op that removes nothing. It can pass only against a mock.
 
-The helper therefore:
+**And "fetch first" does not fix that (AD065).** This contract previously prescribed
+`7a. fetch the relationship manager from the destination FIRST`, which performs no destination read at all:
+`fetch()` opens with `if not self.initialized:` (`.venv/…/infrahub_sdk/node/relationship.py:286-288`) and the
+`client.get` that would do the reading lives **inside** that guard (`:290-296`). On the node step 7 holds,
+the guard is false, `fetch()` walks the locally built peers and returns, and the comparison still compares
+the desired set against itself. The defect in that prescription is worth naming: it described the fix as an
+**ordering** when the property at stake is **whether a read happens**, so both the change and a test written
+against it would have passed while nothing changed.
+
+The helper therefore, with the mechanism named rather than implied:
 
 ```text
-7a. fetch the relationship manager from the destination FIRST   # unconditional re-read
-7b. existing = attr_manager.peer_ids                            # now the destination's actual set
+7a. rm = getattr(node, ref.field)
+    rm.initialized = False                  # discard the locally constructed peer set …
+    rm.fetch()                              # … so the guarded client.get actually runs
+    # — or, equivalently: node2 = client.get(id=node.id, kind=node._schema.kind,
+    #                                       include=[ref.field]); rm = getattr(node2, ref.field)
+7b. existing = rm.peer_ids                                      # now the destination's actual set
 7c. _, existing_only, new_only = compare_lists(existing, new_peer_ids)
 7d. remove every existing_only; add every new_only
 ```
 
-Two things follow. The extraction from `update_node` is **not** behavior-preserving in the ordering —
-it corrects a pre-existing defect, since today's live update path adds without removing, and that
-correction is in scope because the helper is shared and cannot be correct on one caller and wrong on the
-other. And "if the upsert already replaces, step 7 is a no-op" becomes true for the right reason: the
-difference sets are empty because the destination already holds the desired set, not because the
-comparison never looked.
+Either mechanism is acceptable; "call `fetch()` earlier" is not. **The observable the tests assert is that a
+destination read was *issued* for that relationship before the peer set was read** — not that the manager
+was fetched, which the no-op satisfies.
+
+**This is new code on this path, and `update_node` is left exactly as it is (AD070).** An earlier form of
+this contract had the helper *extracted* from `update_node` and shared, with its ordering corrected for both
+callers. That reaches the live `sync` write path: `update_node`'s only caller is `InfrahubModel.update`
+(`infrahub_sync/adapters/infrahub.py:625`), so correcting it there would make `infrahub-sync sync` start
+**removing** destination relationship peers absent from the source, on configurations that have never
+removed one. That is a data-removing change to an existing command, unauthorized by this outcome and
+described by no requirement, criterion or documentation entry — and it directly contradicted the AD048 scope
+rule two sections below, which this same contract states. So the shape is written a second time here, the
+pre-existing additive ordering is recorded as a **pre-existing defect for a later outcome to own**, and the
+duplication is the deliberate price of leaving the live path untouched.
+
+One thing still follows as before: "if the upsert already replaces, step 7 is a no-op" becomes true for the
+right reason — the difference sets are empty because the destination already holds the desired set, not
+because the comparison never looked.
 
 ## `PeerResolver`
 
@@ -306,16 +372,25 @@ In `Potenda.apply_plan`, replacing the v1 body:
        try:
            adapter.apply_planned_operation(operation=operation, peers=peers)
        except (PeerNotFoundError, PeerAmbiguousError, DestinationRejected) as exc:
-           record the summary keys below as they stand, then run state failed
-           naming operation.operation_id, exc and the next action; STOP    # AD027, AD059
+           attach the PARTIAL record (applied, skipped_deletes) to the raised error,   # AD069
+           then raise naming operation.operation_id, exc and the next action; STOP
+           # the CLI merges the partial record, then records run state failed  # AD027, AD059
        applied.append(operation.operation_id)
-6. summary["applied_operations"]         = applied            # FR-020, AD062
-   summary["skipped_delete_operations"]  = skipped_deletes    # FR-017, AD055
-   summary["skipped_delete_count"]       = len(skipped_deletes)
+6. AFTER the loop, on a COMPLETED apply, check the knowability invariant   # AD069, post-loop
+       set(applied) | set(skipped_deletes) == plan identifier set
+       len(applied) + len(skipped_deletes) == manifest.operations_count
+   — raise a named error if either fails; neither holds for a partial apply, which is
+     why this is not evaluated inside the loop nor on the rejection path
 7. if skipped_deletes:
-       warn, at operator-visible level, naming len(skipped_deletes)        # AD055
-   run state applied                     # ALWAYS — a skipped delete is a designed
-                                         # limitation, never a run failure (AD055)
+       logger.warning(... naming len(skipped_deletes) ...)                 # AD055, level pinned
+8. RETURN the record; apply_plan writes no run file                        # AD069
+   applied_operations        = applied            # FR-020, AD062
+   skipped_delete_operations = skipped_deletes    # FR-017, AD055
+   skipped_delete_count      = len(skipped_deletes)
+   # The CLI merges these into run_file.summary under those key names and saves,
+   # then records run state applied — ALWAYS on a completed apply, because a skipped
+   # delete is a designed limitation and never a run failure (AD055) — and names the
+   # skipped count on its completion line when it is non-zero.
 ```
 
 | Rule | Requirement |
@@ -323,8 +398,9 @@ In `Potenda.apply_plan`, replacing the v1 body:
 | Stored order is executed exactly — no re-sorting, no recomputation, no extraction of either side | FR-012, SC-001 |
 | `applied` is an **ordered** sequence; FR-025's "last operation reported as applied" is its final element, not a separate field | FR-020, AD036 |
 | The record's home is `summary[…]` on the run file, not a new persisted field: `RunFile.KEYS` is closed and `summary` is already `dict[str, Any]` (`infrahub_sync/cache/sidecars.py:73`, `:76`), so the `cache/` layer stays unchanged | FR-020, AD062 |
+| **One writer.** `apply_plan` returns the record and writes no run file; the CLI merges it into `run_file.summary` before saving. `RunFile.save()` writes the whole payload with no merge (`:87-89`) and the CLI's instance is built with an empty `summary` (`infrahub_sync/cli.py:322-323`) and saved after the apply returns (`:350-351`), so two writers means the engine's keys are deleted. A mid-apply rejection carries its partial record on the raised error so the CLI can merge it before recording `failed` | FR-020, FR-025, AD069 |
 | A delete-bearing plan ends **`applied`**, with a non-zero `skipped_delete_count`, the skipped identifiers, and a warning naming the count. It does **not** end `failed` | FR-016, FR-017, SC-007, AD055 |
-| `applied` ∪ `skipped_deletes` equals the plan's identifier set on any completed apply — which is what makes the applied set knowable against the reviewed set as a value rather than an inference (DBR-016's actual protection) | FR-017, FR-020, AD055 |
+| `applied` ∪ `skipped_deletes` equals the plan's identifier set on any **completed** apply, and the two lengths sum to `operations_count` on the same condition — which is what makes the applied set knowable against the reviewed set as a value rather than an inference (DBR-016's actual protection). Both clauses are checked **after** the loop and **not** on the rejection path: a partial apply breaks both by construction, so an unconditioned check would replace a clear destination-rejection message with an invariant error | FR-017, FR-020, AD055, AD069 |
 | An operation whose action is outside `ACTIONS` is the **only** class that fails the run for being unsupported, and it is refused at load, before any write | FR-017, AD055 |
 | A destination rejection or transport failure stops at that operation; what was written stays written; no rollback; the summary keys are recorded as they stand so a partial apply is still readable | AD027, FR-025 |
 | The partial-apply record is best-effort and explicitly **not** required to survive abnormal process termination | FR-025, AD011 |
@@ -337,7 +413,7 @@ In `Potenda.apply_plan`, replacing the v1 body:
 | Evidence | Where | Marker |
 |---|---|---|
 | Payload construction, upsert invocation, replace-set reconciliation with its re-read, memo population, negative-caching refusal, both peer refusals, a delete collected and skipped, an unrecognized action refused at load, missing surface, ordered applied set and skipped-delete record, fail-fast on rejection | `tests/adapters/test_infrahub_planned_write.py`, mocked `InfrahubClientSync` | local |
-| **Rendered-mutation conformance (AD045a, rebuilt by AD054)**: the **rendered mutation input** carries `id` or `hfid` for every operation, built against a **committed `NodeSchemaAPI` fixture** rather than a mock; the replace-set reconciliation re-reads the destination peer set before comparing; a repeated operation producing no second create | `tests/plan/test_apply_conformance.py`, real `InfrahubNodeSync` over a committed schema fixture | local |
+| **Rendered-mutation conformance (AD045a, rebuilt by AD054, sharpened by AD065/AD067/AD068)**: the **rendered mutation input** carries `id` or `hfid` — required for every operation on a kind whose HFID is **all-direct**, and carried as a `xfail(strict=True)` for a kind whose HFID **crosses a relationship**, which cannot render keyed today (AD067) — built against a **committed `NodeSchemaAPI` fixture** rather than a mock; the replace-set reconciliation **issued a destination read** for the relationship before reading the peer set it compares against (AD065); two applies of one operation render **byte-identical** inputs (AD068) | `tests/plan/test_apply_conformance.py`, real `InfrahubNodeSync` over a committed schema fixture | local |
 | SC-001 (no diff/sync call), SC-002 (converge on re-apply), SC-003 (per-class matrix, both crash windows), SC-007 (live counts before/after, delete targets surviving, run state `applied`, recorded skip count), SC-008 (peer sets read back, at least one peer pre-existing and absent from the plan), SC-016 (real ambiguity) | `tests/integration/test_saved_plan_apply_integration.py` | **`integration`** (`pyproject.toml:133-135`) |
 
 **Why the conformance row was rebuilt (AD054).** As first written it asserted against the *assembled*
@@ -350,6 +426,19 @@ peer set was replaced" cannot fail for the right reason — two applies against 
 creates. The rebuilt harness constructs a real node from a committed schema fixture and asserts the
 rendered input, which is checkable offline because the SDK renders the mutation locally
 (`.venv/…/infrahub_sdk/node/node.py:295-298`, `:1843-1846`).
+
+**Three further corrections to what it asserts.** **(AD065)** The replace-set observable is that a
+destination **read was issued** for the relationship, not that the manager was fetched — a `fetch()` on an
+already-initialized manager satisfies the latter and reads nothing. **(AD067)** The keyedness assertion is
+split, because the harness is *required* to include a kind whose HFID crosses a relationship and that kind
+cannot render keyed today: all-direct kinds must render keyed, and the relationship-crossing kind carries the
+same assertion marked `xfail(strict=True)` with a reason citing the Material risk row in
+[plan.md](../plan.md#risks) — so it reports the limitation today and turns into a suite failure the day the
+limitation is gone, instead of the risk table quietly going stale. **(AD068)** "Two applies produce exactly
+one create" is replaced by "two applies render **byte-identical** mutation inputs", keyed wherever keyedness
+is assertable: a mock holds no destination state, there is no operation-level deduplication in this design
+and none is wanted, so the old form could never fail. Byte-identity is the strongest claim that is checkable
+offline and is the property convergence actually rests on.
 
 **The live row is deferred evidence, not produced evidence (AD045b).** No Infrahub is reachable in the
 development environment (AD007), so DBA-001, DBA-002, DBA-003 and DBA-008, and the live halves of

@@ -42,7 +42,7 @@ anchored `file:line`. Verdict counts: **10 SATISFIED / 10 DEFECT(BLOCKING) / 19 
 | CHK027 | DEFECT | RECOMMENDED | SC-007's before/after counts are not scoped to any kind set, and the surviving object is not asserted directly. |
 | CHK028 | DEFECT | RECOMMENDED | SC-002's "same object identities" is not scoped to an enumerable kind set. |
 | CHK029 | SATISFIED | — | FR-014 + AD003 are total for this case: deletes never populate the cache and the peer resolves from the destination. |
-| CHK030 | SATISFIED | — | FR-017 + FR-016 + FR-022 fully determine a delete-only plan: no writes, failed run. |
+| CHK030 | SATISFIED | — | FR-017 + FR-016 + FR-022 fully determine a delete-only plan: no writes, and — **restated per AD055**, which superseded this row's original "failed run" — an **applied** run recording the skipped count and identifiers. |
 | CHK031 | DEFECT | RECOMMENDED | The crash hazard specific to relationships (object created, peers unlinked) has no stated expectation. |
 | CHK032 | DEFECT | BLOCKING | A peer identity matching more than one destination object has no stated behavior; today it raises a bare `IndexError`. `PRODUCT-AMBIGUITY` |
 | CHK033 | DEFECT | RECOMMENDED | A planned update whose target vanished is unspecified; the only viable path silently turns it into a create. |
