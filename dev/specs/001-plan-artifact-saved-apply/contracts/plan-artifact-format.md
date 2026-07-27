@@ -58,7 +58,7 @@ sharing an identifier fail the plan run (FR-021).
 ## `operations.jsonl` — one line per operation
 
 ```json
-{"action":"create","identity":{"name":"prod"},"kind":"BuiltinTag","operation_id":"op_3f2a1c9d0e4b6a58","payload":{"description":"Production","name":"prod"},"tier":0}
+{"action":"create","identity":{"name":"prod"},"kind":"BuiltinTag","operation_id":"op_3531c0d83d698fd1","payload":{"description":"Production","name":"prod"},"tier":0}
 ```
 
 With relationships (cardinality one and many together). `LocationRack`'s identity is
@@ -66,20 +66,20 @@ With relationships (cardinality one and many together). `LocationRack`'s identit
 relationship reference, and is **not** duplicated into the payload:
 
 ```json
-{"action":"update","identity":{"name":"dc1-rack-a","site":{"identity":{"name":"dc1"},"peer_kind":"LocationSite"}},"kind":"LocationRack","operation_id":"op_9b1d77c204e3af10","payload":{"name":"dc1-rack-a"},"relationships":[{"cardinality":"one","field":"site","peer_kind":"LocationSite","peers":[{"name":"dc1"}]},{"cardinality":"many","field":"tags","peer_kind":"BuiltinTag","peers":[{"name":"prod"},{"name":"rack"}]}],"tier":2}
+{"action":"update","identity":{"name":"dc1-rack-a","site":{"identity":{"name":"dc1"},"peer_kind":"LocationSite"}},"kind":"LocationRack","operation_id":"op_42d8e04c060f61b8","payload":{"name":"dc1-rack-a"},"relationships":[{"cardinality":"one","field":"site","peer_kind":"LocationSite","peers":[{"name":"dc1"}]},{"cardinality":"many","field":"tags","peer_kind":"BuiltinTag","peers":[{"name":"prod"},{"name":"rack"}]}],"tier":2}
 ```
 
 A peer whose own identity contains a reference nests, recursively — an `InterfacePhysical` whose
 `device` is a `DcimDevice` whose `location` is a `LocationRack`:
 
 ```json
-{"action":"create","identity":{"device":{"identity":{"location":{"identity":{"name":"rack-a","site":{"identity":{"name":"dc1"},"peer_kind":"LocationSite"}},"peer_kind":"LocationRack"},"name":"dev1"},"peer_kind":"DcimDevice"},"name":"Ethernet1"},"kind":"InterfacePhysical","operation_id":"op_1a2b3c4d5e6f7081","payload":{"name":"Ethernet1"},"relationships":[{"cardinality":"one","field":"device","peer_kind":"DcimDevice","peers":[{"location":{"identity":{"name":"rack-a","site":{"identity":{"name":"dc1"},"peer_kind":"LocationSite"}},"peer_kind":"LocationRack"},"name":"dev1"}]}],"tier":4}
+{"action":"create","identity":{"device":{"identity":{"location":{"identity":{"name":"rack-a","site":{"identity":{"name":"dc1"},"peer_kind":"LocationSite"}},"peer_kind":"LocationRack"},"name":"dev1"},"peer_kind":"DcimDevice"},"name":"Ethernet1"},"kind":"InterfacePhysical","operation_id":"op_5dfe0d0bdc714b36","payload":{"name":"Ethernet1"},"relationships":[{"cardinality":"one","field":"device","peer_kind":"DcimDevice","peers":[{"location":{"identity":{"name":"rack-a","site":{"identity":{"name":"dc1"},"peer_kind":"LocationSite"}},"peer_kind":"LocationRack"},"name":"dev1"}]}],"tier":4}
 ```
 
 A delete carries no payload:
 
 ```json
-{"action":"delete","identity":{"name":"retired"},"kind":"BuiltinTag","operation_id":"op_c40e9a71b3d5f682","tier":0}
+{"action":"delete","identity":{"name":"retired"},"kind":"BuiltinTag","operation_id":"op_ba078d0eae6c9fc3","tier":0}
 ```
 
 | Key | Type | Obligation |
@@ -112,7 +112,7 @@ unachievable.
 `element.source_attrs` alone cannot supply them. It is built from `src_obj.get_attrs()`
 (`.venv/…/diffsync/helpers.py:223`), whose own contract states it "does not include the fields in
 `_identifiers`" (`.venv/…/diffsync/__init__.py:340-347`), and the generator strips identifiers out of
-the `_attributes` tuple before the models are written (`infrahub_sync/generator/__init__.py:94`).
+the `_attributes` tuple before the models are written (`infrahub_sync/generator/__init__.py:95`).
 Today's create path avoids the problem by passing identifiers and attributes together
 (`infrahub_sync/adapters/infrahub.py:602-604`); the artifact must do the same.
 
@@ -138,14 +138,41 @@ string. On a memo miss the apply-time resolver holds only the peer's identity ma
 nested pair it could not build a nested destination filter without splitting a unique-id on `__` —
 the v1 flaw the brief names.
 
-`peer_kind` at every level is the kind of the **loaded source store entry** for the referenced
-unique-id, not the referring field's `reference` value: `DcimDevice` is declared by two schema-mapping
-entries whose `location` reference differs (`examples/netbox_to_infrahub/config.yml:212` →
-`LocationRack`, `:254` → `LocationSite`), so the mapping alone is ambiguous and a wrong pick fails the
-whole apply run on the qualified path (AD046).
+`peer_kind` at every level is **probed from the store**, never read from the referring field's
+`reference` value: `DcimDevice` is declared by two schema-mapping entries whose `location` reference
+differs (`examples/netbox_to_infrahub/config.yml:212` → `LocationRack`, `:254` → `LocationSite`), so
+the mapping alone is ambiguous and a wrong pick fails the whole apply run on the qualified path
+(AD046).
+
+The probe is bounded and its arms are fixed (AD050). AD046's own phrasing — "the loaded source store
+entry knows its own kind" — is not constructible: `store.get(*, model, identifier)` requires the model
+before the identifier is looked at, on the base class and in the local implementation alike
+(`.venv/…/diffsync/store/__init__.py:40-52`, `.venv/…/diffsync/store/local.py:30-49`), so there is no
+kind-free lookup by unique-id.
+
+| Step | Rule |
+|---|---|
+| Candidate set | The kinds declared as `reference` for that field across **every** schema-mapping entry whose `name` is the owning destination kind. For `DcimDevice.location`: `{LocationRack, LocationSite}` (`examples/netbox_to_infrahub/config.yml:239`, `:281`) |
+| Probe | `store.get(model=candidate, identifier=peer_unique_id)` per candidate, `ObjectNotFound` meaning "not this kind" |
+| Which store | The **source** store when the owning operation is a `create` or `update`; the **destination** store when it is a derived `delete`, whose peers are destination-only by construction (AD049) |
+| exactly 1 hit | That candidate is `peer_kind` |
+| **0** hits | The plan run fails, naming the owning kind, the field, the unique-id and the candidates tried (FR-030) |
+| **> 1** hit | The plan run fails, naming the same four things (FR-030) |
+| Fallback | **None.** A one-candidate set is probed like any other and a miss still fails — returning the sole mapping-declared kind unprobed is the mapping-derived answer AD046 forbids, reached by another route |
 
 Nested objects are key-sorted like any other, so the canonical encoding and the identifier derivation
 are unaffected.
+
+### A derived delete's identity (AD049)
+
+A delete carries no payload and no `relationships`, but its `identity` obeys **exactly** the rules
+above, including the recursive `{peer_kind, identity}` shape for a reference-valued component. The
+only difference is which store the probe runs against: a delete exists because its object is present at
+the destination and absent from the source, so its peers are destination-only and the source store has
+nothing to resolve. Nine kinds on the qualified path (ten mapping entries) carry a reference inside
+their identifiers, so this is the ordinary case for deletes there. Deletes are **not** exempt: exempting
+them would leave one place in the format where a consumer must split a unique-id on `__`, and would
+make a delete's `operation_id` derive from an identity no reviewer is shown.
 
 ## Operation-identifier derivation
 
@@ -159,12 +186,31 @@ The hash input is a JSON **array** in the order (action, kind, identity) — fix
 payload is deliberately excluded, so the identifier names the logical operation and stays stable across
 re-plans; payload exactness is guaranteed by `plan_checksum` instead (AD002).
 
-**Test vector** (must hold in `tests/plan/test_identity.py`):
+Every `operation_id` in the worked examples above is the value this rule actually produces for that
+example's `(action, kind, identity)` — recomputed, not illustrative. The data model rejects a stored
+identifier that does not match its own triple, so an approximate example in this contract would be an
+example the model refuses.
+
+**Test vectors** (must hold in `tests/plan/test_identity.py`) — the canonical input string on the left,
+the resulting identifier on the right. Each input is UTF-8, no whitespace, no escapes:
 
 ```text
-input bytes : ["create","BuiltinTag",{"name":"prod"}]
-              (0x5b 0x22 0x63 ... — no whitespace, no escapes, UTF-8)
+["create","BuiltinTag",{"name":"prod"}]
+    -> op_3531c0d83d698fd1
+
+["update","LocationRack",{"name":"dc1-rack-a","site":{"identity":{"name":"dc1"},"peer_kind":"LocationSite"}}]
+    -> op_42d8e04c060f61b8
+
+["create","InterfacePhysical",{"device":{"identity":{"location":{"identity":{"name":"rack-a","site":{"identity":{"name":"dc1"},"peer_kind":"LocationSite"}},"peer_kind":"LocationRack"},"name":"dev1"},"peer_kind":"DcimDevice"},"name":"Ethernet1"}]
+    -> op_5dfe0d0bdc714b36
+
+["delete","BuiltinTag",{"name":"retired"}]
+    -> op_ba078d0eae6c9fc3
 ```
+
+The fourth vector is a **delete**, and it is here deliberately: a derived delete's identity is
+canonicalised by the same rule as any other operation's, so its identifier derives from the same
+three-element array (AD049).
 
 Under FR-002's closed action vocabulary exactly one operation exists per
 `(action, kind, identity)`, so a collision is always pathological and fails the plan run (FR-021).

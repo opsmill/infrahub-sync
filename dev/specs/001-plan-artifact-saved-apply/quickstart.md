@@ -9,8 +9,10 @@ reader in [contracts/plan-reader-api.md](./contracts/plan-reader-api.md). This p
 
 **Track 2 is deferred evidence, not produced evidence (AD045b).** No Infrahub is reachable in the
 development environment, so SC-001, SC-002, SC-003 and SC-008, and the live halves of SC-007 and
-SC-016 — brief criteria DBA-001, DBA-002, DBA-003, DBA-008 and the live halves of DBA-007 and SC-016 —
-have no passing evidence at merge time, and the brief's completion condition is **not met**. Track 1
+SC-016, have no passing evidence at merge time. **Five** of those six are the brief's own criteria —
+DBA-001, DBA-002, DBA-003 and DBA-008 in full, plus the live half of DBA-007; the sixth, SC-016's live
+half, this specification derived rather than took from the brief. The brief's completion condition is
+therefore **not met**. Track 1
 includes an offline mutation-payload conformance harness that catches the class of defect those
 criteria were the only other check on, but it does not substitute for them.
 
@@ -89,7 +91,7 @@ table task for task; the two must not drift.
 | SC-010 | `tests/plan/test_canary.py` or equivalent (T072) | Canary credential in `settings`; absent from the artifact files, the captured stdout, and the reader's returned data — and the test fails if the canary is planted into a payload |
 | SC-011 | `tests/plan/test_reader.py` (T024) + `tests/test_cli_plan_review.py` (T065) | T024: a run directory with `plan.parquet` and no `plan/` raises with the re-plan message. T065: the same case on the apply path, with zero writes and `failed` |
 | SC-013 | `tests/plan/test_config_version.py` (T014 plan side, T057 apply side) | An opaque printable-ASCII value supplied verbatim round-trips through write and apply comparison, never parsed |
-| SC-014 | `tests/test_potenda_plan_artifact.py` (T039) | **Three** cases: no `human_friendly_id`; an identity missing an HFID component; and a complete HFID with **no uniqueness constraint** over the plan's identity attributes. Each warns naming the kind and what is missing — and the plan run still succeeds |
+| SC-014 | `tests/test_potenda_plan_artifact.py` (T039, T085) | **Four** cases: no `human_friendly_id`; an identity missing an HFID component; a complete HFID with **no uniqueness constraint** over the plan's identity attributes; and a destination exposing **no schema at all**. The first three warn naming the kind and what is missing; the fourth skips the warning without erroring (AD052). The plan run succeeds in all four, and T085 asserts the same for a full `diff` against a non-Infrahub destination |
 | SC-015 | `tests/plan/test_verify.py` (T025) + `tests/test_cli_plan_review.py` (T065) | A `plan/` directory copied between run directories yields a `run_binding` failure (T025) and is refused on the apply path with zero writes and `failed` (T065) |
 | SC-016 (local half) | `tests/adapters/test_infrahub_planned_write.py` (T053) | Zero-match names the peer kind, peer identity and referring operation id; multi-match names the peer kind, peer identity and match count; and the live `sync` path's warn-and-continue is asserted **unchanged** (AD048) |
 | SC-017 | `tests/test_potenda_plan_artifact.py` (T037) | Full destination extract → deletes recorded and `delete_operations_computed: true`; incremental → no deletes and `false`, and the apply is not driven to `failed` by a phantom delete |
@@ -134,8 +136,9 @@ Skipped automatically when `INFRAHUB_ADDRESS` and `INFRAHUB_API_TOKEN` are unset
 `pyproject.toml:133-135`.
 
 **Everything in this table is deferred.** These tests are authored, not run, in the environment this
-feature was built in. Until someone runs them against a live Infrahub, DBA-001, DBA-002, DBA-003 and
-DBA-008 and the live halves of DBA-007 and SC-016 have no passing evidence, and the brief's completion
+feature was built in. Until someone runs them against a live Infrahub, five of the brief's criteria —
+DBA-001, DBA-002, DBA-003 and DBA-008 in full, plus the live half of DBA-007 — have no passing
+evidence, nor does the live half of this specification's own SC-016, and the brief's completion
 condition is unmet. Do not report them as covered on the strength of the offline harness.
 
 | SC | What the test does |

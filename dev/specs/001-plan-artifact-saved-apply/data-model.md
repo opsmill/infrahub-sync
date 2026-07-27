@@ -31,14 +31,55 @@ Not a class — a **rule** about a `dict[str, Any]`, enforced by `identity.canon
 | Property | Rule | Requirement |
 |---|---|---|
 | Representation | An ordered mapping of identity attribute name to value, sorted by attribute name | FR-028.3 |
-| Population | Comes from `DiffElement.keys`, which diffsync documents as "as in `DiffSyncModel.get_identifiers()`" (`.venv/…/diffsync/diff.py:180,191`) | — |
-| Value domain | Whatever `canonical_value` accepts (see PD-002) **or** a nested peer reference. An identity component that is itself a relationship is **never** stored as the peer's DiffSync unique-id string: it is stored as `{"peer_kind": <kind>, "identity": <DestinationIdentity>}`, recursively, so a consumer never has to split a unique-id on `__` to recover the peer's identity (AD043). Ten schema-mapping entries on the qualified path hit this case | AD043, PD-004 |
-| Nested peer kind | Resolved from the **loaded source store entry** for the referenced unique-id, not from the referring field's `SchemaMappingField.reference`: `DcimDevice` is declared by two schema-mapping entries whose `location` reference differs (`examples/netbox_to_infrahub/config.yml:212` → `LocationRack`, `:254` → `LocationSite`), so the mapping alone cannot say which kind a given peer is | AD046 |
+| Population | Comes from `DiffElement.keys`, which diffsync documents as "as in `DiffSyncModel.get_identifiers()`" (`.venv/…/diffsync/diff.py:178`, assigned `:191`) | — |
+| Value domain | Whatever `canonical_value` accepts (see PD-002) **or** a nested peer reference. An identity component that is itself a relationship is **never** stored as the peer's DiffSync unique-id string: it is stored as `{"peer_kind": <kind>, "identity": <DestinationIdentity>}`, recursively, so a consumer never has to split a unique-id on `__` to recover the peer's identity (AD043). Ten schema-mapping entries across nine kinds on the qualified path hit this case | AD043, PD-004 |
+| Nested peer kind | Established by **probing the store**, never read from the referring field's `SchemaMappingField.reference`. See "Resolving a nested peer kind" below | AD046, AD050 |
+| Which store is probed | The **source** store for a `create` or `update` identity; the **destination** store for a derived `delete` identity, whose peers are destination-only by construction (AD049) | AD049 |
 | Emptiness | An operation for which no identity value can be formed **fails the plan run**, naming the kind and the identity attribute that had no value | AD035; spec Edge Cases |
 
 The same canonical form is what FR-003 hashes, what FR-005 orders relationship-reference lists by, and
 what per-object review presents (FR-006) — so the identity an operator reads is the identity the
-identifier was derived from.
+identifier was derived from. That holds for a derived delete too: a delete is canonicalised by the same
+recursive rule as every other operation, differing only in which store its nested peer kinds are probed
+against (AD049).
+
+### Resolving a nested peer kind (AD050)
+
+AD046 forbids taking the peer's kind from the mapping. Its stated mechanism — "the loaded source store
+entry knows its own kind" — is **not constructible**: the store is keyed by (model, unique-id) and
+every read requires the model up front, both on the base class and in the local implementation
+(`.venv/…/diffsync/store/__init__.py:40-52`, `.venv/…/diffsync/store/local.py:30-49`). There is no
+kind-free lookup by unique-id, so the kind cannot be discovered from the entry.
+
+The rule is therefore a **bounded probe**:
+
+```python
+candidates = {
+    field.reference
+    for entry in config.schema_mapping if entry.name == owning_kind
+    for field in entry.fields if field.name == field_name and field.reference
+}
+hits = []
+for candidate in sorted(candidates):
+    try:
+        hits.append((candidate, store.get(model=candidate, identifier=peer_unique_id)))
+    except ObjectNotFound:
+        continue
+```
+
+| Hits | Behavior |
+|---|---|
+| exactly 1 | That candidate is the peer's kind; its `get_identifiers()` gives the peer identity |
+| **0** | Fails the plan run, naming the owning kind, the field, the unique-id and the candidates tried — the same derivation-failure path as any other unresolvable peer (FR-030) |
+| **> 1** | Fails the plan run, naming the same four things, on that same path (FR-030) |
+
+`store` is the source adapter's store for a `create`/`update` identity and the destination adapter's
+store for a derived `delete` identity (AD049). A **single**-candidate set is probed like any other and
+a miss still fails: silently returning the sole mapping-declared kind would be exactly the
+mapping-derived answer AD046 exists to forbid, arrived at by a different route. On the qualified path
+`DcimDevice.location` is the two-candidate case — `{LocationRack, LocationSite}`
+(`examples/netbox_to_infrahub/config.yml:239`, `:281`) — and every other reference-bearing identifier
+there is a one-candidate case.
 
 ---
 
@@ -49,7 +90,7 @@ A peer named by kind and identity, never by a destination-assigned id.
 | Field | Type | Obligation | Rule |
 |---|---|---|---|
 | `field` | `str` | required | The owning object's field name, i.e. the `SchemaMappingField.name` whose `reference` is set |
-| `peer_kind` | `str` | required | The kind of the **loaded source store entry** for the referenced unique-id, **not** the referring field's `SchemaMappingField.reference` value. Deriving it from the mapping is ambiguous on the qualified path, where `DcimDevice` is declared twice with different `location` references (`examples/netbox_to_infrahub/config.yml:212`, `:254`) and a wrong pick fails the whole apply run (AD046) |
+| `peer_kind` | `str` | required | Established by the bounded store probe above, **not** by reading the referring field's `SchemaMappingField.reference`. Deriving it from the mapping is ambiguous on the qualified path, where `DcimDevice` is declared twice with different `location` references (`examples/netbox_to_infrahub/config.yml:212`, `:254`) and a wrong pick fails the whole apply run (AD046, AD050) |
 | `cardinality` | `Literal["one", "many"]` | required | Derived from whether the mapped value is a scalar or a list |
 | `peers` | `list[DestinationIdentity]` | required | Exactly one element when `cardinality == "one"`; zero or more when `"many"`, ordered canonically by peer identity (AD003, FR-005). Each peer identity may itself contain nested `{peer_kind, identity}` values, recursively (AD043) |
 
@@ -59,8 +100,9 @@ A peer named by kind and identity, never by a destination-assigned id.
 - An **empty** `peers` list under `cardinality == "many"` means the peer set is deliberately empty and
   the replace-set write acts on it; the reference being **absent** means the operation carries no value
   of that kind at all. The two are never interchangeable (FR-028.2).
-- A peer identity that cannot be resolved at plan time (the peer is not in the loaded source store)
-  **fails the command**, naming the owning kind, the field, the peer kind and the unresolvable
+- A peer identity that cannot be resolved at plan time — the peer is in **none** of the candidate
+  kinds' stores, or in **more than one** of them — **fails the command**, naming the owning kind, the
+  field, the candidate kinds tried and the unresolvable
   unique-id. There is no warn-and-drop escape and no error-tolerance option: `--continue-on-error` is
   declared on the mutating command only (`infrahub_sync/cli.py:190`), so it does not exist on the
   non-mutating command where derivation also runs, and degrading to warn-and-drop there would emit a
@@ -79,9 +121,9 @@ One proposed change. This is the record nine later outcomes consume.
 | `operation_id` | `str` | required, always | `"op_" + sha256(canonical_json_bytes([action, kind, identity]))[:16]`; matches `^op_[0-9a-f]{16}$` (FR-003, AD002, PD-001) |
 | `action` | `Literal["create","update","delete"]` | required, always | Closed vocabulary; a relationship change is never a fourth action (FR-002, AD009) |
 | `kind` | `str` | required, always | The destination kind, from `DiffElement.type` |
-| `identity` | `dict[str, Any]` | required, always | Canonical `DestinationIdentity` |
+| `identity` | `dict[str, Any]` | required, always | Canonical `DestinationIdentity` — on a `delete` too, with its nested peer kinds probed against the destination store (AD049) |
 | `tier` | `int` | required, always | Index of the tier set containing the kind, or the kind's index in `top_level` when the configuration declares `order:` (PD-007) |
-| `payload` | `dict[str, Any] \| None` | required on `create` and `update`; **omitted** on `delete` | `element.keys` ∪ `element.source_attrs`, minus any key carried as a `RelationshipReference` — i.e. the **identity components are inside the payload**. `source_attrs` alone is not enough: it comes from `get_attrs()`, whose contract is "does not include the fields in `_identifiers`" (`.venv/…/diffsync/__init__.py:340-347`, called at `.venv/…/diffsync/helpers.py:223`), and the generator strips identifiers out of `_attributes` (`infrahub_sync/generator/__init__.py:94`). A payload without them cannot form the destination's HFID, the upsert is unkeyed, and every re-apply duplicates (AD042). Authoritative for the fields it carries and silent about every other destination field (FR-028.4). List-valued attributes stay in source order and are never re-sorted (FR-005) |
+| `payload` | `dict[str, Any] \| None` | required on `create` and `update`; **omitted** on `delete` | `element.keys` ∪ `element.source_attrs`, minus any key carried as a `RelationshipReference` — i.e. the **identity components are inside the payload**. `source_attrs` alone is not enough: it comes from `get_attrs()`, whose contract is "does not include the fields in `_identifiers`" (`.venv/…/diffsync/__init__.py:340-347`, called at `.venv/…/diffsync/helpers.py:223`), and the generator strips identifiers out of `_attributes` (`infrahub_sync/generator/__init__.py:95`). A payload without them cannot form the destination's HFID, the upsert is unkeyed, and every re-apply duplicates (AD042). Authoritative for the fields it carries and silent about every other destination field (FR-028.4). List-valued attributes stay in source order and are never re-sorted (FR-005) |
 | `relationships` | `list[RelationshipReference] \| None` | optional — present when the operation carries any, **absent** when it carries none | Ordered by `field` name for determinism |
 
 ### Validation

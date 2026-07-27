@@ -137,7 +137,7 @@ against its `fields[].reference` — one row per **mapping entry**, not per kind
 
 | # | Entry | `identifiers` | identity components that are references |
 |---|---|---|---|
-| 1 | `LocationRack` (`:70`) | `name`, `site` | `site` → `LocationSite` |
+| 1 | `LocationRack` (`:119`) | `name`, `site` | `site` → `LocationSite` |
 | 2 | `DcimDeviceType` (`:168`) | `name`, `manufacturer` | `manufacturer` → `OrganizationManufacturer` |
 | 3 | `DcimDevice` (`:212`) | `location`, `name` | `location` → **`LocationRack`** (`mapping: rack`) |
 | 4 | `DcimDevice` (`:254`) | `location`, `name` | `location` → **`LocationSite`** (`mapping: site`) |
@@ -160,11 +160,33 @@ on a memo miss the resolver holds only the peer's identity mapping, and if the c
 were a unique-id string the only way to reach `<attr>` would be to split it — the very flaw this
 decision exists to avoid.
 
-**Peer-kind ambiguity settled separately as AD046**: because rows 3 and 4 declare the same kind with
-different references, a peer's `peer_kind` is resolved from the **loaded source store entry** for the
-referenced unique-id — the entry knows its own kind — rather than from the referring field's
-`SchemaMappingField.reference`. Deriving it from the mapping picks one of two answers arbitrarily for
-`DcimDevice.location`, and a wrong pick fails the whole apply run on the brief's own qualified path.
+**Peer-kind ambiguity settled separately as AD046, made constructible by AD050**: because rows 3 and 4
+declare the same kind with different references, a peer's `peer_kind` is **never** taken from the
+referring field's `SchemaMappingField.reference` — deriving it from the mapping picks one of two answers
+arbitrarily for `DcimDevice.location`, and a wrong pick fails the whole apply run on the brief's own
+qualified path. AD046's stated mechanism, "the loaded source store entry knows its own kind", turns out
+to be circular: `BaseStore.get(*, model, identifier)` and `LocalStore.get` both require the model before
+the identifier is used, selecting the per-model bucket first
+(`.venv/…/diffsync/store/__init__.py:40-52`, `.venv/…/diffsync/store/local.py:30-49`), and the only
+kind-free call on the store is `get_all_model_names()` (`.venv/…/diffsync/store/local.py:22-28`), which
+enumerates every loaded kind rather than answering for one unique-id. There is no way to ask "what kind
+is this unique-id" without already having a kind to ask about.
+
+AD050 restates the rule as a **bounded probe** over a candidate set drawn from the mapping — the kinds
+declared as `reference` for that field across every mapping entry whose `name` is the owning destination
+kind. Each candidate is probed with `store.get(model=candidate, identifier=peer_unique_id)`;
+`ObjectNotFound` means "not this kind". Exactly one hit gives the answer; zero hits and more than one
+hit both fail the plan run under FR-030, naming the owning kind, the field, the unique-id and the
+candidates tried. There is deliberately **no fallback** to the mapping-declared kind, not even when the
+candidate set has one member: an unprobed single candidate *is* the mapping-derived answer AD046
+forbids, and taking it would make a wrong pick silent on the path where it fails the whole apply run.
+Full rule and worked case in [data-model.md](./data-model.md#resolving-a-nested-peer-kind-ad050).
+
+**Deletes use the same rule against the other store (AD049)**: a derived delete's identity is
+canonicalised identically, with the probe run against the **destination** store. A delete exists because
+its object is at the destination and not at the source, so its peers are destination-only and the source
+store has nothing to resolve — which is why AD046's source-side phrasing does not reach the delete case
+and why deletes are nonetheless not carved out of the recursive rule.
 
 **Decision**: the resolver builds its query from the **destination schema's own** `human_friendly_id`
 component paths (`.venv/…/infrahub_sdk/schema/main.py:272`; the adapter already caches the whole
@@ -254,8 +276,11 @@ things that are not true, which is worse than telling them one thing that is.
 **Alternatives considered**: evaluate all five regardless (rejected as above); refuse without naming
 the check (rejected: FR-009 requires the check to be named).
 
-**Materiality**: low. It is a reading of FR-009 rather than a change to it, and it is stated in the
-contract so a reviewer can disagree in one place.
+**Materiality**: low. It began as a reading of FR-009 that FR-009's own text did not admit — the
+requirement said all checks are evaluated and every failure named, without qualification, while this
+decision and a task both assumed a short-circuit. FR-009 has since been amended to state the gate
+explicitly (AD053), so the requirement and this decision now say the same thing and a reviewer can
+disagree with either in one place.
 
 ---
 
@@ -425,7 +450,7 @@ Recorded so a later reader does not re-investigate them.
   instead (`infrahub_sync/potenda/__init__.py:314-316`). But `source_attrs` is built from
   `src_obj.get_attrs()` (`.venv/…/diffsync/helpers.py:223`), whose contract states it "does not
   include the fields in `_identifiers`" (`.venv/…/diffsync/__init__.py:340-347`), and the generator
-  strips identifiers out of `_attributes` (`infrahub_sync/generator/__init__.py:94`). The payload is
+  strips identifiers out of `_attributes` (`infrahub_sync/generator/__init__.py:95`). The payload is
   therefore `element.keys ∪ element.source_attrs`. Taking `source_attrs` alone would have produced
   payloads with no identity fields, an unkeyed upsert, and duplication on every re-apply.
 - **Whether the destination identity is available at plan time.** Yes, and separately from the

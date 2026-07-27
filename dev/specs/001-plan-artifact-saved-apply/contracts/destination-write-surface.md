@@ -52,7 +52,7 @@ Both route through the same convergent upsert. Neither routes through `InfrahubM
 2. data        = dict(operation.payload)   # mapped fields INCLUDING the identity components (AD042)
 3. for ref in operation.relationships:
        data[ref.field] = peers.resolve_one(ref) | peers.resolve_many(ref)   # destination node ids
-3b. ASSERT every component path of node_schema.human_friendly_id resolves against `data`
+3b. ASSERT every component path of node_schema.human_friendly_id is ACCOUNTED FOR (rules below)
        -> otherwise raise, naming the kind and the missing component; never issue an unkeyed write
 4. create_data = client.schema.generate_payload_create(
        schema=node_schema, data=data,
@@ -76,15 +76,57 @@ include the fields in `_identifiers`" (`.venv/…/diffsync/__init__.py:340-347`)
 carry neither `id` nor `hfid`, the upsert would be unkeyed, and every re-apply would duplicate.
 
 Step 3b is the guard that makes that failure loud instead of silent: **assert that every
-human-friendly-ID component path of the destination kind resolves against the data handed to the
-create call**, before the call is made. An unresolvable component raises, naming the kind and the
-component. FR-024 warns about the same condition at plan time; step 3b is what stops it becoming
-silent data duplication at apply time if the plan-time warning was ignored or the schema changed since.
+human-friendly-ID component path of the destination kind is accounted for**, before the create call is
+made. An unaccounted-for component raises, naming the kind and the component. FR-024 warns about the
+same condition at plan time; step 3b is what stops it becoming silent data duplication at apply time if
+the plan-time warning was ignored or the schema changed since.
+
+#### What "accounted for" means, per component (AD051)
+
+"Resolves against the create data" was not implementable as first written. For a relationship-crossing
+component the data holds a resolved node-id **string** by the time step 3b runs — step 3 put it there —
+and an attribute cannot be read out of a node id. The check is therefore defined per component shape,
+against two sources: the `data` mapping and the operation the write is executing.
+
+| HFID component path | Check |
+|---|---|
+| `<attr>` or `<attr>__value` — a **direct** component | `data` contains the key `<attr>` and its value is not `None` |
+| `<rel>__<attr>__value` — a **relationship-crossing** component | `data` contains the key `<rel>` and its value is not `None`, **and** the operation's nested `{peer_kind, identity}` for `<rel>` (AD043) supplies `<attr>` in its `identity` |
+
+Both arms are checkable from what the apply holds, and both still fail for every case the assertion
+exists to catch: a payload that lost its identity components (AD042's defect class) fails the first
+arm, and a relationship reference the plan recorded without the nested pair fails the second. Nesting
+deeper than one level recurses through the nested `identity` by the same rule.
+
+#### Recorded risk: nested HFID resolution needs the SDK client store (AD051)
+
+This is a dependency of the design on SDK behavior, recorded because the resolver is specified never to
+touch that store, and it is carried as a **risk** with step 3b as its detector rather than as a settled
+mechanism. It is also listed in [plan.md](../plan.md#risks).
+
+| Verified fact | Location |
+|---|---|
+| `get_human_friendly_id()` returns `None` if **any** component resolves to `None` | `.venv/…/infrahub_sdk/node/node.py:135-139` |
+| For a relationship-crossing component, `get_path_value()` resolves the peer via `related_node.get()`, catches `NodeNotFoundError`/`ValueError`, and returns `None` — the comment at the catch says "this can happen while batch creating nodes, the lookup won't work as the store is not populated" | `.venv/…/infrahub_sdk/node/node.py:100-107` |
+| `RelatedNodeSync.get()` reads the **SDK client store**, and needs both `id` **and** `typename` to do so; with neither that nor an `hfid_str` it raises `ValueError` | `.venv/…/infrahub_sdk/node/related_node.py:298-304` |
+| A relationship value handed in as a bare id renders as `{"id": "<id>"}` with no `__typename`, so `_typename` is `None` and the store read above is never attempted | `.venv/…/infrahub_sdk/schema/__init__.py:172-181`; `.venv/…/infrahub_sdk/node/related_node.py:54-55`, `:64-68` |
+| With no `id` and no `hfid`, the mutation is unkeyed | `.venv/…/infrahub_sdk/node/node.py:295-298` |
+| The client store is populated on `save()` and on `get`/`filters` with `populate_store=True` | `.venv/…/infrahub_sdk/node/node.py:744`, `:1549`; `.venv/…/infrahub_sdk/client.py:911-918`, `:2271-2278` |
+
+**Consequence**: for a destination kind whose HFID crosses a relationship, the SDK cannot compute an
+`hfid` client-side from a peer supplied as a resolved id alone. Step 3b's second arm confirms the plan
+*carries* the nested attribute; it does not make the SDK able to read it. If the server's upsert cannot
+key on the components as sent, the failure surfaces as a duplicate at a live destination — which is
+exactly what the deferred SC-002 and SC-003 measure, and why they are deferred rather than replaced.
+The mitigation available offline is that no unkeyed write is issued blind: an operation whose HFID
+components cannot be accounted for raises at step 3b instead of duplicating silently. The residual —
+whether an accounted-for nested component actually keys the server-side upsert — is unverifiable
+without a live Infrahub (AD007) and is asserted by the `integration`-marked SC-002 and SC-003 tests.
 
 | Clause | Rule | Requirement |
 |---|---|---|
 | Convergence key | The destination kind's human-friendly ID — the SDK's upsert mutation is keyed on `data["id"]` if set, else `data["hfid"]` (`.venv/…/infrahub_sdk/node/node.py:295-298`) | FR-013, AD017 |
-| Convergence-key presence | Asserted at step 3b over the data handed to `client.create`; an unresolvable HFID component raises rather than issuing an unkeyed write | FR-013, AD042 |
+| Convergence-key presence | Asserted at step 3b by the per-component rule above — direct components checked in `data`, relationship-crossing components checked in `data` **and** in the operation's nested `{peer_kind, identity}`; an unaccounted-for component raises rather than issuing an unkeyed write | FR-013, AD042, AD051 |
 | Payload authority | Authoritative for the mapped fields it carries; **must not** touch unmapped destination fields. "Full" means complete with respect to the configuration's field mapping, not the destination schema | FR-028.4 |
 | Cardinality-many | **Replace-set**, enforced explicitly at step 7 rather than assumed of the upsert (PD-005). `peers: []` under `cardinality: "many"` means "empty the set", and the replace-set acts on it | FR-013, FR-028.2 |
 | A create whose identity already exists | Converges onto the existing object through the same upsert. Whether that object's payload differs is not examined; conflict policies are out of scope | FR-013, AD025 |
@@ -223,7 +265,7 @@ In `Potenda.apply_plan`, replacing the v1 body:
 | Evidence | Where | Marker |
 |---|---|---|
 | Payload construction, upsert invocation, replace-set reconciliation, memo population, negative-caching refusal, both peer refusals, delete → unsupported, missing surface, ordered applied set, fail-fast on rejection | `tests/adapters/test_infrahub_planned_write.py`, mocked `InfrahubClientSync` | local |
-| **Mutation-payload conformance (AD045a)**: every HFID component of the destination kind present in each `client.create` call's data; the replace-set reconciliation issued for every cardinality-many relationship; a repeated operation producing no second create | `tests/plan/test_apply_conformance.py`, mocked `InfrahubClientSync` | local |
+| **Mutation-payload conformance (AD045a)**: every HFID component of the destination kind accounted for in each `client.create` call's data by the AD051 per-component rule; the replace-set reconciliation issued for every cardinality-many relationship; a repeated operation producing no second create | `tests/plan/test_apply_conformance.py`, mocked `InfrahubClientSync` | local |
 | SC-001 (no diff/sync call), SC-002 (converge on re-apply), SC-003 (per-class matrix, both crash windows), SC-007 (live counts before/after), SC-008 (peer sets read back, at least one peer pre-existing and absent from the plan), SC-016 (real ambiguity) | `tests/integration/test_saved_plan_apply_integration.py` | **`integration`** (`pyproject.toml:133-135`) |
 
 **The live row is deferred evidence, not produced evidence (AD045b).** No Infrahub is reachable in the

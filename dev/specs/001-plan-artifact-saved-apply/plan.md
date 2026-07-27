@@ -25,7 +25,7 @@ missing, and what this plan builds: a lossless artifact format (today's rows dro
 apply-time peer resolution without a comparison store, the five-check pre-apply gate, and a
 read-from-artifact review mode on the existing `diff` command.
 
-AD001–AD048 in the spec's Clarifications are treated as settled input throughout. Where this plan had
+AD001–AD053 in the spec's Clarifications are treated as settled input throughout. Where this plan had
 to close a detail those decisions left open, or where two of them interact in a way neither
 anticipated, the resolution is recorded in [research.md](./research.md) as **PD-nnn** and flagged,
 not buried. Five of those PDs were ratified into the spec as AD037–AD041; AD042–AD048 came from a
@@ -84,7 +84,7 @@ Every claim this plan relies on was read in the tree at the cited line. Nothing 
 | V1 | `Potenda.apply_plan` reads `plan.parquet` and dispatches per row to `destination.apply_cached_row(resource, action, source_id, attribute, new_value)`; it never calls `diff_from`/`sync_from`, and it guards a missing surface with `NotImplementedError` naming the adapter class | `infrahub_sync/potenda/__init__.py:341-370` (guard `:354-360`, dispatch `:363-370`) |
 | V2 | `_diff_to_rows` emits `dest_id: ""` and `attribute: ""` as literal empty strings and carries only the changed attributes (`get_attrs_diffs()`), never the full payload and never the identity | `infrahub_sync/potenda/__init__.py:297-331` (empty fields `:322-323`, attrs `:314-316`) |
 | V3 | `apply_cached_row` has **no adapter implementation anywhere**: the only occurrences in the repository are the engine's own dispatch, one `MagicMock` test double, and a bench print | `infrahub_sync/potenda/__init__.py:344,354,357,361,364`; `tests/cache/test_apply_plan.py:43-44`; `tasks/bench.py:413` |
-| V4 | `DiffElement` carries `keys` (the identifiers mapping — the destination identity), `type` (the kind), and `source_attrs` (the full source **attribute** set, not just the delta). The two are disjoint: `source_attrs` is populated from `src_obj.get_attrs()`, whose contract is "Does not include the fields in `_identifiers`", so `source_attrs` carries **no identity field at all** and `keys` is the only source of identity on the element | `.venv/…/diffsync/diff.py:189-196`; `keys` documented "as in DiffSyncModel.get_identifiers()" at `:180`; populated `.venv/…/diffsync/helpers.py:212-219,223`; exclusion contract `.venv/…/diffsync/__init__.py:340-347` |
+| V4 | `DiffElement` carries `keys` (the identifiers mapping — the destination identity), `type` (the kind), and `source_attrs` (the full source **attribute** set, not just the delta). The two are disjoint: `source_attrs` is populated from `src_obj.get_attrs()`, whose contract is "Does not include the fields in `_identifiers`", so `source_attrs` carries **no identity field at all** and `keys` is the only source of identity on the element | `.venv/…/diffsync/diff.py:189-196`; `keys` documented "as in DiffSyncModel.get_identifiers()" at `:178`; populated `.venv/…/diffsync/helpers.py:212-219,223`; exclusion contract `.venv/…/diffsync/__init__.py:340-347` |
 | V5 | `DiffElement.action` returns `create` / `update` / `delete` / `None` | `.venv/…/diffsync/diff.py:237-254` |
 | V6 | Deletes are absent from today's plan because `Potenda` defaults its flags to `SKIP_UNMATCHED_DST`, and diffsync drops destination-only objects from the diff under that flag | `infrahub_sync/potenda/__init__.py:92-93`; `.venv/…/diffsync/helpers.py:191-192` |
 | V7 | `write_resource_side` writes `<run_dir>/<side>/<resource>.parquet` and injects `_extract_ts`, `_source_id`, `_tombstone` into every row; `_extract_ts` is `datetime.now(timezone.utc)` allocated per side per run | `infrahub_sync/cache/parquet_io.py:92-142` (injection `:126-128`); `infrahub_sync/potenda/__init__.py:130` |
@@ -117,6 +117,9 @@ Every claim this plan relies on was read in the tree at the cited line. Nothing 
 | V34 | `--continue-on-error` is declared on the `sync` command only and is passed to nothing on the `diff` path, so it is unavailable to plan derivation running under `diff` | `infrahub_sync/cli.py:190`, consumed `:234`; `diff_cmd` `:87-165` declares no such option |
 | V35 | `update_node`, `resolve_peer_node` and `diffsync_to_infrahub` are **module-level functions**, not methods on `InfrahubAdapter`; the adapter class begins at `:277` | `infrahub_sync/adapters/infrahub.py:57`, `:97`, `:180`, `:277` |
 | V36 | Today's convergent create passes identifiers **and** attributes into the payload builder — `diffsync_to_infrahub(ids=ids, attrs=attrs, …)` — which is why its HFID resolves and the upsert is keyed | `infrahub_sync/adapters/infrahub.py:602-604`, upsert at `:611-612` |
+| V37 | The comparison store has **no kind-free lookup by unique-id**: `get`, `get_all` and `get_by_uids` all take `model` and select the per-model bucket before the identifier is used, and the only kind-free call, `get_all_model_names()`, enumerates loaded kinds rather than answering for one unique-id. So AD046's "the entry knows its own kind" is not reachable and AD050's bounded probe replaces it | `.venv/…/diffsync/store/__init__.py:40-52`, `:55-63`, `:66-77`; `.venv/…/diffsync/store/local.py:22-28`, `:30-49` |
+| V38 | `self.schema` (the wholesale destination schema cache FR-024 reads) exists on the **Infrahub adapter only** — no other adapter in `infrahub_sync/adapters/` defines it — and the repository already reaches for it defensively where it needs it | `infrahub_sync/adapters/infrahub.py:345`; defensive read `infrahub_sync/utils.py:260` (`getattr(dst, "schema", None)`) |
+| V39 | The SDK cannot compute a **relationship-crossing** HFID component from a peer supplied as a bare id: `get_path_value` resolves the peer through the SDK client store and returns `None` on a miss (with an in-code comment naming the batch-create case), one `None` component nulls the whole HFID, and a value rendered as `{"id": …}` carries no `__typename`, so the store read is never even attempted. The client store is populated on `save()` and on `get`/`filters` with `populate_store=True` | `.venv/…/infrahub_sdk/node/node.py:100-107`, `:135-139`, `:295-298`, `:744`, `:1549`; `.venv/…/infrahub_sdk/node/related_node.py:54-55`, `:64-68`, `:298-304`; `.venv/…/infrahub_sdk/schema/__init__.py:172-181`; `.venv/…/infrahub_sdk/client.py:911-918`, `:2271-2278` |
 
 Two things this plan deliberately does **not** claim to have verified, because AD007 records that no
 live Infrahub is reachable here, are called out at their tasks and routed to `integration`-marked
@@ -135,7 +138,7 @@ recorded and justified tension (Principle III).*
 | **II. Sync idempotency & safety** | PASS | Convergence is the point: creates and updates both route through the HFID-keyed upsert (FR-013, V10); SC-002/SC-003 measure re-apply and both crash windows; the apply refuses rather than silently skipping on every divergence path — unsupported operation (FR-017), unresolved peer (FR-014), destination rejection (AD027). Partial failure is surfaced with the failing operation identifier, never left ambiguous. |
 | **III. Adapter symmetry & pattern consistency** | PASS **with a recorded tension** | The planned-write surface is implemented on the Infrahub adapter only. That is asymmetric across the nine adapters. It is nonetheless the brief's explicit scope ("a destination write surface on the Infrahub adapter"), the asymmetry is already the status quo (V3: zero adapters implement the existing surface), and the engine already fails with a clear, actionable error naming the adapter when the surface is absent (V1, preserved as FR-023). Recorded in [Complexity Tracking](#complexity-tracking). `list`/`diff` pathways remain available on every adapter and everything still flows through `potenda`. |
 | **IV. Type safety & explicit contracts** | PASS | Every new module is fully typed with modern unions; the record types are Pydantic models in the existing `SyncConfig` style; a specific exception hierarchy (`PlanArtifactError` + eight named subclasses, see [contracts/plan-reader-api.md](./contracts/plan-reader-api.md)) replaces any broad catch. No `[[tool.ty.overrides]]` block is added; `uv run ty check .` must exit 0. Where the SDK's dynamic surface forces it, a targeted `# ty: ignore[<rule>]` with a TODO is used at the call site, matching `infrahub_sync/potenda/__init__.py:69-70`. |
-| **V. Test discipline** | PASS **with a recorded evidence gap** | ~48 tests written alongside the change, parametrized for the verification matrix and the negative cases, atomic and single-purpose. Live-destination evidence is opt-in behind the existing `integration` marker (V28) rather than a new mechanism. The gap, stated rather than implied (AD045): DBA-001, DBA-002, DBA-003 and DBA-008, and the live halves of DBA-007 and SC-016, have **no passing evidence at merge time**, so the brief's completion condition — inspectable passing evidence for every criterion — is not met. Two things narrow it. First, a local mutation-payload conformance harness against a mocked SDK asserts every HFID component present in each create call's data, the replace-set enforcement issued, and no second create on a repeated operation — which is exactly the class of defect AD042 was, and which those deferred criteria are the only other check on. Second, the deferral is recorded here, in [the evidence map](#success-criteria-evidence-map) and in `tasks.md`, so it cannot read as covered. |
+| **V. Test discipline** | PASS **with a recorded evidence gap** | ~48 tests written alongside the change, parametrized for the verification matrix and the negative cases, atomic and single-purpose. Live-destination evidence is opt-in behind the existing `integration` marker (V28) rather than a new mechanism. The gap, stated rather than implied (AD045): five of the brief's own criteria — DBA-001, DBA-002, DBA-003 and DBA-008 in full, plus the live half of DBA-007 — together with the live half of this specification's derived SC-016, have **no passing evidence at merge time**, so the brief's completion condition — inspectable passing evidence for every criterion — is not met. Two things narrow it. First, a local mutation-payload conformance harness against a mocked SDK asserts every HFID component accounted for in each create call's data by the AD051 per-component rule, the replace-set enforcement issued, and no second create on a repeated operation — which is exactly the class of defect AD042 was, and which those deferred criteria are the only other check on. Second, the deferral is recorded here, in [the evidence map](#success-criteria-evidence-map) and in `tasks.md`, so it cannot read as covered. |
 | **VI. Security, secrets & input boundaries** | PASS | FR-018/SC-010: the artifact carries mapped source field values only; `settings` credentials never enter the artifact or review output; the canary scan asserts it over the artifact files, captured stdout, and the reader's returned data. Refusal messages name expected/found values only where neither is secret (FR-009). `_require_safe_segment` already guards `--run-id` traversal (`infrahub_sync/cache/paths.py:11-23`) and the review path reuses it. |
 | **VII. Simplicity & maintainability** | PASS | No new runtime dependency (stdlib `json` + `hashlib`). One reader entry point, not a plan API (FR-029, AD029). No second apply path — the v1 dispatch is replaced, not paralleled (FR-019). Generated code untouched. The `infrahub_sync/plan/` package is split by responsibility rather than speculatively: each module has a real caller in this change, and the format itself is consumed by nine later outcomes. |
 | **Workflow: logging** | PASS | Module loggers everywhere except the one place FR-008 mandates stdout, which uses `typer.echo` (AD032) — the builtin `print` is never used, which is what the repository's rule bans, and the CLI already echoes help this way (`infrahub_sync/cli.py:69`). |
@@ -151,7 +154,7 @@ and remains justified below.
 
 ```text
 dev/specs/001-plan-artifact-saved-apply/
-├── spec.md                                  # input (AD001–AD048 settled)
+├── spec.md                                  # input (AD001–AD053 settled)
 ├── plan.md                                  # this file
 ├── research.md                              # Phase 0 — PD-001..PD-010, the details AD001–AD036 left open
 ├── data-model.md                            # Phase 1 — entities, fields, validation, state
@@ -221,8 +224,8 @@ changes the CLI; G closes documentation and fixtures.
 
 **Which phases end green, stated precisely so the two documents agree.** S, A, B and C end fully
 green — nothing existing has changed. **D does not**: it is the first phase that changes what a plan
-run writes, and the existing fixtures it makes stale are swept in G, so at Checkpoint D the tree is
-green only for the suites that phase's tasks name. **E ends green** — the one test the dispatch
+run writes, and the existing fixtures it makes stale are swept in G (T067), so at Checkpoint D the tree
+is green only for the suites named in T035's Done-when. **E ends green** — the one test the dispatch
 removal invalidates is rewritten inside E, immediately after the removal, rather than deferred to G.
 F and G each end green. G is not optional: the brief requires the stale fixtures and documentation to
 be updated in the same change as the delete-recording behavior.
@@ -341,7 +344,7 @@ New module `infrahub_sync/plan/derive.py`, plus edits to `infrahub_sync/potenda/
   identity, `element.type` the kind, `element.action` the action (V5), and the payload is
   **`element.keys ∪ element.source_attrs`** (AD042). The union is not a convenience: `source_attrs`
   comes from `get_attrs()`, which by its own contract excludes `_identifiers` (V4), and the generator
-  strips identifiers out of `_attributes` (`infrahub_sync/generator/__init__.py:94`), so
+  strips identifiers out of `_attributes` (`infrahub_sync/generator/__init__.py:95`), so
   `source_attrs` alone carries **no identity field**, the destination HFID cannot be formed, the
   upsert is unkeyed and every re-apply duplicates — SC-002 and SC-003 unachievable. Today's create
   path converges only because it passes both (V36). Elements whose action is `delete` are **skipped
@@ -352,12 +355,19 @@ New module `infrahub_sync/plan/derive.py`, plus edits to `infrahub_sync/potenda/
   in which case it appears in `identity` and in `relationships` but not in `payload`. The reference
   records the peer's identity mapping, obtained by looking the peer up in the loaded **source** store
   by its DiffSync unique-id and calling `get_identifiers()` — never by splitting the unique-id on
-  `__`, which is the v1 flaw the brief names — and the peer's kind, taken from **that store entry**
-  rather than from the mapping's `reference` value, because `DcimDevice` is declared twice with
+  `__`, which is the v1 flaw the brief names — and the peer's kind **probed** from the store rather
+  than read from the mapping's `reference` value, because `DcimDevice` is declared twice with
   different `location` references (V31, AD046) and a wrong pick fails the whole apply run on the
-  qualified path. A peer identity component that is itself a reference recurses into a nested
-  `{peer_kind, identity}` pair rather than a unique-id string (AD043); ten mapping entries on the
-  qualified path hit that case (V30). Cardinality-many references are a list ordered canonically by
+  qualified path. The probe is bounded (AD050, V37): "the entry knows its own kind" is not reachable,
+  since the store requires a model on every read and offers no kind-free lookup by unique-id, so the
+  candidates are the kinds the mapping declares as that field's `reference` across every entry for the
+  owning kind, each probed with `store.get(model=candidate, identifier=uid)`. One hit answers; **zero
+  and more than one both fail the command** naming the owning kind, the field, the unique-id and the
+  candidates tried (FR-030), with **no fallback to the mapping-declared kind even for a one-candidate
+  set** — an unprobed single candidate is the mapping-derived answer AD046 forbids. A peer identity
+  component that is itself a reference recurses into a nested
+  `{peer_kind, identity}` pair rather than a unique-id string (AD043); ten mapping entries across nine
+  kinds on the qualified path hit that case (V30). Cardinality-many references are a list ordered canonically by
   peer identity (AD003). Absent versus empty is honored strictly (FR-028.2). Any derivation failure
   here — unresolvable peer, unformable identity, unencodable value — **fails the command**, on `diff`
   as on `sync`; there is no tolerance option on the `diff` path (V34, FR-030, AD047).
@@ -374,7 +384,14 @@ New module `infrahub_sync/plan/derive.py`, plus edits to `infrahub_sync/potenda/
   side was incremental, no delete is derived and the manifest records
   `delete_operations_computed: false` (FR-015, SC-017).
 - Deletes carry no payload (FR-028.1) and never enter the diff the write path consumes — which is what
-  makes FR-016 structural rather than configuration-dependent.
+  makes FR-016 structural rather than configuration-dependent. Their **identities**, however, go through
+  the same canonicalisation as every other operation's, recursive nested `{peer_kind, identity}` pairs
+  included, with the AD050 probe run against the **destination** store instead of the source store
+  (AD049). Deletes are not exempt from the recursive rule: a delete's peers are destination-only by
+  construction — that is what makes it a delete — so the source-side wording of AD046 has nothing to
+  resolve against, which is a reason to change the store, not to change the rule. Nine kinds on the
+  qualified path carry a reference inside their identifiers (V30), so this is the ordinary delete case
+  there.
 - `warn_missing_convergence_key(...)`: for each destination kind with an operation, read the cached
   destination schema and warn on the log stream in **either** of two conditions (FR-024, AD044) —
   `human_friendly_id` absent or not fully supplied by the plan's identity (V16), **or**
@@ -382,7 +399,13 @@ New module `infrahub_sync/plan/derive.py`, plus edits to `infrahub_sync/potenda/
   fields on the same cached object (V32), so the second costs one more read. The second condition is
   the brief's own and is checked in its own right: a kind can carry a complete HFID and still
   duplicate silently for want of a uniqueness constraint. Warning only — never a manifest field, so it
-  stays outside the checksum and outside SC-006.
+  stays outside the checksum and outside SC-006. **Guarded on the destination exposing a schema at all
+  (AD052, V38)**: `self.schema` exists on the Infrahub adapter and on no other, and derivation now runs
+  on the `diff` path for *every* destination with failures fatal (AD047), so an unguarded read would be
+  an `AttributeError` on eight adapters that compare fine today. Where no schema is exposed the whole
+  warning is skipped and that is never an error — `getattr(dst, "schema", None)` is how the repository
+  already reaches for it (V38). A regression test asserts `diff` against a non-Infrahub destination
+  still succeeds; the coupling itself is recorded in [Complexity Tracking](#complexity-tracking).
 - `Potenda.write_plan_artifact(...)` composes the above, computes the source-snapshot binding per
   PD-008, and calls the Phase B writer. It is invoked from the `diff` path, the serial `sync` path, and
   — after the reordering below — the tier `sync` path.
@@ -428,10 +451,19 @@ def apply_planned_operation(self, *, operation: PlannedOperation, peers: PeerRes
   (V10) — never `InfrahubModel.update`, which is unusable without a destination load (V11). Because
   the payload carries the identity components (AD042), the HFID resolves and the upsert is keyed, the
   same way today's create path is keyed (V36). **An assertion sits between building `data` and issuing
-  the create**: every component path of the destination kind's `human_friendly_id` must resolve against
-  `data`, or the write raises naming the kind and the missing component. An unkeyed write is never
+  the create**: every component path of the destination kind's `human_friendly_id` must be *accounted
+  for*, or the write raises naming the kind and the missing component. An unkeyed write is never
   issued. This is the apply-time counterpart of FR-024's plan-time warning, and it is what makes a
   regression of the AD042 class fail loudly instead of duplicating silently.
+  "Accounted for" is defined per component shape (AD051), because "resolves against `data`" is not
+  implementable: by the time the assertion runs, a relationship key in `data` holds a resolved node-id
+  string and no attribute can be read out of it. A **direct** component (`<attr>` / `<attr>__value`)
+  must be present and non-null in `data`. A **relationship-crossing** component
+  (`<rel>__<attr>__value`) requires the `<rel>` key present and non-null in `data` **and** the
+  operation's nested `{peer_kind, identity}` for `<rel>` to supply `<attr>`. Both arms fail for the
+  cases the assertion exists to catch. The dependency this leaves on the SDK client store for
+  server-side HFID formation is verified (V39) and carried as a [risk](#risks) with this assertion as
+  its detector, not assumed away — the contract records it in full.
 - Cardinality-many relationships are then reconciled as an explicit **replace-set** against the saved
   node, reusing the `compare_lists` remove/add logic that is today the only verified replace-set in the
   tree (V12), extracted into `_replace_relationship_set(node, rel_name, peer_ids)`. This is PD-005: it
@@ -561,9 +593,11 @@ Every functional requirement has a named home. No FR is unhomed.
 the rest run locally.
 
 **These six are deferred evidence, not produced evidence (AD045b).** No Infrahub is reachable in this
-environment (AD007), so SC-001, SC-002, SC-003 and SC-008, and the live halves of SC-007 and SC-016 —
-that is, brief criteria DBA-001, DBA-002, DBA-003, DBA-008 and the live halves of DBA-007 and SC-016 —
-have **no passing evidence at merge time**. The brief's completion condition, "every requirement and
+environment (AD007), so SC-001, SC-002, SC-003 and SC-008, and the live halves of SC-007 and SC-016,
+have **no passing evidence at merge time**. **Five** of those six are the brief's own criteria —
+DBA-001, DBA-002, DBA-003 and DBA-008 in full, plus the live half of DBA-007. The sixth, SC-016's live
+half, is a criterion this specification derived from DBR-007; the brief states none for it, so it must
+not be counted against the brief's tally. The brief's completion condition, "every requirement and
 acceptance criterion has inspectable passing evidence", is therefore **not met at merge**. This is
 stated rather than left to be inferred from a marker. The mutation-payload conformance row below
 narrows the exposure — it catches an AD042-class defect offline, which is exactly the class those six
@@ -584,12 +618,12 @@ criteria were the only other check on — but it does not substitute for them.
 | SC-011 | v1 fixture (`plan.parquet`, no `plan/`); assert the re-plan message and zero writes | local |
 | SC-012 | `--help` captured before and after and diffed as text; plus the SC-009 CLI cases | local |
 | SC-013 | An opaque printable-ASCII value supplied verbatim in-process, round-tripped through write and apply comparison; plus SC-004's mismatch case | local |
-| SC-014 | Three plan runs against fake schemas — a kind with no `human_friendly_id`, a kind whose plan identity misses an HFID component, and a kind with a complete HFID but **no uniqueness constraint** covering the plan's identity attributes; assert each warning's content and a successful run | local (fake schema) |
+| SC-014 | Four plan runs — three against fake schemas (a kind with no `human_friendly_id`, a kind whose plan identity misses an HFID component, and a kind with a complete HFID but **no uniqueness constraint** covering the plan's identity attributes), asserting each warning's content and a successful run; plus one against a destination exposing **no schema at all**, asserting the warning is skipped, no error is raised and `diff` still succeeds (AD052) | local (fake schema) |
 | SC-015 | Copy a `plan/` directory between two run directories; assert refusal on the run-identifier check, zero writes, `failed` | local |
 | SC-016 | Zero-match and multi-match peer fixtures; assert both message shapes and that neither is skipped, **and** that the live `sync` write path's warn-and-continue is unchanged (AD048) | local (mocked SDK) **and** integration (real ambiguity) |
 | SC-017 | Two plan runs, one full-extract and one incremental on the destination side; compare delete presence and the manifest field; assert the incremental run's apply is not driven to `failed` | local |
 | SC-018 | A fixture manifest with `format_version: 99`; assert refusal, message content, zero writes, `failed`, and textual difference from the SC-011 message | local |
-| *(no SC — offline conformance, AD045a)* | Mutation-payload conformance against a mocked SDK: every HFID component of the destination kind present in each `client.create` call's data; the replace-set reconciliation issued for every cardinality-many relationship; a repeated operation producing no second create. Not a criterion of its own — it is the offline half of the assurance SC-002, SC-003 and SC-008 carry, so an AD042-class defect is caught without waiting for the deferred live run | local (mocked SDK) |
+| *(no SC — offline conformance, AD045a)* | Mutation-payload conformance against a mocked SDK: every HFID component of the destination kind accounted for in each `client.create` call's data by the AD051 per-component rule; the replace-set reconciliation issued for every cardinality-many relationship; a repeated operation producing no second create. Not a criterion of its own — it is the offline half of the assurance SC-002, SC-003 and SC-008 carry, so an AD042-class defect is caught without waiting for the deferred live run | local (mocked SDK) |
 
 ## Complexity Tracking
 
@@ -598,6 +632,7 @@ criteria were the only other check on — but it does not substitute for them.
 | **Principle III** — the planned-write surface exists on one adapter of nine | The brief scopes the write surface to "the Infrahub destination adapter"; the qualified path is NetBox → Infrahub, and NetBox is the source side, which needs no write surface | Implementing the surface on all nine adapters is scope this outcome does not carry and would need a convergence-key story per system. The asymmetry is already today's state (V3: zero implementations) and is already handled by a clear, actionable error naming the adapter (V1), which FR-023 preserves |
 | A new multi-module package rather than extending `cache/` | The plan artifact is a shared contract nine later outcomes consume; keeping it inside `cache/` would entangle a public format with run-directory plumbing, and every consumer would import a module named for storage | A single `infrahub_sync/plan.py` was considered. It would exceed 900 lines and mix canonical encoding, derivation, verification and rendering in one namespace — worse for the reviewability Principle VII asks for. Every module here has a real caller in this change |
 | Replacing `Potenda.apply_plan` rather than adding a sibling | FR-019 forbids "a second apply path with weaker guarantees"; leaving the v1 row dispatch wired would *be* that second path | Adding `apply_saved_plan` alongside was considered and rejected on the requirement's plain text. Removal is safe: `apply_cached_row` has zero implementations (V3), so only one test double is affected |
+| **Engine-level plan derivation reads one adapter's schema surface** — `warn_missing_convergence_key` runs in `infrahub_sync/plan/derive.py`, which the engine calls for every destination, but the `human_friendly_id` / `uniqueness_constraints` it reads live only on the Infrahub adapter (V38) | FR-024 is the brief's own non-unique-destination-identifier edge case and it is stated as a plan-time warning, so it has to run where the plan is derived. The two fields it needs exist on one adapter because Infrahub is the only destination with a planned-write surface (the Principle III row above), so the warning is only ever *meaningful* there | Two alternatives were rejected. Pushing the check behind an adapter method would add a method to the adapter contract that eight adapters implement as a no-op — a wider change than the guard. Skipping the check entirely rather than guarding it would drop the brief's own edge case. The accepted shape is AD052: read the schema defensively, skip the warning where none is exposed, and never make its absence an error — with a regression assertion that `diff` against a non-Infrahub destination still succeeds. The coupling is real and is recorded here rather than hidden inside a `getattr` |
 
 ## Risks
 
@@ -605,7 +640,8 @@ criteria were the only other check on — but it does not substitute for them.
 |---|---|---|
 | `save(allow_upsert=True)` may merge rather than replace a cardinality-many relationship set; unverifiable without a live server (AD007) | SC-008 fails; relationships drift | PD-005 makes the replace-set explicit after the upsert using the only verified implementation in the tree (V12), so the server's own semantics do not decide the outcome |
 | The nested `<rel>__<attr>__value` filter spelling for peer lookup is unverified offline | Peer resolution fails on the ten identity-bearing-reference mapping entries (V30) | PD-004 fixes the construction rule from the schema's own HFID paths, and AD043's recursive `{peer_kind, identity}` shape is what makes the nested arm constructible without splitting a unique-id; the spelling is asserted by an `integration`-marked test, and a zero match is a loud refusal (FR-014), never a silent drop |
-| Six brief acceptance criteria have no passing evidence at merge (AD007, AD045b) | The brief's completion condition is not met; a convergence defect could ship unseen — AD042 is exactly that class | Stated explicitly rather than left to a marker, in the evidence map above, Constitution Principle V, and `tasks.md`. Narrowed by the AD045a mutation-payload conformance harness and by the apply-time HFID-component assertion, neither of which needs a server. **Material — reported to root** |
+| Five brief acceptance criteria, plus one criterion this specification derived, have no passing evidence at merge (AD007, AD045b) | The brief's completion condition is not met; a convergence defect could ship unseen — AD042 is exactly that class | Stated explicitly rather than left to a marker, in the evidence map above, Constitution Principle V, and `tasks.md`. Narrowed by the AD045a mutation-payload conformance harness and by the apply-time HFID-component assertion, neither of which needs a server. **Material — reported to root** |
+| **Nested HFID resolution depends on the SDK client store being populated** (V39, AD051) | For a destination kind whose `human_friendly_id` crosses a relationship, the SDK cannot form the mutation's `hfid` from a peer supplied as a resolved id: `get_path_value` needs the peer out of the client store, a bare-id relationship value carries no `__typename` so the store is never even consulted, one `None` component nulls the whole HFID, and the mutation then goes out with neither `id` nor `hfid`. That is an unkeyed write — the AD042 failure mode by another route. This resolver is specified to return ids and never to touch that store | Not mitigated away, and not claimed to be solved. Step 3b's per-component assertion (AD051) is the detector: an operation whose HFID components cannot be accounted for raises *before* the create instead of duplicating silently, so the failure is loud and local rather than a duplicate discovered later at the destination. What step 3b cannot establish offline is whether an accounted-for nested component actually keys the server-side upsert — that needs a live Infrahub (AD007) and is carried by the `integration`-marked SC-002 and SC-003. **Material — reported to root** |
 | `--continue-on-error` does not exist on `diff` (V34), so new plan-derivation failures there are hard failures | An operator's `diff` starts exiting non-zero on data that used to render | Deliberate (FR-030, AD047): warn-and-skip would emit a silently incomplete plan, the divergence DBR-016 exists to prevent. The Principle I reading that permits it is stated in the Constitution Check above so it is reviewable. **Material — reported to root** |
 | A source snapshot's raw bytes vary every run because `_extract_ts` is per-run (V7), so a byte-level binding digest would make SC-006 unachievable | DBA-006 unachievable | PD-008 defines the snapshot digest over the logical rows excluding `_extract_ts`. **Material — reported to root** |
 | Restructuring the tier branch changes an existing execution path | Regression in `sync --parallel` | PD-009; the change is a reordering only, guarded by the existing `tests/test_potenda_parallel.py` and `tests/cache/test_sync_cache_flow.py` plus a new call-order assertion |
