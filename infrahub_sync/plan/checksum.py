@@ -3,8 +3,11 @@
 `compute_plan_checksum` covers the canonical manifest **minus** the three fields
 `CHECKSUM_EXCLUDED_FIELDS` names, concatenated with the raw bytes of
 `operations.jsonl` and **no separator** between the two (AD035). The three fields are
-*removed* from the mapping before canonicalization, never blanked, so a manifest
-carrying them as `null` hashes differently from one that omits them.
+*removed* from the mapping before canonicalization, never blanked: a manifest carrying
+`run_id` with a real value hashes as though the key were absent, and **not** as though it
+were `null`. (A manifest that already carries them as `null` hashes the same as one that
+omits them, because the filter is by name — the removed/blanked distinction is only
+observable on a manifest whose excluded fields carry real values.)
 
 `source_snapshot_digest` digests a snapshot's **logical rows** — the Parquet table with
 the engine-injected `_extract_ts` column dropped — and not the file's bytes (AD037,
