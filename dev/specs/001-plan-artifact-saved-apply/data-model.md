@@ -32,7 +32,8 @@ Not a class — a **rule** about a `dict[str, Any]`, enforced by `identity.canon
 |---|---|---|
 | Representation | An ordered mapping of identity attribute name to value, sorted by attribute name | FR-028.3 |
 | Population | Comes from `DiffElement.keys`, which diffsync documents as "as in `DiffSyncModel.get_identifiers()`" (`.venv/…/diffsync/diff.py:180,191`) | — |
-| Value domain | Whatever `canonical_value` accepts (see PD-002). For an identity component that is itself a relationship, the value is the peer's DiffSync unique-id string, as the engine holds it | PD-004 |
+| Value domain | Whatever `canonical_value` accepts (see PD-002) **or** a nested peer reference. An identity component that is itself a relationship is **never** stored as the peer's DiffSync unique-id string: it is stored as `{"peer_kind": <kind>, "identity": <DestinationIdentity>}`, recursively, so a consumer never has to split a unique-id on `__` to recover the peer's identity (AD043). Ten schema-mapping entries on the qualified path hit this case | AD043, PD-004 |
+| Nested peer kind | Resolved from the **loaded source store entry** for the referenced unique-id, not from the referring field's `SchemaMappingField.reference`: `DcimDevice` is declared by two schema-mapping entries whose `location` reference differs (`examples/netbox_to_infrahub/config.yml:212` → `LocationRack`, `:254` → `LocationSite`), so the mapping alone cannot say which kind a given peer is | AD046 |
 | Emptiness | An operation for which no identity value can be formed **fails the plan run**, naming the kind and the identity attribute that had no value | AD035; spec Edge Cases |
 
 The same canonical form is what FR-003 hashes, what FR-005 orders relationship-reference lists by, and
@@ -48,9 +49,9 @@ A peer named by kind and identity, never by a destination-assigned id.
 | Field | Type | Obligation | Rule |
 |---|---|---|---|
 | `field` | `str` | required | The owning object's field name, i.e. the `SchemaMappingField.name` whose `reference` is set |
-| `peer_kind` | `str` | required | The `SchemaMappingField.reference` value (`infrahub_sync/__init__.py:57`) |
+| `peer_kind` | `str` | required | The kind of the **loaded source store entry** for the referenced unique-id, **not** the referring field's `SchemaMappingField.reference` value. Deriving it from the mapping is ambiguous on the qualified path, where `DcimDevice` is declared twice with different `location` references (`examples/netbox_to_infrahub/config.yml:212`, `:254`) and a wrong pick fails the whole apply run (AD046) |
 | `cardinality` | `Literal["one", "many"]` | required | Derived from whether the mapped value is a scalar or a list |
-| `peers` | `list[DestinationIdentity]` | required | Exactly one element when `cardinality == "one"`; zero or more when `"many"`, ordered canonically by peer identity (AD003, FR-005) |
+| `peers` | `list[DestinationIdentity]` | required | Exactly one element when `cardinality == "one"`; zero or more when `"many"`, ordered canonically by peer identity (AD003, FR-005). Each peer identity may itself contain nested `{peer_kind, identity}` values, recursively (AD043) |
 
 ### Validation
 
@@ -59,9 +60,13 @@ A peer named by kind and identity, never by a destination-assigned id.
   the replace-set write acts on it; the reference being **absent** means the operation carries no value
   of that kind at all. The two are never interchangeable (FR-028.2).
 - A peer identity that cannot be resolved at plan time (the peer is not in the loaded source store)
-  fails the plan run naming the owning kind, the field, the peer kind and the unresolvable unique-id —
-  unless the pre-existing `--continue-on-error` flag is set, in which case it is warned and the peer is
-  dropped, matching the adapter's existing behavior at `infrahub_sync/adapters/infrahub.py:491-493`.
+  **fails the command**, naming the owning kind, the field, the peer kind and the unresolvable
+  unique-id. There is no warn-and-drop escape and no error-tolerance option: `--continue-on-error` is
+  declared on the mutating command only (`infrahub_sync/cli.py:190`), so it does not exist on the
+  non-mutating command where derivation also runs, and degrading to warn-and-drop there would emit a
+  silently incomplete plan — the divergence FR-017 exists to prevent (FR-030, AD047). The adapter's own
+  `continue_on_error` handling on the **load** path (`infrahub_sync/adapters/infrahub.py:491-493`) is
+  unchanged and is a different path from this one.
 
 ---
 
@@ -76,7 +81,7 @@ One proposed change. This is the record nine later outcomes consume.
 | `kind` | `str` | required, always | The destination kind, from `DiffElement.type` |
 | `identity` | `dict[str, Any]` | required, always | Canonical `DestinationIdentity` |
 | `tier` | `int` | required, always | Index of the tier set containing the kind, or the kind's index in `top_level` when the configuration declares `order:` (PD-007) |
-| `payload` | `dict[str, Any] \| None` | required on `create` and `update`; **omitted** on `delete` | The full mapped source values, authoritative for the fields it carries and silent about every other destination field (FR-028.4). List-valued attributes stay in source order and are never re-sorted (FR-005) |
+| `payload` | `dict[str, Any] \| None` | required on `create` and `update`; **omitted** on `delete` | `element.keys` ∪ `element.source_attrs`, minus any key carried as a `RelationshipReference` — i.e. the **identity components are inside the payload**. `source_attrs` alone is not enough: it comes from `get_attrs()`, whose contract is "does not include the fields in `_identifiers`" (`.venv/…/diffsync/__init__.py:340-347`, called at `.venv/…/diffsync/helpers.py:223`), and the generator strips identifiers out of `_attributes` (`infrahub_sync/generator/__init__.py:94`). A payload without them cannot form the destination's HFID, the upsert is unkeyed, and every re-apply duplicates (AD042). Authoritative for the fields it carries and silent about every other destination field (FR-028.4). List-valued attributes stay in source order and are never re-sorted (FR-005) |
 | `relationships` | `list[RelationshipReference] \| None` | optional — present when the operation carries any, **absent** when it carries none | Ordered by `field` name for determinism |
 
 ### Validation
@@ -84,6 +89,9 @@ One proposed change. This is the record nine later outcomes consume.
 - `operation_id` is recomputed on construction and must equal the derived value — a stored operation
   whose identifier does not match its own triple is a corrupt record, not a valid one.
 - `payload` must be `None` when `action == "delete"` and non-`None` otherwise.
+- On a `create` or `update`, every key of `identity` must appear either in `payload` or as the `field`
+  of a `RelationshipReference` — never in neither. This is the model-level guard on AD042: without it,
+  a payload built from `source_attrs` alone validates cleanly and produces unkeyed writes at apply.
 - No field may express a grouping of operations into write units (FR-026) — asserted by a test over the
   model's field set, so a future addition trips it.
 - Unknown fields on read are **not** tolerated at the operation level (unlike the manifest): the

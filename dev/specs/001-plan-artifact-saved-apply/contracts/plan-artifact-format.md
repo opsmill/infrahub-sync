@@ -61,10 +61,19 @@ sharing an identifier fail the plan run (FR-021).
 {"action":"create","identity":{"name":"prod"},"kind":"BuiltinTag","operation_id":"op_3f2a1c9d0e4b6a58","payload":{"description":"Production","name":"prod"},"tier":0}
 ```
 
-With relationships (cardinality one and many together):
+With relationships (cardinality one and many together). `LocationRack`'s identity is
+`["name", "site"]` and `site` is a reference, so `site` appears in `identity` **and** as a
+relationship reference, and is **not** duplicated into the payload:
 
 ```json
-{"action":"update","identity":{"name":"dc1-rack-a"},"kind":"LocationRack","operation_id":"op_9b1d77c204e3af10","payload":{"name":"dc1-rack-a"},"relationships":[{"cardinality":"one","field":"site","peer_kind":"LocationSite","peers":[{"name":"dc1"}]},{"cardinality":"many","field":"tags","peer_kind":"BuiltinTag","peers":[{"name":"prod"},{"name":"rack"}]}],"tier":2}
+{"action":"update","identity":{"name":"dc1-rack-a","site":{"identity":{"name":"dc1"},"peer_kind":"LocationSite"}},"kind":"LocationRack","operation_id":"op_9b1d77c204e3af10","payload":{"name":"dc1-rack-a"},"relationships":[{"cardinality":"one","field":"site","peer_kind":"LocationSite","peers":[{"name":"dc1"}]},{"cardinality":"many","field":"tags","peer_kind":"BuiltinTag","peers":[{"name":"prod"},{"name":"rack"}]}],"tier":2}
+```
+
+A peer whose own identity contains a reference nests, recursively — an `InterfacePhysical` whose
+`device` is a `DcimDevice` whose `location` is a `LocationRack`:
+
+```json
+{"action":"create","identity":{"device":{"identity":{"location":{"identity":{"name":"rack-a","site":{"identity":{"name":"dc1"},"peer_kind":"LocationSite"}},"peer_kind":"LocationRack"},"name":"dev1"},"peer_kind":"DcimDevice"},"name":"Ethernet1"},"kind":"InterfacePhysical","operation_id":"op_1a2b3c4d5e6f7081","payload":{"name":"Ethernet1"},"relationships":[{"cardinality":"one","field":"device","peer_kind":"DcimDevice","peers":[{"location":{"identity":{"name":"rack-a","site":{"identity":{"name":"dc1"},"peer_kind":"LocationSite"}},"peer_kind":"LocationRack"},"name":"dev1"}]}],"tier":4}
 ```
 
 A delete carries no payload:
@@ -88,6 +97,55 @@ all"; a `peers: []` inside a `cardinality: "many"` reference means "the peer set
 empty", which the replace-set write then acts on (FR-028.2).
 
 There is **no** field grouping operations into write units, at either level (FR-026).
+
+### What `payload` contains (AD042)
+
+```text
+payload = element.keys ∪ element.source_attrs   minus every key carried as a relationship reference
+```
+
+**The identity components are inside the payload.** They are not optional decoration: the destination's
+convergent write is keyed on the kind's human-friendly ID, whose components come from the identity, and
+a write issued without them is unkeyed and duplicates on every re-apply — DBA-002 and DBA-003
+unachievable.
+
+`element.source_attrs` alone cannot supply them. It is built from `src_obj.get_attrs()`
+(`.venv/…/diffsync/helpers.py:223`), whose own contract states it "does not include the fields in
+`_identifiers`" (`.venv/…/diffsync/__init__.py:340-347`), and the generator strips identifiers out of
+the `_attributes` tuple before the models are written (`infrahub_sync/generator/__init__.py:94`).
+Today's create path avoids the problem by passing identifiers and attributes together
+(`infrahub_sync/adapters/infrahub.py:602-604`); the artifact must do the same.
+
+An identity component whose `SchemaMappingField.reference` is set travels as a relationship reference
+instead of staying in the payload as a raw unique-id string, on the same rule as any other
+reference-bearing field. Every identity key therefore appears in exactly one of `payload` or
+`relationships[].field` — never neither, which is a model-level validation (data-model.md).
+
+### Peer identity is recursive (AD043)
+
+A peer identity component that is itself a reference records:
+
+```json
+{"peer_kind": "<kind>", "identity": { ... }}
+```
+
+rather than the peer's DiffSync unique-id string, recursively to whatever depth the configuration
+nests. This is required, not cosmetic: **ten** schema-mapping entries on the qualified path carry a
+reference inside `identifiers` (`LocationRack.site`, `DcimDeviceType.manufacturer`, `DcimDevice.location`
+twice, `Interface{Physical,Virtual,Lag}.device`, `IpamVLAN.vlan_group`, `IpamPrefix.vrf`,
+`IpamIPAddress.vrf`), and a reference field's value in a comparison model is the peer's unique-id
+string. On a memo miss the apply-time resolver holds only the peer's identity mapping; without the
+nested pair it could not build a nested destination filter without splitting a unique-id on `__` —
+the v1 flaw the brief names.
+
+`peer_kind` at every level is the kind of the **loaded source store entry** for the referenced
+unique-id, not the referring field's `reference` value: `DcimDevice` is declared by two schema-mapping
+entries whose `location` reference differs (`examples/netbox_to_infrahub/config.yml:212` →
+`LocationRack`, `:254` → `LocationSite`), so the mapping alone is ambiguous and a wrong pick fails the
+whole apply run on the qualified path (AD046).
+
+Nested objects are key-sorted like any other, so the canonical encoding and the identifier derivation
+are unaffected.
 
 ## Operation-identifier derivation
 

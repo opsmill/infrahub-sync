@@ -35,7 +35,7 @@ removed once the decision is confirmed.
 
 If a decision is not ratified, every requirement citing it must be revisited: AD001 → FR-002,
 FR-004, FR-005, FR-010, FR-019; AD002 → FR-003, FR-021; AD003 → FR-002, FR-014; AD004 → FR-015,
-FR-016; AD005 → FR-008. The revisit sets for AD008–AD036 are the requirements carrying each
+FR-016; AD005 → FR-008. The revisit sets for AD008–AD048 are the requirements carrying each
 marker.
 
 - Q: What is the plan artifact's concrete on-disk encoding and file layout, how is its checksum
@@ -63,7 +63,8 @@ marker.
   `[PROVISIONAL AD002]`
 - Q: How does a planned operation reference its relationship peers so they can be resolved at apply
   time with no comparison store loaded? → A: Each reference records the peer's kind and the peer's
-  identity values — never a destination-assigned identifier, which does not exist yet at plan time
+  identity values — **recursively, per AD043, where an identity value is itself a reference** — never
+  a destination-assigned identifier, which does not exist yet at plan time
   for peers this same plan creates and which would not survive being moved between environments.
   A cardinality-one reference is a single object; a cardinality-many reference is a list ordered
   canonically by the peer identity, so it is stable for SC-006. At apply time peers are resolved
@@ -90,6 +91,21 @@ marker.
   the single implementation; the command is a thin renderer over it, so both paths in SC-009
   exercise the same code. `[PROVISIONAL AD005]`
 
+### Session 2026-07-26 — environment fact
+
+One environment fact is recorded as a decision handle because five artifacts cite it and it decides
+which evidence can be produced at all.
+
+- Q: Is a live Infrahub reachable in the environment this feature is planned and built in? → A: **No.**
+  Every criterion whose evidence needs a live destination therefore lands behind the repository's
+  existing opt-in `integration` marker (`pyproject.toml:133-135`) and is **authored rather than
+  produced** here; every other criterion runs locally against fakes and fixtures. Two consequences are
+  carried elsewhere rather than restated: the deferral this creates against the brief's completion
+  condition is AD045, and the two facts about the destination write path that cannot be verified
+  offline — whether the convergent write replaces or merges a cardinality-many peer set, and the exact
+  nested relationship filter spelling — are neutralized by AD038 and by making a resolution miss a loud
+  refusal (AD016), so neither answer decides correctness. `[PROVISIONAL AD007]`
+
 ### Session 2026-07-26 — checklist evaluation
 
 Sixteen further areas were resolved after four independent evaluations worked 166 checklist items
@@ -100,7 +116,9 @@ markers are the ratification handles.
 
 - Q: What value binds the plan to its source snapshot, and how is a truncated snapshot detected? →
   A: A manifest field `source_snapshot` records, per source-snapshot file the plan was computed
-  against, that file's run-relative path, a SHA-256 digest of its content, and its row count. "Match"
+  against, that file's run-relative path, a SHA-256 digest of its content, and its row count —
+  **"content" fixed by AD037 as the file's logical rows with the per-run `_extract_ts` excluded, not
+  its raw bytes, without which this decision and SC-006 cannot both hold**. "Match"
   is recomputed equality of all three; an absent recorded file, or a disagreeing digest or row count,
   is a refusal. One field yields both a binding-mismatch signal and a truncation signal, and the row
   count is already computed on the load path. The source snapshot is one Parquet file per resource
@@ -168,7 +186,10 @@ markers are the ratification handles.
   Cardinality-many relationships are **replace-set**, which is the existing behavior: `update_node`
   computes `compare_lists(existing_peer_ids, new_peer_ids)` and then removes `existing_only` and adds
   `new_only` (`adapters/infrahub.py:166-175`). An update payload is authoritative for the mapped
-  fields it carries and does not touch unmapped destination fields. `[PROVISIONAL AD015]`
+  fields it carries and does not touch unmapped destination fields. **The replace-set clause is
+  superseded by AD038**: `update_node` is on the path this decision forbids, so its behavior is not
+  evidence about the path this decision mandates; the replace-set is enforced explicitly after the
+  upsert instead of being assumed of it. `[PROVISIONAL AD015]`
 - Q: What happens when a planned relationship peer matches no destination object, or more than one? →
   A: A **zero** match refuses the operation and fails the run, naming the peer kind, the peer identity,
   and the referring operation identifier. A **multiple** match refuses, naming the peer kind, the peer
@@ -190,6 +211,8 @@ markers are the ratification handles.
   as a warning". Detection is feasible: the adapter already caches the whole destination schema
   (`adapters/infrahub.py:345`) and `human_friendly_id` is a field on it
   (`infrahub_sdk/schema/main.py:272`), though nothing in `infrahub_sync/` reads it today.
+  **Partly superseded by AD044**: the human-friendly-ID condition stands and is added, but it does not
+  *replace* the brief's uniqueness-constraint condition, which AD044 restores alongside it.
   `[PROVISIONAL AD017]`
 - Q: What marks a value secret, and what does redaction do? → A: The artifact carries mapped source
   field values only. Credentials live in the configuration's `settings` and are never written to the
@@ -342,10 +365,11 @@ on the same basis as AD001–AD024.
   ordered mapping of identity attribute name to value, key-sorted, which is what AD002 hashes and
   AD003 orders by; each per-operation field carries a stated obligation level and an absent-versus-
   empty rule; "the required source values as a full payload" is authoritative for the mapped fields
-  it carries and silent about the rest, consistent with AD015; the configuration-version value's
-  character domain is a non-empty printable-ASCII string; and the default checksum rule covers the
-  declared content of the configuration the run used, as parsed, not the file's bytes.
-  `[PROVISIONAL AD035]`
+  it carries and silent about the rest, consistent with AD015 — **its extent closed by AD042, which
+  puts the identity components inside it**; the configuration-version value's character domain is a
+  non-empty printable-ASCII string; and the default checksum rule covers the declared content of the
+  configuration the run used, as parsed, not the file's bytes — **that field set closed by AD041:
+  every parsed field except the load directory, with `settings` included**. `[PROVISIONAL AD035]`
 - Q: Twelve smaller items remain — ordering, message content, negative caching, `sync`-mode deletes,
   filter misses, and similar. → A: Each is closed at its own requirement rather than through a new
   cross-cutting rule, because each is a local statement the surrounding requirement already almost
@@ -365,6 +389,154 @@ on the same basis as AD001–AD024.
   SC-010's enumeration name the same surfaces; an unreadable run directory is an error naming the
   path; SC-012's before-and-after command listing is captured as `--help` output to a file; and the
   new review flags carry a documentation obligation. `[PROVISIONAL AD036]`
+
+### Session 2026-07-26 — planning-phase decisions
+
+Five decisions were settled while planning worked AD001–AD036 down to the code. Each closes a
+detail an earlier decision left one level of abstraction above the tree, or reconciles two of them
+that turned out to conflict. They are recorded here, in the specification, because four of the five
+change what a requirement above says rather than merely implementing it. All five are **provisional**
+on the same basis as AD001–AD036.
+
+- Q: AD008 records "a SHA-256 digest of its content" for each source-snapshot file. Over what bytes?
+  → A: over the file's **logical rows**, not its raw bytes. The engine stamps a per-run extraction
+  timestamp into every row of every snapshot (`cache/parquet_io.py:126`, allocated once per side per
+  run at `potenda/__init__.py:130`), so two consecutive plan runs over an unchanged source produce
+  snapshot files whose bytes differ by construction. A raw-bytes digest would therefore differ on
+  every re-plan, the manifest would differ, and SC-006 — which fixes its mask at exactly two fields —
+  would be unachievable. The digest is computed over the table with that timestamp column dropped,
+  rows in file order, each row canonically encoded and LF-joined. The row source identifier and the
+  tombstone flag stay **inside** the digest: both are deterministic for identical input and both are
+  semantically part of what the plan was computed against. AD008's three recorded parts — run-relative
+  path, digest, row count — and its "match is recomputed equality of all three" rule are unchanged.
+  What the digest stops detecting is a change confined to the extraction timestamp, which is not a
+  change to the data the plan was computed against. `[PROVISIONAL AD037]`
+- Q: AD015 says cardinality-many relationships are replace-set, "which is the existing behavior". Is
+  that true of the write path AD015 mandates? → A: **No.** The evidence AD015 cites is `update_node`
+  (`adapters/infrahub.py:149-175`), which is on the path AD015 itself forbids the planned write from
+  using. The path AD015 mandates — `client.create(...)` then `save(allow_upsert=True)` — has no
+  verified replace-set semantics in this repository, and whether the server's upsert mutation replaces
+  or merges a relationship list cannot be determined without a live Infrahub (AD007). So replace-set
+  is **enforced explicitly after the upsert** rather than assumed of it: the planned write performs
+  the upsert and then reconciles each cardinality-many peer set against the saved node using the only
+  verified replace-set implementation in the tree. If the upsert already replaces, the reconciliation
+  is a no-op. FR-013's "which is the existing behavior" is corrected accordingly.
+  `[PROVISIONAL AD038]`
+- Q: FR-001 requires the artifact to exist before anything is written to the destination. Does the
+  tiered write path allow that? → A: Not as written. The tier branch interleaves per-tier comparison
+  and per-tier write and writes the aggregated plan only after every write has completed
+  (`potenda/__init__.py:480-499`), and tiered execution is the default on the mutating path
+  (`cli.py:182-185`), so no artifact can exist before the first write. The branch is restructured into
+  two loops: compute and retain **every** tier's comparison result, write the artifact, then execute
+  the retained results tier by tier. The destination-side narrowing that scopes each tier is a
+  **comparison-time** narrowing — the comparison engine reads it when it computes a difference and the
+  synchronizer does not read it at all (`.venv/…/diffsync/helpers.py:79-88`) — so it belongs around
+  each comparison call in the compute loop, and the execution loop replays the retained results with
+  the narrowing restored to its original value. `[PROVISIONAL AD039]`
+- Q: Is the pre-existing per-row apply dispatch kept alongside the new one? → A: No — it is
+  **removed**. FR-019 forbids a second apply path with weaker guarantees, and a wired row dispatch is
+  that path. Removal is safe in a way it rarely is: the surface it dispatches to has zero adapter
+  implementations anywhere in the repository, so nothing can be calling it successfully today. The
+  guard's *shape* — an error naming the adapter class and directing the operator to the mutating
+  command — is preserved for the new surface, so FR-023 keeps the behavior the engine already has.
+  The one test double that asserts the removed dispatch is rewritten in the same phase as the
+  removal, not later. `[PROVISIONAL AD040]`
+- Q: AD035 fixes the default configuration-version rule as "the declared content of the configuration
+  the run used, as parsed, not the file's bytes", which still leaves the field set open. Which fields?
+  → A: everything the parsed configuration declares **except** the directory it was loaded from, which
+  is an absolute filesystem path assigned from wherever the file was found and would make the value
+  machine-dependent — a plan produced in one checkout could never be applied from another. Connection
+  `settings` **are** included: a changed destination address is a changed configuration, and only a
+  one-way digest is written, so including credentials in the hash input discloses none of them
+  (FR-018 governs what is written). This closes AD035's open field set. It has one operator-visible
+  consequence, recorded rather than left to be discovered: **rotating a credential in `settings`
+  changes the configuration-version value and therefore invalidates every saved plan for that
+  configuration**, which is refused at apply under FR-009 and requires a re-plan.
+  `[PROVISIONAL AD041]`
+
+### Session 2026-07-26 — cross-artifact remediation
+
+Seven further decisions were settled after a cross-artifact analysis of this specification against
+the plan, the tasks and the tree. Two close defects that would have made a brief acceptance criterion
+unachievable; the rest correct a statement this specification or its planning artifacts made about
+existing code, or scope a commitment that had leaked wider than the brief authorizes. As before, none
+expands scope. All seven are **provisional** on the same basis as AD001–AD041.
+
+- Q: What exactly does an operation's payload contain? → A: **The identity components as well as the
+  non-identity mapped values.** The comparison engine's attribute accessor deliberately excludes the
+  identity fields — its own contract states it "does not include the fields in `_identifiers`"
+  (`.venv/…/diffsync/__init__.py:340-347`) — and the comparison element's attribute set is built from
+  exactly that call (`.venv/…/diffsync/helpers.py:223`), while the generated models strip identifiers
+  out of the attribute tuple (`generator/__init__.py:94`). A payload derived from that attribute set
+  alone therefore carries **no identity fields at all**, which means the destination's convergence key
+  cannot be formed, the write mutation carries neither a node identifier nor a human-friendly ID, the
+  upsert is unkeyed, and every re-apply duplicates — making DBA-002 and DBA-003 unachievable. Today's
+  create path avoids this precisely by passing identifiers and attributes together
+  (`adapters/infrahub.py:602-604`). The payload written into an operation is therefore the union of
+  the comparison element's identity mapping and its full source attribute set. An identity component
+  whose schema mapping declares a reference is carried as a relationship reference rather than left in
+  the payload as a raw unique-id string, on the same rule as any other reference-bearing field.
+  `[PROVISIONAL AD042]`
+- Q: A peer's identity may itself contain a reference. What does the plan record for it? → A: A peer
+  identity component that is itself a reference records the nested pair (peer kind, peer identity)
+  rather than a raw unique-id string — **recursively**, to whatever depth the configuration nests.
+  This is not hypothetical on the qualified path: ten schema-mapping entries there carry a reference
+  inside `identifiers`, and a reference field's value in a comparison model is the peer's unique-id
+  string. On a resolution miss at apply the resolver holds only the peer's identity mapping, so
+  without the nested pair it could not build a nested destination filter without splitting a unique-id
+  on its separator — the v1 flaw the brief names by name. This changes the artifact format that nine
+  later outcomes consume, so it is settled before any of that format is written.
+  `[PROVISIONAL AD043]`
+- Q: FR-024 warns when the destination kind has no usable convergence key. AD017 restated the brief's
+  "not unique-constrained" condition as "declares no human-friendly ID". Is that the same condition?
+  → A: **No — and the brief's condition is the one that must be covered.** A kind with a complete
+  human-friendly ID but no uniqueness constraint over the plan's identity attributes still duplicates
+  silently, which is exactly the failure the brief asks to be detected. FR-024 therefore warns on
+  **both**: the human-friendly ID absent or incomplete, **and** the destination kind declaring no
+  uniqueness constraint covering the plan's identity attributes. Both are readable from the same
+  cached destination schema object — the uniqueness constraints sit beside the human-friendly ID on it
+  (`.venv/…/infrahub_sdk/schema/main.py:272,274`). It stays a warning, not a failure, per the brief.
+  `[PROVISIONAL AD044]`
+- Q: Six of the brief's acceptance criteria sit behind the opt-in integration marker with no reachable
+  destination (AD007), against a brief completion condition demanding inspectable passing evidence for
+  every criterion. What is done about it? → A: Both halves of a two-part answer, and neither is a
+  substitute for the other. First, a **local conformance harness** against a mocked destination SDK
+  asserts the *mutation payloads* rather than the destination state: that every human-friendly-ID
+  component of the destination kind appears in the data handed to each create call, that the
+  replace-set reconciliation is issued for every cardinality-many relationship, and that a repeated
+  operation produces no second create. That catches a whole class of defect offline — AD042 is exactly
+  such a defect, and it is the class those deferred criteria exist to catch. Second, the deferral is
+  **stated, not implied**: DBA-001, DBA-002, DBA-003 and DBA-008, and the live halves of DBA-007 and
+  SC-016, remain deferred to a run against a live Infrahub, and the brief's completion condition is
+  therefore not met at merge time. `[PROVISIONAL AD045]`
+- Q: A peer's kind is derived from the referring field's schema-mapping `reference` value. Is that
+  unambiguous? → A: Not on the qualified path. Two schema-mapping entries there declare the same
+  destination kind with different references for the same identity field
+  (`examples/netbox_to_infrahub/config.yml:212` and `:254`, both `DcimDevice` with
+  `identifiers: ["location", "name"]`, one referencing `LocationRack` and one `LocationSite`), so the
+  mapping alone cannot say which kind a given peer is, and a wrong pick fails the whole apply run on
+  the brief's own qualified path. A peer's kind is therefore resolved from the **loaded source store
+  entry** for the referenced unique-id — the entry knows its own kind — rather than from the mapping's
+  `reference` field. `[PROVISIONAL AD046]`
+- Q: Several plan-derivation failures now land on the non-mutating command, whose `--continue-on-error`
+  escape hatch does not exist there — the option is declared on the mutating command only
+  (`cli.py:190`). What happens? → A: A plan-derivation failure **fails the command**, with a clear,
+  actionable error naming the kind and the cause. No `--continue-on-error` is added to the
+  non-mutating command, and derivation does not degrade to warn-and-skip: a silently incomplete plan
+  is the failure DBR-016 exists to prevent, and it is worse here than anywhere else because the whole
+  feature's product is a plan an operator trusts. The constitution's "`list`, `diff` and `generate`
+  MUST stay safe to run at any time" is read as *the command performs no destination mutation* rather
+  than *the command never errors* — which still holds, because derivation happens after a read-only
+  comparison and writes only into the run directory. That reading is stated explicitly here and in the
+  plan so it is reviewable rather than assumed. `[PROVISIONAL AD047]`
+- Q: FR-014 replaces a zero-match peer's warn-and-continue with a refusal. Where does that replacement
+  apply? → A: **Only to the new apply-path peer resolver.** The existing warn-and-continue in the live
+  write path (`adapters/infrahub.py:141-143`, `:212-214`, `:229-231`) is unchanged: it is existing
+  behavior on an existing path, and this brief does not authorize touching it. The refusal is a
+  property of resolving a peer from a saved plan with no comparison store loaded, which is a path that
+  does not exist today. Scoping it this way is what keeps FR-014 inside the brief's In-scope line
+  "apply-time relationship peer resolution" rather than reaching into the live sync write path.
+  `[PROVISIONAL AD048]`
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -528,25 +700,38 @@ references.
 - **Torn artifact.** A plan whose manifest exists but whose operations or source snapshot are
   absent or truncated is refused, not partially applied. An operations section whose length
   disagrees with the count the manifest records is torn. A source snapshot file the manifest
-  records but which is absent, or whose recomputed digest or row count disagrees with the recorded
-  value, is likewise torn. A `plan/` directory present without a complete manifest is torn, not a
-  v1 plan. `[PROVISIONAL AD008]` `[PROVISIONAL AD014]`
+  records but which is absent, or whose recomputed logical-row digest or row count disagrees with the
+  recorded value, is likewise torn. A `plan/` directory present without a complete manifest is torn,
+  not a v1 plan. `[PROVISIONAL AD008]` `[PROVISIONAL AD014]` `[PROVISIONAL AD037]`
 - **Identifier collision.** Two operations must never share an operation identifier within one
   plan. Because the action vocabulary is closed to `create | update | delete` and relationship
   changes travel as references on the owning create or update, exactly one operation exists per
   (action, kind, destination identity), so a collision genuinely means two operations address the
   same object with the same action — a pathological plan. The plan run fails rather than emitting a
   plan whose identifiers do not address one operation each. `[PROVISIONAL AD009]`
-- **Destination kind with no usable convergence key.** Convergence rides on the destination kind's
-  human-friendly ID: the upsert is keyed on it, and an absent or incomplete human-friendly ID makes
-  the upsert unkeyed, which produces duplicates. This is detected and reported at plan time, as a
-  warning naming the affected kind and the missing component. Documenting it as a precondition is
-  not sufficient, because the failure is silent data duplication. `[PROVISIONAL AD017]`
+- **Destination kind with no usable convergence key.** Two distinct conditions, both warned about at
+  plan time, naming the affected kind. Convergence rides on the destination kind's human-friendly ID:
+  the convergent write is keyed on it, and an absent or incomplete human-friendly ID makes the write
+  unkeyed, which produces duplicates. Separately, a destination kind may declare a complete
+  human-friendly ID and still have **no uniqueness constraint** over the plan's identity attributes,
+  in which case it also duplicates silently — that is the brief's own condition and it is checked in
+  its own right, not treated as covered by the first. Documenting either as a precondition is not
+  sufficient, because the failure is silent data duplication. `[PROVISIONAL AD017]`
+  `[PROVISIONAL AD044]`
 - **Relationship peer that does not resolve at apply.** A planned relationship reference whose peer
   matches no destination object refuses that operation and fails the run, naming the peer kind, the
   peer identity, and the referring operation identifier. A reference whose peer identity matches
   more than one destination object refuses, naming the peer kind, the peer identity, and the match
-  count. Neither case is ever a silent skip. `[PROVISIONAL AD016]`
+  count. Neither case is ever a silent skip. Both refusals belong to the saved-plan apply resolver
+  only; the live write path's existing warn-and-continue on an unresolvable peer is unchanged.
+  `[PROVISIONAL AD016]` `[PROVISIONAL AD048]`
+- **A plan-derivation failure on the non-mutating path.** An operation with no formable destination
+  identity, a peer that cannot be resolved in the loaded source state, an unrepresentable payload
+  value, or a duplicate operation identifier fails the command with an error naming the destination
+  kind and the cause — on the non-mutating command exactly as on the mutating one. The mutating
+  command's error-tolerance option is not extended to the non-mutating one and derivation never
+  degrades to warn-and-skip, because a silently incomplete plan is the divergence the whole feature
+  exists to prevent. `[PROVISIONAL AD047]`
 - **Partial apply.** If apply stops partway — meaning it terminates in-process with a reported
   error — the operations already written stay written and the run records, best effort, the last
   operation it reported as applied. The record is explicitly not required to survive abnormal
@@ -623,12 +808,24 @@ references.
   be exactly one of `create`, `update`, or `delete`; the vocabulary is closed. A relationship change
   MUST be carried as relationship references on the create or update operation for the owning
   object, never as a separate operation or a fourth action value. Each relationship reference MUST
-  identify its peer by kind and identity values, never by a destination-assigned identifier. Each of
-  those fields carries the obligation level and the absent-versus-empty rule FR-028 states, and
+  identify its peer by kind and identity values, never by a destination-assigned identifier. A peer
+  identity component that is itself a reference MUST likewise record its own peer kind and peer
+  identity rather than a raw unique-identifier string, recursively, so no consumer ever has to recover
+  an identity by splitting a unique identifier on its separator. A peer's kind MUST be resolved from
+  the loaded source entry for the referenced object rather than from the configuration's declared
+  reference for the field, because one destination kind may be declared by more than one schema-mapping
+  entry with different references for the same identity field. The payload MUST carry the operation's
+  identity components as well as its non-identity mapped values, because the destination's convergence
+  key is formed from the identity and a payload without it cannot be written convergently; an identity
+  component that is itself a reference travels as a relationship reference on the same rule as any
+  other reference-bearing field rather than staying in the payload as a raw unique-identifier string.
+  Each of those fields carries the obligation level and the absent-versus-empty rule FR-028 states, and
   "destination identity" and "the required source values as a full payload" carry the single
   representation and the single authority FR-028 fixes.
   *(DBR-008, DBR-011; encoding and layout per AD001, reference shape per AD003, closed action
-  vocabulary per AD009, field obligations per AD035)* `[PROVISIONAL AD009]` `[PROVISIONAL AD035]`
+  vocabulary per AD009, field obligations per AD035, identity in the payload per AD042, recursive
+  reference shape per AD043, peer-kind resolution per AD046)* `[PROVISIONAL AD009]`
+  `[PROVISIONAL AD035]` `[PROVISIONAL AD042]` `[PROVISIONAL AD043]` `[PROVISIONAL AD046]`
 - **FR-003**: Every operation MUST carry a stable identifier that links review, application,
   audit, and recovery records for that operation. The identifier MUST be derived from the
   operation's action, destination kind, and destination identity — never randomly generated and
@@ -644,10 +841,17 @@ references.
   byte-identical whenever those bytes are. The source-snapshot binding MUST be a manifest field
   recording, per source-snapshot file the plan was computed against, that file's run-relative path,
   a SHA-256 digest of its content, and its row count; the binding matches when every recorded path
-  exists and its recomputed digest and row count equal the recorded values. The manifest MUST also
-  carry a field recording whether delete operations were computed for this plan, per FR-015.
-  *(DBR-006, DBR-008, DBR-015; computation per AD001, snapshot binding per AD008, delete-computation
-  disclosure per AD024)* `[PROVISIONAL AD008]` `[PROVISIONAL AD024]`
+  exists and its recomputed digest and row count equal the recorded values. "Content" here MUST mean
+  the file's **logical rows** — the extracted records with the engine's per-run extraction timestamp
+  excluded, in file order, each canonically encoded — and MUST NOT mean the file's raw bytes: the
+  engine stamps that timestamp into every row of every snapshot, so a raw-byte digest would differ on
+  every re-plan of an unchanged source and would make SC-006 unachievable while SC-006 fixes its mask
+  at two fields. The row source identifier and the tombstone flag stay inside the digest, because both
+  are deterministic for identical input and both are part of what the plan was computed against. The
+  manifest MUST also carry a field recording whether delete operations were computed for this plan,
+  per FR-015. *(DBR-006, DBR-008, DBR-015; computation per AD001, snapshot binding per AD008,
+  delete-computation disclosure per AD024, logical-row digest per AD037)* `[PROVISIONAL AD008]`
+  `[PROVISIONAL AD024]` `[PROVISIONAL AD037]`
 - **FR-005**: The manifest and the ordered operations MUST be serialized deterministically — a
   fixed key order, no insignificant whitespace, and a fixed ordering of the operations sequence — so
   the checksum is stable across re-serialization of identical content. Canonical ordering applies to
@@ -726,17 +930,26 @@ references.
   on the same path as a mismatch. The manifest MUST carry an operation count so that a plan with
   no operations is distinguishable from a plan whose operations are missing, rather than the two
   presenting identically. A source snapshot file the manifest records but which is absent, or whose
-  recomputed digest or row count disagrees with the recorded value, is truncated or tampered with and
-  MUST be refused on that same path. *(DBR-015; count field per AD001, snapshot digest and row count
-  per AD008)* `[PROVISIONAL AD008]`
+  recomputed logical-row digest or row count disagrees with the recorded value, is truncated or
+  tampered with and MUST be refused on that same path. *(DBR-015; count field per AD001, snapshot
+  digest and row count per AD008, logical-row digest per AD037)* `[PROVISIONAL AD008]`
+  `[PROVISIONAL AD037]`
 - **FR-011**: The manifest's configuration-version field MUST hold a deterministic content
   checksum computed over the configuration the run used, unless the caller supplies a version
-  identifier explicitly, in which case that value MUST be stored verbatim. Either way the value
+  identifier explicitly, in which case that value MUST be stored verbatim. The default rule MUST
+  cover every field of the parsed configuration **except** the filesystem location it was loaded
+  from, which is machine-dependent and would stop a plan produced in one checkout from being applied
+  from another. The configuration's connection settings ARE covered, because a changed destination
+  address is a changed configuration and only a one-way digest is written, so no credential is
+  disclosed by covering them. A consequence of that coverage is recorded rather than left to be
+  discovered: rotating a credential invalidates every saved plan for that configuration, which is
+  refused at apply under FR-009 and requires a re-plan. Either way the value
   MUST be treated as opaque at apply: compared for equality and never parsed. At apply, the
   comparison value MUST be recomputed by the same default rule, unless an in-process caller supplies
   one verbatim, in which case the supplied value is compared verbatim; the CLI apply path uses the
   default rule only. No new user-facing input is introduced. *(DBR-018; apply-side supplier per
-  AD013)* `[PROVISIONAL AD013]`
+  AD013, covered field set and the credential-rotation consequence per AD041)* `[PROVISIONAL AD013]`
+  `[PROVISIONAL AD041]`
 - **FR-012**: A saved plan MUST be applicable by run ID, executing exactly the stored operations
   in dependency order, without re-extracting either side and without recomputing the comparison.
   *(DBR-004)*
@@ -745,8 +958,16 @@ references.
   planned updates MUST both route through the adapter's convergent upsert, keyed on the destination
   kind's human-friendly ID, and MUST NOT route through the adapter's existing update path, which is
   keyed on a destination-assigned node identifier populated only by a destination load that FR-012
-  forbids. Cardinality-many relationships MUST be written as a replace-set, which is the existing
-  behavior. An update payload is authoritative for the mapped fields it carries and MUST NOT touch
+  forbids. The data handed to that convergent write MUST carry every component of the destination
+  kind's convergence key, which is what FR-002's identity-bearing payload supplies; a write issued
+  without it is unkeyed and duplicates on re-apply, which would make SC-002 and SC-003 unachievable.
+  Cardinality-many relationships MUST be written as a replace-set, and that replace-set MUST be
+  **enforced explicitly after the convergent write rather than assumed of it**. The earlier reading
+  that replace-set "is the existing behavior" was false: the only replace-set this repository
+  implements sits on the update path this requirement forbids, and whether the convergent write's own
+  mutation replaces or merges a peer list is not determinable without a live destination. Enforcing it
+  makes the clause true by construction; where the convergent write already replaces, the enforcement
+  is a no-op. An update payload is authoritative for the mapped fields it carries and MUST NOT touch
   unmapped destination fields. Two consequences of that mandated write path are recorded here rather
   than left to inference. First, a planned `create` whose destination identity already exists converges
   onto the existing object rather than producing a duplicate; whether that object's payload differs is
@@ -757,9 +978,15 @@ references.
   both cases the operation is reported under its original operation identifier and its original action.
   This requirement is verified through SC-002 and SC-008 rather than by a criterion of its own: SC-002
   measures convergence and SC-008 measures the relationship semantics, and between them they exercise
-  every clause here. *(DBR-013, DBR-011; write path per AD015, create-on-no-match consequences per
-  AD025, verification route per AD036)* `[PROVISIONAL AD015]` `[PROVISIONAL AD025]`
-  `[PROVISIONAL AD036]`
+  every clause here. Because both of those criteria need a live destination and none is reachable, an
+  offline conformance check over the write mutations themselves — every convergence-key component
+  present in each create call's data, the replace-set enforcement issued, and a repeated operation
+  producing no second create — is required alongside them, so a defect of this class is caught without
+  waiting for the deferred evidence. *(DBR-013, DBR-011; write path per AD015, create-on-no-match
+  consequences per AD025, verification route per AD036, convergence-key payload per AD042, explicit
+  replace-set enforcement per AD038, offline conformance check per AD045)* `[PROVISIONAL AD015]`
+  `[PROVISIONAL AD025]` `[PROVISIONAL AD036]` `[PROVISIONAL AD038]` `[PROVISIONAL AD042]`
+  `[PROVISIONAL AD045]`
 - **FR-014**: Relationship peers MUST be resolvable at apply time without a loaded comparison
   store, from the peer kind and identity the plan itself carries. Resolution MUST be memoized
   within one apply, MUST take an operation's own result as the resolution for later operations
@@ -776,9 +1003,17 @@ references.
   A peer identity that matches **no** destination object MUST refuse that operation and fail the run,
   naming the peer kind, the peer identity, and the referring operation identifier. A peer identity
   that matches **more than one** destination object MUST refuse, naming the peer kind, the peer
-  identity, and the match count. Neither case may be a silent skip. *(DBR-007, DBR-011; resolution
-  shape per AD003, resolution failures per AD016, tier qualification per AD022, memo negative-caching
-  rule per AD036)* `[PROVISIONAL AD016]` `[PROVISIONAL AD022]` `[PROVISIONAL AD036]`
+  identity, and the match count. Neither case may be a silent skip. Both refusals are scoped to
+  **this saved-plan apply resolver only**. The existing live write path's warn-and-continue on an
+  unresolvable peer is unchanged by this feature: it is existing behavior on an existing path that
+  this outcome does not authorize touching, and the refusal is a property of resolving a peer from a
+  saved plan with no comparison store loaded — a path that does not exist today. Where a peer's
+  identity itself contains a reference, resolution MUST use the nested peer kind and peer identity the
+  plan records under FR-002 and MUST NOT recover an identity by splitting a unique identifier on its
+  separator. *(DBR-007, DBR-011; resolution shape per AD003, resolution failures per AD016, tier
+  qualification per AD022, memo negative-caching rule per AD036, recursive peer identity per AD043,
+  scope of the refusal per AD048)* `[PROVISIONAL AD016]` `[PROVISIONAL AD022]` `[PROVISIONAL AD036]`
+  `[PROVISIONAL AD043]` `[PROVISIONAL AD048]`
 - **FR-015**: Delete operations MUST be recorded in the plan, changing today's default of
   suppressing them. They MUST be derived from the destination-only identities in the loaded
   destination state and materialized only into plan records, never into the comparison result the
@@ -850,18 +1085,25 @@ references.
   already has today. *(Carries the brief's "Missing destination write
   surface" edge case; no separate acceptance criterion, because the brief states none and the
   behavior is pre-existing.)*
-- **FR-024**: When a destination kind declares no human-friendly ID, or when the plan's destination
-  identity for that kind does not supply every human-friendly-ID component, the plan run MUST warn at
-  plan time, naming the affected kind and the missing component. This is the observable convergence
-  actually rides on: the upsert is keyed on the human-friendly ID and is unkeyed — and therefore
-  duplicates — when it is absent or incomplete. The plan run MUST still succeed; this is a warning,
+- **FR-024**: The plan run MUST warn at plan time in either of two conditions, naming the affected
+  kind and what is missing. **First**, when a destination kind declares no human-friendly ID, or when
+  the plan's destination identity for that kind does not supply every human-friendly-ID component:
+  that is the observable convergence actually rides on, because the convergent write is keyed on the
+  human-friendly ID and is unkeyed — and therefore duplicates — when it is absent or incomplete.
+  **Second**, when the destination kind declares no uniqueness constraint covering the plan's identity
+  attributes: that is the brief's own stated condition, and it is a different condition from the
+  first, because a kind with a complete human-friendly ID but no uniqueness constraint still
+  duplicates silently. Both conditions MUST be checked, and both are readable from the same cached
+  destination schema. The plan run MUST still succeed in either case; this is a warning,
   not a failure, per the brief. The warning MUST be emitted on the run's **log stream**, which is
   where the plan path already emits its operational output, and not on the standard-output channel
   FR-008 reserves for read-from-artifact review output. It is emitted only: it MUST NOT be recorded as
   a manifest field, so it stays outside the FR-004 checksum and outside SC-006's byte comparison.
-  *(Carries the brief's non-unique-destination-identifier edge case, restated on the real convergence
-  key per AD017; emitted-only, non-manifest status and output channel per AD036; criterion SC-014.)*
-  `[PROVISIONAL AD017]` `[PROVISIONAL AD036]`
+  *(Carries the brief's non-unique-destination-identifier edge case. The convergence-key condition is
+  AD017's restatement; the uniqueness-constraint condition is the brief's own, restored per AD044
+  because AD017 had substituted a different condition for it. Emitted-only, non-manifest status and
+  output channel per AD036; criterion SC-014.)* `[PROVISIONAL AD017]` `[PROVISIONAL AD036]`
+  `[PROVISIONAL AD044]`
 - **FR-025**: If an apply stops partway — meaning it terminates in-process with a reported error —
   the operations already written MUST stay written and the run MUST record, best effort, the last
   operation it reported as applied, where "last" means last in the dependency order actually
@@ -885,7 +1127,8 @@ references.
     3. The **creation timestamp** of the plan.
     4. The **configuration-version value** the run planned with, per FR-011.
     5. The **source-snapshot binding**, per FR-004: one record per source-snapshot file the plan was
-       computed against, holding that file's run-relative path, a content digest, and its row count.
+       computed against, holding that file's run-relative path, a digest over its logical rows with
+       the engine's per-run extraction timestamp excluded, and its row count.
     6. The **operation count**, per FR-010, which is what keeps a plan with no operations
        distinguishable from a plan whose operations are missing.
     7. The **delete-computation record**, per FR-015, stating whether delete operations were computed
@@ -928,17 +1171,22 @@ references.
        hashes, what FR-005's canonical ordering of relationship-reference lists sorts by, and what
        per-object review presents under FR-006, so the identity an operator reads is the identity the
        operation identifier was derived from.
-    4. **The authority of the payload.** "The required source values as a full payload" is
-       authoritative for the mapped fields it carries and silent about every other destination field:
-       applying it MUST set the fields it carries and MUST NOT touch unmapped destination fields,
-       which is the same authority FR-013 states for a planned update. "Full" means complete with
-       respect to the configuration's field mapping, not complete with respect to the destination
-       schema.
+    4. **The authority and the extent of the payload.** "The required source values as a full payload"
+       is authoritative for the mapped fields it carries and silent about every other destination
+       field: applying it MUST set the fields it carries and MUST NOT touch unmapped destination
+       fields, which is the same authority FR-013 states for a planned update. "Full" means complete
+       with respect to the configuration's field mapping, not complete with respect to the destination
+       schema. Complete with respect to the field mapping MUST include the **identity components**:
+       the payload is the union of the operation's destination identity and its non-identity mapped
+       values, minus any component that travels as a relationship reference instead. The comparison
+       engine's attribute accessor excludes identity fields by contract, so a payload taken from it
+       alone would carry none of them, and a write issued from such a payload cannot form the
+       destination's convergence key.
 
   *(DBR-008, DBR-011, DBR-014; obligation levels, the absent-versus-empty rule, the single identity
-  representation and the payload's authority per AD035; payload authority consistent with AD015;
-  verified through SC-002, SC-005, SC-006 and SC-008 rather than by a criterion of its own)*
-  `[PROVISIONAL AD035]`
+  representation and the payload's authority per AD035; payload authority consistent with AD015; the
+  payload's identity components per AD042; verified through SC-002, SC-005, SC-006 and SC-008 rather
+  than by a criterion of its own)* `[PROVISIONAL AD035]` `[PROVISIONAL AD042]`
 - **FR-029**: Reading a stored plan MUST have exactly one supported entry point: an in-process plan
   reader that takes the sync name and the run identifier locating a stored run, reads that run's plan
   artifact, and produces both review depths FR-006 defines — the summary and the per-object detail.
@@ -951,6 +1199,21 @@ references.
   plans, runs, or applies is designed here. *(DBR-002, DBR-012, DBR-020; single reader entry point per
   AD029; verified through SC-009 and SC-010 rather than by a criterion of its own)*
   `[PROVISIONAL AD029]`
+- **FR-030**: A failure while deriving the plan — an operation for which no destination identity value
+  can be formed, a relationship peer that cannot be resolved in the loaded source state, a payload
+  value the canonical encoding cannot represent, or a duplicate operation identifier — MUST fail the
+  command that was run, with a clear, actionable error naming the destination kind and the cause. This
+  holds on the **non-mutating** command as well as the mutating one: derivation MUST NOT degrade to
+  warn-and-skip there, and no error-tolerance option is added to the non-mutating command, because a
+  silently incomplete plan is exactly the divergence between the reviewed set and the applied set that
+  FR-017 exists to prevent — and it is worse here than anywhere else, because the product of this
+  feature is a plan an operator is asked to trust. This does not weaken the project standard that the
+  non-mutating commands are safe to run at any time: that standard means the command performs no
+  destination mutation, which still holds, since derivation runs after a read-only comparison and
+  writes only inside the run directory. *(Carries FR-002's, FR-014's and FR-021's failure obligations
+  onto the non-mutating path, where the mutating path's error-tolerance option does not exist. No
+  separate acceptance criterion, because the brief states none and each failure is already asserted at
+  the requirement that produces it. Per AD047.)* `[PROVISIONAL AD047]`
 
 ### Key Entities
 
@@ -962,21 +1225,29 @@ references.
   configuration version it ran with, and the source snapshot it was planned against; records the
   format version and the operation count; and carries the deterministic checksum over itself and
   the ordered operations. The source-snapshot binding is a per-file record of run-relative path,
-  content digest, and row count. Also records whether delete operations were computed for this plan,
-  which is false when the destination side was loaded incrementally. *(fields and checksum rule per
-  AD001, snapshot binding per AD008, delete-computation disclosure per AD024)* `[PROVISIONAL AD008]`
-  `[PROVISIONAL AD024]`
+  logical-row digest, and row count. Also records whether delete operations were computed for this
+  plan, which is false when the destination side was loaded incrementally. *(fields and checksum rule
+  per AD001, snapshot binding per AD008, delete-computation disclosure per AD024, logical-row digest
+  per AD037)* `[PROVISIONAL AD008]` `[PROVISIONAL AD024]` `[PROVISIONAL AD037]`
 - **Planned operation**: One proposed change. Carries a stable operation identifier, the action —
   exactly one of `create`, `update`, or `delete` — the destination kind, destination identity, the
-  required source values as a full payload, relationship references, and a dependency tier. A
-  relationship change is not an action; it is carried as relationship references on the owning
-  object's create or update operation. *(closed action vocabulary per AD009)* `[PROVISIONAL AD009]`
+  required source values as a full payload including the identity components, relationship references,
+  and a dependency tier. A relationship change is not an action; it is carried as relationship
+  references on the owning object's create or update operation. *(closed action vocabulary per AD009,
+  identity in the payload per AD042)* `[PROVISIONAL AD009]` `[PROVISIONAL AD042]`
 - **Relationship reference**: A peer named by kind and identity values rather than by any
   destination-assigned identifier, so it is resolvable at apply time and does not depend on which
-  destination instance the plan is applied to. *(per AD003)*
+  destination instance the plan is applied to. Where a peer's identity component is itself a
+  reference, it carries the nested peer kind and peer identity in turn, recursively, so no consumer
+  has to recover an identity by splitting a unique identifier. The peer's kind comes from the loaded
+  source entry for the referenced object, not from the configuration's declared reference for the
+  field, because one destination kind may be declared by several schema-mapping entries with different
+  references. *(per AD003, recursive shape per AD043, peer-kind resolution per AD046)*
+  `[PROVISIONAL AD043]` `[PROVISIONAL AD046]`
 - **Source snapshot**: The extracted source-side state the plan was computed against — one file per
   extracted resource under the run's source side — bound to the plan by the manifest's per-file path,
-  digest, and row count so the pair cannot tear. *(per AD008)*
+  logical-row digest, and row count so the pair cannot tear. *(per AD008, digest scope per AD037)*
+  `[PROVISIONAL AD037]`
 - **Run**: The unit a plan belongs to and the handle an apply is requested by. Carries the run
   state, drawn from the existing vocabulary `pending | running | dry-run | applied | failed`,
   including whether the plan reached `status: applied` and which operations were reported as applied.
@@ -1046,7 +1317,12 @@ references.
   specified — evidenced by, for each relationship the schema mapping declares for the kind under test,
   the destination's peer set read back and compared against the plan's reference list as an **unordered
   set of (peer kind, peer identity) pairs**. The no-comparison-store precondition is evidenced as
-  SC-001 evidences its own: no source or destination extraction call on the apply path. *(DBA-008)*
+  SC-001 evidences its own: no source or destination extraction call on the apply path. At least one
+  referenced peer MUST **pre-exist at the destination and be absent from the plan**, so the
+  destination-query resolution path is actually exercised: when every peer is created by the same
+  plan, dependency-tier ordering fills the resolution memo and the query path never runs, which would
+  let this criterion pass while the requirement it measures is broken. *(DBA-008; the pre-existing-peer
+  case per AD043)* `[PROVISIONAL AD043]`
 - **SC-009**: A saved plan can be summarized by action and kind, and expanded to per-object
   detail, at any time after the run and after the originating process has exited — reachable both
   in-process and from the CLI. Evidenced by four cases: summary and per-object detail, each
@@ -1076,12 +1352,16 @@ references.
   round-trip test using a deliberately opaque value supplied verbatim by an in-process caller and
   compared verbatim at apply, plus the mismatch refusal from SC-004. *(DBA-013; apply-side supplier
   per AD013)* `[PROVISIONAL AD013]`
-- **SC-014**: A plan run against a destination kind that declares no human-friendly ID, or whose
-  plan identity does not supply every human-friendly-ID component, emits a warning naming that kind
-  and the missing component, and the plan run still succeeds — evidenced by a plan run against such a
-  kind, asserting the warning's content and the run's successful outcome. *(FR-024, per AD017; the
-  brief raises this edge case from documentation to detection but states no criterion for it)*
-  `[PROVISIONAL AD017]`
+- **SC-014**: A plan run emits a convergence-key warning naming the affected kind and what is missing,
+  and still succeeds, in each of three cases — evidenced by three plan runs, one per case, asserting
+  the warning's content and the run's successful outcome. The three cases are: a destination kind that
+  declares **no human-friendly ID**; a kind whose plan identity does **not supply every
+  human-friendly-ID component**; and a kind that declares a **complete human-friendly ID but no
+  uniqueness constraint** covering the plan's identity attributes. The third case is the brief's own
+  stated condition and is asserted in its own right, because a kind can pass the first two and still
+  duplicate silently. *(FR-024, per AD017 and AD044; the brief raises this edge case from
+  documentation to detection but states no criterion for it)* `[PROVISIONAL AD017]`
+  `[PROVISIONAL AD044]`
 - **SC-015**: An apply whose manifest records a run identifier other than the run being applied is
   refused before any destination write, naming that check, and the run is recorded `failed` —
   evidenced by copying a plan directory from one run into another and asserting refusal, zero
@@ -1091,7 +1371,9 @@ references.
   whose peer identity matches more than one destination object, each refuse the operation and fail the
   run with a message naming the peer kind and the peer identity — the zero-match message also naming
   the referring operation identifier, the multi-match message also naming the match count — and
-  neither is silently skipped. *(FR-014, per AD016)* `[PROVISIONAL AD016]`
+  neither is silently skipped. The evidence is scoped to the saved-plan apply path; the same evidence
+  asserts that the live write path's existing warn-and-continue behavior is unchanged. *(FR-014, per
+  AD016; scope per AD048)* `[PROVISIONAL AD016]` `[PROVISIONAL AD048]`
 - **SC-017**: A plan run whose destination side ran a full extract records delete operations and
   records in the manifest that deletes were computed; a plan run whose destination side was loaded
   incrementally records no delete operations and records in the manifest that deletes were not
@@ -1198,19 +1480,44 @@ is the whole of what is done: none of the capabilities below is built here.
   not an implementer's call.
 - The qualified path is NetBox → Infrahub using `examples/netbox_to_infrahub/config.yml`.
 - The run-mode vocabulary (`plan`, `sync`, `apply`) is fixed naming, not a build dependency.
-- The existing engine and per-run artifact layout are present: a saved plan is already read and
-  dispatched per row to the destination's planned-write method, and per-side snapshots and run
-  sidecars are already written. The planned-write surface currently has no implementation on any
-  adapter, and today's plan rows are lossy.
+- The existing engine and per-run artifact layout are present: per-side snapshots and run sidecars are
+  already written, and the engine already reads a saved plan and dispatches it per row without calling
+  the comparison engine, which is the property DBA-001 rides on. That per-row dispatch is **removed**
+  by this outcome rather than kept beside the new one, because leaving it wired would be the second
+  apply path FR-019 forbids; removal is safe because the surface it dispatches to has no
+  implementation on any adapter. Today's plan rows are lossy. *(dispatch removal per AD040)*
+  `[PROVISIONAL AD040]`
 - The Infrahub destination adapter's **create** path is identifier-keyed and convergent, via the
   destination kind's human-friendly ID (`client.create(...)` then `save(allow_upsert=True)`,
-  `adapters/infrahub.py:611-612`). Its existing **update** path is not: it is keyed on a
-  destination-assigned node id captured only during a destination load
+  `adapters/infrahub.py:611-612`) — and it is convergent only because it passes identifiers and
+  attributes together (`adapters/infrahub.py:602-604`). Its existing **update** path is not: it is
+  keyed on a destination-assigned node id captured only during a destination load
   (`adapters/infrahub.py:622`, `:510`; `infrahub_sync/__init__.py:232`) and is therefore unusable from
   a saved plan, which performs no destination load. FR-013 accordingly routes planned creates **and**
   planned updates through the upsert path rather than inventing a new one. If that path turns out not
   to converge for a planned update, SC-002 and SC-003 fail and the write surface needs a decision this
-  specification does not carry. *(corrected per AD015)* `[PROVISIONAL AD015]`
+  specification does not carry. Two properties of that path are **not** assumed and are handled
+  instead: whether its mutation replaces or merges a cardinality-many peer set is unverifiable here, so
+  FR-013 enforces the replace-set explicitly afterwards (AD038); and the identity components the key is
+  formed from are not present in the comparison engine's attribute set, so FR-002 puts them into the
+  payload deliberately rather than inheriting them (AD042). *(corrected per AD015, AD038, AD042)*
+  `[PROVISIONAL AD015]` `[PROVISIONAL AD038]` `[PROVISIONAL AD042]`
+- On the qualified path, one destination kind is declared by **two** schema-mapping entries with
+  different references for the same identity field (`examples/netbox_to_infrahub/config.yml:212` and
+  `:254`), so the configuration's declared reference for a field does not uniquely determine a peer's
+  kind. FR-002 therefore resolves a peer's kind from the loaded source entry instead. If a future
+  configuration made even that ambiguous, peer resolution would need a decision this specification does
+  not carry. *(per AD046)* `[PROVISIONAL AD046]`
+- Rotating a credential in the configuration's `settings` changes the default configuration-version
+  value and therefore invalidates every saved plan for that configuration, which is refused at apply
+  and requires a re-plan. This is accepted rather than mitigated: excluding `settings` would mean a
+  changed destination address did not invalidate a plan, which is the worse failure. *(per AD041)*
+  `[PROVISIONAL AD041]`
+- Six of the brief's acceptance criteria need a live destination and none is reachable in the
+  development environment, so their evidence is **deferred**, not produced: the brief's completion
+  condition — inspectable passing evidence for every criterion — is not met at merge time. The offline
+  conformance check FR-013 requires narrows what the deferral can hide, but does not close it.
+  *(per AD045)* `[PROVISIONAL AD045]`
 - The engine computes kind-level dependency tiers from `schema_mapping[].fields[].reference`
   (`dependency_graph.py:25-36`), and this outcome derives each operation's tier from them. Tiers are
   absent entirely when a configuration declares an explicit `order:`
@@ -1324,6 +1631,7 @@ separately. Every requirement in this specification appears in one of the two ta
 | Derived from DBR-007 at apply time: peer resolution failures | FR-014; SC-016 |
 | Derived from DBR-003/DBR-006: the plan's run binding | FR-009; SC-015; User Story 2 scenario 6 |
 | Derived from DBR-003/DBR-006 and DBR-019: the manifest's format-version check | FR-009, FR-027; SC-018; Edge Cases (A manifest declaring an unrecognized format version) |
+| Derived from DBR-008 and DBR-016: plan-derivation failure behavior on the non-mutating path | FR-030; Edge Cases (A plan-derivation failure on the non-mutating path) |
 
 ## Open Design Decisions
 
@@ -1355,6 +1663,21 @@ carrying its marker. None of them expands scope: each either names a representat
 delegates, corrects a statement this specification made about existing code, or picks the reading
 that keeps the brief's own text true.
 
+Twelve more — AD037 through AD048 — were recorded after planning worked the specification down to
+the code and after a cross-artifact analysis checked the result against the tree. They are carried in
+the [planning-phase](#session-2026-07-26--planning-phase-decisions) and
+[remediation](#session-2026-07-26--cross-artifact-remediation) sessions, and are marked the same way.
+Seven of them correct a statement this specification made about existing code rather than adding
+anything: AD037 (what the snapshot digest covers), AD038 (replace-set is not existing behavior on the
+mandated write path), AD040 (the pre-existing dispatch is removed), AD042 (the comparison engine's
+attribute set carries no identity), AD044 (the brief's condition is uniqueness, not the convergence
+key), AD046 (one kind, two mapping entries) and AD048 (the refusal is scoped to the new resolver).
+Two settle a format detail before the format is written — AD041 and AD043 — and three record how a
+constraint is met rather than changing it: AD039, AD045 and AD047. If AD042 is not ratified, FR-002's
+payload extent, FR-013's convergence clause and FR-028.4 reopen, and SC-002 and SC-003 become
+unachievable. If AD043 is not ratified, FR-002's reference shape and FR-014's resolution mechanism
+reopen for a second time.
+
 Nothing here remains open. What remains genuinely deferred is not a design commitment:
 
 - **Plan size and review performance.** The brief sets no volume or latency target, so none is
@@ -1362,6 +1685,7 @@ Nothing here remains open. What remains genuinely deferred is not a design commi
   summarized and detailed without loading all of it, which is the property a later target would
   need; no threshold is asserted. The exclusion itself is recorded in
   [Out of Scope](#out-of-scope). *(per AD030)* `[PROVISIONAL AD030]`
-- **How a missing destination unique constraint is detected** for the FR-024 warning. The
-  requirement and the warning's content are fixed; the detection mechanism is a planning-phase
-  choice with no cross-outcome contract attached.
+- **How a missing destination unique constraint is detected** for the FR-024 warning. The requirement,
+  its two conditions and the warning's content are fixed (AD044), and both conditions are readable
+  from the same cached destination schema; the exact traversal is a planning-phase choice with no
+  cross-outcome contract attached. *(per AD044)* `[PROVISIONAL AD044]`

@@ -8,8 +8,16 @@ It records the ten details planning had to close underneath them — a decision 
 level of abstraction above the code, or an interaction between two of them that neither anticipated.
 
 Each is numbered **PD-nnn**, states which AD it sits under, and carries a materiality judgment.
-PD-003, PD-005, PD-008, PD-009 and PD-010 are reported upward as new decisions; the rest are
+PD-003, PD-005, PD-008, PD-009 and PD-010 were reported upward as new decisions and are now ratified
+into the specification as **AD041, AD038, AD037, AD039 and AD040** respectively; the rest are
 low-impact, reversible calls made inside the CHECKPOINT mandate.
+
+A later cross-artifact analysis added **AD042–AD048** in the specification. Four of them land inside
+entries here and are folded into them rather than duplicated: AD042 (the payload carries the identity
+components) corrects a "confirmed non-question" below; AD043 (peer identities are recursive) is a
+prerequisite of PD-004 and is noted there; AD046 (a peer's kind comes from the source store, not the
+mapping) closes an ambiguity PD-004's own table exposed; and PD-009's `top_level` placement is
+corrected in that entry.
 
 ---
 
@@ -97,6 +105,14 @@ reformat of the configuration that the rule is sensitive to invalidates saved pl
 hashing makes the rule insensitive to YAML comments, key order and whitespace, which is the
 strongest form of that property available without a version registry (DB-008).
 
+**Second consequence, operator-visible, recorded rather than left to be discovered**: because
+`settings` is inside the hash input, **rotating a credential invalidates every saved plan for that
+configuration**. The next apply of any of them is refused on the configuration-version check (FR-009)
+and the operator must re-plan. This is accepted rather than mitigated — excluding `settings` would
+mean a changed destination address did **not** invalidate a plan, which is the worse failure — but it
+is stated in the spec's Assumptions and in AD041 so it reads as a designed consequence rather than a
+bug report waiting to happen.
+
 **Alternatives considered**: hash the file bytes (rejected by AD035 explicitly); hash only
 `schema_mapping` (rejected: a changed destination URL would not invalidate a plan, which is worse than
 over-invalidating); include `directory` (rejected as above).
@@ -113,22 +129,42 @@ on a miss, "by querying the destination for that identity") and AD017 (convergen
 human-friendly ID).
 
 **Question**: AD003 says "querying the destination for that identity" without saying how an identity
-mapping becomes a destination query. On the qualified configuration this is not cosmetic: seven kinds
-carry a relationship *inside* their identity, so an identity value is sometimes a peer's DiffSync
-unique-id rather than a scalar. Verified in `examples/netbox_to_infrahub/config.yml`:
+mapping becomes a destination query. On the qualified configuration this is not cosmetic: **ten
+schema-mapping entries**, across nine distinct destination kinds, carry a relationship *inside* their
+identity, so an identity value is sometimes a peer's DiffSync unique-id rather than a scalar. Verified
+by parsing `examples/netbox_to_infrahub/config.yml` and cross-referencing each entry's `identifiers`
+against its `fields[].reference` — one row per **mapping entry**, not per kind:
 
-| Kind | `identifiers` | identity components that are references |
-|---|---|---|
-| `LocationRack` | `name`, `site` | `site` → `LocationSite` |
-| `DcimDeviceType` | `manufacturer`, `name` | `manufacturer` → `OrganizationManufacturer` |
-| `DcimDevice` | `location`, `name` | `location` → `LocationRack` / `LocationSite` |
-| `InterfacePhysical` / `InterfaceVirtual` / `InterfaceLag` | `device`, `name` | `device` → `DcimDevice` |
-| `IpamVLAN` | `name`, `vlan_group`, `vlan_id` | `vlan_group` → `IpamVLANGroup` |
-| `IpamPrefix` | `prefix`, `vrf` | `vrf` → `IpamVRF` |
-| `IpamIPAddress` | `address`, `vrf` | `vrf` → `IpamVRF` |
+| # | Entry | `identifiers` | identity components that are references |
+|---|---|---|---|
+| 1 | `LocationRack` (`:70`) | `name`, `site` | `site` → `LocationSite` |
+| 2 | `DcimDeviceType` (`:168`) | `name`, `manufacturer` | `manufacturer` → `OrganizationManufacturer` |
+| 3 | `DcimDevice` (`:212`) | `location`, `name` | `location` → **`LocationRack`** (`mapping: rack`) |
+| 4 | `DcimDevice` (`:254`) | `location`, `name` | `location` → **`LocationSite`** (`mapping: site`) |
+| 5–7 | `InterfacePhysical` / `InterfaceVirtual` / `InterfaceLag` | `device`, `name` | `device` → `DcimDevice` |
+| 8 | `IpamVLAN` | `name`, `vlan_id`, `vlan_group` | `vlan_group` → `IpamVLANGroup` |
+| 9 | `IpamPrefix` | `prefix`, `vrf` | `vrf` → `IpamVRF` |
+| 10 | `IpamIPAddress` | `address`, `vrf` | `vrf` → `IpamVRF` |
+
+Rows 3 and 4 are the same destination kind declared **twice**, with complementary filters (racked
+devices versus everything else) and a **different** `location` reference. That has a consequence
+beyond the query construction and is recorded as AD046 below.
 
 The naive approach — split the unique-id on `__` — is precisely the v1 flaw the brief names
 ("identifiers are recovered by splitting the diffsync unique-id on `__`").
+
+**Prerequisite settled separately as AD043**: a peer identity component that is itself a reference is
+recorded in the plan as a nested `{peer_kind, identity}` pair rather than a raw unique-id string,
+recursively. Without that, the `<rel>__<attr>__value` arm of the decision below is not constructible:
+on a memo miss the resolver holds only the peer's identity mapping, and if the component under `<rel>`
+were a unique-id string the only way to reach `<attr>` would be to split it — the very flaw this
+decision exists to avoid.
+
+**Peer-kind ambiguity settled separately as AD046**: because rows 3 and 4 declare the same kind with
+different references, a peer's `peer_kind` is resolved from the **loaded source store entry** for the
+referenced unique-id — the entry knows its own kind — rather than from the referring field's
+`SchemaMappingField.reference`. Deriving it from the mapping picks one of two answers arbitrarily for
+`DcimDevice.location`, and a wrong pick fails the whole apply run on the brief's own qualified path.
 
 **Decision**: the resolver builds its query from the **destination schema's own** `human_friendly_id`
 component paths (`.venv/…/infrahub_sdk/schema/main.py:272`; the adapter already caches the whole
@@ -309,8 +345,20 @@ CLI does the same at `cli.py:271` then `:276`). So under `sync --parallel`, whic
 
 **Decision**: restructure the tier branch into two loops — compute and retain every tier's `Diff`,
 write the plan artifact, then apply the retained diffs tier by tier through the existing
-`sync(diff=...)` entry point (`infrahub_sync/potenda/__init__.py:292-295`). The destination
-`top_level` narrowing stays exactly where it is, in the execution loop.
+`sync(diff=...)` entry point (`infrahub_sync/potenda/__init__.py:292-295`).
+
+**Where the `top_level` narrowing goes — corrected.** It governs **diff computation**, not execution.
+In the tree, `self.destination.top_level = tier_list` is assigned at `:483`, immediately *before*
+`self.diff()` at `:484`; and `top_level` is read only by the comparison engine's differ
+(`.venv/…/diffsync/helpers.py:79-88`, inside `DiffSyncDiffer.calc_diff`), never by the synchronizer,
+which walks the children of whatever `Diff` it is handed. So the **compute loop** must set the
+narrowing around each `self.diff()` call, exactly as the interleaved loop does today, and the
+**execution loop** replays the retained per-tier diffs with the narrowing restored to `saved_top` — it
+is irrelevant there. An earlier reading of this decision said the narrowing "stays in the execution
+loop"; that would have computed every tier's diff against the *whole* destination, producing six
+identical full diffs instead of six disjoint per-tier ones, and the artifact would have recorded each
+operation once per tier. The regression test therefore asserts on per-tier diff **contents**, not only
+on call order.
 
 **Rationale**: it is the minimum change that makes FR-001 true on the default sync path. The two loops
 are equivalent to the interleaved one because tiers partition kinds — tier *n*'s diff only involves
@@ -347,8 +395,10 @@ the guard's *shape* — a `NotImplementedError` naming the adapter class and tel
 **Rationale**: FR-019's plain text forbids a second apply path, and a wired v1 dispatch is that path.
 Removal is safe in a way it rarely is: `apply_cached_row` has zero implementations anywhere in the
 repository (V3), so nothing can be calling it successfully today. The only fallout is
-`tests/cache/test_apply_plan.py`, whose `MagicMock` asserts the dispatch shape, and which Phase G
-rewrites.
+`tests/cache/test_apply_plan.py`, whose `MagicMock` asserts the dispatch shape. That rewrite lands in
+**the same phase as the removal, immediately after it** — an earlier ordering put it two phases later,
+which would have left the removal task's done-condition ("`uv run pytest -q` passes") unsatisfiable
+while a test still asserted the removed behavior.
 
 **Alternatives considered**: keep both and select on which artifact is present (rejected: that *is* the
 two-paths-with-different-guarantees outcome D025 exists to prevent, and it would make the v1 rejection
@@ -369,11 +419,19 @@ Recorded so a later reader does not re-investigate them.
   (`infrahub_sync/potenda/__init__.py:92-93`), and diffsync drops destination-only objects under that
   flag before an element is ever created (`.venv/…/diffsync/helpers.py:191-192`). AD004's set-difference
   derivation is therefore the only way to see them without loosening the flag, exactly as it says.
-- **Whether the full payload is available at plan time.** Yes. `DiffElement.source_attrs` is the
-  complete source attribute set, not the delta (V4); today's writer simply does not use it, taking
-  `get_attrs_diffs()` instead (`infrahub_sync/potenda/__init__.py:314-316`).
-- **Whether the destination identity is available at plan time.** Yes. `DiffElement.keys` is the
-  identifiers mapping (V4); today's writer hardcodes `dest_id: ""` (`:322`).
+- **Whether the full payload is available at plan time.** Yes, but **not from `source_attrs` alone** —
+  this was a near-miss and is now AD042. `DiffElement.source_attrs` is the complete source *attribute*
+  set rather than the delta (V4), and today's writer does not use it, taking `get_attrs_diffs()`
+  instead (`infrahub_sync/potenda/__init__.py:314-316`). But `source_attrs` is built from
+  `src_obj.get_attrs()` (`.venv/…/diffsync/helpers.py:223`), whose contract states it "does not
+  include the fields in `_identifiers`" (`.venv/…/diffsync/__init__.py:340-347`), and the generator
+  strips identifiers out of `_attributes` (`infrahub_sync/generator/__init__.py:94`). The payload is
+  therefore `element.keys ∪ element.source_attrs`. Taking `source_attrs` alone would have produced
+  payloads with no identity fields, an unkeyed upsert, and duplication on every re-apply.
+- **Whether the destination identity is available at plan time.** Yes, and separately from the
+  attributes. `DiffElement.keys` is the identifiers mapping (V4), carried as its own constructor
+  argument (`.venv/…/diffsync/helpers.py:212-219`); today's writer hardcodes `dest_id: ""` (`:322`).
+  It is the *only* source of identity on the element, which is why AD042 unions it into the payload.
 - **Whether review can avoid constructing an adapter.** Yes, and it must branch early to do so:
   `get_potenda_from_instance` imports and instantiates both adapters (`infrahub_sync/utils.py:183-235`)
   and creates the run directory before any check (V21), so the review branch has to sit above it in

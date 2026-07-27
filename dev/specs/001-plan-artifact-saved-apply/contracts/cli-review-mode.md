@@ -102,6 +102,24 @@ creates a run directory, and none is ever presented as an empty plan.
 | `--kind` matching no operation, or naming a kind the configuration does not declare | Error naming that kind — never empty output, for the same reason a mistyped run identifier is not an empty plan | FR-006, AD036 |
 | Neither `--name` nor `--config-file`, or both | Existing behavior, unchanged (`infrahub_sync/cli.py:113-114`) | — |
 
+## `diff`'s live path also gains hard failures (FR-030, AD047)
+
+Separate from review mode: the live `diff` path now derives and writes the plan artifact, so a
+derivation failure — an operation with no formable destination identity, a relationship peer absent
+from the loaded source store, an unencodable payload value, a duplicate operation identifier — **fails
+the command** with a non-zero exit and an error naming the destination kind and the cause.
+
+There is no tolerance switch. `--continue-on-error` is declared on `sync` only
+(`infrahub_sync/cli.py:190`, consumed at `:234`) and is **not** added to `diff`; derivation does not
+degrade to warn-and-skip there either. A silently incomplete plan is the divergence between the
+reviewed set and the applied set that FR-017 exists to prevent, and it is worst in the one feature
+whose product is a plan an operator is asked to trust.
+
+This is compatible with the constitution's "`list`, `diff` and `generate` … MUST stay safe to run at
+any time" read as **the command performs no destination mutation** — which still holds: derivation
+runs after a read-only comparison and writes only inside the run directory. The reading is stated in
+[plan.md's Constitution Check](../plan.md#constitution-check) so it is reviewable rather than assumed.
+
 ## `apply` changes
 
 Not a new surface — the existing `apply` command (`infrahub_sync/cli.py:295-352`) is rewired:
