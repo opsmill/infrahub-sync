@@ -25,24 +25,40 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from functools import partial
+from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import pytest
+import yaml
 from diffsync.exceptions import ObjectNotFound
+from typer.testing import CliRunner
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncInstance
+from infrahub_sync import cli as cli_module
 from infrahub_sync.cache import incremental as incremental_module
 from infrahub_sync.cache.cursors import CursorTier
 from infrahub_sync.cache.paths import cache_root_for
+from infrahub_sync.cli import app
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.derive import (
     derive_deletes,
     operations_from_diff,
+    reference_candidates,
     tier_of,
     warn_missing_convergence_key,
 )
+from infrahub_sync.plan.errors import (
+    DuplicateOperationIdError,
+    PeerNotFoundError,
+    PlanArtifactError,
+    SourcePeerUnresolvedError,
+    UnformableDestinationIdentityError,
+    UnserializablePayloadValueError,
+)
+from infrahub_sync.plan.identity import operation_id
 from infrahub_sync.plan.models import SC006_MASKED_FIELDS
 from infrahub_sync.plan.review import read_saved_plan
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME
@@ -50,9 +66,10 @@ from infrahub_sync.potenda import Potenda
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
-    from pathlib import Path
 
-    from infrahub_sync.plan.models import PlannedOperation
+    from click.testing import Result
+
+    from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 
 DERIVE_LOGGER = "infrahub_sync.plan.derive"
 
@@ -258,9 +275,25 @@ class _FakeDiff:
         self.children = {
             kind: {element.name: element for element in elements} for kind, elements in elements_by_kind.items()
         }
+        # `diff` and `sync` both log `Diff.str()` once the plan is written
+        # (`infrahub_sync/cli.py:154`, `:274`), so the CLI cases below need it. Bound here
+        # rather than declared as a method named `str`, which would shadow the builtin for
+        # every annotation in this class body.
+        self.str = partial(render_diff, self)
 
     def has_diffs(self) -> bool:
         return any(element.action for elements in self.children.values() for element in elements.values())
+
+
+def render_diff(diff: _FakeDiff, indent: int = 0) -> str:
+    """One line per actionable element — what `Diff.str()` returns, in miniature."""
+    pad = " " * indent
+    return "\n".join(
+        f"{pad}{kind}: {element.action} {name}"
+        for kind, elements in sorted(diff.children.items())
+        for name, element in sorted(elements.items())
+        if element.action
+    )
 
 
 def diff_between(
@@ -1203,3 +1236,764 @@ def test_two_plan_runs_at_different_extraction_modes_are_expected_to_differ(
 # =======================================================================================
 # T082-T085 append below this line. The fakes and builders above are the shared surface.
 # =======================================================================================
+
+# ---------------------------------------------------------------------------------------
+# Shared surface for T082-T085: a real CLI invocation, and a plan run that must fail
+# ---------------------------------------------------------------------------------------
+
+CLI_RUNNER = CliRunner()
+
+# Typer renders `--help` through rich, which in some environments styles each hyphen of an
+# option as its own ANSI span, so the literal flag string is absent from the raw output.
+_ANSI_SGR_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+# The adapter package, scanned by T085 so its fixture is tied to the eight adapters the
+# regression is about rather than to one hand-written fake.
+ADAPTERS_DIR = Path(__file__).resolve().parent.parent / "infrahub_sync" / "adapters"
+
+# `rest_api_client.py` is a shared HTTP helper and `utils.py` a shared value helper;
+# neither is an adapter.
+NON_ADAPTER_MODULES = frozenset({"__init__", "rest_api_client", "utils"})
+
+
+def strip_ansi(text: str) -> str:
+    """Return `text` with ANSI SGR (colour) escape sequences removed."""
+    return _ANSI_SGR_RE.sub("", text)
+
+
+def write_config_file(config: SyncInstance, *, directory: Path) -> Path:
+    """Write `config` out as `<directory>/config.yml`, where the CLI's loader finds it.
+
+    The CLI resolves `--name`/`--directory` through `get_all_sync`, which parses every
+    `config.yml` it globs, so the configuration a CLI case runs against has to exist on
+    disk. Dumping the same `SyncInstance` the Potenda under test carries keeps the two from
+    drifting — `directory` is excluded because `get_all_sync` supplies it from the file's
+    own location.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "config.yml"
+    body = config.model_dump(exclude={"directory"}, exclude_none=True)
+    path.write_text(yaml.safe_dump(body, sort_keys=True), encoding="utf-8")
+    return path
+
+
+def invoke_command(  # noqa: PLR0913 — one parameter per axis a CLI case varies on
+    command: str,
+    *,
+    config: SyncInstance,
+    potenda: Potenda,
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    extra: Sequence[str] = (),
+) -> Result:
+    """Run a real `infrahub-sync <command>` against a real Potenda built on this module's fakes.
+
+    Only adapter construction is substituted: `get_potenda_from_instance` is the seam the
+    repository's other CLI tests use (`tests/test_cli_full_extract.py:64`), and everything
+    the command does afterwards — the run file, `load_both_sides`, `diff`, `write_plan` and
+    the artifact write — is the real code path. That is what makes the exit code these
+    cases assert the exit code an operator would get.
+    """
+    write_config_file(config, directory=project_dir)
+
+    def _fixed_potenda(**_kwargs: object) -> Potenda:
+        return potenda
+
+    monkeypatch.setattr(cli_module, "get_potenda_from_instance", _fixed_potenda)
+    return CLI_RUNNER.invoke(app, [command, "--name", config.name, "--directory", str(project_dir), *extra])
+
+
+def manifest_path(potenda: Potenda) -> Path:
+    """Where the plan artifact's commit point would be for this run."""
+    return plan_run_dir(potenda) / PLAN_DIR_NAME / MANIFEST_FILE_NAME
+
+
+def failing_plan_run(  # noqa: PLR0913 — one parameter per axis a failing plan run varies on
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    config: SyncInstance,
+    source: _FakeAdapter,
+    destination: _FakeAdapter,
+    run_id: str,
+    error: type[PlanArtifactError],
+) -> PlanArtifactError:
+    """Drive one plan run that must fail, and assert it left no artifact behind.
+
+    `manifest.json` is written last and is the artifact's commit point
+    (`infrahub_sync/plan/writer.py:145-160`), so its absence is what "no partial artifact"
+    means. `plan.parquet` is written first and unchanged (V23), so it is deliberately not
+    asserted absent — the new artifact is the thing a refusal must not leave half-written.
+    """
+    pin_extraction_decisions(monkeypatch, [False, False])
+    potenda = build_potenda(
+        config=config,
+        source=source,
+        destination=destination,
+        run_id=run_id,
+        top_level=config.order,
+    )
+    with pytest.raises(error) as caught:
+        run_plan(potenda)
+    assert not manifest_path(potenda).exists(), "a failed derivation left a plan manifest behind"
+    return caught.value
+
+
+def references_by_field(operation: PlannedOperation) -> dict[str, RelationshipReference]:
+    """An operation's relationship references, keyed by the field they belong to."""
+    return {reference.field: reference for reference in operation.relationships or []}
+
+
+# =======================================================================================
+# T082 — AD046 / AD050: the peer kind is probed in the store, and both arms fail loudly
+# =======================================================================================
+
+# `DcimDevice.location` on the qualified path is declared twice with different references
+# (`examples/netbox_to_infrahub/config.yml:212` -> LocationRack, `:254` -> LocationSite,
+# V31). Sorted, because `reference_candidates` sorts and the probe order follows it.
+LOCATION_CANDIDATES = ("LocationRack", "LocationSite")
+
+DUPLICATE_ORDER: tuple[str, ...] = ("LocationSite", "LocationRack", "DcimDevice")
+
+
+def duplicate_location_config(*references: str) -> SyncInstance:
+    """A configuration declaring `DcimDevice` once per entry in `references`.
+
+    Each entry gives `location` a different `reference`, so the mapping alone cannot say
+    what kind a device's location is — which is the whole reason AD046 forbids reading the
+    peer kind off the mapping and AD050 replaces it with a bounded store probe. Passing a
+    single reference produces the one-candidate configuration.
+    """
+    return build_config(
+        order=DUPLICATE_ORDER,
+        schema_mapping=[
+            mapping_entry("LocationSite", identifiers=["name"], fields={"name": None}),
+            mapping_entry("LocationRack", identifiers=["name"], fields={"name": None}),
+            *(
+                mapping_entry(
+                    "DcimDevice",
+                    identifiers=["name", "location"],
+                    fields={"name": None, "location": reference},
+                )
+                for reference in references
+            ),
+        ],
+    )
+
+
+def location_side(
+    name: str,
+    *,
+    racks: Sequence[str] = (),
+    sites: Sequence[str] = (),
+    devices: Sequence[tuple[str, str]] = (),
+) -> _FakeAdapter:
+    """One side holding racks, sites, and devices located at a rack or a site by unique id."""
+    return _FakeAdapter(
+        name,
+        [
+            *(_FakeRecord("LocationRack", {"name": rack}) for rack in racks),
+            *(_FakeRecord("LocationSite", {"name": site}) for site in sites),
+            *(
+                _FakeRecord("DcimDevice", {"name": device, "location": location}, {"model": "c9300"})
+                for device, location in devices
+            ),
+        ],
+    )
+
+
+def derive_over(config: SyncInstance, source: _FakeAdapter) -> list[PlannedOperation]:
+    """Derive operations for every source object of `config.order`, destination empty."""
+    return operations_from_diff(
+        diff_between(source=source, destination=_FakeAdapter("destination"), kinds=config.order),
+        config=config,
+        tier_of=resolver(top_level=config.order),
+        source_adapter=source,
+    )
+
+
+def test_the_peer_kind_is_the_kind_that_actually_holds_the_peer() -> None:
+    """AD046 / AD050 arm (a): the probe answers, and the mapping's `reference` cannot.
+
+    Two `DcimDevice` entries declare `location` differently, one device is located at a
+    rack and the other at a site. A derivation that read `peer_kind` off the mapping would
+    have to pick one of the two declarations and would therefore label one of these two
+    devices wrongly — whichever it picked. The probe assertion is separate and deliberate:
+    with the *right* answer alone this case would also pass against an unprobed
+    mapping read on a one-candidate set, so what is asserted is that the store was asked.
+    """
+    config = duplicate_location_config(*LOCATION_CANDIDATES)
+    # Fixture precondition: the mapping really is ambiguous for this field.
+    assert reference_candidates(config, "DcimDevice") == {"location": LOCATION_CANDIDATES}
+
+    source = location_side("source", racks=["r1"], sites=["hq"], devices=[("d1", "r1"), ("d2", "hq")])
+    operations = derive_over(config, source)
+
+    devices = {operation.identity["name"]: operation for operation in operations if operation.kind == "DcimDevice"}
+    assert set(devices) == {"d1", "d2"}
+
+    rack_located = references_by_field(devices["d1"])["location"]
+    site_located = references_by_field(devices["d2"])["location"]
+    assert rack_located.peer_kind == "LocationRack"
+    assert rack_located.peers == [{"name": "r1"}]
+    assert site_located.peer_kind == "LocationSite"
+    assert site_located.peers == [{"name": "hq"}]
+    # The claim in one line: two peer kinds from one mapping field, so no single
+    # mapping-declared value can produce this result.
+    assert {rack_located.peer_kind, site_located.peer_kind} == set(LOCATION_CANDIDATES)
+
+    # The identity carries the same probed kind, as a nested pair rather than a unique id.
+    assert devices["d1"].identity["location"] == {"peer_kind": "LocationRack", "identity": {"name": "r1"}}
+    assert devices["d2"].identity["location"] == {"peer_kind": "LocationSite", "identity": {"name": "hq"}}
+
+    # The probe happened, for every candidate and both peers — asserted rather than
+    # inferred from the answer (AD050).
+    for unique_id in ("r1", "hq"):
+        for candidate in LOCATION_CANDIDATES:
+            assert (candidate, unique_id) in source.store.probes, (
+                f"the store was never probed for {candidate} {unique_id!r}"
+            )
+
+    # And the two entries' operations stay distinguishable.
+    assert devices["d1"].identity != devices["d2"].identity
+    assert devices["d1"].operation_id != devices["d2"].operation_id
+
+
+def test_a_peer_under_no_candidate_kind_fails_the_command_and_leaves_no_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AD050 arm (b): zero hits fails, naming kind, field, unique id and every candidate."""
+    config = duplicate_location_config(*LOCATION_CANDIDATES)
+    source = location_side("source", racks=["r1"], sites=["hq"], devices=[("d1", "ghost")])
+
+    error = failing_plan_run(
+        monkeypatch,
+        config=config,
+        source=source,
+        destination=_FakeAdapter("destination"),
+        run_id="20260726T2000-55555555",
+        error=SourcePeerUnresolvedError,
+    )
+
+    message = str(error)
+    for fragment in ("DcimDevice", "location", "ghost", *LOCATION_CANDIDATES):
+        assert fragment in message
+    assert error.next_action == SourcePeerUnresolvedError.ABSENT_NEXT_ACTION
+    # Both candidates were probed before the refusal, so "not found" is a probed answer.
+    for candidate in LOCATION_CANDIDATES:
+        assert (candidate, "ghost") in source.store.probes
+
+
+def test_a_peer_under_both_candidate_kinds_fails_rather_than_picking_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AD050 arm (c): more than one hit fails and names the match — no silent first pick."""
+    config = duplicate_location_config(*LOCATION_CANDIDATES)
+    # One unique id, two buckets: a rack and a site both named `dup`.
+    source = location_side("source", racks=["dup"], sites=["dup"], devices=[("d1", "dup")])
+
+    error = failing_plan_run(
+        monkeypatch,
+        config=config,
+        source=source,
+        destination=_FakeAdapter("destination"),
+        run_id="20260726T2100-66666666",
+        error=SourcePeerUnresolvedError,
+    )
+
+    message = str(error)
+    for fragment in ("DcimDevice", "location", "dup", "more than one", *LOCATION_CANDIDATES):
+        assert fragment in message
+    assert error.next_action == SourcePeerUnresolvedError.AMBIGUOUS_NEXT_ACTION
+    # Not the absent arm's remedy, which would send the operator to load a kind that is
+    # already loaded twice over.
+    assert error.next_action != SourcePeerUnresolvedError.ABSENT_NEXT_ACTION
+
+
+def test_a_single_candidate_is_probed_and_never_used_as_a_fallback() -> None:
+    """AD050's no-fallback rule: one declared candidate that does not hold the peer fails.
+
+    Returning an unprobed sole candidate *is* the mapping-derived answer AD046 forbids, so
+    the one-candidate set is probed like any other and its miss is a refusal rather than a
+    default.
+    """
+    config = duplicate_location_config("LocationRack")
+    assert reference_candidates(config, "DcimDevice") == {"location": ("LocationRack",)}
+    # The peer exists — as a site, which is not the sole declared candidate.
+    source = location_side("source", sites=["hq"], devices=[("d1", "hq")])
+
+    with pytest.raises(SourcePeerUnresolvedError) as caught:
+        derive_over(config, source)
+
+    assert ("LocationRack", "hq") in source.store.probes, "the sole candidate was not probed"
+    assert caught.value.next_action == SourcePeerUnresolvedError.ABSENT_NEXT_ACTION
+    assert "LocationRack" in str(caught.value)
+
+
+# =======================================================================================
+# T083 — AD047 / AD071 / AD082: five derivation failures, fatal on `diff` as on `sync`
+# =======================================================================================
+
+
+class _ScriptedDiffDestination(_FakeAdapter):
+    """A destination whose comparison result is fixed by the test.
+
+    Three of T083's five failures cannot be produced by comparing two stores: an identity
+    attribute that resolves to nothing, a payload value outside the canonical-value table,
+    and two operations sharing an identifier all need an element shape a real comparison
+    would not build from well-formed records. Scripting the `Diff` keeps everything
+    downstream of the comparison — the real `write_plan`, the real derivation, the real
+    writer — on the path an operator's `diff` takes.
+    """
+
+    def __init__(self, name: str, *, scripted: _FakeDiff) -> None:
+        super().__init__(name)
+        self.scripted = scripted
+
+    def diff_from(self, source: _FakeAdapter, **_kwargs: object) -> _FakeDiff:  # noqa: ARG002
+        return self.scripted
+
+
+class _DerivationFailure(NamedTuple):
+    """One FR-030 failure: the input that provokes it and the message it must carry."""
+
+    config: SyncInstance
+    source: _FakeAdapter
+    destination: _FakeAdapter
+    error: type[PlanArtifactError]
+    next_action: str
+    message_contains: tuple[str, ...]
+
+
+def _unformable_identity_failure() -> _DerivationFailure:
+    """An identity attribute that resolves to no value at all."""
+    diff = _FakeDiff(
+        {
+            "BuiltinTag": [
+                _FakeElement(kind="BuiltinTag", name="prod", keys={"name": None}, source_attrs={"slug": "prod"})
+            ]
+        }
+    )
+    return _DerivationFailure(
+        config=build_config(),
+        source=qualified_source(),
+        destination=_ScriptedDiffDestination("destination", scripted=diff),
+        error=UnformableDestinationIdentityError,
+        next_action=UnformableDestinationIdentityError.next_action,
+        message_contains=("BuiltinTag", "name"),
+    )
+
+
+def _absent_source_peer_failure() -> _DerivationFailure:
+    """A relationship peer that is in no bucket of the loaded source store."""
+    diff = _FakeDiff(
+        {
+            "LocationRack": [
+                _FakeElement(
+                    kind="LocationRack",
+                    name="r1__ghost",
+                    keys={"name": "r1", "site": "ghost"},
+                    source_attrs={},
+                )
+            ]
+        }
+    )
+    return _DerivationFailure(
+        config=build_config(),
+        source=qualified_source(),
+        destination=_ScriptedDiffDestination("destination", scripted=diff),
+        error=SourcePeerUnresolvedError,
+        next_action=SourcePeerUnresolvedError.ABSENT_NEXT_ACTION,
+        message_contains=("LocationRack", "site", "ghost", "LocationSite"),
+    )
+
+
+def _ambiguous_source_peer_failure() -> _DerivationFailure:
+    """The same class's second condition: one unique id in two candidate buckets (AD082)."""
+    diff = _FakeDiff(
+        {
+            "DcimDevice": [
+                _FakeElement(
+                    kind="DcimDevice",
+                    name="d1__dup",
+                    keys={"name": "d1", "location": "dup"},
+                    source_attrs={},
+                )
+            ]
+        }
+    )
+    return _DerivationFailure(
+        config=duplicate_location_config(*LOCATION_CANDIDATES),
+        source=location_side("source", racks=["dup"], sites=["dup"]),
+        destination=_ScriptedDiffDestination("destination", scripted=diff),
+        error=SourcePeerUnresolvedError,
+        next_action=SourcePeerUnresolvedError.AMBIGUOUS_NEXT_ACTION,
+        message_contains=("DcimDevice", "location", "dup", "more than one", *LOCATION_CANDIDATES),
+    )
+
+
+def _unserializable_payload_failure() -> _DerivationFailure:
+    """A payload value whose Python type is outside the canonical-value table."""
+    diff = _FakeDiff(
+        {
+            "BuiltinTag": [
+                _FakeElement(
+                    kind="BuiltinTag",
+                    name="prod",
+                    keys={"name": "prod"},
+                    source_attrs={"description": object()},
+                )
+            ]
+        }
+    )
+    return _DerivationFailure(
+        config=build_config(),
+        source=qualified_source(),
+        destination=_ScriptedDiffDestination("destination", scripted=diff),
+        error=UnserializablePayloadValueError,
+        next_action=UnserializablePayloadValueError.next_action,
+        message_contains=("BuiltinTag", "description", "object"),
+    )
+
+
+def _duplicate_operation_id_failure() -> _DerivationFailure:
+    """Two comparison elements addressing one object with one action."""
+    diff = _FakeDiff(
+        {
+            "BuiltinTag": [
+                _FakeElement(kind="BuiltinTag", name="prod", keys={"name": "prod"}, source_attrs={"slug": "prod"}),
+                _FakeElement(kind="BuiltinTag", name="prod-again", keys={"name": "prod"}, source_attrs={"slug": "p"}),
+            ]
+        }
+    )
+    return _DerivationFailure(
+        config=build_config(),
+        source=qualified_source(),
+        destination=_ScriptedDiffDestination("destination", scripted=diff),
+        error=DuplicateOperationIdError,
+        next_action=DuplicateOperationIdError.next_action,
+        message_contains=("BuiltinTag", "op_"),
+    )
+
+
+DERIVATION_FAILURES = [
+    pytest.param(_unformable_identity_failure, id="unformable-destination-identity"),
+    pytest.param(_absent_source_peer_failure, id="source-peer-absent"),
+    pytest.param(_ambiguous_source_peer_failure, id="source-peer-ambiguous"),
+    pytest.param(_unserializable_payload_failure, id="unserializable-payload-value"),
+    pytest.param(_duplicate_operation_id_failure, id="duplicate-operation-id"),
+]
+
+
+def _assert_named_failure(raised: BaseException | None, case: _DerivationFailure) -> None:
+    """Assert the failure is the named class, carries its next action, and names the cause."""
+    assert isinstance(raised, PlanArtifactError), f"expected a plan-artifact failure, got {raised!r}"
+    assert type(raised) is case.error
+    message = str(raised)
+    for fragment in case.message_contains:
+        assert fragment in message, f"the message does not name {fragment!r}: {message}"
+    # AD059/AD071: the next action, not only the kind and the cause.
+    assert raised.next_action == case.next_action
+    assert f"Next action: {case.next_action}" in message
+
+
+@pytest.mark.parametrize("build_case", DERIVATION_FAILURES)
+def test_a_derivation_failure_fails_the_diff_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    build_case: Callable[[], _DerivationFailure],
+) -> None:
+    """AD047: each FR-030 failure fails the non-mutating `diff` with a non-zero exit.
+
+    No arm degrades to a warning: the command's run record ends `failed` and the plan
+    artifact's commit point is absent, so nothing partial is left for a later `apply` to
+    read.
+    """
+    case = build_case()
+    potenda = build_potenda(
+        config=case.config,
+        source=case.source,
+        destination=case.destination,
+        run_id="20260726T2200-77777777",
+        top_level=case.config.order,
+    )
+
+    result = invoke_command(
+        "diff",
+        config=case.config,
+        potenda=potenda,
+        project_dir=tmp_path / "project",
+        monkeypatch=monkeypatch,
+    )
+
+    assert result.exit_code != 0, result.output
+    _assert_named_failure(result.exception, case)
+    assert not manifest_path(potenda).exists()
+    run_record = json.loads((plan_run_dir(potenda) / "run.json").read_text(encoding="utf-8"))
+    assert run_record["status"] == "failed"
+
+
+@pytest.mark.parametrize("build_case", DERIVATION_FAILURES)
+def test_a_derivation_failure_is_equally_hard_on_the_sync_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    build_case: Callable[[], _DerivationFailure],
+) -> None:
+    """AD047: the same five failures fail `sync` too, before any destination write."""
+    case = build_case()
+    potenda = build_potenda(
+        config=case.config,
+        source=case.source,
+        destination=case.destination,
+        run_id="20260726T2300-88888888",
+        top_level=case.config.order,
+    )
+
+    result = invoke_command(
+        "sync",
+        config=case.config,
+        potenda=potenda,
+        project_dir=tmp_path / "project",
+        monkeypatch=monkeypatch,
+        extra=["--no-parallel"],
+    )
+
+    assert result.exit_code != 0, result.output
+    _assert_named_failure(result.exception, case)
+    assert not manifest_path(potenda).exists()
+    assert case.destination.sync_calls == [], "the destination was written despite a failed derivation"
+
+
+def test_the_diff_command_offers_no_continue_on_error_tolerance() -> None:
+    """AD047: the tolerance option is declared on `sync` only (`infrahub_sync/cli.py:190`).
+
+    If it existed on `diff` too, a derivation failure could degrade to a warning and emit a
+    silently incomplete plan — which is exactly what AD047 forbids, on the most-run command
+    in the tool.
+    """
+    diff_help = CLI_RUNNER.invoke(app, ["diff", "--help"])
+    sync_help = CLI_RUNNER.invoke(app, ["sync", "--help"])
+    assert diff_help.exit_code == 0
+    assert sync_help.exit_code == 0
+    assert "--continue-on-error" in strip_ansi(sync_help.output)
+    assert "--continue-on-error" not in strip_ansi(diff_help.output)
+
+    rejected = CLI_RUNNER.invoke(app, ["diff", "--name", "demo", "--continue-on-error"])
+    # Click's usage error for an unknown option, not a run that tolerated anything.
+    assert rejected.exit_code == 2
+
+
+def test_the_source_side_failures_do_not_route_the_operator_at_the_destination() -> None:
+    """AD071: reusing `PeerNotFoundError` here would hand out a remedy that fixes nothing.
+
+    Both source-side classes must read differently from the destination-side miss, whose
+    remedy is to create the peer at the destination — while the plan-time problem is that
+    the peer is not in the loaded source store, or that its kind cannot be established.
+    """
+    destination_remedy = PeerNotFoundError.next_action
+    assert "at the destination" in destination_remedy
+
+    for next_action in (
+        SourcePeerUnresolvedError.ABSENT_NEXT_ACTION,
+        SourcePeerUnresolvedError.AMBIGUOUS_NEXT_ACTION,
+        UnformableDestinationIdentityError.next_action,
+    ):
+        assert next_action != destination_remedy
+        assert "at the destination" not in next_action
+
+    # AD082's two conditions route to two remedies, not one.
+    assert SourcePeerUnresolvedError.ABSENT_NEXT_ACTION != SourcePeerUnresolvedError.AMBIGUOUS_NEXT_ACTION
+
+
+# =======================================================================================
+# T084 — AD049 / AD050: a delete's identity is canonicalised, probed destination-side
+# =======================================================================================
+
+
+def nested_destination_orphans() -> _FakeAdapter:
+    """A destination holding a device, its rack and that rack's site — none at the source.
+
+    The only state a delete can be derived from: the object is at the destination and
+    absent from the source, so every peer inside its identity is destination-only by
+    construction (AD049).
+    """
+    return _FakeAdapter(
+        "destination",
+        [
+            _FakeRecord("LocationSite", {"name": "hq"}),
+            _FakeRecord("LocationRack", {"name": "r1", "site": "hq"}),
+            _FakeRecord("DcimDevice", {"name": "d1", "rack": "r1__hq"}, {"model": "c9300"}),
+        ],
+    )
+
+
+def test_a_derived_delete_identity_nests_peer_pairs_probed_against_the_destination() -> None:
+    """AD049: the same recursive rule as any other operation, probed destination-side.
+
+    A probe wired to the source store finds nothing there — the source is empty by
+    construction — so this case fails rather than the derivation quietly recording a
+    unique-id string.
+    """
+    source = _FakeAdapter("source")
+    destination = nested_destination_orphans()
+
+    derived = derive_deletes(
+        kinds=KINDS,
+        source_adapter=source,
+        destination_adapter=destination,
+        config=build_config(),
+        tier_of=resolver(),
+        destination_full_extract=True,
+    )
+
+    rack = operation_for(derived, "LocationRack")
+    device = operation_for(derived, "DcimDevice")
+
+    # One level of nesting, then two.
+    assert rack.identity == {"name": "r1", "site": {"peer_kind": "LocationSite", "identity": {"name": "hq"}}}
+    assert device.identity == {
+        "name": "d1",
+        "rack": {
+            "peer_kind": "LocationRack",
+            "identity": {
+                "name": "r1",
+                "site": {"peer_kind": "LocationSite", "identity": {"name": "hq"}},
+            },
+        },
+    }
+    # Never the peer's DiffSync unique-id string, at either level.
+    assert b"r1__hq" not in canonical_json_bytes(device.identity)
+    assert b"__" not in canonical_json_bytes(device.identity)
+
+    # The identifier a reviewer is shown derives from the identity they are shown.
+    assert device.operation_id == operation_id("delete", "DcimDevice", device.identity)
+    assert rack.operation_id == operation_id("delete", "LocationRack", rack.identity)
+
+    # The recursive rule reaches the identity only.
+    for operation in derived:
+        assert operation.action == "delete"
+        assert operation.payload is None
+        assert operation.relationships is None
+
+    # AD050's probe ran against the destination store, and the source was never consulted.
+    assert ("LocationRack", "r1__hq") in destination.store.probes
+    assert ("LocationSite", "hq") in destination.store.probes
+    assert source.store.probes == []
+
+
+def test_a_delete_whose_nested_peer_is_absent_destination_side_fails_the_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AD050's zero-hit arm, destination-side: the same refusal T082 asserts source-side."""
+    destination = _FakeAdapter("destination", [_FakeRecord("DcimDevice", {"name": "d1", "rack": "ghost"})])
+
+    error = failing_plan_run(
+        monkeypatch,
+        config=build_config(),
+        source=_FakeAdapter("source"),
+        destination=destination,
+        run_id="20260727T0000-99999999",
+        error=SourcePeerUnresolvedError,
+    )
+
+    message = str(error)
+    for fragment in ("DcimDevice", "rack", "ghost", "LocationRack"):
+        assert fragment in message
+    assert error.next_action == SourcePeerUnresolvedError.ABSENT_NEXT_ACTION
+    assert ("LocationRack", "ghost") in destination.store.probes
+
+
+def test_a_delete_whose_nested_peer_is_ambiguous_destination_side_fails_the_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AD050's multi-hit arm, destination-side: named, not silently resolved."""
+    config = duplicate_location_config(*LOCATION_CANDIDATES)
+    destination = location_side("destination", racks=["dup"], sites=["dup"], devices=[("d1", "dup")])
+
+    error = failing_plan_run(
+        monkeypatch,
+        config=config,
+        source=_FakeAdapter("source"),
+        destination=destination,
+        run_id="20260727T0100-aaaaaaab",
+        error=SourcePeerUnresolvedError,
+    )
+
+    message = str(error)
+    for fragment in ("DcimDevice", "location", "dup", "more than one", *LOCATION_CANDIDATES):
+        assert fragment in message
+    assert error.next_action == SourcePeerUnresolvedError.AMBIGUOUS_NEXT_ACTION
+
+
+# =======================================================================================
+# T085 — AD052: `diff` end to end against a destination that exposes no schema
+# =======================================================================================
+
+
+def test_only_the_infrahub_adapter_exposes_a_schema_attribute() -> None:
+    """V38, asserted rather than assumed: the guard covers eight adapters, not a fake.
+
+    `self.schema` is set by the Infrahub adapter alone
+    (`infrahub_sync/adapters/infrahub.py:345`). If another adapter ever gained one this
+    case would say so, and the regression below would no longer be the whole story.
+    """
+    modules = sorted(path.stem for path in ADAPTERS_DIR.glob("*.py") if path.stem not in NON_ADAPTER_MODULES)
+    exposing = [
+        module for module in modules if "self.schema" in (ADAPTERS_DIR / f"{module}.py").read_text(encoding="utf-8")
+    ]
+
+    assert exposing == ["infrahub"]
+    assert len(modules) - len(exposing) == 8, f"expected eight schema-less adapters, found {modules}"
+
+
+def test_the_diff_command_succeeds_end_to_end_against_a_destination_with_no_schema(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """AD052 regression: derivation is newly wired onto `diff` for **every** destination.
+
+    Because AD047 makes a derivation failure fatal, an unguarded `destination.schema` read
+    would turn `diff` — which works today on all eight schema-less adapters — into an
+    `AttributeError` at a non-zero exit. Removing the guard in
+    `warn_missing_convergence_key` fails this case on the exit code.
+
+    The warning is asserted **absent**, not empty: a guard that emitted a warning naming
+    nothing would tell an operator their destination has a convergence problem it cannot
+    know anything about.
+    """
+    config = build_config()
+    source = qualified_source()
+    destination = destination_with_orphan()
+    assert not hasattr(destination, "schema"), "fixture error: the destination must expose no schema"
+
+    potenda = build_potenda(
+        config=config,
+        source=source,
+        destination=destination,
+        run_id="20260727T0200-bbbbbbbc",
+    )
+
+    with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
+        result = invoke_command(
+            "diff",
+            config=config,
+            potenda=potenda,
+            project_dir=tmp_path / "project",
+            monkeypatch=monkeypatch,
+        )
+
+    assert result.exit_code == 0, result.output
+    assert result.exception is None, f"an error escaped the diff path: {result.exception!r}"
+    assert "AttributeError" not in result.output
+
+    # The convergence-key warning is skipped outright.
+    assert derive_warnings(caplog) == []
+
+    # And the plan artifact was written all the same, deletes included.
+    assert potenda._side_full_extract == {"A": True, "B": True}
+    manifest = read_manifest(plan_run_dir(potenda))
+    assert set(manifest) == MANIFEST_KEYS
+    assert manifest["operations_count"] > 0
+    assert manifest["delete_operations_computed"] is True
+    run_record = json.loads((plan_run_dir(potenda) / "run.json").read_text(encoding="utf-8"))
+    assert run_record["status"] == "dry-run"
