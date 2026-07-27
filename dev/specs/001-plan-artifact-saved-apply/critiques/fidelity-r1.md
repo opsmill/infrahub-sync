@@ -78,7 +78,7 @@ matters more than it would elsewhere because the incremental path is the *warm* 
 repeat-run case — so the headline user-visible change DBR-009 buys may simply not appear on most real
 runs, and the operator has no signal.
 
-**Minimum fix**
+#### Minimum fix
 
 1. Add to FR-006 a clause: both review depths MUST surface the manifest's delete-computation record,
    and where deletes were not computed the summary MUST say so in terms an operator can act on.
@@ -127,7 +127,7 @@ DBA-006 should have said whether determinism is required across extraction modes
 Repair level `instance`: the Edge-cases and Constraints slots exist in the template and were left empty
 on this point.
 
-**Minimum fix in the artifacts**
+#### Minimum fix in the artifacts
 
 - Mark DBA-006 in the traceability table as *conditionally carried*, with the condition named, rather
   than as plainly carried.
@@ -166,7 +166,7 @@ classification model as scope. Repair level `instance`: the Requirements table's
 the Acceptance criteria table's "Verification evidence expected" column are both slots that could have
 carried this.
 
-**Minimum fix in the artifacts**: none required beyond what is there; keep T072's mutation check as a
+#### Minimum fix in the artifacts: none required beyond what is there; keep T072's mutation check as a
 hard Done-when, and surface the narrowing at the checkpoint so the planner can confirm the reading.
 
 ---
@@ -194,7 +194,7 @@ traceability rows (:1775-1776) file both under "Derived from DBR-003/DBR-006", w
 of an existing brief item rather than as an expansion of one. Two new refusal conditions on the apply
 path are exactly the kind of thing a checkpoint should ratify explicitly.
 
-**Minimum fix**: relabel those two traceability rows as expansions of DBR-006's safety definition,
+#### Minimum fix: relabel those two traceability rows as expansions of DBR-006's safety definition,
 state at FR-009 that DBR-006's three-check list is being treated as non-exhaustive, and put both
 additions in the checkpoint packet as decisions rather than derivations.
 
@@ -224,7 +224,7 @@ values are credentials. The spec has already accepted that the digest need not c
 non-portable) — so drawing a second such line is consistent, not a new principle. The one-way-digest
 argument answers a disclosure objection, which nobody raised; it does not answer the invalidation one.
 
-**Minimum fix**: weigh and record the middle option at PD-003 and AD041. If it is rejected, say why on
+#### Minimum fix: weigh and record the middle option at PD-003 and AD041. If it is rejected, say why on
 the invalidation ground rather than the disclosure ground. Either way, escalate the trade at the
 checkpoint — it decides when a saved plan stops being applicable, which is a headline property of this
 outcome.
@@ -290,7 +290,7 @@ What is missing is the record. Fifty-three decisions were taken and this one was
 walking DBR-008 against the spec finds identifiers covered and "checksums" apparently half-covered,
 with nothing saying the plural was deliberate.
 
-**Minimum fix**: record an AD stating that DBR-008's "checksums" is read as the single plan-level
+#### Minimum fix: record an AD stating that DBR-008's "checksums" is read as the single plan-level
 checksum, citing In-scope bullet 2, DBR-006 and DBR-014, and note that per-operation checksums are not
 delivered. One paragraph.
 
@@ -330,7 +330,7 @@ the artifact is produced on and stated whether a derivation failure may fail a n
 Repair level would be `instance` — the Constraints slot already carries the sibling constraint about
 which commands carry *review*.
 
-**Minimum fix**: promote AD047 from a derived decision to a checkpoint decision, and state at AD047 why
+#### Minimum fix: promote AD047 from a derived decision to a checkpoint decision, and state at AD047 why
 the AD023/AD048 restraint does not apply here.
 
 ---
@@ -394,7 +394,7 @@ The defensible reading is that the schema-subhash abort *is* a refusal of the `a
 rewired, so FR-009's "a refused apply MUST record `failed`" covers it and it is inside the blast radius.
 If that is the reasoning, say it.
 
-**Minimum fix**: state at AD010 why this existing-path change is authorized where AD023's and AD048's
+#### Minimum fix: state at AD010 why this existing-path change is authorized where AD023's and AD048's
 are not — or drop T060 and leave the pre-existing bug to its own change.
 
 ---

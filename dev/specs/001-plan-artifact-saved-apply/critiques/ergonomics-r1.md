@@ -272,7 +272,7 @@ Read literally and executed, three steps fail or mislead.
 The snippet is `uv run python - <<'PY'` with no arguments, and its first line is
 `run = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".")`. Verified empirically:
 
-```
+```text
 argv: ['-']
 resolved run dir: /private/tmp
 would open: /private/tmp/plan/manifest.json exists: False
