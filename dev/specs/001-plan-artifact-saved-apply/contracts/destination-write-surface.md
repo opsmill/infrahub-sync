@@ -25,6 +25,9 @@ Principle III tension in [plan.md](../plan.md#complexity-tracking).
 | `update_node`'s only caller is `InfrahubModel.update` — the live `sync` write path — so any change to its ordering is a change to what the existing mutating command does to destination relationships (AD070) | `infrahub_sync/adapters/infrahub.py:625` |
 | `RunFile.save()` writes the whole payload from the in-memory instance with no merge, and the `apply` command constructs its `RunFile` with an empty `summary` and saves it again after the apply returns (AD069) | `infrahub_sync/cache/sidecars.py:87-89`; `infrahub_sync/cli.py:322-323`, `:350-351` |
 | The rendered mutation input is where keyedness is observable: `data["id"]` if set, else `data["hfid"]`, and the upsert path renders with `exclude_hfid=False` | `.venv/…/infrahub_sdk/node/node.py:295-298`; `create(allow_upsert=True)` `:1843-1846`; `save(allow_upsert=True)` dispatches to it `:1533-1535` |
+| `RelationshipManagerSync` has **no `save`**: `add` and `remove` only mutate `self.peers` and set `_has_update`, issuing no client call, so a reconciled peer set reaches the destination only on a later save of the **node** (AD075) | `.venv/…/infrahub_sdk/node/relationship.py`: no `def save` in the class (`:238`), `add` `:322-332`, `remove` `:339-357`, flag at `:57` |
+| A **plain** `node.save()` after step 6 flushes it as an update, and the unmodified-field stripping **retains** the reconciled relationship because its update flag is set; the manager renders the full peer list, which is what makes the write a replace (AD075) | `.venv/…/infrahub_sdk/node/node.py:1810-1811` (`_existing` true), `:1533-1534` (dispatch to `update`), `:1867-1870` (`exclude_unmodified`), `:352` and `:362` (`_strip_unmodified` keeps a manager with `has_update`); full render at `relationship.py:68-69` |
+| `_generate_input_data(...)["data"]` is `{"data": {…}}`, **not** the rendered `data` — the gate must read one level deeper (AD076) | `.venv/…/infrahub_sdk/node/node.py:300`, `:304-308` |
 | Peer resolution today reads the **loaded** SDK node store | `infrahub_sync/adapters/infrahub.py:57-94`, populated at `:454`, `:501`, `:613` |
 | A zero-match peer is silently dropped with a warning | `infrahub_sync/adapters/infrahub.py:141-143`, `:212-214`, `:229-231` |
 | A multi-match surfaces as a bare `IndexError("More than 1 node returned")` | `.venv/…/infrahub_sdk/client.py:566` |
@@ -92,14 +95,21 @@ Both route through the same convergent upsert. Neither routes through `InfrahubM
        schema=node_schema, data=data,
        source=source_node.id, owner=owner_node.id, is_protected=True)       # parity with :608-610
 5. node = client.create(kind=operation.kind, data=create_data)
-5b. GATE: rendered = node._generate_input_data(exclude_hfid=False)["data"]  # AD066 — keyedness lives HERE
+5b. GATE: rendered = node._generate_input_data(exclude_hfid=False)["data"]["data"]  # AD066 / AD076
+       #   NOT ["data"] alone: that is {"data": {…}}, a one-key mapping, so the test below would be
+       #   true for EVERY operation and the raising arm would fire on all of them (node.py:300, :304-308)
        if "id" not in rendered and "hfid" not in rendered:
-           all-direct HFID      -> raise: the payload lost its identity components (the AD042 class)
-           relationship-crossing -> warn ONCE PER KIND naming the recorded risk, and proceed
+           all-direct HFID       -> raise: the payload lost its identity components (the AD042 class)
+           relationship-crossing -> WARN ONCE PER KIND (content and level below), and proceed
+           NO HFID declared      -> WARN ONCE PER KIND (content and level below), and proceed   # AD076
 6. node.save(allow_upsert=True)                                             # the convergence point
 7. for ref in operation.relationships where cardinality == "many":
        _replace_relationship_set(node, ref.field, resolved_peer_ids)        # PD-005 + AD054/AD065 re-read
                                                                             # NEW code; update_node untouched (AD070)
+7e. node.save()   # AD075 — THE FLUSH. remove()/add() are purely local, so without this step the
+                  #   whole reconciliation is computed and discarded. PLAIN save, NOT
+                  #   save(allow_upsert=True). One save after the loop, not one per relationship.
+                  #   See "Step 7e" below for why the plain form is the correct one.
 8. peers.remember(operation.kind, operation.identity, node.id)
 9. return node.id
 ```
@@ -138,12 +148,32 @@ check could not deliver. Keyedness is a property of the **rendered mutation inpu
 the render is readable with no server. Step 3b can hold while that render carries neither key — which is
 exactly the case the fact table below documents — so the gate is read where the property lives.
 
+**Read the render one level deeper than it first appears (AD076).** `_generate_input_data` returns
+`{"data": mutation_payload, "variables": …, "mutation_variables": …}` where `mutation_payload` is itself
+`{"data": data}` (`.venv/…/infrahub_sdk/node/node.py:300`, `:304-308`). So `…["data"]` is a **one-key
+mapping** and `"id" not in rendered` is true for every operation ever rendered — the all-direct arm would
+raise on all of them. The gate reads `…["data"]["data"]`. This is written as executable pseudocode in four
+places and is corrected in all four.
+
 The gate branches on the destination kind's HFID shape, and the branch is the whole point:
 
 | HFID shape | Rendered input carries neither `id` nor `hfid` | Why |
 |---|---|---|
 | **All direct** components | **Raise**, naming the kind | It can only mean the payload lost its identity components — the AD042 defect class, and always a defect |
-| **Crosses a relationship** | **Warn once per destination kind**, naming the recorded risk, and proceed | It is the expected render today for a reason this outcome does not control (the fact table below): the SDK cannot form the `hfid` from a peer supplied as a resolved id. Refusing would withdraw the ten identity-bearing-reference mapping entries of the qualified configuration from what this outcome delivers — the relationship-bearing capability DBR-013 and DBA-008 require — and the convergent write may still key server-side, which only live evidence can settle |
+| **Crosses a relationship** | **Warn once per destination kind** (content and level below) and proceed | It is the expected render today for a reason this outcome does not control (the fact table below): the SDK cannot form the `hfid` from a peer supplied as a resolved id. Refusing would withdraw the ten identity-bearing-reference mapping entries of the qualified configuration from what this outcome delivers — the relationship-bearing capability DBR-013 and DBA-008 require — and the convergent write may still key server-side, which only live evidence can settle |
+| **No HFID declared** (absent or empty) | **Warn once per destination kind** (content and level below) and proceed — **never raise** (AD076) | This kind matches neither row above, and under the natural implementation ("every component is direct" over an empty list) it would fall into the raising arm and be refused with the message that arm fixes — "the payload lost its identity components" — which is **false**, because nothing went missing. FR-024 explicitly contemplates a destination kind that declares no human-friendly ID and requires the plan run to survive it, so refusing here would decline a configuration class the specification tolerates. The narrowed guarantee below excludes it in its own words: for such a kind, unkeyed is a **schema fact**, not a defect |
+
+**What the report says, and at what level (AD078).** Both warning rows are one obligation, and it is
+pinned rather than described, because "operator-visible" is the exact phrase this run already ruled
+insufficient for the sibling skipped-delete warning:
+
+| Property | Rule |
+|---|---|
+| Level | **`logging.WARNING`.** Pinned for the same reason as the delete warning above: `--quiet` floors the package logger at `logging.WARNING` (`infrahub_sync/cli.py:29`), so an `INFO` emission satisfies every prose description of this row and vanishes for exactly the scripted and CI invocations where this report is the only signal. The test asserts `record.levelno >= logging.WARNING`, not only the text |
+| Content | The **destination kind**; that the write **was issued anyway**; and **what to watch for** — a duplicate object of that kind at the destination if the destination does not key on the components as sent. Plus which of the two conditions applies (the convergence key crosses a relationship, or the kind declares none). "Naming the recorded risk" is **not** sufficient content: the recorded risk is a row in [plan.md](../plan.md#risks), an artifact the operator does not have |
+| Cardinality | **Once per destination kind**, not once per operation — per operation would put one line per row on a four-thousand-operation apply, the same drowning failure the run-id enumeration bound exists to prevent |
+| Where the dedup state lives | A set of already-reported destination kinds on the **adapter instance**, created at the start of an apply and discarded with it — the same lifetime as `PeerResolver`'s memo. `apply_planned_operation` is per-operation, so "once per kind" cannot be local to it |
+| Documentation | The docs sweep states plainly that convergence is **not verified in this release** for destination kinds whose convergence key crosses a relationship, on the same footing as the delete limitation (T069) |
 
 **The flat claim is struck.** "An unkeyed write is never issued" appeared in three places and was false for
 the second row above. What these two checks deliver, stated once and repeated nowhere in a stronger form:
@@ -202,9 +232,9 @@ the offline harness carrying it as a strict expected failure in the meantime (AD
 | Clause | Rule | Requirement |
 |---|---|---|
 | Convergence key | The destination kind's human-friendly ID — the SDK's upsert mutation is keyed on `data["id"]` if set, else `data["hfid"]` (`.venv/…/infrahub_sdk/node/node.py:295-298`) | FR-013, AD017 |
-| Convergence-key presence | Two checks, not one (AD066). Step 3b is the **diagnostic**: direct components checked in `data`, relationship-crossing components checked in `data` **and** in the operation's nested `{peer_kind, identity}`; an unaccounted-for component raises, naming which one. Step 5b is the **gate**, read on the rendered mutation input: unkeyed raises for an all-direct HFID and warns once per kind for a relationship-crossing one | FR-013, AD042, AD051, AD066 |
+| Convergence-key presence | Two checks, not one (AD066). Step 3b is the **diagnostic**: direct components checked in `data`, relationship-crossing components checked in `data` **and** in the operation's nested `{peer_kind, identity}`; an unaccounted-for component raises, naming which one. Step 5b is the **gate**, read on the rendered mutation input **one level deeper than the render call's own `"data"` key** (AD076): unkeyed raises for an all-direct HFID, and warns once per kind — at a pinned level, with pinned content (AD078) — for a relationship-crossing one **and for a kind that declares no HFID at all** (AD076) | FR-013, AD042, AD051, AD066, AD076, AD078 |
 | Payload authority | Authoritative for the mapped fields it carries; **must not** touch unmapped destination fields. "Full" means complete with respect to the configuration's field mapping, not the destination schema | FR-028.4 |
-| Cardinality-many | **Replace-set**, enforced explicitly at step 7 rather than assumed of the upsert (PD-005), and the enforcement **issues its own destination read of the peer set before comparing** so it cannot be a silent no-op (AD054, AD065). `peers: []` under `cardinality: "many"` means "empty the set", and the replace-set acts on it. The enforcement is **new code on this path**; the pre-existing `update_node` is untouched (AD070) | FR-013, FR-028.2, AD054, AD065, AD070 |
+| Cardinality-many | **Replace-set**, enforced explicitly at step 7 rather than assumed of the upsert (PD-005). The enforcement **issues its own destination read of the peer set before comparing**, so it cannot be a silent no-op (AD054, AD065), **and it issues a destination write carrying the reconciled peer list at step 7e**, because the peer-set editors are purely local and a reconciliation that is never saved is discarded (AD075). `peers: []` under `cardinality: "many"` means "empty the set", and the replace-set acts on it. The enforcement is **new code on this path**; the pre-existing `update_node` is untouched (AD070) | FR-013, FR-028.2, AD054, AD065, AD070, AD075 |
 | A create whose identity already exists | Converges onto the existing object through the same upsert. Whether that object's payload differs is not examined; conflict policies are out of scope | FR-013, AD025 |
 | An update whose target was deleted out-of-band | Materializes as a create, because the upsert creates when no destination object matches the key. No conflict detection, freshness check or refusal path is built | FR-013, AD025 |
 | Reporting | Either case is reported under the operation's **original** identifier and **original** action, so SC-005's review-to-apply link is unaffected | AD025 |
@@ -237,6 +267,7 @@ against it would have passed while nothing changed.
 The helper therefore, with the mechanism named rather than implied:
 
 ```text
+# 7a–7d are the helper's body, run once PER cardinality-many relationship:
 7a. rm = getattr(node, ref.field)
     rm.initialized = False                  # discard the locally constructed peer set …
     rm.fetch()                              # … so the guarded client.get actually runs
@@ -244,12 +275,57 @@ The helper therefore, with the mechanism named rather than implied:
     #                                       include=[ref.field]); rm = getattr(node2, ref.field)
 7b. existing = rm.peer_ids                                      # now the destination's actual set
 7c. _, existing_only, new_only = compare_lists(existing, new_peer_ids)
-7d. remove every existing_only; add every new_only
+7d. remove every existing_only; add every new_only               # in memory ONLY — see 7e
+    # the helper RETURNS HERE, leaving the node unsaved (like update_node does)
+
+# 7e is the CALLER's, run ONCE after the loop over every cardinality-many relationship:
+7e. node.save()      # AD075 — the flush. Plain save, not save(allow_upsert=True)
 ```
 
 Either mechanism is acceptable; "call `fetch()` earlier" is not. **The observable the tests assert is that a
 destination read was *issued* for that relationship before the peer set was read** — not that the manager
 was fetched, which the no-op satisfies.
+
+#### Step 7e: the reconciliation is inert until it is flushed, and a **plain** save is the right one (AD075)
+
+`RelationshipManagerSync` has `fetch`, `add`, `remove` and `extend` — and **no `save`**. Both editors are
+purely local: they mutate `self.peers` and set `_has_update = True`, and neither issues a client call
+(`.venv/…/infrahub_sdk/node/relationship.py`: `add` `:322-332`, `remove` `:339-357`, the flag exposed at
+`:57`). The reconciled set reaches the destination **only on a subsequent save of the node**. Without step
+7e the helper computes the surplus correctly and throws it away.
+
+That is exactly how the pre-existing shape behaves, which is why the omission was easy to specify: the
+module-level `update_node` ends `return node` **unsaved** (`infrahub_sync/adapters/infrahub.py:177`) and its
+caller flushes it — `InfrahubModel.update` calls it at `:625` then `node.save(allow_upsert=True)` at `:626`.
+Duplicating that function into a call site with no save after it is what leaves the reconciliation inert.
+
+**Why plain `node.save()` and not `save(allow_upsert=True)`**, verified end to end against the SDK:
+
+| Step in the chain | Fact | Location |
+|---|---|---|
+| Step 6 marks the node existing | `_process_mutation_result` sets `self.id` then `self._existing = True` | `.venv/…/infrahub_sdk/node/node.py:1810-1811` |
+| So a plain save dispatches an **update**, not a create | `save()` is `if self._existing is False or allow_upsert is True: self.create(...) else: self.update(...)` — with `_existing` true and `allow_upsert` false, the `else` arm runs | `:1526-1536`, dispatch at `:1533-1534` |
+| The update renders with unmodified fields stripped | `update(do_full_update=False)` calls `_generate_input_data(exclude_unmodified=not do_full_update)` | `:1867-1870` |
+| …and the stripping **keeps** the reconciled relationship | `_strip_unmodified` pops a relationship only when `not relationship_property.has_update`; the reconciliation set `_has_update`, so it survives | `:352`, the relationship arm at `:362` |
+| …and it renders the **full** peer list, which is what makes the write a replace | the manager renders every peer it holds | `.venv/…/infrahub_sdk/node/relationship.py:68-69` |
+| A second `save(allow_upsert=True)` would be wrong | it re-enters `create(allow_upsert=True)` and re-renders the **upsert create** instead of an update | `:1533-1534` → `:1838-1846` |
+
+**One save after the loop, not one per relationship.** The flush is issued once, after every
+cardinality-many relationship on the operation has been reconciled — cheaper, and equally correct, since
+one update carries every changed relationship. Pinning it matters so the tests know what to count.
+
+**The observable for step 7 as a whole is the issued destination write carrying the reconciled peer
+list** — not the manager's in-memory `peer_ids`. This is the same correction AD065 made for the read side,
+and it is what makes the fix verifiable: every earlier observable (a mocked assertion that "existing-only
+peers are removed", a conformance assertion that "the surplus is removed", a done-condition on manager
+state) is satisfied by a helper that reconciles and never saves.
+
+**Why this failure had to be caught before implementation.** It is co-extensive with the risk step 7
+exists for. Where the convergent write already **replaces** the peer set, the re-read finds no difference,
+there is nothing to flush, and the omission is invisible — the feature works by accident. Where it
+**merges** — the case AD007 says cannot be settled offline and PD-005 exists for — the surplus is computed
+correctly and discarded, so the mitigation is void precisely when it is needed. And the only criterion that
+would catch it, SC-008, is behind the `integration` marker and is not produced at merge.
 
 **This is new code on this path, and `update_node` is left exactly as it is (AD070).** An earlier form of
 this contract had the helper *extracted* from `update_node` and shared, with its ordering corrected for both

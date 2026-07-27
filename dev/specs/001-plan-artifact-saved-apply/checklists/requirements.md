@@ -6,6 +6,14 @@
 
 **Feature**: [spec.md](../spec.md)
 
+> **Superseded convention (AD084, 2026-07-27).** The dated evaluations below refer to
+> `[PROVISIONAL ADnnn]` markers. The delivery gate has since ratified every decision AD001–AD084, and
+> those markers are **removed**: what remains on requirement, criterion and Key-Entity text is a plain
+> `[ADnnn]` reference, which keeps each decision's revisit set without claiming the decision is pending.
+> Wherever an evaluation below names the provisional form or defers an item until the markers are
+> stripped, read the plain form and treat that condition as met. The evaluations themselves are left as
+> written, because they are dated records of what was true when they ran.
+
 ## Content Quality
 
 - [X] No implementation details (languages, frameworks, APIs)

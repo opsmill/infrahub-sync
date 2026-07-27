@@ -56,8 +56,17 @@ uv run pytest -q            # integration tests are skipped by default
 ```bash
 uv run infrahub-sync --help
 uv run infrahub-sync list --directory examples/
-uv run infrahub-sync generate --name from-netbox --directory examples/
 ```
+
+**`generate` is not on this track (AD079).** `AGENTS.md` lists
+`uv run infrahub-sync generate --name from-netbox --directory examples/` under its post-change sanity
+checks, and this file copied it here — but the same file's Known Issues section records that `generate`
+needs a running server, and it does: run offline it exits **1** with
+`ServerNotReachableError: Unable to connect to 'http://localhost:8000'` and a full traceback, because it
+reaches Infrahub for the destination schema. Verified by execution. It is listed under
+[Track 2](#track-2--live-destination-integration-marker) instead, so a maintainer working this guide
+offline does not meet a red traceback on a command this outcome does not touch and have to work out
+whether the feature or the step is at fault.
 
 ### SC-012 — no command group was added (AD060)
 
@@ -147,6 +156,7 @@ reporting a checksum for a path that does not exist.
 
 ```bash
 uv run pytest -m integration tests/integration/test_saved_plan_apply_integration.py
+uv run infrahub-sync generate --name from-netbox --directory examples/   # needs a reachable Infrahub (AD079)
 ```
 
 Skipped automatically when `INFRAHUB_ADDRESS` and `INFRAHUB_API_TOKEN` are unset, matching
@@ -162,8 +172,8 @@ condition is unmet. Do not report them as covered on the strength of the offline
 | SC | What the test does |
 |---|---|
 | SC-001 | Patches `Adapter.diff_from` and `Adapter.sync_from` to fail if called, applies a stored plan, asserts the apply completed and neither was invoked |
-| SC-002 | Applies once, records per-kind counts and HFID identities, applies the identical plan again, compares — no duplicates |
-| SC-003 | Per-class matrix over create / update / relationship-bearing, across apply-once, apply-twice, a crash injected **after** the destination write commits and before the loop advances, and one injected **before** the write is issued. Every class ends at clean-single-run counts. Relationship class measured by SC-008's peer-set comparison, since an object created with its peers unlinked leaves counts correct and relationships wrong |
+| SC-002 | Applies once, records per-kind counts and HFID identities, applies the identical plan again, compares — no duplicates. **This criterion measures convergence rather than asserting it (AD080)**: for a destination kind whose convergence key crosses a relationship the render is unkeyed today and a duplicate here is the recorded AD066/AD067 limitation, which the offline harness carries as a strict expected failure — so a failure on one of those kinds is the criterion doing its job, not a regression |
+| SC-003 | Per-class matrix over create / update / relationship-bearing, across apply-once, apply-twice, a crash injected **after** the destination write commits and before the loop advances, and one injected **before** the write is issued. Every class ends at clean-single-run counts. **Same caveat as SC-002 for relationship-crossing convergence keys (AD080)** — the relationship-bearing class is exactly the population the narrowed keyedness guarantee excludes. Relationship class measured by SC-008's peer-set comparison, since an object created with its peers unlinked leaves counts correct and relationships wrong |
 | SC-007 (live half) | Applies a plan containing a delete; destination object counts before and after, scoped to the kinds in the plan; asserts the delete target is still present, the run is **`applied`**, the recorded `skipped_delete_count` equals the plan's delete count, and the warning names it (AD055) |
 | SC-008 | Applies a relationship-bearing kind with no comparison store loaded; reads the destination peer sets back; compares against the plan's reference list as an unordered set of `(peer kind, peer identity)` pairs. **At least one referenced peer pre-exists at the destination and is absent from the plan**, and the test asserts the destination-query path was taken for it — otherwise tier ordering fills the resolver's memo, the query path never runs, and the test passes while apply-time peer resolution is broken |
 | SC-016 (live half) | Seeds a genuinely ambiguous peer; asserts the multi-match refusal names the real count |
@@ -202,9 +212,19 @@ print(s['status'], s['summary']['skipped_delete_count'], len(s['summary']['appli
 #      33 + 4 == manifest.operations_count, which is what makes the applied set
 #      knowable against the reviewed set as a value rather than a guess.
 
-# 6. Apply again — converges, no duplicates.
+# 6. Apply again. Converges — with one caveat, below (AD080).
 uv run infrahub-sync apply --name from-netbox --directory examples/ --run-id "$RUN_ID"
 ```
+
+**Step 6's convergence is not unconditional (AD066, AD067, AD080).** For a destination kind whose
+convergence key is composed of its own direct attributes, this converges and a duplicate is a defect. For a
+destination kind whose key **crosses a relationship** — which on this configuration is ten mapping entries
+across nine kinds, including every interface kind, `DcimDevice`, `IpamPrefix`, `IpamIPAddress`, `IpamVLAN`,
+`LocationRack` and `DcimDeviceType` — the rendered mutation carries neither identifier today, the apply
+warns once per kind that it issued the write anyway, and whether the destination keys it server-side is
+exactly what SC-002 and SC-003 **measure**. So on this walkthrough a duplicate of one of those kinds is the
+**recorded AD066/AD067 limitation**, not a regression the maintainer just introduced. The preamble at the
+top of this file says the same thing; this note exists so the two agree at the point of use.
 
 **Step 4 exits 0 and records `applied`, not `failed` (AD055).** Not executing a delete is a designed
 limitation of this release — DBR-010 puts applying deletes out of scope — so the apply reports it rather

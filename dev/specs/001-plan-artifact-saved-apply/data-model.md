@@ -279,7 +279,7 @@ be added without one.
 | Failure | Enumeration the message must list |
 |---|---|
 | `UnknownPlanKindError` | the destination kinds the plan actually holds |
-| Unknown run identifier | the **most recent twenty** run identifiers under `cache_root_for(sync_name)`, with the total stated when the list truncates; and, when the root is absent or holds no runs, a plain statement of that with "produce a plan for this sync first" as the next action (AD073) |
+| Unknown run identifier | the **most recent twenty** run identifiers under `cache_root_for(sync_name)`, with the total stated when the list truncates; and, when the root is absent or holds no runs, a plain statement of that with **"run `diff` for this sync to produce a plan first"** as the next action, naming the command as the sibling rows do (AD073) |
 | `PlanFormatVersionError` | `SUPPORTED_FORMAT_VERSIONS` |
 | `UnsupportedOperationActionError` | `ACTIONS` |
 
@@ -356,6 +356,27 @@ destroying FR-020's record while both writers looked correct in isolation. A mid
 **partial** record on the raised error, so the CLI can merge what was written before recording `failed`;
 that is what lets FR-025's last-applied pointer survive a partial apply at all. `RunFile.load_or_default`
 (`:79-85`) exists but is not the mechanism here — the CLI already holds the instance it will save.
+
+**The record crossing the boundary has a named type.** Since AD069 makes it a **return value crossing a
+layer boundary** — engine to command — it is a small frozen dataclass rather than a bare mapping, with an
+explicit method producing the summary keys:
+
+```python
+@dataclass(frozen=True)
+class ApplyRecord:
+    applied_operations: tuple[str, ...]        # ordered; FR-025's pointer is the last element
+    skipped_delete_operations: tuple[str, ...] # stored order
+    skipped_delete_count: int
+
+    def as_summary_keys(self) -> dict[str, Any]: ...   # the three keys below, ready to merge
+```
+
+Three key names and a prose reference to `skipped_delete_count` were what this record had before, which
+`ty` infers as `dict[str, Any]`: the merge site loses every guarantee, and a later relocation of a key
+becomes a `KeyError` two phases downstream instead of a type error at the boundary. The repository is clean
+under `ty` with no overrides, so the typed form is the one that matches the standard the rest of this
+outcome is held to. The **serialized** shape under `summary` is unchanged and is the contract — the
+dataclass is the in-process carrier, and `as_summary_keys()` is the only thing that names the keys.
 
 | Summary key | Type | Rule |
 |---|---|---|
