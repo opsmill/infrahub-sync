@@ -176,6 +176,34 @@ def test_a_changed_configuration_version_refuses_the_apply(tmp_path: Path) -> No
     assert destination.dispatched == []
 
 
+def test_no_configuration_and_no_supplied_version_refuses_before_any_write(tmp_path: Path) -> None:
+    """`_apply_config_version`'s documented `ValueError`, which nothing else reaches (FR-011, AD013).
+
+    A `Potenda` built without a parsed configuration cannot recompute the comparison value,
+    so an in-process caller that also supplies none is asking for a comparison that cannot be
+    made. Refusing is not the same as comparing against a blank value: an empty comparison
+    version would still be *a* comparison, and the plan whose manifest happened to record one
+    would apply. The refusal is asserted on its own wording for that reason — degrading it to
+    `validate_config_version("")` still raises `ValueError`, just the wrong one, about the
+    wrong thing, and against a caller who supplied nothing rather than something bad.
+    """
+    directory = _run_dir(tmp_path)
+    write_artifact(directory, [operation_record()], run_id=RUN_ID, source_snapshot=[])
+
+    destination = RecordingDestination()
+    with pytest.raises(
+        ValueError, match="needs a configuration version to compare the plan artifact against"
+    ) as caught:
+        _potenda(directory, destination).apply_plan()
+
+    message = str(caught.value)
+    assert "construct Potenda with a parsed configuration, or pass `config_version`" in message, message
+    # The named remedies must not read as advice about the *value* the caller passed: there
+    # was no value. A message about printable ASCII here would be the wrong diagnosis.
+    assert "printable ASCII" not in message, message
+    assert destination.dispatched == []
+
+
 def test_an_empty_plan_applies_as_a_successful_no_op(tmp_path: Path) -> None:
     """FR-022: zero operations is a success, and verification still runs first (AD033)."""
     directory = _run_dir(tmp_path)

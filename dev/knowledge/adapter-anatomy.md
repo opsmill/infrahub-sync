@@ -73,8 +73,10 @@ only adapter in this repository that implements it today.
 An implementation must execute the single recorded operation convergently (a re-apply must not
 duplicate), return the destination node id, resolve every relationship peer through the
 supplied `peers` resolver rather than through any loaded store, and **decline a `delete`** by
-raising `SkippedDeleteOperation` instead of executing it — the engine collects those, applies
-the rest of the plan, and the run still ends `applied`.
+raising `SkippedDeleteOperation` instead of executing it. That last obligation is defensive:
+the engine filters deletes out of its own apply loop and never dispatches one to the write
+surface, so the raise guards against a caller that is not the engine. Either way the rest of
+the plan is applied and the run still ends `applied`, with the skipped identifiers recorded.
 
 The full contract lives in
 [the destination write surface contract](../specs/001-plan-artifact-saved-apply/contracts/destination-write-surface.md);

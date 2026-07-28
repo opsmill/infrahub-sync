@@ -22,7 +22,7 @@ Four rules in here are load-bearing and each is enforced where it is stated:
   on `__`.
 - **A peer's kind is probed, never read from the mapping** (AD046, AD050). `DcimDevice` is
   declared by two schema-mapping entries with different `location` references
-  (`examples/netbox_to_infrahub/config.yml:212`, `:254`), so the mapping alone is
+  (`examples/netbox_to_infrahub/config.yml:215`, `:257`), so the mapping alone is
   ambiguous. The probe is bounded to the kinds the mapping declares for that field across
   every entry for the owning kind, and **zero hits and more than one hit both fail the
   command** — with no fallback to the mapping-declared kind, not even for a single
@@ -30,7 +30,7 @@ Four rules in here are load-bearing and each is enforced where it is stated:
   forbids.
 - **A derivation failure fails the command, on `diff` as on `sync`** (AD047). There is no
   tolerance option here: `--continue-on-error` is declared on `sync` only
-  (`infrahub_sync/cli.py:190`) while derivation also runs under `diff`, and degrading to
+  (`infrahub_sync/cli.py:466`) while derivation also runs under `diff`, and degrading to
   warn-and-drop would emit a silently incomplete plan.
 
 Deletes come from `derive_deletes` and from nowhere else: an element whose action is
@@ -563,7 +563,7 @@ def warn_missing_convergence_key(*, destination: Any, operations: Sequence[Plann
 
     **Guarded on the destination exposing a schema at all (AD052).** `self.schema` is
     defined on the Infrahub adapter and on no other
-    (`infrahub_sync/adapters/infrahub.py:345`), while derivation now runs on the `diff` path
+    (`infrahub_sync/adapters/infrahub.py:676`), while derivation now runs on the `diff` path
     for every destination with its failures fatal — so an unguarded read would be a hard
     regression on the adapters that compare fine today. Where no schema is exposed the whole
     warning is skipped, and skipping it is never an error.

@@ -54,8 +54,16 @@ verification checks, not as a per-operation surprise.
 ### `delete` — a designed limitation, not a failure (AD055)
 
 Raises `SkippedDeleteOperation` naming the operation identifier and the kind. It never touches the
-destination. The engine **collects** these rather than stopping at the first, because SC-007 requires
-every non-delete operation in the same plan to still be applied.
+destination.
+
+This obligation is **defensive**, not the mechanism. The engine recognizes `operation.action ==
+"delete"` in its own apply loop, records the identifier and continues without dispatching it to the
+write surface, so `apply_planned_operation` is never called with a delete on the engine's path and
+nothing catches the class in product code. An adapter must still raise it, so a caller that is not
+the engine gets a refusal rather than a deletion.
+
+Either way, every non-delete operation in the same plan is still applied, as SC-007 requires — the
+engine never stops on a delete.
 
 The run then ends **`applied`**, not `failed`. Applying deletes is out of scope for this release and is
 assigned to a later outcome, so an apply that declines to execute one is behaving exactly as designed, and

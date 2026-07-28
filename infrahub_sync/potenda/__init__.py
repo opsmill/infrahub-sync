@@ -389,7 +389,7 @@ class Potenda:
         reads: `apply_plan` loads `<run_dir>/plan/` and refuses a run that holds only the
         parquet. The saved plan artifact is written alongside it, because this method is
         the one call site common to every non-tier path that produces a plan: the `diff`
-        command (`infrahub_sync/cli.py:427`), the serial `sync` command (`:546`) and
+        command (`infrahub_sync/cli.py:428`), the serial `sync` command (`:547`) and
         `sync_in_tiers`' no-tiers branch — and on all three it runs before any
         destination write, which is what FR-001 requires. The tier branch of
         `sync_in_tiers` writes the artifact itself, from every tier's retained diff.
@@ -513,9 +513,12 @@ class Potenda:
         A recorded `delete` is **collected, never dispatched**: applying deletes is out of
         scope for this release, so a delete-bearing plan ends `applied` with the skipped
         identifiers, their count and one `logging.WARNING` naming that count (FR-016,
-        FR-017, AD055). The level is pinned because `--quiet` floors the package logger at
-        `WARNING` (`infrahub_sync/cli.py:29`), so an `INFO` emission would vanish for
-        exactly the scripted runs where this warning is the only signal.
+        FR-017, AD055). The loop below recognizes the action itself and never calls the
+        write surface for it, so the surface's own `SkippedDeleteOperation` is a defensive
+        contract rather than the path taken here. The level is pinned because `--quiet`
+        floors the package logger at `WARNING` (`infrahub_sync/cli.py:48`, `:78-79`, applied
+        by `_setup_logging` at `:84`), so an `INFO` emission would vanish for exactly the
+        scripted runs where this warning is the only signal.
 
         This method **writes no run file** (AD069). It returns the record; the CLI is the
         single writer and merges `as_summary_keys()` into `run_file.summary` before saving.

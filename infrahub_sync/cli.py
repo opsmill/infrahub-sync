@@ -591,7 +591,7 @@ def _record_and_abort(run_file: RunFile, exc: PlanArtifactError, record: ApplyRe
 
     The recording happens **before** the abort and merges `record` into the summary before
     `save()`, because `RunFile.save()` writes the whole payload from this instance
-    (`infrahub_sync/cache/sidecars.py:87-89`) and would otherwise destroy it (AD062, AD069).
+    (`infrahub_sync/cache/sidecars.py:88-90`) and would otherwise destroy it (AD062, AD069).
     """
     run_file.summary.update(record.as_summary_keys())
     run_file.status = "failed"
@@ -658,7 +658,7 @@ def apply_cmd(
         # This command is the **single writer** of `run.json` (AD069). `apply_plan` returns
         # the record and writes no run file; the merge below has to happen before every
         # `save()`, because `RunFile.save()` writes the whole payload from this instance
-        # (`infrahub_sync/cache/sidecars.py:87-89`) and would otherwise destroy the record
+        # (`infrahub_sync/cache/sidecars.py:88-90`) and would otherwise destroy the record
         # with the empty summary built above.
         try:
             record = ptd.apply_plan()

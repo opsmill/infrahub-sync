@@ -12,7 +12,7 @@ observable on a manifest whose excluded fields carry real values.)
 `source_snapshot_digest` digests a snapshot's **logical rows** — the Parquet table with
 the engine-injected `_extract_ts` column dropped — and not the file's bytes (AD037,
 PD-008). `_extract_ts` is allocated once per side per run
-(`infrahub_sync/potenda/__init__.py:130`) and injected into every row
+(`infrahub_sync/potenda/__init__.py:177`, stored per side at `:182`) and injected into every row
 (`infrahub_sync/cache/parquet_io.py:126`), so a raw-bytes digest would differ on every
 re-plan of an unchanged source and make SC-006 unachievable. `_source_id` and
 `_tombstone` stay inside the digest: both are deterministic for identical input and both

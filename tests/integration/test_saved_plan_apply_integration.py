@@ -304,7 +304,10 @@ def assert_convergence_key_is_supplied(
     when the real fault is a schema the plan cannot key against (FR-024, AD017, V15). That
     reads as a product bug, so it is refused as a fixture error before a single assertion runs.
 
-    Pure — no destination is contacted — so it is exercisable, and is exercised, offline.
+    Pure — no destination is contacted — so it is exercisable, and is exercised, offline:
+    `tests/test_live_fixture_preconditions.py` imports it and runs both refusals and both
+    accept paths with no marker and no destination, so the one check that separates "broken
+    fixture" from "broken feature" is not itself carried only by the skipped runs it guards.
     """
     for operation in operations:
         node_schema = destination_schema.get(operation.kind)

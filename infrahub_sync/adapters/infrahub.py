@@ -990,9 +990,13 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         exactly as recorded: nothing is recomputed, and neither side is extracted or loaded
         (FR-012).
 
-        A `delete` raises `SkippedDeleteOperation` and never touches the destination.
-        Applying deletes is out of scope for this release, so the engine collects those and
-        the run still ends `applied` (AD055).
+        A `delete` raises `SkippedDeleteOperation` and never touches the destination. That
+        raise is **defensive**, not the mechanism: the engine recognizes a delete in its own
+        apply loop, records the identifier and never dispatches it here
+        (`infrahub_sync/potenda/__init__.py:580-582`), so on the engine's path this branch is
+        unreachable and nothing catches the class. Applying deletes is out of scope for this
+        release; either way the skipped identifiers are recorded and the run still ends
+        `applied` (AD055).
 
         A `create` and an `update` both route through the same convergent upsert —
         `client.create(...)` then `save(allow_upsert=True)` — and neither routes through
@@ -1010,7 +1014,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         Raises:
             SkippedDeleteOperation: the operation is a recorded delete (a designed
-                limitation, not a failure).
+                limitation, not a failure). Not reached when the engine drives the apply,
+                which filters deletes out before dispatch.
             UnaccountedIdentityComponentError: a human-friendly-ID component of the
                 destination kind is not accounted for by the payload and the operation.
             UnkeyedWriteRefusedError: the rendered mutation is unkeyed for a kind whose

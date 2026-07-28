@@ -414,6 +414,58 @@ def test_the_cli_detail_narrows_to_one_kind(tmp_path: Path) -> None:
     assert "BuiltinTag" not in lines[0]
 
 
+# A relationship-bearing identity, which every other plan in this file lacks: each of the
+# four flat `{"name": …}` identities above renders through one branch of
+# `_identity_value_text`, so the nested and collection branches AD043 exists for are
+# reachable from no other case here. Three shapes in one plan:
+#
+# - `location` — a `{peer_kind, identity}` pair whose own identity contains another one, so
+#   the recursion AD043 requires is rendered to two levels rather than assumed at one;
+# - `tags` — a list of pairs, the cardinality-many spelling;
+# - `meta` — a mapping that is *not* a peer pair, the fallback the renderer keeps for a
+#   value it cannot read as a reference.
+NESTED_PEER_PLAN: tuple[dict[str, Any], ...] = (
+    operation_record(
+        kind="DcimDevice",
+        identity={
+            "name": "router1",
+            "location": {
+                "peer_kind": "LocationRack",
+                "identity": {"name": "rack-7", "site": {"peer_kind": "LocationSite", "identity": {"name": "dc1"}}},
+            },
+            "tags": [{"peer_kind": "BuiltinTag", "identity": {"name": "edge"}}],
+        },
+    ),
+    operation_record(kind="BuiltinTag", identity={"meta": {"b": 2, "a": 1}}),
+)
+
+# Rendered key-sorted, one entry per identity attribute. Asserted as whole strings rather
+# than by fragment: a renderer that dropped the nesting would still contain "rack-7".
+NESTED_PEER_DETAIL = (
+    "location=LocationRack(name=rack-7 site=LocationSite(name=dc1)) name=router1 tags=[BuiltinTag(name=edge)]",
+    "meta={a=1, b=2}",
+)
+
+
+def test_the_cli_detail_renders_a_nested_peer_identity_recursively(tmp_path: Path) -> None:
+    """AD043's identity shapes, as `--detail` renders them (FR-006, AD020).
+
+    The identity of a relationship-bearing operation is not flat: a component that crosses a
+    reference is a `{peer_kind, identity}` pair, recursively. SC-005 compares the apply
+    against what this listing showed, so an identity rendered as `{...}` — or with its
+    nesting flattened away — is an operator approving an object they cannot name.
+    """
+    _store(tmp_path, NESTED_PEER_PLAN, run_id=OTHER_RUN_ID)
+
+    result = _review("--from-plan", OTHER_RUN_ID, "--detail")
+
+    assert result.exit_code == 0, result.output
+    lines = [line for line in _strip_ansi(result.output).splitlines() if line.startswith("op_")]
+    assert len(lines) == len(NESTED_PEER_PLAN)
+    for rendered, line in zip(NESTED_PEER_DETAIL, lines, strict=True):
+        assert line.endswith(rendered), f"expected identity {rendered!r} at the end of {line!r}"
+
+
 # ======================================================================================
 # T087 — the four delete-disclosure cases (FR-006, FR-015, SC-009, AD024, AD056)
 # ======================================================================================

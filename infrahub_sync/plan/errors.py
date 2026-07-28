@@ -13,9 +13,9 @@ which is how `SourcePeerUnresolvedError` routes its two conditions to two remedi
 (AD082).
 
 `SkippedDeleteOperation` is the one class here that is **not** a failure. It is the
-control signal a destination write surface raises for a recorded delete, which this
-release does not execute, and it deliberately sits outside `PlanArtifactError` so no
-caller reads it as an error or asks it for a remedy (AD055).
+control signal a destination write surface raises if it is ever handed a recorded delete,
+which this release does not execute, and it deliberately sits outside `PlanArtifactError`
+so no caller reads it as an error or asks it for a remedy (AD055).
 """
 
 from __future__ import annotations
@@ -27,15 +27,24 @@ if TYPE_CHECKING:
 
 
 class SkippedDeleteOperation(Exception):  # noqa: N818 — a control signal, not an error
-    """A recorded delete the write surface declines to execute (FR-016, FR-017, AD055).
+    """A recorded delete a write surface declines to execute (FR-016, FR-017, AD055).
 
-    Applying deletes is out of scope for this release, so a write surface handed a
-    `delete` operation raises this instead of touching the destination. The engine
-    **collects** these rather than stopping — every non-delete operation in the same
-    plan is still applied — and the run ends `applied`, with the count and the skipped
-    identifiers recorded on the apply record. It is therefore a designed limitation
-    reported as one, which is why this class is not part of the `PlanArtifactError`
-    taxonomy and carries no `next_action`: there is nothing for the operator to repair.
+    The **defensive** half of the contract. Applying deletes is out of scope for this
+    release, so a write surface handed a `delete` operation must raise this instead of
+    touching the destination.
+
+    In normal operation it is never raised, because the engine never dispatches a delete:
+    the apply loop recognizes `operation.action == "delete"` itself, records the identifier
+    and continues without calling the write surface at all
+    (`infrahub_sync/potenda/__init__.py:580-582`). Nothing catches this class in product
+    code. It exists so that an adapter reached by some other route still refuses rather than
+    deletes.
+
+    The outcome either way is the same: every non-delete operation in the plan is applied
+    and the run ends `applied`, with the count and the skipped identifiers recorded on the
+    apply record (`:612-616`, `:637-644`). It is a designed limitation reported as one,
+    which is why this class is not part of the `PlanArtifactError` taxonomy and carries no
+    `next_action`: there is nothing for the operator to repair.
     """
 
 

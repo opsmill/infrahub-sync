@@ -119,8 +119,12 @@ duckdb -c "SELECT action, resource, source_id, new_value FROM read_parquet('.inf
   no run directory is created. See [Reviewing and applying a cached plan](../running-a-sync#reviewing-and-applying-a-cached-plan).
 - `infrahub-sync sync --name X` — runs diff then sync; writes the same cache artifacts as `diff` plus updates `last-successful-rowcounts.json` on success.
 - `infrahub-sync apply --name X --run-id <id>` — applies the stored `plan/` artifact
-  against the destination without re-extracting the source. Refuses if the
-  destination's schema sub-hash has drifted.
+  against the destination without re-extracting the source. Before the first write it
+  verifies the artifact as one gate — run binding, plan checksum, source snapshot,
+  configuration version, and whether the destination adapter implements the planned-write
+  surface — and refuses if any of those checks fails. See
+  [Refusals you will meet](../running-a-sync#refusals-you-will-meet). The gate does **not**
+  compare `schema-sub-hash.txt`: that file guards incremental extraction, not apply.
 - `--allow-rowcount-drop` (on `sync`) bypasses the rowcount guardrail when the operator knows the source has legitimately shrunk.
 - `--continue-on-error` (on `sync`) skips peer relationships missing identifier values rather than aborting; the engine logs each skip so you can review what was dropped.
 - `--no-concurrent-load` (on `diff` and `sync`) falls back to loading source then destination sequentially. The default (concurrent) is safe with all built-in adapters and roughly halves load wall-clock time on real APIs.
