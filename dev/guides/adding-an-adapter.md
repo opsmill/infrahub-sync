@@ -94,6 +94,56 @@ Write the `obj_to_diffsync` helper to walk `element.fields` — `static`, plain 
 If the adapter can be a destination, implement `create`, `update`, and `delete` on the model
 to mutate the target system. A source-only adapter can leave these deferring to the base.
 
+That covers `infrahub-sync sync`, the live compare-and-write path. Applying a **saved plan**
+(`infrahub-sync apply --run-id <id>`) goes through a separate surface — see Step 4b.
+
+### Step 4b: Implement the planned-write surface (optional, destination only)
+
+`infrahub-sync apply` replays a plan artifact that a previous `diff` saved. It does not load
+either side and does not re-compare, so it cannot go through the model's `create` / `update`.
+It calls one method on the **adapter** instead:
+
+```python
+def apply_planned_operation(self, *, operation: PlannedOperation, peers: PeerResolver) -> str:
+    """Execute one planned operation convergently. Returns the destination node id."""
+```
+
+**Not implementing it is a supported position, not a break.** An adapter without this method
+makes `apply` refuse in its pre-write verification gate — **before any write reaches the
+destination** — with an error naming the adapter class and directing the operator to `sync`:
+
+```text
+The destination adapter 'MysystemAdapter' cannot apply a saved plan. Use `infrahub-sync sync`
+for this destination, or apply against a destination whose adapter implements the
+planned-write surface.
+```
+
+Nothing else about the adapter degrades: `list`, `diff`, `sync` and plan *review*
+(`diff --from-plan <run-id>`) all work unchanged. Only `apply` is unavailable. `infrahub` is
+the only one of the nine adapters shipped in this repository that implements the surface
+today; the other eight refuse an `apply` exactly as described above.
+
+If you do implement it, the method must:
+
+- **Execute exactly one operation, convergently** — re-applying the same plan must not
+  duplicate the object. Take `operation.payload` and `operation.identity` as recorded; do not
+  recompute either, and do not read the destination to decide what to write.
+- **Return the destination node id** as a string. The engine feeds it back to the resolver so
+  later operations in the same plan can refer to this object.
+- **Resolve relationship peers through the supplied resolver**, never through a loaded store.
+  Call `peers.resolve(peer_kind=..., identity=..., referring_operation_id=...)` for each peer
+  in each `operation.relationships` entry; it returns one node id per identity, and
+  cardinality is your concern, not its.
+- **Decline a `delete` rather than executing one** — raise `SkippedDeleteOperation`
+  (`infrahub_sync.plan.errors`) and touch nothing. Applying deletes is out of scope for this
+  release. The engine collects these, still applies every non-delete in the same plan, and the
+  run ends `applied` with the skipped count recorded.
+
+The full contract — the convergent upsert sequence, the keyedness gate, relationship
+replace-set reconciliation and the error taxonomy — is in
+[the destination write surface contract](../specs/001-plan-artifact-saved-apply/contracts/destination-write-surface.md).
+`infrahub_sync/adapters/infrahub.py` is the reference implementation.
+
 ### Step 5: Write the schema mapping and `config.yml`
 
 Create an example project directory with a `config.yml` that selects the adapter and maps
@@ -175,6 +225,7 @@ uv run infrahub-sync diff --name mysystem-example --directory examples/mysystem_
 
 - [ ] Adapter inherits `DiffSyncMixin` / `DiffSyncModelMixin`, mixin first, with a `type`.
 - [ ] `model_loader` filters and transforms through the model mixin; `obj_to_diffsync` sets `local_id`.
+- [ ] Decided whether the adapter implements `apply_planned_operation`; if it does not, confirmed that `apply` refuses cleanly and that `sync` is the documented path for it.
 - [ ] Optional SDK imported with `# ty: ignore[unresolved-import]`; credentials from env vars; no secrets logged or committed.
 - [ ] `uv run invoke format` and `uv run invoke lint` are clean; `uv run ty check .` exits 0.
 - [ ] `list` / `generate` / `diff` succeed for the example.

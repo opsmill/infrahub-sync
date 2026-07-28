@@ -47,9 +47,38 @@ The mixin defines the surface Potenda calls. Each method is one of three kinds �
 | `cursor_tier_for(model_name)` | Optional | Strongest incremental tier the source supports for this model. Defaults to `CursorTier.NONE` (always full extract). |
 | `list_changed_since(model_name, cursor)` | Conditional | Required only if `cursor_tier_for` returns a non-`NONE` tier. Yields records changed since the cursor, in the same shape `model_loader` produces. |
 | `list_existing_ids(model_name)` | Optional | Yields current `unique_id` strings for delete detection between incremental runs. |
+| `apply_planned_operation(*, operation, peers)` | Optional | Executes one operation from a **saved plan** and returns the destination node id. Only `infrahub-sync apply` calls it. Absent on an adapter, `apply` refuses before writing anything — see [The planned-write surface](#the-planned-write-surface). |
 
 A read-only-capable adapter that only ever does full extracts needs just `model_loader`.
 Incremental support is additive — see [Incremental sync and cache](incremental-and-cache.md).
+
+## The planned-write surface
+
+`sync` compares both sides live and writes through the **model**'s `create` / `update`.
+`apply` is different: it replays a plan artifact saved by an earlier `diff` without loading
+either side, so it has no model instances to call. It dispatches to one method on the
+**adapter**:
+
+```python
+def apply_planned_operation(self, *, operation: PlannedOperation, peers: PeerResolver) -> str:
+    """Execute one planned operation convergently. Returns the destination node id."""
+```
+
+The method is **optional**, and not defining it is a supported position rather than a gap. An
+adapter that lacks it makes `apply` fail its pre-write verification gate — before any write
+reaches the destination — with an error naming the adapter class and directing the operator to
+`sync` instead. Every other command, plan review included, is unaffected. `infrahub` is the
+only adapter in this repository that implements it today.
+
+An implementation must execute the single recorded operation convergently (a re-apply must not
+duplicate), return the destination node id, resolve every relationship peer through the
+supplied `peers` resolver rather than through any loaded store, and **decline a `delete`** by
+raising `SkippedDeleteOperation` instead of executing it — the engine collects those, applies
+the rest of the plan, and the run still ends `applied`.
+
+The full contract lives in
+[the destination write surface contract](../specs/001-plan-artifact-saved-apply/contracts/destination-write-surface.md);
+`infrahub_sync/adapters/infrahub.py` is the reference implementation.
 
 ## The model contract (`DiffSyncModelMixin`)
 

@@ -14,7 +14,10 @@ title: Cache layout
     │   └── ...
     ├── B/                              # destination snapshot
     │   └── ...
-    ├── plan.parquet                    # the diff plan
+    ├── plan/                           # the saved plan artifact — what `apply` reads
+    │   ├── operations.jsonl            # one canonical JSON operation per line
+    │   └── manifest.json               # the artifact header and its checksum
+    ├── plan.parquet                    # the diff plan, for querying (not read by `apply`)
     ├── errors.parquet                  # only when errors > 0
     ├── cursors.json                    # {A: {Resource: cursor}, B: {Resource: cursor}}
     ├── schema-sub-hash.txt             # invalidates the cache when shape changes
@@ -23,9 +26,71 @@ title: Cache layout
 
 Override the root with `INFRAHUB_SYNC_CACHE_DIR=/path/to/shared/cache`.
 
+## The plan artifact (`plan/`)
+
+`diff` and `sync` both write `<run_dir>/plan/`, and it is the **only** input
+`infrahub-sync apply` reads. It holds two files.
+
+### `operations.jsonl`
+
+One planned operation per line, each a canonical JSON object, every line LF-terminated
+including the last. Operations are ordered by `(tier, operation_id)` and `apply` executes
+them in exactly that stored order — nothing is re-compared or re-derived at apply time.
+
+| Field | Description |
+| --- | --- |
+| `operation_id` | Stable identifier derived from `(action, kind, identity)`. Unique within a plan; a collision fails the plan run before anything is written. |
+| `action` | `create`, `update`, or `delete`. An action outside this set is refused while reading, before any destination write. |
+| `kind` | Destination kind name. |
+| `identity` | The canonical destination identity — attribute name to value, key-sorted. A value that is itself a reference is a nested `{"peer_kind": …, "identity": …}` pair. |
+| `tier` | The write tier the kind belongs to. |
+| `payload` | The mapped field values to write. **Omitted** on a `delete`, which carries none. |
+| `relationships` | Peer references, each `{field, peer_kind, cardinality, peers}`, naming peers by kind and identity rather than by a destination-assigned id. **Omitted** when the operation carries none. |
+
+A plan with zero operations writes a **present, zero-byte** file, so an empty plan is never
+mistaken for a missing one.
+
+### `manifest.json`
+
+| Field | Description |
+| --- | --- |
+| `format_version` | The artifact format. `2` today. A version this release does not support is refused rather than partially read. |
+| `run_id` | The cache run this plan belongs to. |
+| `created_at` | UTC ISO-8601 timestamp of the write. |
+| `config_version` | The configuration the plan was derived from. `apply` compares it for equality and refuses on a mismatch. |
+| `source_snapshot` | One `{path, digest, row_count}` record per source snapshot file the plan was computed against. |
+| `operations_count` | Number of lines in `operations.jsonl`. A disagreement makes the artifact torn. |
+| `delete_operations_computed` | Whether deletes could be enumerated at all — see [Deletes in a plan](#deletes-in-a-plan). |
+| `plan_checksum` | Checksum over the manifest body and the operations bytes. `run_id`, `created_at` and `plan_checksum` itself are excluded from it, so two runs of the same configuration over the same source produce the same value. |
+
+Unknown manifest fields are tolerated and preserved; an operation record with an unknown
+field is not.
+
+### Write order and the commit point
+
+`operations.jsonl` is written **first** and `manifest.json` **last**, each atomically
+through a temporary file and a rename, so neither is ever observed half-written. **The
+manifest's presence is the commit point**: a `plan/` directory with no manifest is a *torn*
+artifact and is refused, while a run directory with no `plan/` at all is a run that predates
+this format — the reader tells the two apart by construction rather than by guessing.
+
+### Deletes in a plan
+
+Deletes are **recorded in the plan and never executed** against the destination by this
+release. Applying a delete-bearing plan applies every non-delete operation, deletes nothing,
+completes as `applied`, and records the skipped identifiers and their count on the run. That
+is a designed limitation, not a failure.
+
+Deletes are also only *computed* when the destination side ran a **full extract** — an
+incrementally-loaded destination cannot enumerate what is missing from it.
+`delete_operations_computed` records which of the two happened, so a plan whose delete class
+was never computed is never mistaken for a plan that genuinely has no deletes. Both review
+depths of `infrahub-sync diff --from-plan` say so in words.
+
 ## plan.parquet
 
-One row per change. The columns are:
+Retained for ad-hoc querying, and still written by every `diff` and `sync`. It is **no
+longer the input to `apply`** — that is `plan/` above. One row per change. The columns are:
 
 | Column | Description |
 | --- | --- |
@@ -48,9 +113,12 @@ duckdb -c "SELECT action, resource, source_id, new_value FROM read_parquet('.inf
 
 ## Commands
 
-- `infrahub-sync diff --name X` — writes side A, side B, and `plan.parquet`.
+- `infrahub-sync diff --name X` — writes side A, side B, `plan/` and `plan.parquet`.
+- `infrahub-sync diff --name X --from-plan <id>` — reads back the `plan/` of a stored run and
+  writes nothing at all: no adapter is constructed, nothing is extracted, no lock is taken and
+  no run directory is created. See [Reviewing and applying a cached plan](../running-a-sync#reviewing-and-applying-a-cached-plan).
 - `infrahub-sync sync --name X` — runs diff then sync; writes the same cache artifacts as `diff` plus updates `last-successful-rowcounts.json` on success.
-- `infrahub-sync apply --name X --run-id <id>` — dispatches the cached plan
+- `infrahub-sync apply --name X --run-id <id>` — applies the stored `plan/` artifact
   against the destination without re-extracting the source. Refuses if the
   destination's schema sub-hash has drifted.
 - `--allow-rowcount-drop` (on `sync`) bypasses the rowcount guardrail when the operator knows the source has legitimately shrunk.

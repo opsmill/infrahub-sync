@@ -384,11 +384,12 @@ class Potenda:
     def write_plan(self, diff: Any) -> None:
         """Write both plan representations for a single-diff run.
 
-        `plan.parquet` is written exactly as before (V23) — it is still the row set
-        `apply` and operators read today, and the new artifact never replaces it. The
-        saved plan artifact is written alongside it, because this method is the one call
-        site common to every non-tier path that produces a plan: the `diff` command
-        (`infrahub_sync/cli.py:152`), the serial `sync` command (`:271`) and
+        `plan.parquet` is written exactly as before (V23) — it is retained for operators
+        to query, and the new artifact never replaces it. It is **not** what `apply`
+        reads: `apply_plan` loads `<run_dir>/plan/` and refuses a run that holds only the
+        parquet. The saved plan artifact is written alongside it, because this method is
+        the one call site common to every non-tier path that produces a plan: the `diff`
+        command (`infrahub_sync/cli.py:427`), the serial `sync` command (`:546`) and
         `sync_in_tiers`' no-tiers branch — and on all three it runs before any
         destination write, which is what FR-001 requires. The tier branch of
         `sync_in_tiers` writes the artifact itself, from every tier's retained diff.
@@ -715,8 +716,9 @@ class Potenda:
         six identical full-destination diffs rather than six disjoint per-tier ones, and the
         artifact would record every operation once per tier (AD039, PD-009).
 
-        Aggregates per-tier diff rows into a single plan.parquet, unchanged, so `apply` and
-        operators can review the whole change set.
+        Aggregates per-tier diff rows into a single plan.parquet, unchanged, so operators can
+        query the whole change set. `apply` reads the saved plan artifact instead, which this
+        branch writes from every tier's retained diff.
         """
         if not self.tiers:
             self.load_both_sides()

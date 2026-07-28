@@ -23,7 +23,7 @@ Prints every sync project found under the given directory along with its source,
 
 ## Calculating differences
 
-The `diff` command compares the source and destination without writing anything to the destination. It also writes a Parquet **plan** to the local cache so you can review the change set and replay it later with `apply`.
+The `diff` command compares the source and destination without writing anything to the destination. It also writes a saved **plan artifact** to the local cache so you can review the change set and apply it later with `apply`.
 
 ### Command
 
@@ -37,11 +37,14 @@ infrahub-sync diff --name <sync_project_name> --directory <your_configuration_di
 - `--directory` — directory holding your sync configuration.
 - `--branch` — Infrahub branch to diff against (default `main`).
 - `--show-progress / --no-show-progress` — toggle the per-resource progress bar.
-- `--run-id` — re-use a specific cache run id; useful when you want to overwrite a previous run's plan in place.
+- `--run-id` — re-use a specific cache run id for the live comparison; useful when you want to overwrite a previous run's plan in place.
 - `--concurrent-load / --no-concurrent-load` — load source and destination concurrently (default on). Disable if a custom adapter isn't thread-safe; see [Concurrent loads](#concurrent-loads) below.
 - `--full-extract / --no-full-extract` — default on; re-extract everything every run. Pass `--no-full-extract` to enable the cursor-driven incremental warm path. See [Incremental extraction](./reference/incremental-extraction).
+- `--from-plan <run-id>` — review the saved plan of a previous run instead of comparing live systems. See [Reviewing a saved plan](#reviewing-a-saved-plan) below.
+- `--detail` — expand the review to one record per operation. Requires `--from-plan <run-id>`.
+- `--kind <kind>` — narrow `--detail` to a single destination kind. Requires `--from-plan <run-id>` and `--detail`.
 
-Each invocation logs a `Cached run <run_id> at <run_dir>` line on success. Note that id — you can hand it to `apply` to dispatch the plan without re-extracting the source.
+Each invocation logs a `Cached run <run_id> at <run_dir>` line on success. Note that id — you can hand it to `diff --from-plan <run-id>` to review the plan, and to `apply --run-id <run-id>` to apply it without re-extracting the source.
 
 ## Synchronizing data
 
@@ -88,25 +91,152 @@ After a successful sync, Infrahub Sync writes a per-resource baseline to `.infra
 
 ## Reviewing and applying a cached plan
 
-The cache pattern lets you split a run into two steps: produce a plan (`diff`), then apply it (`apply`). This is useful when you want a human approval gate, when the destination is briefly unreachable, or when you want to re-apply the same plan without re-fetching the source.
+The cache pattern lets you split a run into three steps: produce a plan (`diff`), review it
+(`diff --from-plan <run-id>`), then apply it (`apply --run-id <run-id>`). This is useful when you
+want a human approval gate, when the destination is briefly unreachable, or when you want to apply
+the same reviewed plan without re-fetching the source.
 
 ```bash
-# 1. Dry-run — extracts source + destination, writes plan.parquet
+# 1. Dry-run — extracts source + destination, writes the plan artifact
 infrahub-sync diff --name from-netbox --directory examples/
 
 # Look at the logged line:
 #   INFO | infrahub_sync.cli | Cached run 20260518T1430-abc12345 at .infrahub-sync-cache/from-netbox/20260518T1430-abc12345
-#
-# Inspect the diff or query the parquet directly with DuckDB:
-#   duckdb -c "SELECT * FROM read_parquet('.infrahub-sync-cache/from-netbox/20260518T1430-abc12345/plan.parquet')"
 
-# 2. Apply the cached plan — no source extraction
+# 2. Review the saved plan — reads the artifact, contacts nothing
+infrahub-sync diff --name from-netbox --directory examples/ --from-plan 20260518T1430-abc12345
+
+# 3. Apply the reviewed plan — no source extraction
 infrahub-sync apply --name from-netbox --run-id 20260518T1430-abc12345 --directory examples/
 ```
 
-`apply` refuses to proceed if the destination's schema shape has drifted since the plan was built — the cached `schema-sub-hash.txt` must match the freshly-computed hash. When it doesn't, re-run `diff` to rebuild the plan.
+For the full on-disk layout of the plan artifact and the rest of the run directory, see the
+[Cache layout reference](./reference/cache-layout).
 
-For the full on-disk layout (per-resource Parquet snapshots, sidecar JSON files, the per-pipeline filelock), see the [Cache layout reference](./reference/cache-layout).
+### Reviewing a saved plan
+
+`diff --from-plan <run-id>` reads the plan stored for that run and renders it. It constructs no
+adapter, extracts nothing, takes no lock, and creates or modifies no run directory — so a mistyped
+run id is reported as an unknown run rather than rendering as a valid empty plan.
+
+The default depth prints a header, a count per action and a count per kind:
+
+```text
+Plan 20260518T1430-abc12345  (from-netbox)
+checksum: OK   format: 2   operations: 4   deletes computed: yes
+
+By action     create 2   delete 1   update 1
+By kind       BuiltinTag 2   InfraDevice 2
+```
+
+Add `--detail` for one record per operation — its identifier, action, destination kind and
+destination identity — and `--kind <kind>` to narrow that listing to a single destination kind:
+
+```bash
+infrahub-sync diff --name from-netbox --directory examples/ \
+  --from-plan 20260518T1430-abc12345 --detail --kind InfraDevice
+```
+
+`--detail` requires `--from-plan <run-id>`, and `--kind` requires both. Passing `--run-id` alongside
+`--from-plan` logs a warning and is ignored: `--from-plan` names the run being reviewed, and nothing
+is created for the ignored value.
+
+### What the review says about deletes
+
+Both review depths disclose two things about deletes, in the same output you approve.
+
+**A recorded delete will not be executed.** A plan that contains deletes prints a note naming the
+count, and every delete in the `--detail` listing is marked `(not executed)`:
+
+```text
+NOTE  1 delete operation(s) are recorded in this plan and NONE will be executed against the
+      destination by this release. Applying this plan will complete successfully and record
+      1 skipped deletes on the run; each delete record is marked "(not executed)" in the
+      --detail listing.
+```
+
+**Deletes may never have been computed at all.** Deletes are derived from the loaded destination
+store, which only holds a complete picture when the destination side ran a full extract. When the
+destination was loaded incrementally the header reads `deletes computed: NO` and the review says so
+rather than letting the plan read as one that genuinely has no deletes:
+
+```text
+NOTE  Delete operations were NOT computed for this plan: the destination side was loaded
+      incrementally, which cannot enumerate it completely. This plan may be missing deletes
+      that exist. Re-run with a full destination extract to compute them.
+```
+
+### Applying by run id
+
+`apply --run-id <run-id>` executes the plan stored for that run, in stored order, against the
+destination. Neither side is loaded and nothing is re-compared or re-derived: what you reviewed is
+what is applied.
+
+On completion the run's `run.json` records `applied_operations`, `skipped_delete_operations` and
+`skipped_delete_count` in its `summary`, so what the apply did is a recorded value rather than
+something you have to infer.
+
+#### Deletes are recorded, never executed
+
+This is the behavior to know before you apply a plan against a destination that has drifted from the
+source.
+
+A plan containing deletes **applies its non-deletes, deletes nothing, completes successfully, and
+reports how many deletes it skipped**. The run ends `applied` — the same state a delete-free apply
+reaches — and the command's last line names the count:
+
+```text
+WARNING | Apply of run 20260518T1430-abc12345: 1 recorded delete operation(s) were not executed. ...
+INFO    | Applied run 20260518T1430-abc12345: 3 operations applied, 1 deletes skipped
+```
+
+**This is a designed limitation of this release, not a failure.** Applying deletes is out of scope
+here and is assigned to later work. An operator who runs this against a non-pristine destination —
+one holding objects the source no longer has — will meet a non-zero skipped-delete count on every
+apply, and should not read it as a broken run. The skipped identifiers are recorded on the run, so
+the difference between what you reviewed and what was written is always readable.
+
+#### Convergence is not verified for relationship-keyed kinds
+
+For a destination kind whose convergence key crosses a relationship — a human-friendly ID with a
+component like `site__name__value` rather than a plain attribute — **convergence is not verified in
+this release**. The client cannot render that key from a peer supplied as a resolved node id, so the
+apply issues the write anyway and warns once per kind that it did:
+
+```text
+WARNING | Planned write: the mutation rendered for destination kind InfraInterface carries
+          neither 'id' nor 'hfid' because the kind's convergence key crosses a relationship
+          (...). The write was issued anyway. Watch for a duplicate object of kind
+          InfraInterface at the destination if it does not key on the identity components as
+          sent.
+```
+
+The destination may still key the write server-side, in which case re-applying converges normally.
+But if it does not, **a duplicate object of that kind is the recorded limitation of this release**,
+not something you did wrong. Watch for the warning, and check that kind at the destination before
+re-applying the same plan. A kind that declares no human-friendly ID at all warns on the same terms.
+
+### Refusals you will meet
+
+`apply` verifies the plan as one gate **before the first write**, so a refusal never leaves the
+destination half-written. Every refusal names its next action.
+
+| Refusal | What it means |
+| --- | --- |
+| No run is stored with that identifier | The run id does not exist. The message lists the most recent stored run identifiers for the sync — or states plainly that the sync has no stored runs. Nothing is created for the named id. |
+| The run holds no plan artifact | The run predates the saved plan format. Re-run `diff` to produce a current-format plan. |
+| The artifact is torn | The plan is present but incomplete or inconsistent — a missing manifest, or a line count disagreeing with the recorded operation count. Re-run `diff` to rebuild it. |
+| Unsupported format version | The artifact was written by a version this release does not understand. The remaining checks are not evaluated, and the message says so. Rebuild the plan, or apply it with the version that wrote it. |
+| The plan checksum does not match | The artifact changed after it was written, so it is not the plan that was reviewed. Re-run `diff`. |
+| The source snapshot no longer matches | A snapshot the plan was computed against is absent or has changed. Re-run `diff`. |
+| The configuration version does not match | The configuration changed since the plan was derived, so the plan is no longer what this configuration would do. Re-run `diff`. |
+| The destination adapter cannot apply a saved plan | The adapter does not implement the planned-write surface. Use `infrahub-sync sync` for that destination instead. |
+| An operation's action is unrecognized | The plan holds an operation this release cannot interpret. It is refused while the artifact is read — before any destination write. |
+
+A review (`diff --from-plan`) is deliberately more forgiving: a plan whose checksum does not verify
+is **rendered anyway**, with `checksum: FAILED` in the header and the explanation beneath it.
+Withholding a plan an operator is trying to understand is the opposite of a review — but that same
+plan will refuse when applied.
 
 ## Generating sync adapters and models
 
