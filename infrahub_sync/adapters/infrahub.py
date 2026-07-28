@@ -219,13 +219,13 @@ def _replace_relationship_set(
     then fetched, which issues the guarded read and assigns the destination's peers back
     onto this same manager.
 
-    **This function leaves `node` unsaved, and its caller flushes it (AD075).**
+    **This function leaves `node` unwritten, and its caller flushes it (AD075).**
     `RelationshipManagerSync` has no `save`, and `add()`/`remove()` only mutate the
     in-memory peer list and set an update flag — they issue no client call. So the
-    reconciled set reaches the destination only on a later save of the node, which
+    reconciled set reaches the destination only on a later write of the node, which
     `apply_planned_operation` issues **once** after reconciling every cardinality-many
-    relationship, as a plain `node.save()`. Without that flush this function computes the
-    surplus correctly and throws it away.
+    relationship, as `node.update(do_full_update=True)` (AD085). Without that flush this
+    function computes the surplus correctly and throws it away.
     """
     manager: RelationshipManagerSync = getattr(node, rel_name)
 
@@ -1006,7 +1006,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         The write is not the last destination interaction: every cardinality-many
         relationship is then reconciled as an explicit replace-set and flushed by a single
-        plain `node.save()` (AD075).
+        `node.update(do_full_update=True)` (AD075, amended by AD085).
 
         Raises:
             SkippedDeleteOperation: the operation is a recorded delete (a designed
@@ -1063,15 +1063,18 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         for reference in many_references:
             _replace_relationship_set(node, reference.field, data[reference.field])
         if many_references:
-            # THE FLUSH (AD075). `add`/`remove` are purely local, so without this save the
-            # reconciliation is computed and discarded. Plain, **not**
-            # `save(allow_upsert=True)`: the upsert above set `_existing`, so a plain save
-            # dispatches an update whose unmodified-field stripping keeps the relationship
-            # precisely because the reconciliation set its update flag, and the manager
-            # renders the full peer list — which is what makes the write a replace. A second
-            # upsert would re-render the create instead. One save after the loop, on the same
-            # node object whose managers were reconciled, not one save per relationship.
-            node.save()
+            # THE FLUSH (AD075, amended by AD085). `add`/`remove` are purely local, so
+            # without this write the reconciliation is computed and discarded. It is an
+            # update, not a second `save(allow_upsert=True)`, which would re-render the
+            # create — and `do_full_update=True` rather than a plain `node.save()`, because
+            # a plain save renders with unmodified-field stripping on and that stripping
+            # drops an **emptied** peer set: the create payload wrote `[]` for the same
+            # field, so the rendered value equals it and the key is popped, taking `peers:
+            # []` out of the write that is supposed to carry it. `do_full_update=True`
+            # renders with the stripping off, so the emptied set survives; `id` is still
+            # rendered, so the update targets this node. One write after the loop, on the
+            # same node object whose managers were reconciled, not one per relationship.
+            node.update(do_full_update=True)
 
         node_id = _require_node_id(node, context=f"for operation {operation.operation_id!r}")
         peers.remember(operation.kind, operation.identity, node_id)

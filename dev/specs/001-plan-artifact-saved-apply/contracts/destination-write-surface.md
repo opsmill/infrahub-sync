@@ -26,7 +26,8 @@ Principle III tension in [plan.md](../plan.md#complexity-tracking).
 | `RunFile.save()` writes the whole payload from the in-memory instance with no merge, and the `apply` command constructs its `RunFile` with an empty `summary` and saves it again after the apply returns (AD069) | `infrahub_sync/cache/sidecars.py:87-89`; `infrahub_sync/cli.py:322-323`, `:350-351` |
 | The rendered mutation input is where keyedness is observable: `data["id"]` if set, else `data["hfid"]`, and the upsert path renders with `exclude_hfid=False` | `.venv/…/infrahub_sdk/node/node.py:295-298`; `create(allow_upsert=True)` `:1843-1846`; `save(allow_upsert=True)` dispatches to it `:1533-1535` |
 | `RelationshipManagerSync` has **no `save`**: `add` and `remove` only mutate `self.peers` and set `_has_update`, issuing no client call, so a reconciled peer set reaches the destination only on a later save of the **node** (AD075) | `.venv/…/infrahub_sdk/node/relationship.py`: no `def save` in the class (`:238`), `add` `:322-332`, `remove` `:339-357`, flag at `:57` |
-| A **plain** `node.save()` after step 6 flushes it as an update, and the unmodified-field stripping **retains** the reconciled relationship because its update flag is set; the manager renders the full peer list, which is what makes the write a replace (AD075) | `.venv/…/infrahub_sdk/node/node.py:1810-1811` (`_existing` true), `:1533-1534` (dispatch to `update`), `:1867-1870` (`exclude_unmodified`), `:352` and `:362` (`_strip_unmodified` keeps a manager with `has_update`); full render at `relationship.py:68-69` |
+| `node.update(do_full_update=True)` after step 6 flushes it as an update carrying the reconciled peer list, because `do_full_update=True` renders with `exclude_unmodified=False` and the unmodified-field stripping never runs; the manager renders the full peer list, which is what makes the write a replace, and `id` is still rendered, so the update targets that node (AD085, amending AD075) | `.venv/…/infrahub_sdk/node/node.py:1870` (`exclude_unmodified=not do_full_update`), `:290-291` (the stripping runs only under `if exclude_unmodified:`), `:295-296` (`id`), `:1872` (`f"{kind}Update"`); full render at `relationship.py:68-69` |
+| A **plain** `node.save()` would drop an **emptied** peer set. It renders with the stripping on, and `_strip_unmodified`'s second loop pops any key whose rendered value equals the create payload's: `generate_payload_create` writes `[]` for a cardinality-many relationship, so `data[item] == original_data[item]` is `[] == []` and the key is popped, because a relationship manager is not an `Attribute` and the guard passes. Non-empty replaces are unaffected (AD085) | `.venv/…/infrahub_sdk/node/node.py:365-370` (equal-payload pop, `Attribute` guard at `:368-370`); `.venv/…/infrahub_sdk/schema/__init__.py:179` (the create payload's `[]`) |
 | `_generate_input_data(...)["data"]` is `{"data": {…}}`, **not** the rendered `data` — the gate must read one level deeper (AD076) | `.venv/…/infrahub_sdk/node/node.py:300`, `:304-308` |
 | Peer resolution today reads the **loaded** SDK node store | `infrahub_sync/adapters/infrahub.py:57-94`, populated at `:454`, `:501`, `:613` |
 | A zero-match peer is silently dropped with a warning | `infrahub_sync/adapters/infrahub.py:141-143`, `:212-214`, `:229-231` |
@@ -106,12 +107,15 @@ Both route through the same convergent upsert. Neither routes through `InfrahubM
 7. for ref in operation.relationships where cardinality == "many":
        _replace_relationship_set(node, ref.field, resolved_peer_ids)        # PD-005 + AD054/AD065 re-read
                                                                             # NEW code; update_node untouched (AD070)
-7e. node.save()   # AD075 — THE FLUSH. remove()/add() are purely local, so without this step the
-                  #   whole reconciliation is computed and discarded. PLAIN save, NOT
-                  #   save(allow_upsert=True). One save after the loop, not one per relationship.
-                  #   `node` is THIS node — the one step 7 reconciled the managers OF. Saving any
+7e. node.update(do_full_update=True)
+                  # AD075 as amended by AD085 — THE FLUSH. remove()/add() are purely local, so
+                  #   without this step the whole reconciliation is computed and discarded. An
+                  #   UPDATE, not a second save(allow_upsert=True) — and do_full_update=True, NOT
+                  #   a plain node.save(), which strips an EMPTIED peer set out of the render.
+                  #   One write after the loop, not one per relationship.
+                  #   `node` is THIS node — the one step 7 reconciled the managers OF. Writing any
                   #   other object reproduces the AD075 defect silently.
-                  #   See "Step 7e" below for why the plain form is the correct one.
+                  #   See "Step 7e" below for why this form is the correct one.
 8. peers.remember(operation.kind, operation.identity, node.id)
 9. return node.id
 ```
@@ -280,20 +284,23 @@ The helper therefore, with the mechanism named rather than implied:
     # the helper RETURNS HERE, leaving the node unsaved (like update_node does)
 
 # 7e is the CALLER's, run ONCE after the loop over every cardinality-many relationship:
-7e. node.save()      # AD075 — the flush. Plain save, not save(allow_upsert=True).
+7e. node.update(do_full_update=True)
+                     # AD075/AD085 — the flush. An update, not save(allow_upsert=True); and
+                     #   do_full_update=True, not a plain node.save().
                      #   `node` is the SAME OBJECT 7a reconciled — see the invariant below
 ```
 
-**The invariant: the node that is saved MUST be the node whose manager was reconciled.** Forcing the
+**The invariant: the node that is updated MUST be the node whose manager was reconciled.** Forcing the
 manager cold and calling `fetch()` is therefore the **only** prescribed re-read mechanism, and this
 invariant is why. An earlier form of this contract offered a second mechanism as equivalent — fetch a
 separate `node2 = client.get(id=node.id, kind=node._schema.kind, include=[ref.field])` and reconcile
 `getattr(node2, ref.field)`. **The two stopped being equivalent the moment the flush became the caller's
 responsibility (AD075)**, and under the second one this section silently reproduces the very defect AD075
-closes: `add`/`remove` land on *`node2`*'s manager, while the `node` the caller saves still holds the
-manager built from the create payload — initialized, with **no** update flag — so the unmodified-field
-stripping pops it (`.venv/…/infrahub_sdk/node/node.py:352`, relationship arm at `:362`) and the update
-carries no relationship at all. The reconciliation is computed and discarded. Two smaller facts finish the
+closes: `add`/`remove` land on *`node2`*'s manager, while the `node` the caller flushes still holds the
+manager built from the create payload, so the flush renders that payload's peer list back — the plan's
+**desired** set, never compared against anything — and the reconciliation is computed and discarded. What
+reaches the destination is then whatever the mutation does with a peer list on its own, which is exactly
+the question AD007 says cannot be settled offline and PD-005 exists so as not to depend on. Two smaller facts finish the
 case: the helper returns nothing, so the caller cannot reach `node2` to save it instead; and one `node2` per
 relationship is incompatible with the single post-loop flush 7e pins. Nothing is lost by dropping it —
 the SDK's own `fetch()` on a cold manager issues exactly that scoped `client.get` and then assigns the
@@ -305,45 +312,66 @@ plus the write-back this invariant requires.
 tests assert is that a destination read was *issued* for that relationship before the peer set was read** —
 not that the manager was fetched, which the no-op satisfies.
 
-#### Step 7e: the reconciliation is inert until it is flushed, and a **plain** save is the right one (AD075)
+#### Step 7e: the reconciliation is inert until it is flushed, and the flush is a full update (AD075, AD085)
 
 `RelationshipManagerSync` has `fetch`, `add`, `remove` and `extend` — and **no `save`**. Both editors are
 purely local: they mutate `self.peers` and set `_has_update = True`, and neither issues a client call
 (`.venv/…/infrahub_sdk/node/relationship.py`: `add` `:322-332`, `remove` `:339-357`, the flag exposed at
-`:57`). The reconciled set reaches the destination **only on a subsequent save of the node**. Without step
+`:57`). The reconciled set reaches the destination **only on a subsequent write of the node**. Without step
 7e the helper computes the surplus correctly and throws it away.
 
 That is exactly how the pre-existing shape behaves, which is why the omission was easy to specify: the
-module-level `update_node` ends `return node` **unsaved** (`infrahub_sync/adapters/infrahub.py:177`) and its
+module-level `update_node` ends `return node` **unwritten** (`infrahub_sync/adapters/infrahub.py:177`) and its
 caller flushes it — `InfrahubModel.update` calls it at `:625` then `node.save(allow_upsert=True)` at `:626`.
-Duplicating that function into a call site with no save after it is what leaves the reconciliation inert.
+Duplicating that function into a call site with no write after it is what leaves the reconciliation inert.
 
-**Why plain `node.save()` and not `save(allow_upsert=True)`**, verified end to end against the SDK:
+**Why an update and not `save(allow_upsert=True)`**, verified end to end against the SDK:
 
 | Step in the chain | Fact | Location |
 |---|---|---|
 | Step 6 marks the node existing | `_process_mutation_result` sets `self.id` then `self._existing = True` | `.venv/…/infrahub_sdk/node/node.py:1810-1811` |
-| So a plain save dispatches an **update**, not a create | `save()` is `if self._existing is False or allow_upsert is True: self.create(...) else: self.update(...)` — with `_existing` true and `allow_upsert` false, the `else` arm runs | `:1526-1536`, dispatch at `:1533-1534` |
-| The update renders with unmodified fields stripped | `update(do_full_update=False)` calls `_generate_input_data(exclude_unmodified=not do_full_update)` | `:1867-1870` |
-| …and the stripping **keeps** the reconciled relationship | `_strip_unmodified` pops a relationship only when `not relationship_property.has_update`; the reconciliation set `_has_update`, so it survives | `:352`, the relationship arm at `:362` |
-| …and it renders the **full** peer list, which is what makes the write a replace | the manager renders every peer it holds | `.venv/…/infrahub_sdk/node/relationship.py:68-69` |
+| The flush is an update mutation, not a second upsert | `update()` names the mutation `f"{kind}Update"` | `:1872` |
 | A second `save(allow_upsert=True)` would be wrong | it re-enters `create(allow_upsert=True)` and re-renders the **upsert create** instead of an update | `:1533-1534` → `:1838-1846` |
+| The manager renders the **full** peer list, which is what makes the write a replace | the manager renders every peer it holds; an emptied set renders `[]` | `.venv/…/infrahub_sdk/node/relationship.py:68-69` |
 
-**And it is a save of the reconciled node.** The invariant stated with the helper above governs this step
-too: `node.save()` flushes the managers that hang off *`node`*, so a re-read mechanism that reconciles a
-manager on any other object leaves this save with nothing to carry — the manager on `node` is still the one
-built from the create payload, carries no update flag, and is popped by the stripping arm cited in the table
-above. That is why the mechanism is pinned rather than left to the implementer's choice.
+**Why `do_full_update=True` and not a plain `node.save()` (AD085).** A plain save dispatches `update()` with
+`do_full_update` defaulting to `False`, which renders with `exclude_unmodified=True` — and that stripping
+drops an **emptied** peer set, so `peers: []` never reaches the destination. AD075 pinned the plain save on
+the strength of a mechanism that turned out to be only half the picture; the amendment is below, and it
+changes only which flush is issued.
 
-**One save after the loop, not one per relationship.** The flush is issued once, after every
+| Step in the chain | Fact | Location |
+|---|---|---|
+| `do_full_update=True` turns the stripping off | `update()` calls `_generate_input_data(exclude_unmodified=not do_full_update)` | `.venv/…/infrahub_sdk/node/node.py:1870` |
+| …and `_strip_unmodified` then never runs at all, so the emptied set survives into the mutation | it is called only under `if exclude_unmodified:` | `:290-291` |
+| …while `id` is still rendered, so the update targets the right node | `if self.id is not None: data["id"] = self.id` | `:295-296` |
+| Under a plain save, the **first** loop does **not** pop the emptied manager — AD075 was right about this arm | a manager defines neither `__bool__` nor `__len__`, so it is always truthy and the `not relationship_property` guard never fires for it; the `has_update` arm keeps it because the reconciliation set the flag | `:354-364`, guard at `:356`, `has_update` arm at `:362` |
+| …but the **second** loop pops it, and that is the actual collision | with the create payload's `[]` for the same field, `data[item] == original_data[item]` is `[] == []`, and the pop fires because a relationship manager is not an `Attribute` so the guard passes | `:365-370`, `Attribute` guard at `:368-370`; the create payload's `[]` at `.venv/…/infrahub_sdk/schema/__init__.py:179` |
+| The differing-payload path is **not** where it is lost | `_strip_unmodified_dict` is dispatched only under `isinstance(original_data[item], dict)`, and a cardinality-many relationship is written as a **list**, so that branch is never reached and the key survives | `:372`; `.venv/…/infrahub_sdk/schema/__init__.py:179` |
+
+Non-empty replaces are unaffected either way — for them AD075's mechanism holds — so the amendment is
+scoped to the empty-set case and to which call issues the flush.
+
+**And it is an update of the reconciled node.** The invariant stated with the helper above governs this step
+too: the flush renders the managers that hang off *`node`*, so a re-read mechanism that reconciles a manager
+on any other object leaves this write carrying the create payload's peer list — the desired set, never
+compared against the destination's. That is why the mechanism is pinned rather than left to the
+implementer's choice.
+
+**One write after the loop, not one per relationship.** The flush is issued once, after every
 cardinality-many relationship on the operation has been reconciled — cheaper, and equally correct, since
 one update carries every changed relationship. Pinning it matters so the tests know what to count.
 
 **The observable for step 7 as a whole is the issued destination write carrying the reconciled peer
-list** — not the manager's in-memory `peer_ids`. This is the same correction AD065 made for the read side,
-and it is what makes the fix verifiable: every earlier observable (a mocked assertion that "existing-only
-peers are removed", a conformance assertion that "the surplus is removed", a done-condition on manager
-state) is satisfied by a helper that reconciles and never saves.
+list** — not the manager's in-memory `peer_ids`, and not a mocked adapter call. This is the same correction
+AD065 made for the read side, and it is what makes the fix verifiable: every earlier observable (a mocked
+assertion that "existing-only peers are removed", a conformance assertion that "the surplus is removed", a
+done-condition on manager state) is satisfied by a helper that reconciles and never writes. The empty-set
+case is the one that decides between the two flush forms, so its assertion is on the **rendered mutation**.
+Because the stripping is undocumented SDK internals and `pyproject.toml:18` pins `infrahub-sdk[all]>=1.17,<2`
+— a range — an **SDK-boundary tripwire** accompanies it: a test that fails loudly, naming AD085, if
+`_generate_input_data(exclude_unmodified=False)` stops retaining an emptied cardinality-many relationship or
+`exclude_unmodified=True` stops stripping it on the equal-payload path.
 
 **Why this failure had to be caught before implementation.** It is co-extensive with the risk step 7
 exists for. Where the convergent write already **replaces** the peer set, the re-read finds no difference,
@@ -514,7 +542,7 @@ In `Potenda.apply_plan`, replacing the v1 body:
 | Evidence | Where | Marker |
 |---|---|---|
 | Payload construction, upsert invocation, replace-set reconciliation with its re-read, memo population, negative-caching refusal, both peer refusals, a delete collected and skipped, an unrecognized action refused at load, missing surface, ordered applied set and skipped-delete record, fail-fast on rejection | `tests/adapters/test_infrahub_planned_write.py`, mocked `InfrahubClientSync` | local |
-| **Rendered-mutation conformance (AD045a, rebuilt by AD054, sharpened by AD065/AD067/AD068/AD075)**: the **rendered mutation input** carries `id` or `hfid` — required for every operation on a kind whose HFID is **all-direct**, and carried as a `xfail(strict=True)` for a kind whose HFID **crosses a relationship**, which cannot render keyed today (AD067) — built against a **committed `NodeSchemaAPI` fixture** rather than a mock; the replace-set reconciliation **issued a destination read** for the relationship before reading the peer set it compares against (AD065); the reconciled peer set was **issued to the destination** by the step 7e flush — a plain `node.save()` on the reconciled node, rendering as an **update** carrying that peer list, not a second upsert (AD075); two applies of one operation render **byte-identical** inputs (AD068) | `tests/plan/test_apply_conformance.py`, real `InfrahubNodeSync` over a committed schema fixture | local |
+| **Rendered-mutation conformance (AD045a, rebuilt by AD054, sharpened by AD065/AD067/AD068/AD075)**: the **rendered mutation input** carries `id` or `hfid` — required for every operation on a kind whose HFID is **all-direct**, and carried as a `xfail(strict=True)` for a kind whose HFID **crosses a relationship**, which cannot render keyed today (AD067) — built against a **committed `NodeSchemaAPI` fixture** rather than a mock; the replace-set reconciliation **issued a destination read** for the relationship before reading the peer set it compares against (AD065); the reconciled peer set was **issued to the destination** by the step 7e flush — `node.update(do_full_update=True)` on the reconciled node, rendering as an **update** carrying that peer list, not a second upsert, and carrying it for an **emptied** set too (AD075, AD085); two applies of one operation render **byte-identical** inputs (AD068) | `tests/plan/test_apply_conformance.py`, real `InfrahubNodeSync` over a committed schema fixture | local |
 | SC-001 (no diff/sync call), SC-002 (converge on re-apply), SC-003 (per-class matrix, both crash windows), SC-007 (live counts before/after, delete targets surviving, run state `applied`, recorded skip count), SC-008 (peer sets read back, at least one peer pre-existing and absent from the plan), SC-016 (real ambiguity) | `tests/integration/test_saved_plan_apply_integration.py` | **`integration`** (`pyproject.toml:133-135`) |
 
 **Why the conformance row was rebuilt (AD054).** As first written it asserted against the *assembled*
@@ -530,12 +558,13 @@ rendered input, which is checkable offline because the SDK renders the mutation 
 
 **Four further corrections to what it asserts.** **(AD065)** The replace-set observable is that a
 destination **read was issued** for the relationship, not that the manager was fetched — a `fetch()` on an
-already-initialized manager satisfies the latter and reads nothing. **(AD075)** The other half of the same
+already-initialized manager satisfies the latter and reads nothing. **(AD075, AD085)** The other half of the same
 observable: the reconciled peer set must be shown to have been **issued to the destination**, by asserting
-the step 7e flush — a plain `node.save()` on the node whose manager was reconciled, rendering as an
-**update** whose relationship value is the reconciled peer list, and failing against both a helper that
-never flushes and a flush spelled `save(allow_upsert=True)`. Without it the harness passes on an
-enforcement that computes the surplus and discards it, which is the AD075 defect. **(AD067)** The keyedness assertion is
+the step 7e flush — `node.update(do_full_update=True)` on the node whose manager was reconciled, rendering
+as an **update** whose relationship value is the reconciled peer list, and failing against a helper that
+never flushes, against a flush spelled `save(allow_upsert=True)`, and — for an **emptied** peer set — against
+a flush spelled as a plain `node.save()`, which strips the empty list back out. Without it the harness
+passes on an enforcement that computes the surplus and discards it, which is the AD075 defect. **(AD067)** The keyedness assertion is
 split, because the harness is *required* to include a kind whose HFID crosses a relationship and that kind
 cannot render keyed today: all-direct kinds must render keyed, and the relationship-crossing kind carries the
 same assertion marked `xfail(strict=True)` with a reason citing the Material risk row in

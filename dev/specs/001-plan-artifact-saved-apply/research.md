@@ -284,24 +284,40 @@ satisfied by the no-op.
 **And the reconciliation must be flushed, or it is discarded (AD075).** `RelationshipManagerSync` has **no
 `save`**: `add()` (`.venv/…/infrahub_sdk/node/relationship.py:322-332`) and `remove()` (`:339-357`) only
 mutate `self.peers` and set `_has_update = True`, issuing no client call, so the reconciled set reaches the
-destination **only on a subsequent save of the node**. The helper therefore leaves the node unsaved — the
+destination **only on a subsequent write of the node**. The helper therefore leaves the node unwritten — the
 same shape as `update_node`, whose flush lives in its caller (`infrahub_sync/adapters/infrahub.py:177`,
-`:625-626`) — and `apply_planned_operation` issues a **plain** `node.save()` once, after the loop over every
-cardinality-many relationship. Plain, not `save(allow_upsert=True)`: the create step has set
-`_existing = True` (`.venv/…/infrahub_sdk/node/node.py:1810-1811`), so a plain save dispatches `update()`
-(`:1533-1534`), which strips unmodified fields (`:1867-1870`) but **keeps** the reconciled relationship
-because its update flag is set (`:352`, relationship arm at `:362`), while the manager renders the full peer
-list (`relationship.py:68-69`) — which is what makes the write a replace. The observable moves onto the
-**issued destination write carrying the reconciled peer list**; manager state is satisfied by a helper that
-never saves.
+`:625-626`) — and `apply_planned_operation` issues `node.update(do_full_update=True)` once, after the loop
+over every cardinality-many relationship. An update, not `save(allow_upsert=True)`, which would re-render
+the upsert create (`.venv/…/infrahub_sdk/node/node.py:1533-1534` → `:1838-1846`); the mutation is
+`f"{kind}Update"` (`:1872`) and the manager renders the full peer list (`relationship.py:68-69`), which is
+what makes the write a replace. The observable moves onto the **issued destination write carrying the
+reconciled peer list**; manager state is satisfied by a helper that never writes.
+
+**And the flush is `do_full_update=True`, not a plain `node.save()` (AD085, amending AD075).** AD075 pinned
+the plain form on the strength of `_strip_unmodified` keeping a relationship whose update flag is set. That
+arm is real — the first loop (`:354-364`) does not pop an emptied manager, and the `not relationship_property`
+guard at `:356` never fires for one, since a relationship manager defines neither `__bool__` nor `__len__`
+and is always truthy. But it is not the only arm. A plain save renders with `exclude_unmodified=True`, and
+the **second** loop (`:365-370`) pops any key whose rendered value equals the create payload's: for a
+relationship reconciled to the **empty** set that comparison is `[] == []`, because
+`generate_payload_create` writes a cardinality-many relationship as `[]`
+(`.venv/…/infrahub_sdk/schema/__init__.py:179`), and the pop fires because a relationship manager is not an
+`Attribute` (`:368-370`). So `peers: []` — which the plan artifact format defines as "empty the set" — never
+reaches the destination under a plain save. (The differing-payload path is not where it is lost:
+`_strip_unmodified_dict` is dispatched only under `isinstance(original_data[item], dict)` (`:372`) and the
+create payload writes a **list**, so that branch is not reached and the key survives.)
+`node.update(do_full_update=True)` renders with `exclude_unmodified=False` (`:1870`), so `_strip_unmodified`
+never runs at all (`:290-291`), the emptied set survives as `[]`, and `id` is still rendered (`:295-296`) so
+the update targets the right node. Non-empty replaces are unaffected, and AD075's conclusions and its
+shipped implementation stand — only the flush call changes.
 
 **And that flush is what withdraws the second re-read mechanism (AD075).** This entry originally offered a
 scoped `client.get(id=node.id, kind=…, include=[rel_name])` with the manager read off the node that comes
 back as equivalent to forcing the manager cold. The two stopped being equivalent once the flush became a
 separate step in the caller: the `add`/`remove` calls would land on the fetched node's manager, while the
-node the caller saves still holds the manager built from the create payload — initialized, with no update
-flag — so the stripping arm cited above pops it and the update carries no relationship at all. **The node
-that is saved must be the node whose manager was reconciled.** Forcing the manager cold satisfies that by
+node the caller flushes still holds the manager built from the create payload, so the update goes out
+carrying that payload's peer list — the desired set, never compared against the destination's — and the
+reconciliation is discarded. **The node that is updated must be the node whose manager was reconciled.** Forcing the manager cold satisfies that by
 construction, because `fetch()` assigns the peers it reads back onto the manager it was called on
 (`.venv/…/infrahub_sdk/node/relationship.py:290-299`) — it *is* the scoped read plus the write-back — and it
 is also the only form compatible with one flush per operation rather than one per relationship.

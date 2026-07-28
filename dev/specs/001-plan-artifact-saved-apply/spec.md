@@ -1022,7 +1022,10 @@ is why its closure was verified by a narrow check against the library rather tha
   and the only criterion that would have caught it is behind the opt-in integration marker and is not
   produced at merge. The failure is co-extensive with the risk the step exists for: where the convergent
   write already replaces the peer set there is nothing to flush and the omission is invisible; where it
-  **merges** — the case this enforcement exists for — the surplus is computed and discarded. `[AD075]`
+  **merges** — the case this enforcement exists for — the surplus is computed and discarded.
+  **Amended by AD085**: the conclusions above stand, but the flush is a **full** update rather than a plain
+  node save, because the default suppression of unchanged fields drops a peer set reconciled to empty.
+  `[AD075]`
 - Q: The keyedness gate is specified as a branch on the destination kind's convergence-key shape, read on
   the rendered mutation input. Are both halves right? → A: **Neither is, and both are corrected.** First,
   the gate is **stricter than the claim it serves** for a kind that declares no convergence key at all:
@@ -1107,6 +1110,39 @@ Three housekeeping repairs were applied in the same pass and carry no decision o
 cross-references to the offline harness still cited an assertion number the AD067 split had moved; the
 apply record crossing the engine-to-command boundary had a key list but no named type; and the no-stored-
 runs next action did not name the command its sibling taxonomy row names.
+
+### Session 2026-07-27 — the empty peer set, amending AD075
+
+One decision, raised from implementation and closed by the brief owner. It **amends AD075** and nothing
+else: no requirement, criterion, scope or guarantee moves.
+
+- Q: AD075 specified the replace-set flush as a **plain** node save, on the stated ground that the
+  unmodified-field stripping retains a relationship whose update flag is set. Does that hold for a
+  relationship reconciled to the **empty** set — the case the plan format defines as "empty the set"? → A:
+  **No, and the flush changes to a full update.** What was wrong is only AD075's *stated mechanism*, and
+  only for the empty-set case. The stripping runs in two loops. The **first** behaves as AD075 said: an
+  emptied manager whose update flag is set is not popped there, and the guard that would skip it never
+  fires, because the relationship manager defines neither `__bool__` nor `__len__` and is therefore always
+  truthy. The **second** loop is the collision: it pops any key whose rendered value equals the create
+  payload's, and the create payload writes an empty list for a cardinality-many relationship, so the
+  comparison is `[] == []` and the pop fires — a relationship manager is not an attribute, so the guard that
+  protects a mutated attribute does not protect it. (The differing-payload path is **not** where the key is
+  lost; the dictionary-stripping helper it would go through is dispatched only for a mapping, and a
+  cardinality-many relationship is written as a list, so the key survives there. An earlier account of this
+  said otherwise and was wrong.) The consequence is that under a plain save an emptied peer set never
+  reaches the destination, which voids the enforcement in exactly one of the two cases it exists for. The
+  flush therefore becomes a **full update** — the destination library's update with full-update requested,
+  which renders with the stripping switched off, so the stripping never runs at all, the emptied set
+  survives, the node identifier is still rendered so the write targets the reconciled node, and the
+  mutation is still an update rather than a second convergent upsert. **AD075's conclusions and its shipped
+  implementation stand**: the manager still has no save of its own, the editors are still purely local, the
+  flush is still issued once after the loop and still on the node whose manager was reconciled, and the
+  observable is still the issued destination write. Non-empty replaces are unaffected either way. Two test
+  obligations follow. The empty-set case must be asserted on the **rendered mutation** — a real node over a
+  real schema — not on a mocked adapter call, which is what let the defect through the first time. And an
+  **SDK-boundary tripwire** must fail loudly, naming this decision, if the library's stripping behaviour
+  changes, because the dependency is pinned as a version range and the behaviour is undocumented internals.
+  `[AD085]`
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -1703,13 +1739,18 @@ references.
   only on a subsequent write of the node. The enforcement MUST therefore issue that write once the
   reconciliation is complete, and it MUST be an ordinary update of the node just written rather than a
   repeat of the convergent write: by that point the node is already known to exist, so an ordinary update
-  is what carries the reconciled relationship, and the library's suppression of unmodified fields retains
-  that relationship precisely because the reconciliation marked it as changed. **The write MUST be issued
-  for the same object whose peer set was reconciled.** Suppression of unmodified fields is decided per
-  object: a write issued for any other representation of the destination object carries that
-  representation's own unreconciled peer set, which is not marked as changed and is therefore suppressed,
-  so the write goes out with no relationship in it and the reconciliation is discarded exactly as if it had
-  never been issued. This is why the two re-read routes above are not interchangeable once the write is a
+  is what carries the reconciled relationship.
+  **That update MUST carry every reconciled field, including a peer set reconciled to empty.** By default
+  the destination library suppresses fields it judges unchanged, and it judges an emptied peer set
+  unchanged against the payload the convergent write was built from — so the default form of the update
+  drops it, and a plan that says to empty a peer set would leave the destination's peers in place. The
+  enforcement MUST therefore request the full form of the update, which suppresses nothing. *(per AD085)*
+  **The write MUST be issued for the same object whose peer set was reconciled.** A write issued for any
+  other representation of the destination object carries that representation's own unreconciled peer set —
+  the desired set, never compared against the destination's — so the reconciliation is discarded exactly as
+  if it had never been issued, and what reaches the destination depends once again on what the mutation does
+  with a peer list on its own, which is the very question this enforcement exists so as not to depend on.
+  This is why the two re-read routes above are not interchangeable once the write is a
   separate step: whichever route is taken, the reconciliation and the write MUST meet on one object.
   The evidence for the whole
   enforcement MUST accordingly be the **destination write carrying the reconciled peer list**, and MUST
@@ -1721,7 +1762,7 @@ references.
   additive ordering is a pre-existing defect and MUST be left exactly as it is: correcting it there would
   change what the existing mutating command does to destination relationships, which this outcome does not
   authorize and no requirement, criterion or documentation entry here describes. It is recorded as work for
-  a later outcome. *(per AD070)* `[AD065]` `[AD070]` `[AD075]`
+  a later outcome. *(per AD070)* `[AD065]` `[AD070]` `[AD075]` `[AD085]`
   An update payload is authoritative for the mapped fields it carries and MUST NOT touch
   unmapped destination fields. Two consequences of that mandated write path are recorded here rather
   than left to inference. First, a planned `create` whose destination identity already exists converges
@@ -1745,7 +1786,8 @@ references.
   destination read for the relationship before reading the peer set** it compares against, assert that the
   reconciled peer set is then **issued to the destination** — a write carrying the reconciled list, made for
   the same object the reconciliation acted on, and taking the form of an ordinary update of the object
-  already written rather than a repeat of the convergent write — and assert that
+  already written rather than a repeat of the convergent write — **including where the plan reconciles a
+  peer set to empty**, which is the case the default suppression of unchanged fields would drop, and assert that
   applying the same operation twice renders **byte-identical** mutation inputs. The flush assertion is the
   fourth of these for the same reason the read assertion is the second: without it, an enforcement that
   reconciles in memory and issues nothing satisfies every other assertion in the set. Keyedness is asserted as two
@@ -1758,7 +1800,7 @@ references.
   AD015, create-on-no-match consequences per AD025, verification route per AD036, convergence-key payload
   per AD042, explicit replace-set enforcement per AD038, offline conformance check per AD045 as rebuilt by
   AD054, the read-not-order observable per AD065, the keyedness split per AD067, the repeat assertion per
-  AD068, the flush observable per AD075)* `[AD015]`
+  AD068, the flush observable per AD075, the empty-set case per AD085)* `[AD015]`
   `[AD025]` `[AD036]` `[AD038]` `[AD042]`
   `[AD045]` `[AD054]` `[AD065]` `[AD067]`
   `[AD068]`
@@ -2696,6 +2738,14 @@ was discoverable only from a refusal message) and AD084 (the provisional framing
 gate has passed). One, **AD081**, changes nothing here at all: it records for the planner that a brief
 dependency row marked satisfied is satisfied only for kinds whose convergence key is all-direct. Nothing
 in this delivery edits the brief.
+
+One further decision, **AD085**, was ratified after implementation began and is carried in the
+[empty peer set](#session-2026-07-27--the-empty-peer-set-amending-ad075) session. It **amends AD075** and
+nothing else: AD075's conclusions and its implementation stand, but its stated mechanism was wrong for the
+empty-set case, so the flush becomes a full update that suppresses nothing. It adds nothing that ships
+beyond that one call, and it adds two test obligations — the empty-set case asserted on the rendered
+mutation rather than on a test double, and a tripwire that fails loudly if the destination library's
+suppression behavior changes under the version range the project pins.
 
 Nothing here remains open. What remains genuinely deferred is not a design commitment:
 
