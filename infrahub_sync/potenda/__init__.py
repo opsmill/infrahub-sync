@@ -536,7 +536,11 @@ class Potenda:
             OperationApplyFailedError: the destination rejected an operation or transport
                 failed. Carries the partial record; earlier writes stay written (AD027).
             ApplyRecordInvariantError: a completed apply's record does not account for every
-                operation in the plan (AD062).
+                operation in the plan (AD062). Carries the record it is complaining about.
+            BaseException: an interrupt — `KeyboardInterrupt` above all — propagates
+                unchanged rather than being converted into a taxonomy error, and carries the
+                partial record on an `apply_record` attribute so the caller can still record
+                what was written before the run was cut short.
         """
         from infrahub_sync.adapters.infrahub import PeerResolver
         from infrahub_sync.plan.reader import load_plan_artifact
@@ -575,7 +579,7 @@ class Potenda:
                 continue
             try:
                 apply_operation(operation=operation, peers=peers)
-            except Exception as exc:
+            except BaseException as exc:
                 # The partial record travels on the error so the CLI can merge what was
                 # written before it records `failed` (AD069). Re-raising bare would lose it.
                 partial = ApplyRecord(
@@ -583,12 +587,30 @@ class Potenda:
                     skipped_delete_operations=tuple(skipped_deletes),
                     skipped_delete_count=len(skipped_deletes),
                 )
+                if not isinstance(exc, Exception):
+                    # An interrupt — `KeyboardInterrupt` above all, which is how an operator
+                    # deliberately stops a long apply. It is not a destination rejection, so
+                    # wrapping it in one would swallow the very signal that stops the process.
+                    # It propagates as itself and carries the record as an attribute instead,
+                    # because the operations written before it are written either way and
+                    # "what was applied" has to stay readable from the run (AD062). The
+                    # suppression below is not masking a defect: no annotation can declare an
+                    # attribute on an exception type this module does not own, and every
+                    # `BaseException` carries an instance `__dict__` that accepts one.
+                    exc.apply_record = partial  # ty: ignore[invalid-assignment]
+                    raise
                 msg = (
                     f"Applying operation {operation.operation_id!r} of run {run_id!r} to the destination "
                     f"failed: {exc}. The {len(applied)} operation(s) applied before it stay written."
                 )
                 raise OperationApplyFailedError(msg, apply_record=partial) from exc
             applied.append(operation.operation_id)
+
+        completed = ApplyRecord(
+            applied_operations=tuple(applied),
+            skipped_delete_operations=tuple(skipped_deletes),
+            skipped_delete_count=len(skipped_deletes),
+        )
 
         # AFTER the loop and off the rejection path (AD069): a partial apply breaks both
         # clauses by construction, so checking unconditionally would replace a clear
@@ -604,7 +626,10 @@ class Potenda:
                 f"{sorted(planned_ids - recorded_ids)} are in neither set and "
                 f"{sorted(recorded_ids - planned_ids)} are in no plan."
             )
-            raise ApplyRecordInvariantError(msg)
+            # The **real** record travels with it: every non-delete operation above was
+            # written before this check ran, so an empty one would misreport a fully applied
+            # run as having applied nothing.
+            raise ApplyRecordInvariantError(msg, apply_record=completed)
 
         if skipped_deletes:
             logger.warning(
@@ -615,11 +640,7 @@ class Potenda:
                 len(skipped_deletes),
             )
 
-        return ApplyRecord(
-            applied_operations=tuple(applied),
-            skipped_delete_operations=tuple(skipped_deletes),
-            skipped_delete_count=len(skipped_deletes),
-        )
+        return completed
 
     def persist_cursors_for_run(self, *, side: str) -> None:
         """Walk the run_dir snapshot files for `side`, compute per-resource

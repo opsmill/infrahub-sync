@@ -19,6 +19,7 @@ from infrahub_sync.cache.sidecars import RunFile
 # the engine, which pulls this package, so deferring these would buy no import time and only
 # hide where the command's behavior comes from.
 from infrahub_sync.plan.errors import (
+    ApplyRecordInvariantError,
     OperationApplyFailedError,
     PlanArtifactError,
     UnknownPlanKindError,
@@ -581,6 +582,23 @@ def _require_applicable_plan(*, sync_name: str, run_id: str) -> None:
         print_error_and_abort(str(exc))
 
 
+def _record_and_abort(run_file: RunFile, exc: PlanArtifactError, record: ApplyRecord) -> NoReturn:
+    """Record what the apply did, then report a designed refusal as one error line.
+
+    Every member of the plan-artifact taxonomy names its own remedy (AD059), so an operator
+    who meets one has met a decision the tool made on purpose, not a crash — and reads it
+    the way `_require_applicable_plan` four lines above already reports its own refusals.
+
+    The recording happens **before** the abort and merges `record` into the summary before
+    `save()`, because `RunFile.save()` writes the whole payload from this instance
+    (`infrahub_sync/cache/sidecars.py:87-89`) and would otherwise destroy it (AD062, AD069).
+    """
+    run_file.summary.update(record.as_summary_keys())
+    run_file.status = "failed"
+    run_file.save()
+    print_error_and_abort(str(exc))
+
+
 @app.command(name="apply")
 def apply_cmd(
     ctx: typer.Context,
@@ -647,17 +665,41 @@ def apply_cmd(
             run_file.summary.update(record.as_summary_keys())
             run_file.status = "applied"
         except OperationApplyFailedError as exc:
-            # The **partial** record the rejection carries, so FR-025's last-applied pointer
-            # survives a partial apply instead of being overwritten with an empty list.
-            run_file.summary.update(exc.apply_record.as_summary_keys())
+            # First of the taxonomy arms, because it is a `PlanArtifactError` subclass and
+            # the general arm below would otherwise swallow it — and with it the **partial**
+            # record the rejection carries, which is what lets FR-025's last-applied pointer
+            # survive a partial apply instead of being overwritten with an empty list.
+            _record_and_abort(run_file, exc, exc.apply_record)
+        except ApplyRecordInvariantError as exc:
+            # Raised *after* the loop wrote every non-delete operation, so the record it
+            # carries holds the real counts. Merging an empty one here would tell an operator
+            # that a run which wrote everything applied nothing, and invite a re-apply
+            # against a populated destination.
+            _record_and_abort(run_file, exc, exc.apply_record)
+        except PlanArtifactError as exc:
+            # Every remaining member of the taxonomy is a **designed refusal** that wrote
+            # nothing and names its own remedy, so it reaches the operator as that message
+            # rather than as a stack trace (AD059). It records the three fields as present
+            # and empty rather than absent: "nothing was applied" must be readable from the
+            # run, not inferred from a missing key (AD062).
+            _record_and_abort(run_file, exc, ApplyRecord())
+        except Exception:
+            # Outside the taxonomy, so not a designed refusal but a defect: it keeps its
+            # traceback, which is the only place its diagnosis lives. The run is recorded
+            # first either way.
+            run_file.summary.update(ApplyRecord().as_summary_keys())
             run_file.status = "failed"
             run_file.save()
             raise
-        except Exception:
-            # A refusal wrote nothing, and records that as present, empty fields rather than
-            # absent ones: "nothing was applied" must be readable from the run, not inferred
-            # from a missing key (AD062).
-            run_file.summary.update(ApplyRecord().as_summary_keys())
+        except BaseException as exc:
+            # An interrupt — Ctrl-C on a long apply. Writes have already landed, and the run
+            # has to say so before the interrupt continues on its way; without this arm the
+            # sidecar keeps the `running` status and the empty summary it was saved with,
+            # claiming nothing was even attempted (AD062). Never swallowed: the bare `raise`
+            # is what keeps Ctrl-C stopping the process.
+            carried = getattr(exc, "apply_record", None)
+            partial = carried if isinstance(carried, ApplyRecord) else ApplyRecord()
+            run_file.summary.update(partial.as_summary_keys())
             run_file.status = "failed"
             run_file.save()
             raise

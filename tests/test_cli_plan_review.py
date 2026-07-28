@@ -87,6 +87,7 @@ from infrahub_sync.plan.errors import (
     UnsupportedOperationActionError,
 )
 from infrahub_sync.plan.models import ACTIONS, SUPPORTED_FORMAT_VERSIONS, ApplyRecord
+from infrahub_sync.plan.reader import load_plan_artifact
 from infrahub_sync.plan.review import RUN_ID_LISTING_LIMIT
 from infrahub_sync.potenda import Potenda
 from infrahub_sync.utils import get_instance
@@ -1096,7 +1097,9 @@ TAXONOMY_CASES: dict[str, Callable[[], PlanArtifactError]] = {
     "operation_apply_failed": lambda: OperationApplyFailedError(
         "Applying operation 'o' failed.", apply_record=ApplyRecord()
     ),
-    "apply_record_invariant": lambda: ApplyRecordInvariantError("The apply record does not account for the plan."),
+    "apply_record_invariant": lambda: ApplyRecordInvariantError(
+        "The apply record does not account for the plan.", apply_record=ApplyRecord()
+    ),
 }
 
 
@@ -1352,6 +1355,18 @@ def _run_apply(destination: RecordingDestination, run_id: str = RUN_ID) -> Any: 
         return _apply(run_id)
 
 
+def _operator_errors(caplog: pytest.LogCaptureFixture) -> str:
+    """The flattened ERROR lines the command reported, as the operator reads them.
+
+    `apply` reports a designed refusal through `print_error_and_abort`, which logs at ERROR
+    and aborts, so the message lives in the log rather than on the exception. Reading it from
+    `str(result.exception)` instead would pass just as well against a command that let the
+    taxonomy error escape as a stack trace — which is exactly the presentation these cases
+    assert against (AD059).
+    """
+    return _flat(" ".join(record.getMessage() for record in caplog.records if record.levelno >= logging.ERROR))
+
+
 def _run_json(tmp_path: Path, run_id: str = RUN_ID) -> dict[str, Any]:
     """Read the run sidecar back **from disk** after the command returned.
 
@@ -1441,7 +1456,10 @@ APPLY_REFUSAL_CASES: dict[str, Callable[[Path], tuple[str, ...]]] = {
 
 @pytest.mark.parametrize("mutate", list(APPLY_REFUSAL_CASES.values()), ids=list(APPLY_REFUSAL_CASES))
 def test_an_apply_refusal_writes_nothing_and_records_failed(
-    tmp_path: Path, destination_double: RecordingDestination, mutate: Callable[[Path], tuple[str, ...]]
+    tmp_path: Path,
+    destination_double: RecordingDestination,
+    mutate: Callable[[Path], tuple[str, ...]],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Every refusal: named cause, its next action, zero writes, and `failed` on disk.
 
@@ -1452,14 +1470,23 @@ def test_an_apply_refusal_writes_nothing_and_records_failed(
     The recorded fields are read back **as present and empty** rather than checked for
     absence: "nothing was applied" must be readable from the run, not inferred from a missing
     key (AD062).
+
+    The message is read from the **operator-facing channel** rather than from the exception,
+    because how a designed refusal arrives is part of what is being asserted: each of these
+    is a decision the tool made on purpose and names its own remedy for, so it reaches the
+    operator as that one line and not as a stack trace out of `apply_plan` (AD059).
     """
     expected_fragments = mutate(tmp_path)
 
-    result = _run_apply(destination_double)
+    with caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"):
+        result = _run_apply(destination_double)
 
     assert result.exit_code != 0
     assert destination_double.writes == []
-    message = _flat(str(result.exception))
+    assert not isinstance(result.exception, PlanArtifactError), (
+        f"the refusal escaped the command as a raw {type(result.exception).__name__} traceback"
+    )
+    message = _operator_errors(caplog)
     for fragment in expected_fragments:
         assert fragment in message, f"{fragment!r} missing from the refusal: {message}"
     assert "Next action" in message or "next action" in message
@@ -1506,12 +1533,16 @@ def test_the_v1_message_differs_from_the_unrecognized_version_message(
     (directory / "plan.parquet").write_bytes(b"pre-existing row format")
     with caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"):
         v1_result = _run_apply(destination_double)
-    assert v1_result.exit_code != 0
-    v1_text = _flat(" ".join(record.getMessage() for record in caplog.records if record.levelno >= logging.ERROR))
+        assert v1_result.exit_code != 0
+        v1_text = _operator_errors(caplog)
 
-    _appliable_run(tmp_path, run_id=OTHER_RUN_ID, format_version=UNSUPPORTED_FORMAT_VERSION)
-    versioned = _run_apply(RecordingDestination(), OTHER_RUN_ID)
-    versioned_text = _flat(str(versioned.exception))
+        # Both messages are read from the same operator-facing channel, so the comparison is
+        # between what an operator actually reads in each case (AD059).
+        caplog.clear()
+        _appliable_run(tmp_path, run_id=OTHER_RUN_ID, format_version=UNSUPPORTED_FORMAT_VERSION)
+        versioned = _run_apply(RecordingDestination(), OTHER_RUN_ID)
+        versioned_text = _operator_errors(caplog)
+    assert versioned.exit_code != 0
 
     assert v1_text != versioned_text
     assert "holds no plan artifact" in v1_text
@@ -1620,21 +1651,31 @@ def test_a_clean_apply_records_the_applied_operations_it_actually_performed(tmp_
     assert recorded["summary"]["skipped_delete_operations"] == []
 
 
-def test_a_rejection_mid_plan_records_the_partial_applied_set(tmp_path: Path) -> None:
+def test_a_rejection_mid_plan_records_the_partial_applied_set(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """FR-025's last-applied pointer survives a partial apply (AD027, AD069).
 
     The rejection carries the partial record, and the CLI merges *that* before recording
     `failed`. Without the merge the run would say nothing was applied while the first
     operation stayed written at the destination — the one state an operator cannot recover
     from by reading the run.
+
+    The rejection is also a member of the taxonomy, so it reaches the operator as its own
+    message — naming what stays written, and what to do next — rather than as a traceback
+    out of the apply loop (AD059).
     """
     _appliable_run(tmp_path)
     destination = RejectingDestination()
 
-    result = _run_apply(destination)
+    with caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"):
+        result = _run_apply(destination)
 
     assert result.exit_code != 0
-    assert isinstance(result.exception, OperationApplyFailedError)
+    assert not isinstance(result.exception, OperationApplyFailedError), (
+        "the rejection escaped the command as a raw traceback"
+    )
+    reported = _operator_errors(caplog)
+    assert "stay written" in reported
+    assert "Next action:" in reported
     first_id = str(APPLY_PLAN[0]["operation_id"])
     assert destination.writes == [first_id]
 
@@ -1643,4 +1684,79 @@ def test_a_rejection_mid_plan_records_the_partial_applied_set(tmp_path: Path) ->
     assert recorded["summary"]["applied_operations"] == [first_id]
     # FR-025's pointer is the final element, not a separate field.
     assert recorded["summary"]["applied_operations"][-1] == first_id
+    assert recorded["summary"]["skipped_delete_count"] == 0
+
+
+class InterruptedDestination(RecordingDestination):
+    """A destination interrupted mid-plan — the operator's Ctrl-C on a long apply."""
+
+    def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
+        if self.writes:
+            raise KeyboardInterrupt
+        return super().apply_planned_operation(operation=operation, peers=peers)
+
+
+def test_an_interrupt_mid_apply_records_failed_and_the_partial_applied_set(tmp_path: Path) -> None:
+    """Ctrl-C between two operations: the run says what was written, and still exits 130.
+
+    An interrupt is the one stop an operator causes deliberately on a long apply, and it is
+    the case where "nothing was applied must be readable from the run" is least inferable —
+    the writes have landed and the operator has no return value to read. A command whose
+    guards only catch `Exception` leaves the sidecar exactly as it was saved before the loop:
+    `running`, with an empty summary, on a run that wrote to the destination (AD062).
+
+    The interrupt itself is asserted to survive, because recording it must not swallow it:
+    the exit code stays 130 and the exception is still a `KeyboardInterrupt`.
+    """
+    _appliable_run(tmp_path)
+    destination = InterruptedDestination()
+
+    result = _run_apply(destination)
+
+    first_id = str(APPLY_PLAN[0]["operation_id"])
+    assert destination.writes == [first_id]
+    assert result.exit_code == 130
+    assert isinstance(result.exception, SystemExit)
+
+    recorded = _run_json(tmp_path)
+    assert recorded["status"] == "failed"
+    assert recorded["summary"]["applied_operations"] == [first_id]
+    assert recorded["summary"]["skipped_delete_operations"] == []
+    assert recorded["summary"]["skipped_delete_count"] == 0
+
+
+def test_a_broken_apply_invariant_records_what_was_written_not_an_empty_record(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """AD062's safety net must not zero the record it exists to protect.
+
+    The invariant is checked *after* the loop wrote every non-delete operation, so a command
+    that merged an empty record here would report a run that wrote everything as having
+    applied nothing — and an operator reading that would re-apply against a populated
+    destination. The manifest's count is inflated because that is the only clause of the
+    invariant a well-formed artifact can violate.
+    """
+    _appliable_run(tmp_path)
+    destination = RecordingDestination()
+    applied_ids = [str(record["operation_id"]) for record in APPLY_PLAN]
+    real_loader = load_plan_artifact
+
+    def _inflated_count(run_dir: Path, **kwargs: Any) -> Any:  # noqa: ANN401 — mirrors the loader
+        loaded = real_loader(run_dir, **kwargs)
+        loaded.manifest.operations_count += 1
+        return loaded
+
+    with (
+        caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"),
+        patch("infrahub_sync.plan.reader.load_plan_artifact", _inflated_count),
+    ):
+        result = _run_apply(destination)
+
+    assert result.exit_code != 0
+    assert destination.writes == applied_ids
+    assert "does not account for the plan" in _operator_errors(caplog)
+
+    recorded = _run_json(tmp_path)
+    assert recorded["status"] == "failed"
+    assert recorded["summary"]["applied_operations"] == applied_ids
     assert recorded["summary"]["skipped_delete_count"] == 0

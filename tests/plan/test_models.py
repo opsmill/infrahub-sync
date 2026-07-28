@@ -23,6 +23,7 @@ from infrahub_sync.plan.models import (
     PLAN_FORMAT_VERSION,
     SC006_MASKED_FIELDS,
     SUPPORTED_FORMAT_VERSIONS,
+    ApplyRecord,
     PlanManifest,
     PlannedOperation,
     PlanSummary,
@@ -613,3 +614,48 @@ def test_verification_failure_check_is_a_closed_vocabulary() -> None:
     """A check name outside the declared set is not a verification failure this code knows."""
     with pytest.raises(ValidationError):
         VerificationFailure(check="freshness", run_id="r1", next_action="do something")  # ty: ignore[invalid-argument-type]
+
+
+# ======================================================================================
+# ApplyRecord — the count is derived state, and cannot contradict the list it counts
+# ======================================================================================
+
+
+def test_an_apply_record_agreeing_with_itself_constructs() -> None:
+    """The shape every in-repo construction site builds, and the defaults `ApplyRecord()` uses."""
+    record = ApplyRecord(
+        applied_operations=("op_a",), skipped_delete_operations=("op_b", "op_c"), skipped_delete_count=2
+    )
+
+    assert record.as_summary_keys() == {
+        "applied_operations": ["op_a"],
+        "skipped_delete_operations": ["op_b", "op_c"],
+        "skipped_delete_count": 2,
+    }
+    assert ApplyRecord().as_summary_keys() == {
+        "applied_operations": [],
+        "skipped_delete_operations": [],
+        "skipped_delete_count": 0,
+    }
+
+
+@pytest.mark.parametrize(
+    ("skipped_operations", "count"),
+    [
+        (("op_a", "op_b", "op_c"), 0),
+        ((), -7),
+        ((), 3),
+        (("op_a",), 2),
+    ],
+    ids=["three-counted-as-zero", "negative-count", "count-without-identifiers", "undercount"],
+)
+def test_a_count_that_contradicts_the_skipped_list_is_refused(skipped_operations: tuple[str, ...], count: int) -> None:
+    """The count is the length of the list, so a record that disagrees cannot be built.
+
+    `skipped_delete_count` is one of the three serialized keys (AD062), so it stays a field
+    rather than being derived at render time — but a record built with a count that disagrees
+    with its list has already lost which of the two is true, and it is a run record: the only
+    account of what an apply did. The contradiction is refused where it is introduced.
+    """
+    with pytest.raises(ValueError, match="skipped_delete_count"):
+        ApplyRecord(skipped_delete_operations=skipped_operations, skipped_delete_count=count)

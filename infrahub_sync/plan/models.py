@@ -217,6 +217,24 @@ class ApplyRecord:
     skipped_delete_operations: tuple[str, ...] = ()
     skipped_delete_count: int = 0
 
+    def __post_init__(self) -> None:
+        """Refuse a record whose count contradicts the list it is the count of.
+
+        `skipped_delete_count` is derived state carried as its own field because the
+        **serialized** shape is the contract and the count is one of its three keys (AD062):
+        deriving it at render time would change no caller, but a record built with a count
+        that disagrees with its list has already lost which of the two is true. The
+        contradiction is therefore refused where it is introduced rather than discovered
+        where it is read — on a run record that is the only account of what an apply did.
+        """
+        if self.skipped_delete_count != len(self.skipped_delete_operations):
+            msg = (
+                f"ApplyRecord.skipped_delete_count is {self.skipped_delete_count} but "
+                f"{len(self.skipped_delete_operations)} skipped delete operation(s) are recorded: "
+                "the count is the length of that list and cannot disagree with it."
+            )
+            raise ValueError(msg)
+
     def as_summary_keys(self) -> dict[str, Any]:
         """Render the record as the three run-summary keys, ready to merge (AD062).
 

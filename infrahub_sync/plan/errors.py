@@ -246,6 +246,12 @@ class ApplyRecordInvariantError(PlanArtifactError):
     against what was reviewed, which is the difference between a disclosed skip and a
     silent one — so it is raised rather than asserted, and only after the loop, since a
     partial apply breaks both clauses by construction.
+
+    Carries the record it is complaining about, for the same reason
+    `OperationApplyFailedError` carries its partial one: this is raised *after* every
+    non-delete operation was written, so recording an empty record against it would tell an
+    operator that a run which wrote everything applied nothing — and invite a re-apply
+    against a populated destination.
     """
 
     next_action = (
@@ -253,6 +259,10 @@ class ApplyRecordInvariantError(PlanArtifactError):
         "operations that does not match the plan it read. Report the run identifier and this message, "
         "then re-run `diff` to rebuild the plan."
     )
+
+    def __init__(self, message: str, *, apply_record: ApplyRecord, next_action: str | None = None) -> None:
+        super().__init__(message, next_action=next_action)
+        self.apply_record = apply_record
 
 
 class UnformableDestinationIdentityError(PlanArtifactError):

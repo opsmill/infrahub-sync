@@ -176,6 +176,12 @@ On completion the run's `run.json` records `applied_operations`, `skipped_delete
 `skipped_delete_count` in its `summary`, so what the apply did is a recorded value rather than
 something you have to infer.
 
+An apply that does **not** complete records the same three keys before it exits. A refusal records
+them empty; a destination rejection part-way through records the operations written before it; and
+an apply you interrupt with Ctrl-C records what had been written at the moment you stopped it, with
+the run marked `failed`. In every case what reached the destination is readable from the run rather
+than guessed at from where the output stopped.
+
 #### Deletes are recorded, never executed
 
 This is the behavior to know before you apply a plan against a destination that has drifted from the

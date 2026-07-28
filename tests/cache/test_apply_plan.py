@@ -22,10 +22,12 @@ from __future__ import annotations
 import logging
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 import pytest
 
-from infrahub_sync.plan.errors import PlanVerificationError
+from infrahub_sync.plan.errors import ApplyRecordInvariantError, PlanVerificationError
+from infrahub_sync.plan.reader import load_plan_artifact
 from infrahub_sync.potenda import Potenda
 from tests.plan.artifact_fixtures import CONFIG_VERSION, operation_record, write_artifact
 
@@ -183,3 +185,69 @@ def test_an_empty_plan_applies_as_a_successful_no_op(tmp_path: Path) -> None:
 
     assert record.applied_operations == ()
     assert record.skipped_delete_count == 0
+
+
+class InterruptingDestination(RecordingDestination):
+    """A destination that applies the first operation and is then interrupted."""
+
+    def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
+        if self.dispatched:
+            raise KeyboardInterrupt
+        return super().apply_planned_operation(operation=operation, peers=peers)
+
+
+def test_an_interrupt_mid_apply_propagates_as_itself_and_carries_the_partial_record(tmp_path: Path) -> None:
+    """Ctrl-C on a long apply keeps its own type **and** the record of what was written.
+
+    Two claims, and both matter. Converting a `KeyboardInterrupt` into
+    `OperationApplyFailedError` would swallow the one signal an operator expects to stop the
+    process, so the type is asserted. Re-raising it bare would lose the operations already
+    written, which the caller has no other way to learn — so the partial record riding on the
+    exception is asserted too (AD062, AD069).
+    """
+    directory = _run_dir(tmp_path)
+    records = [operation_record(identity={"name": "first"}), operation_record(identity={"name": "second"})]
+    write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])
+    destination = InterruptingDestination()
+
+    with pytest.raises(KeyboardInterrupt) as caught:
+        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+
+    assert destination.dispatched == [records[0]["operation_id"]]
+    partial = getattr(caught.value, "apply_record", None)
+    assert partial is not None, "the interrupt carried no partial record"
+    assert partial.applied_operations == (records[0]["operation_id"],)
+    assert partial.skipped_delete_operations == ()
+    assert partial.skipped_delete_count == 0
+
+
+def test_the_invariant_error_carries_the_record_of_what_was_actually_written(tmp_path: Path) -> None:
+    """AD062's safety net must not zero the record it exists to protect.
+
+    The check runs *after* the loop wrote every non-delete operation, so an error carrying an
+    empty record would report a run that wrote everything as having applied nothing — and
+    invite a re-apply against a populated destination. The manifest's count is inflated here
+    because that is the only clause of the invariant a well-formed artifact can violate.
+    """
+    directory = _run_dir(tmp_path)
+    records = [operation_record(identity={"name": "first"}), operation_record(identity={"name": "second"})]
+    write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])
+    destination = RecordingDestination()
+    applied_ids = tuple(str(record["operation_id"]) for record in records)
+
+    real_loader = load_plan_artifact
+
+    def _inflated_count(run_dir: Path, **kwargs: Any) -> Any:  # noqa: ANN401 — mirrors the loader
+        loaded = real_loader(run_dir, **kwargs)
+        loaded.manifest.operations_count += 1
+        return loaded
+
+    with (
+        patch("infrahub_sync.plan.reader.load_plan_artifact", _inflated_count),
+        pytest.raises(ApplyRecordInvariantError) as caught,
+    ):
+        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+
+    assert destination.dispatched == list(applied_ids)
+    assert caught.value.apply_record.applied_operations == applied_ids
+    assert caught.value.apply_record.skipped_delete_count == 0
