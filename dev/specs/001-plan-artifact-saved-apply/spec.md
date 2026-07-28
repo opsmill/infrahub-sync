@@ -1242,6 +1242,51 @@ reassigned.
   resting on it. That render has now produced two defects on this one path, so the tripwire is pinned there
   rather than at the suppression behaviour, which no shipped call now depends on. `[AD088]`
 
+### Session 2026-07-28 — the live tests were non-functional, not merely unexecuted
+
+One decision, raised by the first run of the Phase H tests against a live destination and closed by the
+brief owner. It repairs a **test fixture** and corrects a claim this run made about its own evidence. No
+requirement, criterion, scope or guarantee moves; no product scope is added, expanded, removed or
+reassigned; no assertion in Phase H is weakened; the live `sync` write path is untouched (AD070).
+
+- Q: Run against a live destination, all eight Phase H tests error identically in fixture setup with
+  `ValueError: An error occurred while loading Netbox: 'NetboxAdapter' object has no attribute
+  'BuiltinTag'`. What is missing? → A: **The generate step. The fixture wrote its bounded configuration
+  into a temporary workspace and never generated adapter code there, so it is added: after
+  `_write_bounded_config`, the in-process equivalent of `infrahub-sync generate` renders into the same
+  workspace, and the existence of both `netbox/sync_adapter.py` and `infrahub/sync_adapter.py` is a
+  `LivePlanPreconditionError` when it does not hold.** `import_adapter` (`infrahub_sync/utils.py:72-98`)
+  resolves the per-kind model classes from **generated** code at `<config directory>/<adapter
+  name>/sync_adapter.py`; when that file is absent it falls back to the plugin loader and returns a bare
+  adapter with no per-kind attributes, so `DiffSyncMixin.load` fails on the first `getattr`. **This is not
+  a missing kind and not a fixable pointer at `examples/`**: `examples/netbox_to_infrahub/netbox/sync_models.py`
+  does define `BuiltinTag`, and the adapters checked in there are stale anyway — they declare `InfraDevice`,
+  `InfraRack`, `LocationGeneric` and `OrganizationGeneric` while the same directory's `config.yml` maps
+  `DcimDevice`, `DcimDeviceType`, `LocationRack`, `LocationSite` and `OrganizationManufacturer`. Generated
+  in process rather than by shelling out: it is the same pair of calls `generate` makes once it holds a
+  schema (`find_missing_schema_model` then `render_adapter`, `infrahub_sync/cli.py:781-787`), the fixture
+  already holds the destination schema, and a subprocess would add a second schema round trip and replace a
+  typed precondition error with an exit code to parse. **One render is shared by the seed configuration and
+  the configuration under test, from the wider `KINDS_UNDER_TEST` slice, and that is not a convenience** —
+  the generated adapter reaches its models through `from .sync_models import ...`, so the first import
+  caches `<adapter>.sync_models` in `sys.modules` and a later re-render of the same package is never seen:
+  rendering per configuration makes the widened import fail, `import_adapter` swallows it as a warning, and
+  the bare-adapter fallback returns with the original defect restored **silently**. Both halves were
+  verified offline against a stubbed destination schema: with no generated adapter the source class is
+  `NetboxAdapter` with no `BuiltinTag`; after the render it is `NetboxSync` carrying all seven kinds from
+  `<workspace>/netbox/sync_adapter.py`; and a per-configuration re-render regresses to `NetboxAdapter` with
+  zero per-kind attributes. Sharing is sound because the retained schema-mapping entries are copied
+  verbatim, so every kind the seed maps renders identically from either configuration, and model classes a
+  configuration does not map are inert — `DiffSyncMixin.load` walks the configuration's own `top_level`.
+  **The record this decision corrects: "authored, not satisfied" (AD045b) was too weak a claim.** The Phase
+  H tests were not merely unexecuted — they were **non-functional**, and only execution could reveal that.
+  A test that has never run is not evidence of anything, including of its own validity. Everything AD045b
+  concluded about the *coverage* still stands and none of it is softened; what was wrong was the implied
+  floor, that an authored test is a test whose only missing ingredient is a destination. The transferable
+  lesson belongs in the record rather than in the fix: an unexecuted test's validity is itself unevidenced,
+  so a run may not report authorship as though it bounded the risk. The module docstring is amended to say
+  so at the point a reader meets the claim. `[AD090]`
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Review a saved plan, then apply it by run ID (Priority: P1)

@@ -10,7 +10,7 @@ shell commands, and other important information, read the current plan:
 Supporting design artifacts for that plan:
 
 - `dev/specs/001-plan-artifact-saved-apply/spec.md` — requirements (FR-001…FR-030), success
-  criteria (SC-001…SC-018), and the index of the settled decisions AD001–AD089, whose rules are
+  criteria (SC-001…SC-018), and the index of the settled decisions AD001–AD090, whose rules are
   tabled in `tasks.md`
 - `dev/specs/001-plan-artifact-saved-apply/research.md` — PD-001…PD-010, the details settled
   underneath the decision set

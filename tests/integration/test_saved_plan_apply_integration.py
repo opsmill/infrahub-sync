@@ -12,6 +12,14 @@ offline conformance harness at `tests/plan/test_apply_conformance.py` narrows th
 by asserting the mutation the SDK renders; it does not close it, and nothing here may be
 reported as covered on its strength.
 
+**Amended by AD090: "authored, not satisfied" was too weak a claim.** The first live run errored
+in fixture setup on every test here, because the fixture wrote its bounded configuration into a
+workspace and never generated the adapter code `import_adapter` resolves per-kind model classes
+from. These tests were not merely unexecuted — they were **non-functional**, and only executing
+them could reveal that. A test that has never run is not evidence of anything, including of its
+own validity. `_generate_adapters` closes that gap; nothing else about the paragraph above
+changes, and no assertion below was touched.
+
 Run them with a reachable destination and source::
 
     export INFRAHUB_ADDRESS="http://localhost:8000"
@@ -76,7 +84,7 @@ from infrahub_sync.cache.sidecars import RunFile
 from infrahub_sync.cli import app
 from infrahub_sync.plan import read_saved_plan
 from infrahub_sync.plan.errors import OperationApplyFailedError, PeerAmbiguousError
-from infrahub_sync.utils import get_instance, get_potenda_from_instance
+from infrahub_sync.utils import find_missing_schema_model, get_instance, get_potenda_from_instance, render_adapter
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
@@ -209,6 +217,57 @@ def _write_bounded_config(path: Path, *, name: str, kinds: Sequence[str], enviro
     document["schema_mapping"] = entries
     path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
     return path
+
+
+def _generate_adapters(config_path: Path, destination_schema: Any) -> None:  # noqa: ANN401 — SDK schema mapping
+    """Render the sync adapters the bounded configuration needs, beside it in the workspace.
+
+    Without this step nothing in this module can run at all (AD090). `import_adapter`
+    (`infrahub_sync/utils.py:72-98`) resolves the per-kind model classes from **generated** code
+    at `<config directory>/<adapter name>/sync_adapter.py`, and when that file is absent it falls
+    back to the plugin loader and returns a bare adapter carrying no per-kind attributes — so
+    `DiffSyncMixin.load` fails on the first kind with `'NetboxAdapter' object has no attribute
+    'BuiltinTag'`. Pointing the fixture at the adapters checked in under
+    `examples/netbox_to_infrahub/` is not the alternative: those are stale, and declare kinds the
+    qualified `config.yml` no longer maps.
+
+    In process rather than through a subprocess: this is the same pair of calls the `generate`
+    command makes once it holds a schema (`infrahub_sync/cli.py:781-787`), and the fixture already
+    holds the destination schema, so shelling out would only add a second schema round trip and
+    replace a typed precondition error with an exit code to parse.
+
+    Rendered from the **widest** slice this module uses, `KINDS_UNDER_TEST`, and shared by the seed
+    configuration: the retained schema-mapping entries are copied verbatim, so every kind the seed
+    maps renders identically from either configuration, and an adapter class carrying model classes
+    a configuration does not map is inert — `DiffSyncMixin.load` walks the configuration's own
+    `top_level`, never the class's attributes. Rendering per configuration would instead be
+    actively wrong: the generated adapter reaches its models through `from .sync_models import ...`,
+    so the first import caches `<adapter>.sync_models` in `sys.modules` and a later re-render of the
+    same package is never seen — the widened import fails, `import_adapter` swallows it as a
+    warning, and the bare-adapter fallback returns with the original defect restored silently.
+    """
+    sync_instance = _sync_instance(config_path)
+    missing_models = find_missing_schema_model(sync_instance=sync_instance, schema=destination_schema)
+    if missing_models:
+        msg = (
+            f"The destination schema declares no kind for {', '.join(sorted(missing_models))}, which the bounded "
+            f"configuration at {config_path} maps, so no adapter can be generated for it. The bounded slice is stale "
+            "against this destination — re-derive KINDS_UNDER_TEST against the qualified configuration."
+        )
+        raise LivePlanPreconditionError(msg)
+
+    render_adapter(sync_instance=sync_instance, schema=destination_schema)
+
+    for adapter_name in (sync_instance.source.name, sync_instance.destination.name):
+        generated = config_path.parent / adapter_name / "sync_adapter.py"
+        if not generated.is_file():
+            msg = (
+                f"Generating the sync adapters for {config_path} produced no {generated}. `import_adapter` resolves "
+                f"the per-kind model classes from that path and, when it is absent, silently falls back to a bare "
+                f"{adapter_name!r} adapter that carries none of them — which fails inside `DiffSyncMixin.load` on the "
+                "first kind. Nothing below could measure the apply path."
+            )
+            raise LivePlanPreconditionError(msg)
 
 
 # ---------------------------------------------------------------------------------------
@@ -493,7 +552,12 @@ def _potenda_for_apply(live: LivePlan) -> Any:  # noqa: ANN401 — Potenda is im
 
 
 def _seed_the_peer_kinds(workspace: Path, environment: Mapping[str, str], suffix: str) -> None:
-    """Converge every kind a device references, so its peers pre-exist the plan under test."""
+    """Converge every kind a device references, so its peers pre-exist the plan under test.
+
+    Runs against the adapters `_generate_adapters` has already rendered into `workspace` from the
+    wider `KINDS_UNDER_TEST` slice, which is why this writes its configuration into the same
+    directory and generates nothing of its own — see that function for why one render is shared.
+    """
     seed_config = _write_bounded_config(
         workspace / "seed-config.yml",
         name=f"live-apply-seed-{suffix}",
@@ -664,9 +728,6 @@ def live_plan(tmp_path_factory: pytest.TempPathFactory) -> Iterator[LivePlan]:
         client = _destination_client(environment)
         schemas = client.schema.all(branch=DESTINATION_BRANCH)
 
-        _seed_the_peer_kinds(workspace, environment, suffix)
-        perturbations = _perturb_the_destination(client, schemas, suffix)
-
         sync_name = f"live-apply-{suffix}"
         config_path = _write_bounded_config(
             workspace / "config.yml",
@@ -674,6 +735,14 @@ def live_plan(tmp_path_factory: pytest.TempPathFactory) -> Iterator[LivePlan]:
             kinds=KINDS_UNDER_TEST,
             environment=environment,
         )
+        # Before anything constructs a `Potenda` over this workspace, including the seed run
+        # below: without the generated adapters every load in this module fails on its first
+        # kind (AD090).
+        _generate_adapters(config_path, schemas)
+
+        _seed_the_peer_kinds(workspace, environment, suffix)
+        perturbations = _perturb_the_destination(client, schemas, suffix)
+
         run_id, run_dir = _plan_run(config_path)
         plan = read_saved_plan(
             sync_name=sync_name,
