@@ -71,6 +71,8 @@ and **AD070 removes scope from it**; none adds any.
 | **AD083** | A documentation task points adapter authors at `dev/guides/adding-an-adapter.md`, so the new write surface is discoverable somewhere other than a pre-write refusal |
 | **AD084** | The gate has passed: the provisional markers are removed and the clarification sessions read as ratified, naming the delivery gate as the ratifying event |
 | **AD085** | **Amends AD075's flush form.** The flush is `node.update(do_full_update=True)`, not a plain `node.save()`: a plain save renders with unmodified-field stripping on, and that stripping drops a relationship reconciled to the **empty** set, so `peers: []` never reaches the destination. AD075's conclusions and its shipped implementation stand — only the flush call changes, and the empty-set assertion moves onto the rendered mutation with an SDK-boundary tripwire beside it |
+| **AD086** | The destination write surface becomes a `runtime_checkable` Protocol — `PlannedWriteDestination` in `infrahub_sync/plan/write_surface.py` — with **two** members, `apply_planned_operation` and the peer-resolver factory `new_peer_resolver`. The pre-write gate becomes `isinstance` against it (still passing the adapter's **name** to the verifier, AD058), the `getattr` dispatch becomes a typed call, and `PeerResolver(cast("InfrahubAdapter", …))` becomes `destination.new_peer_resolver()` — **no cast remains**. **The gate is not hardened**: `isinstance` against a `runtime_checkable` Protocol verifies member **presence only, not signatures**, so against a duck-typed destination it is equivalent to the `hasattr` gate it replaced. What is fixed is the **static** boundary. Runtime enforcement needs an explicit opt-in (ABC or a class-level marker) and is a **separate decision**, reported to the planner |
+| **AD087** | The edit to the **shipped** 2.0.0 release note is **reverted** — the sentence returns as shipped. Every current-documentation correction stands, `docs/docs/reference/cache-layout.mdx` above all. A shipped release note records what a release claimed; the remedy for a false claim in one is an erratum or a code fix, never a silent edit, and neither is a plan-artifact delivery's call. The missing scope boundary is reported to the planner |
 
 ## Technical Context
 
@@ -232,9 +234,10 @@ infrahub_sync/
 │   ├── reader.py                            # artifact load, v1 / torn / version detection, error taxonomy
 │   ├── verify.py                            # the five ordered pre-apply checks (FR-009)
 │   ├── review.py                            # FR-029 single entry point: summary + per-object detail
+│   ├── write_surface.py                     # PlannedWriteDestination — the destination surface as a Protocol (AD086)
 │   └── errors.py                            # PlanArtifactError hierarchy
 ├── potenda/__init__.py                      # MODIFIED — per-side extract flag, artifact write, saved-plan apply, tier reordering
-├── adapters/infrahub.py                     # MODIFIED — apply_planned_operation, PeerResolver, replace-set helper
+├── adapters/infrahub.py                     # MODIFIED — apply_planned_operation, new_peer_resolver, PeerResolver, replace-set helper
 ├── cli.py                                   # MODIFIED — diff --from-plan/--detail/--kind, apply rewiring, run-state fix
 └── cache/                                   # UNCHANGED — paths, sidecars, parquet_io, locks, incremental
 
@@ -516,9 +519,28 @@ input.
 
 **Delivers**: FR-013, FR-014, the apply side of FR-012, FR-017, FR-020, FR-023, FR-025.
 
+New in `infrahub_sync/plan/write_surface.py` (AD086):
+
+```python
+@runtime_checkable
+class PlannedWriteDestination(Protocol):
+    def new_peer_resolver(self) -> PeerResolver: ...
+    def apply_planned_operation(self, *, operation: PlannedOperation, peers: PeerResolver) -> str: ...
+```
+
+Two members, because the engine has to build the per-apply resolver without naming a concrete adapter —
+that narrowing is what `cast("InfrahubAdapter", self.destination)` was doing, and no cast remains.
+**The type does not harden FR-023's refusal and is not claimed to**: `isinstance` against a
+`runtime_checkable` Protocol verifies member **presence only, never signatures**, so against a
+duck-typed destination it is equivalent to the `hasattr` gate it replaced. What it fixes is the
+**static** boundary — `ty` verifies every call site and `PeerResolver`'s parameter type, and the untyped
+`getattr` dispatch is gone. Runtime enforcement needs an explicit opt-in from the destination (ABC
+inheritance or a class-level marker) and is a **separate design decision** this outcome does not take.
+
 Edits to `infrahub_sync/adapters/infrahub.py`:
 
 ```python
+def new_peer_resolver(self) -> PeerResolver
 def apply_planned_operation(self, *, operation: PlannedOperation, peers: PeerResolver) -> str
 ```
 
@@ -648,7 +670,9 @@ Edits to `infrahub_sync/potenda/__init__.py`:
 
 - `apply_plan()` is **replaced**, not paralleled: it loads the new artifact, checks the write surface
   before any write (FR-023, keeping today's `NotImplementedError` shape at `:354-360`, and passing the
-  **adapter's name** to `verify_plan` rather than a boolean, since the message names the adapter — AD058),
+  **adapter's name** to `verify_plan` rather than a boolean, since the message names the adapter — AD058;
+  the check is `isinstance(destination, PlannedWriteDestination)`, which is presence-only and therefore
+  no stronger at runtime than the `hasattr` gate it replaced — AD086),
   executes operations in stored order, and **returns** the apply outcome as a record carrying three named
   values (AD062, AD069): the ordered applied-operation identifiers (FR-020, whose final element is FR-025's
   last-applied pointer), the skipped-delete identifiers and their count (FR-017, AD055).

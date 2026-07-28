@@ -7,7 +7,9 @@ verifier's adapter-name argument), AD059 (every failure names a next action), AD
 named home in the run summary), AD065 (the re-read is a named mechanism, not a call order), AD066 (the
 keyedness gate reads the rendered mutation and the flat guarantee is struck), AD067 (the conformance
 keyedness assertion is split), AD068 (byte-identical rendered inputs replace "one create"), AD069 (one
-writer for the run record), AD070 (the enforcement is new code; the live write path is untouched).
+writer for the run record), AD070 (the enforcement is new code; the live write path is untouched),
+AD086 (the surface is a `runtime_checkable` Protocol with two members, which fixes the static boundary
+and leaves the runtime refusal exactly as strong as it was).
 **Scope**: implemented on
 the Infrahub destination adapter only, which is the brief's scope and is recorded as an accepted
 Principle III tension in [plan.md](../plan.md#complexity-tracking).
@@ -36,17 +38,51 @@ Principle III tension in [plan.md](../plan.md#complexity-tracking).
 The v1 dispatch is **replaced**, not kept alongside — leaving it wired would be the second apply path
 FR-019 forbids, and it has zero implementations to break (PD-010).
 
+## The surface as a type (AD086)
+
+The surface is a `runtime_checkable` Protocol in `infrahub_sync/plan/write_surface.py` with **two**
+members — the write surface itself and the per-apply peer-resolver factory:
+
+```python
+@runtime_checkable
+class PlannedWriteDestination(Protocol):
+    def new_peer_resolver(self) -> PeerResolver: ...
+    def apply_planned_operation(
+        self, *, operation: PlannedOperation, peers: PeerResolver
+    ) -> str: ...
+```
+
+The factory is a member because the engine must build the resolver without naming a concrete adapter;
+that narrowing is what `cast("InfrahubAdapter", self.destination)` was doing, and no cast remains.
+
+**What the type enforces, and what it does not.** `isinstance` against a `runtime_checkable` Protocol
+verifies **member presence only, never signatures**. Against a duck-typed destination it is therefore
+**equivalent to the `hasattr` gate it replaced — no stronger**, and FR-023's refusal is still
+presence-checking. This type does not harden it, and nothing in this contract claims it does. What it
+genuinely fixes is the **static** boundary: `ty` verifies every call site and `PeerResolver`'s parameter
+type, and the untyped `getattr` dispatch is gone. Making FR-023's refusal real at runtime needs an
+explicit opt-in from the destination — ABC inheritance or a class-level marker — which is a **separate
+design decision** AD086 does not take and this contract does not specify.
+
+Two obligations follow, and both are asserted rather than described: a destination missing **either**
+member is refused **before any write** and still **named** (the verifier receives the adapter's name,
+not a boolean — AD058); and the presence-only limit is asserted by a destination whose members carry
+the right names and the wrong shapes passing the gate and failing later.
+
 ## The adapter method
 
 ```python
 class InfrahubAdapter(DiffSyncMixin, Adapter):
+    def new_peer_resolver(self) -> PeerResolver:
+        """One resolver for one apply, bound to this adapter."""
+
     def apply_planned_operation(
         self, *, operation: PlannedOperation, peers: PeerResolver
     ) -> str:
         """Execute one planned operation convergently. Returns the destination node id."""
 ```
 
-An adapter that does not define `apply_planned_operation` causes the apply to fail **before any
+An adapter that is not a `PlannedWriteDestination` causes the apply to fail **before any
 write** with a clear, actionable error naming the adapter class and directing the operator to `sync` —
 the shape the engine already has (FR-023). The check runs inside the same pre-write gate as the five
 verification checks, not as a per-operation surprise.
@@ -415,6 +451,7 @@ class PeerResolver:
 | Property | Rule | Requirement |
 |---|---|---|
 | Lifetime | One apply. Created at the start, discarded with it. Never persisted | FR-014 |
+| Construction | The **destination** builds it, through the write surface's `new_peer_resolver()` factory. The engine never constructs one, which is what removed the cast to a concrete adapter from the apply loop | FR-014, AD086 |
 | Key | `(kind, canonical_identity(identity))` — the same canonical form the operation identifier hashes | FR-028.3 |
 | Population | From each completed create/update (step 8), so an operation's own result resolves later operations that refer to it | FR-014 |
 | Miss | Queries the destination (below) and memoizes the **successful** result | FR-014 |
@@ -499,8 +536,9 @@ In `Potenda.apply_plan`, replacing the v1 body:
    An action outside ACTIONS is refused HERE, before any write:
    UnsupportedOperationActionError → run state failed          # FR-017, AD055
 2. run the five verification checks + the write-surface check   → refuse before any write
+   isinstance(destination, PlannedWriteDestination)                          # AD086
    verify_plan(..., write_surface_missing_on=<adapter name> or None)          # AD058
-3. peers = PeerResolver(adapter)
+3. peers = destination.new_peer_resolver()          # no cast, no getattr    # AD086
 4. applied: list[str] = []          # ORDERED — FR-020
    skipped_deletes: list[str] = []  # ORDERED — FR-017, AD055
 5. for operation in stored order:          # tier, then operation_id
@@ -550,6 +588,7 @@ In `Potenda.apply_plan`, replacing the v1 body:
 | Evidence | Where | Marker |
 |---|---|---|
 | Payload construction, upsert invocation, replace-set reconciliation with its re-read, memo population, negative-caching refusal, both peer refusals, a delete collected and skipped, an unrecognized action refused at load, missing surface, ordered applied set and skipped-delete record, fail-fast on rejection | `tests/adapters/test_infrahub_planned_write.py`, mocked `InfrahubClientSync` | local |
+| **The Protocol boundary (AD086)**: the destination adapter satisfies `PlannedWriteDestination` both at runtime and statically — the static half as an annotated return `ty` fails on the day either member lapses; its factory returns a fresh resolver bound to that adapter; a destination missing **either** member is refused **before any write** and named; and the presence-only limit is asserted, by a destination whose members carry the right names and the wrong shapes passing the gate and failing later | `tests/adapters/test_infrahub_planned_write.py` | local |
 | **Rendered-mutation conformance (AD045a, rebuilt by AD054, sharpened by AD065/AD067/AD068/AD075)**: the **rendered mutation input** carries `id` or `hfid` — required for every operation on a kind whose HFID is **all-direct**, and carried as a `xfail(strict=True)` for a kind whose HFID **crosses a relationship**, which cannot render keyed today (AD067) — built against a **committed `NodeSchemaAPI` fixture** rather than a mock; the replace-set reconciliation **issued a destination read** for the relationship before reading the peer set it compares against (AD065); the reconciled peer set was **issued to the destination** by the step 7e flush — `node.update(do_full_update=True)` on the reconciled node, rendering as an **update** carrying that peer list, not a second upsert, and carrying it for an **emptied** set too (AD075, AD085); two applies of one operation render **byte-identical** inputs (AD068) | `tests/plan/test_apply_conformance.py`, real `InfrahubNodeSync` over a committed schema fixture | local |
 | SC-001 (no diff/sync call), SC-002 (converge on re-apply), SC-003 (per-class matrix, both crash windows), SC-007 (live counts before/after, delete targets surviving, run state `applied`, recorded skip count), SC-008 (peer sets read back, at least one peer pre-existing and absent from the plan), SC-016 (real ambiguity) | `tests/integration/test_saved_plan_apply_integration.py` | **`integration`** (`pyproject.toml:133-135`) |
 

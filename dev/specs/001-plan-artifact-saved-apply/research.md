@@ -512,6 +512,15 @@ it replace it?
 `apply_planned_operation`; the `apply_cached_row` dispatch and its `hasattr` guard are removed, with
 the guard's *shape* — a `NotImplementedError` naming the adapter class and telling the operator to use
 `sync` — preserved for the new surface so FR-023 keeps the behavior the engine already has.
+
+**Amended by AD086.** The replacement guard is not a `hasattr` test either: the surface is a
+`runtime_checkable` Protocol with two members — `apply_planned_operation` and the peer-resolver factory
+`new_peer_resolver` — and the gate is `isinstance` against it. That is a **presence** check, not a
+signature check, so what it refuses is exactly what the `hasattr` form refused and FR-023's runtime
+refusal is unchanged in strength. What the Protocol fixes is the **static** boundary: the `getattr`
+dispatch and the `cast` to the concrete adapter are gone, and `ty` checks both call sites. Runtime
+enforcement of conformance would need an explicit opt-in from the destination and is a separate
+decision.
 `plan.parquet` keeps being written (V23, AD014) and is simply never read.
 
 **Rationale**: FR-019's plain text forbids a second apply path, and a wired v1 dispatch is that path.

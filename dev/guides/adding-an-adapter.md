@@ -101,14 +101,22 @@ That covers `infrahub-sync sync`, the live compare-and-write path. Applying a **
 
 `infrahub-sync apply` replays a plan artifact that a previous `diff` saved. It does not load
 either side and does not re-compare, so it cannot go through the model's `create` / `update`.
-It calls one method on the **adapter** instead:
+It goes through a surface on the **adapter** instead — `PlannedWriteDestination` in
+`infrahub_sync/plan/write_surface.py`, which has **two** members:
 
 ```python
+def new_peer_resolver(self) -> PeerResolver:
+    """Build the peer resolver for one apply, bound to this adapter."""
+
 def apply_planned_operation(self, *, operation: PlannedOperation, peers: PeerResolver) -> str:
     """Execute one planned operation convergently. Returns the destination node id."""
 ```
 
-**Not implementing it is a supported position, not a break.** An adapter without this method
+Both are required: the engine builds the per-apply resolver through the factory rather than
+constructing one itself, so an adapter offering only the write method is not a planned-write
+destination and is refused with the rest.
+
+**Not implementing the surface is a supported position, not a break.** An adapter without it
 makes `apply` refuse in its pre-write verification gate — **before any write reaches the
 destination** — with an error naming the adapter class and directing the operator to `sync`:
 
@@ -122,6 +130,11 @@ Nothing else about the adapter degrades: `list`, `diff`, `sync` and plan *review
 (`diff --from-plan <run-id>`) all work unchanged. Only `apply` is unavailable. `infrahub` is
 the only one of the nine adapters shipped in this repository that implements the surface
 today; the other eight refuse an `apply` exactly as described above.
+
+The gate is an `isinstance` check against the protocol, which verifies that both members are
+**present** and not that their signatures match. Get a signature wrong and the refusal will not
+catch it — the apply will fail at the first operation instead. Type-check your adapter
+(`uv run ty check .`) rather than relying on that gate.
 
 If you do implement it, the method must:
 
@@ -228,7 +241,7 @@ uv run infrahub-sync diff --name mysystem-example --directory examples/mysystem_
 
 - [ ] Adapter inherits `DiffSyncMixin` / `DiffSyncModelMixin`, mixin first, with a `type`.
 - [ ] `model_loader` filters and transforms through the model mixin; `obj_to_diffsync` sets `local_id`.
-- [ ] Decided whether the adapter implements `apply_planned_operation`; if it does not, confirmed that `apply` refuses cleanly and that `sync` is the documented path for it.
+- [ ] Decided whether the adapter implements the planned-write surface — **both** `new_peer_resolver` and `apply_planned_operation`; if it does not, confirmed that `apply` refuses cleanly and that `sync` is the documented path for it.
 - [ ] Optional SDK imported with `# ty: ignore[unresolved-import]`; credentials from env vars; no secrets logged or committed.
 - [ ] `uv run invoke format` and `uv run invoke lint` are clean; `uv run ty check .` exits 0.
 - [ ] `list` / `generate` / `diff` succeed for the example.

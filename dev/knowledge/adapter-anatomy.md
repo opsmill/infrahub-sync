@@ -48,6 +48,7 @@ The mixin defines the surface Potenda calls. Each method is one of three kinds �
 | `list_changed_since(model_name, cursor)` | Conditional | Required only if `cursor_tier_for` returns a non-`NONE` tier. Yields records changed since the cursor, in the same shape `model_loader` produces. |
 | `list_existing_ids(model_name)` | Optional | Yields current `unique_id` strings for delete detection between incremental runs. |
 | `apply_planned_operation(*, operation, peers)` | Optional | Executes one operation from a **saved plan** and returns the destination node id. Only `infrahub-sync apply` calls it. Absent on an adapter, `apply` refuses before writing anything — see [The planned-write surface](#the-planned-write-surface). |
+| `new_peer_resolver()` | Conditional | Required only alongside `apply_planned_operation` — the engine builds the per-apply peer resolver through it. The two together are the planned-write surface; an adapter with only one of them is refused like an adapter with neither. |
 
 A read-only-capable adapter that only ever does full extracts needs just `model_loader`.
 Incremental support is additive — see [Incremental sync and cache](incremental-and-cache.md).
@@ -64,10 +65,21 @@ def apply_planned_operation(self, *, operation: PlannedOperation, peers: PeerRes
     """Execute one planned operation convergently. Returns the destination node id."""
 ```
 
-The method is **optional**, and not defining it is a supported position rather than a gap. An
-adapter that lacks it makes `apply` fail its pre-write verification gate — before any write
-reaches the destination — with an error naming the adapter class and directing the operator to
-`sync` instead. Every other command, plan review included, is unaffected. `infrahub` is the
+It is one of **two** members of that surface — `PlannedWriteDestination` in
+`infrahub_sync/plan/write_surface.py` — the other being `new_peer_resolver()`, which builds the
+per-apply peer resolver the method above is handed:
+
+```python
+def new_peer_resolver(self) -> PeerResolver:
+    """Build the peer resolver for one apply, bound to this adapter."""
+```
+
+The surface is **optional**, and not defining it is a supported position rather than a gap. An
+adapter that lacks either member makes `apply` fail its pre-write verification gate — before any
+write reaches the destination — with an error naming the adapter class and directing the operator
+to `sync` instead. The gate is an `isinstance` check against the protocol, so it verifies that
+both members are **present**, never that their signatures match: a wrong signature is not caught
+there and surfaces at the first operation instead. Every other command, plan review included, is unaffected. `infrahub` is the
 only adapter in this repository that implements it today.
 
 An implementation must execute the single recorded operation convergently (a re-apply must not

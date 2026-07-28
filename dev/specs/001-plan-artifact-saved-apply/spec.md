@@ -36,7 +36,7 @@ run's critique loop, at which the decisions were confirmed and the run released 
 Ratification does not discard each decision's **revisit set** — the requirements that must be
 re-examined if the decision is ever reopened — because that set is what makes a reopening tractable:
 AD001 → FR-002, FR-004, FR-005, FR-010, FR-019; AD002 → FR-003, FR-021; AD003 → FR-002, FR-014;
-AD004 → FR-015, FR-016; AD005 → FR-008. The revisit set for each of AD008–AD084 is the requirements
+AD004 → FR-015, FR-016; AD005 → FR-008. The revisit set for each of AD008–AD087 is the requirements
 whose `[ADnnn]` reference cites it. Two of the later decisions carry a wider set and are called out:
 reopening **AD055** reopens FR-016, FR-017, FR-020, SC-007 and User Story 4 to the failed-run reading
 and returns DBR-016 and DBA-007 to the brief's own derivation; reopening **AD056** reopens FR-006's
@@ -1144,6 +1144,47 @@ else: no requirement, criterion, scope or guarantee moves.
   changes, because the dependency is pinned as a version range and the behaviour is undocumented internals.
   `[AD085]`
 
+### Session 2026-07-28 — the write surface as a type, and a shipped release note
+
+Two decisions, both raised from implementation review and closed by the brief owner. Neither adds,
+expands, removes or reassigns product scope; no requirement, criterion or guarantee moves.
+
+- Q: The destination write surface is reached by attribute name — presence tested by name, the write
+  dispatched by name, and the peer resolver built by narrowing the destination to the one adapter that
+  implements it. Nothing about any of that is checked. What replaces it? → A: **A runtime-checkable
+  structural type with two members — the write surface itself and a peer-resolver factory — and the
+  pre-write check becomes a type check against it.** The factory joins the surface because the engine
+  has to build the per-apply resolver without naming a concrete adapter, and that narrowing is what
+  the removed cast was doing. The destination adapter gains the factory, so it satisfies the type. The
+  refusal still receives the **adapter's name** rather than a boolean, so the message FR-023 requires
+  is unchanged. **The honest limit, which this decision states rather than glosses: a type check
+  against a runtime-checkable structural type verifies member *presence*, never signatures. Against a
+  duck-typed destination it is exactly equivalent to the by-name presence test it replaced — no
+  stronger. FR-023's refusal is still presence-checking, and nothing here hardens it.** What is
+  genuinely fixed is the **static** boundary: the type checker now verifies every call site and the
+  resolver's parameter, and the unchecked by-name dispatch is gone. Making FR-023's refusal real at
+  runtime requires an explicit opt-in from the destination — inheritance from an abstract base, or a
+  class-level marker — which is a **separate design decision this one does not take, does not absorb
+  and does not imply is done**. It is reported to the planner as a brief gap instead. Overclaiming a
+  safety property in a decision record is the same error class as AD087's; this decision refuses to
+  commit it while fixing that one. Two test obligations follow: the destination missing either member
+  is still refused **before any write** and still named; and the presence-only limit is **asserted**,
+  by a destination whose members carry the right names and the wrong shapes passing the gate and
+  failing later, so a reader cannot mistake the type for enforcement. `[AD086]`
+- Q: A current-documentation page and a **shipped 2.0.0 release note** both claimed the apply path
+  refuses on schema-sub-hash drift, which it does not; the current page was corrected and the
+  sentence was also deleted from the release note. Does the release-note edit stand? → A: **No — it is
+  reverted, and the sentence returns exactly as shipped.** A shipped release note records what that
+  release claimed, at the time it claimed it; it is not current documentation and is not a place where
+  a claim gets quietly corrected. The remedy for a false claim in a shipped note is an erratum or a
+  fix in the code the note described, and choosing between those is not a plan-artifact delivery's
+  call — it is out of scope for this brief either way. **Every current-documentation correction
+  stands, the cache-layout reference above all: that is where the false claim actually misled a
+  reader, and fixing it there was correct.** No other documentation file is reverted. The scope
+  boundary this went past — documentation edits are limited to current documentation and never touch
+  shipped release notes — was nowhere in the brief, and is reported to the planner as a brief gap.
+  `[AD087]`
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Review a saved plan, then apply it by run ID (Priority: P1)
@@ -1318,7 +1359,10 @@ references.
 
 - **Missing destination write surface.** Applying a plan against an adapter that cannot execute
   planned operations fails with a clear, actionable error naming the adapter — the behavior the
-  engine already has today.
+  engine already has today. The check tests that the destination **offers** the surface's members; it
+  cannot tell a destination that offers them in the wrong shape from one that implements them, and it
+  is not claimed to. Enforcing conformance at runtime would need an explicit opt-in from the
+  destination and is a decision this outcome does not take. `[AD086]`
 - **Empty plan.** A plan with zero operations is a valid artifact; applying it is a successful
   no-op. It is recorded as a present-but-empty operations section with a count of zero, which is
   what keeps it distinguishable from the torn case below.
@@ -2746,6 +2790,17 @@ empty-set case, so the flush becomes a full update that suppresses nothing. It a
 beyond that one call, and it adds two test obligations — the empty-set case asserted on the rendered
 mutation rather than on a test double, and a tripwire that fails loudly if the destination library's
 suppression behavior changes under the version range the project pins.
+
+Two final decisions, **AD086** and **AD087**, were ratified after implementation and are carried in the
+[write surface as a type](#session-2026-07-28--the-write-surface-as-a-type-and-a-shipped-release-note)
+session. Neither adds anything that ships to the operator. **AD086** replaces the by-name reach for the
+destination write surface with a structural type, which fixes the **static** boundary and — as that
+decision states in its own words — leaves FR-023's runtime refusal exactly as strong as it already was;
+the runtime enforcement it declines to absorb is reported to the planner rather than implemented.
+**AD087** reverts an edit to a shipped release note and keeps every current-documentation correction,
+on the ground that a shipped note records what a release claimed and is not where a claim is quietly
+amended. Both scope boundaries they went past — how a non-conforming destination is detected, and which
+documentation a delivery may edit — were absent from the brief and are reported as brief gaps.
 
 Nothing here remains open. What remains genuinely deferred is not a design commitment:
 

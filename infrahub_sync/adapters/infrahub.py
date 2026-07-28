@@ -983,6 +983,20 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             kind,
         )
 
+    def new_peer_resolver(self) -> PeerResolver:
+        """Build the peer resolver for one apply (FR-014, AD086).
+
+        The second member of the planned-write surface
+        (`infrahub_sync.plan.write_surface.PlannedWriteDestination`). The engine calls this
+        instead of constructing a `PeerResolver` itself, which is what removes the cast to
+        this class from `Potenda.apply_plan`: the destination that owns the resolver's
+        dependency is the one that builds it.
+
+        One resolver per apply, created at its start and discarded with it — nothing about it
+        is persisted, and it is never shared between applies.
+        """
+        return PeerResolver(self)
+
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: PeerResolver) -> str:
         """Execute one planned operation convergently. Returns the destination node id.
 

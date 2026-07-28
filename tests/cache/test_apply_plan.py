@@ -8,8 +8,9 @@ forbids. What replaces it is the artifact-driven apply: the plan is read from
 the destination's `apply_planned_operation`.
 
 The destination double below is a plain recording object rather than a `MagicMock`, and
-deliberately so: a mock answers `hasattr` for every name, so the missing-write-surface case
-— the one this file has to be able to fail on — cannot be expressed against one.
+deliberately so: a mock answers every attribute lookup, so it satisfies the write-surface
+protocol's presence check for free and the missing-write-surface case — the one this file has
+to be able to fail on — cannot be expressed against one.
 
 The deep behavioural matrix (peer resolution, the replace-set flush, the rendered-mutation
 conformance) belongs to `tests/adapters/test_infrahub_planned_write.py` and
@@ -40,10 +41,18 @@ RUN_ID = "20260727T0915-4c1ab390"
 
 
 class RecordingDestination:
-    """A destination that implements the planned-write surface and records every dispatch."""
+    """A destination that implements the planned-write surface and records every dispatch.
+
+    Both of the protocol's members, because the pre-write gate is an `isinstance` check
+    against it and a destination missing either one is refused (AD086).
+    """
 
     def __init__(self) -> None:
         self.dispatched: list[str] = []
+
+    def new_peer_resolver(self) -> object:  # noqa: PLR6301
+        """The per-apply resolver factory; nothing below this double's surface reads it."""
+        return object()
 
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
         _ = peers

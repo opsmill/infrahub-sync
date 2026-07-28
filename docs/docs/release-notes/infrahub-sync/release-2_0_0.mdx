@@ -92,7 +92,7 @@ uv run infrahub-sync diff --name from-netbox --directory examples/
 duckdb -c "SELECT action, resource, source_id FROM read_parquet('.infrahub-sync-cache/from-netbox/<run-id>/plan.parquet') LIMIT 20"
 ```
 
-- Use `apply` (preview) to replay a cached plan without re-extracting the source. In 2.0.0 it requires destination adapter support for cached-row application, so use `sync` for built-in adapter workflows until that support is available.
+- Use `apply` (preview) to replay a cached plan without re-extracting the source. In 2.0.0 it requires destination adapter support for cached-row application, so use `sync` for built-in adapter workflows until that support is available. `apply` refuses to run when the current schema mapping and destination schema shape no longer match the cached schema sub-hash.
 
 ### Type checking uses ty in invoke lint
 

@@ -69,6 +69,7 @@ from infrahub_sync.plan.errors import (
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import ACTIONS, ApplyRecord, PlannedOperation, RelationshipReference
 from infrahub_sync.plan.review import read_saved_plan
+from infrahub_sync.plan.write_surface import PlannedWriteDestination
 from infrahub_sync.potenda import Potenda
 from tests.plan.artifact_fixtures import CONFIG_VERSION, SYNC_NAME, operation_record, write_artifact
 
@@ -1040,8 +1041,12 @@ SENTINEL_RUN_FILE = '{"status": "running", "mode": "apply", "summary": {}, "fini
 class RecordingApplyDestination:
     """A destination implementing the planned-write surface, recording every dispatch.
 
-    A plain object rather than a `MagicMock`: a mock answers `hasattr` for every name, so
-    the missing-surface case T055 has to be able to fail on cannot be expressed against one.
+    A plain object rather than a `MagicMock`: a mock answers every attribute lookup, so it
+    satisfies the write-surface protocol's presence check for free and the missing-surface
+    case T055 has to be able to fail on cannot be expressed against one.
+
+    Both protocol members are defined, because the pre-write gate is an `isinstance` check
+    against the protocol and a destination missing either one is refused (AD086).
 
     `reject_at` is the 0-based dispatch index the destination rejects, which is how a
     mid-plan rejection is driven without reaching a real destination.
@@ -1050,6 +1055,10 @@ class RecordingApplyDestination:
     def __init__(self, *, reject_at: int | None = None) -> None:
         self.dispatched: list[str] = []
         self.reject_at = reject_at
+
+    def new_peer_resolver(self) -> object:  # noqa: PLR6301
+        """The per-apply resolver factory; nothing below this double's surface reads it."""
+        return object()
 
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
         _ = peers
@@ -1429,3 +1438,131 @@ def test_the_reviewed_operation_identifiers_equal_the_applied_record_in_the_same
     )
     assert destination.dispatched == reviewed, "And the destination saw exactly that sequence."
     assert outcome.skipped_delete_operations == ()
+
+
+# ---------------------------------------------------------------------------------------
+# AD086 — the write-surface protocol boundary, and what it does not verify
+# ---------------------------------------------------------------------------------------
+
+
+def _statically_conforms(adapter: InfrahubAdapter) -> PlannedWriteDestination:
+    """`ty` checks this return, so the adapter's conformance is a type error when it lapses.
+
+    The engine narrows `self.destination` with `isinstance`, which tells the type checker
+    nothing about the Infrahub adapter itself. This function is where the other direction is
+    asserted: drop `new_peer_resolver`, or change either member's signature, and
+    `uv run ty check .` fails here rather than at some later call site.
+    """
+    return adapter
+
+
+class DestinationWithoutThePeerResolverFactory:
+    """A destination with the write surface and **no** resolver factory (AD086).
+
+    Both members are the surface, so this destination is not one — and is refused in the same
+    pre-write gate as a destination with no write surface at all.
+    """
+
+    def __init__(self) -> None:
+        self.dispatched: list[str] = []
+
+    def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
+        _ = peers
+        self.dispatched.append(operation.operation_id)
+        return f"node-{len(self.dispatched)}"
+
+
+class DuckTypedDestination:
+    """Both member **names**, neither member's signature (AD086).
+
+    This is the destination the honesty test below is about: it is not a planned-write
+    destination in any sense that would let an apply succeed, and the pre-write gate accepts
+    it anyway.
+    """
+
+    def new_peer_resolver(self) -> str:  # noqa: PLR6301
+        return "not a resolver"
+
+    def apply_planned_operation(self) -> None:  # noqa: PLR6301 — takes neither `operation` nor `peers`
+        raise AssertionError
+
+
+def test_the_infrahub_adapter_is_a_planned_write_destination() -> None:
+    """The one adapter of nine that carries the surface satisfies both of its members."""
+    adapter = make_adapter(RecordingClient())
+
+    assert isinstance(adapter, PlannedWriteDestination)
+    assert _statically_conforms(adapter) is adapter
+
+
+def test_the_adapters_factory_builds_a_resolver_bound_to_that_adapter() -> None:
+    """The factory is what replaced the engine's cast to this class (AD086).
+
+    A fresh resolver per call, each bound to the adapter that built it, so the memo's lifetime
+    is one apply and two applies never share one (FR-014).
+    """
+    adapter = make_adapter(RecordingClient())
+
+    resolver = adapter.new_peer_resolver()
+
+    assert isinstance(resolver, PeerResolver)
+    assert resolver._adapter is adapter
+    assert adapter.new_peer_resolver() is not resolver
+
+
+def test_a_destination_missing_only_the_resolver_factory_is_refused_before_any_write(tmp_path: Path) -> None:
+    """FR-023/AD086: the surface is both members, and the refusal still names the adapter.
+
+    A destination carrying `apply_planned_operation` alone would have passed the single-method
+    `hasattr` gate this protocol replaced, then died where the engine built its resolver —
+    after the gate that exists to keep exactly that from happening.
+    """
+    directory = apply_run_dir(tmp_path)
+    write_artifact(directory, [operation_record()], run_id=APPLY_RUN_ID, source_snapshot=[])
+
+    destination = DestinationWithoutThePeerResolverFactory()
+    state, outcome = apply_and_record_state(engine_over(directory, destination))
+
+    assert state == "failed"
+    assert isinstance(outcome, PlanVerificationError)
+    message = str(outcome)
+    assert "write_surface" in message
+    assert "DestinationWithoutThePeerResolverFactory" in message, (
+        "The refusal names the adapter it refused, which is why the verifier receives a name (AD058)."
+    )
+    assert "infrahub-sync sync" in message
+    assert destination.dispatched == [], "Refused before any write, not part-way through one."
+
+
+def test_the_gate_verifies_member_presence_only_and_is_no_stronger_than_hasattr(tmp_path: Path) -> None:
+    """AD086's honesty clause, asserted rather than described.
+
+    `isinstance` against a `runtime_checkable` protocol checks that the members **exist**. It
+    does not check their signatures, so a destination whose members have the right names and
+    the wrong shapes is accepted by the pre-write gate and fails later, mid-apply — exactly
+    where the `hasattr` gate this replaced would have failed. FR-023's refusal is still
+    presence-checking, and this test is here so nobody reads the protocol as having hardened
+    it. Making the refusal real at runtime needs an explicit opt-in — ABC inheritance or a
+    class-level marker — and is a separate design decision that AD086 does not take.
+
+    What the protocol did fix is static, and no runtime assertion can show it: `ty` checks the
+    dispatch and the resolver factory at every call site, and the untyped `getattr` dispatch
+    and the cast to `InfrahubAdapter` are gone.
+    """
+    directory = apply_run_dir(tmp_path)
+    write_artifact(directory, [operation_record()], run_id=APPLY_RUN_ID, source_snapshot=[])
+    duck = DuckTypedDestination()
+
+    assert isinstance(duck, PlannedWriteDestination), (
+        "Member presence is all the protocol checks, so this destination passes the gate."
+    )
+    assert hasattr(duck, "apply_planned_operation"), "And it would have passed the `hasattr` gate too."
+
+    state, outcome = apply_and_record_state(engine_over(directory, duck))
+
+    assert state == "failed", "It fails — but mid-apply, not in the pre-write gate."
+    assert not isinstance(outcome, PlanVerificationError), (
+        "The failure is not a refusal: the gate accepted this destination. If this ever becomes a "
+        "PlanVerificationError, the runtime enforcement AD086 deferred has been implemented, and "
+        "AD086's honesty clause needs revisiting rather than this assertion loosening."
+    )

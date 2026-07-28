@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from diffsync.enum import DiffSyncFlags
 from tqdm import tqdm
 
 from infrahub_sync import IncrementalConfig
 
-# Imported at module level, unlike this module's other `infrahub_sync` imports: these three
-# pull nothing beyond pydantic and the standard library, while the artifact reader and the
-# verifier reach `cache/parquet_io` and therefore `pyarrow`, which this module defers on
-# purpose so importing the engine stays cheap.
+# Imported at module level, unlike this module's other `infrahub_sync` imports: these four
+# pull nothing beyond pydantic and the standard library — the write-surface protocol pulls
+# nothing at all at runtime — while the artifact reader and the verifier reach
+# `cache/parquet_io` and therefore `pyarrow`, which this module defers on purpose so
+# importing the engine stays cheap.
 from infrahub_sync.plan.config_version import resolve_config_version, validate_config_version
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
@@ -20,6 +21,7 @@ from infrahub_sync.plan.errors import (
     PlanVerificationError,
 )
 from infrahub_sync.plan.models import ApplyRecord
+from infrahub_sync.plan.write_surface import PlannedWriteDestination
 
 logger = logging.getLogger(__name__)
 
@@ -32,24 +34,21 @@ if TYPE_CHECKING:
     from diffsync.diff import Diff
 
     from infrahub_sync import SyncInstance
-    from infrahub_sync.adapters.infrahub import InfrahubAdapter
     from infrahub_sync.plan.models import PlanManifest, VerificationFailure
 
-# The destination method a saved-plan apply writes through. A destination that does not
-# define it is refused in the pre-write gate, naming itself (FR-023, AD058) — the shape the
-# engine already had for the v1 dispatch, carried over to the surface that replaced it.
-WRITE_SURFACE_METHOD = "apply_planned_operation"
 
-
-def _refuse_unverified_plan(failures: Sequence[VerificationFailure], *, run_id: str) -> None:
-    """Refuse the apply when any pre-apply check failed, naming every one of them.
+def _plan_refusal(failures: Sequence[VerificationFailure], *, run_id: str) -> PlanVerificationError:
+    """Build the refusal for a non-empty set of pre-apply failures, naming every one of them.
 
     One refusal for the whole gate rather than one per check, so an operator learns
     everything that is wrong from a single attempt (AD036), and each entry carries its own
     next action (AD059).
+
+    Returned rather than raised so a caller that already knows the gate cannot come back
+    clean — the missing-write-surface branch of `apply_plan`, whose failure list contains that
+    failure by construction — can `raise` it directly instead of calling a helper that only
+    *might* raise.
     """
-    if not failures:
-        return
     detail = "\n".join(
         f"  - {failure.check}: expected {failure.expected}, found {failure.found}. {failure.next_action}"
         for failure in failures
@@ -58,7 +57,14 @@ def _refuse_unverified_plan(failures: Sequence[VerificationFailure], *, run_id: 
         f"The plan artifact of run {run_id!r} cannot be applied: {len(failures)} pre-apply check(s) "
         f"failed and nothing was written to the destination.\n{detail}"
     )
-    raise PlanVerificationError(msg)
+    return PlanVerificationError(msg)
+
+
+def _refuse_unverified_plan(failures: Sequence[VerificationFailure], *, run_id: str) -> None:
+    """Raise `_plan_refusal` when any pre-apply check failed, and return quietly otherwise."""
+    if not failures:
+        return
+    raise _plan_refusal(failures, run_id=run_id)
 
 
 class Potenda:
@@ -508,7 +514,10 @@ class Potenda:
         before any destination write (FR-017, AD055). Verification then runs as one gate,
         the write-surface check included, so an adapter that cannot apply a saved plan is
         refused before the first write rather than surprising the operator mid-plan
-        (FR-023, AD058).
+        (FR-023, AD058). That check asks `isinstance` against
+        `infrahub_sync.plan.write_surface.PlannedWriteDestination`, which verifies member
+        **presence** and not signatures — for a duck-typed destination it is as strong as the
+        `hasattr` gate it replaced and no stronger (AD086).
 
         A recorded `delete` is **collected, never dispatched**: applying deletes is out of
         scope for this release, so a delete-bearing plan ends `applied` with the skipped
@@ -545,7 +554,6 @@ class Potenda:
                 partial record on an `apply_record` attribute so the caller can still record
                 what was written before the run was cut short.
         """
-        from infrahub_sync.adapters.infrahub import PeerResolver
         from infrahub_sync.plan.reader import load_plan_artifact
         from infrahub_sync.plan.verify import verify_plan
 
@@ -556,23 +564,43 @@ class Potenda:
         comparison_version = self._apply_config_version(config_version)
 
         loaded = load_plan_artifact(self.run_dir)
+        destination = self.destination
+        if not isinstance(destination, PlannedWriteDestination):
+            # FR-023's refusal, inside the same pre-write gate as the five verification checks
+            # so one attempt tells the operator everything that is wrong (AD036). The
+            # adapter's **name** goes in, not a boolean: the failure this drives names the
+            # adapter, which a boolean cannot supply (AD058). The refusal is raised from here
+            # rather than routed through the shared helper because this gate cannot come back
+            # clean — the missing surface is itself one of the failures it is handed.
+            #
+            # `isinstance` against a `runtime_checkable` protocol verifies member **presence**,
+            # not signatures, so against a duck-typed destination this refusal is exactly as
+            # strong as the `hasattr` gate it replaced and no stronger (AD086). What the
+            # protocol fixes is static: the dispatch and the resolver below are both checked
+            # by `ty`, with no `getattr` and no cast to a concrete adapter.
+            raise _plan_refusal(
+                verify_plan(
+                    run_dir=self.run_dir,
+                    run_id=run_id,
+                    config_version=comparison_version,
+                    write_surface_missing_on=type(destination).__name__,
+                ),
+                run_id=run_id,
+            )
         _refuse_unverified_plan(
             verify_plan(
                 run_dir=self.run_dir,
                 run_id=run_id,
                 config_version=comparison_version,
-                # The adapter's **name**, not a boolean: the failure this drives names the
-                # adapter, which a boolean cannot supply (AD058).
-                write_surface_missing_on=(
-                    None if hasattr(self.destination, WRITE_SURFACE_METHOD) else type(self.destination).__name__
-                ),
+                write_surface_missing_on=None,
             ),
             run_id=run_id,
         )
 
-        apply_operation = getattr(self.destination, WRITE_SURFACE_METHOD)
-        # One memo for the whole apply, discarded with it — the same lifetime as the run.
-        peers = PeerResolver(cast("InfrahubAdapter", self.destination))
+        # One memo for the whole apply, discarded with it — the same lifetime as the run. The
+        # destination supplies it, so the engine builds a resolver for a destination it does
+        # not have to name (AD086).
+        peers = destination.new_peer_resolver()
 
         applied: list[str] = []
         skipped_deletes: list[str] = []
@@ -581,7 +609,7 @@ class Potenda:
                 skipped_deletes.append(operation.operation_id)
                 continue
             try:
-                apply_operation(operation=operation, peers=peers)
+                destination.apply_planned_operation(operation=operation, peers=peers)
             except BaseException as exc:
                 # The partial record travels on the error so the CLI can merge what was
                 # written before it records `failed` (AD069). Re-raising bare would lose it.

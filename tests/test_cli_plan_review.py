@@ -1300,13 +1300,21 @@ APPLY_PLAN: tuple[dict[str, Any], ...] = (
 class RecordingDestination:
     """A destination that implements the planned-write surface and counts every write.
 
-    A plain recording object rather than a `MagicMock`, deliberately: a mock answers
-    `hasattr` for every name, so the "zero destination writes" claim would be unfalsifiable
-    against one and the missing-write-surface case could not be expressed at all.
+    A plain recording object rather than a `MagicMock`, deliberately: a mock answers every
+    attribute lookup, so the "zero destination writes" claim would be unfalsifiable against
+    one and the missing-write-surface case could not be expressed at all — a mock satisfies
+    the write-surface protocol's presence check for free.
+
+    Both protocol members are defined, since the pre-write gate is an `isinstance` check
+    against the protocol and a destination missing either one is refused (AD086).
     """
 
     def __init__(self) -> None:
         self.writes: list[str] = []
+
+    def new_peer_resolver(self) -> object:  # noqa: PLR6301
+        """The per-apply resolver factory; nothing below this double's surface reads it."""
+        return object()
 
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
         _ = peers

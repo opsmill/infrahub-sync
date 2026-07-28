@@ -300,10 +300,18 @@ NORMALIZED_FORMS = (
 
 
 class NoOpPlannedWriteDestination:
-    """A destination with the planned-write surface that records what it was asked to write."""
+    """A destination with the planned-write surface that records what it was asked to write.
+
+    Both protocol members, because the pre-write gate is an `isinstance` check against the
+    write-surface protocol and a destination missing either one is refused (AD086).
+    """
 
     def __init__(self) -> None:
         self.dispatched: list[str] = []
+
+    def new_peer_resolver(self) -> object:  # noqa: PLR6301
+        """The per-apply resolver factory; nothing below this double's surface reads it."""
+        return object()
 
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
         _ = peers
