@@ -20,6 +20,11 @@ caller reads it as an error or asks it for a remedy (AD055).
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from infrahub_sync.plan.models import ApplyRecord
+
 
 class SkippedDeleteOperation(Exception):  # noqa: N818 — a control signal, not an error
     """A recorded delete the write surface declines to execute (FR-016, FR-017, AD055).
@@ -194,6 +199,48 @@ class PlanVerificationError(PlanArtifactError):
     """One or more pre-apply checks failed, so the apply is refused."""
 
     next_action = "Address each failed check named above; every failure carries its own next action."
+
+
+class OperationApplyFailedError(PlanArtifactError):
+    """The destination rejected an operation, or transport failed while applying it (AD027).
+
+    Carries the **partial** apply record — every operation applied before this one, and
+    every delete skipped before it — because the CLI is the single writer of the run record
+    (AD069) and cannot record what it was never handed. Without it, FR-025's last-applied
+    pointer could not survive a partial apply at all.
+
+    Nothing is rolled back: what was written stays written, which is also what keeps a
+    partial apply distinguishable from a completed one — neither clause of the knowability
+    invariant holds for it, since the unattempted operations are in neither set.
+    """
+
+    next_action = (
+        "Nothing was rolled back: the operations applied before this one stay written. Resolve the "
+        "underlying error at the destination, then re-run `diff` and apply the new plan — re-applying "
+        "an operation that already succeeded converges rather than duplicating."
+    )
+
+    def __init__(self, message: str, *, apply_record: ApplyRecord, next_action: str | None = None) -> None:
+        super().__init__(message, next_action=next_action)
+        self.apply_record = apply_record
+
+
+class ApplyRecordInvariantError(PlanArtifactError):
+    """A completed apply's record does not account for every operation in the plan (AD062).
+
+    The knowability invariant DBR-016 protects: on a **completed** apply the applied and
+    skipped-delete identifiers together are exactly the plan's identifier set, and their
+    counts sum to `operations_count`. A violation means the record cannot be compared
+    against what was reviewed, which is the difference between a disclosed skip and a
+    silent one — so it is raised rather than asserted, and only after the loop, since a
+    partial apply breaks both clauses by construction.
+    """
+
+    next_action = (
+        "Do not re-apply this run before checking the destination: the apply reported a set of "
+        "operations that does not match the plan it read. Report the run identifier and this message, "
+        "then re-run `diff` to rebuild the plan."
+    )
 
 
 class UnformableDestinationIdentityError(PlanArtifactError):

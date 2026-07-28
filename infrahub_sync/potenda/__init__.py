@@ -2,12 +2,24 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from diffsync.enum import DiffSyncFlags
 from tqdm import tqdm
 
 from infrahub_sync import IncrementalConfig
+
+# Imported at module level, unlike this module's other `infrahub_sync` imports: these three
+# pull nothing beyond pydantic and the standard library, while the artifact reader and the
+# verifier reach `cache/parquet_io` and therefore `pyarrow`, which this module defers on
+# purpose so importing the engine stays cheap.
+from infrahub_sync.plan.config_version import resolve_config_version, validate_config_version
+from infrahub_sync.plan.errors import (
+    ApplyRecordInvariantError,
+    OperationApplyFailedError,
+    PlanVerificationError,
+)
+from infrahub_sync.plan.models import ApplyRecord
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +32,33 @@ if TYPE_CHECKING:
     from diffsync.diff import Diff
 
     from infrahub_sync import SyncInstance
-    from infrahub_sync.plan.models import PlanManifest
+    from infrahub_sync.adapters.infrahub import InfrahubAdapter
+    from infrahub_sync.plan.models import PlanManifest, VerificationFailure
+
+# The destination method a saved-plan apply writes through. A destination that does not
+# define it is refused in the pre-write gate, naming itself (FR-023, AD058) — the shape the
+# engine already had for the v1 dispatch, carried over to the surface that replaced it.
+WRITE_SURFACE_METHOD = "apply_planned_operation"
+
+
+def _refuse_unverified_plan(failures: Sequence[VerificationFailure], *, run_id: str) -> None:
+    """Refuse the apply when any pre-apply check failed, naming every one of them.
+
+    One refusal for the whole gate rather than one per check, so an operator learns
+    everything that is wrong from a single attempt (AD036), and each entry carries its own
+    next action (AD059).
+    """
+    if not failures:
+        return
+    detail = "\n".join(
+        f"  - {failure.check}: expected {failure.expected}, found {failure.found}. {failure.next_action}"
+        for failure in failures
+    )
+    msg = (
+        f"The plan artifact of run {run_id!r} cannot be applied: {len(failures)} pre-apply check(s) "
+        f"failed and nothing was written to the destination.\n{detail}"
+    )
+    raise PlanVerificationError(msg)
 
 
 class Potenda:
@@ -440,36 +478,147 @@ class Potenda:
         )
         return manifest
 
-    def apply_plan(self) -> None:
-        """Dispatch each row in plan.parquet to the destination adapter.
+    def _apply_config_version(self, supplied: str | None) -> str:
+        """The configuration version the apply compares the artifact's against (FR-011, AD013).
 
-        The destination's `apply_cached_row(*, resource, action, source_id,
-        attribute, new_value)` method is expected to perform the actual
-        write. Adapters that don't implement it yet will raise
-        AttributeError; the operator is told to fall back to `sync`.
+        Recomputed by the default rule from the parsed configuration on the CLI path, or
+        taken **verbatim** — validated as non-empty printable ASCII, never parsed — when an
+        in-process caller supplies one. A caller with neither is asking for a comparison
+        that cannot be made, so it is refused here rather than silently skipped.
         """
-        from infrahub_sync.cache.parquet_io import read_plan
+        if self.config is not None:
+            return resolve_config_version(self.config, supplied)
+        if supplied is None:
+            msg = (
+                "Potenda.apply_plan needs a configuration version to compare the plan artifact "
+                "against: construct Potenda with a parsed configuration, or pass `config_version`."
+            )
+            raise ValueError(msg)
+        return validate_config_version(supplied)
+
+    def apply_plan(self, *, config_version: str | None = None) -> ApplyRecord:
+        """Apply this run's saved plan artifact to the destination, and return what it did.
+
+        Neither side is loaded, nothing is re-compared and nothing is re-derived: the stored
+        operations are executed in **stored order**, exactly as recorded (FR-012, SC-001).
+
+        The order of the first two steps is load-bearing. The artifact is read first, so an
+        operation whose `action` this release does not recognize is refused while reading —
+        before any destination write (FR-017, AD055). Verification then runs as one gate,
+        the write-surface check included, so an adapter that cannot apply a saved plan is
+        refused before the first write rather than surprising the operator mid-plan
+        (FR-023, AD058).
+
+        A recorded `delete` is **collected, never dispatched**: applying deletes is out of
+        scope for this release, so a delete-bearing plan ends `applied` with the skipped
+        identifiers, their count and one `logging.WARNING` naming that count (FR-016,
+        FR-017, AD055). The level is pinned because `--quiet` floors the package logger at
+        `WARNING` (`infrahub_sync/cli.py:29`), so an `INFO` emission would vanish for
+        exactly the scripted runs where this warning is the only signal.
+
+        This method **writes no run file** (AD069). It returns the record; the CLI is the
+        single writer and merges `as_summary_keys()` into `run_file.summary` before saving.
+
+        Args:
+            config_version: The comparison value for the configuration-version check,
+                compared for equality and never parsed. `None` recomputes it from the
+                parsed configuration by the default rule (FR-011, AD013).
+
+        Returns:
+            The `ApplyRecord`: the ordered applied identifiers (whose final element is
+            FR-025's last-applied pointer), the skipped deletes in stored order, and their
+            count.
+
+        Raises:
+            ValueError: this run has no `run_dir`, or no configuration version can be formed.
+            PlanVerificationError: any pre-apply check failed; nothing was written.
+            OperationApplyFailedError: the destination rejected an operation or transport
+                failed. Carries the partial record; earlier writes stay written (AD027).
+            ApplyRecordInvariantError: a completed apply's record does not account for every
+                operation in the plan (AD062).
+        """
+        from infrahub_sync.adapters.infrahub import PeerResolver
+        from infrahub_sync.plan.reader import load_plan_artifact
+        from infrahub_sync.plan.verify import verify_plan
 
         if not self.run_dir:
             msg = "Potenda.apply_plan requires run_dir to be set."
             raise ValueError(msg)
-        if not hasattr(self.destination, "apply_cached_row"):
+        run_id = self.run_id or self.run_dir.name
+        comparison_version = self._apply_config_version(config_version)
+
+        loaded = load_plan_artifact(self.run_dir)
+        _refuse_unverified_plan(
+            verify_plan(
+                run_dir=self.run_dir,
+                run_id=run_id,
+                config_version=comparison_version,
+                # The adapter's **name**, not a boolean: the failure this drives names the
+                # adapter, which a boolean cannot supply (AD058).
+                write_surface_missing_on=(
+                    None if hasattr(self.destination, WRITE_SURFACE_METHOD) else type(self.destination).__name__
+                ),
+            ),
+            run_id=run_id,
+        )
+
+        apply_operation = getattr(self.destination, WRITE_SURFACE_METHOD)
+        # One memo for the whole apply, discarded with it — the same lifetime as the run.
+        peers = PeerResolver(cast("InfrahubAdapter", self.destination))
+
+        applied: list[str] = []
+        skipped_deletes: list[str] = []
+        for operation in loaded.operations:
+            if operation.action == "delete":
+                skipped_deletes.append(operation.operation_id)
+                continue
+            try:
+                apply_operation(operation=operation, peers=peers)
+            except Exception as exc:
+                # The partial record travels on the error so the CLI can merge what was
+                # written before it records `failed` (AD069). Re-raising bare would lose it.
+                partial = ApplyRecord(
+                    applied_operations=tuple(applied),
+                    skipped_delete_operations=tuple(skipped_deletes),
+                    skipped_delete_count=len(skipped_deletes),
+                )
+                msg = (
+                    f"Applying operation {operation.operation_id!r} of run {run_id!r} to the destination "
+                    f"failed: {exc}. The {len(applied)} operation(s) applied before it stay written."
+                )
+                raise OperationApplyFailedError(msg, apply_record=partial) from exc
+            applied.append(operation.operation_id)
+
+        # AFTER the loop and off the rejection path (AD069): a partial apply breaks both
+        # clauses by construction, so checking unconditionally would replace a clear
+        # destination-rejection message with an invariant error, and checking inside the
+        # loop would fail on the first iteration.
+        planned_ids = {operation.operation_id for operation in loaded.operations}
+        recorded_ids = set(applied) | set(skipped_deletes)
+        if recorded_ids != planned_ids or len(applied) + len(skipped_deletes) != loaded.manifest.operations_count:
             msg = (
-                f"Destination adapter {type(self.destination).__name__} does "
-                "not implement apply_cached_row. Use `infrahub-sync sync` "
-                "until the adapter is upgraded."
+                f"The apply of run {run_id!r} completed but its record does not account for the plan: "
+                f"{len(applied)} applied and {len(skipped_deletes)} delete(s) skipped against "
+                f"{loaded.manifest.operations_count} recorded operation(s); "
+                f"{sorted(planned_ids - recorded_ids)} are in neither set and "
+                f"{sorted(recorded_ids - planned_ids)} are in no plan."
             )
-            raise NotImplementedError(msg)
-        apply_cached_row = getattr(self.destination, "apply_cached_row")
-        table = read_plan(run_dir=self.run_dir)
-        for i in range(table.num_rows):
-            apply_cached_row(
-                resource=table.column("resource")[i].as_py(),
-                action=table.column("action")[i].as_py(),
-                source_id=table.column("source_id")[i].as_py(),
-                attribute=table.column("attribute")[i].as_py(),
-                new_value=table.column("new_value")[i].as_py(),
+            raise ApplyRecordInvariantError(msg)
+
+        if skipped_deletes:
+            logger.warning(
+                "Apply of run %s: %d recorded delete operation(s) were not executed. Applying deletes "
+                "is out of scope for this release; their identifiers are recorded on the run under "
+                "'skipped_delete_operations'.",
+                run_id,
+                len(skipped_deletes),
             )
+
+        return ApplyRecord(
+            applied_operations=tuple(applied),
+            skipped_delete_operations=tuple(skipped_deletes),
+            skipped_delete_count=len(skipped_deletes),
+        )
 
     def persist_cursors_for_run(self, *, side: str) -> None:
         """Walk the run_dir snapshot files for `side`, compute per-resource

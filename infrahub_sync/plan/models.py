@@ -16,6 +16,7 @@ silently truncated one. And no field at either level groups operations into writ
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -194,6 +195,40 @@ class PlanSummary(BaseModel):
     total: int = Field(ge=0)
     delete_operations_computed: bool
     deletes_not_executed: int = Field(ge=0)
+
+
+@dataclass(frozen=True)
+class ApplyRecord:
+    """What one apply did, handed from the engine to its caller (FR-017, FR-020, AD062, AD069).
+
+    Not an artifact record — nothing here is written to `plan/`. It is the value
+    `Potenda.apply_plan` **returns**, and the CLI is the single writer that merges
+    `as_summary_keys()` into the run file's `summary` before saving it (AD069). It carries a
+    name and a type rather than three loose keys because it crosses a layer boundary: a bare
+    mapping infers as `dict[str, Any]`, which loses every guarantee at the merge site and
+    turns a later key relocation into a `KeyError` downstream instead of a type error here.
+
+    A destination rejection mid-apply carries the **partial** record on the raised
+    `OperationApplyFailedError`, so the CLI can merge what was written before recording
+    `failed` — which is what lets FR-025's last-applied pointer survive a partial apply.
+    """
+
+    applied_operations: tuple[str, ...] = ()
+    skipped_delete_operations: tuple[str, ...] = ()
+    skipped_delete_count: int = 0
+
+    def as_summary_keys(self) -> dict[str, Any]:
+        """Render the record as the three run-summary keys, ready to merge (AD062).
+
+        The **serialized** shape is the contract and is unchanged by this type existing:
+        two JSON arrays of identifiers and one integer, under the key names below. This
+        method is the only place those names are written.
+        """
+        return {
+            "applied_operations": list(self.applied_operations),
+            "skipped_delete_operations": list(self.skipped_delete_operations),
+            "skipped_delete_count": self.skipped_delete_count,
+        }
 
 
 class VerificationFailure(BaseModel):
