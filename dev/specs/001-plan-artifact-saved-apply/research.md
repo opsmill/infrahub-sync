@@ -286,10 +286,10 @@ satisfied by the no-op.
 mutate `self.peers` and set `_has_update = True`, issuing no client call, so the reconciled set reaches the
 destination **only on a subsequent write of the node**. The helper therefore leaves the node unwritten — the
 same shape as `update_node`, whose flush lives in its caller (`infrahub_sync/adapters/infrahub.py:177`,
-`:625-626`) — and `apply_planned_operation` issues `node.update(do_full_update=True)` once, after the loop
+`:625-626`) — and `apply_planned_operation` issues one write once, after the loop
 over every cardinality-many relationship. An update, not `save(allow_upsert=True)`, which would re-render
 the upsert create (`.venv/…/infrahub_sdk/node/node.py:1533-1534` → `:1838-1846`); the mutation is
-`f"{kind}Update"` (`:1872`) and the manager renders the full peer list (`relationship.py:68-69`), which is
+`f"{kind}Update"` and the manager renders the full peer list (`relationship.py:68-69`), which is
 what makes the write a replace. The observable moves onto the **issued destination write carrying the
 reconciled peer list**; manager state is satisfied by a helper that never writes.
 
@@ -310,6 +310,42 @@ create payload writes a **list**, so that branch is not reached and the key surv
 never runs at all (`:290-291`), the emptied set survives as `[]`, and `id` is still rendered (`:295-296`) so
 the update targets the right node. Non-empty replaces are unaffected, and AD075's conclusions and its
 shipped implementation stand — only the flush call changes.
+
+**And the flush is not a whole-node update either — it is a targeted relationship write (AD088, amending
+AD085's form and correcting its attribution).** Everything above about the stripping is correct and stands;
+what is wrong is the remedy, because both candidate calls render the **whole node**, and that render emits
+`data[<rel>] = None` for every **optional cardinality-one** relationship left uninitialized once `_existing`
+is `True` (`.venv/…/infrahub_sdk/node/node.py:260-266`, whose own comment says it is there "to allow
+clearing relationships"). `save(allow_upsert=True)` sets `_existing = True` through
+`_process_mutation_result` (`:1811`), so the flush nulls every optional cardinality-one relationship the plan
+never mapped — which FR-013 forbids in the same requirement that asked for the full form.
+
+**That null is independent of the stripping, so it predates AD085 and was latent in AD075's own design.**
+Both paths verified: with `exclude_unmodified=False` nothing is stripped at all (`:290-291`); with
+`exclude_unmodified=True` the first loop (`:354-364`) does not pop the key, because its `if` requires a
+non-optional `RelatedNodeBase` and its `elif` requires a `RelationshipManagerBase`, and an uninitialized
+optional cardinality-one relationship is neither, while the second loop (`:365-370`) never visits the key
+because an unmapped field is absent from the `original_data` it walks. AD075 specified the flush as a write
+*of the node*; the null follows from that alone, and AD085 changed only which stripping setting that render
+ran under.
+
+Pre-initialising or restoring the unmapped relationships before the flush is rejected: it treats the symptom,
+and it would require reading every unmapped relationship of the destination object first. The flush is
+instead built by hand in `_flush_replaced_relationship_sets`, carrying `id` plus only the replaced fields:
+`Mutation(mutation=f"{kind}Update", input_data={"data": {…}}, query=node._generate_mutation_query())`
+rendered and issued through `client.execute_graphql`, then handed to `_process_mutation_result` — the same
+construction `update()` performs (`:1867-1888`), minus the whole-node walk. Each peer list is still rendered
+by `RelationshipManagerBase._generate_input_data` (`relationship.py:68-69`), so the replaced fields render
+byte-identically to what the full update produced for them, `[]` for an emptied set included.
+
+A **relationship-level** mutation was evaluated first and rejected. The SDK exposes no general relationship
+method on either client; `RelationshipAdd` appears exactly once, hand-interpolated into a GraphQL string in
+`.venv/…/infrahub_sdk/groups.py:5-25`, on the async client only, for one hard-coded relationship name. There
+is no `RelationshipRemove` anywhere in the package, so a replace-set would need two mutations per
+relationship — breaking AD075's single write after the loop — and emptying a set could not be expressed at
+all through the add half. Generalising that helper to an arbitrary kind and relationship would mean writing
+a new untyped GraphQL string builder with peer ids interpolated by hand, against a mutation the SDK does not
+model.
 
 **And that flush is what withdraws the second re-read mechanism (AD075).** This entry originally offered a
 scoped `client.get(id=node.id, kind=…, include=[rel_name])` with the manager read off the node that comes

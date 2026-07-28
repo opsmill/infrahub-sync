@@ -18,8 +18,10 @@ the properties under test are invisible to an assertion made against a `MagicMoc
   `save` and `add()`/`remove()` only mutate a list and set a flag — so an assertion on
   `rm.peer_ids` is satisfied in full by a helper that removes nothing at a real destination
   (AD075);
-- the **flush** that carries it is `node.update(do_full_update=True)`, and only the rendered
-  mutation *name* separates that from a second `save(allow_upsert=True)` (AD085).
+- the **flush** that carries it is a targeted `<kind>Update` naming `id` plus only the replaced
+  relationship fields, and only the rendered mutation *name* separates that from a second
+  `save(allow_upsert=True)` (AD075, AD085, AD088). That the flush names no **unmapped** field is
+  asserted in `tests/plan/test_apply_conformance.py`, against a fixture kind declaring one.
 
 Covers T050 (payload cases), T051 (replace-set cases), T052 (memo cases), T053 (SC-016's
 local half), T054 (SC-007's local half), T055 (the apply-loop cases) and the apply half of
@@ -774,12 +776,12 @@ def test_the_replace_set_removes_surplus_peers_and_adds_new_ones_in_one_issued_u
 def test_an_empty_peer_list_empties_the_set_in_the_issued_flush() -> None:
     """AD085: `peers: []` under `cardinality: many` reaches the destination.
 
-    The case that decides between `node.update(do_full_update=True)` and a plain
-    `node.save()`. A plain save renders with unmodified-field stripping on; the create
-    payload already wrote `[]` for the same field, so the rendered value matches, the key is
-    popped, and the emptied set never leaves the process while the mutation name stays
-    identical. The rendered relationship value is therefore the only observable that
-    separates them.
+    The case that decides the flush's form. A plain `node.save()` renders with
+    unmodified-field stripping on; the create payload already wrote `[]` for the same field, so
+    the rendered value matches, the key is popped, and the emptied set never leaves the process
+    while the mutation name stays identical. The rendered relationship value is therefore the
+    only observable that separates them — and it is what the targeted flush AD088 specifies
+    writes explicitly rather than leaving to survive a comparison.
     """
     client = RecordingClient()
     client.existing_peers[TEAM_KIND, "members"] = ["tag-id-1", "tag-id-2"]

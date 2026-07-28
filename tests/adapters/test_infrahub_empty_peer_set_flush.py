@@ -1,16 +1,22 @@
 """The emptied-peer-set flush on the planned-write path, and its SDK-boundary tripwire.
 
-`InfrahubAdapter.apply_planned_operation` reconciles every cardinality-many relationship
-as an explicit replace-set after the convergent upsert and then flushes it with
-`node.update(do_full_update=True)` (AD085, amending AD075). These tests exist because the
-case that decides between a plain `node.save()` and that full update — a relationship
-reconciled to the **empty** set — is invisible to any assertion made against a mock: the
-reconciliation is purely in-memory, so a mock adapter call proves nothing about what
+`InfrahubAdapter.apply_planned_operation` reconciles every cardinality-many relationship as an
+explicit replace-set after the convergent upsert and then flushes it with a **targeted
+relationship write** — `id` plus only the fields being replaced (AD088, amending AD085's
+amendment of AD075). These tests exist because the case that decides the flush's form — a
+relationship reconciled to the **empty** set — is invisible to any assertion made against a
+mock: the reconciliation is purely in-memory, so a mock adapter call proves nothing about what
 reached the destination.
 
-Both tests therefore work against a real `InfrahubNodeSync` built over a real
-`NodeSchemaAPI` and read the **rendered mutation**, and both run offline: no live Infrahub
-is contacted and neither is `integration`-marked.
+Every test here therefore works against a real `InfrahubNodeSync` built over a real
+`NodeSchemaAPI` and reads the **rendered mutation**, and all of them run offline: no live
+Infrahub is contacted and none is `integration`-marked.
+
+`THING_SCHEMA` carries an optional cardinality-one `owner` that no operation here maps, because
+that is the shape the SDK's whole-node render nulls. The assertion that no unmapped field
+reaches the flush lives in the conformance harness, against the committed schema fixture
+(`tests/plan/test_apply_conformance.py`, assertion 4); what lives here is the SDK-boundary
+tripwire for the render behaviour that assertion depends on.
 """
 
 from __future__ import annotations
@@ -54,7 +60,18 @@ THING_SCHEMA = NodeSchemaAPI(
             kind=RelationshipKind.GENERIC,
             optional=True,
             identifier="thing__member",
-        )
+        ),
+        # Unmapped by every operation here, and load-bearing: this is the shape the SDK's
+        # whole-node render nulls on an existing node (AD088). Do not remove it.
+        RelationshipSchemaAPI(
+            id="thing-owner",
+            name="owner",
+            peer=MEMBER_KIND,
+            cardinality="one",
+            kind=RelationshipKind.ATTRIBUTE,
+            optional=True,
+            identifier="thing__owner",
+        ),
     ],
 )
 
@@ -73,13 +90,16 @@ MEMBER_SCHEMA = NodeSchemaAPI(
 
 # What the tripwire says when the SDK stops behaving the way the flush depends on.
 SDK_BOUNDARY_MESSAGE = (
-    "The infrahub-sdk's unmodified-field stripping has changed. `pyproject.toml` pins "
+    "The infrahub-sdk's node render behaviour has changed. `pyproject.toml` pins "
     "`infrahub-sdk[all]>=1.17,<2`, a range, and this behaviour is undocumented internals, so a "
-    "permitted upgrade can move it without any other signal. AD085 depends on it: the planned-write "
-    "flush in `InfrahubAdapter.apply_planned_operation` is `node.update(do_full_update=True)` — "
-    "rather than a plain `node.save()` — precisely because the stripping drops a cardinality-many "
-    "relationship reconciled to the empty set, and `do_full_update=True` turns the stripping off. "
-    "Re-derive AD085 against the new SDK before changing this test."
+    "permitted upgrade can move it without any other signal — and this one render has already "
+    "produced two defects on the planned-write flush, which is why it is pinned here. AD088 "
+    "depends on it: the flush in `InfrahubAdapter.apply_planned_operation` is a targeted "
+    "relationship write, issuing `id` plus only the cardinality-many fields being replaced, "
+    "precisely because rendering the whole node emits `<rel>: null` for every unmapped optional "
+    "cardinality-one relationship and so clears destination fields the plan never mapped. AD075 "
+    "(the flush exists at all) and AD085 (the emptied peer set must survive it) depend on the same "
+    "render. Re-derive AD088 against the new SDK before changing this test."
 )
 
 
@@ -211,18 +231,29 @@ def test_non_empty_replace_set_is_carried_by_the_issued_flush_mutation() -> None
     )
 
 
-def test_sdk_still_strips_an_emptied_relationship_only_when_excluding_unmodified() -> None:
-    """SDK-boundary tripwire for AD085: the stripping behaviour the flush is chosen for.
+def test_sdk_nulls_an_unmapped_optional_relationship_under_both_render_modes() -> None:
+    """SDK-boundary tripwire for AD088: why no re-render of the node can be the flush.
 
-    `node.update(do_full_update=True)` renders with `exclude_unmodified=False`. This pins
-    both halves of why that matters, straight at the SDK with no adapter code involved: with
-    the stripping on, a cardinality-many relationship reconciled to the empty set is dropped
-    because its rendered value equals the create payload's; with it off, the emptied set
-    survives and `id` is still rendered, so the update targets the right node.
+    Straight at the SDK, no adapter code involved. Rendering a node the SDK considers existing
+    emits `owner: None` for the unmapped optional cardinality-one relationship
+    (`infrahub_sdk/node/node.py:260-266`), and it does so **under both render modes** — which is
+    what makes the defect this decision fixes older than AD085 and independent of it:
+
+    - stripping **on** (`exclude_unmodified=True`, a plain `node.save()`): the field survives
+      both stripping loops. The first does not pop it — the pop needs a non-optional
+      `RelatedNodeBase` or a `RelationshipManagerBase`, and an uninitialized optional
+      cardinality-one relationship is neither. The second never visits it, because an unmapped
+      field is absent from the original data the comparison walks.
+    - stripping **off** (`exclude_unmodified=False`, `node.update(do_full_update=True)`): nothing
+      is stripped at all.
+
+    So the null was latent in AD075's original flush from the day it shipped; AD085 changed which
+    of the two modes is used and left the null exactly where it was. If either arm of this stops
+    holding, AD088's ground has moved.
     """
     client = RecordingClient()
     create_data = client.schema.generate_payload_create(schema=THING_SCHEMA, data={"name": "thing-a", "members": []})
-    assert create_data["members"] == [], "Precondition: the create payload writes an empty list for the field."
+    assert "owner" not in create_data, "Precondition: the plan maps no `owner`, so the payload carries none."
 
     node = InfrahubNodeSync(client=client, schema=THING_SCHEMA, data=create_data)
     node.id = NODE_ID
@@ -231,44 +262,13 @@ def test_sdk_still_strips_an_emptied_relationship_only_when_excluding_unmodified
     manager = node.members
     assert isinstance(manager, RelationshipManagerSync)
     manager.add("member-1")
-    manager.remove("member-1")
-    assert manager.peer_ids == [], "Precondition: the manager is reconciled to the empty set."
-    assert manager.has_update, "Precondition: reconciling the manager sets its update flag."
+    assert manager.peer_ids == ["member-1"], "Precondition: the manager is reconciled."
 
-    stripped = node._generate_input_data(exclude_unmodified=True)["data"]["data"]
-    retained = node._generate_input_data(exclude_unmodified=False)["data"]["data"]
-
-    assert "members" not in stripped, SDK_BOUNDARY_MESSAGE
-    assert retained.get("members") == [], SDK_BOUNDARY_MESSAGE
-    assert retained.get("id") == NODE_ID, SDK_BOUNDARY_MESSAGE
-
-
-def test_sdk_update_still_maps_do_full_update_onto_the_stripping() -> None:
-    """SDK-boundary tripwire for AD085: `do_full_update` is what turns the stripping off.
-
-    The other half of the boundary. If `update()` stopped inverting `do_full_update` into
-    `exclude_unmodified`, or stopped rendering an update mutation, the flush would go back to
-    dropping the emptied peer set with nothing else to notice it.
-    """
-    rendered: dict[bool, list[str] | None] = {}
-    for do_full_update in (True, False):
-        client = RecordingClient()
-        create_data = client.schema.generate_payload_create(
-            schema=THING_SCHEMA, data={"name": "thing-a", "members": []}
+    for exclude_unmodified in (True, False):
+        rendered = node._generate_input_data(exclude_unmodified=exclude_unmodified)["data"]["data"]
+        message = (
+            f"{SDK_BOUNDARY_MESSAGE}\n\nWith exclude_unmodified={exclude_unmodified} the render produced "
+            f"{rendered!r}, which no longer nulls the unmapped optional cardinality-one relationship."
         )
-        node = InfrahubNodeSync(client=client, schema=THING_SCHEMA, data=create_data)
-        node.id = NODE_ID
-        node._existing = True
-        manager = node.members
-        assert isinstance(manager, RelationshipManagerSync)
-        manager.add("member-1")
-        manager.remove("member-1")
-
-        node.update(do_full_update=do_full_update)
-
-        mutation_name, query = client.mutations[0]
-        assert mutation_name == f"{THING_KIND}Update", SDK_BOUNDARY_MESSAGE
-        rendered[do_full_update] = _rendered_member_ids(query)
-
-    assert rendered[True] == [], SDK_BOUNDARY_MESSAGE
-    assert rendered[False] is None, SDK_BOUNDARY_MESSAGE
+        assert "owner" in rendered, message
+        assert rendered["owner"] is None, message

@@ -7,7 +7,13 @@
     "Four kinds, each carrying one property the harness needs:",
     "  ConfSite  - an all-direct human-friendly ID, and a `comment` attribute no payload writes;",
     "  ConfTag   - a second all-direct kind, so a peer set has something to point at;",
-    "  ConfTeam  - an all-direct kind with a cardinality-many relationship, for the replace-set;",
+    "  ConfTeam  - an all-direct kind with a cardinality-many relationship, for the replace-set,",
+    "              PLUS an OPTIONAL CARDINALITY-ONE relationship (`owner`) that no operation in",
+    "              the harness maps. That second shape is load-bearing (AD088): the destination",
+    "              library renders `<rel>: null` for exactly this shape on a node it considers",
+    "              existing, so a flush that re-renders the whole node clears it. Without the",
+    "              shape in the fixture the harness cannot see that, which is how the defect",
+    "              reached the tree. Do not remove it;",
     "  ConfDevice- a human-friendly ID that CROSSES A RELATIONSHIP, which cannot render keyed",
     "              today and is the xfail(strict=True) arm (AD067)."
   ],
@@ -57,6 +63,15 @@
           "kind": "Generic",
           "optional": true,
           "identifier": "conf_team__members"
+        },
+        {
+          "id": "conf-team-owner",
+          "name": "owner",
+          "peer": "ConfSite",
+          "cardinality": "one",
+          "kind": "Attribute",
+          "optional": true,
+          "identifier": "conf_team__owner"
         }
       ]
     },

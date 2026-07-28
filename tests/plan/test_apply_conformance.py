@@ -11,10 +11,10 @@ So the harness is built against a **real** `InfrahubNodeSync`, constructed from 
 `NodeSchemaAPI` fixture at `tests/data/apply_conformance_schemas.json`, with only the transport
 edge replaced. Everything between the write surface and the wire is the SDK's own: the
 `hfid`/`id` selection (`infrahub_sdk/node/node.py:295-298`), the upsert render's
-`exclude_hfid=False` (`:1843-1846`), the update render's `do_full_update` (`:1870-1872`), and
-the GraphQL rendering. No server is contacted and nothing here is `integration`-marked.
+`exclude_hfid=False` (`:1843-1846`), and the GraphQL rendering. No server is contacted and
+nothing here is `integration`-marked.
 
-Four assertions, because keyedness splits in two (AD067):
+Five assertions, because keyedness splits in two (AD067):
 
 1. every operation on an **all-direct** human-friendly-ID kind renders keyed;
 2. the same assertion on the kind whose human-friendly ID **crosses a relationship**, marked
@@ -22,8 +22,10 @@ Four assertions, because keyedness splits in two (AD067):
    it becomes an xpass and fails the suite, so the limitation retires itself;
 3. the replace-set is issued for every cardinality-many relationship including `peers: []`, a
    destination **read** was issued before the peer set it compares against was read, and the
-   **flush** is an issued `node.update(do_full_update=True)`;
-4. applying the same operation twice renders **byte-identical** mutation inputs.
+   **flush** is an issued update of the node the upsert converged on;
+4. the flush names **only** the relationship fields being replaced — no unmapped destination
+   field appears in it (AD088);
+5. applying the same operation twice renders **byte-identical** mutation inputs.
 
 What it deliberately does **not** assert: "two applies produce one object". A fixture holds no
 destination state, there is no operation-level dedup in this design and none is wanted, so two
@@ -68,7 +70,27 @@ DEVICE_KIND = "ConfDevice"
 # universal over these and **only** these; assertion 2 carries `ConfDevice` alone (AD067).
 ALL_DIRECT_KINDS = (SITE_KIND, TAG_KIND, TEAM_KIND)
 
+# `ConfTeam`'s two relationships: the cardinality-many one the replace-set reconciles, and the
+# optional cardinality-one one no operation here maps — assertion 4's subject (AD088).
+REPLACED_RELATIONSHIP = "members"
+UNMAPPED_RELATIONSHIP = "owner"
+
 NODE_ID = "conformance-node-1"
+
+# What assertion 4 says when the flush stops being a targeted relationship write.
+UNMAPPED_FIELD_MESSAGE = (
+    "The replace-set flush wrote a destination field the plan never mapped. This is the SECOND defect on "
+    "this one path caused by depending on how the infrahub-sdk renders a node, and `pyproject.toml` pins "
+    "`infrahub-sdk[all]>=1.17,<2` — a range — so a permitted upgrade can move that rendering with no other "
+    "signal. The library's render behaviour has changed, or the flush has gone back to re-rendering the "
+    "whole node. Either way `InfrahubNodeBase._generate_input_data` emits `data[<rel>] = None` for every "
+    "uninitialized OPTIONAL CARDINALITY-ONE relationship once the node is marked existing "
+    "(`infrahub_sdk/node/node.py:260-266`, 'to allow clearing relationships'), and the convergent upsert "
+    "marks it existing. AD088 depends on this: the flush must issue a mutation carrying `id` plus ONLY the "
+    "cardinality-many fields being replaced, never a re-render of the node. AD075 (the flush exists at all) "
+    "and AD085 (the emptied peer set must survive it) depend on it too. Re-derive AD088 against the new SDK "
+    "before changing this test."
+)
 
 XFAIL_REASON = (
     "A human-friendly ID that crosses a relationship cannot render keyed today — the Material "
@@ -229,12 +251,14 @@ ALL_DIRECT_OPERATIONS: tuple[tuple[str, PlannedOperation], ...] = (
 def record_rendered_inputs() -> Iterator[list[tuple[str, dict[str, Any]]]]:
     """Record the **mutation input** the SDK renders, per node kind.
 
-    `_generate_input_data` is the single point every write path renders through — the upsert
-    (`exclude_hfid=False`) and the `do_full_update` flush alike — and its `["data"]["data"]`
-    is the mapping the mutation is built from. Recording here rather than regex-scraping the
-    rendered query is what makes "carries `id` or `hfid`" a decidable claim: `id:` also occurs
-    inside every relationship value, so a text search cannot tell a keyed mutation from an
-    unkeyed one that happens to carry a resolved peer.
+    `_generate_input_data` is where the SDK renders a whole node, and its `["data"]["data"]`
+    is the mapping the convergent upsert is built from. Recording here rather than
+    regex-scraping the rendered query is what makes "carries `id` or `hfid`" a decidable claim:
+    `id:` also occurs inside every relationship value, so a text search cannot tell a keyed
+    mutation from an unkeyed one that happens to carry a resolved peer.
+
+    The replace-set flush does **not** render through here (AD088): re-rendering the whole node
+    is exactly what it must not do. Assertion 4 reads the flush off the wire instead.
     """
     rendered: list[tuple[str, dict[str, Any]]] = []
     real = InfrahubNodeSync._generate_input_data
@@ -281,6 +305,19 @@ def rendered_relationship_ids(query: str, rel_name: str) -> list[str] | None:
     return re.findall(r'id:\s*"([^"]+)"', match.group(1))
 
 
+def mutation_input_fields(query: str) -> list[str]:
+    """The field names inside a rendered mutation's top-level `data: { ... }` input block.
+
+    `Mutation.render` puts the mutation name at four spaces, `data: {` at eight and each field
+    of that block at twelve (`infrahub_sdk/graphql/query.py:54-64` with
+    `render_input_block`), so the field names are the keys at exactly that depth. Reading them
+    off the wire rather than off `_generate_input_data` is the point: assertion 4's claim is
+    about the mutation the flush **issues**, and after AD088 the flush does not render through
+    `_generate_input_data` at all.
+    """
+    return re.findall(r"^ {12}(\w+):", query, flags=re.MULTILINE)
+
+
 def event_index(client: ConformanceClient, name: str, predicate: Any = None) -> int:  # noqa: ANN401
     """The index of the first matching event on the client's log, or -1."""
     for index, (event_name, payload) in enumerate(client.events):
@@ -311,12 +348,17 @@ def seeded_adapter(**existing: list[str]) -> tuple[ConformanceClient, InfrahubAd
 # ---------------------------------------------------------------------------------------
 
 
-def test_the_committed_fixture_holds_both_human_friendly_id_shapes() -> None:
-    """The precondition every assertion below rests on (Trap 4, AD067).
+def test_the_committed_fixture_holds_the_shapes_every_assertion_needs() -> None:
+    """The precondition every assertion below rests on (Trap 4, AD067, AD088).
 
     A fixture drifting to all-direct kinds only would leave assertion 2 vacuous and remove the
     one thing that exercises AD051's second arm — while the suite stayed green. So the shapes
     are asserted rather than assumed.
+
+    The same holds for the relationship shapes on `ConfTeam`. Assertion 4 is vacuous unless the
+    kind under replace-set also carries an **optional cardinality-one** relationship no
+    operation maps: that is the shape the destination library nulls, and a fixture without it
+    is why the defect AD088 fixes was invisible here for a whole delivery.
     """
     for kind in ALL_DIRECT_KINDS:
         components = SCHEMAS[kind].human_friendly_id or []
@@ -329,6 +371,23 @@ def test_the_committed_fixture_holds_both_human_friendly_id_shapes() -> None:
     assert any("__" in component.removesuffix("__value") for component in crossing), (
         f"{DEVICE_KIND} must carry a human-friendly-ID component that crosses a relationship, got {crossing}"
     )
+
+    team_relationships = {rel.name: rel for rel in SCHEMAS[TEAM_KIND].relationships}
+    assert team_relationships[REPLACED_RELATIONSHIP].cardinality == "many", (
+        f"{TEAM_KIND}.{REPLACED_RELATIONSHIP} must be the cardinality-many relationship the replace-set acts on."
+    )
+    unmapped = team_relationships[UNMAPPED_RELATIONSHIP]
+    shape_message = (
+        f"{TEAM_KIND}.{UNMAPPED_RELATIONSHIP} must be an OPTIONAL CARDINALITY-ONE relationship — the shape "
+        f"assertion 4 exists for (AD088) — got cardinality={unmapped.cardinality!r} optional={unmapped.optional!r}."
+    )
+    assert unmapped.cardinality == "one", shape_message
+    assert unmapped.optional, shape_message
+    assert not any(
+        reference.field == UNMAPPED_RELATIONSHIP
+        for _description, operation in ALL_DIRECT_OPERATIONS
+        for reference in operation.relationships or ()
+    ), f"No operation in this harness may map {TEAM_KIND}.{UNMAPPED_RELATIONSHIP}; that is what makes it unmapped."
 
 
 # ---------------------------------------------------------------------------------------
@@ -423,7 +482,7 @@ def test_the_replace_set_re_reads_the_destination_and_flushes_an_update() -> Non
 
     assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"], (
         "The convergent upsert, then exactly one flush, and the flush is an update rather than a "
-        "second upsert (infrahub_sdk/node/node.py:1872 against :1845)."
+        "second upsert (infrahub_sdk/node/node.py:1845 renders the latter)."
     )
     _, flush = client.mutations[1]
     assert rendered_relationship_ids(flush, "members") == ["conf-tag-id-2", "conf-tag-id-3"], (
@@ -443,11 +502,13 @@ def test_the_replace_set_re_reads_the_destination_and_flushes_an_update() -> Non
 def test_an_empty_peer_list_is_issued_as_an_emptied_set() -> None:
     """AD085: `peers: []` under `cardinality: many` survives the flush as `[]`.
 
-    The case that separates `node.update(do_full_update=True)` from a plain `node.save()`. A
-    plain save renders with unmodified-field stripping on; the create payload already wrote
-    `[]` for the same field, so the rendered value matches, the key is popped, and the emptied
-    set never leaves the process **while the mutation name stays identical**. The rendered
-    relationship value is the only observable that tells them apart.
+    The case that decides the flush's form. A plain `node.save()` renders with unmodified-field
+    stripping on; the create payload already wrote `[]` for the same field, so the rendered
+    value matches, the key is popped, and the emptied set never leaves the process **while the
+    mutation name stays identical**. The rendered relationship value is the only observable that
+    tells them apart — and the targeted flush AD088 specifies writes it explicitly rather than
+    leaving it to survive a comparison, which is what keeps this case passing alongside
+    assertion 4.
     """
     client, adapter, peers = seeded_adapter(members=["conf-tag-id-1", "conf-tag-id-2"])
 
@@ -461,7 +522,40 @@ def test_an_empty_peer_list_is_issued_as_an_emptied_set() -> None:
 
 
 # ---------------------------------------------------------------------------------------
-# Assertion 4 — repeat-render identity (AD068)
+# Assertion 4 — the flush touches no unmapped destination field (AD088)
+# ---------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("peer_names", [["tag-b", "tag-c"], []], ids=["a non-empty replace", "an emptied set"])
+def test_the_flush_names_only_the_relationship_fields_being_replaced(peer_names: list[str]) -> None:
+    """AD088: the flush is a **targeted** relationship write, not a re-render of the node.
+
+    `ConfTeam` carries an optional cardinality-one `owner` that no operation here maps. A flush
+    that re-renders the whole node emits `owner: null` for it — the SDK does that deliberately
+    for an uninitialized optional cardinality-one relationship on a node it considers existing,
+    and the convergent upsert marks the node existing — so applying any relationship-bearing
+    operation would clear the destination's `owner`. FR-013 forbids exactly that: an update
+    payload "MUST NOT touch unmapped destination fields".
+
+    Both replace shapes are asserted, because the emptied set is the case AD085 exists for and
+    the one a naive narrowing of the payload is most likely to drop.
+    """
+    client, adapter, peers = seeded_adapter(members=["conf-tag-id-9"])
+
+    adapter.apply_planned_operation(operation=team_operation(peer_names), peers=peers)
+
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"]
+    _, flush = client.mutations[1]
+    fields = mutation_input_fields(flush)
+    assert sorted(fields) == sorted(["id", REPLACED_RELATIONSHIP]), (
+        f"{UNMAPPED_FIELD_MESSAGE}\n\nThe flush named {sorted(fields)}; it may name only 'id' and "
+        f"{REPLACED_RELATIONSHIP!r}. Rendered mutation:\n{flush}"
+    )
+    assert f"{UNMAPPED_RELATIONSHIP}:" not in flush, f"{UNMAPPED_FIELD_MESSAGE}\n\nRendered mutation:\n{flush}"
+
+
+# ---------------------------------------------------------------------------------------
+# Assertion 5 — repeat-render identity (AD068)
 # ---------------------------------------------------------------------------------------
 
 

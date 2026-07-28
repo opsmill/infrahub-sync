@@ -36,7 +36,7 @@ run's critique loop, at which the decisions were confirmed and the run released 
 Ratification does not discard each decision's **revisit set** — the requirements that must be
 re-examined if the decision is ever reopened — because that set is what makes a reopening tractable:
 AD001 → FR-002, FR-004, FR-005, FR-010, FR-019; AD002 → FR-003, FR-021; AD003 → FR-002, FR-014;
-AD004 → FR-015, FR-016; AD005 → FR-008. The revisit set for each of AD008–AD087 is the requirements
+AD004 → FR-015, FR-016; AD005 → FR-008. The revisit set for each of AD008–AD088 is the requirements
 whose `[ADnnn]` reference cites it. Two of the later decisions carry a wider set and are called out:
 reopening **AD055** reopens FR-016, FR-017, FR-020, SC-007 and User Story 4 to the failed-run reading
 and returns DBR-016 and DBA-007 to the brief's own derivation; reopening **AD056** reopens FR-006's
@@ -1025,7 +1025,12 @@ is why its closure was verified by a narrow check against the library rather tha
   **merges** — the case this enforcement exists for — the surplus is computed and discarded.
   **Amended by AD085**: the conclusions above stand, but the flush is a **full** update rather than a plain
   node save, because the default suppression of unchanged fields drops a peer set reconciled to empty.
-  `[AD075]`
+  **Amended again by AD088**: the conclusions above still stand, but neither form of a whole-node update is
+  the flush. Both render the whole node, and that render nulls every unmapped optional cardinality-one
+  relationship of a node the library considers existing — so the flush becomes a targeted write of the
+  replaced relationship fields alone. **The defect was latent in this decision's own design, not introduced
+  by AD085**: this decision specified the flush as a write *of the node*, and the null follows from that
+  under either suppression setting. `[AD075]`
 - Q: The keyedness gate is specified as a branch on the destination kind's convergence-key shape, read on
   the rendered mutation input. Are both halves right? → A: **Neither is, and both are corrected.** First,
   the gate is **stricter than the claim it serves** for a kind that declares no convergence key at all:
@@ -1142,7 +1147,13 @@ else: no requirement, criterion, scope or guarantee moves.
   real schema — not on a mocked adapter call, which is what let the defect through the first time. And an
   **SDK-boundary tripwire** must fail loudly, naming this decision, if the library's stripping behaviour
   changes, because the dependency is pinned as a version range and the behaviour is undocumented internals.
-  `[AD085]`
+  **Amended by AD088**: the reading of the stripping recorded here is correct and stands, but the remedy is
+  withdrawn. The full form of the update suppresses nothing *and* re-renders the whole node, which nulls
+  every unmapped optional cardinality-one relationship; the flush becomes a targeted write of the replaced
+  relationship fields instead. **AD088 also corrects the attribution of that null: it did not arrive with
+  this decision.** The null goes out under a plain save too, so it was present from AD075's original flush;
+  what this decision changed is which suppression setting the whole-node render runs under, and the null is
+  independent of that setting. `[AD085]`
 
 ### Session 2026-07-28 — the write surface as a type, and a shipped release note
 
@@ -1184,6 +1195,52 @@ expands, removes or reassigns product scope; no requirement, criterion or guaran
   boundary this went past — documentation edits are limited to current documentation and never touch
   shipped release notes — was nowhere in the brief, and is reported to the planner as a brief gap.
   `[AD087]`
+
+### Session 2026-07-28 — the flush as a targeted write, amending AD085 and correcting its attribution
+
+One decision, raised by convergence assessment as a CRITICAL defect and closed by the brief owner. It
+**amends AD085's flush form**, **corrects the attribution of the defect**, and adds nothing that ships:
+no requirement, criterion, scope or guarantee moves, and no product scope is added, expanded, removed or
+reassigned.
+
+- Q: FR-013 carries two MUSTs that cannot both be satisfied. It requires the replace-set flush to "request
+  the full form of the update, which suppresses nothing" (AD085), and it requires that "an update payload
+  ... MUST NOT touch unmapped destination fields". The full form re-renders the whole node, and the
+  destination library renders `<rel>: null` for every **unmapped optional cardinality-one** relationship of
+  a node it considers existing — deliberately, to let a caller clear one — while the convergent write marks
+  the node existing. So every applied operation carrying a relationship silently clears destination fields
+  the plan never mapped. Which clause gives? → A: **AD085's does. The flush becomes a targeted write of the
+  replaced relationship fields — the node's identifier plus the cardinality-many fields being replaced, and
+  nothing else — and never a re-render of the node.** Both prior clauses are named in FR-013 as having
+  contradicted each other, so the contradiction is visible in the history rather than overwritten: the
+  withdrawn clause is AD085's "request the full form of the update, which suppresses nothing"; the clause it
+  contradicted is FR-013's own "MUST NOT touch unmapped destination fields". A targeted write satisfies both
+  at once — an emptied peer set is written explicitly rather than left to survive a comparison, so nothing is
+  suppressed, and no unmapped field is in the payload to be nulled. **Pre-initialising or restoring the
+  unmapped relationships before a whole-node update is rejected**: it treats the symptom, and it would make
+  the guarantee depend on first reading every unmapped relationship of the destination object.
+  **Everything AD065 and AD075 established is unchanged**: the destination peer set is still re-read cold
+  before comparison, the write is still issued once after the loop, and it is still issued for the object
+  whose manager was reconciled. The write is still an ordinary update of the already-written object rather
+  than a repeat of the convergent write.
+  **The attribution in the convergence finding was wrong and is corrected here. AD085 did not introduce
+  this; it was latent in AD075's original design.** Both paths were verified independently. Under a plain
+  save (suppression on) the null still goes out: the first stripping loop does not pop the field, because
+  that pop needs a non-optional related-node or a relationship manager and an uninitialized optional
+  cardinality-one relationship is neither; and the second loop never visits it, because an unmapped field is
+  absent from the original data that loop compares against. Under the full update (suppression off) nothing
+  is stripped at all. The null is therefore independent of the suppression setting, and what AD085 changed
+  was only that setting. AD075 specified the flush as a write **of the node**, and the null follows from
+  that alone.
+  Two test obligations follow, and the first constrains a **fixture** as much as an assertion. The offline
+  conformance check must assert that the issued flush names no destination field the operation did not map,
+  and its committed schema fixture must therefore declare, on the kind under replace-set, at least one
+  optional cardinality-one relationship no operation maps — the existing fixtures declared only a
+  cardinality-many relationship, which is exactly why the harness could not see this. And the SDK-boundary
+  tripwire AD085 asked for is **re-pointed** at the render behaviour this decision depends on, with a
+  failure message that says plainly that the library's render behaviour has changed and names the decisions
+  resting on it. That render has now produced two defects on this one path, so the tripwire is pinned there
+  rather than at the suppression behaviour, which no shipped call now depends on. `[AD088]`
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -1784,11 +1841,28 @@ references.
   reconciliation is complete, and it MUST be an ordinary update of the node just written rather than a
   repeat of the convergent write: by that point the node is already known to exist, so an ordinary update
   is what carries the reconciled relationship.
-  **That update MUST carry every reconciled field, including a peer set reconciled to empty.** By default
-  the destination library suppresses fields it judges unchanged, and it judges an emptied peer set
-  unchanged against the payload the convergent write was built from — so the default form of the update
-  drops it, and a plan that says to empty a peer set would leave the destination's peers in place. The
-  enforcement MUST therefore request the full form of the update, which suppresses nothing. *(per AD085)*
+  **That update MUST carry every reconciled field, including a peer set reconciled to empty — and it MUST
+  carry nothing else (AD088, amending AD085).** By default the destination library suppresses fields it
+  judges unchanged, and it judges an emptied peer set unchanged against the payload the convergent write
+  was built from — so the default form of the update drops it, and a plan that says to empty a peer set
+  would leave the destination's peers in place. **From that, AD085 concluded that "the enforcement MUST
+  therefore request the full form of the update, which suppresses nothing", and that clause is withdrawn.**
+  Read against this requirement's own second clause — "an update payload is authoritative for the mapped
+  fields it carries and MUST NOT touch unmapped destination fields" — it was unsatisfiable, and the two
+  MUSTs are named here rather than quietly reconciled. Requesting the full form of a node's update means
+  re-rendering the whole node, and the destination library deliberately renders a **null** for every
+  **unmapped optional cardinality-one** relationship of a node it considers existing, precisely so that a
+  caller can clear one; the convergent write marks the node existing, so the full form writes a null over
+  every such field the plan never mapped. Suppressing nothing and touching nothing unmapped cannot both be
+  had from a whole-node render.
+  The enforcement MUST therefore be a **targeted write of the relationship fields being replaced** — the
+  node's own identifier and those fields, and no other field of the node — rather than any form of a
+  whole-node update. That satisfies both clauses at once: nothing is suppressed, because an emptied peer set
+  is written explicitly rather than left to survive a comparison against the convergent write's payload; and
+  no unmapped field is touched, because no unmapped field is in the payload at all. Pre-initialising or
+  restoring the unmapped fields before a whole-node update MUST NOT be used instead — that treats the
+  symptom, and it makes the guarantee depend on having first read every unmapped relationship of the
+  destination object. *(flush per AD075, its form per AD085 as amended by AD088)*
   **The write MUST be issued for the same object whose peer set was reconciled.** A write issued for any
   other representation of the destination object carries that representation's own unreconciled peer set —
   the desired set, never compared against the destination's — so the reconciliation is discarded exactly as
@@ -1806,7 +1880,7 @@ references.
   additive ordering is a pre-existing defect and MUST be left exactly as it is: correcting it there would
   change what the existing mutating command does to destination relationships, which this outcome does not
   authorize and no requirement, criterion or documentation entry here describes. It is recorded as work for
-  a later outcome. *(per AD070)* `[AD065]` `[AD070]` `[AD075]` `[AD085]`
+  a later outcome. *(per AD070)* `[AD065]` `[AD070]` `[AD075]` `[AD085]` `[AD088]`
   An update payload is authoritative for the mapped fields it carries and MUST NOT touch
   unmapped destination fields. Two consequences of that mandated write path are recorded here rather
   than left to inference. First, a planned `create` whose destination identity already exists converges
@@ -1831,10 +1905,15 @@ references.
   reconciled peer set is then **issued to the destination** — a write carrying the reconciled list, made for
   the same object the reconciliation acted on, and taking the form of an ordinary update of the object
   already written rather than a repeat of the convergent write — **including where the plan reconciles a
-  peer set to empty**, which is the case the default suppression of unchanged fields would drop, and assert that
+  peer set to empty**, which is the case the default suppression of unchanged fields would drop, assert that
+  that write **names no destination field the operation did not map** (AD088), and assert that
   applying the same operation twice renders **byte-identical** mutation inputs. The flush assertion is the
   fourth of these for the same reason the read assertion is the second: without it, an enforcement that
-  reconciles in memory and issues nothing satisfies every other assertion in the set. Keyedness is asserted as two
+  reconciles in memory and issues nothing satisfies every other assertion in the set. The unmapped-field
+  assertion is the fifth for a reason of its own, and it constrains the **fixture** rather than only the
+  assertion: it is vacuous unless the schema fixture declares, on the kind under replace-set, at least one
+  **optional cardinality-one** relationship that no operation in the check maps. A fixture carrying only a
+  cardinality-many relationship cannot see this defect class at all, which is how one reached the tree. Keyedness is asserted as two
   cases, not one: for a kind whose convergence key is composed of its own direct attributes it MUST hold,
   and for a kind whose key crosses a relationship the same assertion is made and marked a **strict expected
   failure** against the recorded risk, so it reports the limitation today and turns into a suite failure the
@@ -1844,7 +1923,8 @@ references.
   AD015, create-on-no-match consequences per AD025, verification route per AD036, convergence-key payload
   per AD042, explicit replace-set enforcement per AD038, offline conformance check per AD045 as rebuilt by
   AD054, the read-not-order observable per AD065, the keyedness split per AD067, the repeat assertion per
-  AD068, the flush observable per AD075, the empty-set case per AD085)* `[AD015]`
+  AD068, the flush observable per AD075, the empty-set case per AD085, the unmapped-field assertion and the
+  fixture shape it needs per AD088)* `[AD015]`
   `[AD025]` `[AD036]` `[AD038]` `[AD042]`
   `[AD045]` `[AD054]` `[AD065]` `[AD067]`
   `[AD068]`
@@ -2801,6 +2881,18 @@ the runtime enforcement it declines to absorb is reported to the planner rather 
 on the ground that a shipped note records what a release claimed and is not where a claim is quietly
 amended. Both scope boundaries they went past — how a non-conforming destination is detected, and which
 documentation a delivery may edit — were absent from the brief and are reported as brief gaps.
+
+One last decision, **AD088**, was ratified after a convergence assessment found the delivery's one CRITICAL
+defect, and is carried in the [targeted write](#session-2026-07-28--the-flush-as-a-targeted-write-amending-ad085-and-correcting-its-attribution)
+session. It **amends AD085's flush form** and nothing else, and it adds nothing that ships beyond changing
+what one write sends: the flush becomes a targeted write of the replaced relationship fields instead of a
+whole-node update, because a whole-node render nulls every unmapped optional cardinality-one relationship
+and FR-013 forbids touching an unmapped field. It resolves a contradiction **inside FR-013** — two MUSTs
+that could not both hold — and names both of them rather than overwriting one. It also **corrects an
+attribution**: the defect was latent in AD075's original design and did not arrive with AD085, because the
+null goes out under both of the library's render modes. Its two test obligations are an assertion that the
+issued flush names no unmapped field, the fixture shape that assertion needs, and an SDK-boundary tripwire
+re-pointed from the suppression behaviour to the render behaviour.
 
 Nothing here remains open. What remains genuinely deferred is not a design commitment:
 
