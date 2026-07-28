@@ -2,221 +2,243 @@
 description: "Implementation report — saved plan artifact and apply-exactly-what-was-reviewed"
 ---
 
-# Implementation report — BLOCKED
+# Implementation report — COMPLETE
 
 **Feature**: `001-plan-artifact-saved-apply-infp-653`
 **Spec dir**: `/Users/blake/repos/opsmill/infrahub-sync-run3/dev/specs/001-plan-artifact-saved-apply`
-**Base commit (resume point)**: `5c05414`
-**Head commit**: `d02ca6a`
+**Base commit (resume point)**: `92ce0dc`
+**Head commit**: `3c7e233`
+**Commits added**: 10 (8 implementation + 2 review remediation)
+**Tasks**: **90 / 90 `[X]`** — none blocked, none deferred
+**Suite**: **681 passed, 11 skipped, 1 xfailed** (from a 521 passed / 3 skipped base)
 **Decision mode**: CHECKPOINT
-**Run status**: **BLOCKED** — a new material decision surfaced in Phase E and, per the CHECKPOINT
-contract, dependent work stopped rather than proceeding on an implementer's judgment call.
 
-This run resumed after a client disconnect. T001–T023 were already `[X]` and committed; five further
-chunks landed here, taking the tree from 23 to 50 of 90 tasks before the block.
+This run resumed at T047 after the brief owner resolved the block recorded in the previous report
+(AD085: the replace-set flush is `node.update(do_full_update=True)`, committed at `92ce0dc`). It
+completed the Phase E test tail, Phase F (CLI review mode and apply rewiring), Phase G (docs,
+fixtures, project gate) and Phase H (live evidence, `integration`-marked), then ran a six-lens review
+and remediated its findings.
 
 ## 1. Chunk ledger
 
-| # | Chunk | Tasks | Outcome | Commit |
+Chunks were dispatched one at a time — never in parallel — because they share files.
+
+| # | Chunk | Tasks | Yes | Partial | Blocked | Commit |
+|---|---|---|---|---|---|---|
+| 1 | Phase E impl tail | T047, T048, T066, T049 | 4 | 0 | 0 | `cfa830e` |
+| 2 | Phase E tests, part 1 | T050–T053 | 4 | 0 | 0 | `54eb2c4` |
+| 3 | Phase E tests, part 2 | T054, T055, T056, T081, T057 | 5 | 0 | 0 | `b26b349` |
+| 4 | Phase F implementation | T058, T059, T086, T088 | 4 | 0 | 0 | `573593f` |
+| 5 | Phase F tests | T061–T065, T087, T089, T090 | 8 | 0 | 0 | `aa52a5a` |
+| 6 | Phase G docs and fixtures | T067–T071, T091 | 6 | 0 | 0 | `b0fa785` |
+| 7 | Phase H live evidence | T074–T080 | 7 | 0 | 0 | `fc8a312` |
+| 8 | Phase G tail | T072, T073 | 2 | 0 | 0 | `d4e2718` |
+| R1 | Review remediation — source | 4 findings | 4 | 0 | 0 | `b759ac4` |
+| R2 | Review remediation — docs, test gaps | 6 findings | 6 | 0 | 0 | `3c7e233` |
+
+Notable things chunks flagged upward:
+
+- **Chunk 1** — `ApplyRecord` was given a home in `infrahub_sync/plan/models.py` (no artifact text
+  assigned one), and a missing write surface surfaces as `PlanVerificationError` naming the adapter
+  rather than a separate `NotImplementedError`. T055's own wording says the verifier produces that
+  name, so this reconciles T048 with T055 rather than departing from either.
+- **Chunk 3** — T081 assertion 2 is a **strict xfail**, which is what AD067 specifies. Confirmed to
+  xfail at the keyedness assertion itself, not incidentally.
+- **Chunk 4** — T088 was largely pre-delivered by Phases S and B–E; the task reads as more work than
+  actually remained.
+- **Chunk 5** — T065's blanket "all nine refusals assert `failed` from `run.json`" cannot hold for
+  SC-011: the contract requires that case to create **no run directory**, so there is no sidecar to
+  read. `tasks.md` and the contract disagree; the contract was followed.
+- **Chunk 6** — the sweep found the five fixtures T067 names were **not** stale. The real stale
+  content was two false source docstrings and an example config.
+
+## 2. Tasks not completed
+
+None. All 90 task IDs are `[X]` in `tasks.md`, re-read and confirmed after every chunk.
+
+The Phase H tasks (T074–T080) are **authored, not satisfied**, exactly as AD045b prescribes — §3.
+
+## 3. Local-pass evidence
+
+Aggregated per file rather than per test: this run added roughly 200 tests, and a 200-row table would
+obscure rather than evidence. Every row was executed on the final tree at the timestamp shown and
+carries the runner's verbatim tail. No row is `MISSING`.
+
+Environment for every row: macOS darwin 25.5.0, Python 3.12.2, pytest 9.0.2, dependencies via
+`uv sync --extra dev`, repo `/Users/blake/repos/opsmill/infrahub-sync-run3`. Offline — no Infrahub,
+NetBox or Nautobot reachable, and none required.
+
+| Test file | Type | Run command | Passed at (UTC) | Verbatim tail |
 |---|---|---|---|---|
-| 1 | Phase C tail — reader / verifier / review tests | T024–T027 (4) | 4 ✅ | `0879204` |
-| 2 | Phase D — derivation and engine wiring | T028–T035 (8) | 8 ✅ | `1c8061b` |
-| 3 | Phase D tests, part 1 | T036–T041 (6) | 5 ✅, 1 ⚠️ | `0825b0b` |
-| 4 | Phase D tests, part 2 | T082–T085 (4) | 4 ✅ | `ac8c61d` |
-| 5 | Phase E — write surface and peer resolution | T042–T046 (5) | 5 ✅ + escalation | `d02ca6a` |
-| 6–15 | Phase E tests, F, G, H, project gate | 40 tasks | **not dispatched** — blocked | — |
+| `tests/adapters/test_infrahub_planned_write.py` | unit | `uv run pytest <file> -q` | 2026-07-28T05:15:33Z | `29 passed in 0.32s` |
+| `tests/test_cli_plan_review.py` | unit/CLI | `uv run pytest <file> -q` | 2026-07-28T05:15:33Z | `90 passed in 18.71s` |
+| `tests/plan/test_apply_conformance.py` | unit | `uv run pytest <file> -q` | 2026-07-28T05:15:33Z | `11 passed, 1 xfailed in 0.31s` |
+| `tests/plan/test_config_version.py` | unit | `uv run pytest <file> -q` | 2026-07-28T05:15:33Z | `41 passed in 0.18s` |
+| `tests/test_sc010_credential_canary.py` | unit | `uv run pytest <file> -q` | 2026-07-28T05:15:33Z | `6 passed in 0.37s` |
+| `tests/cache/test_apply_plan.py` | unit | `uv run pytest <file> -q` | 2026-07-28T05:15:33Z | `9 passed in 0.15s` |
+| `tests/plan/test_models.py` | unit | `uv run pytest <file> -q` | 2026-07-28T05:15:33Z | `78 passed in 0.17s` |
+| `tests/test_live_fixture_preconditions.py` | unit | `uv run pytest <file> -q` | 2026-07-28T05:15:33Z | `5 passed in 0.19s` |
+| `tests/plan/test_review.py` | unit | `uv run pytest <file> -q` | 2026-07-28T05:15:33Z | `25 passed in 1.39s` |
+| `tests/integration/test_saved_plan_apply_integration.py` | integration | `uv run pytest -m integration <file>` | **deferred — no live destination (AD007, AD045b)** | `8 skipped in 0.19s` |
 
-Every commit SHA above was verified with `git log`; every checkbox transition was verified by
-re-reading `tasks.md`; every headline test count was re-run by the orchestrator rather than taken
-from a subagent's self-report.
-
-## 2. The block
-
-A Phase E worker returned `ESCALATION: NEW MATERIAL DECISION`. The orchestrator verified the claim
-against the real SDK rather than relaying it, and it is **correct — and broader than reported**.
-
-**The collision.** Two ratified pins cannot both hold:
-
-- **AD075** pins the replace-set flush to a **plain `node.save()`**, and states the mechanism as
-  "`_strip_unmodified` **keeps** the relationship because `has_update` is true (`:352`, `:362`)".
-- **T046**, **T051**, `contracts/destination-write-surface.md:239` and
-  `contracts/plan-artifact-format.md:96` all pin that **`peers: []` under `cardinality: "many"`
-  means empty the set and the replace-set acts on it**, with the **issued destination write** as the
-  observable.
-
-**Why they collide.** `_strip_unmodified`'s `has_update` arm
-(`.venv/…/infrahub_sdk/node/node.py:352`, `:362`) runs in the *first* loop and only decides the
-not-updated case. A *second* loop (`:365-370`) then pops any key whose rendered value equals the
-node's `_data` — and `_data` is the create payload, where `generate_payload_create` wrote `[]` for
-the same field (`.venv/…/infrahub_sdk/schema/__init__.py:178-181`).
-
-**Orchestrator's own falsification run** (real `InfrahubNodeSync` over a real `NodeSchemaAPI`, plain
-save, `exclude_unmodified=True`):
+Full suite, three consecutive runs on the final tree:
 
 ```text
-has_update: True   peer_ids after empty: []
-UPDATE render data: {'data': {'id': 'node-1'}, ...}
-'members' present in emptied update render: False
-non-equal _data case, 'members' present: False None
+681 passed, 11 skipped, 1 xfailed, 3 warnings in 25.07s
+681 passed, 11 skipped, 1 xfailed, 3 warnings in 25.06s
+681 passed, 11 skipped, 1 xfailed, 3 warnings in 24.75s
 ```
 
-The emptied relationship is absent from the flush in **both** the equal-`_data` case the worker
-identified **and** the differing-`_data` case it did not. So emptying a peer set never reaches the
-destination under a plain save, and `T051`'s empty-`peers` case cannot pass on the issued-write
-observable as currently specified.
+### The one xfail and the eleven skips
 
-**The candidate resolution the worker declined to take unilaterally**, quoted verbatim:
+- **1 xfailed** — `test_a_relationship_crossing_kind_renders_a_keyed_mutation`, a **strict** xfail
+  mandated by AD067. It self-retires if the SDK ever renders that case keyed.
+- **11 skipped** — 3 pre-existing, plus the 8 Phase H `integration` tests.
 
-> The one-line resolution I did **not** take, because it deviates from step 2/3's written pseudocode
-> (`data[ref.field] = ids`): omit an empty cardinality-many reference from `data` before
-> `generate_payload_create`, so `_data` carries no such key, the equality never fires, and the flush
-> carries `members: []`. It is arguably the reading most consistent with step 7's own premise — the
-> empty set is the replace-set's job, "enforced, not assumed of the upsert" — but it changes what the
-> upsert payload contains, so it is yours to decide. As shipped, T051's empty-`peers` case will fail
-> on the issued-write observable.
+### Phase H is authored, not satisfied
 
-This changes what the upsert payload contains, or else changes a ratified flush pin. Either is
-material, so under CHECKPOINT it returns to the decision owner. There is no second decision gate.
+`uv run pytest -m integration -q` reports `11 skipped, 682 deselected`. Per AD007 no live Infrahub is
+reachable here, and per **AD045b** these tests produce no evidence in this environment. **SC-001,
+SC-002, SC-003, SC-008 and the live halves of SC-007 and SC-016 remain without passing evidence, and
+the brief's completion condition is unmet at merge.** This belongs in the merge notes.
 
-## 3. Tasks not completed
+Nothing was mocked to stand in for a live destination. A reviewer audited specifically for this and
+confirmed the patches in that file (`Adapter.diff_from` / `sync_from` patched to **raise**) are
+assertion mechanisms, not substitutes.
 
-**40 of 90 remain `[ ]`**: T047, T048, T049, T050, T051, T052, T053, T054, T055, T056, T057, T058,
-T059, T061, T062, T063, T064, T065, T066, T067, T068, T069, T070, T071, T072, T073, T074, T075,
-T076, T077, T078, T079, T080, T081, T086, T087, T088, T089, T090, T091.
+CI command to produce the missing evidence, against a **disposable** Infrahub:
 
-Reason for all forty: **not dispatched.** The block landed at the Phase E boundary and every one of
-them is downstream of the unresolved write-surface question — the Phase E test chunks assert the
-flush directly (T051, T081), and F, G and H build on the surface those tests are meant to pin.
-Dispatching them would have meant a worker silently picking one side of the collision.
+```bash
+export INFRAHUB_ADDRESS=... INFRAHUB_API_TOKEN=... NETBOX_URL=... NETBOX_TOKEN=...
+uv sync --extra dev
+uv run pytest -m integration tests/integration/test_saved_plan_apply_integration.py
+```
 
-**One task is `[X]` but only partially satisfied — T037.** The worker reported `⚠️ partial` and
-ticked it anyway. Its remaining clause asks the incremental run's apply to record
-`summary["skipped_delete_count"] == 0`, which is a **Phase E** observable ordered into a Phase D
-task: `Potenda.apply_plan` is still the pre-existing parquet dispatcher
-(`infrahub_sync/potenda/__init__.py:443-472`) and `ApplyRecord` lands at T047. The worker asserted
-the decidable precondition instead (`SavedPlan.summary().deletes_not_executed == 0`). This must be
-closed once T047/T054/T065 exist; it should not be read as done.
+## 4. Review findings
 
-T060 is `~~DROPPED~~` by AD063 and is correctly excluded from the 90.
+Six lenses ran over `92ce0dc..HEAD` (code, errors, tests, types, comments; simplify folded in).
 
-## 4. Local-pass evidence
+| Severity | Area | Finding | Disposition |
+|---|---|---|---|
+| High | `cli.py` apply arms | An interrupt mid-apply left `run.json` at `status="running"`, `summary={}` while writes had already landed — `BaseException` passed through both `except Exception` guards | Fixed `b759ac4` |
+| High | `cli.py` refusals | Every designed apply refusal reached the operator as a raw traceback instead of `print_error_and_abort` | Fixed `b759ac4` |
+| High | `potenda` dispatch | The write boundary is dispatched via `getattr` and typed `Any`, so `ty` checks nothing about the call | **Escalated** — material design decision |
+| High | `potenda` cast | `cast("InfrahubAdapter", ...)` narrows on a `hasattr` gate, so a duck-typed destination passes the pre-write refusal and dies mid-apply | **Escalated** — material design decision |
+| Critical (docs) | `cache-layout.mdx` | Documented an `apply` refusal on schema-sub-hash drift that never happens | Fixed `3c7e233` |
+| High (docs) | 5 sites | "The engine collects these" misdescribes the delete-decline mechanism — the engine pre-filters and never dispatches a delete | Fixed `3c7e233` |
+| Medium | `cli.py` invariant arm | `ApplyRecordInvariantError` merged an **empty** record on a run that had written everything | Fixed `b759ac4` |
+| Medium | `models.py` | `ApplyRecord` allowed `skipped_delete_count` to contradict its own list, and negative counts | Fixed `b759ac4` |
+| Medium | `cli.py` renderer | The AD043 nested-peer identity renderer was entirely untested | Fixed `3c7e233` |
+| Medium | integration fixture | `assert_convergence_key_is_supplied` claimed to be exercised offline and was not | Fixed `3c7e233` |
+| Medium | `potenda` config version | `_apply_config_version`'s no-config refusal was untested | Fixed `3c7e233` |
+| Medium | `potenda` broad except | Erases `PeerNotFoundError`'s class and emits two competing next actions | Deferred — §5 |
+| Medium | `errors.py` | `next_action` is enforced at construction, not class definition, so a forgetful subclass trades a missing remedy for a lost error | Deferred |
+| Low | 6 citations | Stale `file:line` references, one authored by this change | Fixed `3c7e233` |
+| Low | `cli.py` dead block | Inert schema-sub-hash check | **Left alone — AD063 ratified this** |
+| Low | misc | Untested completion line and empty-plan `--kind` arm; a layout-coupled assertion; a missing failure message on the SC-012 byte compare | Deferred |
 
-Every test added by chunks 1–4 was observed passing locally, and chunks 3 and 4 additionally
-demonstrated **falsifiability** — each test shown to fail when the behaviour it guards was reverted,
-with the production file restored afterwards. Full per-test node ids, commands, timestamps and
-verbatim pass lines are in the chunk reports; the aggregate, re-run by the orchestrator:
+### A measurement artifact worth recording
 
-| Test group | Type | Run command | Passed at | Environment | Verbatim pass line |
-|---|---|---|---|---|---|
-| `tests/plan/test_reader.py`, `test_verify.py`, `test_review.py` (71 cases, T024–T027) | unit | `uv run pytest -q` | 2026-07-27T20:50Z | macOS arm64, Python 3.12.2, pytest 9.0.2, `uv sync --extra dev` | `475 passed, 3 skipped, 3 warnings in 6.42s` |
-| `tests/cache/test_incremental_engine.py::test_side_full_extract_answers_per_side_on_a_mixed_run` (T031) | unit | `uv run pytest -q` | 2026-07-27T21:09Z | as above | `476 passed, 3 skipped, 3 warnings in 5.58s` |
-| `tests/test_potenda_plan_artifact.py` (20 cases, T036–T041) | unit | `uv run pytest -q` | 2026-07-27T21:26Z | as above | `496 passed, 3 skipped, 3 warnings in 5.60s` |
-| `tests/test_potenda_plan_artifact.py` (21 further cases, T082–T085) | unit | `uv run pytest -q` | 2026-07-27T21:41Z | as above | `517 passed, 3 skipped, 3 warnings in 5.93s` |
-| Whole suite, orchestrator re-run at the block | unit | `uv run pytest -q` | 2026-07-27T22:0xZ | as above | `517 passed, 3 skipped, 3 warnings in 6.13s` |
+Two reviewers initially reported the suite as flaky. It is not. The reviewers were mutating source in
+place to prove test resilience — as instructed — **concurrently with each other's test runs**. The
+contamination was reproduced directly (`git status` showing a modified source file mid-run), and one
+contaminated run surfaced an error string that exists nowhere in the repository. On a quiet tree the
+suite is deterministic: six consecutive runs, identical results. No action needed, but a future
+parallel review pass should give each mutating reviewer its own worktree.
 
-No `MISSING` rows. Chunk 5 added no repository tests by design (its assertions are T050–T057 and
-T081, not yet dispatched); it verified its work through throwaway scripts outside the repo and
-reported the observations, which is recorded here as implementation evidence, **not** as criterion
-evidence.
+## 5. Autonomous decisions
 
-**Integration-marked tests: NOT RUN.** `uv run pytest -q -m integration --collect-only` reports
-`1/518 tests collected (517 deselected)` — the single collected item is the pre-existing integration
-module, and it is deselected from the default run. Phase H, which authors the new `integration`
-tests, was never dispatched. Per AD007/AD045 no live Infrahub is reachable and nothing was
-substituted with a mock.
+Recorded with origin, per the CHECKPOINT protocol.
 
-## 5. Gate status
+1. **Chunk ordering — Phase H before Phase G's tail** *(governance)*. `tasks.md` orders G then H, but
+   T073 *is* the full project gate. Running it before Phase H added files would have made its result
+   stale on arrival. Order run: G's docs, then H, then T072/T073 — so the gate genuinely ran last.
+   Task order in `tasks.md` is otherwise unchanged.
+2. **Two high type findings escalated rather than fixed** *(governance)*. Replacing the `getattr`
+   dispatch with a `runtime_checkable` Protocol, and removing the `cast("InfrahubAdapter", ...)` by
+   moving `PeerResolver` ownership to the adapter, are design changes to the feature's central write
+   boundary — not low-impact reversible choices. Under CHECKPOINT they return to the brief owner.
+   Both are real: the second means a duck-typed non-Infrahub destination passes the pre-write
+   refusal FR-023 and AD058 exist to enforce, and fails mid-apply after writes have landed.
+3. **A published release note was edited** *(governance — flagged for reversal if unwanted)*.
+   `docs/docs/release-notes/infrahub-sync/release-2_0_0.mdx` carried the same false schema-sub-hash
+   refusal claim. One sentence was deleted. Leaving a falsehood in live user-facing docs seemed worse
+   than amending a historical note, but this is a call the brief owner may want to make differently;
+   it is one line and trivially revertible.
+4. **The refusal/defect split** *(inherent)*. "Designed refusal" was defined as *membership of the
+   `PlanArtifactError` taxonomy* rather than a hand-picked list, because that base class already
+   enforces a non-empty `next_action` (AD059) — membership already is the predicate. Everything
+   outside the taxonomy keeps its traceback.
+5. **`ApplyRecordInvariantError` gained a required `apply_record`** *(inherent)*, mirroring
+   `OperationApplyFailedError`; merging the real counts is not implementable without it.
+6. **One new `# ty: ignore[invalid-assignment]`** *(governance)* for attaching a record to a foreign
+   `BaseException`. It follows 13 pre-existing ignores in the same module and is *used*, so the
+   3-warning baseline is unchanged.
+7. **T091's "nine adapters other than Infrahub" corrected to eight** *(brief-gap)* — nine total,
+   eight others, corroborated by an existing assertion in the suite.
+8. **Deferred deliberately**: the broad-except class erasure in `potenda` and definition-time
+   `next_action` enforcement. Both are real, neither is load-bearing for this outcome, and both touch
+   error-taxonomy design that AD059 already ratified a shape for.
 
-- `uv run invoke format` — clean.
-- `uv run invoke lint` — exits **30 at pylint**, entirely **pre-existing** findings in
-  `infrahub_sync/` (all `C0415` in `potenda/__init__.py`). Score held at **9.71/10
-  (previous run: 9.71, +0.00)** across all five chunks; zero findings in any file this run created.
-  Ruff, yamllint and ty are each clean.
-- `uv run ty check .` — **exit 0, 3 diagnostics**, exactly the baseline: three
-  `unused-ignore-comment` warnings in `tests/adapters/test_nautobot_incremental.py`, all pre-existing
-  on `main`.
-- `pyproject.toml` — **no `[[tool.ty.overrides]]`** (verified: `grep -c` returns 0). None added.
-- `uv run rumdl check .` — clean, 80 files.
-- CLI sanity — `infrahub-sync --help` and `list --directory examples/` both exit 0.
-- `tests/adapters/` passes **unchanged** (26 passed, 2 skipped), and `update_node` is
-  **byte-identical** to `HEAD` (sha256 `552c6697…`, 81 lines, verified by AST extraction). The AD070
-  tripwire was not tripped.
+Nothing was returned as `NEEDS_INTAKE_REVISION`. No product scope was added, expanded, removed,
+softened or reassigned. Every out-of-scope item stayed out: no delete reaches the destination, no new
+CLI command group, no durable apply ledger, no configuration-version registry, no load-path scan
+replacement, no destination freshness or conflict policy, no branch review mode.
 
-## 6. Material technical decisions recorded
+## 6. Gate results
 
-| # | Decision | Origin |
-|---|---|---|
-| 1 | `tests/plan/artifact_fixtures.py` added as a shared non-test fixture module — several required shapes (`action: "purge"`, a `create` with no payload, a line count disagreeing with `operations_count`) cannot be built through `PlannedOperation` or `write_plan_artifact` and must be assembled at byte level | inherent |
-| 2 | Plain `uv sync` removes the `dev` extra, after which `uv run pytest` dies on unrecognised `--cov-report`/`--dist` in `addopts`; `uv sync --extra dev` is what works. AGENTS.md prescribes the former. **Not repaired** — flagged only | governance |
-| 3 | `write_plan_artifact` is invoked from `Potenda.write_plan` rather than from `cli.py` — the engine exposes no single "diff path" entry point and `write_plan` is exactly {diff cmd, serial sync cmd, no-tiers `sync_in_tiers`} | inherent |
-| 4 | FR-024 component matching is first-segment presence (`site__name__value` → identity key `site`); the stronger nested form is AD051's write-path gate at T045, deliberately not duplicated | inherent |
-| 5 | An identifier reference cycle raises `UnformableDestinationIdentityError` with an overridden next action rather than `RecursionError` | inherent |
-| 6 | An **empty** many-peer set on a field with exactly one declared candidate takes the mapping-declared kind (`derive.py:270-274`). Verified by the orchestrator as **not** the AD050 fallback: a *present* peer is always probed, and this arm only fires when there is no peer to probe. With more than one candidate it raises instead | inherent |
-| 7 | `SkippedDeleteOperation` lives in `infrahub_sync/plan/errors.py` deliberately **outside** `PlanArtifactError` — it is a control signal for a designed limitation and carries no `next_action` | brief-gap (placement only) |
-| 8 | Two new taxonomy members, `UnaccountedIdentityComponentError` and `UnkeyedWriteRefusedError` — the contracts pin the raise and the message but name no class | brief-gap (local) |
-| 9 | The resolver query passes `populate_store=False`; the SDK default `True` would read `client.store`, which FR-014 forbids | inherent |
-| 10 | Where the peer kind's HFID supplies no usable component the query falls back to the identity's direct scalars; the `<rel>__ids` fallback is **documented, not implemented** (the task verb is "Document") | brief-gap (local) |
-| 11 | The flush is issued only when the operation carries a cardinality-many reference | inherent |
+Re-run by the orchestrator, not taken on a worker's report.
 
-## 7. Escalations
+| Gate | Result |
+|---|---|
+| `uv run pytest -q` | **681 passed, 11 skipped, 1 xfailed** — deterministic over 3 consecutive runs |
+| `uv run pytest -m integration -q` | `11 skipped, 682 deselected` — clean skip, no destination |
+| `uv run ty check .` | exit **0**, exactly **3** pre-existing `unused-ignore-comment` warnings |
+| `grep -c "tool.ty.overrides" pyproject.toml` | **0** |
+| pylint | **9.73/10** (baseline 9.73) |
+| `uv run rumdl check .` | `Success: No issues found in 81 files` |
+| `uv run infrahub-sync --help` | exit 0, **byte-identical** to the committed SC-012 baseline |
+| `uv run infrahub-sync list --directory examples/` | exit 0, 14 syncs |
+| `uv run infrahub-sync diff --help` | the three review options present with contract-exact help text |
+| `generate` | exit 1, `ServerNotReachableError` — **excluded from the offline gate by AD079** |
 
-**One `ESCALATION: NEW MATERIAL DECISION`** — the empty-peer-set flush collision, quoted verbatim and
-verified in §2. This is what blocks the run.
+`uv run invoke lint` exits **30**. This is pre-existing and not caused by this feature: pylint emits
+one `E0213` (`no-self-argument`) at `infrahub_sync/__init__.py:98`, a file this branch never touches
+(last changed by `b25942a`, before the branch base). Pylint's exit code is a bitmask. The criterion
+that binds — the score — is met and unmoved. Deliberately not fixed: unrelated pre-existing lint is
+out of scope.
 
-**No `NEEDS_INTAKE_REVISION`** was returned by any worker. No product ambiguity was hit.
+### AD070 tripwire
 
-## 8. A settled point that turned out wrong against the real code
-
-The caller listed nine settled points and asked that any which proved wrong be quoted with anchors
-rather than worked around. **One did, in part — settled point 3 / AD075.**
-
-Its *conclusions* hold: the relationship manager genuinely has no `save`; `add`/`remove` genuinely
-are local only; the flush genuinely must be a plain `node.save()` on the node whose manager was
-reconciled, once after the loop; and the scoped-`client.get` variant is genuinely wrong. Chunk 5
-implemented all of that and demonstrated it end to end — the flush renders as `TestThingUpdate`, not
-`TestThingUpsert`, carrying the reconciled peer list.
-
-Its *stated mechanism* is incomplete. AD075 and `tasks.md:403` both assert that
-
-> `_strip_unmodified` **keeps** the relationship precisely because `has_update` is true (`:352`, the
-> relationship arm at `:362`)
-
-That is true for a **non-empty** reconciled set. It is false for an **emptied** one: the `has_update`
-arm is in the first loop and only decides the not-updated case, while a second loop at
-`.venv/…/infrahub_sdk/node/node.py:365-370` pops the key on equality with `_data` regardless. The
-orchestrator's falsification run above shows `'members' present in emptied update render: False`.
-
-The consequence is scoped and narrow — non-empty replace-sets are unaffected — but it is exactly the
-class of defect AD065/AD075 exist to catch, and it was found by running the code rather than by
-reading the artifacts.
-
-## 9. Repository state
+Verified at **every chunk boundary** and on the final tree, by AST extraction of the module-level
+`update_node` in `infrahub_sync/adapters/infrahub.py`:
 
 ```text
-$ git status --porcelain
-(clean)
-
-$ git log --oneline 5c05414..HEAD
-d02ca6a feat: add the destination planned-write surface and apply-time peer resolution
-ac8c61d test: pin the peer-kind probe, derivation failures, delete identity and the schema guard
-0825b0b test: cover plan derivation, tier ordering and re-plan determinism
-1c8061b feat: derive planned operations and write the plan artifact
-0879204 test: cover the plan reader, verifier and review surface
+lines: 109 - 189
+byte_sha256: 552c6697ca78be62bd7152061d48e48baa5d289131c2cc571fd5940d4b78bb92
+ast_sha256 : 81ae3d95cabed698a4d72de72a2e7e379fe171676025ab64ed05b35069179553
 ```
 
-Branch `001-plan-artifact-saved-apply-infp-653` throughout. Nothing pushed, no PR, no merge, no
-branch created or switched.
+Identical to baseline at all ten checks. The second clause also holds: the only file added under
+`tests/adapters/` is the new planned-write suite, and the pre-existing set still reports exactly its
+original **30 passed, 2 skipped**.
 
-## 10. Suggested next steps
+`tests/data/cli_help_baseline.txt` is unchanged across the whole range
+(`fbbe0f9397cadee39970aea1b41b85baa83647db691dc43621698e6fe1e80401`), and a reviewer independently
+confirmed it was committed in `368e960` *before* the CLI change — a genuine pre-change capture, not a
+self-comparison.
 
-1. **Resolve the §2 collision** — it is the only thing blocking the remaining 40 tasks. The
-   candidate resolution is one line and is quoted verbatim above; deciding it needs the decision
-   owner, not an implementer.
-2. Re-run `speckit-opsmill-implement` from T047 once that is settled.
-3. Close **T037**'s deferred apply-side assertion when T047/T054/T065 land; it is ticked `[X]` today
-   on a precondition rather than on the observable its task text names.
-4. Record the AD075 mechanism correction (§8) against the decision, so the artifacts and the code
-   stop disagreeing.
-5. Phase H remains authored-but-unsatisfied by design (AD045b): DBA-001, DBA-002, DBA-003, DBA-008
-   and the live halves of DBA-007 and SC-016 will still need a live Infrahub after the code is
-   complete.
+## 7. Suggested next steps
+
+1. **Record the AD045b deferral in the merge notes.** Six criteria — SC-001, SC-002, SC-003, SC-008
+   and the live halves of SC-007 and SC-016 — have no passing evidence, and the brief's completion
+   condition is unmet at merge. Expected and ratified, but it must be said out loud.
+2. **Run the `integration` suite** wherever a disposable Infrahub and a NetBox are reachable, using
+   the command in §3, to close those six.
+3. **Decide the two escalated type findings** — the `getattr` write-boundary dispatch and the `cast`
+   on a `hasattr` gate. The second is the more consequential: it lets a duck-typed destination past a
+   pre-write refusal.
+4. **Confirm or revert the release-note edit** (§5.3).
+5. Consider the deferred medium findings: the broad-except class erasure (which also produces a
+   doubled period in the operator message) and definition-time `next_action` enforcement.
+6. Give each reviewer its own worktree on any future parallel review pass (§4).
