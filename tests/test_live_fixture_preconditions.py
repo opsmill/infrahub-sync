@@ -34,10 +34,13 @@ from tests.plan.artifact_fixtures import operation_record
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-# `DcimDevice`'s human-friendly ID crosses a relationship, which is the shape AD043's nesting
-# exists for: `location__name__value` is answered by the identity's nested
+# A human-friendly ID that **crosses a relationship** is the shape AD043's nesting exists for:
+# `location__name__value` is answered by the identity's nested
 # `{"peer_kind": …, "identity": {"name": …}}` pair, and the trailing `value` segment is a
-# schema spelling with no counterpart in the data.
+# schema spelling with no counterpart in the data. The doubles below are *shapes*, not claims
+# about any particular kind: on the live destination `DcimDevice` is in fact all-direct
+# (`['name__value']`) and the crossing shape belongs to the interface kinds
+# (`['device__name__value', 'name__value']`) and to `IpamPrefix` / `IpamIPAddress` — see AD091.
 DEVICE_HFID = ["location__name__value", "name__value"]
 TAG_HFID = ["name__value"]
 

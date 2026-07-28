@@ -1,16 +1,19 @@
 """Phase H — the six criteria and half-criteria that need a running Infrahub.
 
-**Authored, not satisfied (AD045b).** No live Infrahub is reachable in the environment this
-feature was built in (AD007), so nothing in this file has produced passing evidence. Every
-test here is `integration`-marked and skips itself when the destination environment is not
-configured, so a default `uv run pytest -q` reports them as skips and the offline suite is
-unchanged. Until someone runs the command below against a live Infrahub, SC-001, SC-002,
-SC-003 and SC-008, and the live halves of SC-007 and SC-016, have **no** passing evidence —
-which is five of the delivery brief's own criteria (DBA-001, DBA-002, DBA-003 and DBA-008 in
-full, plus the live half of DBA-007) — and the brief's completion condition is unmet. The
-offline conformance harness at `tests/plan/test_apply_conformance.py` narrows that exposure
-by asserting the mutation the SDK renders; it does not close it, and nothing here may be
-reported as covered on its strength.
+**Authored, not satisfied (AD045b) — and now, for five of the six, satisfied (AD091).** No live
+Infrahub was reachable in the environment this feature was built in (AD007). One later was, and
+this module was run against it: **`7 passed, 1 error`**. SC-001, SC-002, SC-003, SC-008 and
+SC-007's live half **pass live**, which closes DBA-001, DBA-002, DBA-003, DBA-008 and DBA-007's
+live half. SC-016's live half does **not**: `test_an_ambiguous_peer_refuses_the_operation` errors
+in fixture setup, because seeding a genuinely ambiguous peer needs a referenced kind whose
+uniqueness constraints do not cover the components the resolver filters on, and every kind the
+qualified configuration touches declares one that does — the destination answers the clone with
+`Violates uniqueness constraint 'device-name'`. That precondition is left exactly as written.
+Every test here stays `integration`-marked and skips itself when the destination environment is
+not configured, so a default `uv run pytest -q` still reports them as skips and the offline suite
+is unchanged. The offline conformance harness at `tests/plan/test_apply_conformance.py` narrowed
+the exposure by asserting the mutation the SDK renders; it never closed it, and nothing here was
+ever reportable as covered on its strength.
 
 **Amended by AD090: "authored, not satisfied" was too weak a claim.** The first live run errored
 in fixture setup on every test here, because the fixture wrote its bounded configuration into a
@@ -33,33 +36,55 @@ not observable without writing, so point them at a disposable Infrahub — the s
 `tests/integration/test_infrahub_node_to_diffsync_integration.py` already takes when it
 loads a throwaway schema and creates nodes against it.
 
+**Amended by AD091: the slice had to widen, because its own precondition refused it.** The
+earlier seven-entry slice ended at `DcimDevice`, and every kind `DcimDevice` references —
+`LocationRack`, `LocationSite`, `DcimDeviceType`, `DcimPlatform`, `BuiltinTag` — carries an
+**all-direct** destination human-friendly ID (`['name__value']`). So `_require_preexisting_peer`
+refused the fixture: with no relationship-crossing peer, SC-008's nested identity walk and
+PD-004's nested `<rel>__<attr>__value` filter spelling would have passed vacuously. The refusal
+was correct, and only live data could raise it, because which kinds have such a human-friendly ID
+is a fact about the **destination schema** and not about the configuration's `identifiers` lists —
+the same conflation AD091 corrects in the run's records. `InterfacePhysical` is the kind that
+supplies what was missing: two mapped kinds reference a kind whose destination human-friendly ID
+crosses a relationship — `DcimDevice.primary_address` → `IpamIPAddress` and
+`InterfacePhysical.bundle` → `InterfaceLag` — but `IpamIPAddress`'s plan identity
+(`identifiers: ["address", "vrf"]`) supplies no `ip_namespace` component at all, so no crossing
+filter can be formed for it and its own operations would be refused by
+`assert_convergence_key_is_supplied` first. `InterfaceLag`'s crossing component is
+`device__name__value`, its plan identity (`["device", "name"]`) supplies it, and it resolves
+against `DcimDevice` — already in the slice. `DcimDevice` and `InterfaceLag` therefore move into
+the seed. No assertion and no precondition below was weakened to get there.
+
 The fixture runs the qualified path (`examples/netbox_to_infrahub/config.yml`, NetBox →
-Infrahub) narrowed to seven of its schema-mapping entries, copied **verbatim** apart from one
-documented field removal (see `DROPPED_FIELDS`): `BuiltinTag`, `LocationSite`,
-`LocationRack`, `OrganizationManufacturer`, `DcimPlatform`, `DcimDeviceType` and both
-`DcimDevice` entries. The slice is the **reference closure** of `DcimDevice`, so no kind
+Infrahub) narrowed to ten of its schema-mapping entries, copied **verbatim** apart from the
+documented field removals (`DROPPED_FIELDS`) and the documented source-side bounding filter
+(`ADDED_FILTERS`): `BuiltinTag`, `LocationSite`, `LocationRack`, `OrganizationManufacturer`,
+`DcimPlatform`, `DcimDeviceType`, both `DcimDevice` entries, `InterfaceLag` and
+`InterfacePhysical`. The slice is the **reference closure** of `InterfacePhysical`, so no kind
 outside it is needed to resolve a peer, and it is the smallest closure that carries every
-shape this phase measures: a create with no references (`BuiltinTag`), an update, a
-relationship-bearing kind with cardinality-one **and** cardinality-many references
-(`DcimDevice`), and — the one SC-008 turns on — a *referenced* kind whose own `identifiers`
-contain a reference, so a peer identity is a nested `{peer_kind, identity}` pair and AD043's
-recursive resolution is exercised rather than declared. `LocationRack` (name + site) and
-`DcimDeviceType` (name + manufacturer) are both such peers of `DcimDevice`; nothing in a
-smaller slice is.
+shape this phase measures: a create with no references (`BuiltinTag`), an update
+(`LocationSite`), a relationship-bearing kind with a cardinality-one **and** a
+cardinality-many reference (`InterfacePhysical` — `device`, `bundle`; `DcimDevice` — `tags`),
+and — the one SC-008 turns on — a *referenced* kind whose **destination human-friendly ID
+crosses a relationship** (`InterfaceLag`, `['device__name__value', 'name__value']`), so a peer
+identity is a nested `{peer_kind, identity}` pair, the destination query that resolves it has
+to be spelled the nested way, and AD043's recursive resolution is exercised rather than
+declared.
 
 The plan under test is built in two phases, because three of its properties cannot be
 arranged after it exists:
 
-1. a **seed** run applies every kind except `DcimDevice`, so the racks, device types,
-   platforms and tags a device references already exist at the destination *and no operation
-   in the plan under test creates them* — the pre-existing peers SC-008 requires, without
-   which dependency-tier ordering fills the resolver's memo from the plan's own creates and
-   the destination-query path under test never runs;
+1. a **seed** run applies every kind except `InterfacePhysical`, so the devices, LAG
+   interfaces, racks, device types, platforms and tags a physical interface references already
+   exist at the destination *and no operation in the plan under test creates them* — the
+   pre-existing peers SC-008 requires, without which dependency-tier ordering fills the
+   resolver's memo from the plan's own creates and the destination-query path under test never
+   runs;
 2. the destination is then perturbed three ways — one unreferenced tag removed, one site's
    description changed, one tag created that the source does not have — so the plan under
    test carries a plain create, an update and a delete;
-3. the plan under test is derived over all seven kinds, which adds the relationship-bearing
-   `DcimDevice` creates.
+3. the plan under test is derived over all ten entries, which adds the relationship-bearing
+   `InterfacePhysical` creates.
 """
 
 from __future__ import annotations
@@ -103,19 +128,76 @@ DESTINATION_BRANCH = "main"
 # The bounded slice of the qualified configuration, and the role each kind plays.
 TAG_KIND = "BuiltinTag"
 SITE_KIND = "LocationSite"
-RELATIONSHIP_KIND = "DcimDevice"
+DEVICE_KIND = "DcimDevice"
+# The pre-existing peer whose destination human-friendly ID crosses a relationship (AD091).
+BUNDLE_KIND = "InterfaceLag"
+RELATIONSHIP_KIND = "InterfacePhysical"
 
-# Everything `DcimDevice` references, transitively. Seeded first, so every peer of a device
-# pre-exists the plan under test and none of them is created by it (SC-008).
-SEED_KINDS = (TAG_KIND, SITE_KIND, "LocationRack", "OrganizationManufacturer", "DcimPlatform", "DcimDeviceType")
+# Everything `InterfacePhysical` references, transitively. Seeded first, so every peer of an
+# interface pre-exists the plan under test and none of them is created by it (SC-008).
+SEED_KINDS = (
+    TAG_KIND,
+    SITE_KIND,
+    "LocationRack",
+    "OrganizationManufacturer",
+    "DcimPlatform",
+    "DcimDeviceType",
+    DEVICE_KIND,
+    BUNDLE_KIND,
+)
 KINDS_UNDER_TEST = (*SEED_KINDS, RELATIONSHIP_KIND)
 
-# The one departure from copying the qualified configuration verbatim, and why. `DcimDevice`
-# also references `IpamIPAddress`, whose own closure pulls in `IpamVRF` and `IpamRouteTarget`
-# and, on the NetBox demo data, some thousands of addresses — none of which any of these six
-# criteria measures. Dropping the field bounds the live run; the two references that carry
-# SC-008's nested peer identity, `location` and `device_type`, are untouched.
-DROPPED_FIELDS: Mapping[str, tuple[str, ...]] = {RELATIONSHIP_KIND: ("primary_address",)}
+# The first departure from copying the qualified configuration verbatim, and why. Every dropped
+# field references `IpamIPAddress` or `IpamVLAN`, whose own closures pull in `IpamVRF`,
+# `IpamRouteTarget`, `IpamVLANGroup` and, on the NetBox demo data, some thousands of addresses —
+# none of which any of these six criteria measures. Dropping them bounds the live run; every
+# reference that carries SC-008's nested peer identity — `DcimDevice.location`,
+# `DcimDevice.device_type`, `InterfacePhysical.device` and `InterfacePhysical.bundle` — is
+# untouched.
+DROPPED_FIELDS: Mapping[str, tuple[str, ...]] = {
+    DEVICE_KIND: ("primary_address",),
+    RELATIONSHIP_KIND: ("ip_addresses",),
+    BUNDLE_KIND: ("ip_addresses", "untagged_vlan", "tagged_vlan"),
+}
+
+# The second departure, and why (AD091). It has two independent grounds, and the second is a
+# defect the first live run exposed rather than a matter of run time.
+#
+# **Ground one — size.** The qualified configuration maps 1727 physical interfaces on the NetBox
+# demo data, and the tests below apply the plan between one and six times each. Writing that
+# population twenty-odd times measures nothing these criteria do not already measure at one
+# device, and would put the live run into the hours. `BOUNDING_DEVICE` is chosen because two of
+# its physical interfaces are members of its one LAG interface, which is what makes the
+# relationship-crossing peer SC-008 needs exist at all.
+#
+# **Ground two — `LocationRack` is not convergent on the qualified path against this destination
+# schema, and that is a separate, now-recorded finding rather than something this fixture may
+# assert away.** Destination `LocationRack` declares `human_friendly_id: ['name__value']` and
+# `uniqueness_constraints: [['name__value']]` — keyed on the rack name **alone** — while the
+# configuration's identity for it is `identifiers: ["name", "site"]`. Thirteen NetBox demo racks
+# are named `Comms closet`, one per site, so thirteen distinct plan identities converge onto one
+# destination object whose `site` is whichever operation wrote last. Every re-derived plan then
+# reports a create *and* a delete for the same rack, and the churn cascades: `DcimDevice.location`
+# nests the rack identity, and `InterfaceLag` / `InterfacePhysical` nest the device identity, so
+# no kind in that chain can ever be seeded out of the plan. Note which way the mismatch runs:
+# FR-024's warning fires when the destination's key is **coarser than the plan can key on**
+# (`constraint <= identity` is what `warn_missing_convergence_key` tests), and here the constraint
+# *is* a subset of the identity, so both of its arms stay silent. Bounding both rack-bearing
+# entries to one site puts exactly one `Comms closet` in scope, which converges. The defect is not
+# fixed here and not hidden: it is recorded in the run's own records against this run's live
+# evidence, and none of the six criteria below is about it.
+#
+# Same species of documented departure as `DROPPED_FIELDS`, and asserted the same way: a filter
+# that stops matching leaves the plan with no relationship-bearing operation, which is a loud
+# setup error in `live_plan` naming the device.
+BOUNDING_DEVICE = "dmi01-akron-rtr01"
+BOUNDING_SITE = "dm-akron"
+ADDED_FILTERS: Mapping[str, tuple[dict[str, Any], ...]] = {
+    "LocationRack": ({"field": "site.slug", "operation": "==", "value": BOUNDING_SITE},),
+    DEVICE_KIND: ({"field": "site.slug", "operation": "==", "value": BOUNDING_SITE},),
+    RELATIONSHIP_KIND: ({"field": "device.name", "operation": "==", "value": BOUNDING_DEVICE},),
+    BUNDLE_KIND: ({"field": "device.name", "operation": "==", "value": BOUNDING_DEVICE},),
+}
 
 # The environment both sides of the qualified path need. Missing any one of them skips.
 REQUIRED_ENVIRONMENT = ("INFRAHUB_ADDRESS", "INFRAHUB_API_TOKEN", "NETBOX_URL", "NETBOX_TOKEN")
@@ -178,14 +260,17 @@ def _destination_client(environment: Mapping[str, str]) -> Any:  # noqa: ANN401 
 def _write_bounded_config(path: Path, *, name: str, kinds: Sequence[str], environment: Mapping[str, str]) -> Path:
     """Write the qualified configuration narrowed to `kinds`, pointed at the live systems.
 
-    The retained `schema_mapping` entries are copied **verbatim** apart from `DROPPED_FIELDS`;
-    only `name` and the two `settings` blocks are rewritten, so the mappings under test are
-    the shipped ones rather than a paraphrase. The name is unique per run, so this cache root
-    cannot collide with an operator's own `from-netbox` runs.
+    The retained `schema_mapping` entries are copied **verbatim** apart from `DROPPED_FIELDS`
+    and `ADDED_FILTERS`; only `name` and the two `settings` blocks are rewritten, so the
+    mappings under test are the shipped ones rather than a paraphrase. The name is unique per
+    run, so this cache root cannot collide with an operator's own `from-netbox` runs.
 
     A dropped field that is not there to drop is a setup error rather than a silent no-op: if
     the qualified configuration renames it, the slice quietly stops being bounded and the live
     run pulls in a closure this phase never intended to write.
+
+    A bounding filter is **appended** to whatever filters the shipped entry already declares,
+    never substituted for them, so the entry keeps every exclusion it ships with (AD091).
     """
     document = yaml.safe_load(QUALIFIED_CONFIG.read_text(encoding="utf-8"))
     entries = [entry for entry in document["schema_mapping"] if entry["name"] in kinds]
@@ -207,6 +292,9 @@ def _write_bounded_config(path: Path, *, name: str, kinds: Sequence[str], enviro
                 )
                 raise LivePlanPreconditionError(msg)
             entry["fields"] = retained
+        added = ADDED_FILTERS.get(entry["name"], ())
+        if added:
+            entry["filters"] = [*(entry.get("filters") or ()), *(dict(item) for item in added)]
     document["name"] = name
     document["source"]["settings"] = {"url": environment["NETBOX_URL"], "token": environment["NETBOX_TOKEN"]}
     document["destination"]["settings"] = {
@@ -552,7 +640,7 @@ def _potenda_for_apply(live: LivePlan) -> Any:  # noqa: ANN401 — Potenda is im
 
 
 def _seed_the_peer_kinds(workspace: Path, environment: Mapping[str, str], suffix: str) -> None:
-    """Converge every kind a device references, so its peers pre-exist the plan under test.
+    """Converge every kind a physical interface references, so its peers pre-exist the plan under test.
 
     Runs against the adapters `_generate_adapters` has already rendered into `workspace` from the
     wider `KINDS_UNDER_TEST` slice, which is why this writes its configuration into the same
@@ -766,7 +854,9 @@ def live_plan(tmp_path_factory: pytest.TempPathFactory) -> Iterator[LivePlan]:
         if not relationship_operations:
             msg = (
                 f"The plan under test holds no relationship-bearing operation on {RELATIONSHIP_KIND!r}, so SC-008 and "
-                "SC-003's third write class would measure nothing."
+                f"SC-003's third write class would measure nothing. The slice is bounded to the interfaces of "
+                f"{BOUNDING_DEVICE!r} (ADDED_FILTERS); if the qualified configuration or the source data no longer "
+                "carries that device, re-derive the bounding against them."
             )
             raise LivePlanPreconditionError(msg)
         peer = _require_preexisting_peer(plan, relationship_operations, schemas)

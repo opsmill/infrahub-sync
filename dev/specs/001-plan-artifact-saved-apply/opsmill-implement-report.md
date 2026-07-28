@@ -79,7 +79,7 @@ NetBox or Nautobot reachable, and none required.
 | `tests/plan/test_models.py` | unit | `uv run pytest <file> -q` | 2026-07-28T05:15:33Z | `78 passed in 0.17s` |
 | `tests/test_live_fixture_preconditions.py` | unit | `uv run pytest <file> -q` | 2026-07-28T05:15:33Z | `5 passed in 0.19s` |
 | `tests/plan/test_review.py` | unit | `uv run pytest <file> -q` | 2026-07-28T05:15:33Z | `25 passed in 1.39s` |
-| `tests/integration/test_saved_plan_apply_integration.py` | integration | `uv run pytest -m integration <file>` | **deferred — no live destination (AD007, AD045b)** | `8 skipped in 0.19s` |
+| `tests/integration/test_saved_plan_apply_integration.py` | integration | `uv run pytest -m integration <file>` | offline: 2026-07-28T05:15:33Z. **Live: 2026-07-28, see §3a** | offline `8 skipped in 0.19s`; live **`7 passed, 1 error in 70.74s`** |
 
 Full suite, three consecutive runs on the final tree:
 
@@ -97,6 +97,9 @@ Full suite, three consecutive runs on the final tree:
 
 ### Phase H is authored, not satisfied
 
+*(Superseded for five of the six criteria by §3a, which records a live run. Kept as the record of the
+offline tree, and still accurate for SC-016's live half.)*
+
 `uv run pytest -m integration -q` reports `11 skipped, 682 deselected`. Per AD007 no live Infrahub is
 reachable here, and per **AD045b** these tests produce no evidence in this environment. **SC-001,
 SC-002, SC-003, SC-008 and the live halves of SC-007 and SC-016 remain without passing evidence, and
@@ -113,6 +116,53 @@ export INFRAHUB_ADDRESS=... INFRAHUB_API_TOKEN=... NETBOX_URL=... NETBOX_TOKEN=.
 uv sync --extra dev
 uv run pytest -m integration tests/integration/test_saved_plan_apply_integration.py
 ```
+
+## 3a. The live run — what actually happened (AD091)
+
+The section above stands as the record of the offline tree. A live destination then became reachable and
+the command above was run. **The paragraph "Phase H is authored, not satisfied" is superseded for five of
+the six criteria and stands for the sixth.**
+
+Environment: Infrahub at `http://localhost:8000`, branch `main`, schema from
+`opsmill/schema-library@bgi-schema-library-v2`; source `https://demo.netbox.dev` (75 devices, 1761
+interfaces). Verbatim summary line:
+
+```text
+7 passed, 1 error in 70.74s (0:01:10)
+```
+
+| Test | Outcome | What it establishes |
+|---|---|---|
+| `test_applying_a_stored_plan_runs_no_extraction` | **passed** | SC-001. `Adapter.diff_from`, `Adapter.sync_from` and `DiffSyncMixin.load` all patched to raise; none was called, and `applied ∪ skipped` covered every operation |
+| `test_re_applying_an_identical_plan_converges` | **passed** | SC-002. No duplicate on any kind in the plan — **including `InterfacePhysical`, whose convergence key crosses a relationship**. Its docstring records that a duplicate there would be the test working correctly; none occurred |
+| `test_the_write_class_conformance_matrix[create]` | **passed** | SC-003, create class, across apply-once, apply-twice and both crash windows |
+| `test_the_write_class_conformance_matrix[update]` | **passed** | SC-003, update class, same four scenarios |
+| `test_the_write_class_conformance_matrix[relationship]` | **passed** | SC-003, relationship class, same four scenarios, measured through peer sets |
+| `test_a_delete_bearing_plan_applies_and_records_the_skipped_deletes` | **passed** | SC-007's live half. Run ended `applied`, the delete targets survived, the skipped-delete count and identifier set matched the plan, and a `WARNING`-level line named the count under `--quiet` |
+| `test_relationship_peer_sets_match_the_plan` | **passed** | SC-008. Peer sets matched, **and** the resolver was observed issuing `client.filters(kind="InterfaceLag", device__name__value=…, name__value=…)` — PD-004's nested spelling, verified against a live destination for the first time |
+| `test_an_ambiguous_peer_refuses_the_operation` | **error in setup — not a pass, and not satisfiable on this schema** | SC-016's live half. `_clone_node` was refused: `Violates uniqueness constraint 'device-name'`, HTTP 422, converted to `LivePlanPreconditionError` as that helper's docstring prescribes. Seeding a genuine ambiguity needs a referenced kind whose uniqueness constraints do not cover the components the resolver filters on, and **all 20 kinds this configuration touches declare one that does**. The offline half still passes |
+
+**The keyedness gate, observed live.** Seventeen `WARNING` lines across the module, one per apply, all
+naming `InterfacePhysical`: *"the mutation rendered for destination kind InterfacePhysical carries neither
+'id' nor 'hfid' because the kind's convergence key crosses a relationship (device__name__value,
+name__value) … The write was issued anyway."* So the render is unkeyed exactly as V39 predicted — and the
+writes converged regardless, because the destination resolves the upsert on its own `device-name`
+uniqueness constraint. The Material nested-HFID risk is confirmed as a **render** fact and **not**
+realised as a duplicate on this schema. AD067's strict `xfail` did not xpass: it asserts the render, and
+the render is unchanged; it is an offline harness against a committed fixture and is not parameterised by
+the live slice.
+
+**Two defects the live run found, neither of them on the apply path, both recorded in plan.md's Risks and
+neither fixed here:** `LocationRack` is not convergent on the qualified path because the destination keys
+racks on `name` alone while the configuration's identity is `name` + `site` and thirteen demo racks share
+a name; and the destination **extract** path cannot rebuild a peer whose own identifiers include a
+relationship, so `diff` fails once `InterfacePhysical` exists at the destination. The second one bounds
+what the seven passes mean: they were produced against a destination holding no `InterfacePhysical`, and
+reproducing them requires clearing that kind first.
+
+Nothing was mocked, stubbed or skipped to manufacture any of this, and no assertion or precondition was
+weakened. The one change to the module was widening `KINDS_UNDER_TEST` so its own
+`_require_preexisting_peer` precondition could be met (AD091).
 
 ## 4. Review findings
 

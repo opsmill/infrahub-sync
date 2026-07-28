@@ -170,7 +170,9 @@ above, including the recursive `{peer_kind, identity}` shape for a reference-val
 only difference is which store the probe runs against: a delete exists because its object is present at
 the destination and absent from the source, so its peers are destination-only and the source store has
 nothing to resolve. Nine kinds on the qualified path (ten mapping entries) carry a reference inside
-their identifiers, so this is the ordinary case for deletes there. Deletes are **not** exempt: exempting
+their identifiers — the **configuration-side** figure, which is the one this rule turns on; the
+destination-side count of keys that cross a relationship is five and is a different question (AD091) —
+so this is the ordinary case for deletes there. Deletes are **not** exempt: exempting
 them would leave one place in the format where a consumer must split a unique-id on `__`, and would
 make a delete's `operation_id` derive from an identity no reviewer is shown.
 

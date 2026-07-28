@@ -514,7 +514,9 @@ expands scope. All seven are **ratified** on the same basis as AD001–AD041.
   rather than a raw unique-id string — **recursively**, to whatever depth the configuration nests.
   This is not hypothetical on the qualified path: ten schema-mapping entries there carry a reference
   inside `identifiers`, and a reference field's value in a comparison model is the peer's unique-id
-  string. On a resolution miss at apply the resolver holds only the peer's identity mapping, so
+  string. (That figure is **configuration-side**, which is the right one here — the nesting follows
+  `SchemaMappingField.reference`. It is *not* the count of kinds whose destination convergence key
+  crosses a relationship, which is five; see AD091.) On a resolution miss at apply the resolver holds only the peer's identity mapping, so
   without the nested pair it could not build a nested destination filter without splitting a unique-id
   on its separator — the v1 flaw the brief names by name. This changes the artifact format that nine
   later outcomes consume, so it is settled before any of that format is written.
@@ -606,7 +608,9 @@ same basis as AD001–AD048.
   out would leave the artifact with exactly one place where a consumer must split a unique-id on `__` —
   the flaw the brief names — and would mean a delete's operation identifier was derived from an identity
   no reviewer ever sees. Nine kinds on the qualified path carry a reference inside their identifiers
-  (ten mapping entries), so this is the common case for deletes there, not a corner.
+  (ten mapping entries) — the **configuration-side** figure, which is the one this clause needs; the
+  destination-side keying figure is different and smaller (AD091) — so this is the common case for
+  deletes there, not a corner.
   `[AD049]`
 - Q: AD046 says a peer's kind comes from "the loaded source store entry for the referenced unique-id —
   the entry knows its own kind". Is that lookup constructible? → A: **Not as written — it is circular.**
@@ -888,9 +892,13 @@ repairs turned out not to have landed as reported, which is why this session exi
   without destroying scope.** Moving the gate wholesale onto the rendered mutation input and refusing
   every unkeyed render was considered and rejected: for a destination kind whose human-friendly ID crosses
   a relationship the rendered input carries neither identifier today — verified, and recorded as a
-  Material risk — so a hard refusal there would make the apply decline the ten mapping entries of the
-  qualified configuration that carry a reference inside their identity, which is precisely the
-  relationship-bearing capability DBR-013 and DBA-008 require. Refusing them would be scope destruction
+  Material risk — so a hard refusal there would make the apply decline the qualified configuration's
+  relationship-crossing-key kinds, which is precisely the
+  relationship-bearing capability DBR-013 and DBA-008 require. **(AD091 corrects the magnitude: that
+  population is five kinds and five mapping entries — `Interface{Physical,Virtual,Lag}`, `IpamPrefix`,
+  `IpamIPAddress` — not the ten identity-bearing-reference entries this answer cited, which is a
+  configuration-side count standing in for a destination-schema question. The choice is unchanged: a
+  refusal would still decline every interface kind on the qualified path.)** Refusing them would be scope destruction
   dressed as rigour. So: the pre-write gate gains a **rendered-mutation check** — the strongest form of the
   claim that is both observable and free — which **refuses** an unkeyed render for a kind whose
   human-friendly ID is **all-direct** (that condition can only mean the payload lost its identity
@@ -1085,7 +1093,9 @@ is why its closure was verified by a narrow check against the library rather tha
   this delivery still support that? → A: **Only in part, and the repair is the planner's.** The claim holds
   where the destination kind's convergence key is composed of its own direct attributes; where a component
   crosses a relationship the client cannot form the key from a peer supplied as a resolved identifier, so
-  the write goes out unkeyed — ten mapping entries across nine kinds of the qualified path. The dependency
+  the write goes out unkeyed — **five kinds, five mapping entries** of the qualified path (AD091 corrects
+  the "ten entries across nine kinds" this answer first gave, which counted plan identities containing a
+  reference rather than destination keys that cross a relationship). The dependency
   row should be scoped to the all-direct case and recorded as unverified for the relationship-crossing one,
   with an impact-if-wrong in the brief's assumptions, and three later outcomes consuming this apply path
   inherit the same partial satisfaction. This is recorded for planner feedback only: **nothing here edits
@@ -1286,6 +1296,55 @@ reassigned; no assertion in Phase H is weakened; the live `sync` write path is u
   lesson belongs in the record rather than in the fix: an unexecuted test's validity is itself unevidenced,
   so a run may not report authorship as though it bounded the risk. The module docstring is amended to say
   so at the point a reader meets the claim. `[AD090]`
+
+### Session 2026-07-28 (second) — V30's magnitude figure was read off the wrong schema
+
+One decision, raised by querying the live destination schema directly. It corrects a **code fact** this
+run recorded and every claim that rested on it, and it widens a **test fixture** so its own precondition
+can be met. No requirement, criterion, guarantee or scope moves; no product scope is added, expanded,
+removed or reassigned; no assertion or precondition in Phase H is weakened; the live `sync` write path is
+untouched (AD070).
+
+- Q: V30 says ten schema-mapping entries across nine kinds carry a relationship-crossing convergence key,
+  and AD066, AD067, AD076, the Principle II tension, the nested-HFID risk and the filter-spelling risk all
+  quantify themselves with it. Is that the right figure for those claims? → A: **No. The figure was
+  derived from the *configuration's* `identifiers` lists containing references; what governs keying and
+  filtering is the *destination kind's* `human_friendly_id`, and that is a different and smaller set.**
+  Both facts are real and V30 now states them separately. Configuration-side: ten entries across nine
+  kinds, which is what AD043's nested `{peer_kind, identity}` shape turns on and where the figure stays.
+  Destination-side, verified against the live destination: of the **20 kinds** the qualified configuration
+  maps or references (21 entries), **five kinds — five entries — have an HFID that crosses a
+  relationship**: `InterfacePhysical`, `InterfaceVirtual`, `InterfaceLag` (all
+  `['device__name__value', 'name__value']`), `IpamPrefix` (`['ip_namespace__name__value',
+  'prefix__value']`) and `IpamIPAddress` (`['ip_namespace__name__value', 'address__value']`). The other
+  fifteen are all-direct, and they include **four of the nine** the old figure counted — `LocationRack`,
+  `DcimDeviceType`, `DcimDevice` and `IpamVLAN` — which are keyed on `name__value` alone and converge
+  normally. All 20 also declare a uniqueness constraint. A further split inside the five: only the three
+  interface kinds' plan identities *supply* the crossing component (`identifiers: ["device", "name"]`);
+  `IpamPrefix` and `IpamIPAddress` supply no `ip_namespace` at all, so for those two AD051's per-component
+  diagnostic refuses **before** the write rather than AD066's gate warning and proceeding.
+  **The query, exactly**: `client.schema.all(branch="main")` against the live destination, then
+  `human_friendly_id` and `uniqueness_constraints` read off every kind named in `schema_mapping[].name` or
+  `schema_mapping[].fields[].reference` of `examples/netbox_to_infrahub/config.yml`; a component is
+  relationship-crossing when `"__" in component.removesuffix("__value")`.
+  **The risk stays; only its reach shrinks.** It is real for the three interface kinds and it was not
+  wished away — the live run confirms the render is unkeyed there, seventeen keyedness warnings naming
+  `InterfacePhysical`. What was wrong was the overstatement, and the corrected records say which figure
+  answers which question so the two cannot be conflated again.
+  **Only live data exposed it.** The proxy was flagged as a proxy in the third fidelity critique (R3-N2)
+  and carried anyway, because with no reachable destination there was nothing to check it against; a count
+  read from the artifact under review looked like a verified fact for as long as the schema it described
+  was unreachable. The transferable lesson: a magnitude quoted in a justification must name the artifact
+  it was read from, because a figure read from the wrong one is indistinguishable from a figure read from
+  the right one until something can be queried.
+  **Consequently the Phase H slice widens.** Its own `_require_preexisting_peer` precondition refused
+  every test, correctly: with `DcimDevice` as the widest kind, every referenced kind was all-direct, so
+  SC-008's nested identity walk and PD-004's nested filter spelling would have passed vacuously.
+  `InterfacePhysical` joins the slice as the relationship-bearing kind under test and `InterfaceLag`
+  (reached through `bundle`, HFID `device__name__value`) becomes the pre-existing crossing peer, which
+  moves `DcimDevice` and `InterfaceLag` into the seed. Two bounding filters are added and documented at
+  `ADDED_FILTERS`, one for size and one because `LocationRack` is not convergent against this destination
+  schema — a separate defect this run found and recorded in plan.md's Risks rather than fixed. `[AD091]`
 
 ## User Scenarios & Testing *(mandatory)*
 

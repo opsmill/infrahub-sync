@@ -219,11 +219,20 @@ uv run infrahub-sync apply --name from-netbox --directory examples/ --run-id "$R
 
 **Step 6's convergence is not unconditional (AD066, AD067, AD080).** For a destination kind whose
 convergence key is composed of its own direct attributes, this converges and a duplicate is a defect. For a
-destination kind whose key **crosses a relationship** — which on this configuration is ten mapping entries
-across nine kinds, including every interface kind, `DcimDevice`, `IpamPrefix`, `IpamIPAddress`, `IpamVLAN`,
-`LocationRack` and `DcimDeviceType` — the rendered mutation carries neither identifier today, the apply
+destination kind whose key **crosses a relationship** — which on this configuration is **five kinds, five
+mapping entries**: `InterfacePhysical`, `InterfaceVirtual`, `InterfaceLag`, `IpamPrefix` and
+`IpamIPAddress` (AD091; the earlier "ten entries across nine kinds" counted plan identities containing a
+reference, which is a fact about the configuration, not about the destination key, and `DcimDevice`,
+`IpamVLAN`, `LocationRack` and `DcimDeviceType` are all-direct at the destination and converge normally) —
+the rendered mutation carries neither identifier today, the apply
 warns once per kind that it issued the write anyway, and whether the destination keys it server-side is
-exactly what SC-002 and SC-003 **measure**. So on this walkthrough a duplicate of one of those kinds is the
+exactly what SC-002 and SC-003 **measure**. **They have now measured it (AD091)**: against
+`opsmill/schema-library@bgi-schema-library-v2` the destination *does* key it server-side — thirteen
+`InterfacePhysical` upserts rendered unkeyed, were issued with the warning, and a second apply of the
+identical plan produced no duplicate, because the destination declares a `device-name` uniqueness
+constraint and resolves the upsert on it. That is one destination's answer, not the general one: a
+destination kind with a relationship-crossing key and **no** covering uniqueness constraint would still
+duplicate. So on this walkthrough a duplicate of one of those kinds is the
 **recorded AD066/AD067 limitation**, not a regression the maintainer just introduced. The preamble at the
 top of this file says the same thing; this note exists so the two agree at the point of use.
 
