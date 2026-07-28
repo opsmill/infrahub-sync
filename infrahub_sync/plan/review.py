@@ -6,10 +6,12 @@ that re-implements no reading, filtering or summarizing (FR-029).
 
 It constructs **no adapter**, extracts nothing, takes **no** pipeline lock, creates or
 modifies nothing in the run directory, and never mutates run state (FR-008, AD021, AD031).
-A plan that would fail apply verification is **rendered anyway**, with `checksum_ok` false
-and a note saying why; the one bound on that is an operation whose `action` this release
-cannot interpret, which is refused while reading, because a count of operations the tool
-does not understand is not a review (AD031, AD055).
+A plan that would fail apply verification is **rendered anyway**, with a verification note
+saying why — and with `checksum_ok` false when the failing check is the checksum itself; a
+plan bound to a torn source snapshot checksums clean and is disclosed by the note alone
+(FR-010). The one bound on rendering-rather-than-refusing is an operation whose `action`
+this release cannot interpret, which is refused while reading, because a count of operations
+the tool does not understand is not a review (AD031, AD055).
 
 Two obligations sit on the **renderer**, not here, and the split is deliberate. Turning an
 empty `operations(kind=…)` result into FR-006's error is a *presentation* rule: FR-029
@@ -24,9 +26,16 @@ from typing import TYPE_CHECKING
 
 from infrahub_sync.cache.paths import cache_root_for, run_dir
 from infrahub_sync.plan.checksum import compute_plan_checksum
-from infrahub_sync.plan.errors import PlanArtifactUnreadableError, UnknownPlanKindError, UnknownRunIdentifierError
+from infrahub_sync.plan.errors import UnknownPlanKindError, UnknownRunIdentifierError
 from infrahub_sync.plan.models import PlanSummary
-from infrahub_sync.plan.reader import load_plan_artifact, stat_or_unreadable
+from infrahub_sync.plan.reader import (
+    RUN_ID_LISTING_LIMIT,
+    load_plan_artifact,
+    run_id_listing_text,
+    stat_or_unreadable,
+    stored_run_ids,
+)
+from infrahub_sync.plan.verify import source_snapshot_failures
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, PLAN_DIR_NAME
 
 if TYPE_CHECKING:
@@ -34,12 +43,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from infrahub_sync import SyncConfig
-    from infrahub_sync.plan.models import PlanManifest, PlannedOperation
+    from infrahub_sync.plan.models import PlanManifest, PlannedOperation, VerificationFailure
 
-# The enumeration's bound (AD073). Nothing in this repository prunes a run directory and
-# retention is out of scope, so an hourly pipeline would otherwise answer a typo with
-# thousands of lines.
-RUN_ID_LISTING_LIMIT = 20
+# Re-exported from the reader, which owns the bound and the enumeration's wording because
+# FR-008 puts the same enumeration on the arm that module raises (AD073). Kept importable from
+# here: this is the module the review surface is read from.
+__all__ = ["RUN_ID_LISTING_LIMIT", "SavedPlan", "read_saved_plan", "require_stored_run"]
 
 
 class SavedPlan:
@@ -47,10 +56,15 @@ class SavedPlan:
 
     Attributes:
         manifest: The manifest as read, tolerated unknown fields included (FR-027).
-        checksum_ok: Whether the recomputed `plan_checksum` matches the recorded one.
-            Reported, never a refusal: review renders a plan that would fail verification
-            rather than withholding it (AD031).
-        verification_notes: Human-readable notes about any check that did not pass.
+        checksum_ok: Whether the recomputed `plan_checksum` matches the recorded one — that
+            check alone, and not a verdict on the whole artifact: the checksum covers the
+            manifest and the operations file and says nothing about the source snapshot, so
+            a run bound to a torn snapshot has `checksum_ok` true and a note. Reported,
+            never a refusal: review renders a plan that would fail verification rather than
+            withholding it (AD031).
+        verification_notes: Human-readable notes about any check that did not pass — the
+            plan checksum, and the source-snapshot binding FR-010 puts on this path too.
+            An empty list is the only "nothing to report" answer.
     """
 
     def __init__(
@@ -135,48 +149,36 @@ def _run_directory_exists(directory: Path) -> bool:
     return stat_or_unreadable(directory, description="run directory") is not None
 
 
-def _stored_run_ids(cache_root: Path) -> list[str]:
-    """Return the sync's stored run identifiers, most recent first.
-
-    `cache_root_for` **computes** a path and neither creates nor checks it
-    (`infrahub_sync/cache/paths.py:26-43`), so an unguarded listing raises
-    `FileNotFoundError` for a sync that never ran — from what is supposed to be a helpful
-    error path (AD073). An absent root is therefore "no stored runs", not a failure.
-
-    Run identifiers sort by time by construction (`:46-52`), so "most recent" is a reverse
-    lexicographic sort and needs no `stat` calls.
-    """
-    try:
-        names = [entry.name for entry in cache_root.iterdir() if entry.is_dir()]
-    except (FileNotFoundError, NotADirectoryError):
-        return []
-    except OSError as exc:
-        msg = f"The cache root at {str(cache_root)!r} exists but could not be listed: {exc.strerror or exc}."
-        raise PlanArtifactUnreadableError(msg) from exc
-    return sorted(names, reverse=True)
-
-
 def _unknown_run_error(sync_name: str, run_id: str, expected_artifact: Path) -> UnknownRunIdentifierError:
-    """Build the unknown-run refusal, with the enumeration AD073 requires (AD059)."""
+    """Build the unknown-run refusal, with the enumeration AD073 requires (AD059).
+
+    The enumeration's wording is the reader's, because FR-008 requires the same listing when a
+    run is located but holds no plan artifact — a verdict `require_plan_directory` raises — and
+    two hand-written listings would drift.
+    """
     cache_root = cache_root_for(sync_name)
-    stored = _stored_run_ids(cache_root)
-    if not stored:
-        msg = (
-            f"No run {run_id!r} is stored for synchronization {sync_name!r}: the plan artifact was "
-            f"expected at {expected_artifact}. This sync has no stored runs at all — {cache_root} "
-            f"holds no run directories."
-        )
-        return UnknownRunIdentifierError.no_runs(msg, sync_name=sync_name)
-    shown = stored[:RUN_ID_LISTING_LIMIT]
-    truncation = (
-        f" (Showing the {len(shown)} most recent of {len(stored)} stored runs.)" if len(stored) > len(shown) else ""
-    )
+    stored = stored_run_ids(cache_root)
     msg = (
         f"No run {run_id!r} is stored for synchronization {sync_name!r}: the plan artifact was "
-        f"expected at {expected_artifact}. The most recent run identifiers for this sync are: "
-        f"{', '.join(shown)}.{truncation}"
+        f"expected at {expected_artifact}. {run_id_listing_text(stored, cache_root=cache_root)}"
     )
+    if not stored:
+        return UnknownRunIdentifierError.no_runs(msg, sync_name=sync_name)
     return UnknownRunIdentifierError(msg)
+
+
+def _snapshot_note(failure: VerificationFailure) -> str:
+    """Render one source-snapshot failure as a review note (FR-010).
+
+    The note carries the three things FR-010 requires of every torn-artifact refusal —
+    which part is torn (the failure's `expected` and `found` both lead with the snapshot's
+    run-relative path), the expected and found values, and the next action — because the
+    review path is one of the two paths a torn artifact is reachable from.
+    """
+    return (
+        f"The source-snapshot binding does not hold: expected {failure.expected}; found "
+        f"{failure.found}. Applying this run would refuse. {failure.next_action}"
+    )
 
 
 def require_stored_run(sync_name: str, run_id: str) -> Path:
@@ -247,6 +249,15 @@ def read_saved_plan(
             f"The artifact changed after it was written, so applying this run would refuse. "
             f"Re-run `diff` for this sync to rebuild it."
         )
+    # FR-010's snapshot half, on the review path. The plan checksum covers the manifest and
+    # the operations file and says nothing about the snapshot the plan was computed against,
+    # so without this a run whose snapshot was deleted or truncated renders `checksum: OK`
+    # with no note — a safety check reporting a result it never computed. Routed through the
+    # verifier's own check rather than recomputed here, so the two paths cannot drift.
+    notes.extend(
+        _snapshot_note(failure)
+        for failure in source_snapshot_failures(run_id=run_id, run_dir=directory, mapping=loaded.manifest_mapping)
+    )
     declared_kinds = None if config is None else [entry.name for entry in config.schema_mapping]
     return SavedPlan(
         manifest=loaded.manifest,

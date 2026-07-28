@@ -27,8 +27,9 @@ from unittest.mock import patch
 
 import pytest
 
-from infrahub_sync.plan.errors import ApplyRecordInvariantError, PlanVerificationError
+from infrahub_sync.plan.errors import ApplyRecordInvariantError, PlanFormatV1Error, PlanVerificationError
 from infrahub_sync.plan.reader import load_plan_artifact
+from infrahub_sync.plan.verify import GATED_CHECKS
 from infrahub_sync.potenda import Potenda
 from tests.plan.artifact_fixtures import CONFIG_VERSION, operation_record, write_artifact
 
@@ -83,7 +84,13 @@ def _run_dir(tmp_path: Path) -> Path:
 
 
 def test_apply_plan_executes_the_stored_operations_in_stored_order(tmp_path: Path) -> None:
-    """Stored order is executed exactly — no re-sorting and no recomputation (FR-012, SC-001).
+    """Stored order is executed exactly — no re-sorting and no recomputation (FR-012).
+
+    **SC-001's local half only.** That criterion is evidenced by an apply against a live
+    destination showing no comparison-engine call on the apply path; what this case measures is
+    the dispatch order the engine hands to an in-memory double, which is a precondition for the
+    criterion and not the criterion. The live half is
+    `tests/integration/test_saved_plan_apply_integration.py`.
 
     The three operations are written in an order that is **not** their sorted order, so an
     implementation that sorted the operations it read — by identifier, kind or action —
@@ -222,6 +229,76 @@ def test_an_empty_plan_applies_as_a_successful_no_op(tmp_path: Path) -> None:
 
     assert record.applied_operations == ()
     assert record.skipped_delete_count == 0
+
+
+# ======================================================================================
+# T097 — FR-009's gate disclosure and evaluate-all rule, reached from the apply path
+# ======================================================================================
+
+
+def test_a_tear_and_a_config_version_mismatch_are_both_reported_by_one_apply_attempt(tmp_path: Path) -> None:
+    """FR-009: once the gate passes, every failure is named in one refusal (AD036).
+
+    The artifact is broken **twice** — its operations file is gone and its configuration
+    version disagrees — and both are named. An apply that read the artifact before verifying
+    it raises the reader's single-condition tear instead, so the operator fixes the tear,
+    re-runs, and only then learns the configuration also changed. That second break is what
+    makes this assertion falsifiable.
+    """
+    directory = _run_dir(tmp_path)
+    write_artifact(directory, [operation_record()], run_id=RUN_ID, source_snapshot=[])
+    (directory / "plan" / "operations.jsonl").unlink()
+    destination = RecordingDestination()
+
+    with pytest.raises(PlanVerificationError) as caught:
+        _potenda(directory, destination).apply_plan(config_version="a-different-configuration-version")
+
+    message = str(caught.value)
+    assert "torn_operations" in message
+    assert "config_version" in message
+    assert "2 pre-apply check(s) failed" in message
+    assert destination.dispatched == []
+
+
+def test_the_format_version_gate_tells_the_operator_what_it_did_not_evaluate(tmp_path: Path) -> None:
+    """FR-009's gate message, reachable from an apply and not only from a direct verify call.
+
+    An artifact whose `format_version` this release does not understand cannot have its
+    remaining fields meaningfully interpreted, so checks 2 to 5 are skipped **and the refusal
+    says so, naming them**. The configuration version below also disagrees, so an
+    implementation that evaluated everything anyway would report two failures and fail here.
+    """
+    directory = _run_dir(tmp_path)
+    write_artifact(directory, [operation_record()], run_id=RUN_ID, source_snapshot=[], format_version=99)
+    destination = RecordingDestination()
+
+    with pytest.raises(PlanVerificationError) as caught:
+        _potenda(directory, destination).apply_plan(config_version="a-different-configuration-version")
+
+    message = str(caught.value)
+    assert "1 pre-apply check(s) failed" in message
+    assert "were not evaluated" in message
+    for gated in GATED_CHECKS:
+        assert gated in message, f"the gate did not name {gated!r} among the checks it skipped"
+    assert destination.dispatched == []
+
+
+def test_a_run_holding_no_plan_artifact_keeps_its_own_verdict(tmp_path: Path) -> None:
+    """FR-019's verdict is not degraded into "the manifest could not be parsed" (SC-011).
+
+    Verification now precedes the read, and the gate's first arm answers a missing manifest —
+    so without the FR-019 check standing in front of it, a run in the pre-existing row format
+    would be refused as an unreadable manifest and sent to the wrong remedy.
+    """
+    directory = _run_dir(tmp_path)
+    (directory / "plan.parquet").write_bytes(b"pre-existing row format")
+    destination = RecordingDestination()
+
+    with pytest.raises(PlanFormatV1Error) as caught:
+        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+
+    assert "holds no plan artifact" in str(caught.value)
+    assert destination.dispatched == []
 
 
 class InterruptingDestination(RecordingDestination):

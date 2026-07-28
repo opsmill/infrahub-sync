@@ -29,12 +29,15 @@ import json
 import os
 import subprocess  # noqa: S404 — a new process is the point: SC-009 measures reading after the producer exited
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from infrahub_sync import SchemaMappingModel, SyncAdapter, SyncConfig
+from infrahub_sync.cache.parquet_io import write_resource_side
+from infrahub_sync.plan.checksum import source_snapshot_records
 from infrahub_sync.plan.errors import UnknownPlanKindError, UnsupportedOperationActionError
 from infrahub_sync.plan.models import PlannedOperation
 from infrahub_sync.plan.reader import load_plan_artifact
@@ -417,6 +420,150 @@ def test_review_writes_nothing_even_when_the_plan_fails_verification(tmp_path: P
     """The rendering path for a failing plan is still a read-only path (AD031)."""
     directory = _store(tmp_path, [tamperable_operation()])
     tamper_with_operations(directory)
+    before = _tree(directory)
+
+    read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID).summary()
+
+    assert _tree(directory) == before
+
+
+# ======================================================================================
+# T095 — FR-010's source-snapshot binding, on the review path
+# ======================================================================================
+
+_EXTRACT_TS = datetime(2026, 7, 26, 18, 4, 11, tzinfo=timezone.utc)
+
+SNAPSHOT_ROWS: list[dict[str, Any]] = [
+    {"name": "prod", "description": "production"},
+    {"name": "staging", "description": "staging"},
+]
+
+
+def _store_with_snapshot(
+    tmp_path: Path,
+    rows: Sequence[Mapping[str, Any]] = SNAPSHOT_ROWS,
+    *,
+    run_id: str = RUN_ID,
+) -> Path:
+    """Store an artifact bound to a real source snapshot, and return its run directory.
+
+    The snapshot is written through the engine's own writer, because the binding digests the
+    table's **logical rows** with `_extract_ts` dropped (AD037): a digest over a hand-built
+    table missing the injected columns would not be the digest either path computes.
+    """
+    directory = tmp_path / SYNC_NAME / run_id
+    directory.mkdir(parents=True, exist_ok=True)
+    write_resource_side(
+        run_dir=directory,
+        side="A",
+        resource="BuiltinTag",
+        rows=[dict(row) for row in rows],
+        source_ids=[str(row["name"]) for row in rows],
+        extract_ts=_EXTRACT_TS,
+        tombstones=None,
+    )
+    write_artifact(
+        directory,
+        [operation_record()],
+        run_id=run_id,
+        source_snapshot=source_snapshot_records(directory),
+    )
+    return directory
+
+
+def _snapshot_path(run_directory: Path) -> Path:
+    return run_directory / "A" / "BuiltinTag.parquet"
+
+
+def test_a_plan_bound_to_an_intact_snapshot_carries_no_note(tmp_path: Path) -> None:
+    """The precondition. Without it the two cases below could pass vacuously."""
+    _store_with_snapshot(tmp_path)
+
+    plan = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID)
+
+    assert plan.checksum_ok is True
+    assert plan.verification_notes == []
+
+
+def test_a_review_of_a_run_whose_snapshot_is_absent_notes_the_tear(tmp_path: Path) -> None:
+    """FR-010 on the review path: the torn binding is named, not silently rendered clean.
+
+    The plan checksum covers the manifest and the operations file only, so `checksum_ok` is
+    **true** here — which is exactly why the note is the whole signal. A review that read
+    only the checksum renders `checksum: OK` for a run whose snapshot is gone, reporting a
+    check it never performed.
+    """
+    directory = _store_with_snapshot(tmp_path)
+    _snapshot_path(directory).unlink()
+
+    plan = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID)
+
+    assert plan.checksum_ok is True, "the checksum is intact, so the note is the only signal"
+    assert plan.verification_notes, "a run whose recorded snapshot is gone rendered with no note"
+    note = " ".join(plan.verification_notes)
+    # Which part is torn, expected and found, and the next action (FR-010).
+    assert "A/BuiltinTag.parquet" in note
+    assert "absent" in note
+    assert "Re-run `diff`" in note
+    # And it is still rendered rather than refused (AD031).
+    assert plan.summary().total == 1
+    assert plan.operations()
+
+
+def test_a_review_of_a_run_whose_snapshot_was_truncated_notes_both_values(tmp_path: Path) -> None:
+    """The truncation arm, whose expected and found values are both readable (FR-010).
+
+    Absent and truncated are different conditions with the same remedy, and a note that
+    said only "the snapshot does not match" would leave an operator unable to tell how far
+    it had drifted — so the recorded row count and the found one are both asserted.
+    """
+    directory = _store_with_snapshot(tmp_path)
+    write_resource_side(
+        run_dir=directory,
+        side="A",
+        resource="BuiltinTag",
+        rows=[dict(SNAPSHOT_ROWS[0])],
+        source_ids=[str(SNAPSHOT_ROWS[0]["name"])],
+        extract_ts=_EXTRACT_TS,
+        tombstones=None,
+    )
+
+    plan = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID)
+
+    assert plan.checksum_ok is True
+    note = " ".join(plan.verification_notes)
+    assert "A/BuiltinTag.parquet" in note
+    assert f"{len(SNAPSHOT_ROWS)} row(s)" in note, f"the recorded row count is missing from: {note}"
+    assert "1 row(s)" in note, f"the found row count is missing from: {note}"
+    assert "Re-run `diff`" in note
+
+
+def test_the_review_note_and_the_apply_refusal_report_the_same_binding(tmp_path: Path) -> None:
+    """One check, two paths (FR-010).
+
+    The point is not that the two texts are identical — the apply path refuses and review
+    annotates — but that neither can say the binding holds while the other says it is torn.
+    A review that recomputed the digest by its own rule could drift from the verifier
+    silently, and this is the case that would fail if it did.
+    """
+    directory = _store_with_snapshot(tmp_path)
+    _snapshot_path(directory).unlink()
+    from infrahub_sync.plan.verify import verify_plan
+    from tests.plan.artifact_fixtures import CONFIG_VERSION
+
+    failures = verify_plan(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION)
+    plan = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID)
+
+    assert [failure.check for failure in failures] == ["source_snapshot"]
+    assert len(plan.verification_notes) == 1
+    reported = plan.verification_notes[0]
+    assert str(failures[0].expected) in reported
+    assert str(failures[0].found) in reported
+
+
+def test_a_review_writes_nothing_while_reading_the_snapshot_binding(tmp_path: Path) -> None:
+    """The new read is a read: recomputing the digest creates nothing (FR-008, AD021)."""
+    directory = _store_with_snapshot(tmp_path)
     before = _tree(directory)
 
     read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID).summary()

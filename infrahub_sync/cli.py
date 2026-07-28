@@ -710,7 +710,16 @@ def apply_cmd(
             # executed no delete, which is a designed limitation of this release and not a
             # failure (AD055). The count belongs on the completion line as well as in the
             # engine's warning, because this is the last line an operator reads.
-            logger.info(
+            #
+            # At `WARNING`, and pinned there for the same reason the engine's own warning is
+            # (AD089): SC-007 names this line as required evidence, and `--quiet` floors the
+            # package logger at `logging.WARNING` (`:48`, `:78-79`), so an `INFO` emission
+            # satisfies every prose description of the obligation and vanishes for exactly the
+            # scripted invocations where it is the only completion signal. The level follows
+            # the count it reports — the branch below carries no skipped count and stays at
+            # `INFO`, which is what keeps `--quiet` silent on an apply with nothing to
+            # disclose.
+            logger.warning(
                 "Applied run %s: %d operations applied, %d deletes skipped",
                 ptd.run_id,
                 len(record.applied_operations),

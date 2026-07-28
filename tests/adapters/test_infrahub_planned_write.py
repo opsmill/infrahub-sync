@@ -723,6 +723,31 @@ def test_the_unkeyed_render_report_is_deduplicated_per_kind_not_per_run(
     assert all(record.levelno >= logging.WARNING for record in reports)
 
 
+def test_the_dedup_set_lives_for_one_apply_and_not_for_the_adapter_instance(
+    captured_logs: pytest.LogCaptureFixture,
+) -> None:
+    """T102 / AD078: "once per kind" is once per **apply**, and the state's lifetime says so.
+
+    Two applies through one adapter instance, each entered the way the engine enters one — by
+    asking the destination for a resolver — and each discloses the kind. With the set allocated
+    for the instance instead, the second apply finds every kind already reported and says
+    nothing: the disclosure is withdrawn silently, on a run whose operator has no other signal,
+    and the per-kind case above still passes because it only ever runs one apply.
+    """
+    client = RecordingClient()
+    adapter = make_adapter(client)
+
+    for _ in range(2):
+        peers = adapter.new_peer_resolver()
+        peers.remember(SITE_KIND, {"name": "site-a"}, "site-id-1")
+        adapter.apply_planned_operation(operation=device_operation("device-a"), peers=peers)
+
+    reports = unkeyed_reports(captured_logs)
+    assert len(reports) == 2, f"Each apply discloses the kind once, got {[record.getMessage() for record in reports]}."
+    assert all(DEVICE_KIND in record.getMessage() for record in reports)
+    assert all(record.levelno >= logging.WARNING for record in reports)
+
+
 # ---------------------------------------------------------------------------------------
 # T051 — replace-set cases
 # ---------------------------------------------------------------------------------------

@@ -9,10 +9,11 @@ shell commands, and other important information, read the current plan:
 
 Supporting design artifacts for that plan:
 
-- `dev/specs/001-plan-artifact-saved-apply/spec.md` — requirements (FR-001…FR-029), success
-  criteria (SC-001…SC-018), and the settled decisions AD001–AD036
+- `dev/specs/001-plan-artifact-saved-apply/spec.md` — requirements (FR-001…FR-030), success
+  criteria (SC-001…SC-018), and the index of the settled decisions AD001–AD089, whose rules are
+  tabled in `tasks.md`
 - `dev/specs/001-plan-artifact-saved-apply/research.md` — PD-001…PD-010, the details settled
-  underneath AD001–AD036
+  underneath the decision set
 - `dev/specs/001-plan-artifact-saved-apply/data-model.md` — entities, validation, run-state
   transitions
 - `dev/specs/001-plan-artifact-saved-apply/contracts/` — the plan artifact format, the reader

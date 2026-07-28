@@ -218,9 +218,18 @@ def _review(*options: str) -> Any:  # noqa: ANN401 — click's Result type is no
     return runner.invoke(app, ["diff", "--name", SYNC_NAME, "--directory", str(EXAMPLES_DIR), *options])
 
 
-def _apply(run_id: str) -> Any:  # noqa: ANN401 — click's Result type is not exported for annotation
-    """Invoke `apply` for `run_id` against the example configuration."""
-    return runner.invoke(app, ["apply", "--name", SYNC_NAME, "--directory", str(EXAMPLES_DIR), "--run-id", run_id])
+def _apply(run_id: str, *, quiet: bool = False) -> Any:  # noqa: ANN401 — click's Result type is not exported for annotation
+    """Invoke `apply` for `run_id` against the example configuration.
+
+    `quiet` passes the app-level `--quiet`, which floors the package logger at
+    `logging.WARNING` (`infrahub_sync/cli.py:48`, `:78-79`) — the invocation SC-007's warning
+    obligations are pinned above, and therefore the one that can tell an `INFO` emission from
+    a `WARNING` one.
+    """
+    prefix = ["--quiet"] if quiet else []
+    return runner.invoke(
+        app, [*prefix, "apply", "--name", SYNC_NAME, "--directory", str(EXAMPLES_DIR), "--run-id", run_id]
+    )
 
 
 # The plan every rendering case reads. Its stored order is deliberately not its sorted order,
@@ -1409,10 +1418,10 @@ def _patched_potenda(destination: RecordingDestination, *, constructed: list[str
     return _factory
 
 
-def _run_apply(destination: RecordingDestination, run_id: str = RUN_ID) -> Any:  # noqa: ANN401
+def _run_apply(destination: RecordingDestination, run_id: str = RUN_ID, *, quiet: bool = False) -> Any:  # noqa: ANN401
     """Invoke the CLI's `apply` with a real engine over `destination`."""
     with patch("infrahub_sync.cli.get_potenda_from_instance", _patched_potenda(destination)):
-        return _apply(run_id)
+        return _apply(run_id, quiet=quiet)
 
 
 def _operator_errors(caplog: pytest.LogCaptureFixture) -> str:
@@ -1463,10 +1472,20 @@ def _case_snapshot_binding_mismatch(tmp_path: Path) -> tuple[str, ...]:
 
 
 def _case_absent_operations(tmp_path: Path) -> tuple[str, ...]:
-    """SC-004: the operations file is gone, so no checksum can be computed over it (FR-010)."""
+    """SC-004: the operations file is gone, so no checksum can be computed over it (FR-010).
+
+    Reported by the **verifier**, which is what runs before the reader on this path (T097):
+    the tear is named as `torn_operations`, and the message still names the file, the recorded
+    line count and the next action, which is what FR-010 requires of it.
+    """
     directory = _appliable_run(tmp_path)
     operations_path(directory).unlink()
-    return ("operations.jsonl is absent", "Re-run `diff` to rebuild the plan artifact")
+    return (
+        "torn_operations",
+        "operations.jsonl",
+        "no operations file",
+        "Re-run `diff` for this sync to rebuild the plan artifact",
+    )
 
 
 def _case_truncated_snapshot(tmp_path: Path) -> tuple[str, ...]:
@@ -1490,9 +1509,19 @@ def _case_run_binding_mismatch(tmp_path: Path) -> tuple[str, ...]:
 
 
 def _case_unsupported_format_version(tmp_path: Path) -> tuple[str, ...]:
-    """SC-018: a manifest revision this release cannot interpret."""
+    """SC-018: a manifest revision this release cannot interpret.
+
+    Reported by the verifier's **gate**, which runs before the reader on this path (T097), so
+    the operator also learns that the remaining four checks were not evaluated and why — the
+    disclosure FR-009 requires and which the reader's own refusal could not carry.
+    """
     _appliable_run(tmp_path, format_version=UNSUPPORTED_FORMAT_VERSION)
-    return (f"declares format version {UNSUPPORTED_FORMAT_VERSION}", "Supported plan format versions: 2")
+    return (
+        "format_version",
+        f"found {UNSUPPORTED_FORMAT_VERSION}",
+        "one of the supported plan format versions: 2",
+        "were not evaluated",
+    )
 
 
 def _case_unrecognized_action(tmp_path: Path) -> tuple[str, ...]:
@@ -1606,9 +1635,10 @@ def test_the_v1_message_differs_from_the_unrecognized_version_message(
 
     assert v1_text != versioned_text
     assert "holds no plan artifact" in v1_text
-    assert "declares format version" in versioned_text
+    assert "format_version" in versioned_text
+    assert f"found {UNSUPPORTED_FORMAT_VERSION}" in versioned_text
     assert "holds no plan artifact" not in versioned_text
-    assert "Supported plan format versions" not in v1_text
+    assert "supported plan format versions" not in v1_text
 
 
 def test_a_missing_run_refuses_naming_the_runs_that_exist_and_creates_no_directory(
@@ -1648,7 +1678,15 @@ def test_a_missing_run_refuses_naming_the_runs_that_exist_and_creates_no_directo
 def test_a_delete_bearing_plan_applies_exits_zero_and_records_the_skipped_deletes(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """SC-007 and AD055 on the CLI path — **and** AD069's merge, read back from `run.json`.
+    """SC-007's **local half** and AD055 on the CLI path — and AD069's merge, from `run.json`.
+
+    Scoped, because SC-007 is evidenced against a live destination: object counts before and
+    after, and the direct assertion that each delete's target object is still present. Neither
+    is expressible against the in-memory double below. What this case carries is the rest of the
+    criterion's evidence list — the recorded run state, the recorded skipped-delete count and
+    identifiers, the closure of applied plus skipped over the plan, the warning at a level
+    `--quiet` does not suppress, and the command's own completion line. The live half is
+    `tests/integration/test_saved_plan_apply_integration.py`.
 
     This is the case that would have caught the collision. `apply_plan` returns the record
     and writes no run file; `RunFile.save()` writes the whole payload from an instance whose
@@ -1685,11 +1723,65 @@ def test_a_delete_bearing_plan_applies_exits_zero_and_records_the_skipped_delete
     }
 
     warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
-    assert len(warnings) == 1
-    assert "1" in warnings[0].getMessage()
+    assert len(warnings) == 2, [entry.getMessage() for entry in warnings]
+    engine_warning = next(entry for entry in warnings if entry.name == "infrahub_sync.potenda")
+    completion = next(entry for entry in warnings if entry.name == "infrahub_sync.cli")
+    assert "1" in engine_warning.getMessage()
     # `--quiet` floors the package logger at WARNING, so an INFO emission would vanish for
     # exactly the scripted runs where this warning is the only signal.
-    assert warnings[0].levelno == logging.WARNING
+    assert engine_warning.levelno == logging.WARNING
+    # SC-007's completion-line clause: the command's own last line names the skipped count,
+    # at the same level as the count it reports (AD089).
+    assert "1 deletes skipped" in completion.getMessage()
+    assert completion.levelno == logging.WARNING
+
+
+def test_the_completion_line_naming_the_skipped_count_survives_quiet(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """T098 / SC-007: the command's own completion line is required evidence, so it must arrive.
+
+    `--quiet` is the invocation this clause is about. It floors the package logger at
+    `logging.WARNING`, so a completion line emitted at `INFO` satisfies every prose
+    description of the obligation — "the command's own completion line naming the skipped
+    count" — and is then dropped for exactly the scripted runs where it is the only signal the
+    operator gets. The level is asserted through the real `--quiet` invocation rather than by
+    reading the call site, because the level and the floor only interact at run time (AD089).
+    """
+    delete = operation_record(action="delete", identity={"name": "retired"})
+    _appliable_run(tmp_path, [*APPLY_PLAN, delete])
+    destination = RecordingDestination()
+
+    with caplog.at_level(logging.DEBUG, logger="infrahub_sync"):
+        result = _run_apply(destination, quiet=True)
+
+    assert result.exit_code == 0, result.output
+    completion = [entry for entry in caplog.records if entry.name == "infrahub_sync.cli"]
+    assert len(completion) == 1, [entry.getMessage() for entry in completion]
+    message = completion[0].getMessage()
+    assert f"{len(APPLY_PLAN)} operations applied" in message
+    assert "1 deletes skipped" in message
+    assert completion[0].levelno >= logging.WARNING
+
+
+def test_a_quiet_apply_with_nothing_to_disclose_emits_no_completion_line(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The negative control for the case above (AD089).
+
+    The level rises with the count it reports and not with the command: an apply that skipped
+    nothing has nothing to disclose, and raising *that* line too would make `--quiet` noisy on
+    every clean apply. Without this case, "emit the completion line at WARNING" could be
+    satisfied by shouting on every run.
+    """
+    _appliable_run(tmp_path)
+    destination = RecordingDestination()
+
+    with caplog.at_level(logging.DEBUG, logger="infrahub_sync"):
+        result = _run_apply(destination, quiet=True)
+
+    assert result.exit_code == 0, result.output
+    assert [entry.getMessage() for entry in caplog.records if entry.name == "infrahub_sync.cli"] == []
 
 
 def test_a_clean_apply_records_the_applied_operations_it_actually_performed(tmp_path: Path) -> None:
@@ -1744,6 +1836,53 @@ def test_a_rejection_mid_plan_records_the_partial_applied_set(tmp_path: Path, ca
     assert recorded["summary"]["applied_operations"] == [first_id]
     # FR-025's pointer is the final element, not a separate field.
     assert recorded["summary"]["applied_operations"][-1] == first_id
+    assert recorded["summary"]["skipped_delete_count"] == 0
+
+
+class PeerlessDestination(RecordingDestination):
+    """A destination whose first operation names a peer that matches nothing (SC-016).
+
+    Raises the real `PeerNotFoundError` with the message shape the adapter builds — the peer
+    kind, the peer identity and the referring operation identifier — because what this case is
+    about is the **run's** fate once that refusal leaves the write surface, and a stand-in
+    exception would not travel the taxonomy arm the CLI dispatches on.
+    """
+
+    def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401, PLR6301
+        _ = peers
+        msg = (
+            f"Operation {operation.operation_id!r} references peer kind 'LocationSite' with identity "
+            f"{{'name': 'dc-nowhere'}}, which matches no object at the destination."
+        )
+        raise PeerNotFoundError(msg)
+
+
+def test_a_zero_match_peer_fails_the_run_and_records_it(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """T100 / SC-016: the refusal must **fail the run**, not merely leave the write surface.
+
+    The write-surface half — the raise, and zero dispatch — is asserted against the adapter in
+    `tests/adapters/test_infrahub_planned_write.py`. Neither half implies the other: an engine
+    that swallowed `PeerNotFoundError` and carried on, or a command that recorded `applied`
+    anyway, would satisfy the adapter case in full while leaving an operator with a run that
+    says it succeeded and a destination missing the object. Unlike the multi-match arm there is
+    no live counterpart, so the run-state half is asserted here, offline.
+    """
+    _appliable_run(tmp_path)
+    destination = PeerlessDestination()
+
+    with caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"):
+        result = _run_apply(destination)
+
+    assert result.exit_code != 0
+    assert destination.writes == []
+    reported = _operator_errors(caplog)
+    assert "LocationSite" in reported, "the refusal must reach the operator naming the peer kind"
+    assert "dc-nowhere" in reported, "and the peer identity"
+    assert PeerNotFoundError.next_action in reported, "and its next action (AD059)"
+
+    recorded = _run_json(tmp_path)
+    assert recorded["status"] == "failed"
+    assert recorded["summary"]["applied_operations"] == []
     assert recorded["summary"]["skipped_delete_count"] == 0
 
 

@@ -94,7 +94,11 @@ def _gate_failure(run_id: str, mapping: dict[str, Any] | None) -> VerificationFa
     return VerificationFailure(
         check="format_version",
         run_id=run_id,
-        expected=supported_versions_text(),
+        # Worded as a sentence rather than as the bare version list, because this failure is
+        # what an operator reads when an artifact a newer release wrote reaches this one: it
+        # is the apply path's whole answer for SC-018, which requires the message to name the
+        # version found **and** the versions supported.
+        expected=f"one of the supported plan format versions: {supported_versions_text()}",
         found=found,
         next_action=(
             f"The remaining checks ({', '.join(GATED_CHECKS)}) were not evaluated: an artifact whose "
@@ -183,13 +187,19 @@ def _operations_failures(run_id: str, run_dir: Path, mapping: dict[str, Any]) ->
     ]
 
 
-def _snapshot_failures(run_id: str, run_dir: Path, mapping: dict[str, Any]) -> list[VerificationFailure]:
-    """Evaluate check 4 — the source-snapshot binding (FR-004, AD037).
+def source_snapshot_failures(*, run_id: str, run_dir: Path, mapping: dict[str, Any]) -> list[VerificationFailure]:
+    """Evaluate check 4 — the source-snapshot binding (FR-004, FR-010, AD037).
 
     Absent, truncated and mismatched all land on this one check name — the three words
     SC-004 enumerates — and each failure names the snapshot it is about, so a plan bound to
     several snapshots reports which one disagreed. The digest is over **logical rows** with
     `_extract_ts` dropped, not the file's raw bytes (AD037).
+
+    Public because FR-010 puts this check on the **review** path as well as the apply path:
+    a run whose recorded snapshot is absent or truncated would otherwise render with
+    `checksum: OK` and no note, which is a safety check reporting a result it never
+    computed. `read_saved_plan` calls this and turns each failure into a verification note,
+    so both paths reach one implementation and their verdicts cannot drift.
     """
     recorded = mapping.get("source_snapshot")
     if not isinstance(recorded, list):
@@ -335,7 +345,7 @@ def verify_plan(
     failures: list[VerificationFailure] = []
     failures.extend(_run_binding_failures(run_id, mapping))
     failures.extend(_operations_failures(run_id, run_dir, mapping))
-    failures.extend(_snapshot_failures(run_id, run_dir, mapping))
+    failures.extend(source_snapshot_failures(run_id=run_id, run_dir=run_dir, mapping=mapping))
     failures.extend(_config_version_failures(run_id, mapping, config_version))
     failures.extend(_write_surface_failures(run_id, write_surface_missing_on))
     return failures

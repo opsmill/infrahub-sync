@@ -57,7 +57,15 @@ from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, 
 
 if TYPE_CHECKING:
     import os
+    from collections.abc import Sequence
     from pathlib import Path
+
+# The run-identifier enumeration's bound (AD073). Nothing in this repository prunes a run
+# directory and retention is out of scope, so an hourly pipeline would otherwise answer a
+# typo with thousands of lines. It lives here rather than in `review.py` because FR-008 puts
+# the enumeration on **both** of its arms — an unknown run identifier and a located run that
+# holds no plan artifact — and the second arm is raised from this module.
+RUN_ID_LISTING_LIMIT = 20
 
 
 @dataclass(frozen=True)
@@ -102,6 +110,45 @@ def stat_or_unreadable(path: Path, *, description: str) -> os.stat_result | None
     except OSError as exc:
         msg = f"The {description} at {str(path)!r} exists but could not be examined: {exc.strerror or exc}."
         raise PlanArtifactUnreadableError(msg) from exc
+
+
+def stored_run_ids(cache_root: Path) -> list[str]:
+    """Return the sync's stored run identifiers, most recent first.
+
+    `cache_root_for` **computes** a path and neither creates nor checks it
+    (`infrahub_sync/cache/paths.py:26-43`), so an unguarded listing raises `FileNotFoundError`
+    for a sync that never ran — from what is supposed to be a helpful error path (AD073). An
+    absent root is therefore "no stored runs", not a failure. A root that exists but cannot be
+    listed keeps its own verdict rather than being degraded to "no runs" (AD036).
+
+    Run identifiers sort by time by construction (`:46-52`), so "most recent" is a reverse
+    lexicographic sort and needs no `stat` calls.
+    """
+    try:
+        names = [entry.name for entry in cache_root.iterdir() if entry.is_dir()]
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+    except OSError as exc:
+        msg = f"The cache root at {str(cache_root)!r} exists but could not be listed: {exc.strerror or exc}."
+        raise PlanArtifactUnreadableError(msg) from exc
+    return sorted(names, reverse=True)
+
+
+def run_id_listing_text(stored: Sequence[str], *, cache_root: Path) -> str:
+    """Render FR-008's enumeration of the run identifiers that exist, bounded by AD073.
+
+    One sentence, shared by both arms FR-008 names so their wording cannot drift: an unknown
+    run identifier (`review.py`) and a located run holding no plan artifact
+    (`require_plan_directory` below). The caller supplies the already-listed identifiers
+    because one of the two arms also branches on whether the list is empty.
+    """
+    if not stored:
+        return f"This sync has no stored runs at all — {cache_root} holds no run directories."
+    shown = list(stored[:RUN_ID_LISTING_LIMIT])
+    truncation = (
+        f" (Showing the {len(shown)} most recent of {len(stored)} stored runs.)" if len(stored) > len(shown) else ""
+    )
+    return f"The most recent run identifiers for this sync are: {', '.join(shown)}.{truncation}"
 
 
 def _read_bytes(path: Path, *, description: str) -> bytes:
@@ -270,20 +317,31 @@ def require_plan_directory(run_dir: Path) -> Path:
     allocates a run directory, which is what AD026 requires and what a check living only
     inside the loader could not give it.
 
+    The refusal **enumerates the run identifiers that exist**, because FR-008 puts that
+    enumeration on this arm as well as on the unknown-run arm: a run located but holding no
+    plan artifact leaves the operator with the same next question, and answering it here
+    means they do not have to guess a second time. The identifiers come from `run_dir.parent`,
+    which is the sync's cache root by construction (`infrahub_sync/cache/paths.py:56-59`),
+    so no synchronization name has to be threaded into the reader to produce them.
+
     Raises:
         PlanFormatV1Error: no `plan/` directory exists, so the run predates this format
             (FR-019).
         PlanArtifactTornError: `plan/` exists but is not a directory.
-        PlanArtifactUnreadableError: the path exists but could not be examined (AD036).
+        PlanArtifactUnreadableError: the path exists but could not be examined, or the cache
+            root exists but could not be listed (AD036).
     """
     run_id = run_dir.name
     plan_dir = run_dir / PLAN_DIR_NAME
     entry = stat_or_unreadable(plan_dir, description="plan artifact directory")
     if entry is None:
+        cache_root = run_dir.parent
+        stored = stored_run_ids(cache_root)
+        listing = f" {run_id_listing_text(stored, cache_root=cache_root)}" if stored else ""
         msg = (
             f"Run {run_id!r} holds no plan artifact: no {PLAN_DIR_NAME!r} directory exists at "
             f"{plan_dir}. The run predates the saved plan artifact format, so there is nothing "
-            f"to apply or review."
+            f"to apply or review.{listing}"
         )
         raise PlanFormatV1Error(msg)
     if not stat_module.S_ISDIR(entry.st_mode):

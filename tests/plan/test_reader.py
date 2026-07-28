@@ -38,8 +38,14 @@ from infrahub_sync.plan.errors import (
     UnsupportedOperationActionError,
 )
 from infrahub_sync.plan.models import ACTIONS, SUPPORTED_FORMAT_VERSIONS
-from infrahub_sync.plan.reader import load_plan_artifact
+from infrahub_sync.plan.reader import (
+    RUN_ID_LISTING_LIMIT,
+    load_plan_artifact,
+    run_id_listing_text,
+    stored_run_ids,
+)
 from tests.plan.artifact_fixtures import (
+    OTHER_RUN_ID,
     RUN_ID,
     encode_operations,
     manifest_path,
@@ -100,6 +106,72 @@ def test_the_v1_verdict_does_not_depend_on_the_row_file_being_present(tmp_path: 
     """An empty run directory is v1 too: the verdict is the absence of `plan/`."""
     with pytest.raises(PlanFormatV1Error):
         load_plan_artifact(_run_dir(tmp_path))
+
+
+# ======================================================================================
+# T096 — FR-008's enumeration on the second arm: a run that holds no plan artifact
+# ======================================================================================
+
+
+def test_a_run_holding_no_plan_artifact_names_the_run_identifiers_that_do_exist(tmp_path: Path) -> None:
+    """FR-008 names this arm as well as the unknown-run arm.
+
+    A located run with no `plan/` leaves the operator with the same next question an unknown
+    run identifier does — which run *can* I apply? — so the same enumeration answers it. The
+    sibling run below is what makes the assertion falsifiable: a message that named only the
+    run asked for would pass any test that searched for that identifier alone.
+    """
+    _v1_run_dir(tmp_path)
+    sibling = tmp_path / OTHER_RUN_ID
+    sibling.mkdir(parents=True, exist_ok=True)
+    write_artifact(sibling, [operation_record()], run_id=OTHER_RUN_ID)
+
+    with pytest.raises(PlanFormatV1Error) as raised:
+        load_plan_artifact(tmp_path / RUN_ID)
+
+    message = str(raised.value)
+    assert "holds no plan artifact" in message
+    assert OTHER_RUN_ID in message, f"the run identifiers that do exist are missing from: {message}"
+    assert raised.value.next_action in message
+
+
+def test_the_enumeration_on_that_arm_is_bounded_the_same_way_the_unknown_run_one_is(tmp_path: Path) -> None:
+    """AD073's bound, on the arm that acquired the enumeration second.
+
+    Nothing prunes a run directory, so an unbounded listing would answer an hourly pipeline's
+    typo with thousands of lines. The total is stated when the list truncates, so the operator
+    knows the listing is partial rather than assuming it is all there is.
+    """
+    _v1_run_dir(tmp_path)
+    for index in range(RUN_ID_LISTING_LIMIT + 5):
+        (tmp_path / f"20260101T{index:04d}-aaaaaaaa").mkdir(parents=True, exist_ok=True)
+
+    with pytest.raises(PlanFormatV1Error) as raised:
+        load_plan_artifact(tmp_path / RUN_ID)
+
+    message = str(raised.value)
+    # Run identifiers carry no `.`, so the sentence's own terminator bounds the listing.
+    listed = message.split("are: ", 1)[1].split(".", 1)[0].split(", ")
+    assert len(listed) == RUN_ID_LISTING_LIMIT
+    assert f"of {RUN_ID_LISTING_LIMIT + 6} stored runs" in message
+
+
+def test_the_two_arms_of_the_enumeration_are_worded_identically(tmp_path: Path) -> None:
+    """One wording, so the two commands an operator meets it from cannot drift (FR-008).
+
+    Asserted against the shared renderer rather than by comparing two hand-written strings:
+    what must not diverge is the sentence, and a duplicated sentence is exactly what would
+    diverge silently.
+    """
+    _v1_run_dir(tmp_path)
+    sibling = tmp_path / OTHER_RUN_ID
+    sibling.mkdir(parents=True, exist_ok=True)
+    expected = run_id_listing_text(stored_run_ids(tmp_path), cache_root=tmp_path)
+
+    with pytest.raises(PlanFormatV1Error) as raised:
+        load_plan_artifact(tmp_path / RUN_ID)
+
+    assert expected in str(raised.value)
 
 
 # ======================================================================================

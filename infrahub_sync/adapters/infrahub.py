@@ -664,7 +664,12 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     # unkeyed. The report is once per kind, not once per operation, because
     # `apply_planned_operation` is entered once per operation and a four-thousand-operation
     # apply would otherwise emit one line per row. The set is created at the start of an
-    # apply and discarded with it, the same lifetime as `PeerResolver`'s memo.
+    # apply and discarded with it, the same lifetime as `PeerResolver`'s memo — which is why
+    # `new_peer_resolver` allocates it and `__init__` does not: an adapter instance can serve
+    # more than one apply in-process, and a set living for the instance would suppress the
+    # second apply's report of a kind the first already named. `None` is the not-in-an-apply
+    # state, which the report site allocates into for a caller that dispatches an operation
+    # without going through the resolver factory.
     _unkeyed_render_reported: set[str] | None = None
 
     def __init__(
@@ -731,8 +736,6 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         # We will keep a copy of the schema
         self.schema: MutableMapping[str, MainSchemaTypesAPI] = self.client.schema.all(branch=infrahub_branch)
-
-        self._unkeyed_render_reported = set()
 
     def cursor_tier_for(self, model_name: str) -> CursorTier:
         """TIMESTAMP for any kind present in the live Infrahub schema.
@@ -1025,6 +1028,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             else f"the kind's convergence key crosses a relationship ({', '.join(components)}), which the "
             "client cannot render from a peer supplied as a resolved node id"
         )
+        # `new_peer_resolver` allocates this at an apply's start, which is the lifetime AD078
+        # fixes. The fallback covers a caller that dispatches an operation without asking for a
+        # resolver first: it still deduplicates, it just cannot know where the apply began.
         reported = self._unkeyed_render_reported
         if reported is None:
             reported = self._unkeyed_render_reported = set()
@@ -1051,7 +1057,16 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         One resolver per apply, created at its start and discarded with it — nothing about it
         is persisted, and it is never shared between applies.
+
+        The keyedness report's dedup set is allocated here for that same reason (AD078). Its
+        contract is "once per destination kind **per apply**", and this is the one call the
+        engine makes at an apply's start, so it is the only place on the write surface where
+        that lifetime can be established. Allocated in `__init__` instead, it would live for
+        the adapter instance: a second apply through a reused adapter would then find every
+        kind already reported and disclose nothing at all, on the run where the operator has
+        no other signal.
         """
+        self._unkeyed_render_reported = set()
         return PeerResolver(self)
 
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: PeerResolver) -> str:

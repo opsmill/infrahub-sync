@@ -1024,6 +1024,95 @@ def test_the_convergence_warning_stays_out_of_the_manifest_and_the_run_succeeds(
     assert manifest["operations_count"] > 0
 
 
+class ConvergenceCase(NamedTuple):
+    """One of SC-014's three cases, as a schema fixture plus what its warning must say."""
+
+    run_id: str
+    schema: dict[str, Any]
+    fragments: tuple[str, ...]
+
+
+# SC-014's evidence procedure is "three plan runs, one per case, asserting the warning's
+# content and the run's successful outcome". Each schema below declares exactly **one** kind,
+# so the kinds the plan also carries are skipped and the case's own warning is the only one
+# emitted — which is what lets the count be asserted rather than a substring search that any
+# extra warning would also satisfy.
+SC014_CASES: dict[str, ConvergenceCase] = {
+    "no-human-friendly-id": ConvergenceCase(
+        run_id="20260727T0300-11111111",
+        schema={"BuiltinTag": schema_node(human_friendly_id=None, uniqueness_constraints=[["name__value"]])},
+        fragments=("BuiltinTag", "no human-friendly ID"),
+    ),
+    "identity-misses-a-component": ConvergenceCase(
+        run_id="20260727T0301-22222222",
+        schema={
+            "BuiltinTag": schema_node(
+                # `slug` is a mapped field but not one of the kind's identifiers, so the plan's
+                # identity cannot supply this component.
+                human_friendly_id=["name__value", "slug__value"],
+                uniqueness_constraints=[["name__value"]],
+            )
+        },
+        fragments=("BuiltinTag", "does not supply every human-friendly-ID component", "slug__value"),
+    ),
+    "no-covering-uniqueness-constraint": ConvergenceCase(
+        run_id="20260727T0302-33333333",
+        schema={"BuiltinTag": schema_node(human_friendly_id=["name__value"], uniqueness_constraints=[])},
+        fragments=("BuiltinTag", "no uniqueness constraint"),
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(SC014_CASES.values()), ids=list(SC014_CASES))
+def test_each_convergence_key_case_warns_and_the_plan_run_still_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    case: ConvergenceCase,
+) -> None:
+    """T099 / SC-014: all three cases, each as a plan run, each asserted to succeed.
+
+    The three content assertions elsewhere in this section call
+    `warn_missing_convergence_key` directly — no plan run, no run outcome — so they evidence
+    the message and nothing about the criterion's other half. SC-014's own evidence procedure
+    is three **plan runs**, so each case is driven through the real `diff` command here and
+    the successful outcome is read from the exit code and the recorded run state, not inferred
+    from the absence of an exception.
+
+    The run outcome is the point of the pairing: FR-024 raises this edge case from
+    documentation to detection, and a detection that failed the run would make the plan
+    unreachable for every kind whose destination schema happens to look like this.
+    """
+    config = build_config()
+    source = qualified_source()
+    destination = destination_with_orphan(schema=case.schema)
+
+    potenda = build_potenda(config=config, source=source, destination=destination, run_id=case.run_id)
+    with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
+        result = invoke_command(
+            "diff",
+            config=config,
+            potenda=potenda,
+            project_dir=tmp_path / "project",
+            monkeypatch=monkeypatch,
+        )
+
+    # The warning's content.
+    messages = derive_warnings(caplog)
+    assert len(messages) == 1, messages
+    for fragment in case.fragments:
+        assert fragment in messages[0], f"{fragment!r} missing from: {messages[0]}"
+
+    # The run's successful outcome.
+    assert result.exit_code == 0, result.output
+    assert result.exception is None, f"an error escaped the plan run: {result.exception!r}"
+    run_record = json.loads((plan_run_dir(potenda) / "run.json").read_text(encoding="utf-8"))
+    assert run_record["status"] == "dry-run"
+    manifest = read_manifest(plan_run_dir(potenda))
+    assert set(manifest) == MANIFEST_KEYS, "the warning leaked into the manifest"
+    assert manifest["operations_count"] > 0
+
+
 def test_a_destination_exposing_no_schema_is_skipped_rather_than_failing(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -1125,6 +1214,82 @@ def test_the_tier_branch_computes_every_diff_and_writes_the_artifact_before_the_
     assert len(identifiers) == 6
     assert len(identifiers) == len(set(identifiers))
     assert read_manifest(plan_run_dir(potenda))["operations_count"] == 6
+
+
+# =======================================================================================
+# T101 — FR-015: `sync` records deletes exactly as `diff` does, serial and tiered
+# =======================================================================================
+
+
+def _delete_records(potenda: Potenda) -> list[dict[str, Any]]:
+    """Every recorded `delete` operation of a run's artifact, in stored order."""
+    lines = [json.loads(line) for line in read_operations_bytes(plan_run_dir(potenda)).splitlines()]
+    return [record for record in lines if record["action"] == "delete"]
+
+
+def test_a_serial_and_a_tiered_sync_record_deletes_exactly_as_a_diff_does(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FR-015: the delete class is recorded, never executed — and identically in all three modes.
+
+    This is structurally true today, because `write_plan` and the tier branch of
+    `sync_in_tiers` are the only artifact-writing call sites and both go through
+    `write_plan_artifact`. Structurally true and unasserted is exactly the shape that regresses
+    silently: a second artifact-writing call site added later — a new execution mode, a
+    resumed apply — would only have to forget `derive_deletes` to make `sync` record no delete
+    at all, and FR-015's "explicit and reviewable" claim would be carried by nothing on the two
+    paths an operator actually writes from.
+
+    Asserted as the recorded delete **records**, not their count: a mode that recorded a delete
+    for the wrong object, at the wrong tier, or with a differently derived identifier would
+    keep the count and break the parity a reviewer relies on.
+    """
+    config = build_config()
+
+    pin_extraction_decisions(monkeypatch, [False, False])
+    dry_run = build_potenda(
+        config=config,
+        source=qualified_source(),
+        destination=destination_with_orphan(),
+        run_id="20260727T0400-11111111",
+    )
+    run_plan(dry_run)
+
+    pin_extraction_decisions(monkeypatch, [False, False])
+    serial = build_potenda(
+        config=config,
+        source=qualified_source(),
+        destination=destination_with_orphan(),
+        run_id="20260727T0401-22222222",
+    )
+    serial.sync_in_tiers(parallel=False)
+
+    pin_extraction_decisions(monkeypatch, [False, False])
+    tiered = build_potenda(
+        config=config,
+        source=qualified_source(),
+        destination=destination_with_orphan(),
+        run_id="20260727T0402-33333333",
+        tiers=[{"BuiltinTag", "LocationSite"}, {"LocationRack"}, {"DcimDevice"}],
+    )
+    tiered.sync_in_tiers(parallel=True)
+
+    # The precondition: the fixture's orphan gives all three runs a delete to record. Without
+    # it every equality below would hold vacuously between three empty lists.
+    recorded = _delete_records(dry_run)
+    assert recorded, "the fixture's destination orphan produced no delete operation"
+    assert {record["kind"] for record in recorded} == {"BuiltinTag"}
+
+    assert _delete_records(serial) == recorded
+    assert _delete_records(tiered) == recorded
+    # And each mode recorded the delete class as computed, so review discloses it (AD056).
+    for potenda in (dry_run, serial, tiered):
+        assert read_manifest(plan_run_dir(potenda))["delete_operations_computed"] is True
+
+    # Both sync modes really executed, and the artifact was already on disk when they did —
+    # otherwise the parity above would be a parity between three dry runs (FR-001).
+    assert dry_run.destination.sync_calls == []  # ty: ignore[unresolved-attribute]
+    for potenda in (serial, tiered):
+        assert potenda.destination.sync_calls  # ty: ignore[unresolved-attribute]
+        assert all(potenda.destination.manifest_present_at_sync)  # ty: ignore[unresolved-attribute]
 
 
 # =======================================================================================
