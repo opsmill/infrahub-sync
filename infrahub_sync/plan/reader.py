@@ -262,6 +262,40 @@ def _load_operations(plan_dir: Path, manifest: PlanManifest, run_id: str) -> tup
     return operations, operations_bytes
 
 
+def require_plan_directory(run_dir: Path) -> Path:
+    """Return `<run_dir>/plan/`, refusing when it is absent or is not a directory.
+
+    Split out of `load_plan_artifact` so the CLI's apply path can reach the *same* verdict —
+    and therefore the same message and next action — **before** it constructs an adapter or
+    allocates a run directory, which is what AD026 requires and what a check living only
+    inside the loader could not give it.
+
+    Raises:
+        PlanFormatV1Error: no `plan/` directory exists, so the run predates this format
+            (FR-019).
+        PlanArtifactTornError: `plan/` exists but is not a directory.
+        PlanArtifactUnreadableError: the path exists but could not be examined (AD036).
+    """
+    run_id = run_dir.name
+    plan_dir = run_dir / PLAN_DIR_NAME
+    entry = stat_or_unreadable(plan_dir, description="plan artifact directory")
+    if entry is None:
+        msg = (
+            f"Run {run_id!r} holds no plan artifact: no {PLAN_DIR_NAME!r} directory exists at "
+            f"{plan_dir}. The run predates the saved plan artifact format, so there is nothing "
+            f"to apply or review."
+        )
+        raise PlanFormatV1Error(msg)
+    if not stat_module.S_ISDIR(entry.st_mode):
+        raise _torn(
+            run_id,
+            f"{PLAN_DIR_NAME!r} is not a directory",
+            expected=f"a directory at {plan_dir}",
+            found="a non-directory path",
+        )
+    return plan_dir
+
+
 def load_plan_artifact(run_dir: Path) -> LoadedPlan:
     """Read `<run_dir>/plan/` and return it as a validated `LoadedPlan`.
 
@@ -281,22 +315,7 @@ def load_plan_artifact(run_dir: Path) -> LoadedPlan:
             (FR-017, AD055).
     """
     run_id = run_dir.name
-    plan_dir = run_dir / PLAN_DIR_NAME
-    entry = stat_or_unreadable(plan_dir, description="plan artifact directory")
-    if entry is None:
-        msg = (
-            f"Run {run_id!r} holds no plan artifact: no {PLAN_DIR_NAME!r} directory exists at "
-            f"{plan_dir}. The run predates the saved plan artifact format, so there is nothing "
-            f"to apply or review."
-        )
-        raise PlanFormatV1Error(msg)
-    if not stat_module.S_ISDIR(entry.st_mode):
-        raise _torn(
-            run_id,
-            f"{PLAN_DIR_NAME!r} is not a directory",
-            expected=f"a directory at {plan_dir}",
-            found="a non-directory path",
-        )
+    plan_dir = require_plan_directory(run_dir)
 
     manifest, mapping = _load_manifest(plan_dir, run_id)
     operations, operations_bytes = _load_operations(plan_dir, manifest, run_id)

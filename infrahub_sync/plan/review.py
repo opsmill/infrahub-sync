@@ -179,6 +179,29 @@ def _unknown_run_error(sync_name: str, run_id: str, expected_artifact: Path) -> 
     return UnknownRunIdentifierError(msg)
 
 
+def require_stored_run(sync_name: str, run_id: str) -> Path:
+    """Return the run's directory, refusing with the enumerated message when it is absent.
+
+    The **single** raising site for the unknown-run refusal, shared by the review path below
+    and by the CLI's apply guard, so AD073's bounded enumeration and AD059's next action are
+    written once and cannot drift between the two commands an operator reaches them from.
+
+    Raises:
+        UnknownRunIdentifierError: no run with that identifier is stored. The message lists
+            the most recent stored identifiers, or states plainly that the sync has no
+            stored runs at all (AD073).
+        PlanArtifactUnreadableError: the run directory or the cache root exists but could
+            not be examined or listed (AD036).
+    """
+    # `run_dir` applies `_require_safe_segment`'s traversal guard to **both** arguments
+    # (`infrahub_sync/cache/paths.py:11-23`, `:56-59`), so a `..` or absolute value is
+    # rejected before any path is joined.
+    directory = run_dir(sync_name, run_id)
+    if not _run_directory_exists(directory):
+        raise _unknown_run_error(sync_name, run_id, directory / PLAN_DIR_NAME / MANIFEST_FILE_NAME)
+    return directory
+
+
 def read_saved_plan(
     *,
     sync_name: str,
@@ -211,12 +234,7 @@ def read_saved_plan(
             the one bound on AD031's "review renders rather than refuses", which is scoped
             to verification failures (AD055).
     """
-    # `run_dir` applies `_require_safe_segment`'s traversal guard to **both** arguments
-    # (`infrahub_sync/cache/paths.py:11-23`, `:56-59`), so a `..` or absolute value is
-    # rejected before any path is joined.
-    directory = run_dir(sync_name, run_id)
-    if not _run_directory_exists(directory):
-        raise _unknown_run_error(sync_name, run_id, directory / PLAN_DIR_NAME / MANIFEST_FILE_NAME)
+    directory = require_stored_run(sync_name, run_id)
 
     loaded = load_plan_artifact(directory)
     recomputed = compute_plan_checksum(loaded.manifest_mapping, loaded.operations_bytes)

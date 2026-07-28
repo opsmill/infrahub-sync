@@ -113,7 +113,19 @@ class UnknownRunIdentifierError(PlanArtifactError):
 
 
 class UnknownPlanKindError(PlanArtifactError):
-    """A `kind` filter names a kind the configuration does not declare."""
+    """A `kind` filter selects nothing, from either of the two conditions that can cause it.
+
+    **Undeclared** — the configuration does not declare that kind — is raised by the reader.
+    **Declared but unrepresented** — the configuration declares it and the plan simply holds
+    no operation for it — is raised by the **renderer**, because the reader answers `[]`
+    there by design: FR-029 requires a programmatic caller to consume the result as data,
+    and forcing one to catch an exception to learn a count is a presentation rule leaking
+    into the data interface (AD058).
+
+    One class, because the operator's remedy is the same in both — pick a kind the plan
+    holds, which both messages list — while the messages themselves stay distinguishable so
+    the operator can tell a typo from an empty class of work.
+    """
 
     next_action = "Re-run naming one of the destination kinds listed above."
 
