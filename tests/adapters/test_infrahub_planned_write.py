@@ -21,8 +21,11 @@ the properties under test are invisible to an assertion made against a `MagicMoc
 - the **flush** that carries it is `node.update(do_full_update=True)`, and only the rendered
   mutation *name* separates that from a second `save(allow_upsert=True)` (AD085).
 
-Covers T050 (payload cases), T051 (replace-set cases), T052 (memo cases) and T053 (SC-016's
-local half).
+Covers T050 (payload cases), T051 (replace-set cases), T052 (memo cases), T053 (SC-016's
+local half), T054 (SC-007's local half), T055 (the apply-loop cases) and the apply half of
+T056 (SC-005). The last three drive `Potenda.apply_plan` over a stored artifact against a
+recording fake destination, because what they measure — stored order, the collected delete,
+the returned record — is the **engine's** contract over the write surface above.
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ from __future__ import annotations
 import logging
 import re
 from contextlib import contextmanager
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
@@ -53,18 +57,29 @@ from infrahub_sync.adapters.infrahub import (
     update_node,
 )
 from infrahub_sync.plan.errors import (
+    ApplyRecordInvariantError,
+    OperationApplyFailedError,
     PeerAmbiguousError,
     PeerNotFoundError,
+    PlanVerificationError,
     UnaccountedIdentityComponentError,
     UnkeyedWriteRefusedError,
+    UnsupportedOperationActionError,
 )
 from infrahub_sync.plan.identity import canonical_identity, operation_id
-from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
+from infrahub_sync.plan.models import ACTIONS, ApplyRecord, PlannedOperation, RelationshipReference
+from infrahub_sync.plan.review import read_saved_plan
+from infrahub_sync.potenda import Potenda
+from tests.plan.artifact_fixtures import CONFIG_VERSION, SYNC_NAME, operation_record, write_artifact
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
 ADAPTER_LOGGER = "infrahub_sync.adapters.infrahub"
+ENGINE_LOGGER = "infrahub_sync.potenda"
+
+APPLY_RUN_ID = "20260727T1130-77e0b4c2"
 
 SITE_KIND = "TestSite"
 TAG_KIND = "TestTag"
@@ -1011,3 +1026,406 @@ def test_the_live_sync_write_path_still_drops_an_unresolvable_cardinality_many_p
     update_node(node=node, attrs={"members": ["a-key-no-store-holds"]})
 
     assert not client.mutations, "Nothing is written and nothing is raised."
+
+
+# ---------------------------------------------------------------------------------------
+# The engine over the write surface — shared scaffolding for T054, T055 and T056
+# ---------------------------------------------------------------------------------------
+
+# A run.json written before the apply, so "apply_plan leaves it untouched" is a comparison
+# of bytes rather than the weaker "no file was created" (AD069).
+SENTINEL_RUN_FILE = '{"status": "running", "mode": "apply", "summary": {}, "finished_at": null}'
+
+
+class RecordingApplyDestination:
+    """A destination implementing the planned-write surface, recording every dispatch.
+
+    A plain object rather than a `MagicMock`: a mock answers `hasattr` for every name, so
+    the missing-surface case T055 has to be able to fail on cannot be expressed against one.
+
+    `reject_at` is the 0-based dispatch index the destination rejects, which is how a
+    mid-plan rejection is driven without reaching a real destination.
+    """
+
+    def __init__(self, *, reject_at: int | None = None) -> None:
+        self.dispatched: list[str] = []
+        self.reject_at = reject_at
+
+    def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
+        _ = peers
+        if self.reject_at is not None and len(self.dispatched) == self.reject_at:
+            msg = "the destination rejected this object"
+            raise RuntimeError(msg)
+        self.dispatched.append(operation.operation_id)
+        return f"node-{len(self.dispatched)}"
+
+
+class DestinationWithoutPlannedWriteSurface:
+    """A destination that cannot apply a saved plan — FR-023's refusal case.
+
+    Deliberately named at length: the verifier's message has to carry **this** class name,
+    which it can only do because it receives the name rather than a boolean (AD058).
+    """
+
+    def __init__(self) -> None:
+        self.dispatched: list[str] = []
+
+
+def apply_run_dir(tmp_path: Path, *, run_id: str = APPLY_RUN_ID) -> Path:
+    """A run directory under the sync's cache layout, so review and apply see one artifact."""
+    directory = tmp_path / SYNC_NAME / run_id
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def engine_over(run_directory: Path, destination: object, *, run_id: str = APPLY_RUN_ID) -> Potenda:
+    """A `Potenda` bound to `run_directory` with no configuration and no source load."""
+    return Potenda(
+        source=SimpleNamespace(top_level=[]),  # ty: ignore[invalid-argument-type]
+        destination=destination,  # ty: ignore[invalid-argument-type]
+        config=None,  # ty: ignore[invalid-argument-type]
+        top_level=["BuiltinTag"],
+        run_dir=run_directory,
+        run_id=run_id,
+    )
+
+
+def apply_and_record_state(engine: Potenda) -> tuple[str, ApplyRecord | Exception]:
+    """Apply, and return the run state the CLI would record, with what the apply produced.
+
+    The state rule is the CLI's, mirrored rather than described: `infrahub_sync/cli.py:343-349`
+    records `applied` when `apply_plan` returns and `failed` when it raises. Reading the state
+    through this helper is what makes "the run ends `applied`" an assertion a `failed` run
+    fails, rather than an inference from the absence of an exception (AD055).
+    """
+    try:
+        record = engine.apply_plan(config_version=CONFIG_VERSION)
+    except Exception as exc:  # noqa: BLE001 — the CLI catches exactly this broadly
+        return "failed", exc
+    return "applied", record
+
+
+@pytest.fixture
+def engine_logs(caplog: pytest.LogCaptureFixture) -> Iterator[pytest.LogCaptureFixture]:
+    """Capture the engine's logger at DEBUG, so an `INFO` emission is captured and fails."""
+    with caplog.at_level(logging.DEBUG, logger=ENGINE_LOGGER):
+        yield caplog
+
+
+# ---------------------------------------------------------------------------------------
+# T054 — SC-007's local half: a delete-bearing plan, and the class that does still fail
+# ---------------------------------------------------------------------------------------
+
+
+def test_a_delete_bearing_plan_applies_every_non_delete_and_ends_applied(
+    tmp_path: Path,
+    engine_logs: pytest.LogCaptureFixture,
+) -> None:
+    """SC-007: a recorded delete is collected, never dispatched, and the run still succeeds.
+
+    **A run state of `failed` fails this test.** Not executing a delete is a designed
+    limitation of this release, and reporting a designed limitation as a fault is the defect
+    AD055 corrects: an operator whose delete-bearing plan reports `failed` cannot tell it
+    from a plan whose creates were rejected, and the creates *were* applied.
+
+    Every value is read off the **returned** record, because `apply_plan` writes no run file
+    (AD069). T065 asserts the same three read back from `run.json` after the CLI has merged
+    them, which is what proves the merge happens.
+    """
+    directory = apply_run_dir(tmp_path)
+    create = operation_record(identity={"name": "prod"})
+    update = operation_record(action="update", identity={"name": "staging"})
+    first_delete = operation_record(action="delete", identity={"name": "retired"})
+    second_delete = operation_record(action="delete", kind="LocationSite", identity={"name": "closed"})
+    records = [create, first_delete, update, second_delete]
+    write_artifact(directory, records, run_id=APPLY_RUN_ID, source_snapshot=[])
+    run_file = directory / "run.json"
+    run_file.write_text(SENTINEL_RUN_FILE, encoding="utf-8")
+
+    destination = RecordingApplyDestination()
+    state, outcome = apply_and_record_state(engine_over(directory, destination))
+
+    assert state == "applied", (
+        f"A delete-bearing plan is a designed limitation, not a fault: the run must end 'applied', "
+        f"got {state!r} from {outcome!r}."
+    )
+    assert isinstance(outcome, ApplyRecord)
+    record = outcome
+    assert destination.dispatched == [create["operation_id"], update["operation_id"]], (
+        "Every non-delete is applied, in stored order, and neither delete is dispatched."
+    )
+    assert first_delete["operation_id"] not in destination.dispatched
+    assert second_delete["operation_id"] not in destination.dispatched
+
+    assert record.skipped_delete_count == 2, "The count is the plan's delete count."
+    assert record.skipped_delete_operations == (first_delete["operation_id"], second_delete["operation_id"]), (
+        "Exactly the delete identifiers, in stored order."
+    )
+
+    # DBR-016's knowability invariant, as a recorded value rather than an inference: the
+    # reviewed set minus the applied set has to be readable, not deduced.
+    planned = {str(entry["operation_id"]) for entry in records}
+    assert set(record.applied_operations) | set(record.skipped_delete_operations) == planned
+    assert len(record.applied_operations) + len(record.skipped_delete_operations) == len(records)
+
+    assert run_file.read_text(encoding="utf-8") == SENTINEL_RUN_FILE, (
+        "`apply_plan` is not the run file's writer; the CLI merges the record and saves it (AD069)."
+    )
+
+    warnings = [entry for entry in engine_logs.records if "delete" in entry.getMessage()]
+    assert len(warnings) == 1, f"One report for the whole apply, got {[w.getMessage() for w in warnings]}."
+    assert warnings[0].levelno >= logging.WARNING, (
+        f"The report is pinned to WARNING because --quiet floors the package logger there "
+        f"(infrahub_sync/cli.py:29); it was emitted at {warnings[0].levelname}."
+    )
+    assert "2" in warnings[0].getMessage(), "The warning must name the count of deletes it did not execute."
+
+
+def test_a_mid_apply_rejection_surfaces_the_rejection_not_the_knowability_invariant(tmp_path: Path) -> None:
+    """AD062: the invariant is checked on a **completed** apply and nowhere else.
+
+    A partial apply breaks both of its clauses by construction, so an implementation that
+    checked it unconditionally would replace a clear destination-rejection message with an
+    internal invariant error and send the operator after the wrong cause.
+    """
+    directory = apply_run_dir(tmp_path)
+    records = [operation_record(identity={"name": "prod"}), operation_record(identity={"name": "staging"})]
+    write_artifact(directory, records, run_id=APPLY_RUN_ID, source_snapshot=[])
+
+    destination = RecordingApplyDestination(reject_at=1)
+    state, outcome = apply_and_record_state(engine_over(directory, destination))
+
+    assert state == "failed"
+    assert not isinstance(outcome, ApplyRecordInvariantError), (
+        f"A rejection must surface as the rejection, got {outcome!r}."
+    )
+    assert isinstance(outcome, OperationApplyFailedError)
+    assert "the destination rejected this object" in str(outcome)
+
+
+def test_an_action_outside_the_vocabulary_fails_the_run_before_any_dispatch(tmp_path: Path) -> None:
+    """FR-017: the class that *does* fail — an operation this release cannot interpret.
+
+    The pairing with the case above is the point. A delete is recorded, understood and
+    deliberately not executed; an action outside `ACTIONS` is not understood at all, so
+    continuing would mean applying part of a plan whose remainder is uninterpretable. It is
+    refused while reading, which is what puts it before the first write.
+    """
+    directory = apply_run_dir(tmp_path)
+    records = [
+        operation_record(identity={"name": "prod"}),
+        operation_record(action="purge", identity={"name": "retired"}),
+    ]
+    write_artifact(directory, records, run_id=APPLY_RUN_ID, source_snapshot=[])
+
+    destination = RecordingApplyDestination()
+    state, outcome = apply_and_record_state(engine_over(directory, destination))
+
+    assert state == "failed", "An uninterpretable operation is a genuine failure, unlike a recorded delete."
+    assert destination.dispatched == [], "Nothing is dispatched: the refusal precedes the first write."
+    assert isinstance(outcome, UnsupportedOperationActionError)
+    message = str(outcome)
+    assert records[1]["operation_id"] in message, "The refusal must name the offending operation identifier."
+    assert "purge" in message, "The refusal must name the action it found."
+    for action in ACTIONS:
+        assert action in message, f"The refusal must list the recognized vocabulary; {action!r} is absent."
+    assert "Next action:" in message, "The refusal must carry its next action (AD059)."
+    assert "re-plan" in message, "And that next action is to re-plan with this version."
+
+
+# ---------------------------------------------------------------------------------------
+# T055 — the apply loop
+# ---------------------------------------------------------------------------------------
+
+
+def test_a_destination_without_the_write_surface_fails_before_any_write_naming_the_class(tmp_path: Path) -> None:
+    """FR-023/AD058: the refusal names the adapter class, which a boolean cannot supply.
+
+    The verifier receives the destination's class **name** rather than a "has a surface"
+    flag precisely so this message can be acted on: an operator running several syncs learns
+    which destination cannot apply a saved plan without reading the source.
+    """
+    directory = apply_run_dir(tmp_path)
+    write_artifact(directory, [operation_record()], run_id=APPLY_RUN_ID, source_snapshot=[])
+
+    destination = DestinationWithoutPlannedWriteSurface()
+    state, outcome = apply_and_record_state(engine_over(directory, destination))
+
+    assert state == "failed"
+    assert isinstance(outcome, PlanVerificationError)
+    message = str(outcome)
+    assert "DestinationWithoutPlannedWriteSurface" in message, (
+        "The verifier must name the adapter class it refused, not merely report a missing surface."
+    )
+    assert "write_surface" in message
+    assert "infrahub-sync sync" in message, "The refusal must direct the operator at the path that does work."
+    assert destination.dispatched == []
+
+
+def test_the_applied_record_is_an_ordered_sequence_ending_at_the_last_applied_operation(tmp_path: Path) -> None:
+    """FR-020/FR-025: stored order is executed exactly and the record preserves it.
+
+    The fixture's stored order is deliberately **not** its sorted order, so an implementation
+    that sorted what it read — or recorded the applied set unordered — dispatches a different
+    sequence and fails here rather than passing by coincidence. FR-025's last-applied pointer
+    is the final element of that sequence, not a separate field.
+    """
+    directory = apply_run_dir(tmp_path)
+    records = [
+        operation_record(identity={"name": "zulu"}),
+        operation_record(action="update", identity={"name": "alpha"}),
+        operation_record(identity={"name": "mike"}),
+    ]
+    write_artifact(directory, records, run_id=APPLY_RUN_ID, source_snapshot=[])
+    stored_order = [str(entry["operation_id"]) for entry in records]
+    assert stored_order != sorted(stored_order), "the fixture must not already be in sorted order"
+
+    destination = RecordingApplyDestination()
+    state, outcome = apply_and_record_state(engine_over(directory, destination))
+
+    assert state == "applied"
+    assert isinstance(outcome, ApplyRecord)
+    record = outcome
+    assert destination.dispatched == stored_order
+    assert list(record.applied_operations) == stored_order, "The record is ordered, and it is the stored order."
+    assert record.applied_operations[-1] == stored_order[-1]
+
+
+def test_a_rejection_mid_plan_stops_there_keeps_prior_writes_and_carries_the_partial_record(tmp_path: Path) -> None:
+    """AD027/AD062/AD069: the partial record travels on the error so the CLI can merge it.
+
+    Re-raising bare would lose it, and FR-025's last-applied pointer would not survive a
+    partial apply — which is exactly the run where an operator needs it.
+    """
+    directory = apply_run_dir(tmp_path)
+    records = [
+        operation_record(identity={"name": "first"}),
+        operation_record(identity={"name": "second"}),
+        operation_record(identity={"name": "third"}),
+    ]
+    write_artifact(directory, records, run_id=APPLY_RUN_ID, source_snapshot=[])
+    identifiers = [str(entry["operation_id"]) for entry in records]
+
+    destination = RecordingApplyDestination(reject_at=1)
+    state, outcome = apply_and_record_state(engine_over(directory, destination))
+
+    assert state == "failed"
+    assert destination.dispatched == [identifiers[0]], "The apply stops at the rejection; it does not continue."
+    assert isinstance(outcome, OperationApplyFailedError)
+    assert outcome.apply_record.applied_operations == (identifiers[0],), (
+        "The partial record must ride on the error: without it the CLI records `failed` with no "
+        "last-applied pointer, on the one run where the pointer matters."
+    )
+    assert outcome.apply_record.skipped_delete_count == 0
+    message = str(outcome)
+    assert identifiers[1] in message, "The failure must name the operation that failed."
+    assert "stay written" in message, "The failure must say the earlier writes were kept."
+    assert outcome.next_action, "Every member of the taxonomy carries a next action (AD059)."
+    assert "Next action:" in message
+
+
+def test_an_empty_plan_applies_as_a_successful_no_op_after_verification_has_run(tmp_path: Path) -> None:
+    """FR-022/AD033: zero operations is a success — and the gate still runs first.
+
+    The second clause is what the surfaceless pairing below asserts: an implementation that
+    short-circuited an empty plan before verification would return success for a destination
+    that cannot apply a plan at all, and the operator would learn nothing.
+    """
+    directory = apply_run_dir(tmp_path)
+    write_artifact(directory, [], run_id=APPLY_RUN_ID, source_snapshot=[])
+
+    state, outcome = apply_and_record_state(engine_over(directory, RecordingApplyDestination()))
+
+    assert state == "applied"
+    assert isinstance(outcome, ApplyRecord)
+    assert outcome.applied_operations == ()
+    assert outcome.skipped_delete_operations == ()
+    assert outcome.skipped_delete_count == 0
+
+    refused_state, refused = apply_and_record_state(engine_over(directory, DestinationWithoutPlannedWriteSurface()))
+    assert refused_state == "failed"
+    assert isinstance(refused, PlanVerificationError), (
+        "Verification runs before the operation loop, so an empty plan is still gated (AD033)."
+    )
+
+
+def test_the_returned_record_carries_exactly_the_three_run_summary_keys(tmp_path: Path) -> None:
+    """AD062/AD069: the record's shape is asserted on the **returned** value.
+
+    `apply_plan` writes no run file, so reading these back from `run.json` here would assert
+    a merge this method does not perform. The key names are pinned because the CLI merges
+    them into `summary` by exactly these names; T065 asserts the merged file.
+    """
+    directory = apply_run_dir(tmp_path)
+    write_artifact(directory, [operation_record()], run_id=APPLY_RUN_ID, source_snapshot=[])
+    run_file = directory / "run.json"
+    run_file.write_text(SENTINEL_RUN_FILE, encoding="utf-8")
+
+    state, outcome = apply_and_record_state(engine_over(directory, RecordingApplyDestination()))
+
+    assert state == "applied"
+    assert isinstance(outcome, ApplyRecord)
+    keys = outcome.as_summary_keys()
+    assert set(keys) == {"applied_operations", "skipped_delete_operations", "skipped_delete_count"}
+    assert isinstance(keys["applied_operations"], list)
+    assert isinstance(keys["skipped_delete_operations"], list)
+    assert isinstance(keys["skipped_delete_count"], int)
+    assert run_file.read_text(encoding="utf-8") == SENTINEL_RUN_FILE, (
+        "`apply_plan` wrote the run file, which is the CLI's job alone (AD069)."
+    )
+
+
+# ---------------------------------------------------------------------------------------
+# T056 — SC-005's apply half: the reviewed set equals the applied record, in order
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_reviewed_operation_identifiers_equal_the_applied_record_in_the_same_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SC-005: what a review showed is exactly what an apply then wrote.
+
+    The review-side set comes from `read_saved_plan`'s per-object output — the same call the
+    command-line review mode renders — and the apply-side set from the FR-020 record on the
+    apply result. The comparison is **ordered**, so an implementation recording the applied
+    identifiers as a set or sorting them fails here: an operator reconciling a review against
+    a partial apply reads the record positionally, and an unordered record cannot answer
+    "where did it stop".
+
+    **The fixture carries no delete**, asserted before comparing. A delete is reviewed but
+    never applied, so its identifier lands in `skipped_delete_operations` rather than
+    `applied_operations`, and an ordered equality over a delete-bearing plan would fail for a
+    reason that has nothing to do with SC-005. T054 is where a delete-bearing plan is
+    exercised.
+    """
+    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path))
+    directory = apply_run_dir(tmp_path)
+    records = [
+        operation_record(identity={"name": "zulu"}),
+        operation_record(action="update", kind="LocationSite", identity={"name": "dc1"}, tier=1),
+        operation_record(identity={"name": "alpha"}),
+    ]
+    write_artifact(directory, records, run_id=APPLY_RUN_ID, source_snapshot=[])
+
+    reviewed_operations = read_saved_plan(sync_name=SYNC_NAME, run_id=APPLY_RUN_ID).operations()
+    assert all(operation.action != "delete" for operation in reviewed_operations), (
+        "SC-005's precondition: a delete is reviewed but never applied, so a delete-bearing "
+        "fixture would fail this comparison for an unrelated reason (FR-016, FR-017)."
+    )
+    reviewed = [operation.operation_id for operation in reviewed_operations]
+    assert reviewed != sorted(reviewed), (
+        "the fixture must not already be in sorted order, or an unordered record would pass"
+    )
+
+    destination = RecordingApplyDestination()
+    state, outcome = apply_and_record_state(engine_over(directory, destination))
+
+    assert state == "applied"
+    assert isinstance(outcome, ApplyRecord)
+    assert list(outcome.applied_operations) == reviewed, (
+        f"The reviewed set and the applied record must agree per operation and in order: reviewed "
+        f"{reviewed}, applied {list(outcome.applied_operations)}."
+    )
+    assert destination.dispatched == reviewed, "And the destination saw exactly that sequence."
+    assert outcome.skipped_delete_operations == ()

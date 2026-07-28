@@ -195,6 +195,25 @@ def test_the_reviewed_identifiers_are_the_artifacts_own(tmp_path: Path) -> None:
     assert {operation.operation_id for operation in operations} == {record["operation_id"] for record in MIXED_PLAN}
 
 
+def test_the_reviewed_identifiers_are_returned_in_stored_order(tmp_path: Path) -> None:
+    """T056/SC-005's review half: the review side is an ordered sequence, not a set.
+
+    The apply side compares its FR-020 record against this **positionally**
+    (`tests/adapters/test_infrahub_planned_write.py`, the SC-005 case), and that comparison
+    is only meaningful if the review side preserves the order the artifact stored. The
+    sibling case above asserts the same identifiers as a set, which a review that sorted or
+    regrouped its output would also satisfy — so this case is what pins the order, and the
+    fixture's stored order is deliberately not its sorted order.
+    """
+    _store(tmp_path)
+    stored_order = [str(record["operation_id"]) for record in MIXED_PLAN]
+    assert stored_order != sorted(stored_order), "the fixture must not already be in sorted order"
+
+    operations = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID).operations()
+
+    assert [operation.operation_id for operation in operations] == stored_order
+
+
 # ======================================================================================
 # T026 — the `kind` filter, and AD058's split
 # ======================================================================================

@@ -7,13 +7,20 @@ for that configuration. Both are properties an operator can be surprised by, so 
 named test.
 
 A caller-supplied value is opaque: it round-trips **verbatim** and is never parsed (AD013).
+
+**T057** adds SC-013's apply side at the end of the file: the same opaqueness measured
+end to end, through the real manifest write and the real apply-time comparison, rather than
+against `validate_config_version` alone. Paired with SC-004's mismatch case (T025), the
+criterion is complete.
 """
 
 from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import string
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -27,7 +34,13 @@ from infrahub_sync.plan.config_version import (
     resolve_config_version,
     validate_config_version,
 )
+from infrahub_sync.plan.errors import PlanVerificationError
+from infrahub_sync.plan.models import PlannedOperation
+from infrahub_sync.plan.reader import load_plan_artifact
+from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, PLAN_DIR_NAME, write_plan_artifact
+from infrahub_sync.potenda import Potenda
 from infrahub_sync.utils import get_instance
+from tests.plan.artifact_fixtures import RUN_ID, operation_record
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -262,3 +275,126 @@ def test_a_trailing_newline_is_rejected_rather_than_matched_by_dollar() -> None:
     with pytest.raises(ValueError):
         validate_config_version("v1\n")
     assert validate_config_version("v1") == "v1"
+
+
+# --------------------------------------------------------------------------------------
+# T057 — SC-013's apply side: through the manifest write, compared verbatim at apply.
+# --------------------------------------------------------------------------------------
+
+# Deliberately opaque, and deliberately hostile to every way a value like this gets
+# "helpfully" interpreted: leading and trailing spaces a trimmer eats, a leading zero a
+# version parser normalises away, doubled inner spaces a whitespace-collapser folds, mixed
+# case a case-folder flattens, and punctuation a tokenizer splits on. Every character is
+# printable ASCII, so it survives the manifest as one line.
+OPAQUE_VERSION = ' v1.02+Build.7  (rc-2) [beta] {"k": "v"} '
+
+# Each is what one of those interpretations would turn `OPAQUE_VERSION` into. Every one of
+# them must be **refused**, because an equality comparison is the whole contract: the value
+# is opaque, so the tool has no basis for deciding that any of these means the same thing.
+NORMALIZED_FORMS = (
+    pytest.param(OPAQUE_VERSION.strip(), id="trimmed"),
+    pytest.param(" ".join(OPAQUE_VERSION.split()), id="whitespace collapsed"),
+    pytest.param(OPAQUE_VERSION.lower(), id="case folded"),
+    pytest.param(OPAQUE_VERSION.replace("1.02", "1.2"), id="version-parsed: the leading zero dropped"),
+)
+
+
+class NoOpPlannedWriteDestination:
+    """A destination with the planned-write surface that records what it was asked to write."""
+
+    def __init__(self) -> None:
+        self.dispatched: list[str] = []
+
+    def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
+        _ = peers
+        self.dispatched.append(operation.operation_id)
+        return "node-1"
+
+
+def _store_plan(run_directory: Path, *, config_version: str) -> str:
+    """Write a one-operation artifact through the real writer and return its stored version.
+
+    The **manifest write** is the round trip SC-013 is about, so the artifact is produced by
+    `write_plan_artifact` rather than assembled by hand: the value passes through the model,
+    the canonical JSON encoder and the checksum on its way to disk, which is where a
+    normalization would creep in unnoticed.
+    """
+    manifest = write_plan_artifact(
+        run_dir=run_directory,
+        run_id=RUN_ID,
+        config_version=validate_config_version(config_version),
+        source_snapshot=[],
+        deletes_computed=True,
+        operations=[PlannedOperation.model_validate(operation_record())],
+    )
+    return manifest.config_version
+
+
+def _apply_with(run_directory: Path, *, config_version: str) -> tuple[str, NoOpPlannedWriteDestination]:
+    """Apply the stored plan with `config_version` and return the run state and destination.
+
+    The state rule is the CLI's (`infrahub_sync/cli.py:343-349`): `applied` when `apply_plan`
+    returns, `failed` when it raises.
+    """
+    destination = NoOpPlannedWriteDestination()
+    engine = Potenda(
+        source=SimpleNamespace(top_level=[]),  # ty: ignore[invalid-argument-type]
+        destination=destination,  # ty: ignore[invalid-argument-type]
+        config=None,  # ty: ignore[invalid-argument-type]
+        top_level=["BuiltinTag"],
+        run_dir=run_directory,
+        run_id=RUN_ID,
+    )
+    try:
+        engine.apply_plan(config_version=config_version)
+    except PlanVerificationError:
+        return "failed", destination
+    return "applied", destination
+
+
+def test_an_opaque_supplied_version_round_trips_the_manifest_and_applies_verbatim(tmp_path: Path) -> None:
+    """SC-013: supplied by an in-process caller, stored byte for byte, matched by equality.
+
+    Three hops, each of which is somewhere a value gets normalised by accident: the model's
+    validation, the canonical JSON encoding of the manifest, and the apply-time comparison.
+    The stored bytes are asserted directly, not just the parsed field, because a normalization
+    applied on the way **in** and undone on the way **out** would leave the parsed value
+    correct and the artifact wrong for every other reader.
+    """
+    directory = tmp_path / RUN_ID
+    directory.mkdir(parents=True)
+
+    stored = _store_plan(directory, config_version=OPAQUE_VERSION)
+
+    assert stored == OPAQUE_VERSION, "The manifest write must not trim, fold or reformat the value."
+    manifest_bytes = (directory / PLAN_DIR_NAME / MANIFEST_FILE_NAME).read_bytes()
+    assert json.dumps(OPAQUE_VERSION).encode() in manifest_bytes, (
+        f"The value must appear in the artifact's bytes exactly as supplied. Manifest:\n{manifest_bytes.decode()}"
+    )
+    assert load_plan_artifact(directory).manifest.config_version == OPAQUE_VERSION
+
+    state, destination = _apply_with(directory, config_version=OPAQUE_VERSION)
+
+    assert state == "applied", "The identical value must compare equal and let the apply proceed."
+    assert len(destination.dispatched) == 1
+
+
+@pytest.mark.parametrize("comparison", NORMALIZED_FORMS)
+def test_a_normalized_form_of_the_stored_version_is_refused(tmp_path: Path, comparison: str) -> None:
+    """FR-011/AD013: the comparison is equality on the raw value, never a parse.
+
+    Every parameter here is what some plausible interpretation of the stored value produces,
+    and every one is a **different string**. An implementation that trimmed, folded case,
+    collapsed whitespace or parsed the value as a version would accept at least one of them
+    and apply a plan bound to a configuration the operator no longer has — which is precisely
+    the mismatch SC-004's sibling case exists to catch.
+    """
+    directory = tmp_path / RUN_ID
+    directory.mkdir(parents=True)
+    _store_plan(directory, config_version=OPAQUE_VERSION)
+    assert comparison != OPAQUE_VERSION, "the parameter must differ from the stored value"
+
+    state, destination = _apply_with(directory, config_version=comparison)
+
+    assert state == "failed", f"{comparison!r} is not the stored value and must not be treated as it."
+    assert destination.dispatched == [], "Nothing may be written once the configuration version disagrees."
