@@ -1,0 +1,1013 @@
+"""The Infrahub destination's planned-write surface, offline.
+
+`InfrahubAdapter.apply_planned_operation` is the saved-plan write surface (FR-013) and
+`PeerResolver` is its apply-time peer resolution (FR-014). Everything here runs against a
+real `InfrahubClientSync` whose **transport edge alone** is replaced: `schema.get`,
+`generate_payload_create`, `client.create`, the node classes and the GraphQL rendering all
+stay real, so the mutations recorded here are the ones the SDK would actually send. No live
+Infrahub is contacted and nothing here is `integration`-marked.
+
+Recording the rendered mutation rather than a mock adapter call is not decoration. Three of
+the properties under test are invisible to an assertion made against a `MagicMock`:
+
+- **keyedness** is a property of the rendered mutation, not of the assembled `data` — by the
+  time `data` is complete a relationship-crossing human-friendly-ID component is a resolved
+  node-id string, so "every component present in `data`" holds while the mutation goes out
+  with neither `id` nor `hfid` (AD054, AD066);
+- the **replace-set** reconciliation is purely in-memory — `RelationshipManagerSync` has no
+  `save` and `add()`/`remove()` only mutate a list and set a flag — so an assertion on
+  `rm.peer_ids` is satisfied in full by a helper that removes nothing at a real destination
+  (AD075);
+- the **flush** that carries it is `node.update(do_full_update=True)`, and only the rendered
+  mutation *name* separates that from a second `save(allow_upsert=True)` (AD085).
+
+Covers T050 (payload cases), T051 (replace-set cases), T052 (memo cases) and T053 (SC-016's
+local half).
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
+
+import pytest
+from infrahub_sdk import Config, InfrahubClientSync
+from infrahub_sdk.node import InfrahubNodeSync
+from infrahub_sdk.node.relationship import RelationshipManagerBase, RelationshipManagerSync
+from infrahub_sdk.schema import NodeSchemaAPI
+from infrahub_sdk.schema.main import (
+    AttributeKind,
+    AttributeSchemaAPI,
+    BranchSchema,
+    RelationshipKind,
+    RelationshipSchemaAPI,
+)
+
+from infrahub_sync.adapters.infrahub import (
+    InfrahubAdapter,
+    InfrahubModel,
+    PeerResolver,
+    update_node,
+)
+from infrahub_sync.plan.errors import (
+    PeerAmbiguousError,
+    PeerNotFoundError,
+    UnaccountedIdentityComponentError,
+    UnkeyedWriteRefusedError,
+)
+from infrahub_sync.plan.identity import canonical_identity, operation_id
+from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+ADAPTER_LOGGER = "infrahub_sync.adapters.infrahub"
+
+SITE_KIND = "TestSite"
+TAG_KIND = "TestTag"
+DEVICE_KIND = "TestDevice"
+KEYLESS_KIND = "TestKeyless"
+ORPHAN_KIND = "TestOrphan"
+TEAM_KIND = "TestTeam"
+GROUP_KIND = "TestGroup"
+
+NODE_ID = "written-node-1"
+
+
+def _text(attr_id: str, name: str, *, optional: bool = True) -> AttributeSchemaAPI:
+    """One text attribute, spelled once rather than at every fixture site."""
+    return AttributeSchemaAPI(id=attr_id, name=name, kind=AttributeKind.TEXT, optional=optional, unique=not optional)
+
+
+def _many(rel_id: str, name: str, peer: str) -> RelationshipSchemaAPI:
+    """One optional cardinality-many relationship."""
+    return RelationshipSchemaAPI(
+        id=rel_id,
+        name=name,
+        peer=peer,
+        cardinality="many",
+        kind=RelationshipKind.GENERIC,
+        optional=True,
+        identifier=f"{name}__{peer}",
+    )
+
+
+# An all-direct human-friendly ID. `comment` exists in the destination schema and is carried
+# by no payload here, which is what makes "no unmapped destination field is written" a
+# decidable assertion.
+SITE_SCHEMA = NodeSchemaAPI(
+    id="site-schema",
+    name="Site",
+    namespace="Test",
+    label="Site",
+    default_filter="name__value",
+    human_friendly_id=["name__value"],
+    attributes=[
+        _text("site-name", "name", optional=False),
+        _text("site-desc", "description"),
+        _text("site-comment", "comment"),
+    ],
+    relationships=[],
+)
+
+TAG_SCHEMA = NodeSchemaAPI(
+    id="tag-schema",
+    name="Tag",
+    namespace="Test",
+    label="Tag",
+    default_filter="name__value",
+    human_friendly_id=["name__value"],
+    attributes=[_text("tag-name", "name", optional=False)],
+    relationships=[],
+)
+
+# A human-friendly ID that **crosses a relationship**: the client cannot form the `hfid`
+# from a peer supplied as a resolved node id, so this kind renders unkeyed today (AD066).
+DEVICE_SCHEMA = NodeSchemaAPI(
+    id="device-schema",
+    name="Device",
+    namespace="Test",
+    label="Device",
+    default_filter="name__value",
+    human_friendly_id=["site__name__value", "name__value"],
+    attributes=[_text("device-name", "name", optional=False)],
+    relationships=[
+        RelationshipSchemaAPI(
+            id="device-site",
+            name="site",
+            peer=SITE_KIND,
+            cardinality="one",
+            kind=RelationshipKind.ATTRIBUTE,
+            optional=False,
+            identifier="device__site",
+        )
+    ],
+)
+
+# No human-friendly ID at all — the gate's third arm (AD076). FR-024 permits such a kind and
+# requires the run to survive it.
+KEYLESS_SCHEMA = NodeSchemaAPI(
+    id="keyless-schema",
+    name="Keyless",
+    namespace="Test",
+    label="Keyless",
+    default_filter="name__value",
+    attributes=[_text("keyless-name", "name", optional=False)],
+    relationships=[],
+)
+
+# An all-direct human-friendly ID whose component (`code`) a payload can omit while the
+# operation record still validates, because the plan's identity is keyed on `name`.
+ORPHAN_SCHEMA = NodeSchemaAPI(
+    id="orphan-schema",
+    name="Orphan",
+    namespace="Test",
+    label="Orphan",
+    default_filter="name__value",
+    human_friendly_id=["code__value"],
+    attributes=[_text("orphan-name", "name", optional=False), _text("orphan-code", "code")],
+    relationships=[],
+)
+
+# One cardinality-many relationship: the replace-set cases.
+TEAM_SCHEMA = NodeSchemaAPI(
+    id="team-schema",
+    name="Team",
+    namespace="Test",
+    label="Team",
+    default_filter="name__value",
+    human_friendly_id=["name__value"],
+    attributes=[_text("team-name", "name", optional=False)],
+    relationships=[_many("team-members", "members", TAG_KIND)],
+)
+
+# Two cardinality-many relationships, so "one flush per operation, not one per
+# relationship" (V40) is decidable.
+GROUP_SCHEMA = NodeSchemaAPI(
+    id="group-schema",
+    name="Group",
+    namespace="Test",
+    label="Group",
+    default_filter="name__value",
+    human_friendly_id=["name__value"],
+    attributes=[_text("group-name", "name", optional=False)],
+    relationships=[_many("group-members", "members", TAG_KIND), _many("group-watchers", "watchers", TAG_KIND)],
+)
+
+SCHEMAS: dict[str, NodeSchemaAPI] = {
+    SITE_KIND: SITE_SCHEMA,
+    TAG_KIND: TAG_SCHEMA,
+    DEVICE_KIND: DEVICE_SCHEMA,
+    KEYLESS_KIND: KEYLESS_SCHEMA,
+    ORPHAN_KIND: ORPHAN_SCHEMA,
+    TEAM_KIND: TEAM_SCHEMA,
+    GROUP_KIND: GROUP_SCHEMA,
+}
+
+
+class RecordingClient(InfrahubClientSync):
+    """A real client whose destination calls are recorded on one ordered event log.
+
+    One log rather than three lists, because two of the properties under test are about
+    **order**: that the relationship re-read was issued before the peer set was compared
+    (AD065), and that the flush followed the reconciliation (AD075).
+    """
+
+    def __init__(self) -> None:
+        super().__init__(config=Config(address="http://localhost:8000", api_token="token"))  # noqa: S106
+        self.schema.set_cache(BranchSchema(hash="fixture", nodes=dict(SCHEMAS)))
+        self.events: list[tuple[str, Any]] = []
+        # Destination peer sets answered by the relationship re-read, per (kind, relationship).
+        self.existing_peers: dict[tuple[str, str], list[str]] = {}
+        # Successive answers to the resolver's destination query; the last one repeats.
+        self.filter_results: list[list[InfrahubNodeSync]] = [[]]
+        self.write_error: Exception | None = None
+
+    # -- the transport edge ------------------------------------------------------------
+
+    def execute_graphql(self, *args: Any, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401, ARG002
+        """Record the rendered mutation and answer as a successful write would."""
+        query = kwargs["query"]
+        match = re.search(r"mutation\s*\{\s*(\w+)", query)
+        if match is None:
+            msg = f"Unrecognised mutation rendered by the SDK: {query!r}"
+            raise AssertionError(msg)
+        mutation_name = match.group(1)
+        self.events.append(("mutation", (mutation_name, query)))
+        if self.write_error is not None:
+            raise self.write_error
+        return {mutation_name: {"ok": True, "object": {"id": NODE_ID}}}
+
+    def get(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
+        """Answer the relationship re-read with the destination's seeded peer set."""
+        self.events.append(("get", kwargs))
+        kind = kwargs["kind"]
+        schema = SCHEMAS[kind]
+        data: dict[str, Any] = {"id": kwargs.get("id")}
+        for rel_name in kwargs.get("include") or ():
+            peer_kind = next(rel.peer for rel in schema.relationships if rel.name == rel_name)
+            data[rel_name] = [
+                {"id": peer_id, "__typename": peer_kind} for peer_id in self.existing_peers.get((kind, rel_name), [])
+            ]
+        return InfrahubNodeSync(client=self, schema=schema, data=data)
+
+    def filters(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
+        """The resolver's destination query, and `fetch()`'s peer hydration.
+
+        The two are told apart by `populate_store`: the resolver passes `False` because a
+        saved-plan apply loads neither side, while the SDK's hydration batch passes `True`.
+        Only the resolver's queries are recorded, so a memo assertion cannot be satisfied by
+        an unrelated hydration call.
+        """
+        if kwargs.get("populate_store"):
+            return []
+        self.events.append(("filters", kwargs))
+        if len(self.filter_results) > 1:
+            return self.filter_results.pop(0)
+        return self.filter_results[0]
+
+    # -- readers -----------------------------------------------------------------------
+
+    @property
+    def mutations(self) -> list[tuple[str, str]]:
+        """Every rendered mutation, in the order the SDK handed it to the transport."""
+        return [payload for name, payload in self.events if name == "mutation"]
+
+    @property
+    def mutation_names(self) -> list[str]:
+        """Just the mutation names, which is what separates an upsert from an update."""
+        return [name for name, _ in self.mutations]
+
+    @property
+    def resolver_queries(self) -> list[dict[str, Any]]:
+        """Every destination query the peer resolver issued."""
+        return [payload for name, payload in self.events if name == "filters"]
+
+
+class PoisonedStore:
+    """A `client.store` that fails loudly on any access (FR-014).
+
+    A saved plan is applied without loading either side, so there is no store for the
+    resolver to read: `resolve_peer_node`'s store dependency is exactly the one this path
+    cannot inherit.
+    """
+
+    def __getattr__(self, name: str) -> Any:  # noqa: ANN401
+        msg = f"The peer resolver read client.store.{name}, which a saved-plan apply cannot populate."
+        raise AssertionError(msg)
+
+
+def make_node(client: RecordingClient, kind: str, node_id: str) -> InfrahubNodeSync:
+    """A destination node of `kind`, as a query result would return it."""
+    return InfrahubNodeSync(client=client, schema=SCHEMAS[kind], data={"id": node_id})
+
+
+def make_adapter(client: RecordingClient, *, source: str | None = None, owner: str | None = None) -> InfrahubAdapter:
+    """The adapter with only the state the planned-write surface reads, and no network setup."""
+    adapter = InfrahubAdapter.__new__(InfrahubAdapter)
+    adapter.client = client
+    adapter.source_node = make_node(client, SITE_KIND, source) if source else None
+    adapter.owner_node = make_node(client, SITE_KIND, owner) if owner else None
+    adapter.schema = dict(SCHEMAS)
+    adapter._unkeyed_render_reported = set()
+    return adapter
+
+
+def make_operation(
+    *,
+    kind: str,
+    identity: dict[str, Any],
+    payload: dict[str, Any],
+    action: str = "create",
+    relationships: list[RelationshipReference] | None = None,
+) -> PlannedOperation:
+    """One planned operation, with its identifier derived the way the artifact derives it."""
+    canonical = canonical_identity(identity, kind=kind)
+    return PlannedOperation(
+        operation_id=operation_id(action, kind, canonical),
+        action=action,  # ty: ignore[invalid-argument-type]
+        kind=kind,
+        identity=canonical,
+        tier=0,
+        payload=payload,
+        relationships=relationships,
+    )
+
+
+def device_operation(name: str, site_name: str = "site-a") -> PlannedOperation:
+    """A `TestDevice` create whose `site` is named by identity, never by destination id."""
+    return make_operation(
+        kind=DEVICE_KIND,
+        identity={"name": name, "site": {"peer_kind": SITE_KIND, "identity": {"name": site_name}}},
+        payload={"name": name},
+        relationships=[
+            RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"name": site_name}])
+        ],
+    )
+
+
+def team_operation(peer_names: list[str]) -> PlannedOperation:
+    """A `TestTeam` update reconciling `members` to exactly `peer_names`."""
+    return make_operation(
+        kind=TEAM_KIND,
+        action="update",
+        identity={"name": "team-a"},
+        payload={"name": "team-a"},
+        relationships=[
+            RelationshipReference(
+                field="members",
+                peer_kind=TAG_KIND,
+                cardinality="many",
+                peers=[{"name": peer_name} for peer_name in peer_names],
+            )
+        ],
+    )
+
+
+def rendered_relationship_ids(query: str, rel_name: str) -> list[str] | None:
+    """The peer ids inside a rendered mutation's `<rel>:` list, or None if it has no such key."""
+    match = re.search(rf"\b{rel_name}:\s*\[(.*?)\]", query, flags=re.DOTALL)
+    if match is None:
+        return None
+    return re.findall(r'id:\s*"([^"]+)"', match.group(1))
+
+
+def rendered_related_id(query: str, rel_name: str) -> str | None:
+    """The peer id inside a rendered mutation's cardinality-one `<rel>:` object."""
+    match = re.search(rf"\b{rel_name}:\s*\{{\s*id:\s*\"([^\"]+)\"", query, flags=re.DOTALL)
+    return match.group(1) if match else None
+
+
+@contextmanager
+def record_payload_create(client: RecordingClient) -> Iterator[list[dict[str, Any]]]:
+    """Record `generate_payload_create`'s arguments while still calling the real one."""
+    calls: list[dict[str, Any]] = []
+    real = client.schema.generate_payload_create
+
+    def spy(**kwargs: Any) -> dict[str, Any]:  # noqa: ANN401
+        calls.append(kwargs)
+        return real(**kwargs)
+
+    with patch.object(client.schema, "generate_payload_create", spy):
+        yield calls
+
+
+@contextmanager
+def record_peer_set_reads(client: RecordingClient) -> Iterator[None]:
+    """Log every read of `RelationshipManagerBase.peer_ids` onto the client's event log.
+
+    AD065's observable is an **ordering**: the destination read has to have been *issued*
+    before the peer set was compared. "The manager was fetched" is the weaker observable
+    that the broken implementation also satisfies — a manager built from the write payload
+    reports `initialized = True`, so `fetch()` returns through its own guard without ever
+    reaching the `client.get` inside it, and `peer_ids` is still the desired set.
+    """
+    original = RelationshipManagerBase.__dict__["peer_ids"]
+
+    def read(self: RelationshipManagerBase) -> list[str]:
+        client.events.append(("peer_ids", self.schema.name))
+        return original.fget(self)
+
+    with patch.object(RelationshipManagerBase, "peer_ids", property(read)):
+        yield
+
+
+@contextmanager
+def count_reconciliation_edits() -> Iterator[list[tuple[str, Any]]]:
+    """Record every `add`/`remove` the replace-set performs on a relationship manager.
+
+    The observable for "`existing_only` and `new_only` are both empty" without asserting on
+    the in-memory peer set the AD075 ban is about.
+    """
+    edits: list[tuple[str, Any]] = []
+    real_add = RelationshipManagerSync.add
+    real_remove = RelationshipManagerSync.remove
+
+    def add(self: RelationshipManagerSync, data: Any) -> None:  # noqa: ANN401
+        edits.append(("add", data))
+        real_add(self, data)
+
+    def remove(self: RelationshipManagerSync, data: Any) -> None:  # noqa: ANN401
+        edits.append(("remove", data))
+        real_remove(self, data)
+
+    with (
+        patch.object(RelationshipManagerSync, "add", add),
+        patch.object(RelationshipManagerSync, "remove", remove),
+    ):
+        yield edits
+
+
+def event_index(client: RecordingClient, name: str, predicate: Any = None) -> int:  # noqa: ANN401
+    """The index of the first matching event on the client's log, or -1."""
+    for index, (event_name, payload) in enumerate(client.events):
+        if event_name == name and (predicate is None or predicate(payload)):
+            return index
+    return -1
+
+
+def unkeyed_reports(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    """The keyedness gate's reports among the captured records (AD078)."""
+    return [record for record in caplog.records if "carries neither 'id' nor 'hfid'" in record.getMessage()]
+
+
+@pytest.fixture(autouse=True)
+def _forbid_live_sync_update() -> Iterator[None]:
+    """`InfrahubModel.update` is never reached by the planned-write path (FR-013).
+
+    That method opens with `client.get(id=self.local_id, …)` and `local_id` is populated only
+    by a destination load, which FR-012 forbids a saved-plan apply from performing — so a
+    planned update routed through it would key the read on `None`.
+    """
+
+    def forbidden(self: InfrahubModel, attrs: dict) -> None:  # noqa: ARG001
+        msg = "InfrahubModel.update was reached on the planned-write path; it needs a destination load (FR-012)."
+        raise AssertionError(msg)
+
+    with patch.object(InfrahubModel, "update", forbidden):
+        yield
+
+
+@pytest.fixture
+def captured_logs(caplog: pytest.LogCaptureFixture) -> Iterator[pytest.LogCaptureFixture]:
+    """Capture the adapter's logger at DEBUG.
+
+    Deliberately below `WARNING`: an `INFO` emission has to be *captured* for the level
+    assertions to fail against it rather than pass vacuously on an empty record list.
+    """
+    with caplog.at_level(logging.DEBUG, logger=ADAPTER_LOGGER):
+        yield caplog
+
+
+# ---------------------------------------------------------------------------------------
+# T050 — payload cases
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_write_is_client_create_then_an_upsert_of_payload_plus_resolved_peer_ids() -> None:
+    """FR-013: `data` is the payload plus resolved peer ids, issued as a convergent upsert.
+
+    The mutation *name* is the discriminating observable for the write shape:
+    `client.create(...)` then `save(allow_upsert=True)` renders `<kind>Upsert`, whereas a
+    route through `InfrahubModel.update` would render `<kind>Update` against a node the
+    saved-plan path cannot key.
+    """
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    peers = PeerResolver(adapter)
+    peers.remember(SITE_KIND, {"name": "site-a"}, "site-id-1")
+
+    node_id = adapter.apply_planned_operation(operation=device_operation("device-a"), peers=peers)
+
+    assert node_id == NODE_ID
+    assert client.mutation_names == [f"{DEVICE_KIND}Upsert"], (
+        "A create with no cardinality-many relationship is exactly one convergent upsert."
+    )
+    _, query = client.mutations[0]
+    assert 'value: "device-a"' in query, f"The payload's attributes must reach the write. Rendered:\n{query}"
+    assert rendered_related_id(query, "site") == "site-id-1", (
+        f"The relationship must reach the write as the resolved destination node id. Rendered:\n{query}"
+    )
+
+
+def test_no_unmapped_destination_field_is_written() -> None:
+    """FR-013: the payload is authoritative for the fields it carries and touches no other.
+
+    `TestSite` declares `comment` and no payload here carries it, so an implementation that
+    filled the destination's declared fields from anywhere but the payload would write it.
+    """
+    client = RecordingClient()
+    adapter = make_adapter(client)
+
+    operation = make_operation(
+        kind=SITE_KIND,
+        identity={"name": "site-a"},
+        payload={"name": "site-a", "description": "recorded"},
+    )
+    adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    _, query = client.mutations[0]
+    assert "comment" not in query, (
+        f"`comment` is declared by the destination kind and carried by no payload, so it must not be "
+        f"written. Rendered mutation:\n{query}"
+    )
+
+
+def test_generate_payload_create_receives_the_source_owner_and_protection_arguments() -> None:
+    """FR-013: lineage parity with the live `sync` create path.
+
+    `InfrahubModel.create` passes `source`, `owner` and `is_protected=True`; a planned write
+    that dropped them would produce objects whose provenance metadata differs from the ones
+    the same configuration writes through `sync`.
+    """
+    client = RecordingClient()
+    adapter = make_adapter(client, source="source-account-1", owner="owner-account-1")
+
+    operation = make_operation(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
+    with record_payload_create(client) as calls:
+        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["schema"] is SITE_SCHEMA
+    assert call["source"] == "source-account-1"
+    assert call["owner"] == "owner-account-1"
+    assert call["is_protected"] is True
+    assert call["data"] == {"name": "site-a"}, "`data` is the payload plus resolved peer ids, and nothing else."
+
+
+def test_a_payload_missing_an_identity_component_is_refused_before_any_write() -> None:
+    """AD042/AD051: a payload assembled from attributes alone leaves the upsert unkeyed.
+
+    The payload is `keys` union `source_attrs` precisely so it carries the components the
+    convergent write keys on. A payload built from `get_attrs()` alone excludes
+    `_identifiers`, so the write goes out with no key and **every re-apply duplicates the
+    object** — silently, because the destination accepts each one.
+
+    The refusal must name *which* component is unaccounted for: an operator told only that
+    "the write would be unkeyed" has nothing to act on.
+    """
+    client = RecordingClient()
+    adapter = make_adapter(client)
+
+    operation = make_operation(kind=ORPHAN_KIND, identity={"name": "orphan-a"}, payload={"name": "orphan-a"})
+
+    with pytest.raises(UnaccountedIdentityComponentError) as excinfo:
+        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    message = str(excinfo.value)
+    assert "code__value" in message, "The refusal must name the human-friendly-ID component that is missing."
+    assert ORPHAN_KIND in message
+    assert operation.operation_id in message
+    assert not client.mutations, "Nothing may reach the destination once the payload is refused."
+
+
+def test_an_unkeyed_render_for_an_all_direct_hfid_kind_raises_naming_lost_components() -> None:
+    """AD066: the gate's raising arm reads the **rendered mutation**, not the assembled data.
+
+    For a kind whose every human-friendly-ID component is a direct attribute, a render
+    carrying neither `id` nor `hfid` can only mean the payload lost its identity components,
+    so this arm refuses rather than warns — and the message has to name that cause.
+    """
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    node = client.create(kind=SITE_KIND, data={"description": {"value": "carries no name at all"}})
+
+    with pytest.raises(UnkeyedWriteRefusedError) as excinfo:
+        adapter._report_unkeyed_render(node=node, node_schema=SITE_SCHEMA)
+
+    message = str(excinfo.value)
+    assert "name__value" in message
+    assert "lost its identity components" in message
+    assert not client.mutations, "The gate runs before the write is issued."
+
+
+def test_a_kind_declaring_no_human_friendly_id_is_written_and_never_refused(
+    captured_logs: pytest.LogCaptureFixture,
+) -> None:
+    """AD076: the gate's third arm — no human-friendly ID is a schema fact, not a defect.
+
+    FR-024 permits such a kind and requires the run to survive it. An implementation that
+    reads an **empty** component list as "every component is direct" — `all(...)` over an
+    empty sequence is `True` — refuses the operation instead, and that refusal is the
+    failure this case exists to catch. The report must name the **no-convergence-key**
+    condition: routing an operator at "the payload lost its identity components" points at
+    a cause that is not there, which is the defect AD059 exists to remove.
+    """
+    client = RecordingClient()
+    adapter = make_adapter(client)
+
+    operation = make_operation(kind=KEYLESS_KIND, identity={"name": "keyless-a"}, payload={"name": "keyless-a"})
+    node_id = adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    assert node_id == NODE_ID
+    assert client.mutation_names == [f"{KEYLESS_KIND}Upsert"], (
+        "An absent human-friendly ID must not refuse the operation: the write is issued."
+    )
+    reports = unkeyed_reports(captured_logs)
+    assert len(reports) == 1
+    message = reports[0].getMessage()
+    assert "declares no human-friendly ID" in message
+    assert "no convergence key" in message
+    assert "lost its identity components" not in message, (
+        "The kind declares no convergence key at all; naming a lost payload component sends the "
+        "operator after a cause that does not exist."
+    )
+
+
+def test_the_unkeyed_render_is_reported_once_per_kind_at_warning_level(
+    captured_logs: pytest.LogCaptureFixture,
+) -> None:
+    """AD078: one report per destination kind, at `WARNING`, saying what to watch for.
+
+    `apply_planned_operation` is entered once per operation, so a per-operation report would
+    put one line per row into a four-thousand-operation apply. The level is pinned rather
+    than described: `--quiet` floors the package logger at `WARNING`
+    (`infrahub_sync/cli.py:29`), so an `INFO` emission satisfies every text-only assertion
+    and then vanishes for exactly the scripted invocations where this report and the run
+    record are the only signals.
+    """
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    peers = PeerResolver(adapter)
+    peers.remember(SITE_KIND, {"name": "site-a"}, "site-id-1")
+
+    for name in ("device-a", "device-b"):
+        adapter.apply_planned_operation(operation=device_operation(name), peers=peers)
+
+    assert client.mutation_names == [f"{DEVICE_KIND}Upsert"] * 2, "Both operations are written."
+
+    reports = unkeyed_reports(captured_logs)
+    assert len(reports) == 1, (
+        f"Two operations of one kind must produce exactly one report, got {[r.getMessage() for r in reports]}."
+    )
+    record = reports[0]
+    assert record.levelno >= logging.WARNING, (
+        f"The report is pinned to WARNING because --quiet floors the logger there; it was emitted at "
+        f"{record.levelname}."
+    )
+    message = record.getMessage()
+    assert DEVICE_KIND in message, "The report must name the destination kind."
+    assert "The write was issued anyway" in message, "The report must say the write went out."
+    assert "Watch for a duplicate" in message, "The report must say what to watch for at the destination."
+    assert "crosses a relationship" in message, "The report must name the condition that produced it."
+
+
+def test_the_unkeyed_render_report_is_deduplicated_per_kind_not_per_run(
+    captured_logs: pytest.LogCaptureFixture,
+) -> None:
+    """AD078: two unkeyed kinds produce two reports.
+
+    The counterpart to the case above, and the one that separates per-kind deduplication
+    from per-run suppression — an implementation that reports only the first unkeyed render
+    of the whole apply passes that case and fails this one, while silently withdrawing the
+    disclosure for every other kind in the plan.
+    """
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    peers = PeerResolver(adapter)
+    peers.remember(SITE_KIND, {"name": "site-a"}, "site-id-1")
+
+    adapter.apply_planned_operation(operation=device_operation("device-a"), peers=peers)
+    keyless = make_operation(kind=KEYLESS_KIND, identity={"name": "keyless-a"}, payload={"name": "keyless-a"})
+    adapter.apply_planned_operation(operation=keyless, peers=peers)
+
+    reports = unkeyed_reports(captured_logs)
+    assert len(reports) == 2, (
+        f"Each unkeyed destination kind is reported once, got {[r.getMessage() for r in reports]}."
+    )
+    assert {DEVICE_KIND, KEYLESS_KIND} == {
+        kind for kind in (DEVICE_KIND, KEYLESS_KIND) if any(kind in r.getMessage() for r in reports)
+    }
+    assert all(record.levelno >= logging.WARNING for record in reports)
+
+
+# ---------------------------------------------------------------------------------------
+# T051 — replace-set cases
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_replace_set_removes_surplus_peers_and_adds_new_ones_in_one_issued_update() -> None:
+    """AD038/AD075/AD085: the reconciled peer set reaches the destination.
+
+    The destination's set is seeded to *differ* from the plan's, which is what makes
+    `existing_only` non-empty and the removal decidable. Every assertion is on the issued
+    mutation: the reconciliation itself is in-memory, so a helper that computes the surplus
+    and never flushes satisfies any assertion on `rm.peer_ids` while removing nothing at a
+    real destination.
+
+    The flush must be `<kind>Update`, not a second `<kind>Upsert`: an upsert flush would
+    carry the full peer list too, so the peer list alone cannot separate the two and the
+    **mutation name** is the discriminating observable.
+    """
+    client = RecordingClient()
+    client.existing_peers[TEAM_KIND, "members"] = ["tag-id-1", "tag-id-2"]
+    adapter = make_adapter(client)
+    peers = PeerResolver(adapter)
+    peers.remember(TAG_KIND, {"name": "tag-b"}, "tag-id-2")
+    peers.remember(TAG_KIND, {"name": "tag-c"}, "tag-id-3")
+
+    with record_peer_set_reads(client):
+        adapter.apply_planned_operation(operation=team_operation(["tag-b", "tag-c"]), peers=peers)
+
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"], (
+        "The convergent upsert, then exactly one flush, and the flush is an update."
+    )
+    _, flush = client.mutations[1]
+    assert rendered_relationship_ids(flush, "members") == ["tag-id-2", "tag-id-3"], (
+        f"The flush must carry exactly the plan's peer set, with 'tag-id-1' removed. Rendered:\n{flush}"
+    )
+    assert f'id: "{NODE_ID}"' in flush, "The flush must target the node whose manager was reconciled (AD075)."
+
+    read_index = event_index(client, "get", lambda kwargs: kwargs.get("include") == ["members"])
+    assert read_index >= 0, (
+        "A destination read scoped to the relationship must be ISSUED (AD065). A manager built from "
+        "the write payload reports initialized=True, so fetch() returns through its own guard without "
+        "reaching the client.get inside it and peer_ids is still the desired set."
+    )
+    compare_index = event_index(client, "peer_ids", lambda rel: rel == "members")
+    assert 0 <= read_index < compare_index, (
+        f"The destination read must precede the peer-set comparison, got read at {read_index} and "
+        f"comparison at {compare_index}."
+    )
+
+
+def test_an_empty_peer_list_empties_the_set_in_the_issued_flush() -> None:
+    """AD085: `peers: []` under `cardinality: many` reaches the destination.
+
+    The case that decides between `node.update(do_full_update=True)` and a plain
+    `node.save()`. A plain save renders with unmodified-field stripping on; the create
+    payload already wrote `[]` for the same field, so the rendered value matches, the key is
+    popped, and the emptied set never leaves the process while the mutation name stays
+    identical. The rendered relationship value is therefore the only observable that
+    separates them.
+    """
+    client = RecordingClient()
+    client.existing_peers[TEAM_KIND, "members"] = ["tag-id-1", "tag-id-2"]
+    adapter = make_adapter(client)
+
+    adapter.apply_planned_operation(operation=team_operation([]), peers=PeerResolver(adapter))
+
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"]
+    _, flush = client.mutations[1]
+    assert rendered_relationship_ids(flush, "members") == [], (
+        f"The flush must carry an empty `members` list, not omit the key. Rendered:\n{flush}"
+    )
+
+
+def test_a_peer_set_the_upsert_already_matches_is_reconciled_as_a_no_op() -> None:
+    """AD038: when the destination already holds the plan's set, nothing is added or removed.
+
+    `existing_only` and `new_only` are both empty, observed through the manager edits the
+    replace-set performs rather than through the in-memory peer set (AD075). The flush still
+    goes out carrying the same set, which is what keeps the write idempotent.
+    """
+    client = RecordingClient()
+    client.existing_peers[TEAM_KIND, "members"] = ["tag-id-2"]
+    adapter = make_adapter(client)
+    peers = PeerResolver(adapter)
+    peers.remember(TAG_KIND, {"name": "tag-b"}, "tag-id-2")
+
+    with count_reconciliation_edits() as edits:
+        adapter.apply_planned_operation(operation=team_operation(["tag-b"]), peers=peers)
+
+    assert edits == [], f"Nothing to reconcile means no add and no remove, got {edits}."
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"]
+    _, flush = client.mutations[1]
+    assert rendered_relationship_ids(flush, "members") == ["tag-id-2"]
+
+
+def test_one_flush_is_issued_per_operation_not_one_per_relationship() -> None:
+    """V40: the flush follows the whole reconciliation loop, once.
+
+    Two cardinality-many relationships on one operation, both reconciled against a
+    destination set that differs from the plan's, and one update carrying both.
+    """
+    client = RecordingClient()
+    client.existing_peers[GROUP_KIND, "members"] = ["tag-id-1"]
+    client.existing_peers[GROUP_KIND, "watchers"] = ["tag-id-9"]
+    adapter = make_adapter(client)
+    peers = PeerResolver(adapter)
+    peers.remember(TAG_KIND, {"name": "tag-b"}, "tag-id-2")
+    peers.remember(TAG_KIND, {"name": "tag-c"}, "tag-id-3")
+
+    operation = make_operation(
+        kind=GROUP_KIND,
+        action="update",
+        identity={"name": "group-a"},
+        payload={"name": "group-a"},
+        relationships=[
+            RelationshipReference(field="members", peer_kind=TAG_KIND, cardinality="many", peers=[{"name": "tag-b"}]),
+            RelationshipReference(field="watchers", peer_kind=TAG_KIND, cardinality="many", peers=[{"name": "tag-c"}]),
+        ],
+    )
+    adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.mutation_names == [f"{GROUP_KIND}Upsert", f"{GROUP_KIND}Update"], (
+        "Two cardinality-many relationships are still one flush, issued after the loop."
+    )
+    _, flush = client.mutations[1]
+    assert rendered_relationship_ids(flush, "members") == ["tag-id-2"]
+    assert rendered_relationship_ids(flush, "watchers") == ["tag-id-3"]
+
+
+# ---------------------------------------------------------------------------------------
+# T052 — memo cases
+# ---------------------------------------------------------------------------------------
+
+
+def test_a_completed_operation_resolves_a_later_reference_with_no_destination_query() -> None:
+    """FR-014: an operation's own result resolves the operations that refer to it.
+
+    Dependency-tier ordering puts the peer's create before its referrer, so the memo is what
+    keeps a plan-internal reference from costing a destination round trip per row.
+    """
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    peers = PeerResolver(adapter)
+
+    site = make_operation(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
+    adapter.apply_planned_operation(operation=site, peers=peers)
+    adapter.apply_planned_operation(operation=device_operation("device-a"), peers=peers)
+
+    assert client.resolver_queries == [], (
+        "The peer was created by this same apply, so its identity must resolve from the memo."
+    )
+    _, query = client.mutations[1]
+    assert rendered_related_id(query, "site") == NODE_ID
+
+
+def test_a_failed_lookup_is_not_memoized_and_the_next_reference_reattempts() -> None:
+    """AD036: a negative result is never cached.
+
+    A peer absent when the first referring operation ran may have been created by an
+    operation in between, so inheriting the failure would refuse a plan that is applicable.
+    """
+    client = RecordingClient()
+    client.filter_results = [[], [make_node(client, SITE_KIND, "site-id-9")]]
+    adapter = make_adapter(client)
+    peers = PeerResolver(adapter)
+
+    with pytest.raises(PeerNotFoundError):
+        adapter.apply_planned_operation(operation=device_operation("device-a"), peers=peers)
+    adapter.apply_planned_operation(operation=device_operation("device-b"), peers=peers)
+
+    assert len(client.resolver_queries) == 2, (
+        "The failed lookup must not be cached, so the second reference queries the destination again."
+    )
+    _, query = client.mutations[0]
+    assert rendered_related_id(query, "site") == "site-id-9"
+
+
+def test_a_failed_write_is_not_memoized_and_a_later_reference_queries_the_destination() -> None:
+    """AD036: only a **completed** write is remembered.
+
+    Memoizing an operation whose write was rejected would hand later operations a node id
+    for an object that does not exist.
+    """
+    client = RecordingClient()
+    client.write_error = RuntimeError("the destination rejected the write")
+    adapter = make_adapter(client)
+    peers = PeerResolver(adapter)
+
+    site = make_operation(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
+    with pytest.raises(RuntimeError):
+        adapter.apply_planned_operation(operation=site, peers=peers)
+
+    client.write_error = None
+    client.filter_results = [[make_node(client, SITE_KIND, "site-id-7")]]
+    adapter.apply_planned_operation(operation=device_operation("device-a"), peers=peers)
+
+    assert len(client.resolver_queries) == 1, (
+        "The failed write must leave no memo entry, so the reference falls through to the destination."
+    )
+    _, query = client.mutations[-1]
+    assert rendered_related_id(query, "site") == "site-id-7"
+
+
+def test_the_resolver_never_reads_the_client_store() -> None:
+    """FR-014: the resolver has no store dependency.
+
+    `resolve_peer_node` on the live `sync` path resolves peers out of `client.store`, which
+    a destination load populates. A saved plan is applied without loading either side, so a
+    resolver that fell back to the store would read an empty one and refuse every peer.
+    """
+    client = RecordingClient()
+    client.filter_results = [[make_node(client, SITE_KIND, "site-id-3")]]
+    adapter = make_adapter(client)
+    resolver = PeerResolver(adapter)
+
+    with patch.object(client, "store", PoisonedStore()):
+        node_id = resolver.resolve(peer_kind=SITE_KIND, identity={"name": "site-a"}, referring_operation_id="op_0000")
+
+    assert node_id == "site-id-3"
+    assert len(client.resolver_queries) == 1
+
+
+# ---------------------------------------------------------------------------------------
+# T053 — SC-016's local half
+# ---------------------------------------------------------------------------------------
+
+
+def test_a_zero_match_peer_refuses_the_operation_and_dispatches_nothing() -> None:
+    """SC-016: an unresolvable peer fails the run rather than being silently skipped.
+
+    Writing the object without the relationship would leave the destination holding a
+    half-applied object that no later run detects, because the plan records the reference as
+    applied.
+    """
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    operation = device_operation("device-a")
+
+    with pytest.raises(PeerNotFoundError) as excinfo:
+        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    message = str(excinfo.value)
+    assert SITE_KIND in message, "The refusal must name the peer kind."
+    assert "site-a" in message, "The refusal must name the peer identity."
+    assert operation.operation_id in message, "The refusal must name the referring operation."
+    assert not client.mutations, "The operation must not be dispatched."
+
+
+def test_a_multi_match_peer_refuses_naming_the_match_count() -> None:
+    """SC-016: an ambiguous peer refuses too, with the count that makes it actionable.
+
+    Picking the first match would bind the relationship to an arbitrary one of several
+    destination objects, and nothing downstream would record which.
+    """
+    client = RecordingClient()
+    client.filter_results = [[make_node(client, SITE_KIND, "site-id-1"), make_node(client, SITE_KIND, "site-id-2")]]
+    adapter = make_adapter(client)
+    operation = device_operation("device-a")
+
+    with pytest.raises(PeerAmbiguousError) as excinfo:
+        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    message = str(excinfo.value)
+    assert SITE_KIND in message, "The refusal must name the peer kind."
+    assert "site-a" in message, "The refusal must name the peer identity."
+    assert "2 objects" in message, "The refusal must name the match count."
+    assert not client.mutations, "The operation must not be dispatched."
+
+
+def test_the_live_sync_write_path_still_warns_and_continues_on_an_unresolvable_peer(
+    captured_logs: pytest.LogCaptureFixture,
+) -> None:
+    """AD048: the refusal is scoped to the planned-write resolver and has not leaked out.
+
+    `update_node` is the live `sync` write path's relationship handler. It warns and
+    continues on a peer it cannot resolve, and this brief does not authorize changing that:
+    turning it into a refusal would make `infrahub-sync sync` start failing runs that
+    complete today.
+    """
+    client = RecordingClient()
+    node = InfrahubNodeSync(client=client, schema=DEVICE_SCHEMA, data={"id": "device-1", "name": {"value": "device-a"}})
+
+    returned = update_node(node=node, attrs={"name": "device-a", "site": "a-key-no-store-holds"})
+
+    assert returned is node, "The live path returns the node it was given rather than raising."
+    warnings = [record for record in captured_logs.records if "Ignored" in record.getMessage()]
+    assert warnings, "The live path warns about the peer it could not resolve."
+    assert not client.mutations, "`update_node` itself issues no write; its caller saves."
+
+
+def test_the_live_sync_write_path_still_drops_an_unresolvable_cardinality_many_peer() -> None:
+    """AD048: the cardinality-many arm of the live path is unchanged too.
+
+    A peer absent from the store is dropped from the new set and the run continues. The
+    planned-write resolver refuses the same condition; that difference is deliberate and
+    scoped to the new path.
+    """
+    client = RecordingClient()
+    client.existing_peers[TEAM_KIND, "members"] = []
+    node = InfrahubNodeSync(
+        client=client, schema=TEAM_SCHEMA, data={"id": "team-1", "name": {"value": "team-a"}, "members": []}
+    )
+
+    update_node(node=node, attrs={"members": ["a-key-no-store-holds"]})
+
+    assert not client.mutations, "Nothing is written and nothing is raised."
