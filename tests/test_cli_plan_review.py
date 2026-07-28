@@ -777,6 +777,33 @@ def test_an_undeclared_kind_errors_the_same_way_from_the_reader(
     assert "declares that kind" not in message
 
 
+def test_a_kind_the_plan_holds_but_the_configuration_omits_errors_at_the_cli(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """T104's CLI arm: the case the two above cannot reach.
+
+    Both cases above use a kind the plan does not hold, so neither can distinguish the
+    specified single condition — "the configuration does not declare it" — from a conjunction
+    that also requires the plan not to hold it. Here the plan *does* hold operations for the
+    undeclared kind, which is the state a review is designed to render: review deliberately
+    does not verify the configuration version (AD031), so a plan written before an entry was
+    dropped from `schema_mapping` is read against a configuration that no longer declares it.
+
+    The renderer cannot recover the obligation on its own — `_select_review_records` turns only
+    an **empty** reader result into FR-006's error, so under the conjunction these operations
+    would print as ordinary per-object detail for a kind this synchronization does not have.
+    """
+    _store(tmp_path, [*MIXED_PLAN, operation_record(kind=UNDECLARED_KIND, identity={"name": "held"})])
+
+    message = _failed_review(caplog, "--from-plan", RUN_ID, "--detail", "--kind", UNDECLARED_KIND)
+
+    assert f"No destination kind '{UNDECLARED_KIND}' is declared for this synchronization" in message
+    assert "Re-run naming one of the destination kinds listed above." in message
+    assert "declares that kind" not in message, (
+        "This is the undeclared arm, not the declared-but-unplanned one; the remedies differ."
+    )
+
+
 MISSING_PREREQUISITE_CASES: dict[str, tuple[tuple[str, ...], str]] = {
     "detail_without_from_plan": (("--detail",), "--detail requires --from-plan"),
     "kind_without_from_plan": (("--kind", "BuiltinTag"), "--kind requires --from-plan"),

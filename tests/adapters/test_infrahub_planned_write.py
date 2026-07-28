@@ -41,6 +41,7 @@ from unittest.mock import patch
 
 import pytest
 from infrahub_sdk import Config, InfrahubClientSync
+from infrahub_sdk.exceptions import AuthenticationError, ServerNotResponsiveError
 from infrahub_sdk.node import InfrahubNodeSync
 from infrahub_sdk.node.relationship import RelationshipManagerBase, RelationshipManagerSync
 from infrahub_sdk.schema import NodeSchemaAPI
@@ -243,6 +244,14 @@ class RecordingClient(InfrahubClientSync):
         # Successive answers to the resolver's destination query; the last one repeats.
         self.filter_results: list[list[InfrahubNodeSync]] = [[]]
         self.write_error: Exception | None = None
+        # How many mutations succeed before `write_error` starts firing. `0` — the default —
+        # fails the first one, which is what every pre-existing case here expects. A higher
+        # value lets a case apply some operations and then fail, so "the operations applied
+        # before it stay written" is decidable rather than vacuous.
+        self.write_error_after_mutations = 0
+        # Raised instead of answering the resolver's destination query, so the resolver's own
+        # transport and auth edges are reachable offline and separately from the write's.
+        self.filter_error: Exception | None = None
 
     # -- the transport edge ------------------------------------------------------------
 
@@ -255,7 +264,7 @@ class RecordingClient(InfrahubClientSync):
             raise AssertionError(msg)
         mutation_name = match.group(1)
         self.events.append(("mutation", (mutation_name, query)))
-        if self.write_error is not None:
+        if self.write_error is not None and len(self.mutations) > self.write_error_after_mutations:
             raise self.write_error
         return {mutation_name: {"ok": True, "object": {"id": NODE_ID}}}
 
@@ -283,6 +292,8 @@ class RecordingClient(InfrahubClientSync):
         if kwargs.get("populate_store"):
             return []
         self.events.append(("filters", kwargs))
+        if self.filter_error is not None:
+            raise self.filter_error
         if len(self.filter_results) > 1:
             return self.filter_results.pop(0)
         return self.filter_results[0]
@@ -1592,4 +1603,180 @@ def test_the_gate_verifies_member_presence_only_and_is_no_stronger_than_hasattr(
         "The failure is not a refusal: the gate accepted this destination. If this ever becomes a "
         "PlanVerificationError, the runtime enforcement AD086 deferred has been implemented, and "
         "AD086's honesty clause needs revisiting rather than this assertion loosening."
+    )
+
+
+# ---------------------------------------------------------------------------------------
+# T107 — the transport and auth edges on the two live-calling surfaces
+# ---------------------------------------------------------------------------------------
+#
+# Constitution V asks for adapter edge-case tests covering timeouts and 401/403. The two
+# surfaces this outcome adds both issue live destination calls during an apply — the planned
+# write itself (`client.create` → `save(allow_upsert=True)` → the targeted flush) and the
+# apply-time peer resolver (`client.filters`) — and their *resolution* edges are covered above
+# (a zero-match and a multi-match peer each refuse and dispatch nothing), while their
+# transport and auth edges were not. plan.md's Principle V row disclosed that as owed; these
+# close it.
+#
+# The property under test is the operator's, so it is asserted where the operator meets it:
+# through `Potenda.apply_plan`, which is the only caller of these surfaces in the product. The
+# adapter deliberately does not catch these errors — a timeout is not a designed refusal and
+# has no adapter-level remedy — so the guarantee is that the engine converts whatever the
+# library raised into `OperationApplyFailedError`, which names the failing operation, the run,
+# how many operations stay written, and a next action, and which chains the original exception
+# so the library traceback is still there for a maintainer. A bare `ServerNotResponsiveError`
+# reaching the operator would name none of that.
+
+# The SDK's own two edges, not invented ones: `ServerNotResponsiveError` is what
+# `infrahub_sdk.client` raises on a read timeout, and `AuthenticationError` is what it raises
+# for both 401 and 403 (`if exc.response.status_code in {401, 403}`).
+LIVE_CALL_EDGES = (
+    pytest.param(
+        ServerNotResponsiveError(url="http://localhost:8000/graphql/main", timeout=10),
+        "timeout",
+        id="transport-timeout",
+    ),
+    pytest.param(
+        AuthenticationError("Authentication failed: 401 Unauthorized"),
+        "401",
+        id="auth-401",
+    ),
+)
+
+
+def _tag_then_team_plan(directory: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    """A two-operation plan: a plain create, then one carrying a relationship reference.
+
+    The order matters for both cases below. The first operation touches neither surface's
+    failing edge, so it applies cleanly and gives "the operations applied before it stay
+    written" something to be true *of* — an assertion that a single-operation plan could only
+    make vacuously. The second carries a `members` reference, which is what routes it through
+    the peer resolver before its own write.
+
+    The peer is `tag-b`, deliberately **not** the `tag-a` the first operation creates. A peer
+    the same plan created is answered from the resolver's memo without any destination query
+    at all, so pointing the reference at `tag-a` would leave the resolver's transport edge
+    unreachable and the case below would pass while nothing was exercised.
+    """
+    first = operation_record(kind=TAG_KIND, identity={"name": "tag-a"}, payload={"name": "tag-a"})
+    second = operation_record(
+        kind=TEAM_KIND,
+        action="update",
+        identity={"name": "team-a"},
+        payload={"name": "team-a"},
+        relationships=[
+            {"field": "members", "peer_kind": TAG_KIND, "cardinality": "many", "peers": [{"name": "tag-b"}]}
+        ],
+    )
+    write_artifact(directory, [first, second], run_id=APPLY_RUN_ID, source_snapshot=[])
+    return first, second
+
+
+def _assert_named_and_actionable(
+    outcome: ApplyRecord | Exception,
+    *,
+    injected: Exception,
+    failing_operation_id: str,
+    applied_before: tuple[str, ...],
+) -> OperationApplyFailedError:
+    """The operator-facing guarantee, asserted once for all four cases.
+
+    Every clause here is something a bare library exception would not carry. Returns the
+    narrowed failure so a caller can make its own further assertions on it.
+    """
+    assert isinstance(outcome, OperationApplyFailedError), (
+        f"The library error must be converted into the named taxonomy failure, not reach the "
+        f"operator raw; got {type(outcome).__name__}: {outcome!r}."
+    )
+    message = str(outcome)
+    assert failing_operation_id in message, "The failure must name the operation that failed."
+    assert APPLY_RUN_ID in message, "…and the run it failed in, which is what the operator re-plans."
+    assert str(injected) in message, (
+        f"…and the underlying cause, or the operator cannot tell a timeout from a rejection. Message was: {message!r}"
+    )
+    assert outcome.next_action, "AD059: every taxonomy failure names the operator's next action."
+    assert "Next action:" in message, "And it is carried in the rendered message, not only as an attribute."
+    assert outcome.__cause__ is injected, (
+        "The original exception must be chained, so the library traceback survives for a maintainer "
+        "even though the operator sees the named message."
+    )
+    assert outcome.apply_record.applied_operations == applied_before, (
+        f"Nothing is rolled back, so the record must account for what was written before the failure; "
+        f"expected {applied_before}, got {outcome.apply_record.applied_operations}."
+    )
+    return outcome
+
+
+@pytest.mark.parametrize(("injected", "expected_fragment"), LIVE_CALL_EDGES)
+def test_a_failing_transport_or_auth_on_the_write_is_named_and_actionable(
+    tmp_path: Path, injected: Exception, expected_fragment: str
+) -> None:
+    """The planned-write surface's transport and auth edges (Constitution V, plan.md's Principle V row).
+
+    The write is armed to fail on the *second* mutation, so the first operation's upsert
+    succeeds and the failure lands on the second operation's own write rather than before any
+    write at all.
+    """
+    directory = apply_run_dir(tmp_path)
+    first, second = _tag_then_team_plan(directory)
+    client = RecordingClient()
+    client.filter_results = [[make_node(client, TAG_KIND, "tag-1")]]
+    client.write_error = injected
+    client.write_error_after_mutations = 1
+
+    state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert state == "failed", "A transport or auth failure mid-apply is a genuine failure, not a skip."
+    _assert_named_and_actionable(
+        outcome,
+        injected=injected,
+        failing_operation_id=str(second["operation_id"]),
+        applied_before=(str(first["operation_id"]),),
+    )
+    assert expected_fragment in str(outcome).lower() or expected_fragment in str(outcome), (
+        f"The message must carry enough of the cause to identify the edge; {expected_fragment!r} is absent."
+    )
+
+
+@pytest.mark.parametrize(("injected", "expected_fragment"), LIVE_CALL_EDGES)
+def test_a_failing_transport_or_auth_on_peer_resolution_is_named_and_actionable(
+    tmp_path: Path, injected: Exception, expected_fragment: str
+) -> None:
+    """The apply-time peer resolver's transport and auth edges.
+
+    Distinct from the case above, and not a duplicate of it: the resolver's destination query
+    is a **read** issued from a different call site (`client.filters`, not the mutation
+    transport), it happens *before* the operation's own write, and its two designed refusals —
+    `PeerNotFoundError` and `PeerAmbiguousError` — are the paths a naive implementation would
+    route a timeout into. A timeout is neither: nothing is missing and nothing is ambiguous, so
+    reporting it as either would send the operator to create a peer that already exists. The
+    assertion is therefore that it stays a transport/auth failure and is named as one.
+    """
+    directory = apply_run_dir(tmp_path)
+    first, second = _tag_then_team_plan(directory)
+    client = RecordingClient()
+    # The first operation carries no relationship, so the first — and only — resolver query is
+    # the second operation's. No counter is needed to place the failure.
+    client.filter_error = injected
+
+    state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert state == "failed"
+    assert client.resolver_queries, "Precondition: the resolver must actually have issued its query."
+    failure = _assert_named_and_actionable(
+        outcome,
+        injected=injected,
+        failing_operation_id=str(second["operation_id"]),
+        applied_before=(str(first["operation_id"]),),
+    )
+    assert not isinstance(failure.__cause__, (PeerNotFoundError, PeerAmbiguousError)), (
+        "A transport or auth failure must not be reported as a peer resolution refusal: nothing is "
+        "absent and nothing is ambiguous, and both of those remedies are wrong for this condition."
+    )
+    assert expected_fragment in str(outcome).lower() or expected_fragment in str(outcome), (
+        f"The message must carry enough of the cause to identify the edge; {expected_fragment!r} is absent."
+    )
+    assert len(client.mutations) == 1, (
+        "The failing operation's own write must not have been attempted: the resolver runs first, so "
+        "only the preceding operation's upsert reached the transport."
     )

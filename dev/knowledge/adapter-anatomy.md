@@ -90,6 +90,15 @@ the engine filters deletes out of its own apply loop and never dispatches one to
 surface, so the raise guards against a caller that is not the engine. Either way the rest of
 the plan is applied and the run still ends `applied`, with the skipped identifiers recorded.
 
+It must also **write only the fields the operation maps**. The payload is authoritative for those
+fields and for nothing else: an unmapped destination field must come out of the apply untouched.
+That rule is easy to break by accident on the relationship path, because an SDK that re-renders a
+whole node it considers existing emits `<rel>: null` for every optional cardinality-one
+relationship left uninitialized — so on the Infrahub adapter the cardinality-many replace-set is
+flushed by a **targeted relationship write** naming `id` plus only the fields being replaced,
+never by a whole-node update. If your destination client re-renders whole objects on write, check
+what it does with the fields you did not set.
+
 The full contract lives in
 [the destination write surface contract](../specs/001-plan-artifact-saved-apply/contracts/destination-write-surface.md);
 `infrahub_sync/adapters/infrahub.py` is the reference implementation.

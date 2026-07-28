@@ -143,6 +143,12 @@ If you do implement it, the method must:
   recompute either, and do not read the destination to decide what to write.
 - **Return the destination node id** as a string. The engine feeds it back to the resolver so
   later operations in the same plan can refer to this object.
+- **Touch no destination field the operation did not map.** The payload is authoritative for the
+  fields it carries and for nothing else. Watch the relationship path in particular: a client that
+  re-renders a whole object on write may send explicit nulls for the fields you never set — the
+  Infrahub SDK does exactly that for optional cardinality-one relationships on a node it considers
+  existing, which is why the cardinality-many replace-set there is flushed by a **targeted write**
+  naming the id plus only the fields being replaced, rather than a whole-node update.
 - **Resolve relationship peers through the supplied resolver**, never through a loaded store.
   Call `peers.resolve(peer_kind=..., identity=..., referring_operation_id=...)` for each peer
   in each `operation.relationships` entry; it returns one node id per identity, and

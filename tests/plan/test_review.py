@@ -266,6 +266,39 @@ def test_an_undeclared_kind_raises_naming_the_kinds_the_plan_holds(tmp_path: Pat
     assert raised.value.next_action
 
 
+def test_a_kind_the_plan_holds_but_the_configuration_omits_raises(tmp_path: Path) -> None:
+    """The case that distinguishes the specified guard from a conjunction (T104).
+
+    The two tests above both use a kind absent from **both** the plan and the configuration, so
+    they only ever exercise the intersection and pass against a guard that raises on
+    `kind not in held and not declared`. Under that conjunction a kind the plan *holds* and the
+    configuration does *not* declare returns operations instead of raising, because the first
+    term is false — the `held` term is correct only in the no-configuration branch below, and
+    applying it unconditionally is the defect.
+
+    The specified behaviour is that where a configuration was supplied it is the sole authority:
+    `operations()` raises for any kind it does not declare (AD058, and
+    `contracts/plan-reader-api.md:86`, which says only an undeclared kind raises). A plan can
+    outlive the configuration that produced it, so this is reachable without anything being
+    corrupt: the operator drops `LocationSite` from the schema mapping and then reviews a plan
+    recorded before the change.
+    """
+    _store(tmp_path)
+    # `MIXED_PLAN` holds `BuiltinTag` and `LocationSite`; the configuration declares only the
+    # first, so `LocationSite` is held-but-undeclared.
+    config = _config("BuiltinTag")
+    plan = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, config=config)
+    assert any(operation.kind == "LocationSite" for operation in plan.operations()), (
+        "Precondition: the plan must hold operations for the kind, or this is the intersection case again."
+    )
+
+    with pytest.raises(UnknownPlanKindError) as raised:
+        plan.operations(kind="LocationSite")
+
+    assert "LocationSite" in str(raised.value)
+    assert raised.value.next_action
+
+
 def test_with_no_configuration_the_plans_own_kinds_are_the_vocabulary(tmp_path: Path) -> None:
     """`config` is optional, so declaration is unknowable without it (FR-029)."""
     _store(tmp_path)

@@ -120,15 +120,23 @@ class SavedPlan:
         the plan's own kinds are the vocabulary.
 
         Raises:
-            UnknownPlanKindError: `kind` is neither declared by the configuration nor held
-                by the plan. The message lists the kinds the plan does hold, so the operator
-                picks from what exists rather than guessing again (AD059).
+            UnknownPlanKindError: the configuration was supplied and does not declare `kind`
+                — whether or not the plan holds operations for it — or no configuration was
+                supplied and the plan does not hold it. The message lists the kinds the plan
+                does hold, so the operator picks from what exists rather than guessing again
+                (AD059).
         """
         if kind is None:
             return list(self._operations)
         held = self._plan_kinds
-        declared = self._declared_kinds is not None and kind in self._declared_kinds
-        if kind not in held and not declared:
+        # Where a configuration was supplied it is the *sole* authority on which kinds exist
+        # for this synchronization, so an undeclared kind raises whether or not the plan
+        # happens to hold operations for it — a plan can outlive the configuration that
+        # produced it, and answering for a kind the operator has since removed reports on a
+        # synchronization that no longer exists. Only without a configuration is declaration
+        # unknowable, and there the plan's own kinds are the vocabulary.
+        vocabulary = held if self._declared_kinds is None else self._declared_kinds
+        if kind not in vocabulary:
             held_text = ", ".join(sorted(held)) if held else "<none: the plan contains no operations>"
             msg = (
                 f"No destination kind {kind!r} is declared for this synchronization. The plan holds "

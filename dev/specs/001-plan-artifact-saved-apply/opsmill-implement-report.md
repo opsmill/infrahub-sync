@@ -9,9 +9,16 @@ description: "Implementation report — saved plan artifact and apply-exactly-wh
 **Base commit (resume point)**: `92ce0dc`
 **Head commit**: `3c7e233`
 **Commits added**: 10 (8 implementation + 2 review remediation)
-**Tasks**: **90 / 90 `[X]`** — none blocked, none deferred
-**Suite**: **681 passed, 11 skipped, 1 xfailed** (from a 521 passed / 3 skipped base)
+**Tasks**: **90 / 90 `[X]`** at the time of this report — *superseded: the tree now carries **107**
+tasks (T091–T108 were appended by later review, convergence and completion passes) and **T080 is now
+`[ ]`**, its state corrected because its own evidence errors in setup. See §8.*
+**Suite**: **681 passed, 11 skipped, 1 xfailed** (from a 521 passed / 3 skipped base) — *superseded:
+**718 passed, 10 skipped, 1 xfailed** on the current tree. See §8.*
 **Decision mode**: CHECKPOINT
+
+> **This report is the record of the pass that produced it and is not rewritten.** Claims later
+> superseded are marked in place and reconciled in **§8 — Currency addendum**, which is the section to
+> read for the tree's present state.
 
 This run resumed at T047 after the brief owner resolved the block recorded in the previous report
 (AD085: the replace-set flush is `node.update(do_full_update=True)`, committed at `92ce0dc`). It
@@ -56,7 +63,15 @@ Notable things chunks flagged upward:
 
 None. All 90 task IDs are `[X]` in `tasks.md`, re-read and confirmed after every chunk.
 
-The Phase H tasks (T074–T080) are **authored, not satisfied**, exactly as AD045b prescribes — §3.
+~~The Phase H tasks (T074–T080) are **authored, not satisfied**, exactly as AD045b prescribes — §3.~~
+
+**Superseded — and this line contradicted its own §3a even when written.** §3a records a live run in
+which T075–T079 **pass**. Two corrections apply. (1) "Authored, not satisfied" was **too weak a claim**
+(AD090): the tests were not merely unrun, they were **non-functional** — the fixture's own
+`_require_preexisting_peer` precondition refused every one of them, and only execution could reveal
+that. A test that has never run is not evidence of anything, including of its own validity, so a run may
+not report authorship as though it bounded the risk. (2) **T080 is not "authored, not satisfied" either
+— it is unsatisfiable on this destination schema** and is now `[ ]`. See §8.
 
 ## 3. Local-pass evidence
 
@@ -95,10 +110,12 @@ Full suite, three consecutive runs on the final tree:
   mandated by AD067. It self-retires if the SDK ever renders that case keyed.
 - **11 skipped** — 3 pre-existing, plus the 8 Phase H `integration` tests.
 
-### Phase H is authored, not satisfied
+### Phase H is authored, not satisfied — SUPERSEDED
 
 *(Superseded for five of the six criteria by §3a, which records a live run. Kept as the record of the
-offline tree, and still accurate for SC-016's live half.)*
+offline tree. **For the sixth — SC-016's live half — the heading is still wrong**: that criterion is not
+"authored, not satisfied", it is **unsatisfiable on this destination schema** and its test errors in
+fixture setup. See §8. And per AD090 the phrase itself is withdrawn as a claim about unexecuted tests.)*
 
 `uv run pytest -m integration -q` reports `11 skipped, 682 deselected`. Per AD007 no live Infrahub is
 reachable here, and per **AD045b** these tests produce no evidence in this environment. **SC-001,
@@ -241,9 +258,9 @@ Re-run by the orchestrator, not taken on a worker's report.
 
 | Gate | Result |
 |---|---|
-| `uv run pytest -q` | **681 passed, 11 skipped, 1 xfailed** — deterministic over 3 consecutive runs |
+| `uv run pytest -q` | **681 passed, 11 skipped, 1 xfailed** — deterministic over 3 consecutive runs. *Superseded: **718 passed, 10 skipped, 1 xfailed** on the current tree (§8)* |
 | `uv run pytest -m integration -q` | `11 skipped, 682 deselected` — clean skip, no destination |
-| `uv run ty check .` | exit **0**, exactly **3** pre-existing `unused-ignore-comment` warnings |
+| `uv run ty check .` | ~~exit **0**, exactly **3** pre-existing `unused-ignore-comment` warnings~~ — **this row was wrong** and is corrected in §8: `ty` exits **1** with **6** diagnostics, all pre-existing, all `pynetbox`-caused and identical on `main`. "Exit 0 with 3 warnings" describes neither the count nor the exit status |
 | `grep -c "tool.ty.overrides" pyproject.toml` | **0** |
 | pylint | **9.73/10** (baseline 9.73) |
 | `uv run rumdl check .` | `Success: No issues found in 81 files` |
@@ -280,15 +297,84 @@ self-comparison.
 
 ## 7. Suggested next steps
 
-1. **Record the AD045b deferral in the merge notes.** Six criteria — SC-001, SC-002, SC-003, SC-008
+**Items 1–4 are CLOSED. They are kept as written — this is that pass's report — with each resolution
+named. Do not action them; see the annotations and §8.**
+
+1. ~~**Record the AD045b deferral in the merge notes.** Six criteria — SC-001, SC-002, SC-003, SC-008
    and the live halves of SC-007 and SC-016 — have no passing evidence, and the brief's completion
-   condition is unmet at merge. Expected and ratified, but it must be said out loud.
-2. **Run the `integration` suite** wherever a disposable Infrahub and a NetBox are reachable, using
-   the command in §3, to close those six.
-3. **Decide the two escalated type findings** — the `getattr` write-boundary dispatch and the `cast`
-   on a `hasattr` gate. The second is the more consequential: it lets a duck-typed destination past a
-   pre-write refusal.
-4. **Confirm or revert the release-note edit** (§5.3).
+   condition is unmet at merge. Expected and ratified, but it must be said out loud.~~
+   **CLOSED by the live run (§3a, AD091): five of the six now have passing evidence.** The sixth,
+   SC-016's live half, is **not deferred but unsatisfiable on this destination schema** — its test errors
+   in fixture setup and T080 is now `[ ]`. What belongs in the merge notes is therefore that one
+   criterion and the reason, not six.
+2. ~~**Run the `integration` suite** wherever a disposable Infrahub and a NetBox are reachable, using
+   the command in §3, to close those six.~~
+   **DONE (§3a).** `7 passed, 1 error in 70.74s`. **Re-running requires a reset first**: clear
+   `InterfacePhysical`, `InterfaceVirtual` and `InterfaceLag` from the destination, or the run fails in
+   the fixture's own `_plan_run`. Recorded in `quickstart.md` and in `planner-feedback-additions.md`.
+3. ~~**Decide the two escalated type findings** — the `getattr` write-boundary dispatch and the `cast`
+   on a `hasattr` gate.~~
+   **DECIDED as AD086, implemented by T092.** The surface became a `runtime_checkable` Protocol
+   (`PlannedWriteDestination`) with two members; the `getattr` dispatch and the `cast` are both gone.
+   **The refusal was not hardened and must not be described as if it were**: `isinstance` against such a
+   Protocol checks member **presence only, never signatures**, so against a duck-typed destination it is
+   exactly as strong as the `hasattr` gate it replaced. Runtime enforcement needs an explicit opt-in and
+   is a separate decision, reported to the planner (`planner-feedback-additions.md` item 1).
+4. ~~**Confirm or revert the release-note edit** (§5.3).~~
+   **DECIDED as AD087, implemented by T093: reverted.** The shipped
+   `docs/docs/release-notes/infrahub-sync/release-2_0_0.mdx` is back to `main` and the deleted sentence
+   returns; every current-documentation fix stands. The scope boundary is reported to the planner
+   (`planner-feedback-additions.md` item 2).
 5. Consider the deferred medium findings: the broad-except class erasure (which also produces a
-   doubled period in the operator message) and definition-time `next_action` enforcement.
-6. Give each reviewer its own worktree on any future parallel review pass (§4).
+   doubled period in the operator message) and definition-time `next_action` enforcement. **Still open.**
+6. Give each reviewer its own worktree on any future parallel review pass (§4). **Still open.**
+
+## 8. Currency addendum
+
+Added by the completion-remediation pass. **Nothing above is rewritten**; this section is the tree's
+present state where it differs from the report.
+
+### Tasks
+
+| Claim above | Present state |
+|---|---|
+| 90 / 90 `[X]` | **107 tasks.** T091–T094 (review remediation), T095–T103 (convergence), T104–T108 (completion gate and its remediation). |
+| none deferred | **T080 is `[ ]`.** Its state was corrected from `[X]`: its own evidence *errors in fixture setup* and SC-016's live half cannot be satisfied on this destination schema. The test is written and committed, and deliberately left erroring rather than skipped, weakened or mocked. Leaving it ticked made the completion condition read as met on a criterion whose evidence errors. |
+
+### Gates, re-run on the current tree
+
+| Gate | Present result | Report's claim |
+|---|---|---|
+| `uv run pytest -q` | **718 passed, 10 skipped, 1 xfailed** | 681 passed, 11 skipped, 1 xfailed |
+| `uv run ty check .` | exit **1**, **6** diagnostics — all pre-existing, all `pynetbox`-caused, identical on `main`, none in this feature's code | **wrong**: "exit 0, exactly 3 warnings" |
+| `grep -c "tool.ty.overrides" pyproject.toml` | **0** — unchanged | 0 |
+| pylint | **9.73/10** — unmoved | 9.73/10 |
+| `uv run invoke lint` | exit **30** — pre-existing `E0213` in a file this branch never touches; the binding criterion is the score | exit 30 |
+| `uv run rumdl check .` | `Success: No issues found in 82 files` | 81 files |
+| AD070 tripwire | `update_node` **byte- and AST-identical to `main`** — `byte_sha256 552c6697…b78bb92`, verified against `git show main:` | identical at all ten checks |
+
+The suite grew by 37 tests across the intervening passes — the last six of them T104's distinguishing kind-filter case (one at the reader, one at the CLI) and T107's four transport/auth cases. The skip count fell from 11 to 10, and the
+integration module now holds 7 passing live tests plus 1 erroring one where it previously held 8 skips.
+
+### Live evidence
+
+Five of the six live criteria pass (§3a). **Two bounds travel with them and must be quoted alongside
+them**, per AD080's precedent:
+
+- **SC-002 and SC-003 passed on a bounded slice.** Ten schema-mapping entries, four narrowed by
+  `ADDED_FILTERS` — two for size, and one because **`LocationRack` is not convergent on the qualified
+  path at all** (the destination keys it on the rack name alone while the plan identity is
+  name-plus-site). So convergence held on a slice from which the known non-convergent kind was filtered
+  out; it is not convergence across the qualified path.
+- **Reproduction requires a destination reset.** Clear `InterfacePhysical`, `InterfaceVirtual` and
+  `InterfaceLag` first — the destination *extract* cannot rebuild a peer whose own identifiers include a
+  relationship, a pre-existing defect on the path AD070 puts off limits here.
+
+### The withdrawn flush
+
+This report's opening line records AD085 — `node.update(do_full_update=True)` — as the flush the run
+resumed on. **That remedy is withdrawn at AD088** and the code does not contain it: `grep -rn
+do_full_update infrahub_sync/` returns nothing. The flush is a **targeted relationship write**, a
+hand-built `f"{kind}Update"` carrying `id` plus only the cardinality-many fields being replaced, because
+any whole-node render emits `<rel>: null` for every unmapped optional cardinality-one relationship, which
+FR-013 forbids. AD085's reading of the unmodified-field stripping stands; only its call is withdrawn.

@@ -164,11 +164,58 @@ Skipped automatically when `INFRAHUB_ADDRESS` and `INFRAHUB_API_TOKEN` are unset
 `tests/integration/test_infrahub_node_to_diffsync_integration.py` and the marker declared at
 `pyproject.toml:133-135`.
 
-**Everything in this table is deferred.** These tests are authored, not run, in the environment this
-feature was built in. Until someone runs them against a live Infrahub, five of the brief's criteria —
-DBA-001, DBA-002, DBA-003 and DBA-008 in full, plus the live half of DBA-007 — have no passing
-evidence, nor does the live half of this specification's own SC-016, and the brief's completion
-condition is unmet. Do not report them as covered on the strength of the offline harness.
+**This table was run. Five of its six rows pass; the sixth cannot be satisfied on this destination
+schema.** Verbatim: `7 passed, 1 error in 70.74s`, against Infrahub on `main` with the schema library
+`opsmill/schema-library@bgi-schema-library-v2` and source `https://demo.netbox.dev` (AD091). So SC-001,
+SC-002, SC-003, SC-007's live half and SC-008 have inspectable passing evidence, and with them DBA-001,
+DBA-002, DBA-003, DBA-008 and DBA-007's live half.
+
+**Superseded, kept so the change of state is legible**: this section previously read "Everything in this
+table is deferred … authored, not run". That claim was **too weak in a way only execution could expose**
+(AD090): the tests were not merely unrun, they were **non-functional** — the fixture's own
+`_require_preexisting_peer` precondition refused every one of them, because with `DcimDevice` as the
+widest kind every referenced kind was all-direct and SC-008's nested identity walk would have passed
+vacuously. A test that has never run is not evidence of anything, including of its own validity.
+
+**Two bounds travel with the passing rows and must not be dropped when they are quoted.**
+
+1. **The slice is bounded.** Ten of the configuration's schema-mapping entries, four of them narrowed by
+   a source-side filter (`ADDED_FILTERS`). Two filters are for size; the `LocationRack` one is there
+   **because `LocationRack` is not convergent on the qualified path at all** — the destination keys it on
+   the rack name alone while the plan identity is name-plus-site, so thirteen identically named demo
+   racks collapse onto one object. SC-002 and SC-003 therefore establish convergence **on a slice from
+   which the known non-convergent kind was filtered out** (AD080's precedent: this caveat travels with
+   the claim). See plan.md's Risks.
+2. **SC-016's live half is not deferred — it is unsatisfiable here.**
+   `test_an_ambiguous_peer_refuses_the_operation` **errors in fixture setup**: seeding a genuine peer
+   ambiguity needs a referenced kind whose uniqueness constraints do not cover the components the
+   resolver filters on, and every one of the 20 kinds this configuration touches declares one that does.
+   The destination answered the clone with `Violates uniqueness constraint 'device-name'`, HTTP 422. It
+   is left erroring rather than skipped, weakened or mocked. Its offline half (T053) passes.
+
+### Reset the destination before re-running Track 2
+
+**Required, not optional — the run will fail in fixture setup without it.** Clear
+`InterfacePhysical`, `InterfaceVirtual` and `InterfaceLag` from the destination first:
+
+```bash
+# With the destination reachable, delete every object of these three kinds before re-running.
+# The order matters: InterfacePhysical references InterfaceLag through `bundle`.
+uv run pytest -m integration tests/integration/test_saved_plan_apply_integration.py   # only after the reset
+```
+
+Why: the destination **extract** cannot rebuild a peer whose own identifiers include a relationship.
+`resolve_peer_node` re-fetches a peer only when `_node_has_complete_attributes` is false, and that
+predicate walks **attributes** only, so an attribute-complete peer carrying no relationship data is never
+re-fetched; `infrahub_node_to_diffsync` then skips its relationship for want of `rel.id` and
+`_resolve_peer_unique_id` raises `PeerIdentifierError`. Re-running against a destination this module has
+already written to therefore fails inside the fixture's own `_plan_run` with
+`Cannot build unique_id for peer InterfaceLag[…] (relationship InterfacePhysical.bundle …): missing
+identifier key(s) ['device']`. The defect is **pre-existing** — the predicate and its gate are
+byte-identical to `main` — lives on the destination-extract path shared with the live `sync` command,
+which AD070 puts off limits for this delivery, and is **not** on the apply path, since a saved-plan apply
+re-extracts nothing (FR-012). Recorded in plan.md's Risks and in `planner-feedback-additions.md` for a
+later outcome to own.
 
 | SC | What the test does |
 |---|---|
@@ -177,7 +224,7 @@ condition is unmet. Do not report them as covered on the strength of the offline
 | SC-003 | Per-class matrix over create / update / relationship-bearing, across apply-once, apply-twice, a crash injected **after** the destination write commits and before the loop advances, and one injected **before** the write is issued. Every class ends at clean-single-run counts. **Same caveat as SC-002 for relationship-crossing convergence keys (AD080)** — the relationship-bearing class is exactly the population the narrowed keyedness guarantee excludes. Relationship class measured by SC-008's peer-set comparison, since an object created with its peers unlinked leaves counts correct and relationships wrong |
 | SC-007 (live half) | Applies a plan containing a delete; destination object counts before and after, scoped to the kinds in the plan; asserts the delete target is still present, the run is **`applied`**, the recorded `skipped_delete_count` equals the plan's delete count, and the warning names it (AD055) |
 | SC-008 | Applies a relationship-bearing kind with no comparison store loaded; reads the destination peer sets back; compares against the plan's reference list as an unordered set of `(peer kind, peer identity)` pairs. **At least one referenced peer pre-exists at the destination and is absent from the plan**, and the test asserts the destination-query path was taken for it — otherwise tier ordering fills the resolver's memo, the query path never runs, and the test passes while apply-time peer resolution is broken |
-| SC-016 (live half) | Seeds a genuinely ambiguous peer; asserts the multi-match refusal names the real count |
+| SC-016 (live half) | Seeds a genuinely ambiguous peer; asserts the multi-match refusal names the real count. **Errors in fixture setup and cannot pass on this destination schema** — see bound 2 above |
 
 ### Manual walkthrough of the headline scenario
 
