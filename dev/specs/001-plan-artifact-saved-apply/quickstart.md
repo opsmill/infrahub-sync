@@ -165,7 +165,9 @@ Skipped automatically when `INFRAHUB_ADDRESS` and `INFRAHUB_API_TOKEN` are unset
 `pyproject.toml:133-135`.
 
 **This table was run. Five of its six rows pass; the sixth cannot be satisfied on this destination
-schema.** Verbatim: `7 passed, 1 error in 70.74s`, against Infrahub on `main` with the schema library
+schema.** Verbatim, as that run reported it: `7 passed, 1 error in 70.74s` — a re-run reports
+`7 passed, 1 skipped` for the same reason, since AD092 turned the sixth row's unsatisfiability into a
+schema-checked precondition that skips (see bound 2 below). Against Infrahub on `main` with the schema library
 `opsmill/schema-library@bgi-schema-library-v2` and source `https://demo.netbox.dev` (AD091). So SC-001,
 SC-002, SC-003, SC-007's live half and SC-008 have inspectable passing evidence, and with them DBA-001,
 DBA-002, DBA-003, DBA-008 and DBA-007's live half.
@@ -187,11 +189,15 @@ vacuously. A test that has never run is not evidence of anything, including of i
    which the known non-convergent kind was filtered out** (AD080's precedent: this caveat travels with
    the claim). See plan.md's Risks.
 2. **SC-016's live half is not deferred — it is unsatisfiable here.**
-   `test_an_ambiguous_peer_refuses_the_operation` **errors in fixture setup**: seeding a genuine peer
-   ambiguity needs a referenced kind whose uniqueness constraints do not cover the components the
-   resolver filters on, and every one of the 20 kinds this configuration touches declares one that does.
-   The destination answered the clone with `Violates uniqueness constraint 'device-name'`, HTTP 422. It
-   is left erroring rather than skipped, weakened or mocked. Its offline half (T053) passes.
+   `test_an_ambiguous_peer_refuses_the_operation` **skips, and its skip message says why** (AD092):
+   seeding a genuine peer ambiguity needs a referenced kind whose uniqueness constraints do not cover
+   the components the resolver filters on, and every one of the 20 kinds this configuration touches
+   declares one that does. The destination answered the clone with `Violates uniqueness constraint
+   'device-name'`, HTTP 422. The precondition is **checked against the destination schema** rather than
+   hardcoded, so expect `1 skipped` here on a schema like this one and a real run — nothing weakened,
+   nothing mocked — on a schema declaring a referenced kind whose constraints leave one of those filtered
+   components free. Its offline half (T053) passes. Earlier runs of this track reported this test as an
+   **error in fixture setup**; that is the same fact, reported worse.
 
 ### Reset the destination before re-running Track 2
 

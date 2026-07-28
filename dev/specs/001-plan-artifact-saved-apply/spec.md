@@ -1346,6 +1346,52 @@ untouched (AD070).
   `ADDED_FILTERS`, one for size and one because `LocationRack` is not convergent against this destination
   schema — a separate defect this run found and recorded in plan.md's Risks rather than fixed. `[AD091]`
 
+### Session 2026-07-28 (third) — an unsatisfiable-by-schema precondition is a skip, not an error
+
+One decision, decided by the brief owner. It changes how a **test fixture** reports a condition it cannot
+establish. No requirement, criterion, guarantee or scope moves; no product scope is added, expanded,
+removed or reassigned; no assertion in Phase H is weakened, deleted or mocked; the live `sync` write path
+is untouched (AD070).
+
+- Q: `test_an_ambiguous_peer_refuses_the_operation` (SC-016's live half) errors in fixture setup, and T080
+  is left open as undelivered. The cause is settled: seeding a genuinely ambiguous peer needs a referenced
+  kind whose uniqueness constraints do not cover the components the resolver filters on, and every one of
+  the 20 kinds the qualified configuration touches declares one that does (V30, AD091), so the destination
+  refuses the clone with `Violates uniqueness constraint 'device-name'`, HTTP 422. Is an erroring fixture
+  the right report for that? → A: **No. That is a property of the schema, not a defect and not an absent
+  environment, so it is stated as an explicit precondition that skips with the reason in the message.**
+  The guard is `_ambiguous_peer_or_skip`, over the pure `covering_uniqueness_constraint`: for every peer
+  the plan references and does not create — the module fixture's chosen pre-existing peer first — it asks
+  the **destination schema** whether any declared uniqueness constraint is fully pinned by the filters the
+  resolver queries that kind with. A component is pinned when the filters name it directly
+  (`name__value`), or, for a relationship component named on its own (`device`), when the filters reach
+  through it far enough to identify a single peer — decided by applying the same test to the peer kind,
+  which is what stops `device__name__value` being read as pinning `device` on a destination where device
+  names are not unique. The first candidate whose constraints leave a filtered component free is seeded
+  and the test runs in full; only when none does is the run skipped, with the candidate kinds, their
+  resolver filters and the covering constraint in the message. It follows the skip pattern the module
+  already establishes for a condition outside its control (`_env_or_skip`), and it is deliberately *not*
+  `LivePlanPreconditionError`, which stays for a fixture that should have been satisfiable and was not.
+  **This is materially different from both a mock and a silent skip, and the difference is checkable.**
+  A mock would supply the ambiguity the destination refuses and assert against a fiction; nothing here is
+  faked — the check reads the destination's own schema and every assertion in the test body is untouched.
+  A silent skip states no reason and can never become a run; this one carries the reason a reader can
+  reproduce (query the schema, read `uniqueness_constraints` off the referenced kinds) and **turns back
+  into a run** the moment a schema admits an ambiguity. A skip that cannot ever turn back into a run is a
+  deletion, so the guard is covered offline in `tests/test_live_fixture_preconditions.py` — four cases over
+  schema doubles, one of them the schema that *does* admit an ambiguity and therefore runs the test —
+  which is the same standard AD045b's precondition cover set for `assert_convergence_key_is_supplied`:
+  the check that decides run-versus-skip may not itself be carried only by the runs it guards.
+  **What is delivered and what is not.** T080 is ticked for a test that is written, unweakened and
+  guarded by a schema precondition, and its text says exactly that: on this destination it **skips**, with
+  the reason. The **live passing evidence** for SC-016's live half is still not produced and cannot be on
+  this destination; every record that says so keeps saying so, unsoftened. SC-016's offline half (T053)
+  passes, so the requirement is not unevidenced — only its live half.
+  **Scope of the completion condition.** SC-016 is a **spec-derived** criterion with no counterpart in the
+  brief's own acceptance list, so neither this decision nor the state it records touches the brief's
+  completion condition; it changes only how this repository's own criterion reports an unreachable
+  environment fact. `[AD092]`
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Review a saved plan, then apply it by run ID (Priority: P1)

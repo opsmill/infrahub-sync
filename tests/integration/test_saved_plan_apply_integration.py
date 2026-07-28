@@ -4,11 +4,10 @@
 Infrahub was reachable in the environment this feature was built in (AD007). One later was, and
 this module was run against it: **`7 passed, 1 error`**. SC-001, SC-002, SC-003, SC-008 and
 SC-007's live half **pass live**, which closes DBA-001, DBA-002, DBA-003, DBA-008 and DBA-007's
-live half. SC-016's live half does **not**: `test_an_ambiguous_peer_refuses_the_operation` errors
-in fixture setup, because seeding a genuinely ambiguous peer needs a referenced kind whose
-uniqueness constraints do not cover the components the resolver filters on, and every kind the
-qualified configuration touches declares one that does — the destination answers the clone with
-`Violates uniqueness constraint 'device-name'`. That precondition is left exactly as written.
+live half. SC-016's live half does **not**: seeding a genuinely ambiguous peer needs a referenced
+kind whose uniqueness constraints do not cover the components the resolver filters on, and every
+kind the qualified configuration touches declares one that does — the destination answers the clone
+with `Violates uniqueness constraint 'device-name'`. That precondition is left exactly as written.
 Every test here stays `integration`-marked and skips itself when the destination environment is
 not configured, so a default `uv run pytest -q` still reports them as skips and the offline suite
 is unchanged. The offline conformance harness at `tests/plan/test_apply_conformance.py` narrowed
@@ -22,6 +21,15 @@ from. These tests were not merely unexecuted — they were **non-functional**, a
 them could reveal that. A test that has never run is not evidence of anything, including of its
 own validity. `_generate_adapters` closes that gap; nothing else about the paragraph above
 changes, and no assertion below was touched.
+
+**Amended by AD092: SC-016's live half is guarded, not left erroring.**
+`test_an_ambiguous_peer_refuses_the_operation` now states its unsatisfiability as a precondition
+checked against the destination schema — `_ambiguous_peer_or_skip`, over
+`covering_uniqueness_constraint` — so on a destination where no referenced peer kind admits an
+ambiguity it **skips** naming the covering uniqueness constraint that establishes it, instead of
+erroring on a clone the schema was always going to refuse. Nothing in the test body is weakened,
+mocked or deleted: the check is over the schema as data, and a schema declaring a referenced kind
+whose constraints leave a filtered component free runs the whole test rather than skipping it.
 
 Run them with a reachable destination and source::
 
@@ -409,6 +417,107 @@ def _human_friendly_id(schemas: Mapping[str, Any], kind: str) -> list[str]:
     return list(getattr(node_schema, "human_friendly_id", None) or ())
 
 
+def _uniqueness_constraints(schemas: Mapping[str, Any], kind: str) -> list[list[str]]:
+    """The destination kind's declared uniqueness constraints, each a list of component paths.
+
+    Spelled the way the destination schema spells them: an attribute component carries the
+    trailing `value` segment (`name__value`) while a relationship component is named on its
+    own (`device`), which is why coverage below is decided over **paths** and not over strings.
+    """
+    node_schema = schemas.get(kind)
+    return [list(constraint) for constraint in (getattr(node_schema, "uniqueness_constraints", None) or ())]
+
+
+def _peer_kind_at(schemas: Mapping[str, Any], kind: str, path: Sequence[str]) -> str | None:
+    """The destination kind reached by walking `path` from `kind` through relationships only.
+
+    `None` as soon as a segment names something that is not a relationship of the kind reached
+    so far, which is what stops an attribute path being read as a peer.
+    """
+    current: str | None = kind
+    for segment in path:
+        node_schema = schemas.get(current) if current is not None else None
+        current = next(
+            (
+                getattr(relationship, "peer", None)
+                for relationship in getattr(node_schema, "relationships", None) or ()
+                if relationship.name == segment
+            ),
+            None,
+        )
+        if current is None:
+            return None
+    return current
+
+
+def _pins_one_object(
+    schemas: Mapping[str, Any],
+    kind: str,
+    path: tuple[str, ...],
+    queried: set[tuple[str, ...]],
+    seen: tuple[str, ...],
+) -> bool:
+    """Whether a query over `queried` fixes `path` on `kind` to one value or one peer object."""
+    if path in queried:
+        return True
+    depth = len(path)
+    nested = {candidate[depth:] for candidate in queried if candidate[:depth] == path and len(candidate) > depth}
+    if not nested:
+        return False
+    peer_kind = _peer_kind_at(schemas, kind, path)
+    if peer_kind is None:
+        return False
+    return _covering_constraint(schemas, peer_kind, nested, seen) is not None
+
+
+def _covering_constraint(
+    schemas: Mapping[str, Any],
+    kind: str,
+    queried: set[tuple[str, ...]],
+    seen: tuple[str, ...] = (),
+) -> list[str] | None:
+    """The kind's first uniqueness constraint every component of which `queried` pins."""
+    if kind in seen:
+        # A cyclic reference between two kinds' constraints; nothing further is pinned by it.
+        return None
+    for constraint in _uniqueness_constraints(schemas, kind):
+        if constraint and all(
+            _pins_one_object(schemas, kind, tuple(_component_path(component)), queried, (*seen, kind))
+            for component in constraint
+        ):
+            return constraint
+    return None
+
+
+def covering_uniqueness_constraint(
+    *,
+    destination_schema: Mapping[str, Any],
+    kind: str,
+    filters: Mapping[str, Any],
+) -> list[str] | None:
+    """The constraint that makes two objects of `kind` both matching `filters` impossible.
+
+    `None` means this destination schema **admits an ambiguous peer** for that query: no
+    declared uniqueness constraint is fully pinned by the components the resolver filters on,
+    so a second matching object can be created and the multi-match state SC-016's live half
+    measures is seedable. A returned constraint is the one the destination answers the second
+    object with (`Violates uniqueness constraint`, HTTP 422), which is what makes a refusal to
+    seed a **fact about the schema** rather than an absent environment (AD092).
+
+    A component is pinned when the filters ask for it directly (`name__value`) or, for a
+    relationship component named on its own (`device`), when the filters reach through it far
+    enough to identify a single peer — decided by applying this same test to the peer kind.
+    That recursion is the difference between this check and a prefix match: on a destination
+    where device names are not themselves unique, `device__name__value` does **not** pin
+    `device`, two interfaces could match, and the ambiguity would be seedable after all.
+
+    Pure — no destination is contacted — so it is exercisable, and is exercised, offline in
+    `tests/test_live_fixture_preconditions.py`: the check that decides whether SC-016's live
+    half runs or skips is not itself carried only by the runs it guards.
+    """
+    return _covering_constraint(destination_schema, kind, {tuple(_component_path(name)) for name in filters})
+
+
 def _identity_filters(schemas: Mapping[str, Any], kind: str, identity: Mapping[str, Any]) -> dict[str, Any]:
     """The destination query naming exactly the object a plan identity refers to.
 
@@ -735,6 +844,25 @@ def _crosses_a_relationship(filters: Mapping[str, Any]) -> bool:
     return any(_COMPONENT_SEPARATOR in name.removesuffix(suffix) for name in filters)
 
 
+def _referenced_peers_absent_from_the_plan(
+    plan: SavedPlan,
+    operations: Sequence[PlannedOperation],
+) -> list[tuple[str, dict[str, Any]]]:
+    """Every `(peer kind, peer identity)` the given operations reference that the plan does not create.
+
+    Those are the peers that must already exist at the destination for the plan to apply, so they
+    are the only ones a fixture can read back — or perturb — before the apply under test runs.
+    """
+    planned = {(operation.kind, _identity_key(operation.identity)) for operation in plan.operations()}
+    return [
+        (reference.peer_kind, dict(peer))
+        for operation in operations
+        for reference in operation.relationships or ()
+        for peer in reference.peers
+        if (reference.peer_kind, _identity_key(peer)) not in planned
+    ]
+
+
 def _require_preexisting_peer(
     plan: SavedPlan,
     operations: Sequence[PlannedOperation],
@@ -754,14 +882,7 @@ def _require_preexisting_peer(
     schema, so when none of the referenced kinds does, this is a setup error telling the
     maintainer to widen `KINDS_UNDER_TEST` rather than a failing assertion about the product.
     """
-    planned = {(operation.kind, _identity_key(operation.identity)) for operation in plan.operations()}
-    candidates: list[tuple[str, dict[str, Any]]] = [
-        (reference.peer_kind, dict(peer))
-        for operation in operations
-        for reference in operation.relationships or ()
-        for peer in reference.peers
-        if (reference.peer_kind, _identity_key(peer)) not in planned
-    ]
+    candidates = _referenced_peers_absent_from_the_plan(plan, operations)
     if not candidates:
         msg = (
             "Every peer the plan references is also created by the plan, so dependency-tier ordering fills the "
@@ -1268,14 +1389,80 @@ def _clone_node(live: LivePlan, kind: str, node_id: str) -> Any:  # noqa: ANN401
     return clone
 
 
+@dataclass(frozen=True)
+class AmbiguousPeer:
+    """The seeded ambiguity: which peer it is, and how many destination objects really match it."""
+
+    kind: str
+    identity: dict[str, Any]
+    filters: dict[str, Any]
+    match_count: int
+
+
+def _ambiguous_peer_or_skip(live: LivePlan) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    """A referenced peer whose ambiguity this destination schema admits, or skip saying why (AD092).
+
+    SC-016's live half needs two destination objects that both match the query the resolver
+    issues for one peer identity. Whether that state is reachable at all is a property of the
+    **destination schema**: a kind declaring a uniqueness constraint every component of which
+    those filters pin cannot hold a second matching object, and the destination answers the
+    attempt with `Violates uniqueness constraint`, HTTP 422.
+
+    So every peer the plan references and does not create is checked against the schema — the
+    module fixture's chosen pre-existing peer first, so that where an ambiguity is admissible
+    for it the test measures exactly the peer T079 also resolves — and the first candidate
+    whose constraints leave a filtered component free is returned. When none does, that is
+    neither a missing environment nor a product defect but a verifiable, reproducible fact
+    about this schema, so it skips with the constraint that establishes it in the message.
+    The same skip pattern as `_env_or_skip`: a checked precondition, reported as a skip naming
+    what could not be established, rather than the setup error `LivePlanPreconditionError`
+    raises for a fixture that *should* have been satisfiable.
+    """
+    chosen = (live.preexisting_peer_kind, dict(live.preexisting_peer_identity))
+    referencing = [operation for operation in live.plan.operations() if operation.relationships]
+    candidates = [
+        chosen,
+        *(
+            candidate
+            for candidate in _referenced_peers_absent_from_the_plan(live.plan, referencing)
+            if (candidate[0], _identity_key(candidate[1])) != (chosen[0], _identity_key(chosen[1]))
+        ),
+    ]
+    refused: dict[str, str] = {}
+    for kind, identity in candidates:
+        try:
+            filters = _identity_filters(live.schemas, kind, identity)
+        except LivePlanPreconditionError:
+            # Nothing about this candidate is queryable, so it can be neither resolved nor made
+            # ambiguous. Another candidate may be.
+            continue
+        covering = covering_uniqueness_constraint(destination_schema=live.schemas, kind=kind, filters=filters)
+        if covering is None:
+            return kind, identity, filters
+        refused[kind] = f"filtered on {sorted(filters)}, covered by uniqueness constraint {covering}"
+    pytest.skip(
+        "This destination's schema admits no genuinely ambiguous peer, so SC-016's live half cannot be seeded: "
+        "every peer kind the plan references declares a uniqueness constraint every component of which the "
+        "filters the resolver queries it with pin, so the destination refuses a second matching object with "
+        "`Violates uniqueness constraint` (HTTP 422). Candidate peer kinds, their resolver filters and the "
+        f"constraint covering each: {'; '.join(f'{kind} — {reason}' for kind, reason in sorted(refused.items()))}. "
+        "Every assertion in the test is unchanged and runs as soon as a referenced kind's uniqueness "
+        "constraints leave one of those filtered components free."
+    )
+
+
 @pytest.fixture
-def ambiguous_peer(live_plan: LivePlan) -> Iterator[int]:
-    """Seed a genuinely ambiguous peer and yield the **real** number of matches.
+def ambiguous_peer(live_plan: LivePlan) -> Iterator[AmbiguousPeer]:
+    """Seed a genuinely ambiguous peer and yield it with the **real** number of matches.
 
     Function-scoped and torn down, because the ambiguity breaks every other test in this
     module by construction: it is a destination state, not a fixture of the plan.
+
+    Which peer is seeded is decided by `_ambiguous_peer_or_skip` against the destination
+    schema, so a schema that admits no ambiguity for any referenced peer skips here with that
+    reason rather than erroring on a clone the destination was always going to refuse (AD092).
     """
-    kind, identity = live_plan.preexisting_peer_kind, live_plan.preexisting_peer_identity
+    kind, identity, filters = _ambiguous_peer_or_skip(live_plan)
     original_id = _resolve_exactly_one(live_plan, kind, identity)
     clone = _clone_node(live_plan, kind, original_id)
     try:
@@ -1287,19 +1474,23 @@ def ambiguous_peer(live_plan: LivePlan) -> Iterator[int]:
                 "a refusal that never happens."
             )
             raise LivePlanPreconditionError(msg)
-        yield len(matches)
+        yield AmbiguousPeer(kind=kind, identity=identity, filters=filters, match_count=len(matches))
     finally:
         clone.delete()
 
 
-def test_an_ambiguous_peer_refuses_the_operation(live_plan: LivePlan, ambiguous_peer: int) -> None:
+def test_an_ambiguous_peer_refuses_the_operation(live_plan: LivePlan, ambiguous_peer: AmbiguousPeer) -> None:
     """SC-016 live half: the refusal names the peer kind, the peer identity and the real count.
 
     "Refused rather than skipped" is asserted from the partial record the failure carries: the
     referring operation appears in neither the applied set nor the skipped-delete set, so the
     apply stopped at it instead of stepping over it.
+
+    The peer under test is the one the `ambiguous_peer` fixture actually seeded, which is any
+    referenced peer this destination's schema admits an ambiguity for (AD092) — not necessarily
+    the pre-existing crossing peer T079 uses.
     """
-    kind, identity = live_plan.preexisting_peer_kind, live_plan.preexisting_peer_identity
+    kind, identity = ambiguous_peer.kind, ambiguous_peer.identity
     referrers = [
         operation
         for operation in live_plan.plan.operations()
@@ -1317,8 +1508,10 @@ def test_an_ambiguous_peer_refuses_the_operation(live_plan: LivePlan, ambiguous_
     assert isinstance(cause, PeerAmbiguousError), f"The apply failed with {cause!r}, not a multi-match refusal."
     message = str(cause)
     assert kind in message, f"The refusal does not name the peer kind {kind!r}: {message}"
-    assert str(ambiguous_peer) in message, f"The refusal does not name the real match count {ambiguous_peer}: {message}"
-    for value in live_plan.preexisting_peer_filters.values():
+    assert str(ambiguous_peer.match_count) in message, (
+        f"The refusal does not name the real match count {ambiguous_peer.match_count}: {message}"
+    )
+    for value in ambiguous_peer.filters.values():
         assert str(value) in message, f"The refusal does not name the peer identity value {value!r}: {message}"
 
     record = caught.value.apply_record
