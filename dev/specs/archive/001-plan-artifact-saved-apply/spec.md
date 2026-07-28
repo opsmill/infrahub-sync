@@ -4,7 +4,7 @@
 
 **Created**: 2026-07-26
 
-**Status**: Draft
+**Status**: Extracted
 
 **Input**: Delivery brief DB-001 (`db-001-plan-artifact-saved-apply.md`, brief_version 5, batch-v3),
 primary JPD card **INFP-653**. The brief is the sole scope authority for this specification.
