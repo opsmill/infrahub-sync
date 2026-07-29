@@ -676,17 +676,15 @@ def apply_cmd(
             record = applier.apply_plan(allow_destination_change=allow_destination_change)
             run_file.summary.update(record.as_summary_keys())
             run_file.status = "applied"
-        except OperationApplyFailedError as exc:
-            # First of the taxonomy arms, because it is a `PlanArtifactError` subclass and
-            # the general arm below would otherwise swallow it — and with it the **partial**
-            # record the rejection carries, which is what lets FR-025's last-applied pointer
-            # survive a partial apply instead of being overwritten with an empty list.
-            _record_and_abort(run_file, exc, exc.apply_record)
-        except ApplyRecordInvariantError as exc:
-            # Raised *after* the loop wrote every non-delete operation, so the record it
-            # carries holds the real counts. Merging an empty one here would tell an operator
-            # that a run which wrote everything applied nothing, and invite a re-apply
-            # against a populated destination.
+        except (OperationApplyFailedError, ApplyRecordInvariantError) as exc:
+            # The two record-carrying members of the taxonomy, ahead of the general arm below
+            # because they are `PlanArtifactError` subclasses and it would otherwise swallow
+            # them — and with them the record each carries. A rejection carries the **partial**
+            # one, which is what lets FR-025's last-applied pointer survive a partial apply
+            # instead of being overwritten with an empty list; the invariant error is raised
+            # *after* the loop wrote every non-delete operation, so its record holds the real
+            # counts, and merging an empty one would tell an operator that a run which wrote
+            # everything applied nothing.
             _record_and_abort(run_file, exc, exc.apply_record)
         except PlanArtifactError as exc:
             # Every remaining member of the taxonomy is a **designed refusal** that wrote
