@@ -4,7 +4,7 @@ import importlib.util
 import logging
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Any, Union, cast
 
 import yaml
 from diffsync.store.local import LocalStore
@@ -21,7 +21,10 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
 
+    from diffsync import Adapter
     from infrahub_sdk.schema import GenericSchema, NodeSchema
+
+    from infrahub_sync.plan.models import ApplyRecord
 
 
 def find_missing_schema_model(
@@ -279,6 +282,106 @@ def get_potenda_from_instance(
         continue_on_error=continue_on_error,
         concurrent_load=concurrent_load,
     )
+
+
+class _PlanApplySource:
+    """Stands in for the source adapter an apply never constructs.
+
+    Apply reads no source (FR-012), so `PlanApplier.open_existing` neither imports nor
+    instantiates one. `Potenda.__init__` assigns `top_level` and `continue_on_error` onto
+    its source, which a plain instance accepts; anything that would actually *use* the
+    source raises immediately, so a change that reintroduces source access on the apply
+    path fails loudly instead of quietly requiring the source's dependencies again.
+    """
+
+    def __getattr__(self, name: str) -> Any:
+        msg = f"apply constructs no source adapter, so nothing on the apply path may read source.{name}"
+        raise AttributeError(msg)
+
+
+def _destination_store(sync_instance: SyncInstance) -> LocalStore | RedisStore:
+    """The diffsync store the destination adapter uses, per the configuration's `store` block."""
+    if sync_instance.store and sync_instance.store.type == "redis":
+        if sync_instance.store.settings and isinstance(sync_instance.store.settings, dict):
+            return RedisStore(**sync_instance.store.settings, name=sync_instance.destination.name)
+        return RedisStore(name=sync_instance.destination.name)
+    return LocalStore()
+
+
+class PlanApplier:
+    """The apply command's assembly seam: a stored run opened for applying.
+
+    Apply executes a plan that already exists, against the destination it names, so this
+    seam constructs the **destination adapter only** — a host holding destination
+    credentials applies a reviewed plan without the source's dependencies, credentials or
+    reachability. It locates the stored run directory without creating anything (AD026)
+    and writes none of the run's sidecars: a stored run's files are the immutable
+    provenance of the plan under apply. `run.json` remains the CLI's to write (AD069).
+    """
+
+    def __init__(self, engine: Potenda, *, run_dir: Path, run_id: str) -> None:
+        self.engine = engine
+        self.run_dir = run_dir
+        self.run_id = run_id
+
+    @classmethod
+    def open_existing(
+        cls,
+        sync_instance: SyncInstance,
+        *,
+        run_id: str,
+        branch: str | None = None,
+        verbosity: int | None = None,
+    ) -> PlanApplier:
+        """Open the stored run `run_id` of `sync_instance` for applying.
+
+        Raises:
+            ImportError: the destination adapter could not be loaded.
+            ValueError: the destination adapter could not be initialized.
+        """
+        destination_class = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
+        if not destination_class:
+            msg = f"Could not load the destination adapter '{sync_instance.destination.name}'"
+            raise ImportError(msg)
+
+        dest_kwargs: dict[str, Any] = {
+            "config": sync_instance,
+            "target": "destination",
+            "adapter": sync_instance.destination,
+            "internal_storage_engine": _destination_store(sync_instance),
+        }
+        if "infrahub" in sync_instance.destination.name.lower():
+            dest_kwargs["branch"] = (sync_instance.destination.settings or {}).get("branch") or branch or "main"
+        try:
+            destination = destination_class(**dest_kwargs)
+        except (ValueError, TypeError) as exc:
+            msg = f"Error initializing {sync_instance.destination.name.title()}Adapter: {exc}"
+            raise ValueError(msg) from exc
+
+        top_level, tiers = sync_instance.compute_order_and_tiers()
+
+        from infrahub_sync.cache.paths import run_dir as run_dir_for
+
+        # Located, never created: the run being applied already exists, and an apply that
+        # allocated directories could manufacture the very run whose absence it should report.
+        rdir = run_dir_for(sync_instance.name, run_id)
+
+        engine = Potenda(
+            source=cast("Adapter", _PlanApplySource()),
+            destination=destination,
+            config=sync_instance,
+            top_level=top_level,
+            tiers=tiers,
+            verbosity=verbosity,
+            run_dir=rdir,
+            run_id=run_id,
+            cache_root=rdir.parent,
+        )
+        return cls(engine, run_dir=rdir, run_id=run_id)
+
+    def apply_plan(self, *, config_version: str | None = None) -> ApplyRecord:
+        """Apply the stored plan — the engine's contract, unchanged; writes no run file (AD069)."""
+        return self.engine.apply_plan(config_version=config_version)
 
 
 def get_infrahub_config(settings: dict[str, str | None], branch: str | None) -> Config:

@@ -90,7 +90,7 @@ from infrahub_sync.plan.models import ACTIONS, SUPPORTED_FORMAT_VERSIONS, ApplyR
 from infrahub_sync.plan.reader import parse_plan_artifact
 from infrahub_sync.plan.review import RUN_ID_LISTING_LIMIT
 from infrahub_sync.potenda import Potenda
-from infrahub_sync.utils import get_instance
+from infrahub_sync.utils import PlanApplier, get_instance
 from tests.plan.artifact_fixtures import (
     OTHER_RUN_ID,
     RUN_ID,
@@ -1418,36 +1418,38 @@ def destination_double() -> RecordingDestination:
     return RecordingDestination()
 
 
-def _patched_potenda(destination: RecordingDestination, *, constructed: list[str] | None = None) -> Any:  # noqa: ANN401
-    """A `get_potenda_from_instance` replacement returning a real engine over `destination`.
+def _patched_open_existing(destination: RecordingDestination, *, constructed: list[str] | None = None) -> Any:  # noqa: ANN401
+    """A `PlanApplier.open_existing` replacement assembling a real engine over `destination`.
 
-    A **real** `Potenda`, so the pre-apply gate, the reader and the apply loop under test are
-    the shipped ones; only the adapter pair is replaced, because no live destination is
-    reachable here and a mocked engine would assert nothing about either.
+    A **real** `Potenda` inside a real `PlanApplier`, so the pre-apply gate, the reader and
+    the apply loop under test are the shipped ones; only the destination adapter is
+    replaced, because no live destination is reachable here and a mocked engine would
+    assert nothing about either.
     """
 
-    def _factory(*, sync_instance: Any, run_id: str | None = None, **kwargs: Any) -> Potenda:  # noqa: ANN401
+    def _open_existing(sync_instance: Any, *, run_id: str, **kwargs: Any) -> PlanApplier:  # noqa: ANN401
         _ = kwargs
-        assert run_id is not None
         if constructed is not None:
             constructed.append(run_id)
         from infrahub_sync.cache.paths import run_dir as run_dir_for
 
-        return Potenda(
+        directory = run_dir_for(sync_instance.name, run_id)
+        engine = Potenda(
             source=SimpleNamespace(top_level=[]),  # ty: ignore[invalid-argument-type]
             destination=destination,  # ty: ignore[invalid-argument-type]
             config=sync_instance,
             top_level=["BuiltinTag", "LocationSite"],
-            run_dir=run_dir_for(sync_instance.name, run_id),
+            run_dir=directory,
             run_id=run_id,
         )
+        return PlanApplier(engine, run_dir=directory, run_id=run_id)
 
-    return _factory
+    return _open_existing
 
 
 def _run_apply(destination: RecordingDestination, run_id: str = RUN_ID, *, quiet: bool = False) -> Any:  # noqa: ANN401
     """Invoke the CLI's `apply` with a real engine over `destination`."""
-    with patch("infrahub_sync.cli.get_potenda_from_instance", _patched_potenda(destination)):
+    with patch("infrahub_sync.cli.PlanApplier.open_existing", _patched_open_existing(destination)):
         return _apply(run_id, quiet=quiet)
 
 
@@ -1629,8 +1631,8 @@ def test_a_v1_plan_is_refused_before_anything_is_constructed(
     constructed: list[str] = []
 
     with patch(
-        "infrahub_sync.cli.get_potenda_from_instance",
-        _patched_potenda(destination_double, constructed=constructed),
+        "infrahub_sync.cli.PlanApplier.open_existing",
+        _patched_open_existing(destination_double, constructed=constructed),
     ):
         result = _apply(RUN_ID)
 
@@ -1683,8 +1685,8 @@ def test_a_missing_run_refuses_naming_the_runs_that_exist_and_creates_no_directo
     with (
         caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"),
         patch(
-            "infrahub_sync.cli.get_potenda_from_instance",
-            _patched_potenda(destination_double, constructed=constructed),
+            "infrahub_sync.cli.PlanApplier.open_existing",
+            _patched_open_existing(destination_double, constructed=constructed),
         ),
     ):
         result = _apply("20260101T0000-deadbeef")
@@ -1697,6 +1699,95 @@ def test_a_missing_run_refuses_naming_the_runs_that_exist_and_creates_no_directo
     assert RUN_ID in message
     assert "Next action:" in message
     assert _tree(_cache_root(tmp_path)) == before
+
+
+# --- the apply assembly seam: destination only, stored sidecars immutable ---------------
+
+
+def _side_sensitive_import(destination: RecordingDestination, *, allow_source: bool = False) -> Any:  # noqa: ANN401
+    """An `import_adapter` replacement that knows which side it is being asked for.
+
+    The destination side yields a factory producing `destination`. The source side raises —
+    apply must never ask for it — unless `allow_source`, which yields an inert stand-in so
+    a case about something else entirely does not fail on the import instead.
+    """
+
+    def _import_adapter(*, sync_instance: Any, adapter: Any) -> Any:  # noqa: ANN401
+        if adapter is sync_instance.source:
+            if allow_source:
+                return lambda **kwargs: SimpleNamespace(top_level=[])  # noqa: ARG005
+            msg = "apply must not import or construct the source adapter"
+            raise AssertionError(msg)
+        return lambda **kwargs: destination  # noqa: ARG005
+
+    return _import_adapter
+
+
+def test_apply_assembles_no_source_adapter_and_still_applies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, destination_double: RecordingDestination
+) -> None:
+    """The real assembly seam constructs the destination only.
+
+    No seam is patched here: the command runs through the real `PlanApplier.open_existing`,
+    and `import_adapter` **raises if asked for the source** while yielding the recording
+    destination — so this apply succeeding is the proof that a host with destination
+    credentials but no source dependency or token can apply a reviewed plan. The shared
+    diff/sync factory imports and constructs both adapters, so routing apply through it
+    fails this case before verification is even reached.
+    """
+    _appliable_run(tmp_path)
+    monkeypatch.setattr("infrahub_sync.utils.import_adapter", _side_sensitive_import(destination_double))
+
+    result = _apply(RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    assert destination_double.writes == [str(record["operation_id"]) for record in APPLY_PLAN]
+    recorded = _run_json(tmp_path)
+    assert recorded["status"] == "applied"
+
+
+class SchemaBearingDestination(RecordingDestination):
+    """A recording destination that also exposes a live schema, as a real adapter does.
+
+    The live schema is exactly what an assembly that recomputes extraction sidecars would
+    hash — so seeding the stored `schema-sub-hash.txt` with a value the live schema does
+    not hash to makes any rewrite observable as a byte change.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.schema = {"BuiltinTag": {}, "LocationSite": {}}
+
+
+def test_apply_leaves_the_stored_schema_sub_hash_byte_identical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stored run's sidecars are immutable extraction provenance.
+
+    Asserted through **both** outcomes — a designed refusal and a successful apply — because
+    the clobbering happened at assembly time, before either outcome was decided: the shared
+    diff/sync factory recomputed `schema-sub-hash.txt` from the live destination and wrote
+    it into the stored run before anything compared it, erasing the recorded provenance a
+    stored-vs-live comparison would need.
+    """
+    seeded = b"OLD\n"
+    destination = SchemaBearingDestination()
+    monkeypatch.setattr("infrahub_sync.utils.import_adapter", _side_sensitive_import(destination, allow_source=True))
+
+    # The refusal outcome: a plan bound to a configuration version that no longer matches.
+    refused_run = _appliable_run(tmp_path, config_version="a-different-configuration-version")
+    (refused_run / "schema-sub-hash.txt").write_bytes(seeded)
+    refused = _apply(RUN_ID)
+    assert refused.exit_code != 0
+    assert destination.writes == []
+    assert (refused_run / "schema-sub-hash.txt").read_bytes() == seeded
+
+    # The successful outcome, on a second stored run.
+    applied_run = _appliable_run(tmp_path, run_id=OTHER_RUN_ID)
+    (applied_run / "schema-sub-hash.txt").write_bytes(seeded)
+    applied = _apply(OTHER_RUN_ID)
+    assert applied.exit_code == 0, applied.output
+    assert (applied_run / "schema-sub-hash.txt").read_bytes() == seeded
 
 
 # --- the positive case, where AD069's merge is asserted by name -------------------------

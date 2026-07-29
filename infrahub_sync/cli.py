@@ -28,6 +28,7 @@ from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.plan.reader import require_plan_directory
 from infrahub_sync.plan.review import read_saved_plan, require_stored_run
 from infrahub_sync.utils import (
+    PlanApplier,
     find_missing_schema_model,
     get_all_sync,
     get_infrahub_config,
@@ -615,45 +616,28 @@ def apply_cmd(
     if not sync_instance:
         print_error_and_abort("Failed to load sync instance.")
 
-    # Refuse **before constructing anything** (AD026). `get_potenda_from_instance` imports
-    # and instantiates both adapters and then does `mkdir(parents=True, exist_ok=True)` on
-    # the run directory before any check, so an apply naming a run that does not exist would
-    # otherwise create the very directory whose absence it is about to report.
+    # Refuse **before constructing anything** (AD026): an apply naming a run that does not
+    # exist, or whose run holds no plan, is refused before even the destination adapter is
+    # imported — the applier below constructs the destination and locates the stored run
+    # without creating anything, so this refusal leaves no trace of the attempt.
     _require_applicable_plan(sync_name=sync_instance.name, run_id=run_id)
 
     verbosity_level = ctx.obj.get("verbosity", logging.INFO) if ctx.obj else logging.INFO
 
     with pipeline_lock(sync_instance.name):
-        ptd = get_potenda_from_instance(
-            sync_instance=sync_instance,
+        # Apply-specific assembly: the destination only — apply never reads the source, so a
+        # host with destination credentials applies a plan without the source's dependencies
+        # — and no sidecar writes: the stored run's files are the immutable provenance of
+        # the plan under apply. FIX-005's destination binding is the supported apply-time
+        # guard against a drifted destination.
+        applier = PlanApplier.open_existing(
+            sync_instance,
+            run_id=run_id,
             branch=branch,
             verbosity=verbosity_level,
-            run_id=run_id,
         )
-        if ptd.run_dir is None:  # get_potenda_from_instance always allocates one
-            msg = "get_potenda_from_instance did not allocate a run_dir"
-            raise RuntimeError(msg)
-        run_file = RunFile(path=ptd.run_dir / "run.json", status="running", mode="apply")
+        run_file = RunFile(path=applier.run_dir / "run.json", status="running", mode="apply")
         run_file.save()
-        # Check that the cached plan was built against the same schema we
-        # would build against now. Plan 2 will provide _resolve_infrahub_schema;
-        # until then this check is a no-op.
-        try:
-            from infrahub_sync.cache import compute_schema_subhash
-            from infrahub_sync.cache.sidecars import SchemaHashFile
-            from infrahub_sync.utils import _resolve_infrahub_schema  # ty: ignore[unresolved-import]
-
-            schema = _resolve_infrahub_schema(sync_instance, branch=branch)
-            current = compute_schema_subhash(sync_instance, schema)
-            cached = SchemaHashFile.load(ptd.run_dir / "schema-sub-hash.txt").value
-            if cached and cached != current:
-                print_error_and_abort(
-                    f"Cached plan was built against schema-sub-hash {cached!r} but "
-                    f"the destination is now at {current!r}. Re-run `diff` to "
-                    "rebuild the plan."
-                )
-        except ImportError:
-            pass  # Plan 2 resolver not available yet
 
         # This command is the **single writer** of `run.json` (AD069). `apply_plan` returns
         # the record and writes no run file; the merge below has to happen before every
@@ -661,7 +645,7 @@ def apply_cmd(
         # (`infrahub_sync/cache/sidecars.py:88-90`) and would otherwise destroy the record
         # with the empty summary built above.
         try:
-            record = ptd.apply_plan()
+            record = applier.apply_plan()
             run_file.summary.update(record.as_summary_keys())
             run_file.status = "applied"
         except OperationApplyFailedError as exc:
@@ -721,12 +705,12 @@ def apply_cmd(
             # disclose.
             logger.warning(
                 "Applied run %s: %d operations applied, %d deletes skipped",
-                ptd.run_id,
+                applier.run_id,
                 len(record.applied_operations),
                 record.skipped_delete_count,
             )
         else:
-            logger.info("Applied run %s", ptd.run_id)
+            logger.info("Applied run %s", applier.run_id)
 
 
 @app.command(name="generate")
