@@ -451,6 +451,10 @@ class PeerResolver:
         # The canonical identity is unhashable, so the memo key carries its canonical JSON
         # encoding — the same normalization the operation identifier hashes (FR-028.3).
         self._memo: dict[tuple[str, bytes], str] = {}
+        # Kinds whose partial filter has been warned about, once per kind per apply — the
+        # same lifetime rule as the adapter's unkeyed-render report (AD078), and it holds
+        # here for the same reason: the resolver lives for exactly one apply.
+        self._partial_filter_reported: set[str] = set()
 
     @staticmethod
     def _key(kind: str, identity: Mapping[str, Any]) -> tuple[str, bytes]:
@@ -494,18 +498,22 @@ class PeerResolver:
         `identity[<attr>]` and recursing for deeper nesting (AD043). The **schema path** is
         split; the **data value** never is.
 
-        Two degraded cases, and neither can be silent, because a query that is too loose
-        matches either nothing or more than one and both arms of `_query` refuse:
+        Two degraded cases, and neither is silent — a too-loose query can match **exactly
+        one** node and bind it wrongly, so `_query`'s zero- and multi-match refusals are not
+        a defense against degradation (FIX-002):
 
-        - a component whose value the identity does not supply is **skipped**. The
+        - a component whose value the identity does not supply is **skipped**, and the skip
+          is disclosed by a per-kind apply-time warning naming the dropped components. The
           specified remedy for a kind whose HFID does not cover its plan identity is the
           `<rel>__ids` fallback — resolve the reference component's own peer first,
           recursively through this same resolver, then filter `<rel>__ids=[<id>]` — which
           this release does not implement; FR-024 already warns at plan time about exactly
-          this condition, so it is the degraded case that warning is about;
+          this condition, and this is its apply-time counterpart;
         - a kind that declares no usable HFID component at all falls back to the identity's
           own direct scalars as `<attr>__value` filters, which is the only thing the apply
-          holds for it.
+          holds for it. When even those yield nothing, the returned mapping is empty and
+          `_query` refuses before querying: an unfiltered query lists every node of the
+          kind, and with exactly one at the destination it would bind silently.
 
         Raises:
             ValueError: the destination schema declares no kind `peer_kind` (MIN-012). The
@@ -525,18 +533,32 @@ class PeerResolver:
         components = list(getattr(node_schema, "human_friendly_id", None) or ())
 
         kwargs: dict[str, Any] = {}
+        dropped: list[str] = []
         for component in components:
             value = _identity_path_value(identity, _component_segments(component))
             if value is _UNRESOLVED or isinstance(value, (Mapping, list, tuple)):
+                dropped.append(component)
                 continue
             kwargs[_filter_kwarg_name(component)] = value
-        if kwargs:
-            return kwargs
 
-        for name, value in identity.items():
-            if value is None or isinstance(value, (Mapping, list, tuple)):
-                continue
-            kwargs[_filter_kwarg_name(name)] = value
+        if not kwargs:
+            for name, value in identity.items():
+                if value is None or isinstance(value, (Mapping, list, tuple)):
+                    continue
+                kwargs[_filter_kwarg_name(name)] = value
+
+        if kwargs and dropped and peer_kind not in self._partial_filter_reported:
+            self._partial_filter_reported.add(peer_kind)
+            logger.warning(
+                "Planned apply: resolving %s peers on a PARTIAL filter. The plan identity supplies no "
+                "value for human-friendly-ID component(s) %s, so they were dropped and the destination "
+                "is queried on %s — a strict subset of the kind's convergence key, which can match a "
+                "single wrong node and bind it. Re-plan so the identity supplies the dropped "
+                "component(s) (FR-024's plan-time warning names the same condition).",
+                peer_kind,
+                ", ".join(dropped),
+                sorted(kwargs),
+            )
         return kwargs
 
     def _query(self, *, peer_kind: str, identity: Mapping[str, Any], referring_operation_id: str) -> str:
@@ -546,9 +568,23 @@ class PeerResolver:
         warn-and-continue on an unresolvable peer, and the SDK's bare `IndexError` on a
         multi-match, are existing behavior on an existing path and are left exactly as they
         are.
+
+        An **empty** filter set is refused before the query is issued (FIX-002): an
+        unfiltered `client.filters(kind=...)` lists every node of the kind, and with exactly
+        one node at the destination it returns it — the one shape the zero- and multi-match
+        refusals cannot catch, and silent wrong-peer wiring if it binds.
         """
         filter_kwargs = self._filter_kwargs(peer_kind=peer_kind, identity=identity)
         readable = canonical_json_bytes(canonical_identity(identity, kind=peer_kind)).decode("utf-8")
+        if not filter_kwargs:
+            msg = (
+                f"No usable destination filter could be derived from the peer identity {readable} of "
+                f"kind {peer_kind!r}, referenced by operation {referring_operation_id!r}: every value "
+                "the identity supplies is reference-shaped or null. An unfiltered query would list "
+                f"every {peer_kind!r} object and could silently bind the wrong one, so the peer is "
+                "refused instead."
+            )
+            raise PeerNotFoundError(msg)
         results = self._adapter.client.filters(
             kind=peer_kind,
             populate_store=False,

@@ -1002,6 +1002,75 @@ def test_an_unknown_peer_kind_is_refused_loudly_before_any_destination_query() -
     assert client.resolver_queries == [], "No destination query may be issued for a kind the schema lacks."
 
 
+def test_a_reference_only_identity_is_refused_before_querying_not_silently_bound() -> None:
+    """FIX-002: an empty filter set refuses, even when exactly one node of the kind exists.
+
+    A peer identity every value of which is reference-shaped derives no filter kwargs at all,
+    so `client.filters(kind=...)` would list **every** node of the kind — and with exactly one
+    at the destination, return it. That is the one shape the zero- and multi-match refusals
+    cannot catch: the wrong peer is bound, memoized (AD036) and reused for the rest of the
+    apply, silently. The destination here is seeded with exactly that single-node state, so an
+    implementation that still queries binds it and fails this test.
+    """
+    client = RecordingClient()
+    client.filter_results = [[make_node(client, SITE_KIND, "the-only-site")]]
+    adapter = make_adapter(client)
+    resolver = PeerResolver(adapter)
+
+    identity = {"parent": {"peer_kind": SITE_KIND, "identity": {"name": "site-a"}}}
+    with pytest.raises(PeerNotFoundError) as excinfo:
+        resolver.resolve(peer_kind=SITE_KIND, identity=identity, referring_operation_id="op_0001")
+
+    message = str(excinfo.value)
+    assert "No usable destination filter" in message, "The refusal must state that no filter could be derived."
+    assert SITE_KIND in message, "The refusal must name the peer kind."
+    assert "op_0001" in message, "The refusal must name the referring operation."
+    assert client.resolver_queries == [], (
+        "The refusal must come BEFORE the query: an unfiltered query lists every node of the kind "
+        "and, with exactly one at the destination, silently binds it."
+    )
+
+
+def test_a_partial_filter_warns_once_per_kind_naming_the_dropped_components(
+    captured_logs: pytest.LogCaptureFixture,
+) -> None:
+    """FIX-002: silently skipped HFID components are disclosed at apply time, per kind.
+
+    `TestDevice`'s destination human-friendly ID is `[site__name__value, name__value]`. An
+    identity supplying only `name` drops the crossing component and queries on a strict subset
+    of the convergence key — FR-024's plan-time degraded mode, which nothing signalled at apply
+    time. The warning must name the dropped component; it is deduplicated per kind for the
+    resolver's one-apply lifetime, the same rule as the unkeyed-render report (AD078).
+    """
+    client = RecordingClient()
+    client.filter_results = [
+        [make_node(client, DEVICE_KIND, "device-id-1")],
+        [make_node(client, DEVICE_KIND, "device-id-2")],
+    ]
+    adapter = make_adapter(client)
+    resolver = PeerResolver(adapter)
+
+    first = resolver.resolve(peer_kind=DEVICE_KIND, identity={"name": "device-a"}, referring_operation_id="op_0002")
+    second = resolver.resolve(peer_kind=DEVICE_KIND, identity={"name": "device-b"}, referring_operation_id="op_0003")
+
+    assert (first, second) == ("device-id-1", "device-id-2"), "Partial filters warn; they do not refuse (OQ-5)."
+    assert len(client.resolver_queries) == 2, "Both resolutions must still query the destination."
+    assert all("name__value" in query and "site__name__value" not in query for query in client.resolver_queries)
+
+    warnings = [record for record in captured_logs.records if "PARTIAL filter" in record.getMessage()]
+    assert len(warnings) == 1, (
+        f"One warning per kind per apply, got {[record.getMessage() for record in warnings]}."
+    )
+    record = warnings[0]
+    assert record.levelno >= logging.WARNING, (
+        f"The report is pinned to WARNING because --quiet floors the logger there; it was emitted at "
+        f"{record.levelname}."
+    )
+    message = record.getMessage()
+    assert DEVICE_KIND in message, "The warning must name the destination kind."
+    assert "site__name__value" in message, "The warning must name the dropped component."
+
+
 # ---------------------------------------------------------------------------------------
 # T053 — SC-016's local half
 # ---------------------------------------------------------------------------------------
