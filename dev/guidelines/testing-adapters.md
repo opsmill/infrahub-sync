@@ -65,6 +65,47 @@ pytest.importorskip("pynetbox")  # module-level: skip, don't error, when the dep
 
 This keeps collection green in environments that did not install that adapter's extra.
 
+<!-- Extracted from dev/specs/archive/001-plan-artifact-saved-apply on 2026-07-28 -->
+
+## Never claim an unexecuted test as evidence
+
+**Always record a run before marking a test done — a pass, or a skip whose reason is verifiable:**
+
+A test that has never run is not evidence of anything, including of its own validity. A delivery run
+closed seven `integration`-marked tasks on tests that were not merely unexecuted but **non-functional**:
+the generate step was missing from the fixture, so every one of them errored in setup. Only execution
+revealed that. "Authored, not satisfied" is too generous a description of that state, because it implies
+the only missing ingredient is an environment.
+
+- An `integration`-marked test is done when there is a recorded run, not when it is written.
+- A precondition the environment cannot satisfy is a **skip with a reason in the message**, not an
+  error. An erroring fixture reports a defect; a schema or environment that cannot establish the
+  precondition is neither a defect nor an absent environment.
+- If a test cannot be run at all in this repository, say what it does *not* yet bound. Do not let
+  authorship stand in for coverage.
+
+## Assert the effect that leaves the process, not the state before it
+
+**Always pick an observable a broken implementation actually fails:**
+
+Several assertions in this codebase's history passed against implementations that did nothing. Prefer
+the outermost observable you can reach offline:
+
+- **Assert the issued call, not in-memory state.** SDK relationship editors are purely local, so
+  asserting a manager's `peer_ids` passes against code that reconciles and never writes. Assert the
+  rendered mutation, or the client call, instead.
+- **Assert that a read happened, not that two calls were ordered.** A self-guarding `fetch()` satisfies
+  "fetched before read" while reading nothing. If the property is "a destination read was issued", assert
+  that.
+- **Beware assertions a mock cannot fail.** A mock holds no destination state, so "two applies produce
+  one object" cannot fail against one. Byte-identity of two rendered inputs is the offline-checkable
+  claim; convergence itself needs the live suite.
+- **Give the fixture something to catch.** An assertion that a write names no unmapped field needs a
+  fixture kind that *declares* an unmapped field. Otherwise it passes against the bug it exists for.
+- When an assertion depends on undocumented behaviour of a dependency pinned by a **range**, add a
+  tripwire test that goes straight at the dependency with no local code involved, and fails loudly when
+  the behaviour changes.
+
 ## Keep tests atomic and integration tests opt-in
 
 **Always isolate one behavior per test and mark live tests:**
