@@ -16,6 +16,7 @@ what makes the write order observable to a test.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import tempfile
 from datetime import datetime, timezone
@@ -53,8 +54,12 @@ def _atomic_write_bytes(path: Path, payload: bytes) -> None:
             handle.write(payload)
         Path(tmp_name).replace(path)
     except BaseException:
-        # Best-effort cleanup of the tmp file on any failure.
-        Path(tmp_name).unlink(missing_ok=True)
+        # Best-effort cleanup of the tmp file on any failure. Best-effort means its own
+        # failure is suppressed (MIN-025): a cleanup `PermissionError` superseding the
+        # write or replace error would hide the very failure — ENOSPC above all — that
+        # explains the torn artifact.
+        with contextlib.suppress(OSError):
+            Path(tmp_name).unlink(missing_ok=True)
         raise
 
 

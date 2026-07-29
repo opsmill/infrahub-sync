@@ -259,6 +259,32 @@ def test_the_manifest_is_absent_until_the_operations_file_is_complete(
     assert seen_at_manifest_time == [_operations_path(tmp_path).read_bytes()]
 
 
+def test_a_cleanup_failure_never_replaces_the_error_that_tore_the_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MIN-025: the tmp-file cleanup is best-effort and must stay that way.
+
+    `replace` fails (the disk-full shape that explains the torn artifact), then `unlink`
+    fails too (permissions shifted underneath). The operator's error must be the replace
+    failure; a cleanup `PermissionError` that superseded it would hide why the artifact
+    is torn.
+    """
+
+    def _failing_replace(self: Path, target: object) -> None:  # noqa: ARG001 — the target is irrelevant to the failure
+        msg = "simulated replace failure: no space left on device"
+        raise OSError(msg)
+
+    def _failing_unlink(self: Path, missing_ok: bool = False) -> None:  # noqa: ARG001, FBT001, FBT002 — mirrors Path.unlink
+        msg = "simulated cleanup failure"
+        raise PermissionError(msg)
+
+    monkeypatch.setattr(Path, "replace", _failing_replace)
+    monkeypatch.setattr(Path, "unlink", _failing_unlink)
+
+    with pytest.raises(OSError, match="simulated replace failure"):
+        writer._atomic_write_bytes(tmp_path / "plan" / OPERATIONS_FILE_NAME, b"payload\n")
+
+
 # ======================================================================================
 # T017 — ordering by tier, then identifier (AD001)
 # ======================================================================================
