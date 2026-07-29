@@ -87,6 +87,37 @@ class LoadedPlan:
     operations_bytes: bytes = b""
 
 
+@dataclass(frozen=True)
+class RawPlanArtifact:
+    """The plan artifact's two files as bytes, read from disk exactly once.
+
+    The single read that both the pre-apply verifier and `parse_plan_artifact` consume, so
+    the bytes that were verified are — by construction — the bytes that are parsed and
+    applied. An absent file reads as `None` rather than raising, because absence is a
+    verdict the verifier reports in its failure list (torn, or the format-version gate) and
+    the parser turns into its own torn refusal; a present-but-unreadable file keeps
+    `PlanArtifactUnreadableError` (AD036).
+    """
+
+    run_dir: Path
+    manifest_bytes: bytes | None
+    operations_bytes: bytes | None
+
+
+def read_plan_artifact_bytes(run_dir: Path) -> RawPlanArtifact:
+    """Read `<run_dir>/plan/`'s files once, tolerating absence and refusing unreadability.
+
+    Raises:
+        PlanArtifactUnreadableError: a path exists but could not be read (AD036).
+    """
+    directory = run_dir / PLAN_DIR_NAME
+    return RawPlanArtifact(
+        run_dir=run_dir,
+        manifest_bytes=_read_optional_bytes(directory / MANIFEST_FILE_NAME, description="plan manifest"),
+        operations_bytes=_read_optional_bytes(directory / OPERATIONS_FILE_NAME, description="plan operations file"),
+    )
+
+
 def supported_versions_text() -> str:
     """List `SUPPORTED_FORMAT_VERSIONS` for a message, lowest first (AD059)."""
     return ", ".join(str(version) for version in sorted(SUPPORTED_FORMAT_VERSIONS))
@@ -151,10 +182,19 @@ def run_id_listing_text(stored: Sequence[str], *, cache_root: Path) -> str:
     return f"The most recent run identifiers for this sync are: {', '.join(shown)}.{truncation}"
 
 
-def _read_bytes(path: Path, *, description: str) -> bytes:
-    """Read `path` whole, mapping any I/O failure to the unreadable verdict."""
+def _read_optional_bytes(path: Path, *, description: str) -> bytes | None:
+    """Return `path`'s bytes, `None` when absent, raising when present but unreadable.
+
+    An absent file is a verdict this function's callers classify themselves; an unreadable
+    one is a different condition with a different remedy, so it keeps its own error class
+    rather than being flattened into "absent" (AD036).
+    """
     try:
         return path.read_bytes()
+    except FileNotFoundError:
+        return None
+    except NotADirectoryError:
+        return None
     except OSError as exc:
         msg = f"The {description} at {str(path)!r} could not be read: {exc.strerror or exc}."
         raise PlanArtifactUnreadableError(msg) from exc
@@ -202,19 +242,18 @@ def _operation_lines(operations_bytes: bytes, run_id: str) -> list[str]:
     return lines
 
 
-def _load_manifest(plan_dir: Path, run_id: str) -> tuple[PlanManifest, dict[str, Any]]:
-    """Read, version-gate and validate the manifest, returning it and its raw mapping."""
-    manifest_path = plan_dir / MANIFEST_FILE_NAME
-    if stat_or_unreadable(manifest_path, description="plan manifest") is None:
+def _parse_manifest(raw: RawPlanArtifact, run_id: str) -> tuple[PlanManifest, dict[str, Any]]:
+    """Version-gate and validate the manifest's bytes, returning it and its raw mapping."""
+    manifest_path = raw.run_dir / PLAN_DIR_NAME / MANIFEST_FILE_NAME
+    if raw.manifest_bytes is None:
         raise _torn(
             run_id,
             f"{MANIFEST_FILE_NAME} is absent, so the artifact was never committed",
             expected=f"a manifest at {manifest_path}",
             found="no manifest",
         )
-    raw = _read_bytes(manifest_path, description="plan manifest")
     try:
-        mapping = json.loads(raw)
+        mapping = json.loads(raw.manifest_bytes)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise _torn(
             run_id,
@@ -262,17 +301,19 @@ def _load_manifest(plan_dir: Path, run_id: str) -> tuple[PlanManifest, dict[str,
     return manifest, mapping
 
 
-def _load_operations(plan_dir: Path, manifest: PlanManifest, run_id: str) -> tuple[list[PlannedOperation], bytes]:
-    """Read and validate `operations.jsonl`, returning the operations and the raw bytes."""
-    operations_path = plan_dir / OPERATIONS_FILE_NAME
-    if stat_or_unreadable(operations_path, description="plan operations file") is None:
+def _parse_operations(
+    raw: RawPlanArtifact, manifest: PlanManifest, run_id: str
+) -> tuple[list[PlannedOperation], bytes]:
+    """Validate `operations.jsonl`'s bytes, returning the operations and those same bytes."""
+    operations_path = raw.run_dir / PLAN_DIR_NAME / OPERATIONS_FILE_NAME
+    operations_bytes = raw.operations_bytes
+    if operations_bytes is None:
         raise _torn(
             run_id,
             f"{MANIFEST_FILE_NAME} is present but {OPERATIONS_FILE_NAME} is absent",
             expected=f"{manifest.operations_count} operation line(s) at {operations_path}",
             found="no operations file",
         )
-    operations_bytes = _read_bytes(operations_path, description="plan operations file")
     lines = _operation_lines(operations_bytes, run_id)
     if len(lines) != manifest.operations_count:
         raise _torn(
@@ -354,8 +395,37 @@ def require_plan_directory(run_dir: Path) -> Path:
     return plan_dir
 
 
+def parse_plan_artifact(raw: RawPlanArtifact, *, run_id: str) -> LoadedPlan:
+    """Validate an already-read artifact into a `LoadedPlan` — the same bytes, uninterrupted.
+
+    The parsing half of `load_plan_artifact`, split out so a caller that verified a
+    `RawPlanArtifact` can parse and apply **that object** rather than re-reading the disk —
+    a second read is what let files replaced between verification and apply execute
+    unverified (DBR-006, DBA-004).
+
+    Raises:
+        PlanArtifactTornError: the artifact is incomplete or inconsistent — a missing or
+            malformed manifest, an absent operations file, a line count disagreeing with
+            `operations_count`, or an operations line that fails record validation for a
+            reason other than its action (FR-010).
+        PlanFormatVersionError: `format_version` is outside `SUPPORTED_FORMAT_VERSIONS`
+            (FR-027).
+        UnsupportedOperationActionError: an operation's `action` is outside `ACTIONS`,
+            refused here — while parsing — and therefore before any destination write
+            (FR-017, AD055).
+    """
+    manifest, mapping = _parse_manifest(raw, run_id)
+    operations, operations_bytes = _parse_operations(raw, manifest, run_id)
+    return LoadedPlan(
+        manifest=manifest,
+        operations=operations,
+        manifest_mapping=mapping,
+        operations_bytes=operations_bytes,
+    )
+
+
 def load_plan_artifact(run_dir: Path) -> LoadedPlan:
-    """Read `<run_dir>/plan/` and return it as a validated `LoadedPlan`.
+    """Read `<run_dir>/plan/` — once — and return it as a validated `LoadedPlan`.
 
     Raises:
         PlanFormatV1Error: the run holds no `plan/` directory, so its plan predates this
@@ -373,13 +443,5 @@ def load_plan_artifact(run_dir: Path) -> LoadedPlan:
             (FR-017, AD055).
     """
     run_id = run_dir.name
-    plan_dir = require_plan_directory(run_dir)
-
-    manifest, mapping = _load_manifest(plan_dir, run_id)
-    operations, operations_bytes = _load_operations(plan_dir, manifest, run_id)
-    return LoadedPlan(
-        manifest=manifest,
-        operations=operations,
-        manifest_mapping=mapping,
-        operations_bytes=operations_bytes,
-    )
+    require_plan_directory(run_dir)
+    return parse_plan_artifact(read_plan_artifact_bytes(run_dir), run_id=run_id)

@@ -5,6 +5,12 @@ non-empty one means refuse, before any destination write. The function writes no
 records no run state, and constructs or touches no adapter — the caller owns all three
 (AD069).
 
+The manifest and operations file arrive as an already-read `RawPlanArtifact` rather than
+being read here, so the bytes this gate verifies are the very bytes the caller goes on to
+parse and apply — a verifier that re-read the disk would certify a copy that is then
+discarded (DBR-006, DBA-004). Only the source snapshots are digested from disk, because
+they are verification *subjects*, never applied.
+
 Two rules shape the check order and they are each other's exception, which is why both are
 stated here rather than left to a reader of the loop (AD053):
 
@@ -33,13 +39,14 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from infrahub_sync.plan.checksum import compute_plan_checksum, snapshot_digest_and_row_count
-from infrahub_sync.plan.errors import PlanArtifactUnreadableError
 from infrahub_sync.plan.models import SUPPORTED_FORMAT_VERSIONS, VerificationFailure
 from infrahub_sync.plan.reader import stat_or_unreadable, supported_versions_text
-from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME
+from infrahub_sync.plan.writer import OPERATIONS_FILE_NAME, PLAN_DIR_NAME
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from infrahub_sync.plan.reader import RawPlanArtifact
 
 # The checks the format-version gate short-circuits, named in its own message so the
 # operator knows what was and was not looked at (AD053).
@@ -48,35 +55,16 @@ GATED_CHECKS: tuple[str, ...] = ("run_binding", "plan_checksum", "source_snapsho
 RE_PLAN_NEXT_ACTION = "Re-run `diff` for this sync to rebuild the plan artifact, then apply that run."
 
 
-def _read_optional_bytes(path: Path, *, description: str) -> bytes | None:
-    """Return `path`'s bytes, `None` when absent, raising when present but unreadable.
-
-    An absent file is a verdict this function's callers report as a failure in the returned
-    list; an unreadable one is a different condition with a different remedy, so it keeps
-    its own error class rather than being flattened into "absent" (AD036).
-    """
-    try:
-        return path.read_bytes()
-    except FileNotFoundError:
-        return None
-    except NotADirectoryError:
-        return None
-    except OSError as exc:
-        msg = f"The {description} at {str(path)!r} could not be read: {exc.strerror or exc}."
-        raise PlanArtifactUnreadableError(msg) from exc
-
-
-def _read_manifest_mapping(plan_dir: Path) -> dict[str, Any] | None:
-    """Return the manifest as a mapping, or `None` when absent or unparseable.
+def _manifest_mapping(manifest_bytes: bytes | None) -> dict[str, Any] | None:
+    """Return the manifest bytes as a mapping, or `None` when absent or unparseable.
 
     Both conditions are the gate's, per the contract's check-1 row: "not in
     `SUPPORTED_FORMAT_VERSIONS`, **or the manifest cannot be parsed**".
     """
-    raw = _read_optional_bytes(plan_dir / MANIFEST_FILE_NAME, description="plan manifest")
-    if raw is None:
+    if manifest_bytes is None:
         return None
     try:
-        mapping = json.loads(raw)
+        mapping = json.loads(manifest_bytes)
     except (UnicodeDecodeError, json.JSONDecodeError):
         return None
     return mapping if isinstance(mapping, dict) else None
@@ -133,15 +121,15 @@ def _run_binding_failures(run_id: str, mapping: dict[str, Any]) -> list[Verifica
     ]
 
 
-def _operations_failures(run_id: str, run_dir: Path, mapping: dict[str, Any]) -> list[VerificationFailure]:
+def _operations_failures(run_id: str, artifact: RawPlanArtifact, mapping: dict[str, Any]) -> list[VerificationFailure]:
     """Evaluate check 3 — the operations file's integrity, then its checksum.
 
     Torn is reported **instead of** a checksum mismatch, because a checksum cannot be
     computed over bytes that are not there (FR-010).
     """
-    operations_path = run_dir / PLAN_DIR_NAME / OPERATIONS_FILE_NAME
+    operations_path = artifact.run_dir / PLAN_DIR_NAME / OPERATIONS_FILE_NAME
     recorded_count = mapping.get("operations_count")
-    operations_bytes = _read_optional_bytes(operations_path, description="plan operations file")
+    operations_bytes = artifact.operations_bytes
     if operations_bytes is None:
         return [
             VerificationFailure(
@@ -309,7 +297,7 @@ def _write_surface_failures(run_id: str, write_surface_missing_on: str | None) -
 
 def verify_plan(
     *,
-    run_dir: Path,
+    artifact: RawPlanArtifact,
     run_id: str,
     config_version: str,
     write_surface_missing_on: str | None = None,
@@ -317,7 +305,11 @@ def verify_plan(
     """Run the FR-009 pre-apply checks and return every failure, empty when safe to apply.
 
     Args:
-        run_dir: The run directory holding `plan/`. Read only — nothing is created here.
+        artifact: The artifact's bytes as `read_plan_artifact_bytes` returned them. Taking
+            the bytes rather than a directory is what makes "the bytes verified are the
+            bytes applied" hold: the caller parses and applies this same object, and no
+            second read exists for a concurrent rewrite to slip through (DBR-006). The
+            source snapshots it names are still digested from disk, under its `run_dir`.
         run_id: The run being applied. Compared against the artifact's own `run_id`, and
             carried on every failure so an operator applying several runs knows which one
             was refused (AD036).
@@ -331,11 +323,11 @@ def verify_plan(
         neither value is secret, and the operator's next action. Empty means safe to apply.
 
     Raises:
-        PlanArtifactUnreadableError: a path exists but could not be read. Unreadable is a
-            different condition from absent, with a different remedy, so it is not
-            flattened into a failure entry (AD036).
+        PlanArtifactUnreadableError: a snapshot path exists but could not be examined.
+            Unreadable is a different condition from absent, with a different remedy, so it
+            is not flattened into a failure entry (AD036).
     """
-    mapping = _read_manifest_mapping(run_dir / PLAN_DIR_NAME)
+    mapping = _manifest_mapping(artifact.manifest_bytes)
     gate = _gate_failure(run_id, mapping)
     if gate is not None or mapping is None:
         # `mapping is None` cannot occur with `gate is None`; the second clause is what
@@ -344,8 +336,8 @@ def verify_plan(
 
     failures: list[VerificationFailure] = []
     failures.extend(_run_binding_failures(run_id, mapping))
-    failures.extend(_operations_failures(run_id, run_dir, mapping))
-    failures.extend(source_snapshot_failures(run_id=run_id, run_dir=run_dir, mapping=mapping))
+    failures.extend(_operations_failures(run_id, artifact, mapping))
+    failures.extend(source_snapshot_failures(run_id=run_id, run_dir=artifact.run_dir, mapping=mapping))
     failures.extend(_config_version_failures(run_id, mapping, config_version))
     failures.extend(_write_surface_failures(run_id, write_surface_missing_on))
     return failures

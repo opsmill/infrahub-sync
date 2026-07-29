@@ -27,6 +27,7 @@ import pytest
 
 from infrahub_sync.cache.parquet_io import write_resource_side
 from infrahub_sync.plan.checksum import source_snapshot_records
+from infrahub_sync.plan.reader import read_plan_artifact_bytes
 from infrahub_sync.plan.verify import GATED_CHECKS, verify_plan
 from tests.plan.artifact_fixtures import (
     CONFIG_VERSION,
@@ -116,6 +117,27 @@ def _text(failure: VerificationFailure) -> str:
     return " ".join(part for part in (failure.expected, failure.found, failure.next_action) if part)
 
 
+def _verify(
+    *,
+    run_dir: Path,
+    run_id: str,
+    config_version: str,
+    write_surface_missing_on: str | None = None,
+) -> list[VerificationFailure]:
+    """Read the artifact once and verify those bytes — the only shape `verify_plan` accepts.
+
+    `verify_plan` takes a `RawPlanArtifact` rather than a directory so its caller applies
+    the same bytes it verified; every case here reads through the same one-read function
+    the apply path uses.
+    """
+    return verify_plan(
+        artifact=read_plan_artifact_bytes(run_dir),
+        run_id=run_id,
+        config_version=config_version,
+        write_surface_missing_on=write_surface_missing_on,
+    )
+
+
 # ======================================================================================
 # The precondition every negative case rests on
 # ======================================================================================
@@ -125,7 +147,7 @@ def test_a_clean_artifact_verifies_with_an_empty_list(tmp_path: Path) -> None:
     """Empty means safe to apply. Without this, every case below could pass vacuously."""
     directory = _verifiable_run(tmp_path)
 
-    assert verify_plan(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION) == []
+    assert _verify(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION) == []
 
 
 # ======================================================================================
@@ -191,7 +213,7 @@ def test_sc004_case_is_refused_naming_the_failed_check(
     directory = _verifiable_run(tmp_path)
     config_version = mutate(directory)
 
-    failures = verify_plan(run_dir=directory, run_id=RUN_ID, config_version=config_version)
+    failures = _verify(run_dir=directory, run_id=RUN_ID, config_version=config_version)
 
     assert failures != []
     failure = _failure(failures, expected_check)
@@ -209,7 +231,7 @@ def test_every_sc004_failure_carries_a_next_action(
     directory = _verifiable_run(tmp_path)
     config_version = mutate(directory)
 
-    failures = verify_plan(run_dir=directory, run_id=RUN_ID, config_version=config_version)
+    failures = _verify(run_dir=directory, run_id=RUN_ID, config_version=config_version)
 
     assert expected_check in _checks(failures)
     for failure in failures:
@@ -225,7 +247,7 @@ def test_an_absent_operations_file_is_reported_as_torn_and_not_as_a_checksum_mis
     directory = _verifiable_run(tmp_path)
     operations_path(directory).unlink()
 
-    failures = verify_plan(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION)
+    failures = _verify(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION)
 
     assert "plan_checksum" not in _checks(failures)
     assert "torn_operations" in _checks(failures)
@@ -236,7 +258,7 @@ def test_the_checksum_failure_names_both_hex_values(tmp_path: Path) -> None:
     directory = _verifiable_run(tmp_path)
     tamper_with_operations(directory)
 
-    failure = _failure(verify_plan(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION), "plan_checksum")
+    failure = _failure(_verify(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION), "plan_checksum")
 
     assert failure.expected is not None
     assert failure.found is not None
@@ -249,7 +271,7 @@ def test_the_config_version_failure_carries_both_opaque_values(tmp_path: Path) -
     directory = _verifiable_run(tmp_path)
 
     failure = _failure(
-        verify_plan(run_dir=directory, run_id=RUN_ID, config_version="an-opaque-caller-value"),
+        _verify(run_dir=directory, run_id=RUN_ID, config_version="an-opaque-caller-value"),
         "config_version",
     )
 
@@ -272,7 +294,7 @@ def test_a_plan_directory_copied_into_another_run_fails_the_run_binding(tmp_path
     destination = tmp_path / OTHER_RUN_ID
     shutil.copytree(source, destination)
 
-    failures = verify_plan(run_dir=destination, run_id=OTHER_RUN_ID, config_version=CONFIG_VERSION)
+    failures = _verify(run_dir=destination, run_id=OTHER_RUN_ID, config_version=CONFIG_VERSION)
 
     assert _checks(failures) == ["run_binding"]
     failure = failures[0]
@@ -287,7 +309,7 @@ def test_the_copied_artifacts_checksum_still_verifies(tmp_path: Path) -> None:
     destination = tmp_path / OTHER_RUN_ID
     shutil.copytree(source, destination)
 
-    failures = verify_plan(run_dir=destination, run_id=RUN_ID, config_version=CONFIG_VERSION)
+    failures = _verify(run_dir=destination, run_id=RUN_ID, config_version=CONFIG_VERSION)
 
     assert failures == []
 
@@ -313,7 +335,7 @@ def test_the_format_version_gate_short_circuits_the_remaining_checks(tmp_path: P
         format_version=UNSUPPORTED_FORMAT_VERSION,
     )
 
-    failures = verify_plan(run_dir=directory, run_id=RUN_ID, config_version="a-different-configuration-version")
+    failures = _verify(run_dir=directory, run_id=RUN_ID, config_version="a-different-configuration-version")
 
     assert _checks(failures) == ["format_version"]
     failure = failures[0]
@@ -333,7 +355,7 @@ def test_an_unparseable_manifest_also_fails_the_gate(tmp_path: Path) -> None:
     directory = _verifiable_run(tmp_path)
     manifest_path(directory).write_bytes(b'{"format_version": 2, "run_id":')
 
-    failures = verify_plan(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION)
+    failures = _verify(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION)
 
     assert _checks(failures) == ["format_version"]
     assert "manifest" in str(failures[0].found)
@@ -344,7 +366,7 @@ def test_once_the_gate_passes_two_simultaneous_failures_are_both_named(tmp_path:
     directory = _verifiable_run(tmp_path)
     _write_snapshot(directory, SNAPSHOT_ROWS[:2])
 
-    failures = verify_plan(run_dir=directory, run_id=RUN_ID, config_version="a-different-configuration-version")
+    failures = _verify(run_dir=directory, run_id=RUN_ID, config_version="a-different-configuration-version")
 
     assert set(_checks(failures)) == {"source_snapshot", "config_version"}
 
@@ -357,7 +379,7 @@ def test_all_four_gated_checks_can_fail_in_one_call(tmp_path: Path) -> None:
     tamper_with_operations(directory)
     _snapshot_path(directory).unlink()
 
-    failures = verify_plan(run_dir=directory, run_id=OTHER_RUN_ID, config_version="a-different-configuration-version")
+    failures = _verify(run_dir=directory, run_id=OTHER_RUN_ID, config_version="a-different-configuration-version")
 
     assert set(_checks(failures)) == {"run_binding", "plan_checksum", "source_snapshot", "config_version"}
 
@@ -376,7 +398,7 @@ def test_the_write_surface_failure_names_the_adapter_that_was_passed_in(tmp_path
     """
     directory = _verifiable_run(tmp_path)
 
-    failures = verify_plan(
+    failures = _verify(
         run_dir=directory,
         run_id=RUN_ID,
         config_version=CONFIG_VERSION,
@@ -395,7 +417,7 @@ def test_none_means_the_write_surface_is_present(tmp_path: Path) -> None:
     """`None` is the present case, so a clean plan with a capable adapter returns empty."""
     directory = _verifiable_run(tmp_path)
 
-    failures = verify_plan(
+    failures = _verify(
         run_dir=directory,
         run_id=RUN_ID,
         config_version=CONFIG_VERSION,
@@ -419,7 +441,7 @@ def test_the_write_surface_check_is_not_behind_the_format_version_gate(tmp_path:
         format_version=UNSUPPORTED_FORMAT_VERSION,
     )
 
-    failures = verify_plan(
+    failures = _verify(
         run_dir=directory,
         run_id=RUN_ID,
         config_version=CONFIG_VERSION,

@@ -581,10 +581,11 @@ def test_the_review_note_and_the_apply_refusal_report_the_same_binding(tmp_path:
     """
     directory = _store_with_snapshot(tmp_path)
     _snapshot_path(directory).unlink()
+    from infrahub_sync.plan.reader import read_plan_artifact_bytes
     from infrahub_sync.plan.verify import verify_plan
     from tests.plan.artifact_fixtures import CONFIG_VERSION
 
-    failures = verify_plan(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION)
+    failures = verify_plan(artifact=read_plan_artifact_bytes(directory), run_id=RUN_ID, config_version=CONFIG_VERSION)
     plan = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID)
 
     assert [failure.check for failure in failures] == ["source_snapshot"]

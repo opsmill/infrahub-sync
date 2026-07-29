@@ -87,7 +87,7 @@ from infrahub_sync.plan.errors import (
     UnsupportedOperationActionError,
 )
 from infrahub_sync.plan.models import ACTIONS, SUPPORTED_FORMAT_VERSIONS, ApplyRecord
-from infrahub_sync.plan.reader import load_plan_artifact
+from infrahub_sync.plan.reader import parse_plan_artifact
 from infrahub_sync.plan.review import RUN_ID_LISTING_LIMIT
 from infrahub_sync.potenda import Potenda
 from infrahub_sync.utils import get_instance
@@ -1965,16 +1965,16 @@ def test_a_broken_apply_invariant_records_what_was_written_not_an_empty_record(
     _appliable_run(tmp_path)
     destination = RecordingDestination()
     applied_ids = [str(record["operation_id"]) for record in APPLY_PLAN]
-    real_loader = load_plan_artifact
+    real_parse = parse_plan_artifact
 
-    def _inflated_count(run_dir: Path, **kwargs: Any) -> Any:  # noqa: ANN401 — mirrors the loader
-        loaded = real_loader(run_dir, **kwargs)
+    def _inflated_count(raw: Any, **kwargs: Any) -> Any:  # noqa: ANN401 — mirrors the parser
+        loaded = real_parse(raw, **kwargs)
         loaded.manifest.operations_count += 1
         return loaded
 
     with (
         caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"),
-        patch("infrahub_sync.plan.reader.load_plan_artifact", _inflated_count),
+        patch("infrahub_sync.plan.reader.parse_plan_artifact", _inflated_count),
     ):
         result = _run_apply(destination)
 

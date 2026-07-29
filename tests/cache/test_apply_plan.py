@@ -28,7 +28,7 @@ from unittest.mock import patch
 import pytest
 
 from infrahub_sync.plan.errors import ApplyRecordInvariantError, PlanFormatV1Error, PlanVerificationError
-from infrahub_sync.plan.reader import load_plan_artifact
+from infrahub_sync.plan.reader import parse_plan_artifact
 from infrahub_sync.plan.verify import GATED_CHECKS
 from infrahub_sync.potenda import Potenda
 from tests.plan.artifact_fixtures import CONFIG_VERSION, operation_record, write_artifact
@@ -301,6 +301,43 @@ def test_a_run_holding_no_plan_artifact_keeps_its_own_verdict(tmp_path: Path) ->
     assert destination.dispatched == []
 
 
+def test_an_artifact_substituted_after_verification_is_not_what_gets_applied(tmp_path: Path) -> None:
+    """The bytes verified are the bytes applied (DBR-006, DBA-004) — T097's guard, extended.
+
+    T097 fixed *which refusal fires first*; this case pins the other property of the same
+    code: verification and application consume **one** read. A structurally valid
+    replacement artifact lands on disk the instant the pre-apply gate has passed — the
+    reachable race is a concurrent `diff --run-id X` rewriting `plan/` while `apply
+    --run-id X` runs. An apply that re-read the artifact after verifying it would dispatch
+    the substituted, never-checksum-verified operations; the one-read apply dispatches
+    exactly what it verified and the replacement on disk is inert.
+    """
+    directory = _run_dir(tmp_path)
+    verified = [operation_record(identity={"name": "verified"})]
+    write_artifact(directory, verified, run_id=RUN_ID, source_snapshot=[])
+    substituted = [
+        operation_record(identity={"name": "substituted"}),
+        operation_record(action="update", identity={"name": "also-substituted"}),
+    ]
+
+    from infrahub_sync.plan.verify import verify_plan as real_verify
+
+    def _substituting_verify(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 — passes through either signature
+        failures = real_verify(*args, **kwargs)
+        # The race, at its widest: a valid, internally consistent plan replaces the
+        # verified one the moment verification has passed.
+        write_artifact(directory, substituted, run_id=RUN_ID, source_snapshot=[])
+        return failures
+
+    destination = RecordingDestination()
+    with patch("infrahub_sync.plan.verify.verify_plan", _substituting_verify):
+        record = _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+
+    assert destination.dispatched == [verified[0]["operation_id"]]
+    assert record.applied_operations == (verified[0]["operation_id"],)
+    assert {op["operation_id"] for op in substituted}.isdisjoint(destination.dispatched)
+
+
 class InterruptingDestination(RecordingDestination):
     """A destination that applies the first operation and is then interrupted."""
 
@@ -349,15 +386,15 @@ def test_the_invariant_error_carries_the_record_of_what_was_actually_written(tmp
     destination = RecordingDestination()
     applied_ids = tuple(str(record["operation_id"]) for record in records)
 
-    real_loader = load_plan_artifact
+    real_parse = parse_plan_artifact
 
-    def _inflated_count(run_dir: Path, **kwargs: Any) -> Any:  # noqa: ANN401 — mirrors the loader
-        loaded = real_loader(run_dir, **kwargs)
+    def _inflated_count(raw: Any, **kwargs: Any) -> Any:  # noqa: ANN401 — mirrors the parser
+        loaded = real_parse(raw, **kwargs)
         loaded.manifest.operations_count += 1
         return loaded
 
     with (
-        patch("infrahub_sync.plan.reader.load_plan_artifact", _inflated_count),
+        patch("infrahub_sync.plan.reader.parse_plan_artifact", _inflated_count),
         pytest.raises(ApplyRecordInvariantError) as caught,
     ):
         _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)

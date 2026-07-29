@@ -509,20 +509,23 @@ class Potenda:
         Neither side is loaded, nothing is re-compared and nothing is re-derived: the stored
         operations are executed in **stored order**, exactly as recorded (FR-012, SC-001).
 
-        The order of the first steps is load-bearing, and it is **verify, then read**. The
-        `plan/` directory's presence is settled first, so a run in the pre-existing row
-        format keeps FR-019's own verdict rather than arriving as a manifest that could not
-        be parsed. Verification then runs as one gate, the write-surface check included, so
-        an adapter that cannot apply a saved plan is refused before the first write rather
-        than surprising the operator mid-plan (FR-023, AD058). **Verification precedes the
-        read** because FR-009 requires the format-version gate's message to state that the
-        remaining four checks were not evaluated, and requires a tear co-occurring with a
-        `config_version` or `source_snapshot` mismatch to report every failure rather than
-        only the tear: reading first raises the reader's single-condition refusal and neither
-        obligation can be met. The reader still runs **before the loop**, so an operation
-        whose `action` this release does not recognize is refused before any destination
-        write (FR-017, AD055) — the guarantee is that nothing is written before the read, not
-        that the read comes first. The write-surface check asks `isinstance` against
+        The order of the first steps is load-bearing, and it is **read once, verify those
+        bytes, then parse them**. The `plan/` directory's presence is settled first, so a
+        run in the pre-existing row format keeps FR-019's own verdict rather than arriving
+        as a manifest that could not be parsed. The artifact's files are then read from disk
+        exactly once, and verification, parsing and the loop below all consume that one
+        `RawPlanArtifact` — a second read is what let files replaced mid-apply execute
+        unverified (DBR-006, DBA-004). Verification runs as one gate over the raw bytes, the
+        write-surface check included, so an adapter that cannot apply a saved plan is
+        refused before the first write rather than surprising the operator mid-plan (FR-023,
+        AD058). **Verification precedes the parse** because FR-009 requires the
+        format-version gate's message to state that the remaining four checks were not
+        evaluated, and requires a tear co-occurring with a `config_version` or
+        `source_snapshot` mismatch to report every failure rather than only the tear:
+        parsing first raises the parser's single-condition refusal and neither obligation
+        can be met. The parser still runs **before the loop**, so an operation whose
+        `action` this release does not recognize is refused before any destination write
+        (FR-017, AD055). The write-surface check asks `isinstance` against
         `infrahub_sync.plan.write_surface.PlannedWriteDestination`, which verifies member
         **presence** and not signatures — for a duck-typed destination it is as strong as the
         `hasattr` gate it replaced and no stronger (AD086).
@@ -568,7 +571,7 @@ class Potenda:
                 partial record on an `apply_record` attribute so the caller can still record
                 what was written before the run was cut short.
         """
-        from infrahub_sync.plan.reader import load_plan_artifact, require_plan_directory
+        from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes, require_plan_directory
         from infrahub_sync.plan.verify import verify_plan
 
         if not self.run_dir:
@@ -582,6 +585,11 @@ class Potenda:
         # from an artifact whose manifest the gate below cannot parse. The CLI already reaches
         # this before it constructs anything (AD026); an in-process caller reaches it here.
         require_plan_directory(self.run_dir)
+
+        # The one read. Verification, parsing and the loop below all consume this object,
+        # so the bytes verified are the bytes applied — nothing re-reads the disk between
+        # the gate and the writes (DBR-006, DBA-004).
+        raw = read_plan_artifact_bytes(self.run_dir)
         destination = self.destination
         if not isinstance(destination, PlannedWriteDestination):
             # FR-023's refusal, inside the same pre-write gate as the five verification checks
@@ -598,7 +606,7 @@ class Potenda:
             # by `ty`, with no `getattr` and no cast to a concrete adapter.
             raise _plan_refusal(
                 verify_plan(
-                    run_dir=self.run_dir,
+                    artifact=raw,
                     run_id=run_id,
                     config_version=comparison_version,
                     write_surface_missing_on=type(destination).__name__,
@@ -607,7 +615,7 @@ class Potenda:
             )
         _refuse_unverified_plan(
             verify_plan(
-                run_dir=self.run_dir,
+                artifact=raw,
                 run_id=run_id,
                 config_version=comparison_version,
                 write_surface_missing_on=None,
@@ -615,10 +623,11 @@ class Potenda:
             run_id=run_id,
         )
 
-        # Read after the gate and before the loop. Everything the gate can see is already
-        # reported; what remains for the reader is per-record validity — an unrecognized
-        # `action` above all — which is still refused before the first destination write.
-        loaded = load_plan_artifact(self.run_dir)
+        # Parse after the gate and before the loop — the same bytes the gate verified.
+        # Everything the gate can see is already reported; what remains for the parser is
+        # per-record validity — an unrecognized `action` above all — which is still refused
+        # before the first destination write.
+        loaded = parse_plan_artifact(raw, run_id=run_id)
 
         # One memo for the whole apply, discarded with it — the same lifetime as the run. The
         # destination supplies it, so the engine builds a resolver for a destination it does
