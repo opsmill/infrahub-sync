@@ -483,6 +483,25 @@ def test_an_unsupported_format_version_names_the_version_and_lists_those_support
     assert raised.value.next_action
 
 
+def test_an_unhashable_format_version_is_version_refused_rather_than_raising(tmp_path: Path) -> None:
+    """MIN-002: `format_version: [2]` in a hand-edited manifest is unhashable.
+
+    A bare `not in SUPPORTED_FORMAT_VERSIONS` raises `TypeError` against a frozenset — a raw
+    traceback with no next action (AD059). A non-integer is a version this release does not
+    support, so it gets the version refusal, naming what was found.
+    """
+    directory = _run_dir(tmp_path)
+    write_artifact(directory, [operation_record()], format_version=[2])
+
+    with pytest.raises(PlanFormatVersionError) as raised:
+        load_plan_artifact(directory)
+
+    message = str(raised.value)
+    assert "[2]" in message
+    for supported in SUPPORTED_FORMAT_VERSIONS:
+        assert str(supported) in message
+
+
 def test_the_version_message_differs_from_the_pre_existing_format_message(tmp_path: Path) -> None:
     """SC-018's own clause: the two remedies differ, so the two messages must differ.
 

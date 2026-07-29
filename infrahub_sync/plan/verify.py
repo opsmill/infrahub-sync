@@ -98,7 +98,10 @@ def _gate_failure(run_id: str, mapping: dict[str, Any] | None) -> VerificationFa
         found = "no readable, parseable manifest"
     else:
         declared = mapping.get("format_version")
-        if declared in SUPPORTED_FORMAT_VERSIONS:
+        # The `isinstance` guard runs first (MIN-002): an unhashable hand-edited value like
+        # `[2]` would raise `TypeError` from the frozenset membership test, in the component
+        # built to classify corrupt manifests.
+        if isinstance(declared, int) and declared in SUPPORTED_FORMAT_VERSIONS:
             return None
         found = "no 'format_version' field" if "format_version" not in mapping else repr(declared)
     return _failure(

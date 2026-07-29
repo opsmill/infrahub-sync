@@ -351,6 +351,27 @@ def test_the_gate_names_the_checks_it_did_not_evaluate() -> None:
     assert GATED_CHECKS == ("run_binding", "plan_checksum", "source_snapshot", "config_version")
 
 
+def test_an_unhashable_format_version_fails_the_gate_rather_than_raising(tmp_path: Path) -> None:
+    """MIN-002: a hand-edited `format_version` like `[2]` is unhashable.
+
+    A bare `declared in SUPPORTED_FORMAT_VERSIONS` raises `TypeError` against a frozenset —
+    a raw traceback from the very component built to classify corrupt manifests. It must be
+    the gate's ordinary refusal instead.
+    """
+    directory = _verifiable_run(tmp_path)
+    write_artifact(
+        directory,
+        [tamperable_operation()],
+        source_snapshot=source_snapshot_records(directory),
+        format_version=[2],
+    )
+
+    failures = _verify(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION)
+
+    assert _checks(failures) == ["format_version"]
+    assert "[2]" in str(failures[0].found)
+
+
 def test_an_unparseable_manifest_also_fails_the_gate(tmp_path: Path) -> None:
     """Check 1's second condition: "or the manifest cannot be parsed" (contract, check 1)."""
     directory = _verifiable_run(tmp_path)

@@ -292,7 +292,10 @@ def _parse_manifest(raw: RawPlanArtifact, run_id: str) -> tuple[PlanManifest, di
             found="no 'format_version' field",
         )
     found_version = mapping["format_version"]
-    if found_version not in SUPPORTED_FORMAT_VERSIONS:
+    # The `isinstance` guard runs first (MIN-002): an unhashable hand-edited value like
+    # `[2]` would raise `TypeError` from the frozenset membership test. A non-integer is a
+    # version this release does not support, so it takes the version refusal below.
+    if not isinstance(found_version, int) or found_version not in SUPPORTED_FORMAT_VERSIONS:
         msg = (
             f"The plan artifact of run {run_id!r} declares format version {found_version!r}, which "
             f"this version of infrahub-sync does not support. Supported plan format versions: "
