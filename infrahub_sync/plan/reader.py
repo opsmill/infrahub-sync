@@ -220,15 +220,29 @@ def _describe_validation_error(exc: ValidationError) -> str:
     return "; ".join(parts)
 
 
-def _operation_lines(operations_bytes: bytes, run_id: str) -> list[str]:
-    """Split `operations.jsonl` into its record lines.
+def operation_record_lines(operations_bytes: bytes) -> list[bytes]:
+    """Split `operations.jsonl`'s bytes into its record lines.
 
     Every line is LF-terminated including the last, so the trailing empty element of the
-    split is dropped and the length is the record count. A file that is not valid UTF-8 is
-    torn: the writer emits UTF-8 by construction.
+    split is dropped and the length is the record count. Shared by the reader and the
+    verifier so the two cannot disagree about how many records a file holds; the split is
+    byte-level, so counting never depends on how a decoder treats bytes that are not UTF-8.
+    """
+    lines = operations_bytes.split(b"\n")
+    if lines and not lines[-1]:
+        lines.pop()
+    return lines
+
+
+def _operation_lines(operations_bytes: bytes, run_id: str) -> list[bytes]:
+    """The record lines, refusing a file that is not valid UTF-8.
+
+    The writer emits UTF-8 by construction, so a file that does not decode is torn — the
+    validity gate runs over the whole file first, keeping the failing byte offset in the
+    verdict.
     """
     try:
-        text = operations_bytes.decode("utf-8")
+        operations_bytes.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise _torn(
             run_id,
@@ -236,10 +250,7 @@ def _operation_lines(operations_bytes: bytes, run_id: str) -> list[str]:
             expected="UTF-8 encoded JSON lines",
             found=f"a byte sequence that failed to decode at offset {exc.start}",
         ) from exc
-    lines = text.split("\n")
-    if lines and not lines[-1]:
-        lines.pop()
-    return lines
+    return operation_record_lines(operations_bytes)
 
 
 def _parse_manifest(raw: RawPlanArtifact, run_id: str) -> tuple[PlanManifest, dict[str, Any]]:

@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any
 
 from infrahub_sync.plan.checksum import compute_plan_checksum, snapshot_digest_and_row_count
 from infrahub_sync.plan.models import SUPPORTED_FORMAT_VERSIONS, VerificationFailure
-from infrahub_sync.plan.reader import stat_or_unreadable, supported_versions_text
+from infrahub_sync.plan.reader import operation_record_lines, stat_or_unreadable, supported_versions_text
 from infrahub_sync.plan.writer import OPERATIONS_FILE_NAME, PLAN_DIR_NAME
 
 if TYPE_CHECKING:
@@ -141,17 +141,14 @@ def _operations_failures(run_id: str, artifact: RawPlanArtifact, mapping: dict[s
                 next_action=RE_PLAN_NEXT_ACTION,
             )
         ]
-    text = operations_bytes.decode("utf-8", errors="replace")
-    lines = text.split("\n")
-    if lines and not lines[-1]:
-        lines.pop()
-    if len(lines) != recorded_count:
+    line_count = len(operation_record_lines(operations_bytes))
+    if line_count != recorded_count:
         return [
             VerificationFailure(
                 check="torn_operations",
                 run_id=run_id,
                 expected=f"{recorded_count} operation line(s)",
-                found=f"{len(lines)} operation line(s)",
+                found=f"{line_count} operation line(s)",
                 next_action=RE_PLAN_NEXT_ACTION,
             )
         ]
