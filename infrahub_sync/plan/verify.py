@@ -44,6 +44,7 @@ from infrahub_sync.plan.reader import stat_or_unreadable, supported_versions_tex
 from infrahub_sync.plan.writer import OPERATIONS_FILE_NAME, PLAN_DIR_NAME
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from infrahub_sync.plan.reader import RawPlanArtifact
@@ -155,24 +156,40 @@ def _operations_failures(run_id: str, artifact: RawPlanArtifact, mapping: dict[s
             )
         ]
 
-    # `compute_plan_checksum` removes the excluded manifest fields itself, so the mapping is
-    # passed through exactly as read, unknown fields included (AD035, FR-027).
-    recomputed = compute_plan_checksum(mapping, operations_bytes)
-    recorded_checksum = mapping.get("plan_checksum")
+    failure = plan_checksum_failure(run_id=run_id, manifest_mapping=mapping, operations_bytes=operations_bytes)
+    return [] if failure is None else [failure]
+
+
+def plan_checksum_failure(
+    *,
+    run_id: str,
+    manifest_mapping: Mapping[str, Any],
+    operations_bytes: bytes,
+) -> VerificationFailure | None:
+    """Evaluate the plan-checksum comparison alone, returning `None` when it matches.
+
+    Public because FR-010 puts this check on the **review** path as well as the apply path:
+    `read_saved_plan` derives `checksum_ok` and its note from this comparison, so both paths
+    reach one implementation and their verdicts cannot drift — the same rule
+    `source_snapshot_failures` already follows.
+
+    `compute_plan_checksum` removes the excluded manifest fields itself, so the mapping is
+    passed through exactly as read, unknown fields included (AD035, FR-027).
+    """
+    recomputed = compute_plan_checksum(manifest_mapping, operations_bytes)
+    recorded_checksum = manifest_mapping.get("plan_checksum")
     if recomputed == recorded_checksum:
-        return []
-    return [
-        VerificationFailure(
-            check="plan_checksum",
-            run_id=run_id,
-            expected=str(recorded_checksum),
-            found=recomputed,
-            next_action=(
-                "The artifact changed after it was written, so what would be applied is not what was "
-                f"reviewed. {RE_PLAN_NEXT_ACTION}"
-            ),
-        )
-    ]
+        return None
+    return VerificationFailure(
+        check="plan_checksum",
+        run_id=run_id,
+        expected=str(recorded_checksum),
+        found=recomputed,
+        next_action=(
+            "The artifact changed after it was written, so what would be applied is not what was "
+            f"reviewed. {RE_PLAN_NEXT_ACTION}"
+        ),
+    )
 
 
 def source_snapshot_failures(*, run_id: str, run_dir: Path, mapping: dict[str, Any]) -> list[VerificationFailure]:

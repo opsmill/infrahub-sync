@@ -25,7 +25,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from infrahub_sync.cache.paths import cache_root_for, run_dir
-from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.errors import UnknownPlanKindError, UnknownRunIdentifierError
 from infrahub_sync.plan.models import PlanSummary
 from infrahub_sync.plan.reader import (
@@ -35,7 +34,7 @@ from infrahub_sync.plan.reader import (
     stat_or_unreadable,
     stored_run_ids,
 )
-from infrahub_sync.plan.verify import source_snapshot_failures
+from infrahub_sync.plan.verify import plan_checksum_failure, source_snapshot_failures
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, PLAN_DIR_NAME
 
 if TYPE_CHECKING:
@@ -247,21 +246,24 @@ def read_saved_plan(
     directory = require_stored_run(sync_name, run_id)
 
     loaded = load_plan_artifact(directory)
-    recomputed = compute_plan_checksum(loaded.manifest_mapping, loaded.operations_bytes)
-    checksum_ok = recomputed == loaded.manifest.plan_checksum
+    # Both checks below are routed through the verifier's own implementations rather than
+    # recomputed here, so the review verdicts and the apply refusals cannot drift (FR-010).
+    checksum_failure = plan_checksum_failure(
+        run_id=run_id,
+        manifest_mapping=loaded.manifest_mapping,
+        operations_bytes=loaded.operations_bytes,
+    )
     notes: list[str] = []
-    if not checksum_ok:
+    if checksum_failure is not None:
         notes.append(
-            f"The plan checksum does not match: the manifest records "
-            f"{loaded.manifest.plan_checksum!r} and the artifact's contents hash to {recomputed!r}. "
-            f"The artifact changed after it was written, so applying this run would refuse. "
-            f"Re-run `diff` for this sync to rebuild it."
+            f"The plan checksum does not match: the manifest records {checksum_failure.expected!r} "
+            f"and the artifact's contents hash to {checksum_failure.found!r}. "
+            f"{checksum_failure.next_action}"
         )
     # FR-010's snapshot half, on the review path. The plan checksum covers the manifest and
     # the operations file and says nothing about the snapshot the plan was computed against,
     # so without this a run whose snapshot was deleted or truncated renders `checksum: OK`
-    # with no note — a safety check reporting a result it never computed. Routed through the
-    # verifier's own check rather than recomputed here, so the two paths cannot drift.
+    # with no note — a safety check reporting a result it never computed.
     notes.extend(
         _snapshot_note(failure)
         for failure in source_snapshot_failures(run_id=run_id, run_dir=directory, mapping=loaded.manifest_mapping)
@@ -270,7 +272,7 @@ def read_saved_plan(
     return SavedPlan(
         manifest=loaded.manifest,
         operations=loaded.operations,
-        checksum_ok=checksum_ok,
+        checksum_ok=checksum_failure is None,
         verification_notes=notes,
         declared_kinds=declared_kinds,
     )
