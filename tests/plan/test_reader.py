@@ -306,6 +306,51 @@ def test_a_line_that_is_not_json_at_all_is_torn_naming_the_line(tmp_path: Path) 
 
 
 # ======================================================================================
+# Torn — a repeated operation identifier (MIN-024)
+# ======================================================================================
+
+
+def test_a_repeated_operation_identifier_is_torn_naming_the_id_and_both_lines(tmp_path: Path) -> None:
+    """The writer refuses duplicates, so the reader re-establishes the same invariant.
+
+    Lines validate independently, so a checksum-valid, hand-built artifact carrying the same
+    identifier twice — with different payloads — would otherwise load, review, and apply with
+    last-write-wins semantics and an ambiguous apply record. Both records below are
+    individually valid; only the pair is pathological.
+    """
+    directory = _run_dir(tmp_path)
+    first = operation_record(payload={"name": "prod", "description": "first"})
+    second = operation_record(payload={"name": "prod", "description": "second"})
+    assert first["operation_id"] == second["operation_id"], "the fixture must collide on the identifier"
+    write_artifact(directory, [first, second])
+
+    with pytest.raises(PlanArtifactTornError) as raised:
+        load_plan_artifact(directory)
+
+    message = str(raised.value)
+    assert str(first["operation_id"]) in message
+    assert "line 1" in message
+    assert "line 2" in message
+    assert raised.value.next_action
+
+
+def test_the_repeated_identifier_verdict_names_the_two_offending_lines_not_the_first_two(tmp_path: Path) -> None:
+    """The named line numbers are the colliding pair's, wherever the collision sits."""
+    directory = _run_dir(tmp_path)
+    first = operation_record(identity={"name": "staging"})
+    second = operation_record(payload={"name": "prod", "description": "first"})
+    third = operation_record(payload={"name": "prod", "description": "second"})
+    write_artifact(directory, [first, second, third])
+
+    with pytest.raises(PlanArtifactTornError) as raised:
+        load_plan_artifact(directory)
+
+    message = str(raised.value)
+    assert "line 2" in message
+    assert "line 3" in message
+
+
+# ======================================================================================
 # Torn — the identity reviewed and hashed disagrees with the value written (FIX-013)
 # ======================================================================================
 

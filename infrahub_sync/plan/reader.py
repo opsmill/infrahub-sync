@@ -335,6 +335,11 @@ def _parse_operations(
         )
 
     operations: list[PlannedOperation] = []
+    # MIN-024: the writer asserts identifier uniqueness (FR-021) but lines validate
+    # independently here, so a checksum-valid, hand-built artifact repeating an identifier
+    # would otherwise load, review, and apply with last-write-wins semantics. The invariant
+    # is re-established at this boundary, naming the identifier and both lines.
+    line_by_operation_id: dict[str, int] = {}
     for number, line in enumerate(lines, start=1):
         try:
             record = json.loads(line)
@@ -346,7 +351,7 @@ def _parse_operations(
                 found=f"unparseable text on line {number} ({exc.msg} at column {exc.colno})",
             ) from exc
         try:
-            operations.append(PlannedOperation.model_validate(record))
+            operation = PlannedOperation.model_validate(record)
         except ValidationError as exc:
             # `UnsupportedOperationActionError` is **not** a `ValidationError`: it is raised
             # from `PlannedOperation`'s before-validator and pydantic propagates it
@@ -358,6 +363,16 @@ def _parse_operations(
                 expected="a complete, self-consistent operation record",
                 found=f"line {number} — {_describe_validation_error(exc)}",
             ) from exc
+        first_line = line_by_operation_id.get(operation.operation_id)
+        if first_line is not None:
+            raise _torn(
+                run_id,
+                f"{OPERATIONS_FILE_NAME} repeats operation identifier {operation.operation_id!r}",
+                expected="each operation identifier exactly once (FR-021)",
+                found=f"operation {operation.operation_id!r} on both line {first_line} and line {number}",
+            )
+        line_by_operation_id[operation.operation_id] = number
+        operations.append(operation)
     return operations, operations_bytes
 
 
