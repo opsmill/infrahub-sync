@@ -348,42 +348,57 @@ class ApplyRecord:
 
     A destination rejection mid-apply carries the **partial** record on the raised
     `OperationApplyFailedError`, so the CLI can merge what was written before recording
-    `failed` — which is what lets FR-025's last-applied pointer survive a partial apply.
+    `failed` — which is what lets FR-025's last-applied pointer survive a partial apply. The
+    operation that failed is named on the record as well, because applying one operation is
+    not one destination write: the base upsert is issued before the cardinality-many
+    relationship flush, so a failure between the two leaves the destination changed by an
+    operation that belongs to neither the applied nor the skipped-delete set. Naming it, and
+    marking that it may have written part of its change, keeps that state readable from the
+    run instead of inferred from where the output stopped; re-applying converges it (AD033).
     """
 
     applied_operations: tuple[str, ...] = ()
     skipped_delete_operations: tuple[str, ...] = ()
-    skipped_delete_count: int = 0
+    failed_operation: str | None = None
 
-    def __post_init__(self) -> None:
-        """Refuse a record whose count contradicts the list it is the count of.
+    @property
+    def skipped_delete_count(self) -> int:
+        """How many recorded deletes this apply did not execute (FR-016, AD055).
 
-        `skipped_delete_count` is derived state carried as its own field because the
-        **serialized** shape is the contract and the count is one of its three keys (AD062):
-        deriving it at render time would change no caller, but a record built with a count
-        that disagrees with its list has already lost which of the two is true. The
-        contradiction is therefore refused where it is introduced rather than discovered
-        where it is read — on a run record that is the only account of what an apply did.
+        Derived, not stored. The **serialized** shape is the contract and this count is one
+        of its keys (AD062), but its value is the length of the list above — so storing it
+        would only introduce a state that can contradict itself on the record that is the
+        single account of what an apply did.
         """
-        if self.skipped_delete_count != len(self.skipped_delete_operations):
-            msg = (
-                f"ApplyRecord.skipped_delete_count is {self.skipped_delete_count} but "
-                f"{len(self.skipped_delete_operations)} skipped delete operation(s) are recorded: "
-                "the count is the length of that list and cannot disagree with it."
-            )
-            raise ValueError(msg)
+        return len(self.skipped_delete_operations)
+
+    @property
+    def may_have_partially_written(self) -> bool:
+        """Whether `failed_operation` may have left part of its change at the destination.
+
+        Deliberately "may". Applying one operation issues the base upsert first and the
+        cardinality-many relationship flush second, and the engine learns only that the call
+        raised — never how far it got. So the marker is true for any failed operation and
+        false otherwise, which is the reading that never understates what reached the
+        destination.
+        """
+        return self.failed_operation is not None
 
     def as_summary_keys(self) -> dict[str, Any]:
-        """Render the record as the three run-summary keys, ready to merge (AD062).
+        """Render the record as the run-summary keys, ready to merge (AD062).
 
-        The **serialized** shape is the contract and is unchanged by this type existing:
-        two JSON arrays of identifiers and one integer, under the key names below. This
-        method is the only place those names are written.
+        Two JSON arrays of identifiers, one integer, the failing identifier or `null`, and
+        the partial-write marker, under the key names below. This method is the only place
+        those names are written. Every key is always present: "nothing was applied" and
+        "nothing failed" must be readable from the run rather than inferred from an absent
+        key.
         """
         return {
             "applied_operations": list(self.applied_operations),
             "skipped_delete_operations": list(self.skipped_delete_operations),
             "skipped_delete_count": self.skipped_delete_count,
+            "failed_operation": self.failed_operation,
+            "may_have_partially_written": self.may_have_partially_written,
         }
 
 

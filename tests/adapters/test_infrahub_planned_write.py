@@ -1472,7 +1472,7 @@ def test_an_empty_plan_applies_as_a_successful_no_op_after_verification_has_run(
     )
 
 
-def test_the_returned_record_carries_exactly_the_three_run_summary_keys(tmp_path: Path) -> None:
+def test_the_returned_record_carries_exactly_the_run_summary_keys(tmp_path: Path) -> None:
     """AD062/AD069: the record's shape is asserted on the **returned** value.
 
     `apply_plan` writes no run file, so reading these back from `run.json` here would assert
@@ -1489,10 +1489,18 @@ def test_the_returned_record_carries_exactly_the_three_run_summary_keys(tmp_path
     assert state == "applied"
     assert isinstance(outcome, ApplyRecord)
     keys = outcome.as_summary_keys()
-    assert set(keys) == {"applied_operations", "skipped_delete_operations", "skipped_delete_count"}
+    assert set(keys) == {
+        "applied_operations",
+        "skipped_delete_operations",
+        "skipped_delete_count",
+        "failed_operation",
+        "may_have_partially_written",
+    }
     assert isinstance(keys["applied_operations"], list)
     assert isinstance(keys["skipped_delete_operations"], list)
     assert isinstance(keys["skipped_delete_count"], int)
+    assert keys["failed_operation"] is None, "A completed apply had no failing operation."
+    assert keys["may_have_partially_written"] is False
     assert run_file.read_text(encoding="utf-8") == SENTINEL_RUN_FILE, (
         "`apply_plan` wrote the run file, which is the CLI's job alone (AD069)."
     )

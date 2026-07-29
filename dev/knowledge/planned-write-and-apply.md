@@ -236,7 +236,9 @@ manager's in-memory state and not a mocked adapter call.
 4. applied: list[str] = []   ;   skipped_deletes: list[str] = []      # both ORDERED
 5. for operation in stored order:
        delete            → record the identifier and continue, never dispatched
-       peer/destination failure → attach the PARTIAL record to the error, name the next action, STOP
+       peer/destination failure → attach the PARTIAL record — including this operation's id
+                                  under failed_operation — to the error, name the next
+                                  action, STOP
        otherwise         → applied.append(operation.operation_id)
 6. AFTER the loop, on a COMPLETED apply, check the knowability invariant
 7. if skipped_deletes: one warning naming the count
@@ -254,8 +256,27 @@ engine's keys are deleted. A mid-apply rejection carries its **partial** record 
 the CLI can merge it before recording `failed`. That partial record is best-effort and explicitly not
 required to survive abnormal process termination.
 
+The merged summary keys are `applied_operations`, `skipped_delete_operations`,
+`skipped_delete_count`, `failed_operation` and `may_have_partially_written`. All five are always
+written: "nothing was applied" and "nothing failed" have to be readable from the run rather than
+inferred from an absent key.
+
 A destination rejection or transport failure stops at that operation. What was written stays written;
 there is no rollback.
+
+**And the failing operation may itself have written part of its change.** Applying one operation is
+not one write — step 5 upserts the object and step 7e writes its replaced cardinality-many
+relationship sets — so a failure between them leaves the destination changed by an operation that is
+in neither `applied_operations` nor `skipped_delete_operations`. The record therefore names it under
+`failed_operation` and reports `may_have_partially_written`, and the engine's error message says the
+same in words. The marker is deliberately "may": the engine learns that the call raised, never how
+far it got, and a marker that understated the writes would be the one an operator could not recover
+from by reading the run. Convergent re-apply is what recovers it — re-applying an operation that
+already succeeded in whole or in part converges on the same object (AD033).
+
+`may_have_partially_written` is derived from `failed_operation` rather than stored beside it, as
+`skipped_delete_count` is derived from `skipped_delete_operations`: on the record that is the only
+account of what an apply did, a second source of truth is a state that can contradict itself.
 
 ## Deletes are recorded, never executed
 

@@ -29,6 +29,7 @@ import pytest
 
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
+    OperationApplyFailedError,
     PlanArtifactTornError,
     PlanFormatV1Error,
     PlanVerificationError,
@@ -135,6 +136,8 @@ def test_apply_plan_writes_no_run_file(tmp_path: Path) -> None:
         "applied_operations": list(record.applied_operations),
         "skipped_delete_operations": [],
         "skipped_delete_count": 0,
+        "failed_operation": None,
+        "may_have_partially_written": False,
     }
 
 
@@ -359,6 +362,62 @@ def test_an_artifact_substituted_after_verification_is_not_what_gets_applied(tmp
     assert destination.dispatched == [verified[0]["operation_id"]]
     assert record.applied_operations == (verified[0]["operation_id"],)
     assert {op["operation_id"] for op in substituted}.isdisjoint(destination.dispatched)
+
+
+class PartiallyWritingDestination(RecordingDestination):
+    """A destination whose second operation fails **after** issuing part of its own write.
+
+    The in-tree shape of FIX-006: `apply_planned_operation` issues the base upsert and only
+    then flushes the cardinality-many relationship sets, so a failure in the flush leaves the
+    destination changed by an operation the engine never counted as applied. The double
+    records the base write separately from the dispatch list so the case can assert the
+    destination changed while the applied set does not name the operation.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.base_writes: list[str] = []
+
+    def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
+        self.base_writes.append(operation.operation_id)
+        if len(self.base_writes) > 1:
+            msg = f"the relationship flush for {operation.operation_id!r} was rejected"
+            raise RuntimeError(msg)
+        return super().apply_planned_operation(operation=operation, peers=peers)
+
+
+def test_a_failure_after_the_base_write_names_the_operation_and_marks_the_partial_write(tmp_path: Path) -> None:
+    """FIX-006: the record must not imply the failing operation wrote nothing.
+
+    The destination is changed by the failing operation's base upsert, and that operation is
+    in neither the applied nor the skipped-delete set — so without the identifier and the
+    marker the run undercounts the writes it caused, and the error message reads as though
+    only the earlier operations landed. Convergent re-apply (AD033) is what recovers it, which
+    the message has to say rather than leave the operator to know.
+    """
+    directory = _run_dir(tmp_path)
+    records = [operation_record(identity={"name": "first"}), operation_record(identity={"name": "second"})]
+    write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])
+    destination = PartiallyWritingDestination()
+
+    with pytest.raises(OperationApplyFailedError) as caught:
+        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+
+    failing_id = str(records[1]["operation_id"])
+    assert destination.base_writes == [str(records[0]["operation_id"]), failing_id], (
+        "the double must have issued the failing operation's base write"
+    )
+    record = caught.value.apply_record
+    assert record.applied_operations == (str(records[0]["operation_id"]),)
+    assert failing_id not in record.applied_operations, "a failed operation is never reported as applied"
+    assert record.failed_operation == failing_id
+    assert record.may_have_partially_written is True
+    assert record.as_summary_keys()["failed_operation"] == failing_id
+
+    message = str(caught.value)
+    assert "stay written" in message, "the earlier operations' fate stays stated"
+    assert "may itself have written part of its change" in message
+    assert "re-applying" in message.lower(), "and the convergent remedy (AD033)"
 
 
 class InterruptingDestination(RecordingDestination):

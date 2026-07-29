@@ -542,7 +542,8 @@ class Potenda:
         Returns:
             The `ApplyRecord`: the ordered applied identifiers (whose final element is
             FR-025's last-applied pointer), the skipped deletes in stored order, and their
-            count.
+            count. On a **completed** apply no operation failed, so the record's
+            `failed_operation` is `None`.
 
         Raises:
             ValueError: this run has no `run_dir`, or no configuration version can be formed.
@@ -554,7 +555,9 @@ class Potenda:
             UnsupportedOperationActionError: an operation's `action` is outside `ACTIONS`,
                 refused while reading and therefore before any write (FR-017, AD055).
             OperationApplyFailedError: the destination rejected an operation or transport
-                failed. Carries the partial record; earlier writes stay written (AD027).
+                failed. Carries the partial record — earlier writes stay written (AD027), and
+                the failing operation is named on it because its own write may have landed in
+                part before the failure.
             ApplyRecordInvariantError: a completed apply's record does not account for every
                 operation in the plan (AD062). Carries the record it is complaining about.
             BaseException: an interrupt — `KeyboardInterrupt` above all — propagates
@@ -629,7 +632,11 @@ class Potenda:
                 partial = ApplyRecord(
                     applied_operations=tuple(applied),
                     skipped_delete_operations=tuple(skipped_deletes),
-                    skipped_delete_count=len(skipped_deletes),
+                    # Named on the record because applying one operation is not one write: the
+                    # base upsert precedes the relationship flush, so this operation may have
+                    # changed the destination while belonging to neither recorded set. The
+                    # record says so rather than leaving the write uncounted (FIX-006).
+                    failed_operation=operation.operation_id,
                 )
                 if not isinstance(exc, Exception):
                     # An interrupt — `KeyboardInterrupt` above all, which is how an operator
@@ -645,7 +652,9 @@ class Potenda:
                     raise
                 msg = (
                     f"Applying operation {operation.operation_id!r} of run {run_id!r} to the destination "
-                    f"failed: {exc}. The {len(applied)} operation(s) applied before it stay written."
+                    f"failed: {exc}. The {len(applied)} operation(s) applied before it stay written, and "
+                    f"this operation may itself have written part of its change before failing — "
+                    f"re-applying the plan converges it."
                 )
                 raise OperationApplyFailedError(msg, apply_record=partial) from exc
             applied.append(operation.operation_id)
@@ -653,7 +662,6 @@ class Potenda:
         completed = ApplyRecord(
             applied_operations=tuple(applied),
             skipped_delete_operations=tuple(skipped_deletes),
-            skipped_delete_count=len(skipped_deletes),
         )
 
         # AFTER the loop and off the rejection path (AD069): a partial apply breaks both

@@ -870,45 +870,58 @@ def test_verification_failure_check_is_a_closed_vocabulary() -> None:
 
 
 # ======================================================================================
-# ApplyRecord — the count is derived state, and cannot contradict the list it counts
+# ApplyRecord — the count is derived state, and the failing operation is recorded
 # ======================================================================================
 
 
-def test_an_apply_record_agreeing_with_itself_constructs() -> None:
-    """The shape every in-repo construction site builds, and the defaults `ApplyRecord()` uses."""
-    record = ApplyRecord(
-        applied_operations=("op_a",), skipped_delete_operations=("op_b", "op_c"), skipped_delete_count=2
-    )
+def test_an_apply_record_renders_every_summary_key() -> None:
+    """The shape every in-repo construction site builds, and the defaults `ApplyRecord()` uses.
+
+    Every key is present on both records: an operator reading the run must be able to see
+    "nothing was applied" and "nothing failed" rather than infer them from absent keys.
+    """
+    record = ApplyRecord(applied_operations=("op_a",), skipped_delete_operations=("op_b", "op_c"))
 
     assert record.as_summary_keys() == {
         "applied_operations": ["op_a"],
         "skipped_delete_operations": ["op_b", "op_c"],
         "skipped_delete_count": 2,
+        "failed_operation": None,
+        "may_have_partially_written": False,
     }
     assert ApplyRecord().as_summary_keys() == {
         "applied_operations": [],
         "skipped_delete_operations": [],
         "skipped_delete_count": 0,
+        "failed_operation": None,
+        "may_have_partially_written": False,
     }
 
 
-@pytest.mark.parametrize(
-    ("skipped_operations", "count"),
-    [
-        (("op_a", "op_b", "op_c"), 0),
-        ((), -7),
-        ((), 3),
-        (("op_a",), 2),
-    ],
-    ids=["three-counted-as-zero", "negative-count", "count-without-identifiers", "undercount"],
-)
-def test_a_count_that_contradicts_the_skipped_list_is_refused(skipped_operations: tuple[str, ...], count: int) -> None:
-    """The count is the length of the list, so a record that disagrees cannot be built.
+def test_the_skipped_delete_count_cannot_be_set_apart_from_the_list_it_counts() -> None:
+    """The count is the length of the list, so no record can be built that disagrees with it.
 
-    `skipped_delete_count` is one of the three serialized keys (AD062), so it stays a field
-    rather than being derived at render time — but a record built with a count that disagrees
-    with its list has already lost which of the two is true, and it is a run record: the only
-    account of what an apply did. The contradiction is refused where it is introduced.
+    It stays one of the serialized keys (AD062) and is derived at render time instead of
+    stored: a stored count is a second source of truth on the record that is the only account
+    of what an apply did, and the contradiction is better made unrepresentable than refused.
     """
-    with pytest.raises(ValueError, match="skipped_delete_count"):
-        ApplyRecord(skipped_delete_operations=skipped_operations, skipped_delete_count=count)
+    with pytest.raises(TypeError, match="skipped_delete_count"):
+        ApplyRecord(skipped_delete_count=2)  # ty: ignore[unknown-argument]
+
+    assert ApplyRecord(skipped_delete_operations=("op_a", "op_b", "op_c")).skipped_delete_count == 3
+
+
+def test_a_failed_operation_marks_the_record_as_possibly_partially_written() -> None:
+    """FIX-006: the failing identifier is recorded, and it implies the partial-write marker.
+
+    Applying one operation issues the base upsert before the relationship flush, so a failure
+    between them leaves the destination changed by an operation in neither recorded set. The
+    marker follows the identifier rather than being set separately, because the engine never
+    learns how far the failing call got — so the two can never disagree.
+    """
+    failed = ApplyRecord(applied_operations=("op_a",), failed_operation="op_b")
+
+    assert failed.may_have_partially_written is True
+    assert failed.as_summary_keys()["failed_operation"] == "op_b"
+    assert failed.as_summary_keys()["may_have_partially_written"] is True
+    assert ApplyRecord(applied_operations=("op_a",)).may_have_partially_written is False

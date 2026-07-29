@@ -2033,6 +2033,10 @@ def test_a_rejection_mid_plan_records_the_partial_applied_set(tmp_path: Path, ca
     # FR-025's pointer is the final element, not a separate field.
     assert recorded["summary"]["applied_operations"][-1] == first_id
     assert recorded["summary"]["skipped_delete_count"] == 0
+    # FIX-006: the operation that failed is in neither recorded set, and its own write may
+    # have landed in part — so the run names it rather than leaving the write uncounted.
+    assert recorded["summary"]["failed_operation"] == str(APPLY_PLAN[1]["operation_id"])
+    assert recorded["summary"]["may_have_partially_written"] is True
 
 
 class PeerlessDestination(RecordingDestination):

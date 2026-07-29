@@ -225,20 +225,24 @@ class PlanVerificationError(PlanArtifactError):
 class OperationApplyFailedError(PlanArtifactError):
     """The destination rejected an operation, or transport failed while applying it (AD027).
 
-    Carries the **partial** apply record — every operation applied before this one, and
-    every delete skipped before it — because the CLI is the single writer of the run record
-    (AD069) and cannot record what it was never handed. Without it, FR-025's last-applied
-    pointer could not survive a partial apply at all.
+    Carries the **partial** apply record — every operation applied before this one, every
+    delete skipped before it, and this operation's own identifier under `failed_operation` —
+    because the CLI is the single writer of the run record (AD069) and cannot record what it
+    was never handed. Without it, FR-025's last-applied pointer could not survive a partial
+    apply at all.
 
     Nothing is rolled back: what was written stays written, which is also what keeps a
     partial apply distinguishable from a completed one — neither clause of the knowability
-    invariant holds for it, since the unattempted operations are in neither set.
+    invariant holds for it, since the unattempted operations are in neither set. Applying one
+    operation is not one write either: the base upsert precedes the relationship flush, so the
+    failing operation may have changed the destination as well, and the record marks that.
     """
 
     next_action = (
-        "Nothing was rolled back: the operations applied before this one stay written. Resolve the "
-        "underlying error at the destination, then re-run `diff` and apply the new plan — re-applying "
-        "an operation that already succeeded converges rather than duplicating."
+        "Nothing was rolled back: the operations applied before this one stay written, and this one "
+        "may have written part of its own change. Resolve the underlying error at the destination, "
+        "then re-run `diff` and apply the new plan — re-applying an operation that already succeeded, "
+        "in whole or in part, converges rather than duplicating."
     )
 
     def __init__(self, message: str, *, apply_record: ApplyRecord, next_action: str | None = None) -> None:
