@@ -1,0 +1,101 @@
+{
+  "_comment": [
+    "Committed destination schema for the offline apply-conformance harness (T081, AD054).",
+    "It is a data file rather than a Python fixture on purpose: the harness asserts the mutation",
+    "the SDK renders, so the schema it renders against has to be a fixed, reviewable input that a",
+    "later edit to a test helper cannot quietly reshape.",
+    "Four kinds, each carrying one property the harness needs:",
+    "  ConfSite  - an all-direct human-friendly ID, and a `comment` attribute no payload writes;",
+    "  ConfTag   - a second all-direct kind, so a peer set has something to point at;",
+    "  ConfTeam  - an all-direct kind with a cardinality-many relationship, for the replace-set,",
+    "              PLUS an OPTIONAL CARDINALITY-ONE relationship (`owner`) that no operation in",
+    "              the harness maps. That second shape is load-bearing (AD088): the destination",
+    "              library renders `<rel>: null` for exactly this shape on a node it considers",
+    "              existing, so a flush that re-renders the whole node clears it. Without the",
+    "              shape in the fixture the harness cannot see that, which is how the defect",
+    "              reached the tree. Do not remove it;",
+    "  ConfDevice- a human-friendly ID that CROSSES A RELATIONSHIP, which cannot render keyed",
+    "              today and is the xfail(strict=True) arm (AD067)."
+  ],
+  "nodes": [
+    {
+      "id": "conformance-site",
+      "name": "Site",
+      "namespace": "Conf",
+      "label": "Site",
+      "default_filter": "name__value",
+      "human_friendly_id": ["name__value"],
+      "attributes": [
+        {"id": "conf-site-name", "name": "name", "kind": "Text", "optional": false, "unique": true},
+        {"id": "conf-site-description", "name": "description", "kind": "Text", "optional": true, "unique": false},
+        {"id": "conf-site-comment", "name": "comment", "kind": "Text", "optional": true, "unique": false}
+      ],
+      "relationships": []
+    },
+    {
+      "id": "conformance-tag",
+      "name": "Tag",
+      "namespace": "Conf",
+      "label": "Tag",
+      "default_filter": "name__value",
+      "human_friendly_id": ["name__value"],
+      "attributes": [
+        {"id": "conf-tag-name", "name": "name", "kind": "Text", "optional": false, "unique": true}
+      ],
+      "relationships": []
+    },
+    {
+      "id": "conformance-team",
+      "name": "Team",
+      "namespace": "Conf",
+      "label": "Team",
+      "default_filter": "name__value",
+      "human_friendly_id": ["name__value"],
+      "attributes": [
+        {"id": "conf-team-name", "name": "name", "kind": "Text", "optional": false, "unique": true}
+      ],
+      "relationships": [
+        {
+          "id": "conf-team-members",
+          "name": "members",
+          "peer": "ConfTag",
+          "cardinality": "many",
+          "kind": "Generic",
+          "optional": true,
+          "identifier": "conf_team__members"
+        },
+        {
+          "id": "conf-team-owner",
+          "name": "owner",
+          "peer": "ConfSite",
+          "cardinality": "one",
+          "kind": "Attribute",
+          "optional": true,
+          "identifier": "conf_team__owner"
+        }
+      ]
+    },
+    {
+      "id": "conformance-device",
+      "name": "Device",
+      "namespace": "Conf",
+      "label": "Device",
+      "default_filter": "name__value",
+      "human_friendly_id": ["site__name__value", "name__value"],
+      "attributes": [
+        {"id": "conf-device-name", "name": "name", "kind": "Text", "optional": false, "unique": true}
+      ],
+      "relationships": [
+        {
+          "id": "conf-device-site",
+          "name": "site",
+          "peer": "ConfSite",
+          "cardinality": "one",
+          "kind": "Attribute",
+          "optional": false,
+          "identifier": "conf_device__site"
+        }
+      ]
+    }
+  ]
+}

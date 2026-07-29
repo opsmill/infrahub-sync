@@ -1,0 +1,34 @@
+                                                                                
+ Usage: infrahub-sync [OPTIONS] COMMAND [ARGS]...                               
+                                                                                
+ Infrahub-sync: synchronize data between infrastructure sources and             
+ destinations.                                                                  
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --verbosity                   [quiet|default|verbos  Log verbosity level     │
+│                               e]                     [default: default]      │
+│ --verbose             -v                             Shorthand for           │
+│                                                      --verbosity verbose     │
+│ --quiet               -q                             Shorthand for           │
+│                                                      --verbosity quiet       │
+│ --install-completion                                 Install completion for  │
+│                                                      the current shell.      │
+│ --show-completion                                    Show completion for the │
+│                                                      current shell, to copy  │
+│                                                      it or customize the     │
+│                                                      installation.           │
+│ --help                                               Show this message and   │
+│                                                      exit.                   │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────╮
+│ list       List all available SYNC projects.                                 │
+│ diff       Calculate and print the differences between the source and the    │
+│            destination systems for a given project.                          │
+│ sync       Synchronize the data between source and the destination systems   │
+│            for a given project or configuration file.                        │
+│ apply      Apply a previously cached plan against the destination — no       │
+│            source extraction.                                                │
+│ generate   Generate all the Python files for a given sync based on the       │
+│            configuration.                                                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+

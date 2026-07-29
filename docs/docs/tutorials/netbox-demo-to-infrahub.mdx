@@ -238,7 +238,7 @@ Run a dry-run diff against the `netbox-import` branch before writing any data to
 uv run infrahub-sync diff --name from-netbox --directory sync-projects --branch netbox-import
 ```
 
-The `diff` command loads data from NetBox and Infrahub, compares both sides, and prints the planned changes. It also writes a cached plan under `.infrahub-sync-cache/from-netbox/<run-id>/plan.parquet`.
+The `diff` command loads data from NetBox and Infrahub, compares both sides, and prints the planned changes. It also saves a plan artifact under `.infrahub-sync-cache/from-netbox/<run-id>/plan/`, which you can review on its own with `infrahub-sync diff --name from-netbox --directory sync-projects --from-plan <run-id>`.
 
 Review the output before continuing. On a first run against an empty branch, most planned changes should be creates. Exact counts depend on the current public NetBox demo data.
 

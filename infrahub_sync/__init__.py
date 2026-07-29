@@ -95,7 +95,7 @@ class SyncConfig(pydantic.BaseModel):
     incremental: IncrementalConfig | None = None
 
     @validator_decorator("diffsync_flags", **validator_kwargs)  # ty: ignore[no-matching-overload]
-    def convert_str_to_enum(cls, v):
+    def convert_str_to_enum(cls, v):  # pylint: disable=no-self-argument  # a pydantic validator: `cls` is correct
         if not isinstance(v, list):
             msg = "diffsync_flags must be provided as a list"
             raise TypeError(msg)

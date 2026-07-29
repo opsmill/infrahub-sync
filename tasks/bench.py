@@ -410,7 +410,10 @@ def _print_markdown(results: list[CellResult]) -> None:
     print(
         ">   Cold/warm deltas reflect upstream service warmth + the destination already containing the data from the cold run."
     )
-    print(">   When `apply` is wired (adapters implement `apply_cached_row`), cold/warm splits will be more dramatic.")
+    print(
+        ">   `apply` replays a saved plan through the destination's planned-write surface "
+        "(`apply_planned_operation`), so cold/warm splits are more dramatic where the adapter implements it."
+    )
     print(
         "> - `--parallel` changes write ORDERING (hard tier barrier); wall-clock impact comes from concurrent loads, not from"
     )
