@@ -243,10 +243,9 @@ def get_potenda_from_instance(
     top_level, tiers = sync_instance.compute_order_and_tiers()
 
     from infrahub_sync.cache.paths import generate_run_id
-    from infrahub_sync.cache.paths import run_dir as run_dir_for
 
     rid = run_id or generate_run_id()
-    rdir = run_dir_for(sync_instance.name, rid)
+    rdir = stored_run_dir(sync_instance.name, rid)
     rdir.mkdir(parents=True, exist_ok=True)
 
     # Compute (and persist) the schema sub-hash *before* constructing Potenda so
