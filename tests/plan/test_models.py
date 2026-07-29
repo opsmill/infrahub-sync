@@ -10,6 +10,7 @@ whichever caller remembered it.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -395,6 +396,124 @@ def test_distinct_reference_fields_beside_a_disjoint_payload_stay_accepted() -> 
         )
     )
     assert [reference.field for reference in operation.relationships or []] == ["site", "tags"]
+
+
+# ======================================================================================
+# FIX-013 — the identity reviewed and hashed must agree with the value written
+# ======================================================================================
+
+
+def test_a_scalar_identity_component_disagreeing_with_its_payload_value_is_rejected() -> None:
+    """`identity={"name": "reviewed"}` beside `payload={"name": "actually-written"}`.
+
+    Review, the operation id and the write would each describe a different object: apply
+    builds the mutation from the payload, writes the other object, then memoizes the result
+    under the reviewed identity — so a later same-run reference is wired to the wrong node.
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        PlannedOperation(**_operation(identity={"name": "reviewed"}, payload={"name": "actually-written"}))
+    message = str(excinfo.value)
+    assert "reviewed" in message
+    assert "actually-written" in message
+
+
+def test_a_one_peer_identity_component_disagreeing_with_its_reference_peer_is_rejected() -> None:
+    """The identity names `dc1` while the matching reference names `dc2`."""
+    identity = {"name": "rack-a", "site": {"peer_kind": "LocationSite", "identity": {"name": "dc1"}}}
+    with pytest.raises(ValidationError) as excinfo:
+        PlannedOperation(
+            **_operation(
+                kind="LocationRack",
+                identity=identity,
+                payload={"name": "rack-a"},
+                relationships=[_reference("site", cardinality="one", peers=[{"name": "dc2"}])],
+            )
+        )
+    assert "site" in str(excinfo.value)
+
+
+def test_a_reference_whose_peer_kind_disagrees_with_the_identity_component_is_rejected() -> None:
+    """Same peer identity, different peer kind: still two different objects."""
+    identity = {"name": "rack-a", "site": {"peer_kind": "LocationRegion", "identity": SITE_PEER}}
+    with pytest.raises(ValidationError):
+        PlannedOperation(
+            **_operation(
+                kind="LocationRack",
+                identity=identity,
+                payload={"name": "rack-a"},
+                relationships=[_reference("site")],  # peer_kind LocationSite
+            )
+        )
+
+
+def test_a_matching_scalar_identity_component_stays_accepted() -> None:
+    """The positive half FIX-013 must not break: agreement validates."""
+    operation = PlannedOperation(**_operation(identity={"name": "prod"}, payload={"name": "prod", "color": "red"}))
+    assert operation.identity == {"name": "prod"}
+
+
+def test_a_matching_one_peer_identity_component_stays_accepted() -> None:
+    """A cardinality-one reference whose single peer is the identity's named peer."""
+    identity = {"name": "rack-a", "site": {"peer_kind": "LocationSite", "identity": SITE_PEER}}
+    operation = PlannedOperation(
+        **_operation(
+            kind="LocationRack",
+            identity=identity,
+            payload={"name": "rack-a"},
+            relationships=[_reference("site", cardinality="one", peers=[SITE_PEER])],
+        )
+    )
+    assert operation.identity["site"] == {"peer_kind": "LocationSite", "identity": SITE_PEER}
+
+
+def test_a_matching_many_peer_identity_component_stays_accepted() -> None:
+    """The many-peer shape `derive` records: a list of pairs, one per peer, in peer order."""
+    members = [{"name": "alice"}, {"name": "bob"}]
+    identity = {
+        "name": "team-a",
+        "members": [{"peer_kind": "OrgPerson", "identity": peer} for peer in members],
+    }
+    operation = PlannedOperation(
+        **_operation(
+            kind="OrgTeam",
+            identity=identity,
+            payload={"name": "team-a"},
+            relationships=[{"field": "members", "peer_kind": "OrgPerson", "cardinality": "many", "peers": members}],
+        )
+    )
+    assert operation.identity["members"] == [{"peer_kind": "OrgPerson", "identity": peer} for peer in members]
+
+
+def test_a_many_peer_identity_component_disagreeing_with_the_reference_peers_is_rejected() -> None:
+    """A many-valued identity component must name exactly the reference's peers, in order."""
+    identity = {
+        "name": "team-a",
+        "members": [{"peer_kind": "OrgPerson", "identity": {"name": "alice"}}],
+    }
+    with pytest.raises(ValidationError):
+        PlannedOperation(
+            **_operation(
+                kind="OrgTeam",
+                identity=identity,
+                payload={"name": "team-a"},
+                relationships=[
+                    {
+                        "field": "members",
+                        "peer_kind": "OrgPerson",
+                        "cardinality": "many",
+                        "peers": [{"name": "alice"}, {"name": "mallory"}],
+                    }
+                ],
+            )
+        )
+
+
+def test_value_agreement_compares_canonical_values_not_raw_ones() -> None:
+    """A payload value in a pre-canonical shape agrees once normalized (PD-002)."""
+    moment = datetime(2026, 7, 26, 18, 4, 11, tzinfo=timezone.utc)
+    identity = {"seen_at": moment.isoformat()}
+    operation = PlannedOperation(**_operation(kind="AuditEntry", identity=identity, payload={"seen_at": moment}))
+    assert operation.identity["seen_at"] == "2026-07-26T18:04:11+00:00"
 
 
 # ======================================================================================

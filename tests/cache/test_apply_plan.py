@@ -27,7 +27,12 @@ from unittest.mock import patch
 
 import pytest
 
-from infrahub_sync.plan.errors import ApplyRecordInvariantError, PlanFormatV1Error, PlanVerificationError
+from infrahub_sync.plan.errors import (
+    ApplyRecordInvariantError,
+    PlanArtifactTornError,
+    PlanFormatV1Error,
+    PlanVerificationError,
+)
 from infrahub_sync.plan.reader import parse_plan_artifact
 from infrahub_sync.plan.verify import GATED_CHECKS
 from infrahub_sync.potenda import Potenda
@@ -234,6 +239,24 @@ def test_an_empty_plan_applies_as_a_successful_no_op(tmp_path: Path) -> None:
 # ======================================================================================
 # T097 — FR-009's gate disclosure and evaluate-all rule, reached from the apply path
 # ======================================================================================
+
+
+def test_an_identity_value_disagreement_refuses_the_apply_before_any_destination_call(tmp_path: Path) -> None:
+    """FIX-013 at the apply boundary: the mismatched record never reaches the destination.
+
+    The checksum is valid — the artifact was *written* with the disagreement — so nothing
+    upstream of record validation can catch it. The parse refuses it as torn, after the
+    verification gate and before the first dispatch.
+    """
+    directory = _run_dir(tmp_path)
+    mismatched = operation_record(identity={"name": "reviewed"}, payload={"name": "actually-written"})
+    write_artifact(directory, [mismatched], run_id=RUN_ID, source_snapshot=[])
+    destination = RecordingDestination()
+
+    with pytest.raises(PlanArtifactTornError):
+        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+
+    assert destination.dispatched == []
 
 
 def test_a_tear_and_a_config_version_mismatch_are_both_reported_by_one_apply_attempt(tmp_path: Path) -> None:

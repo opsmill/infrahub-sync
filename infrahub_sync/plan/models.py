@@ -22,6 +22,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
+from infrahub_sync.plan.canonical import canonical_value
 from infrahub_sync.plan.config_version import CONFIG_VERSION_PATTERN
 from infrahub_sync.plan.errors import UnsupportedOperationActionError
 from infrahub_sync.plan.identity import OPERATION_ID_PATTERN, canonical_identity, operation_id
@@ -170,6 +171,33 @@ class PlannedOperation(BaseModel):
                 "every re-apply would duplicate (AD042)."
             )
             raise ValueError(msg)
+        # FIX-013: presence is not enough — the value the write source carries must equal
+        # the identity component review rendered and the operation id hashed. Otherwise
+        # apply builds the mutation from the payload/reference (writing the *other* object)
+        # and memoizes the result under the disagreeing reviewed identity. MIN-015 above
+        # guarantees exactly one source per field, so the comparison is unambiguous.
+        references_by_field = {reference.field: reference for reference in self.relationships or ()}
+        for name, recorded in self.identity.items():
+            reference = references_by_field.get(name)
+            if name in self.payload:
+                written = canonical_value(self.payload[name], kind=self.kind, field=name)
+                source = "canonical payload value"
+            elif reference is not None:
+                pairs: list[dict[str, Any]] = [
+                    {"peer_kind": reference.peer_kind, "identity": canonical_value(peer, kind=self.kind, field=name)}
+                    for peer in reference.peers
+                ]
+                written = pairs if reference.cardinality == "many" else pairs[0]
+                source = "relationship reference"
+            else:  # pragma: no cover — the AD042 guard above already refused this shape
+                continue
+            if written != recorded:
+                msg = (
+                    f"Operation {self.operation_id!r} on kind {self.kind!r} records identity component "
+                    f"{name!r} as {recorded!r} while its {source} is {written!r}: the identity reviewed "
+                    "and hashed disagrees with the value that would be written, so the record is corrupt."
+                )
+                raise ValueError(msg)
         return self
 
 

@@ -306,6 +306,48 @@ def test_a_line_that_is_not_json_at_all_is_torn_naming_the_line(tmp_path: Path) 
 
 
 # ======================================================================================
+# Torn — the identity reviewed and hashed disagrees with the value written (FIX-013)
+# ======================================================================================
+
+
+def test_a_scalar_identity_payload_disagreement_read_from_disk_is_torn(tmp_path: Path) -> None:
+    """`identity` names one object, `payload` writes another: refused while reading.
+
+    Refusing at the read is what keeps the disagreement from reaching apply, where the
+    mutation would be built from the payload and memoized under the reviewed identity.
+    """
+    directory = _run_dir(tmp_path)
+    mismatched = operation_record(identity={"name": "reviewed"}, payload={"name": "actually-written"})
+    write_artifact(directory, [mismatched])
+
+    with pytest.raises(PlanArtifactTornError) as raised:
+        load_plan_artifact(directory)
+
+    message = str(raised.value)
+    assert "line 1" in message
+    assert raised.value.next_action
+
+
+def test_a_one_peer_identity_reference_disagreement_read_from_disk_is_torn(tmp_path: Path) -> None:
+    """The identity names `dc1`, the matching reference names `dc2`: torn, naming the line."""
+    directory = _run_dir(tmp_path)
+    mismatched = operation_record(
+        kind="LocationRack",
+        identity={"name": "rack-a", "site": {"peer_kind": "LocationSite", "identity": {"name": "dc1"}}},
+        payload={"name": "rack-a"},
+        relationships=[
+            {"field": "site", "peer_kind": "LocationSite", "cardinality": "one", "peers": [{"name": "dc2"}]}
+        ],
+    )
+    write_artifact(directory, [mismatched])
+
+    with pytest.raises(PlanArtifactTornError) as raised:
+        load_plan_artifact(directory)
+
+    assert "line 1" in str(raised.value)
+
+
+# ======================================================================================
 # Unreadable — never degraded to absent (AD036)
 # ======================================================================================
 
