@@ -12,6 +12,7 @@ from diffsync.store.redis import RedisStore
 from infrahub_sdk import Config
 
 from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
+from infrahub_sync.cache.paths import run_dir as stored_run_dir
 from infrahub_sync.generator import render_template
 from infrahub_sync.plugin_loader import PluginLoader, PluginLoadError
 from infrahub_sync.potenda import Potenda
@@ -360,11 +361,9 @@ class PlanApplier:
 
         top_level, tiers = sync_instance.compute_order_and_tiers()
 
-        from infrahub_sync.cache.paths import run_dir as run_dir_for
-
         # Located, never created: the run being applied already exists, and an apply that
         # allocated directories could manufacture the very run whose absence it should report.
-        rdir = run_dir_for(sync_instance.name, run_id)
+        rdir = stored_run_dir(sync_instance.name, run_id)
 
         engine = Potenda(
             source=cast("Adapter", _PlanApplySource()),
