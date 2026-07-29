@@ -25,10 +25,10 @@ from infrahub_sync.plan.canonical import canonical_json_bytes
 if TYPE_CHECKING:
     from infrahub_sync import SyncConfig
 
-# Non-empty printable ASCII (AD035). Anchored for the model field; `re.fullmatch` is used
-# here because `$` in Python also matches before a trailing newline.
+# Non-empty printable ASCII (AD035). Anchored, so the model field's pattern match covers
+# the whole value; `validate_config_version` uses `re.fullmatch`, which must consume the
+# entire string and therefore rejects a trailing newline despite `$`'s before-LF quirk.
 CONFIG_VERSION_PATTERN = r"^[\x20-\x7e]+$"
-_CONFIG_VERSION_BODY = r"[\x20-\x7e]+"
 
 # `directory` is location, not configuration (PD-003).
 CONFIG_VERSION_EXCLUDED_FIELDS = frozenset({"directory"})
@@ -53,7 +53,7 @@ def validate_config_version(value: str) -> str:
     ASCII string, so it survives a JSON round trip in the manifest and reads back byte for
     byte (FR-011, AD013).
     """
-    if not isinstance(value, str) or not re.fullmatch(_CONFIG_VERSION_BODY, value):
+    if not isinstance(value, str) or not re.fullmatch(CONFIG_VERSION_PATTERN, value):
         msg = (
             f"A caller-supplied configuration version must be non-empty printable ASCII "
             f"(matching {CONFIG_VERSION_PATTERN!r}), got {value!r}."

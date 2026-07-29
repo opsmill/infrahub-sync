@@ -267,7 +267,7 @@ def test_empty_and_non_printable_supplied_values_are_rejected(supplied: str) -> 
 
 
 def test_a_trailing_newline_is_rejected_rather_than_matched_by_dollar() -> None:
-    """`re.fullmatch` on the body, not `re.match` with `$`, which also matches before a LF.
+    """`re.fullmatch` must consume the whole string, so `$`'s before-LF quirk cannot apply.
 
     This is the one regex hazard the module calls out; without the case, switching to
     `re.match(CONFIG_VERSION_PATTERN, value)` would pass the suite.
