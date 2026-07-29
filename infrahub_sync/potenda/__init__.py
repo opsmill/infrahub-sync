@@ -5,6 +5,12 @@ import sys
 from typing import TYPE_CHECKING, Any, cast
 
 from diffsync.enum import DiffSyncFlags
+
+# The destination SDK's error base, imported for the apply path's exception boundary below and
+# for nothing else. It is the one module-level import here that is not cheap, and it is
+# unavoidable: the boundary has to *name* the library whose rejections are operational, and
+# every path that reaches `apply_plan` constructs an SDK-backed destination anyway.
+from infrahub_sdk.exceptions import Error as InfrahubSDKError
 from tqdm import tqdm
 
 from infrahub_sync import IncrementalConfig
@@ -18,12 +24,38 @@ from infrahub_sync.plan.config_version import resolve_config_version, validate_c
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
     OperationApplyFailedError,
+    PlanArtifactError,
     PlanVerificationError,
+    SkippedDeleteOperation,
 )
 from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.plan.write_surface import PlannedWriteDestination
 
 logger = logging.getLogger(__name__)
+
+# The apply path's **operational** exception boundary (FIX-011, spec 002). An exception from
+# the write surface is reported as `OperationApplyFailedError` — a designed destination refusal,
+# whose remedy is to repair the destination and re-plan — only if it is one of these:
+#
+#   * `PlanArtifactError` — the plan taxonomy the write surface raises deliberately: a peer that
+#     matches nothing or matches many, an unaccounted identity component, an unkeyed render.
+#   * `SkippedDeleteOperation` — the surface's defensive delete refusal. Unreachable on this
+#     loop's own path, which filters deletes before dispatch, and a designed limitation rather
+#     than a defect when some other caller provokes it.
+#   * `InfrahubSDKError` — the destination library's own base, and therefore its transport,
+#     authentication, GraphQL and object-validation rejections.
+#
+# Everything else — `TypeError`, `AttributeError`, `KeyError` after an SDK shape change, a bare
+# `AssertionError` — is a **defect**, and a defect wrapped in this taxonomy advises an operator
+# to repair a destination that is working while hiding the traceback that would diagnose it. So
+# it escapes unchanged, carrying the partial record. Deliberately narrow: an `httpx` error the
+# SDK failed to translate escapes as a defect rather than being wrapped on suspicion — the run
+# still records what was written, and mislabelling a defect as a refusal is the worse failure.
+OPERATIONAL_APPLY_FAILURES: tuple[type[Exception], ...] = (
+    PlanArtifactError,
+    SkippedDeleteOperation,
+    InfrahubSDKError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -554,16 +586,19 @@ class Potenda:
                 fails validation for a reason the line count cannot see (FR-010).
             UnsupportedOperationActionError: an operation's `action` is outside `ACTIONS`,
                 refused while reading and therefore before any write (FR-017, AD055).
-            OperationApplyFailedError: the destination rejected an operation or transport
-                failed. Carries the partial record — earlier writes stay written (AD027), and
-                the failing operation is named on it because its own write may have landed in
-                part before the failure.
+            OperationApplyFailedError: an operation failed **inside the operational boundary**
+                — `OPERATIONAL_APPLY_FAILURES`, the plan taxonomy plus the destination
+                library's own rejections. Carries the partial record — earlier writes stay
+                written (AD027), and the failing operation is named on it because its own write
+                may have landed in part before the failure.
             ApplyRecordInvariantError: a completed apply's record does not account for every
                 operation in the plan (AD062). Carries the record it is complaining about.
-            BaseException: an interrupt — `KeyboardInterrupt` above all — propagates
-                unchanged rather than being converted into a taxonomy error, and carries the
-                partial record on an `apply_record` attribute so the caller can still record
-                what was written before the run was cut short.
+            BaseException: anything outside that boundary — an interrupt, `KeyboardInterrupt`
+                above all, or a defect such as a `TypeError` from an SDK shape change —
+                propagates **unchanged** rather than being converted into a taxonomy error a
+                working destination would be blamed for, and carries the partial record on an
+                `apply_record` attribute so the caller can still record what was written
+                (FIX-011).
         """
         from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes, require_plan_directory
         from infrahub_sync.plan.verify import verify_plan
@@ -638,17 +673,20 @@ class Potenda:
                     # record says so rather than leaving the write uncounted (FIX-006).
                     failed_operation=operation.operation_id,
                 )
-                if not isinstance(exc, Exception):
-                    # An interrupt — `KeyboardInterrupt` above all, which is how an operator
-                    # deliberately stops a long apply. It is not a destination rejection, so
-                    # wrapping it in one would swallow the very signal that stops the process.
-                    # It propagates as itself and carries the record as an attribute instead,
-                    # because the operations written before it are written either way and
-                    # "what was applied" has to stay readable from the run (AD062). The
-                    # suppression below is not masking a defect: no annotation can declare an
-                    # attribute on an exception type this module does not own, and every
-                    # `BaseException` carries an instance `__dict__` that accepts one.
-                    exc.apply_record = partial  # ty: ignore[invalid-assignment]
+                if not isinstance(exc, OPERATIONAL_APPLY_FAILURES):
+                    # Outside the operational boundary, and therefore never presented as a
+                    # destination refusal: an interrupt — `KeyboardInterrupt` above all, which
+                    # is how an operator deliberately stops a long apply — or a defect, this
+                    # code's or an SDK shape change's (FIX-011). Wrapping either would send the
+                    # operator to repair a destination that is working and would swallow the
+                    # very signal that stops the process. It propagates as itself, with its own
+                    # traceback, and carries the record as an attribute instead: the operations
+                    # written before it are written either way and "what was applied" has to
+                    # stay readable from the run (AD062). The suppression below is not masking a
+                    # defect: no annotation can declare an attribute on an exception type this
+                    # module does not own, and every `BaseException` carries an instance
+                    # `__dict__` that accepts one.
+                    exc.apply_record = partial  # ty: ignore[unresolved-attribute]
                     raise
                 msg = (
                     f"Applying operation {operation.operation_id!r} of run {run_id!r} to the destination "

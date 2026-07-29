@@ -58,6 +58,7 @@ from unittest.mock import patch
 
 import pytest
 from filelock import FileLock, Timeout
+from infrahub_sdk.exceptions import GraphQLError
 from typer.testing import CliRunner
 
 from infrahub_sync.cache.locks import pipeline_lock
@@ -1364,12 +1365,33 @@ class RecordingDestination:
 
 
 class RejectingDestination(RecordingDestination):
-    """A destination that accepts the first operation and rejects the next (AD027)."""
+    """A destination that accepts the first operation and rejects the next (AD027).
+
+    The rejection is the SDK's own `GraphQLError` — what a server refusing a mutation
+    actually raises — because the engine's operational boundary is defined by the destination
+    library's error base. A stand-in `RuntimeError` would be a defect, and defects escape
+    unwrapped by design (FIX-011).
+    """
 
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
         if self.writes:
-            msg = f"the destination rejected {operation.operation_id!r}"
-            raise RuntimeError(msg)
+            raise GraphQLError([{"message": f"the destination rejected {operation.operation_id!r}"}])
+        return super().apply_planned_operation(operation=operation, peers=peers)
+
+
+class DefectiveDestination(RecordingDestination):
+    """A destination whose second operation trips a **code defect** after the first succeeded.
+
+    `AssertionError` deliberately: it is outside the plan taxonomy and outside the SDK's error
+    hierarchy, so nothing about it looks like a destination refusing a write. The in-tree
+    example it stands for is the adapter's own schema-type guard, which raises `TypeError` when
+    `client.schema.get` returns something other than a `NodeSchemaAPI`.
+    """
+
+    def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
+        if self.writes:
+            msg = "a code defect, not a destination refusal"
+            raise AssertionError(msg)
         return super().apply_planned_operation(operation=operation, peers=peers)
 
 
@@ -2122,6 +2144,43 @@ def test_an_interrupt_mid_apply_records_failed_and_the_partial_applied_set(tmp_p
     assert recorded["summary"]["applied_operations"] == [first_id]
     assert recorded["summary"]["skipped_delete_operations"] == []
     assert recorded["summary"]["skipped_delete_count"] == 0
+
+
+def test_a_code_defect_escapes_the_command_unchanged_while_the_run_records_what_was_written(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """FIX-011 (RIG-05) on the CLI path: the defect keeps its traceback, the run keeps the record.
+
+    The destination succeeds once and then raises `AssertionError`. Two claims, and a command
+    can pass one while failing the other. The assertion must reach the operator as itself — a
+    command that reported it as a designed refusal would send them to repair a destination that
+    is working, and would swallow the traceback that is the only diagnosis. And `run.json` must
+    still name the first operation as applied, because it *is* applied: without the merge the
+    run claims nothing happened on a destination that was written to.
+    """
+    _appliable_run(tmp_path)
+    destination = DefectiveDestination()
+
+    with caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"):
+        result = _run_apply(destination)
+
+    assert result.exit_code != 0
+    assert isinstance(result.exception, AssertionError), (
+        f"the defect must escape as itself, not as a taxonomy refusal; got {result.exception!r}"
+    )
+    reported = _operator_errors(caplog)
+    assert "defect rather than a destination refusal" in reported, (
+        "the operator has to be told the destination is not the thing to repair"
+    )
+    assert OperationApplyFailedError.next_action not in reported, "and must not be given the refusal's remedy"
+
+    first_id = str(APPLY_PLAN[0]["operation_id"])
+    assert destination.writes == [first_id]
+    recorded = _run_json(tmp_path)
+    assert recorded["status"] == "failed"
+    assert recorded["summary"]["applied_operations"] == [first_id]
+    assert recorded["summary"]["failed_operation"] == str(APPLY_PLAN[1]["operation_id"])
+    assert recorded["summary"]["may_have_partially_written"] is True
 
 
 def test_a_broken_apply_invariant_records_what_was_written_not_an_empty_record(

@@ -600,6 +600,26 @@ def _record_and_abort(run_file: RunFile, exc: PlanArtifactError, record: ApplyRe
     print_error_and_abort(str(exc))
 
 
+def _record_carried(run_file: RunFile, exc: BaseException) -> None:
+    """Record whatever the engine attached to `exc`, then leave the exception to its caller.
+
+    The counterpart of `_record_and_abort` for the exceptions the engine deliberately does
+    **not** convert into the taxonomy (`Potenda.OPERATIONAL_APPLY_FAILURES` is the boundary):
+    an interrupt, and any defect. Both may leave destination writes behind, so the record
+    rides on the exception as an `apply_record` attribute and is merged here before `save()`,
+    which writes the whole payload from this instance (AD062, AD069). An exception carrying
+    nothing records the keys present and empty rather than absent, for the same reason.
+
+    This function does not raise: the caller re-raises, so the exception keeps its own
+    traceback — which for a defect is the only place its diagnosis lives (FIX-011).
+    """
+    carried = getattr(exc, "apply_record", None)
+    partial = carried if isinstance(carried, ApplyRecord) else ApplyRecord()
+    run_file.summary.update(partial.as_summary_keys())
+    run_file.status = "failed"
+    run_file.save()
+
+
 @app.command(name="apply")
 def apply_cmd(
     ctx: typer.Context,
@@ -675,25 +695,35 @@ def apply_cmd(
             # and empty rather than absent: "nothing was applied" must be readable from the
             # run, not inferred from a missing key (AD062).
             _record_and_abort(run_file, exc, ApplyRecord())
-        except Exception:
-            # Outside the taxonomy, so not a designed refusal but a defect: it keeps its
-            # traceback, which is the only place its diagnosis lives. The run is recorded
-            # first either way.
-            run_file.summary.update(ApplyRecord().as_summary_keys())
-            run_file.status = "failed"
-            run_file.save()
+        except Exception as exc:
+            # Outside the taxonomy **and** outside the engine's operational boundary, so not a
+            # designed refusal but a defect — this code's, or an SDK shape change's. It keeps
+            # its traceback, which is the only place its diagnosis lives, and it is *not*
+            # dressed up as a destination rejection: the operator is told the destination is
+            # not the thing to repair, and that the apply may have left writes behind (FIX-011).
+            # The engine attaches the partial record even here, so this arm persists it rather
+            # than the empty one it used to record.
+            # `logger.error` and not `logger.exception`: the `raise` below carries the traceback
+            # to the operator already, and logging it here would print it twice.
+            logger.error(  # noqa: TRY400
+                "Apply of run %s failed with an unexpected error, which is a defect rather than a "
+                "destination refusal: %s: %s. The traceback below is the diagnosis; the run records "
+                "what was applied before it, and the failing operation may have written part of its "
+                "change. Do not re-plan on the assumption the destination is at fault.",
+                applier.run_id,
+                type(exc).__name__,
+                exc,
+            )
+            _record_carried(run_file, exc)
             raise
         except BaseException as exc:
-            # An interrupt — Ctrl-C on a long apply. Writes have already landed, and the run
-            # has to say so before the interrupt continues on its way; without this arm the
-            # sidecar keeps the `running` status and the empty summary it was saved with,
-            # claiming nothing was even attempted (AD062). Never swallowed: the bare `raise`
-            # is what keeps Ctrl-C stopping the process.
-            carried = getattr(exc, "apply_record", None)
-            partial = carried if isinstance(carried, ApplyRecord) else ApplyRecord()
-            run_file.summary.update(partial.as_summary_keys())
-            run_file.status = "failed"
-            run_file.save()
+            # An interrupt — Ctrl-C on a long apply. Not a defect and not a refusal, so it gets
+            # no error line of its own: the operator caused it and knows what they did. Writes
+            # have already landed, and the run has to say so before the interrupt continues on
+            # its way; without this arm the sidecar keeps the `running` status and the empty
+            # summary it was saved with, claiming nothing was even attempted (AD062). Never
+            # swallowed: the bare `raise` is what keeps Ctrl-C stopping the process.
+            _record_carried(run_file, exc)
             raise
         run_file.finished_at = datetime.now(timezone.utc).isoformat()
         run_file.save()

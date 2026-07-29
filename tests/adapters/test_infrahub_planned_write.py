@@ -43,7 +43,7 @@ from unittest.mock import patch
 
 import pytest
 from infrahub_sdk import Config, InfrahubClientSync
-from infrahub_sdk.exceptions import AuthenticationError, ServerNotResponsiveError
+from infrahub_sdk.exceptions import AuthenticationError, GraphQLError, ServerNotResponsiveError
 from infrahub_sdk.node import InfrahubNodeSync
 from infrahub_sdk.schema import NodeSchemaAPI
 from infrahub_sdk.schema.main import (
@@ -1163,7 +1163,10 @@ class RecordingApplyDestination:
     against the protocol and a destination missing either one is refused (AD086).
 
     `reject_at` is the 0-based dispatch index the destination rejects, which is how a
-    mid-plan rejection is driven without reaching a real destination.
+    mid-plan rejection is driven without reaching a real destination. The rejection is the
+    SDK's own `GraphQLError` rather than a stand-in `RuntimeError`, because the engine's
+    operational boundary is defined by the destination library's error base: a bare
+    `RuntimeError` is a defect and deliberately escapes unwrapped (FIX-011).
     """
 
     def __init__(self, *, reject_at: int | None = None) -> None:
@@ -1177,8 +1180,7 @@ class RecordingApplyDestination:
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
         _ = peers
         if self.reject_at is not None and len(self.dispatched) == self.reject_at:
-            msg = "the destination rejected this object"
-            raise RuntimeError(msg)
+            raise GraphQLError([{"message": "the destination rejected this object"}])
         self.dispatched.append(operation.operation_id)
         return f"node-{len(self.dispatched)}"
 

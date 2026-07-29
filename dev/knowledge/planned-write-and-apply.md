@@ -278,6 +278,28 @@ already succeeded in whole or in part converges on the same object (AD033).
 `skipped_delete_count` is derived from `skipped_delete_operations`: on the record that is the only
 account of what an apply did, a second source of truth is a state that can contradict itself.
 
+### The operational exception boundary
+
+Only an **operational** failure is reported as a destination refusal. `OPERATIONAL_APPLY_FAILURES`
+in `infrahub_sync/potenda/__init__.py` is the list, and it has three members: the `PlanArtifactError`
+taxonomy the write surface raises deliberately (a peer matching nothing or many, an unaccounted
+identity component, an unkeyed render), `SkippedDeleteOperation`, and `infrahub_sdk.exceptions.Error`
+— the destination library's own base, and therefore its transport, authentication, GraphQL and
+object-validation rejections.
+
+Anything else is a **defect**: a `TypeError` from the adapter's own schema-type guard, an
+`AttributeError` or `KeyError` after an SDK shape change, a stray `AssertionError`. Wrapping one in
+`OperationApplyFailedError` tells the operator to repair a destination that is working and re-plan a
+plan that is fine, and hides the traceback that is the only diagnosis of the real fault — so it
+propagates **unchanged**, with the partial record attached as an `apply_record` attribute. The CLI's
+generic arm persists that record, logs one line saying this is a defect rather than a refusal, and
+re-raises so the traceback still reaches the operator. Its interrupt arm records the same way and
+logs nothing: an interrupt is neither a defect nor a refusal.
+
+The boundary is deliberately narrow rather than generous. An `httpx` error the SDK failed to
+translate escapes as a defect instead of being wrapped on suspicion, because a defect labelled as a
+destination refusal is the more expensive mistake — the run records what was written either way.
+
 ## Deletes are recorded, never executed
 
 Deletes are derived by set difference and recorded as first-class operations, then never executed —

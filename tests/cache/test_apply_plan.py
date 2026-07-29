@@ -26,10 +26,12 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
+from infrahub_sdk.exceptions import AuthenticationError, GraphQLError, ServerNotResponsiveError
 
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
     OperationApplyFailedError,
+    PeerNotFoundError,
     PlanArtifactTornError,
     PlanFormatV1Error,
     PlanVerificationError,
@@ -381,8 +383,7 @@ class PartiallyWritingDestination(RecordingDestination):
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
         self.base_writes.append(operation.operation_id)
         if len(self.base_writes) > 1:
-            msg = f"the relationship flush for {operation.operation_id!r} was rejected"
-            raise RuntimeError(msg)
+            raise GraphQLError([{"message": f"the relationship flush for {operation.operation_id!r} was rejected"}])
         return super().apply_planned_operation(operation=operation, peers=peers)
 
 
@@ -418,6 +419,100 @@ def test_a_failure_after_the_base_write_names_the_operation_and_marks_the_partia
     assert "stay written" in message, "the earlier operations' fate stays stated"
     assert "may itself have written part of its change" in message
     assert "re-applying" in message.lower(), "and the convergent remedy (AD033)"
+
+
+class DefectiveDestination(RecordingDestination):
+    """A destination whose second operation raises the defect it is constructed with.
+
+    Not a rejection of any kind: the exception types below are what a programming mistake or an
+    SDK shape change raises, and the in-tree example is the adapter's own schema-type guard,
+    which raises `TypeError` when `client.schema.get` answers with something other than a
+    `NodeSchemaAPI`.
+    """
+
+    def __init__(self, defect: Exception) -> None:
+        super().__init__()
+        self.defect = defect
+
+    def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
+        if self.dispatched:
+            raise self.defect
+        return super().apply_planned_operation(operation=operation, peers=peers)
+
+
+DESTINATION_REJECTIONS = (
+    pytest.param(GraphQLError([{"message": "Object not found"}]), id="graphql-rejection"),
+    pytest.param(AuthenticationError("Authentication failed: 401 Unauthorized"), id="auth-401"),
+    pytest.param(ServerNotResponsiveError(url="http://localhost:8000/graphql/main", timeout=10), id="read-timeout"),
+    pytest.param(
+        PeerNotFoundError("Operation 'op_a' references peer kind 'LocationSite' matching no object."),
+        id="plan-taxonomy-peer-miss",
+    ),
+)
+
+
+@pytest.mark.parametrize("rejection", DESTINATION_REJECTIONS)
+def test_a_known_destination_failure_is_wrapped_with_the_operation_and_run_context(
+    tmp_path: Path, rejection: Exception
+) -> None:
+    """FIX-011: inside the operational boundary, a failure becomes the named taxonomy refusal.
+
+    The four cases are the boundary's whole membership as an operator meets it — the SDK's
+    GraphQL, authentication and transport rejections, and the plan taxonomy the write surface
+    raises itself. Each has a remedy at the destination, so each is reported as one message
+    naming the operation, the run and the next action rather than as a traceback.
+    """
+    directory = _run_dir(tmp_path)
+    records = [operation_record(identity={"name": "first"}), operation_record(identity={"name": "second"})]
+    write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])
+    destination = DefectiveDestination(rejection)
+
+    with pytest.raises(OperationApplyFailedError) as caught:
+        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+
+    message = str(caught.value)
+    assert str(records[1]["operation_id"]) in message, "the refusal names the operation that failed"
+    assert RUN_ID in message, "…and the run it failed in"
+    assert str(rejection) in message, "…and the underlying cause"
+    assert caught.value.__cause__ is rejection, "…and chains it, so the library traceback survives"
+    assert caught.value.apply_record.applied_operations == (str(records[0]["operation_id"]),)
+    assert caught.value.apply_record.failed_operation == str(records[1]["operation_id"])
+
+
+CODE_DEFECTS = (
+    pytest.param(TypeError("Expected NodeSchemaAPI for BuiltinTag, got NoneType"), id="type-error"),
+    pytest.param(AttributeError("'NoneType' object has no attribute 'peers'"), id="attribute-error"),
+    pytest.param(KeyError("hfid"), id="key-error-after-an-sdk-shape-change"),
+)
+
+
+@pytest.mark.parametrize("defect", CODE_DEFECTS)
+def test_a_code_defect_escapes_the_apply_unchanged_and_still_carries_the_partial_record(
+    tmp_path: Path, defect: Exception
+) -> None:
+    """FIX-011: a defect must not be presented to the operator as a destination refusal.
+
+    Wrapping these in `OperationApplyFailedError` advises repairing a destination that is
+    working, re-planning against a plan that is fine, and hides the traceback that is the only
+    diagnosis of the real fault — the first of which an operator will do, because the message
+    told them to. So the exception keeps its own type and traceback. It still has to carry the
+    record: the earlier operations are written either way, and the failing one may have written
+    part of its own change (AD062).
+    """
+    directory = _run_dir(tmp_path)
+    records = [operation_record(identity={"name": "first"}), operation_record(identity={"name": "second"})]
+    write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])
+    destination = DefectiveDestination(defect)
+
+    with pytest.raises(type(defect)) as caught:
+        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+
+    assert caught.value is defect, "the defect reached the caller as itself, not as a copy or a wrapper"
+    carried = getattr(caught.value, "apply_record", None)
+    assert carried is not None, "the defect carried no record, so the CLI cannot say what was written"
+    assert carried.applied_operations == (str(records[0]["operation_id"]),)
+    assert carried.failed_operation == str(records[1]["operation_id"])
+    assert carried.may_have_partially_written is True
 
 
 class InterruptingDestination(RecordingDestination):
