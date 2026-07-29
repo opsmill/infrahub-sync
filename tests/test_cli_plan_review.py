@@ -690,7 +690,13 @@ def test_the_run_identifier_enumeration_is_bounded_and_states_the_total(
 def test_a_run_with_no_plan_directory_errors_with_the_re_plan_message(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """FR-019: a run that predates the artifact format has nothing to review."""
+    """FR-019: a run with no `plan/` directory has nothing to review.
+
+    The verdict keys on the absent directory, and the message says so without asserting which
+    of its causes applies: a run predating the format, a `diff` that failed before the writer,
+    and a run directory archived without its `plan/` all arrive here, and an operator told only
+    "the run predates the format" is sent to diagnose the wrong one (MIN-016).
+    """
     directory = _run_directory(tmp_path)
     (directory / "plan.parquet").write_bytes(b"pre-existing row format")
 
@@ -698,6 +704,7 @@ def test_a_run_with_no_plan_directory_errors_with_the_re_plan_message(
 
     assert f"Run '{RUN_ID}' holds no plan artifact" in message
     assert str(directory / "plan") in message
+    assert "was never written or has since been removed" in message
     assert "Re-plan: re-run `diff` for this sync" in message
 
 

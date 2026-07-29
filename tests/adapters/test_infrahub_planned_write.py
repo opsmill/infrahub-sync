@@ -662,7 +662,10 @@ def test_the_unkeyed_render_is_reported_once_per_kind_at_warning_level(
     )
     message = record.getMessage()
     assert DEVICE_KIND in message, "The report must name the destination kind."
-    assert "The write was issued anyway" in message, "The report must say the write went out."
+    assert "The write is issued anyway" in message, (
+        "The report must say the write is not withheld — in the present tense, because it is emitted "
+        "from the render gate, before the upsert and the relationship flush it precedes."
+    )
     assert "Watch for a duplicate" in message, "The report must say what to watch for at the destination."
     assert "crosses a relationship" in message, "The report must name the condition that produced it."
 

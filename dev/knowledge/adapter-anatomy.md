@@ -87,8 +87,11 @@ duplicate), return the destination node id, resolve every relationship peer thro
 supplied `peers` resolver rather than through any loaded store, and **decline a `delete`** by
 raising `SkippedDeleteOperation` instead of executing it. That last obligation is defensive:
 the engine filters deletes out of its own apply loop and never dispatches one to the write
-surface, so the raise guards against a caller that is not the engine. Either way the rest of
-the plan is applied and the run still ends `applied`, with the skipped identifiers recorded.
+surface, so the raise guards against a caller that is not the engine. Under the apply loop the
+rest of the plan is still applied and the run still ends `applied`, with the skipped
+identifiers recorded — but that accounting is the loop's, not your method's. Dispatched
+directly, your method raises and that is all that happens: nothing is recorded, and there is no
+run to complete.
 
 It must also **write only the fields the operation maps**. The payload is authoritative for those
 fields and for nothing else: an unmapped destination field must come out of the apply untouched.

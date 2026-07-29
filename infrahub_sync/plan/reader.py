@@ -395,8 +395,8 @@ def require_plan_directory(run_dir: Path) -> Path:
     so no synchronization name has to be threaded into the reader to produce them.
 
     Raises:
-        PlanFormatV1Error: no `plan/` directory exists, so the run predates this format
-            (FR-019).
+        PlanFormatV1Error: no `plan/` directory exists — the run predates this format, or its
+            plan directory was never written or has been removed (FR-019).
         PlanArtifactTornError: `plan/` exists but is not a directory.
         PlanArtifactUnreadableError: the path exists but could not be examined, or the cache
             root exists but could not be listed (AD036).
@@ -410,8 +410,9 @@ def require_plan_directory(run_dir: Path) -> Path:
         listing = f" {run_id_listing_text(stored, cache_root=cache_root)}" if stored else ""
         msg = (
             f"Run {run_id!r} holds no plan artifact: no {PLAN_DIR_NAME!r} directory exists at "
-            f"{plan_dir}. The run predates the saved plan artifact format, so there is nothing "
-            f"to apply or review.{listing}"
+            f"{plan_dir}. Either the run predates the saved plan artifact format, or its plan "
+            f"directory was never written or has since been removed — either way there is "
+            f"nothing to apply or review.{listing}"
         )
         raise PlanFormatV1Error(msg)
     if not stat_module.S_ISDIR(entry.st_mode):
@@ -457,8 +458,9 @@ def load_plan_artifact(run_dir: Path) -> LoadedPlan:
     """Read `<run_dir>/plan/` — once — and return it as a validated `LoadedPlan`.
 
     Raises:
-        PlanFormatV1Error: the run holds no `plan/` directory, so its plan predates this
-            format and must be re-planned (FR-019).
+        PlanFormatV1Error: the run holds no `plan/` directory — it predates this format, or
+            the directory was never written or has been removed — so it must be re-planned
+            (FR-019).
         PlanArtifactTornError: the artifact is present but incomplete or inconsistent — a
             missing or malformed manifest, an absent operations file, a line count
             disagreeing with `operations_count`, or an operations line that fails record

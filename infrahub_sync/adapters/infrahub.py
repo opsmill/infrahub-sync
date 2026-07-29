@@ -1066,7 +1066,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         reported.add(kind)
         logger.warning(
             "Planned write: the mutation rendered for destination kind %s carries neither 'id' nor "
-            "'hfid' because %s. The write was issued anyway. Watch for a duplicate object of kind %s at "
+            "'hfid' because %s. The write is issued anyway. Watch for a duplicate object of kind %s at "
             "the destination if it does not key on the identity components as sent.",
             kind,
             condition,
@@ -1104,12 +1104,15 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         (FR-012).
 
         A `delete` raises `SkippedDeleteOperation` and never touches the destination. That
-        raise is **defensive**, not the mechanism: the engine recognizes a delete in its own
-        apply loop, records the identifier and never dispatches it here
-        (`infrahub_sync/potenda/__init__.py:580-582`), so on the engine's path this branch is
-        unreachable and nothing catches the class. Applying deletes is out of scope for this
-        release; either way the skipped identifiers are recorded and the run still ends
-        `applied` (AD055).
+        raise is **defensive**, not the mechanism: `Potenda.apply_plan` recognizes a delete in
+        its own apply loop, records the identifier and never dispatches it here, so on the
+        engine's path this branch is unreachable and nothing catches the class. Applying
+        deletes is out of scope for this release (AD055).
+
+        Recording the skip and completing the plan are the **apply loop's** behavior, not this
+        method's. A caller that dispatches a delete straight to this method gets the raise and
+        nothing else: no identifier is recorded anywhere, and there is no run for the operation
+        to end `applied`.
 
         A `create` and an `update` both route through the same convergent upsert —
         `client.create(...)` then `save(allow_upsert=True)` — and neither routes through
@@ -1129,7 +1132,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         Raises:
             SkippedDeleteOperation: the operation is a recorded delete (a designed
                 limitation, not a failure). Not reached when the engine drives the apply,
-                which filters deletes out before dispatch.
+                which filters deletes out before dispatch — and on any other path the raise is
+                all that happens: recording the skip belongs to the apply loop.
             UnaccountedIdentityComponentError: a human-friendly-ID component of the
                 destination kind is not accounted for by the payload and the operation.
             UnkeyedWriteRefusedError: the rendered mutation is unkeyed for a kind whose

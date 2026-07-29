@@ -62,8 +62,7 @@ Only the Infrahub adapter implements the surface today.
 5.  node = client.create(kind=..., data=generate_payload_create(...))
 5b. GATE: read the rendered mutation input and check it carries `id` or `hfid`
 6.  node.save(allow_upsert=True)               # the convergence point
-7.  for each cardinality-many relationship: reconcile the peer set (see below)
-7e. ONE targeted relationship write flushing the reconciled sets
+7e. ONE targeted relationship write carrying the plan's cardinality-many peer sets (see below)
 8.  peers.remember(operation.kind, operation.identity, node.id)
 ```
 
@@ -131,7 +130,10 @@ the adapter instance for the lifetime of the apply. Both properties are pinned r
 `--quiet` floors the package logger at warning level, so an info-level emission satisfies every prose
 description of the obligation and vanishes for exactly the scripted and CI runs where it is the only
 signal; and once-per-operation would put a line on every row of a large apply. The content names the
-kind, that the write was issued anyway, which of the two conditions applies, and what to watch for.
+kind, that the write is issued anyway, which of the two conditions applies, and what to watch for. It
+is phrased in the present tense because the gate reads the *rendered* mutation: the warning is emitted
+at step 5b, before the upsert at step 6 and the relationship flush at step 7e, so a past-tense "the
+write was issued" would be claiming a write that has not happened yet and may still fail.
 
 ## Peer resolution
 
@@ -187,43 +189,34 @@ governs. The qualification is safe precisely because the miss is loud.
 
 ## Cardinality-many is an enforced replace-set
 
-The convergent path has no verified replace-set semantics, and whether the server's upsert replaces or
-merges a relationship list cannot be settled offline. So the apply path reconciles explicitly after the
-upsert, per cardinality-many relationship:
+The destination ends holding exactly the peers the plan names. The apply path writes those peer sets
+explicitly rather than leaving them to the upsert:
 
 ```text
-7a. rm = getattr(node, ref.field)     # the manager ON THE NODE THE CALLER WILL WRITE
-    rm.initialized = False            # discard the locally built peer set …
-    rm.fetch()                        # … so the guarded client.get actually runs
-7b. existing = rm.peer_ids            # now the destination's actual set
-7c. _, existing_only, new_only = compare_lists(existing, new_peer_ids)
-7d. remove existing_only, add new_only            # IN MEMORY ONLY
-7e. (caller, once after the loop) one targeted relationship write
+7e. one hand-built <kind>Update carrying `id` plus only the replaced cardinality-many fields,
+    each rendered from the manager the create payload already built, issued once after the
+    upsert through client.execute_graphql
 ```
 
-Three properties of this are easy to get wrong, and each was got wrong once:
+No destination read is involved. Two properties are easy to get wrong here, and each was got wrong
+once:
 
-- **The manager must be forced cold.** A relationship manager sets `initialized = data is not None`, so a
-  node built from the write payload reports the **desired** set as its **existing** set, and the
-  comparison compares a set against itself and removes nothing. Calling `fetch()` earlier does not fix
-  it: `fetch()` opens with `if not self.initialized:` and the `client.get` that would read the
-  destination lives inside that guard. The property at stake is whether a destination read is **issued**,
-  not what order two calls happen in.
-- **The reconciliation must be flushed.** `RelationshipManagerSync` has no `save`; `add` and `remove`
-  only mutate `self.peers` and set a flag. Without a subsequent write, the surplus is computed and
-  discarded. This mirrors `update_node`, which also returns its node unwritten and leaves the flush to
-  its caller.
+- **Surplus-peer removal is the server's replace semantics, not something the client can express.**
+  `RelationshipManagerBase._generate_input_data` renders only the surviving peer list — `[{id: …}, …]`
+  with no removal directive — so a fetch-and-reconcile round trip before the write decided nothing: if
+  the destination's Update mutation replaces the list, the written list is the new set with or without
+  it; if it merged, no in-process reconciliation could remove a peer either. The semantics are pinned by
+  a live shrink test rather than hedged in code.
 - **The flush is a targeted relationship write, never a whole-node re-render.** A whole-node render of a
   node the SDK considers existing emits `<rel>: None` for every **optional cardinality-one** relationship
   left uninitialized, silently clearing destination fields the plan never mapped. No render flag avoids
-  it. The flush is built by hand — `f"{kind}Update"` carrying `id` plus only the replaced
-  cardinality-many fields, issued through `client.execute_graphql` — and issued **once** after the loop,
-  against the same node object whose managers were reconciled. See
-  [ADR 0003](../adr/0003-replace-set-flush-is-a-targeted-relationship-write.md) for the full reasoning
-  and the two withdrawn forms.
+  it — which is why the mutation is built by hand and names only the fields being replaced.
 
-`peers: []` under `cardinality: "many"` means "empty the set", and the replace-set acts on it. The
-observable throughout is the **issued destination write carrying the reconciled peer list** — not the
+See [ADR 0003](../adr/0003-replace-set-flush-is-a-targeted-relationship-write.md) for the full
+reasoning, the withdrawn forms, and the round trips that were removed.
+
+`peers: []` under `cardinality: "many"` means "empty the set", and the write carries `[]` for it. The
+observable throughout is the **issued destination write carrying the plan's peer list** — not the
 manager's in-memory state and not a mocked adapter call.
 
 ## The apply loop

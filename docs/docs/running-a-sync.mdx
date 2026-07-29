@@ -217,12 +217,13 @@ the difference between what you reviewed and what was written is always readable
 For a destination kind whose convergence key crosses a relationship — a human-friendly ID with a
 component like `site__name__value` rather than a plain attribute — **convergence is not verified in
 this release**. The client cannot render that key from a peer supplied as a resolved node id, so the
-apply issues the write anyway and warns once per kind that it did:
+apply warns once per kind — as it renders the mutation, before issuing it — and issues the write
+anyway:
 
 ```text
 WARNING | Planned write: the mutation rendered for destination kind InfraInterface carries
           neither 'id' nor 'hfid' because the kind's convergence key crosses a relationship
-          (...). The write was issued anyway. Watch for a duplicate object of kind
+          (...). The write is issued anyway. Watch for a duplicate object of kind
           InfraInterface at the destination if it does not key on the identity components as
           sent.
 ```
@@ -240,7 +241,7 @@ destination half-written. Every refusal names its next action.
 | Refusal | What it means |
 | --- | --- |
 | No run is stored with that identifier | The run id does not exist. The message lists the most recent stored run identifiers for the sync — or states plainly that the sync has no stored runs. Nothing is created for the named id. |
-| The run holds no plan artifact | The run predates the saved plan format. Re-run `diff` to produce a current-format plan. |
+| The run holds no plan artifact | The run directory has no `plan/` directory: it predates the saved plan format, or its plan was never written or has been removed — a run directory archived or copied without `plan/` reads the same way. Re-run `diff` to produce a current-format plan. |
 | The artifact is torn | The plan is present but incomplete or inconsistent — a missing manifest, or a line count disagreeing with the recorded operation count. Re-run `diff` to rebuild it. |
 | Unsupported format version | The artifact was written by a version this release does not understand. The remaining checks are not evaluated, and the message says so. Rebuild the plan, or apply it with the version that wrote it. |
 | The plan checksum does not match | The artifact changed after it was written, so it is not the plan that was reviewed. Re-run `diff`. |

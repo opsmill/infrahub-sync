@@ -34,17 +34,18 @@ class SkippedDeleteOperation(Exception):  # noqa: N818 — a control signal, not
     touching the destination.
 
     In normal operation it is never raised, because the engine never dispatches a delete:
-    the apply loop recognizes `operation.action == "delete"` itself, records the identifier
-    and continues without calling the write surface at all
-    (`infrahub_sync/potenda/__init__.py:580-582`). Nothing catches this class in product
-    code. It exists so that an adapter reached by some other route still refuses rather than
-    deletes.
+    `Potenda.apply_plan`'s loop recognizes `operation.action == "delete"` itself, records the
+    identifier and continues without calling the write surface at all. Nothing catches this
+    class in product code. It exists so that an adapter reached by some other route still
+    refuses rather than deletes.
 
-    The outcome either way is the same: every non-delete operation in the plan is applied
-    and the run ends `applied`, with the count and the skipped identifiers recorded on the
-    apply record (`:612-616`, `:637-644`). It is a designed limitation reported as one,
-    which is why this class is not part of the `PlanArtifactError` taxonomy and carries no
-    `next_action`: there is nothing for the operator to repair.
+    **Under the apply loop**, every non-delete operation in the plan is applied and the run
+    ends `applied`, with the count and the skipped identifiers recorded on the apply record.
+    That accounting is the loop's, not this signal's: a caller that dispatches a delete
+    directly to a write surface gets this raise and nothing more — no identifier is recorded
+    and no run is completed. It is a designed limitation reported as one, which is why this
+    class is not part of the `PlanArtifactError` taxonomy and carries no `next_action`: there
+    is nothing for the operator to repair.
     """
 
 
@@ -74,7 +75,12 @@ class PlanArtifactError(Exception):
 
 
 class PlanFormatV1Error(PlanArtifactError):
-    """The run holds no `plan/` directory at all, so its plan predates this format."""
+    """The run holds no `plan/` directory at all.
+
+    Usually because the run predates this format, but the same verdict covers a `plan/` that
+    was never written or has since been removed — a run directory archived without it, most
+    often. The remedy is the same for all three, which is why they are one class.
+    """
 
     next_action = "Re-plan: re-run `diff` for this sync to produce a current-format plan artifact."
 

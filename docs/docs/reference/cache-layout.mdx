@@ -28,8 +28,14 @@ Override the root with `INFRAHUB_SYNC_CACHE_DIR=/path/to/shared/cache`.
 
 ## The plan artifact (`plan/`)
 
-`diff` and `sync` both write `<run_dir>/plan/`, and it is the **only** input
-`infrahub-sync apply` reads. It holds two files.
+`diff` and `sync` both write `<run_dir>/plan/`, and it is the plan `infrahub-sync apply`
+executes — the operations, and the manifest that binds them to a run, a configuration and a
+set of source snapshots. It holds two files.
+
+It is **not** apply's only input. Verification re-reads the source snapshots under `A/` that
+the manifest names, and the command also needs the sync configuration and access to the
+destination. Archiving `plan/` on its own therefore leaves a plan that refuses to apply: keep
+the whole run directory.
 
 ### `operations.jsonl`
 
@@ -71,8 +77,10 @@ field is not.
 `operations.jsonl` is written **first** and `manifest.json` **last**, each atomically
 through a temporary file and a rename, so neither is ever observed half-written. **The
 manifest's presence is the commit point**: a `plan/` directory with no manifest is a *torn*
-artifact and is refused, while a run directory with no `plan/` at all is a run that predates
-this format — the reader tells the two apart by construction rather than by guessing.
+artifact and is refused, while a run directory with no `plan/` at all has no plan to read —
+usually a run predating this format, but equally one whose plan was never written or has since
+been removed. The reader tells those two verdicts apart by construction rather than by
+guessing, and the second names all three of its causes.
 
 ### Deletes in a plan
 
