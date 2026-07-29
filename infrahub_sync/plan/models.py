@@ -121,13 +121,24 @@ class PlannedOperation(BaseModel):
 
     @model_validator(mode="after")
     def _validate_record(self) -> PlannedOperation:
-        """Enforce the three record-level rules: identifier, payload, identity-in-payload."""
+        """Enforce the record-level rules: identifier, one source per field, payload, identity-in-payload."""
         derived = operation_id(self.action, self.kind, self.identity)
         if self.operation_id != derived:
             msg = (
                 f"Operation identifier {self.operation_id!r} does not match its own triple "
                 f"(action={self.action!r}, kind={self.kind!r}, identity={self.identity!r}), which "
                 f"derives {derived!r}: the record is corrupt."
+            )
+            raise ValueError(msg)
+        # MIN-015: every destination field has exactly one write source. Two references for
+        # one field would make the replace-set write depend on reference order.
+        reference_fields = [reference.field for reference in self.relationships or ()]
+        duplicated = sorted({name for name in reference_fields if reference_fields.count(name) > 1})
+        if duplicated:
+            msg = (
+                f"Operation {self.operation_id!r} on kind {self.kind!r} carries more than one "
+                f"relationship reference for field(s) {duplicated}: which peer set the apply "
+                "writes would depend on reference order, so the record is ambiguous."
             )
             raise ValueError(msg)
         if self.action == "delete":
@@ -138,7 +149,18 @@ class PlannedOperation(BaseModel):
         if self.payload is None:
             msg = f"Operation {self.operation_id!r} is a {self.action} and must carry a payload."
             raise ValueError(msg)
-        referenced_fields = {reference.field for reference in self.relationships or ()}
+        # MIN-015's other half: a field carried by the payload *and* a relationship reference
+        # has two competing write sources — the upsert value and the flush value.
+        referenced_fields = set(reference_fields)
+        doubly_sourced = sorted(referenced_fields & set(self.payload))
+        if doubly_sourced:
+            msg = (
+                f"Operation {self.operation_id!r} on kind {self.kind!r} carries field(s) "
+                f"{doubly_sourced} in both its payload and a relationship reference: the upsert "
+                "value and the relationship write would be two competing sources for one "
+                "destination field, so the record is ambiguous."
+            )
+            raise ValueError(msg)
         unkeyed = sorted(key for key in self.identity if key not in self.payload and key not in referenced_fields)
         if unkeyed:
             msg = (

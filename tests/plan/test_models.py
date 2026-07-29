@@ -311,6 +311,93 @@ def test_an_empty_identity_passes_the_guard_vacuously() -> None:
 
 
 # ======================================================================================
+# MIN-015 — one unambiguous source per field
+# ======================================================================================
+
+
+def test_duplicate_relationship_reference_fields_are_rejected() -> None:
+    """Two references for one field make the replace-set write depend on reference order.
+
+    Which peer set the apply flushes would be whichever reference the loop visits last, so
+    the record is ambiguous and is refused at validation (MIN-015).
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        PlannedOperation(
+            **_operation(
+                kind="OrgTeam",
+                identity={"name": "team-a"},
+                payload={"name": "team-a"},
+                relationships=[
+                    _reference("members", cardinality="many", peers=[{"name": "alice"}]),
+                    _reference("members", cardinality="many", peers=[{"name": "bob"}]),
+                ],
+            )
+        )
+    assert "members" in str(excinfo.value)
+
+
+def test_duplicate_reference_fields_are_rejected_even_when_the_references_are_identical() -> None:
+    """Byte-identical duplicates are still two sources; deduplicating would guess intent."""
+    with pytest.raises(ValidationError):
+        PlannedOperation(
+            **_operation(
+                kind="OrgTeam",
+                identity={"name": "team-a"},
+                payload={"name": "team-a"},
+                relationships=[
+                    _reference("members", cardinality="many", peers=[{"name": "alice"}]),
+                    _reference("members", cardinality="many", peers=[{"name": "alice"}]),
+                ],
+            )
+        )
+
+
+def test_a_field_in_both_payload_and_relationships_is_rejected() -> None:
+    """One field, two competing write sources: the upsert value and the flush value."""
+    with pytest.raises(ValidationError) as excinfo:
+        PlannedOperation(
+            **_operation(
+                kind="LocationRack",
+                identity={"name": "rack-a"},
+                payload={"name": "rack-a", "site": "dc1"},
+                relationships=[_reference("site")],
+            )
+        )
+    assert "site" in str(excinfo.value)
+
+
+def test_a_non_identity_field_in_both_payload_and_relationships_is_rejected_too() -> None:
+    """The dual-source ambiguity does not depend on the field being an identity component."""
+    with pytest.raises(ValidationError) as excinfo:
+        PlannedOperation(
+            **_operation(
+                kind="BuiltinTag",
+                identity={"name": "prod"},
+                payload={"name": "prod", "tags": ["x"]},
+                relationships=[_reference("tags", cardinality="many", peers=[SITE_PEER])],
+            )
+        )
+    assert "tags" in str(excinfo.value)
+
+
+def test_distinct_reference_fields_beside_a_disjoint_payload_stay_accepted() -> None:
+    """The rule refuses duplication, not relationships: the ordinary shape still validates."""
+    identity = {"name": "rack-a", "site": {"peer_kind": "LocationSite", "identity": SITE_PEER}}
+    operation = PlannedOperation(
+        **_operation(
+            kind="LocationRack",
+            identity=identity,
+            payload={"name": "rack-a"},
+            relationships=[
+                _reference("site"),
+                _reference("tags", cardinality="many", peers=[SITE_PEER]),
+            ],
+        )
+    )
+    assert [reference.field for reference in operation.relationships or []] == ["site", "tags"]
+
+
+# ======================================================================================
 # Action vocabulary
 # ======================================================================================
 
