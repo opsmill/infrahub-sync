@@ -1009,8 +1009,8 @@ def _extraction_forbidden() -> Iterator[list[str]]:
     """Fail if the apply path extracts either side or runs the comparison engine (FR-012).
 
     Both halves are recorded **and** raised: raising is what stops a stray call being written
-    into the destination behind the assertion, and the record is what makes the failure
-    legible when the raise is swallowed and re-raised as `OperationApplyFailedError`.
+    into the destination behind the assertion, and the record is what makes the failure legible
+    wherever the raise is caught and re-raised as something else on the way out.
     """
     calls: list[str] = []
 
@@ -1203,7 +1203,11 @@ def test_the_write_class_conformance_matrix(live_plan: LivePlan, write_class: st
     for before_the_write in (False, True):
         window = "before" if before_the_write else "after"
         with (
-            pytest.raises(OperationApplyFailedError),
+            # The injected crash escapes as **itself**: it is outside the engine's operational
+            # boundary, which is what keeps a defect from being reported as a destination
+            # refusal (FIX-011). What this case measures is unaffected — the destination's
+            # state after re-applying, in either crash window.
+            pytest.raises(InjectedCrashError),
             _crash_at(operation.operation_id, before_the_write=before_the_write),
         ):
             _potenda_for_apply(live_plan).apply_plan()
