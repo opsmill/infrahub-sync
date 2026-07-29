@@ -38,7 +38,10 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from pyarrow import ArrowInvalid
+
 from infrahub_sync.plan.checksum import compute_plan_checksum, snapshot_digest_and_row_count
+from infrahub_sync.plan.errors import PlanArtifactUnreadableError
 from infrahub_sync.plan.models import SUPPORTED_FORMAT_VERSIONS, VerificationFailure
 from infrahub_sync.plan.reader import operation_record_lines, stat_or_unreadable, supported_versions_text
 from infrahub_sync.plan.writer import OPERATIONS_FILE_NAME, PLAN_DIR_NAME
@@ -222,9 +225,10 @@ def source_snapshot_failures(*, run_id: str, run_dir: Path, mapping: dict[str, A
     """Evaluate check 4 — the source-snapshot binding (FR-004, FR-010, AD037).
 
     Absent, truncated and mismatched all land on this one check name — the three words
-    SC-004 enumerates — and each failure names the snapshot it is about, so a plan bound to
-    several snapshots reports which one disagreed. The digest is over **logical rows** with
-    `_extract_ts` dropped, not the file's raw bytes (AD037).
+    SC-004 enumerates — as does a snapshot whose bytes are not readable Parquet at all, and
+    each failure names the snapshot it is about, so a plan bound to several snapshots
+    reports which one disagreed. The digest is over **logical rows** with `_extract_ts`
+    dropped, not the file's raw bytes (AD037).
 
     Public because FR-010 puts this check on the **review** path as well as the apply path:
     a run whose recorded snapshot is absent or truncated would otherwise render with
@@ -270,7 +274,31 @@ def source_snapshot_failures(*, run_id: str, run_dir: Path, mapping: dict[str, A
                 )
             )
             continue
-        digest, row_count = snapshot_digest_and_row_count(snapshot_path)
+        try:
+            digest, row_count = snapshot_digest_and_row_count(snapshot_path)
+        except ArrowInvalid:
+            # Byte corruption, not row-level truncation: the file stats fine but its bytes
+            # are not a readable Parquet table. Same check, same remedy as the other three
+            # snapshot conditions (FR-010, AD059).
+            failures.append(
+                _failure(
+                    "source_snapshot",
+                    run_id=run_id,
+                    expected=f"{relative}: {record.get('row_count')} row(s), digest {record.get('digest')}",
+                    found=f"{relative}: bytes that are not a readable Parquet snapshot",
+                    next_action=(
+                        "The source snapshot's bytes are corrupt, so the plan cannot be shown to "
+                        f"still describe it. {RE_PLAN_NEXT_ACTION}"
+                    ),
+                )
+            )
+            continue
+        except OSError as exc:
+            # The stat above succeeded, so this is removed-between-stat-and-open or
+            # stat-allowed/read-denied — unreadable, not absent, with a different remedy
+            # (AD036); it is raised rather than flattened into a failure entry.
+            msg = f"The source snapshot at {str(snapshot_path)!r} exists but could not be read: {exc.strerror or exc}."
+            raise PlanArtifactUnreadableError(msg) from exc
         if digest == record.get("digest") and row_count == record.get("row_count"):
             continue
         failures.append(
@@ -364,9 +392,10 @@ def verify_plan(
         neither value is secret, and the operator's next action. Empty means safe to apply.
 
     Raises:
-        PlanArtifactUnreadableError: a snapshot path exists but could not be examined.
-            Unreadable is a different condition from absent, with a different remedy, so it
-            is not flattened into a failure entry (AD036).
+        PlanArtifactUnreadableError: a snapshot path exists but could not be examined, or
+            could not be read after a successful stat. Unreadable is a different condition
+            from absent, with a different remedy, so it is not flattened into a failure
+            entry (AD036).
     """
     mapping = _manifest_mapping(artifact.manifest_bytes)
     gate = _gate_failure(run_id, mapping)

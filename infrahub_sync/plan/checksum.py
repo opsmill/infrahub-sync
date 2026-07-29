@@ -25,8 +25,11 @@ import hashlib
 from operator import itemgetter
 from typing import TYPE_CHECKING, Any
 
+from pyarrow import ArrowInvalid
+
 from infrahub_sync.cache.parquet_io import read_table
 from infrahub_sync.plan.canonical import canonical_json_bytes
+from infrahub_sync.plan.errors import PlanArtifactUnreadableError
 from infrahub_sync.plan.models import CHECKSUM_EXCLUDED_FIELDS
 
 if TYPE_CHECKING:
@@ -96,7 +99,20 @@ def source_snapshot_records(run_dir: Path) -> list[dict[str, Any]]:
         return []
     records: list[dict[str, Any]] = []
     for path in sorted(side_dir.glob("*.parquet")):
-        digest, row_count = _digest_and_row_count(path)
+        try:
+            digest, row_count = _digest_and_row_count(path)
+        except ArrowInvalid as exc:
+            # A snapshot this run cannot digest cannot be bound to the plan, so the plan
+            # write fails with the taxonomy's message rather than a raw pyarrow traceback
+            # (AD059). Same classification the verifier gives the condition at apply time.
+            msg = (
+                f"The source snapshot at {str(path)!r} could not be digested for the plan "
+                f"manifest: its bytes are not a readable Parquet table ({exc})."
+            )
+            raise PlanArtifactUnreadableError(
+                msg,
+                next_action="Re-run `diff` for this sync to rebuild the snapshot and its plan artifact.",
+            ) from exc
         records.append(
             {
                 "path": path.relative_to(run_dir).as_posix(),

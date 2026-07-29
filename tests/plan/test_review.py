@@ -759,3 +759,32 @@ def test_the_new_process_reads_the_not_computed_disclosure(tmp_path: Path) -> No
     assert reported["summary"]["deletes_not_executed"] == 0
     assert reported["summary"]["total"] == 1
     assert reported["checksum_ok"] is True
+
+
+# ======================================================================================
+# FIX-003 (spec 002) — a byte-corrupt snapshot renders a note, never a traceback
+# ======================================================================================
+
+
+def test_a_review_of_a_run_whose_snapshot_bytes_are_corrupt_notes_it(tmp_path: Path) -> None:
+    """Garbage bytes at the recorded snapshot path are a rendered note (AD031, FIX-003).
+
+    `pyarrow` raises `ArrowInvalid` — not an `OSError` — for a file that is not a Parquet
+    table, so without the verifier's classification this review crashes with a raw
+    traceback instead of rendering. The plan checksum does not cover the snapshot, so
+    `checksum_ok` stays true and the note is the whole signal, as in the absent case above.
+    """
+    directory = _store_with_snapshot(tmp_path)
+    _snapshot_path(directory).write_bytes(b"these bytes are not a Parquet table")
+
+    plan = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID)
+
+    assert plan.checksum_ok is True, "the checksum is intact, so the note is the only signal"
+    assert plan.verification_notes, "a run whose snapshot bytes are corrupt rendered with no note"
+    note = " ".join(plan.verification_notes)
+    assert "A/BuiltinTag.parquet" in note
+    assert "not a readable Parquet snapshot" in note
+    assert "Re-run `diff`" in note
+    # And it is still rendered rather than refused (AD031).
+    assert plan.summary().total == 1
+    assert plan.operations()

@@ -21,12 +21,13 @@ from __future__ import annotations
 
 import shutil
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import pytest
 
 from infrahub_sync.cache.parquet_io import write_resource_side
 from infrahub_sync.plan.checksum import source_snapshot_records
+from infrahub_sync.plan.errors import PlanArtifactUnreadableError
 from infrahub_sync.plan.reader import read_plan_artifact_bytes
 from infrahub_sync.plan.verify import GATED_CHECKS, verify_plan
 from tests.plan.artifact_fixtures import (
@@ -449,3 +450,63 @@ def test_the_write_surface_check_is_not_behind_the_format_version_gate(tmp_path:
     )
 
     assert set(_checks(failures)) == {"format_version", "write_surface"}
+
+
+# ======================================================================================
+# FIX-003 / RIG-07 (spec 002) — snapshot bytes that stat fine but cannot be digested
+# ======================================================================================
+
+
+def test_a_byte_corrupt_snapshot_is_a_classified_source_snapshot_failure(tmp_path: Path) -> None:
+    """Garbage bytes at the manifest-declared snapshot path land on check 4, not a crash.
+
+    `pyarrow` raises `ArrowInvalid` — not an `OSError` — for a file whose bytes are not a
+    Parquet table, so without the classification the verifier raises an undocumented
+    exception instead of returning the refusal (FIX-003).
+    """
+    directory = _verifiable_run(tmp_path)
+    _snapshot_path(directory).write_bytes(b"these bytes are not a Parquet table")
+
+    failures = _verify(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION)
+
+    failure = _failure(failures, "source_snapshot")
+    text = _text(failure)
+    assert "A/BuiltinTag.parquet" in text
+    assert "not a readable Parquet snapshot" in text
+    assert "Re-run `diff`" in failure.next_action
+
+
+def test_a_byte_corrupt_snapshot_still_lets_every_other_failure_be_named(tmp_path: Path) -> None:
+    """Classification, not short-circuit: the evaluate-all disclosure survives (AD036)."""
+    directory = _verifiable_run(tmp_path)
+    _snapshot_path(directory).write_bytes(b"garbage")
+
+    failures = _verify(run_dir=directory, run_id=RUN_ID, config_version="a-different-config-version")
+
+    assert set(_checks(failures)) == {"source_snapshot", "config_version"}
+
+
+def test_a_read_denied_snapshot_raises_the_unreadable_taxonomy_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RIG-07: a read-time `OSError` after a successful stat is unreadable, not absent.
+
+    The snapshot stats fine, then the digest read is denied — removed between stat and
+    open, or stat-allowed/read-denied permissions. That must surface as the taxonomy's
+    `PlanArtifactUnreadableError` naming the path, with its next action, rather than as a
+    raw `PermissionError` (AD036, AD059).
+    """
+    directory = _verifiable_run(tmp_path)
+
+    def _deny(path: str) -> NoReturn:
+        raise PermissionError(13, "Permission denied", path)
+
+    monkeypatch.setattr("infrahub_sync.plan.checksum.read_table", _deny)
+
+    with pytest.raises(PlanArtifactUnreadableError) as raised:
+        _verify(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION)
+
+    message = str(raised.value)
+    assert "BuiltinTag.parquet" in message
+    assert "could not be read" in message
+    assert "Next action:" in message

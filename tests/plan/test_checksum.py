@@ -25,6 +25,7 @@ import pytest
 from infrahub_sync.cache.parquet_io import read_table, write_resource_side
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum, source_snapshot_digest, source_snapshot_records
+from infrahub_sync.plan.errors import PlanArtifactUnreadableError
 from infrahub_sync.plan.models import CHECKSUM_EXCLUDED_FIELDS
 
 if TYPE_CHECKING:
@@ -400,3 +401,29 @@ def test_records_digest_matches_the_per_file_digest(tmp_path: Path) -> None:
     path = _write_side(tmp_path, resource="BuiltinTag", rows=ROWS, source_ids=SOURCE_IDS)
     (record,) = source_snapshot_records(tmp_path)
     assert record["digest"] == source_snapshot_digest(path)
+
+
+# ======================================================================================
+# FIX-003 (spec 002) — plan-write time: a snapshot that cannot be digested
+# ======================================================================================
+
+
+def test_plan_write_refuses_a_corrupt_snapshot_with_the_taxonomy_error(tmp_path: Path) -> None:
+    """A snapshot whose bytes are not Parquet fails the plan write with a named remedy.
+
+    `source_snapshot_records` runs while the artifact is being written; a garbage
+    `A/<resource>.parquet` there would otherwise escape as a raw `ArrowInvalid`
+    traceback from what is supposed to be a designed failure path (AD059).
+    """
+    side = tmp_path / "A"
+    side.mkdir(parents=True)
+    (side / "BuiltinTag.parquet").write_bytes(b"these bytes are not a Parquet table")
+
+    with pytest.raises(PlanArtifactUnreadableError) as raised:
+        source_snapshot_records(tmp_path)
+
+    message = str(raised.value)
+    assert "BuiltinTag.parquet" in message
+    assert "not a readable Parquet table" in message
+    assert "Next action:" in message
+    assert "Re-run `diff`" in message
