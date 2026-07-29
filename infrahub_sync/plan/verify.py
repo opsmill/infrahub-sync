@@ -39,43 +39,30 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from pyarrow import ArrowInvalid
+from pydantic import ValidationError
 
 from infrahub_sync.plan.checksum import compute_plan_checksum, snapshot_digest_and_row_count
 from infrahub_sync.plan.errors import PlanArtifactUnreadableError
-from infrahub_sync.plan.models import SUPPORTED_FORMAT_VERSIONS, VerificationFailure
+from infrahub_sync.plan.models import SUPPORTED_FORMAT_VERSIONS, DestinationBindingRecord, VerificationFailure
 from infrahub_sync.plan.reader import operation_record_lines, stat_or_unreadable, supported_versions_text
 from infrahub_sync.plan.writer import OPERATIONS_FILE_NAME, PLAN_DIR_NAME
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
-    from typing import Literal, TypeAlias
 
+    from infrahub_sync.plan.models import VerificationCheck
     from infrahub_sync.plan.reader import RawPlanArtifact
-
-    # `_failure`'s check vocabulary, mirroring `VerificationFailure.check` so `ty` checks
-    # every construction site. WP-2 (FIX-005 + SIM-07) replaces this local mirror with a
-    # shared `VerificationCheck` alias on the model, typing the field and `GATED_CHECKS`
-    # with it as well.
-    _Check: TypeAlias = Literal[
-        "format_version",
-        "run_binding",
-        "plan_checksum",
-        "source_snapshot",
-        "config_version",
-        "torn_operations",
-        "write_surface",
-    ]
 
 # The checks the format-version gate short-circuits, named in its own message so the
 # operator knows what was and was not looked at (AD053).
-GATED_CHECKS: tuple[str, ...] = ("run_binding", "plan_checksum", "source_snapshot", "config_version")
+GATED_CHECKS: tuple[VerificationCheck, ...] = ("run_binding", "plan_checksum", "source_snapshot", "config_version")
 
 RE_PLAN_NEXT_ACTION = "Re-run `diff` for this sync to rebuild the plan artifact, then apply that run."
 
 
 def _failure(
-    check: _Check,
+    check: VerificationCheck,
     *,
     run_id: str,
     expected: str,
@@ -362,6 +349,59 @@ def _write_surface_failures(run_id: str, write_surface_missing_on: str | None) -
             ),
         )
     ]
+
+
+def destination_binding_failure(
+    *,
+    run_id: str,
+    artifact: RawPlanArtifact,
+    live: DestinationBindingRecord | None,
+) -> VerificationFailure | None:
+    """Compare the manifest's recorded destination against the live one (FIX-005, spec 002).
+
+    The plan records the **effective** destination — endpoint URL and branch as the adapter
+    resolved them, environment variables included — precisely because the config-version
+    digest is blind to that resolution (PD-003/AD041 cover the parsed YAML only). A plan
+    reviewed against one destination must not silently apply to another.
+
+    Evaluated at the apply seam (`PlanApplier`), not inside `verify_plan`: like
+    `write_surface`, its subject is the destination adapter rather than the artifact, but
+    unlike every `verify_plan` check it is also **overridable** — the CLI's
+    `--allow-destination-change` exists for a deliberate cross-environment apply — so it
+    cannot sit behind a gate whose non-empty result is an unconditional refusal.
+
+    Returns `None` — the check is skipped, not passed — when the manifest is absent or
+    unparseable (the format gate owns that verdict), when it predates the field, or when
+    the live adapter exposes no binding to compare against.
+    """
+    mapping = _manifest_mapping(artifact.manifest_bytes)
+    if mapping is None or live is None:
+        return None
+    recorded = mapping.get("destination_binding")
+    if recorded is None:
+        return None
+    try:
+        recorded_binding = DestinationBindingRecord.model_validate(recorded)
+    except ValidationError:
+        return _failure(
+            "destination_binding",
+            run_id=run_id,
+            expected="a destination_binding record with a url and an optional branch",
+            found=repr(recorded),
+        )
+    if recorded_binding == live:
+        return None
+    return _failure(
+        "destination_binding",
+        run_id=run_id,
+        expected=f"url {recorded_binding.url!r}, branch {recorded_binding.branch!r}",
+        found=f"url {live.url!r}, branch {live.branch!r}",
+        next_action=(
+            "The plan was computed against a different destination than this apply would write "
+            "to. Re-run `diff` against this destination to rebuild the plan, or pass "
+            "--allow-destination-change to deliberately apply it across environments."
+        ),
+    )
 
 
 def verify_plan(

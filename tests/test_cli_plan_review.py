@@ -86,7 +86,7 @@ from infrahub_sync.plan.errors import (
     UnserializablePayloadValueError,
     UnsupportedOperationActionError,
 )
-from infrahub_sync.plan.models import ACTIONS, SUPPORTED_FORMAT_VERSIONS, ApplyRecord
+from infrahub_sync.plan.models import ACTIONS, SUPPORTED_FORMAT_VERSIONS, ApplyRecord, DestinationBindingRecord
 from infrahub_sync.plan.reader import parse_plan_artifact
 from infrahub_sync.plan.review import RUN_ID_LISTING_LIMIT
 from infrahub_sync.potenda import Potenda
@@ -1345,6 +1345,11 @@ class RecordingDestination:
     against the protocol and a destination missing either one is refused (AD086).
     """
 
+    # `None` — no captured binding — skips FIX-005's destination comparison, so every case
+    # not about that check behaves exactly as before the field existed; the binding cases
+    # assign a record here.
+    destination_binding: DestinationBindingRecord | None = None
+
     def __init__(self) -> None:
         self.writes: list[str] = []
 
@@ -1613,6 +1618,79 @@ def test_an_apply_refusal_writes_nothing_and_records_failed(
     assert recorded["summary"]["applied_operations"] == []
     assert recorded["summary"]["skipped_delete_operations"] == []
     assert recorded["summary"]["skipped_delete_count"] == 0
+
+
+RECORDED_BINDING = {"url": "http://recorded.example:8000", "branch": "main"}
+LIVE_BINDING = DestinationBindingRecord(url="http://live.example:8000", branch="main")
+
+
+def test_an_apply_to_a_drifted_destination_refuses_with_the_binding_message(
+    tmp_path: Path, destination_double: RecordingDestination, caplog: pytest.LogCaptureFixture
+) -> None:
+    """FIX-005 (spec 002): the plan is bound to its effective destination, and a mismatch refuses.
+
+    The manifest records the resolved endpoint the plan was computed against; the live
+    destination exposes a different one, so the apply refuses before any write, names both
+    values, and names the override — the same operator-facing channel and run-state
+    discipline as every other designed refusal above (AD059, AD062).
+    """
+    _appliable_run(tmp_path, destination_binding=RECORDED_BINDING)
+    destination_double.destination_binding = LIVE_BINDING
+
+    with caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"):
+        result = _run_apply(destination_double)
+
+    assert result.exit_code != 0
+    assert destination_double.writes == []
+    message = _operator_errors(caplog)
+    assert "bound to a different destination" in message
+    assert "http://recorded.example:8000" in message
+    assert "http://live.example:8000" in message
+    assert "--allow-destination-change" in message
+    recorded = _run_json(tmp_path)
+    assert recorded["status"] == "failed"
+    assert recorded["summary"]["applied_operations"] == []
+
+
+def test_allow_destination_change_applies_across_the_mismatch(
+    tmp_path: Path, destination_double: RecordingDestination
+) -> None:
+    """FIX-005's override: an explicit flag for the deliberate cross-environment apply."""
+    _appliable_run(tmp_path, destination_binding=RECORDED_BINDING)
+    destination_double.destination_binding = LIVE_BINDING
+
+    with patch("infrahub_sync.cli.PlanApplier.open_existing", _patched_open_existing(destination_double)):
+        result = runner.invoke(
+            app,
+            [
+                "apply",
+                "--name",
+                SYNC_NAME,
+                "--directory",
+                str(EXAMPLES_DIR),
+                "--run-id",
+                RUN_ID,
+                "--allow-destination-change",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert len(destination_double.writes) == len(APPLY_PLAN)
+    assert _run_json(tmp_path)["status"] == "applied"
+
+
+def test_a_plan_without_a_recorded_binding_applies_to_any_destination(
+    tmp_path: Path, destination_double: RecordingDestination
+) -> None:
+    """FIX-005's absent-field skip: plans older than the field are not refused."""
+    _appliable_run(tmp_path)
+    destination_double.destination_binding = LIVE_BINDING
+
+    result = _run_apply(destination_double)
+
+    assert result.exit_code == 0, result.output
+    assert len(destination_double.writes) == len(APPLY_PLAN)
+    assert _run_json(tmp_path)["status"] == "applied"
 
 
 def test_a_v1_plan_is_refused_before_anything_is_constructed(

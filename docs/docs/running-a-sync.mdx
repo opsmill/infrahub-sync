@@ -236,6 +236,7 @@ destination half-written. Every refusal names its next action.
 | The plan checksum does not match | The artifact changed after it was written, so it is not the plan that was reviewed. Re-run `diff`. |
 | The source snapshot no longer matches | A snapshot the plan was computed against is absent or has changed. Re-run `diff`. |
 | The configuration version does not match | The configuration changed since the plan was derived, so the plan is no longer what this configuration would do. Re-run `diff`. |
+| The plan is bound to a different destination | The live destination endpoint or branch — environment variables included — differs from the one the plan was computed against. Re-run `diff` against this destination, or pass `--allow-destination-change` to deliberately apply the plan across environments. Plans written before this field existed skip the check. |
 | The destination adapter cannot apply a saved plan | The adapter does not implement the planned-write surface. Use `infrahub-sync sync` for that destination instead. |
 | An operation's action is unrecognized | The plan holds an operation this release cannot interpret. It is refused while the artifact is read — before any destination write. |
 

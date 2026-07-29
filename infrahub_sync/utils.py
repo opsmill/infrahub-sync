@@ -14,6 +14,9 @@ from infrahub_sdk import Config
 from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
 from infrahub_sync.cache.paths import run_dir as stored_run_dir
 from infrahub_sync.generator import render_template
+from infrahub_sync.plan.errors import PlanVerificationError
+from infrahub_sync.plan.reader import read_plan_artifact_bytes
+from infrahub_sync.plan.verify import destination_binding_failure
 from infrahub_sync.plugin_loader import PluginLoader, PluginLoadError
 from infrahub_sync.potenda import Potenda
 
@@ -377,9 +380,53 @@ class PlanApplier:
         )
         return cls(engine, run_dir=rdir, run_id=run_id)
 
-    def apply_plan(self, *, config_version: str | None = None) -> ApplyRecord:
-        """Apply the stored plan — the engine's contract, unchanged; writes no run file (AD069)."""
+    def apply_plan(self, *, config_version: str | None = None, allow_destination_change: bool = False) -> ApplyRecord:
+        """Apply the stored plan — the engine's contract, unchanged; writes no run file (AD069).
+
+        Before delegating, the destination-binding precheck (FIX-005, spec 002) compares
+        the manifest's recorded destination against the live adapter's and refuses on a
+        mismatch; `allow_destination_change` turns that refusal into a logged warning for
+        a deliberate cross-environment apply. Plans without the recorded field, and
+        destinations that expose no binding, skip the check.
+
+        Raises:
+            PlanVerificationError: the plan was computed against a different destination
+                and `allow_destination_change` is false; nothing was written.
+        """
+        self._require_recorded_destination(allow_destination_change=allow_destination_change)
         return self.engine.apply_plan(config_version=config_version)
+
+    def _require_recorded_destination(self, *, allow_destination_change: bool) -> None:
+        """The FIX-005 apply-time guard, on the seam that owns apply-specific assembly.
+
+        Here rather than inside `Potenda.apply_plan` because the check's subject is the
+        destination this seam constructed, and its refusal is the one pre-apply verdict an
+        operator may deliberately override. The manifest read below is advisory only — the
+        engine still verifies and applies its own single read (DBR-006), so a swap between
+        the two reads changes nothing about what gets checksum-verified and applied.
+        """
+        failure = destination_binding_failure(
+            run_id=self.run_id,
+            artifact=read_plan_artifact_bytes(self.run_dir),
+            live=getattr(self.engine.destination, "destination_binding", None),
+        )
+        if failure is None:
+            return
+        if allow_destination_change:
+            logger.warning(
+                "Applying run %s to a different destination than it was planned against: "
+                "recorded %s; live %s (--allow-destination-change).",
+                self.run_id,
+                failure.expected,
+                failure.found,
+            )
+            return
+        msg = (
+            f"The plan of run {self.run_id!r} is bound to a different destination than this "
+            f"apply would write to: expected {failure.expected}; found {failure.found}. "
+            f"Nothing was written."
+        )
+        raise PlanVerificationError(msg, next_action=failure.next_action)
 
 
 def get_infrahub_config(settings: dict[str, str | None], branch: str | None) -> Config:

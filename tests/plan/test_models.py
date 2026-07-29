@@ -446,6 +446,9 @@ PLAN_MANIFEST_FIELDS = {
     "operations_count",
     "delete_operations_computed",
     "plan_checksum",
+    # Additive, FIX-005 (spec 002): the effective destination the plan is bound to. An
+    # identity to compare at apply time, not a grouping of operations into write units.
+    "destination_binding",
 }
 
 # Vocabulary a grouping field would plausibly be named with. Belt and braces beside the
@@ -547,8 +550,12 @@ def test_planned_operation_rejects_unknown_fields() -> None:
 
 
 def test_plan_manifest_still_requires_its_declared_fields() -> None:
-    """`extra="allow"` does not make the declared fields optional."""
-    for missing in PLAN_MANIFEST_FIELDS:
+    """`extra="allow"` does not make the declared fields optional.
+
+    `destination_binding` is the one exception by design: it is FIX-005's **additive**
+    field, and manifests written before it existed must keep validating (spec 002).
+    """
+    for missing in PLAN_MANIFEST_FIELDS - {"destination_binding"}:
         record = _manifest()
         del record[missing]
         with pytest.raises(ValidationError):

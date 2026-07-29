@@ -608,6 +608,14 @@ def apply_cmd(
     directory: str = typer.Option(default=None, help="Base directory to search for sync configurations"),
     run_id: str = typer.Option(..., help="Cache run id produced by a previous `diff`."),
     branch: str = typer.Option(default=None, help="Branch to use for the apply."),
+    allow_destination_change: bool = typer.Option(
+        default=False,
+        help=(
+            "Apply even though the live destination endpoint or branch differs from the one "
+            "the plan was computed against. Without it, a destination mismatch refuses before "
+            "any write."
+        ),
+    ),
 ) -> None:
     """Apply a previously cached plan against the destination — no source extraction."""
     if sum([bool(name), bool(config_file)]) != 1:
@@ -645,7 +653,7 @@ def apply_cmd(
         # (`infrahub_sync/cache/sidecars.py:88-90`) and would otherwise destroy the record
         # with the empty summary built above.
         try:
-            record = applier.apply_plan()
+            record = applier.apply_plan(allow_destination_change=allow_destination_change)
             run_file.summary.update(record.as_summary_keys())
             run_file.status = "applied"
         except OperationApplyFailedError as exc:

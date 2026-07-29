@@ -17,9 +17,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
+from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from infrahub_sync.plan.config_version import CONFIG_VERSION_PATTERN
 from infrahub_sync.plan.errors import UnsupportedOperationActionError
@@ -160,6 +161,40 @@ class SourceSnapshotRecord(BaseModel):
     row_count: int = Field(ge=0)
 
 
+def _normalized_destination_url(url: str) -> str:
+    """Normalize a destination endpoint URL so equivalent addresses compare equal.
+
+    Scheme and host are lowercased and trailing path slashes dropped, so
+    `HTTP://Infrahub:8000/` and `http://infrahub:8000` name the same destination and do
+    not false-refuse an apply. Userinfo is dropped outright: the record must never carry
+    a credential, however the endpoint was spelled (FIX-005, spec 002).
+    """
+    parts = urlsplit(url.strip())
+    host = (parts.hostname or "").lower()
+    netloc = host if parts.port is None else f"{host}:{parts.port}"
+    return urlunsplit((parts.scheme.lower(), netloc, parts.path.rstrip("/"), parts.query, parts.fragment))
+
+
+class DestinationBindingRecord(BaseModel):
+    """The effective destination identity a plan was computed against (FIX-005, spec 002).
+
+    The **resolved** endpoint URL and branch — environment variables already applied over
+    settings, exactly what the destination adapter connects with — and never the token.
+    The URL is normalized on construction, so a record built from a manifest and one built
+    from a live adapter compare equal whenever they name the same destination.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str
+    branch: str | None = None
+
+    @field_validator("url")
+    @classmethod
+    def _normalize_url(cls, value: str) -> str:
+        return _normalized_destination_url(value)
+
+
 class PlanManifest(BaseModel):
     """The artifact's header, and the format contract (FR-027).
 
@@ -177,6 +212,22 @@ class PlanManifest(BaseModel):
     operations_count: int = Field(ge=0)
     delete_operations_computed: bool
     plan_checksum: str
+    # Additive (FIX-005, spec 002): manifests written before this field exists carry no
+    # binding, and the apply-time destination comparison skips them.
+    destination_binding: DestinationBindingRecord | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize_without_absent_binding(self, handler: Any) -> dict[str, Any]:
+        """Serialize an absent binding as **absent**, never as `null`.
+
+        The writer omits the field when there is no binding — the exact pre-FIX-005 bytes —
+        so a manifest read back and re-serialized must not grow a `null` the file never
+        carried: the model's rendering stays byte-faithful to the artifact.
+        """
+        data: dict[str, Any] = handler(self)
+        if data.get("destination_binding") is None:
+            data.pop("destination_binding", None)
+        return data
 
 
 class PlanSummary(BaseModel):
@@ -249,20 +300,28 @@ class ApplyRecord:
         }
 
 
+# The pre-apply check vocabulary, typed once so every construction site — the verifier's
+# failure builder, `GATED_CHECKS`, and any new check — is checked by `ty` rather than
+# failing at runtime on a misspelled name (SIM-07, spec 002). The serialized values are
+# unchanged: each member is the exact string the check has always carried.
+VerificationCheck: TypeAlias = Literal[
+    "format_version",
+    "run_binding",
+    "plan_checksum",
+    "source_snapshot",
+    "config_version",
+    "torn_operations",
+    "write_surface",
+    "destination_binding",
+]
+
+
 class VerificationFailure(BaseModel):
     """One failed pre-apply check. The apply refuses when the list is non-empty (FR-009)."""
 
     model_config = ConfigDict(extra="forbid")
 
-    check: Literal[
-        "format_version",
-        "run_binding",
-        "plan_checksum",
-        "source_snapshot",
-        "config_version",
-        "torn_operations",
-        "write_surface",
-    ]
+    check: VerificationCheck
     run_id: str
     expected: str | None = None
     found: str | None = None

@@ -30,7 +30,7 @@ from infrahub_sync.plan.models import PLAN_FORMAT_VERSION, PlanManifest
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from infrahub_sync.plan.models import PlannedOperation, SourceSnapshotRecord
+    from infrahub_sync.plan.models import DestinationBindingRecord, PlannedOperation, SourceSnapshotRecord
 
 # The artifact's directory and its two files, in the order they are written.
 PLAN_DIR_NAME = "plan"
@@ -126,12 +126,18 @@ def write_plan_artifact(
     source_snapshot: Sequence[SourceSnapshotRecord],
     deletes_computed: bool,
     operations: Sequence[PlannedOperation],
+    destination_binding: DestinationBindingRecord | None = None,
 ) -> PlanManifest:
     """Write `<run_dir>/plan/` and return the manifest that was written.
 
     Operations are ordered by `(tier, operation_id)` and their identifiers asserted unique;
     `operations.jsonl` is written first and `manifest.json` last, each atomically. The
     returned `PlanManifest` is the one on disk, `plan_checksum` included.
+
+    `destination_binding` is the resolved destination identity the plan is bound to —
+    endpoint URL and branch, never the token (FIX-005, spec 002). It is additive: `None`
+    (a destination that exposes none) writes a manifest without the field, exactly the
+    pre-FIX-005 shape, and the apply-time comparison skips such plans.
 
     Raises:
         DuplicateOperationIdError: two operations share an operation identifier (FR-021).
@@ -154,6 +160,9 @@ def write_plan_artifact(
         "operations_count": len(ordered),
         "delete_operations_computed": deletes_computed,
     }
+    if destination_binding is not None:
+        # Before the checksum below, so the recorded binding is covered by it.
+        body["destination_binding"] = destination_binding.model_dump()
     body["plan_checksum"] = compute_plan_checksum(body, operations_bytes)
     manifest = PlanManifest.model_validate(body)
 

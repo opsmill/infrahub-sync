@@ -37,8 +37,23 @@ from infrahub_sync.plan.errors import (
     UnkeyedWriteRefusedError,
 )
 from infrahub_sync.plan.identity import canonical_identity
+from infrahub_sync.plan.models import DestinationBindingRecord
 
 logger = logging.getLogger(__name__)
+
+
+def resolved_endpoint(settings: Mapping[str, Any], branch: str | None) -> tuple[str | None, str | None]:
+    """The effective `(url, branch)` this adapter connects with — env vars before settings.
+
+    One resolution for both consumers: the SDK client's construction and the plan's
+    destination binding (FIX-005, spec 002). The environment-over-settings precedence is
+    the whole point of recording the *effective* values — the config-version digest covers
+    the parsed YAML only, and the repo's own guidance keeps credentials and addresses in
+    environment variables, exactly where that digest is blind.
+    """
+    url = os.environ.get("INFRAHUB_ADDRESS") or os.environ.get("INFRAHUB_URL") or settings.get("url")
+    return url, settings.get("branch") or branch
+
 
 # GraphQL filter kwarg for timestamp-based incremental queries.
 # Verified against a live Infrahub via __type introspection — every node
@@ -693,14 +708,19 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         self.config = config
 
         settings = adapter.settings or {}
-        infrahub_url = os.environ.get("INFRAHUB_ADDRESS") or os.environ.get("INFRAHUB_URL") or settings.get("url")
+        infrahub_url, infrahub_branch = resolved_endpoint(settings, branch)
         infrahub_token = os.environ.get("INFRAHUB_API_TOKEN") or settings.get("token")
-        infrahub_branch = settings.get("branch") or branch
         verify_ssl = settings.get("verify_ssl")
 
         if not infrahub_url or not infrahub_token:
             msg = "Both url and token must be specified!"
             raise ValueError(msg)
+
+        # The effective destination identity a plan of this adapter is bound to — the
+        # resolved URL and branch, never the token (FIX-005, spec 002). The branch falls
+        # back to "main" because that is the SDK's `default_branch` when none is set, so
+        # the record names the branch actually written to.
+        self.destination_binding = DestinationBindingRecord(url=infrahub_url, branch=infrahub_branch or "main")
 
         sdk_config: dict[str, Any] = {"timeout": 60, "api_token": infrahub_token}
         if infrahub_branch:

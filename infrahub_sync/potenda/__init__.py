@@ -464,6 +464,9 @@ class Potenda:
             source_snapshot=[SourceSnapshotRecord(**record) for record in source_snapshot_records(self.run_dir)],
             deletes_computed=deletes_computed,
             operations=operations,
+            # FIX-005 (spec 002): the resolved destination identity, when the adapter
+            # captured one; `None` writes the pre-FIX-005 manifest shape.
+            destination_binding=getattr(self.destination, "destination_binding", None),
         )
         logger.info(
             "Plan artifact: wrote %d operation(s) to %s (deletes computed: %s)",
