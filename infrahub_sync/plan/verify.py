@@ -46,14 +46,45 @@ from infrahub_sync.plan.writer import OPERATIONS_FILE_NAME, PLAN_DIR_NAME
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
+    from typing import Literal, TypeAlias
 
     from infrahub_sync.plan.reader import RawPlanArtifact
+
+    # `_failure`'s check vocabulary, mirroring `VerificationFailure.check` so `ty` checks
+    # every construction site. WP-2 (FIX-005 + SIM-07) replaces this local mirror with a
+    # shared `VerificationCheck` alias on the model, typing the field and `GATED_CHECKS`
+    # with it as well.
+    _Check: TypeAlias = Literal[
+        "format_version",
+        "run_binding",
+        "plan_checksum",
+        "source_snapshot",
+        "config_version",
+        "torn_operations",
+        "write_surface",
+    ]
 
 # The checks the format-version gate short-circuits, named in its own message so the
 # operator knows what was and was not looked at (AD053).
 GATED_CHECKS: tuple[str, ...] = ("run_binding", "plan_checksum", "source_snapshot", "config_version")
 
 RE_PLAN_NEXT_ACTION = "Re-run `diff` for this sync to rebuild the plan artifact, then apply that run."
+
+
+def _failure(
+    check: _Check,
+    *,
+    run_id: str,
+    expected: str,
+    found: str,
+    next_action: str = RE_PLAN_NEXT_ACTION,
+) -> VerificationFailure:
+    """Build one failed check; AD059's re-plan instruction is the default next action.
+
+    Every site names its check, the refused run, and expected versus found; most share the
+    re-plan next action, so it is the default rather than restated.
+    """
+    return VerificationFailure(check=check, run_id=run_id, expected=expected, found=found, next_action=next_action)
 
 
 def _manifest_mapping(manifest_bytes: bytes | None) -> dict[str, Any] | None:
@@ -80,8 +111,8 @@ def _gate_failure(run_id: str, mapping: dict[str, Any] | None) -> VerificationFa
         if declared in SUPPORTED_FORMAT_VERSIONS:
             return None
         found = "no 'format_version' field" if "format_version" not in mapping else repr(declared)
-    return VerificationFailure(
-        check="format_version",
+    return _failure(
+        "format_version",
         run_id=run_id,
         # Worded as a sentence rather than as the bare version list, because this failure is
         # what an operator reads when an artifact a newer release wrote reaches this one: it
@@ -109,8 +140,8 @@ def _run_binding_failures(run_id: str, mapping: dict[str, Any]) -> list[Verifica
     if recorded == run_id:
         return []
     return [
-        VerificationFailure(
-            check="run_binding",
+        _failure(
+            "run_binding",
             run_id=run_id,
             expected=run_id,
             found=repr(recorded),
@@ -133,23 +164,21 @@ def _operations_failures(run_id: str, artifact: RawPlanArtifact, mapping: dict[s
     operations_bytes = artifact.operations_bytes
     if operations_bytes is None:
         return [
-            VerificationFailure(
-                check="torn_operations",
+            _failure(
+                "torn_operations",
                 run_id=run_id,
                 expected=f"{recorded_count} operation line(s) at {operations_path}",
                 found="no operations file",
-                next_action=RE_PLAN_NEXT_ACTION,
             )
         ]
     line_count = len(operation_record_lines(operations_bytes))
     if line_count != recorded_count:
         return [
-            VerificationFailure(
-                check="torn_operations",
+            _failure(
+                "torn_operations",
                 run_id=run_id,
                 expected=f"{recorded_count} operation line(s)",
                 found=f"{line_count} operation line(s)",
-                next_action=RE_PLAN_NEXT_ACTION,
             )
         ]
 
@@ -177,8 +206,8 @@ def plan_checksum_failure(
     recorded_checksum = manifest_mapping.get("plan_checksum")
     if recomputed == recorded_checksum:
         return None
-    return VerificationFailure(
-        check="plan_checksum",
+    return _failure(
+        "plan_checksum",
         run_id=run_id,
         expected=str(recorded_checksum),
         found=recomputed,
@@ -206,24 +235,22 @@ def source_snapshot_failures(*, run_id: str, run_dir: Path, mapping: dict[str, A
     recorded = mapping.get("source_snapshot")
     if not isinstance(recorded, list):
         return [
-            VerificationFailure(
-                check="source_snapshot",
+            _failure(
+                "source_snapshot",
                 run_id=run_id,
                 expected="a list of recorded source snapshots",
                 found=f"a {type(recorded).__name__}",
-                next_action=RE_PLAN_NEXT_ACTION,
             )
         ]
     failures: list[VerificationFailure] = []
     for record in recorded:
         if not isinstance(record, dict):
             failures.append(
-                VerificationFailure(
-                    check="source_snapshot",
+                _failure(
+                    "source_snapshot",
                     run_id=run_id,
                     expected="a recorded snapshot object",
                     found=f"a {type(record).__name__}",
-                    next_action=RE_PLAN_NEXT_ACTION,
                 )
             )
             continue
@@ -231,8 +258,8 @@ def source_snapshot_failures(*, run_id: str, run_dir: Path, mapping: dict[str, A
         snapshot_path = run_dir / relative
         if stat_or_unreadable(snapshot_path, description="source snapshot") is None:
             failures.append(
-                VerificationFailure(
-                    check="source_snapshot",
+                _failure(
+                    "source_snapshot",
                     run_id=run_id,
                     expected=f"{relative}: {record.get('row_count')} row(s), digest {record.get('digest')}",
                     found=f"{relative}: absent",
@@ -247,8 +274,8 @@ def source_snapshot_failures(*, run_id: str, run_dir: Path, mapping: dict[str, A
         if digest == record.get("digest") and row_count == record.get("row_count"):
             continue
         failures.append(
-            VerificationFailure(
-                check="source_snapshot",
+            _failure(
+                "source_snapshot",
                 run_id=run_id,
                 expected=f"{relative}: {record.get('row_count')} row(s), digest {record.get('digest')}",
                 found=f"{relative}: {row_count} row(s), digest {digest}",
@@ -272,8 +299,8 @@ def _config_version_failures(run_id: str, mapping: dict[str, Any], config_versio
     if recorded == config_version:
         return []
     return [
-        VerificationFailure(
-            check="config_version",
+        _failure(
+            "config_version",
             run_id=run_id,
             expected=str(recorded),
             found=config_version,
@@ -295,8 +322,8 @@ def _write_surface_failures(run_id: str, write_surface_missing_on: str | None) -
     if write_surface_missing_on is None:
         return []
     return [
-        VerificationFailure(
-            check="write_surface",
+        _failure(
+            "write_surface",
             run_id=run_id,
             expected="a destination adapter that implements the planned-write surface",
             found=f"adapter {write_surface_missing_on!r} does not implement it",
