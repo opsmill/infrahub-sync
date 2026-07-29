@@ -85,11 +85,23 @@ def canonical_json_bytes(value: Any, *, kind: str | None = None, field: str | No
     passing an already-normalized value is safe — and there is deliberately no `default=`
     hook, so an unencodable type raises `UnserializablePayloadValueError` rather than
     being stringified behind the caller's back.
+
+    `allow_nan=False` for the same reason (MIN-001): `NaN` and `Infinity` pass the type
+    table as floats, but the default `allow_nan=True` would emit their JavaScript literals
+    — invalid JSON — into a file the contract calls canonical.
     """
-    text = json.dumps(
-        canonical_value(value, kind=kind, field=field),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
+    try:
+        text = json.dumps(
+            canonical_value(value, kind=kind, field=field),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    except ValueError as exc:
+        msg = (
+            f"Cannot canonically encode a non-finite float ({_describe(kind, field)}): NaN and "
+            "Infinity have no JSON encoding."
+        )
+        raise UnserializablePayloadValueError(msg) from exc
     return text.encode("utf-8")

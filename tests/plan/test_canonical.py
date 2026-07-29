@@ -227,6 +227,33 @@ def test_failure_inside_a_list_names_the_index() -> None:
     assert "tags[1]" in message
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(float("nan"), id="NaN"),
+        pytest.param(float("inf"), id="Infinity"),
+        pytest.param(float("-inf"), id="-Infinity"),
+    ],
+)
+def test_a_non_finite_float_is_refused_rather_than_encoded(value: float) -> None:
+    """MIN-001: `NaN`/`Infinity` pass the type table as floats, but have no JSON encoding.
+
+    `json.dumps`'s default `allow_nan=True` would emit the literal `NaN`/`Infinity` —
+    invalid JSON — into a file the contract calls canonical, so the encoder refuses with
+    the same named error as any other unencodable value.
+    """
+    with pytest.raises(UnserializablePayloadValueError):
+        canonical_json_bytes({"metric": value})
+
+
+def test_a_nested_non_finite_float_is_refused_too() -> None:
+    """The refusal is the encoder's, so depth does not matter."""
+    with pytest.raises(UnserializablePayloadValueError) as excinfo:
+        canonical_json_bytes({"metrics": [1.0, float("nan")]}, kind="DcimDevice")
+    assert "DcimDevice" in str(excinfo.value)
+    assert excinfo.value.next_action
+
+
 def test_non_string_mapping_key_raises() -> None:
     """A non-string object key has no deterministic canonical encoding."""
     with pytest.raises(UnserializablePayloadValueError) as excinfo:
