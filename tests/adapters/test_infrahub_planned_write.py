@@ -808,6 +808,40 @@ def test_a_peer_set_the_destination_already_holds_is_flushed_unchanged() -> None
     assert issued_reads(client) == []
 
 
+def test_the_flush_retains_the_peer_lineage_metadata_the_upsert_carried() -> None:
+    """MIN-010: planned-apply-managed peers keep their lineage metadata through the flush.
+
+    The upsert's create payload renders every cardinality-many peer with the adapter's
+    `source`/`owner`/`is_protected` metadata (`generate_payload_create` with
+    `is_protected=True`, lineage parity with the live `sync` path). The old
+    fetch-and-reconcile flush re-rendered peers as bare `{id: ...}`, so kinds with
+    cardinality-many relationships lost that metadata on exactly the write that stuck —
+    only on the planned-apply path. The FIX-001 simplification renders the create payload's
+    own managers, so the metadata survives; this pins it.
+    """
+    client = RecordingClient()
+    adapter = make_adapter(client, source="source-account-1", owner="owner-account-1")
+    peers = PeerResolver(adapter)
+    peers.remember(TAG_KIND, {"name": "tag-b"}, "tag-id-2")
+
+    adapter.apply_planned_operation(operation=team_operation(["tag-b"]), peers=peers)
+
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"]
+    for role, (_, query) in zip(("upsert", "flush"), client.mutations):
+        members_block = re.search(r"members:\s*\[(.*?)\]", query, flags=re.DOTALL)
+        assert members_block is not None, f"The {role} must render the `members` peer list:\n{query}"
+        rendered = members_block.group(1)
+        assert "_relation__is_protected: true" in rendered, (
+            f"The {role} must carry the peer's protection flag (MIN-010). Rendered:\n{query}"
+        )
+        assert '_relation__source: "source-account-1"' in rendered, (
+            f"The {role} must carry the peer's source attribution (MIN-010). Rendered:\n{query}"
+        )
+        assert '_relation__owner: "owner-account-1"' in rendered, (
+            f"The {role} must carry the peer's owner attribution (MIN-010). Rendered:\n{query}"
+        )
+
+
 def test_one_flush_is_issued_per_operation_not_one_per_relationship() -> None:
     """V40: the flush follows the whole reconciliation loop, once.
 
