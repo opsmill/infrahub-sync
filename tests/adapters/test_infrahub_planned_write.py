@@ -981,6 +981,27 @@ def test_the_resolver_never_reads_the_client_store() -> None:
     assert len(client.resolver_queries) == 1
 
 
+def test_an_unknown_peer_kind_is_refused_loudly_before_any_destination_query() -> None:
+    """MIN-012: a peer kind the destination schema does not declare raises, like the operation path.
+
+    `self._adapter.schema` is a plain mapping, so `.get()` on an unknown kind returns `None` —
+    and `getattr(None, "human_friendly_id", ...)` reads as "no human-friendly ID", silently
+    degrading the resolver to the scalar fallback and querying a kind that does not exist.
+    The operation path raises before writing an unknown kind; resolving a peer against one is
+    the same condition and must be as loud.
+    """
+    client = RecordingClient()
+    client.filter_results = [[make_node(client, SITE_KIND, "site-id-1")]]
+    adapter = make_adapter(client)
+    resolver = PeerResolver(adapter)
+
+    with pytest.raises(ValueError, match="declares no kind 'TestNowhere'") as excinfo:
+        resolver.resolve(peer_kind="TestNowhere", identity={"name": "site-a"}, referring_operation_id="op_0000")
+
+    assert "re-plan" in str(excinfo.value), "The refusal must tell the operator what to do next."
+    assert client.resolver_queries == [], "No destination query may be issued for a kind the schema lacks."
+
+
 # ---------------------------------------------------------------------------------------
 # T053 — SC-016's local half
 # ---------------------------------------------------------------------------------------
