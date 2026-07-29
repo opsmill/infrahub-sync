@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from diffsync.enum import DiffSyncFlags
 from tqdm import tqdm
@@ -43,11 +43,6 @@ def _plan_refusal(failures: Sequence[VerificationFailure], *, run_id: str) -> Pl
     One refusal for the whole gate rather than one per check, so an operator learns
     everything that is wrong from a single attempt (AD036), and each entry carries its own
     next action (AD059).
-
-    Returned rather than raised so a caller that already knows the gate cannot come back
-    clean — the missing-write-surface branch of `apply_plan`, whose failure list contains that
-    failure by construction — can `raise` it directly instead of calling a helper that only
-    *might* raise.
     """
     detail = "\n".join(
         f"  - {failure.check}: expected {failure.expected}, found {failure.found}. {failure.next_action}"
@@ -58,13 +53,6 @@ def _plan_refusal(failures: Sequence[VerificationFailure], *, run_id: str) -> Pl
         f"failed and nothing was written to the destination.\n{detail}"
     )
     return PlanVerificationError(msg)
-
-
-def _refuse_unverified_plan(failures: Sequence[VerificationFailure], *, run_id: str) -> None:
-    """Raise `_plan_refusal` when any pre-apply check failed, and return quietly otherwise."""
-    if not failures:
-        return
-    raise _plan_refusal(failures, run_id=run_id)
 
 
 class Potenda:
@@ -591,37 +579,27 @@ class Potenda:
         # the gate and the writes (DBR-006, DBA-004).
         raw = read_plan_artifact_bytes(self.run_dir)
         destination = self.destination
-        if not isinstance(destination, PlannedWriteDestination):
-            # FR-023's refusal, inside the same pre-write gate as the five verification checks
-            # so one attempt tells the operator everything that is wrong (AD036). The
-            # adapter's **name** goes in, not a boolean: the failure this drives names the
-            # adapter, which a boolean cannot supply (AD058). The refusal is raised from here
-            # rather than routed through the shared helper because this gate cannot come back
-            # clean — the missing surface is itself one of the failures it is handed.
-            #
-            # `isinstance` against a `runtime_checkable` protocol verifies member **presence**,
-            # not signatures, so against a duck-typed destination this refusal is exactly as
-            # strong as the `hasattr` gate it replaced and no stronger (AD086). What the
-            # protocol fixes is static: the dispatch and the resolver below are both checked
-            # by `ty`, with no `getattr` and no cast to a concrete adapter.
-            raise _plan_refusal(
-                verify_plan(
-                    artifact=raw,
-                    run_id=run_id,
-                    config_version=comparison_version,
-                    write_surface_missing_on=type(destination).__name__,
-                ),
-                run_id=run_id,
-            )
-        _refuse_unverified_plan(
-            verify_plan(
-                artifact=raw,
-                run_id=run_id,
-                config_version=comparison_version,
-                write_surface_missing_on=None,
-            ),
+        # FR-023's write-surface check joins the same pre-write gate as the five verification
+        # checks, so one attempt tells the operator everything that is wrong (AD036). The
+        # adapter's **name** goes in, not a boolean: the failure it drives names the adapter,
+        # which a boolean cannot supply (AD058). `isinstance` against the `runtime_checkable`
+        # protocol verifies member **presence**, not signatures — against a duck-typed
+        # destination it is exactly as strong as the `hasattr` gate it replaced and no
+        # stronger (AD086); what the protocol fixes is static, in the dispatch and resolver
+        # below.
+        failures = verify_plan(
+            artifact=raw,
             run_id=run_id,
+            config_version=comparison_version,
+            write_surface_missing_on=(
+                None if isinstance(destination, PlannedWriteDestination) else type(destination).__name__
+            ),
         )
+        if failures:
+            raise _plan_refusal(failures, run_id=run_id)
+        # The gate evaluated the write-surface check, so an empty failure list proves the
+        # surface is present — the cast narrows for the type checker; it is not a second gate.
+        destination = cast("PlannedWriteDestination", destination)
 
         # Parse after the gate and before the loop — the same bytes the gate verified.
         # Everything the gate can see is already reported; what remains for the parser is
