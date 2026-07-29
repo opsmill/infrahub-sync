@@ -43,7 +43,12 @@ from pydantic import ValidationError
 
 from infrahub_sync.plan.checksum import compute_plan_checksum, snapshot_digest_and_row_count
 from infrahub_sync.plan.errors import PlanArtifactUnreadableError
-from infrahub_sync.plan.models import SUPPORTED_FORMAT_VERSIONS, DestinationBindingRecord, VerificationFailure
+from infrahub_sync.plan.models import (
+    SUPPORTED_FORMAT_VERSIONS,
+    DestinationBindingRecord,
+    VerificationFailure,
+    require_run_relative_path,
+)
 from infrahub_sync.plan.reader import operation_record_lines, stat_or_unreadable, supported_versions_text
 from infrahub_sync.plan.writer import OPERATIONS_FILE_NAME, PLAN_DIR_NAME
 
@@ -248,7 +253,25 @@ def source_snapshot_failures(*, run_id: str, run_dir: Path, mapping: dict[str, A
                 )
             )
             continue
-        relative = str(record.get("path"))
+        # MIN-003: the check reads the raw manifest mapping, so the model's run-relative
+        # rule is mirrored here — a `..` segment or an absolute path would send the digest
+        # below to a file outside the run directory, and a record with no `path` at all
+        # used to be probed at `<run_dir>/None`.
+        raw_path = record.get("path")
+        try:
+            relative = require_run_relative_path(raw_path) if isinstance(raw_path, str) else None
+        except ValueError:
+            relative = None
+        if relative is None:
+            failures.append(
+                _failure(
+                    "source_snapshot",
+                    run_id=run_id,
+                    expected="a run-relative snapshot path with no absolute, '.' or '..' segments",
+                    found=repr(raw_path),
+                )
+            )
+            continue
         snapshot_path = run_dir / relative
         if stat_or_unreadable(snapshot_path, description="source snapshot") is None:
             failures.append(

@@ -407,6 +407,69 @@ def test_all_four_gated_checks_can_fail_in_one_call(tmp_path: Path) -> None:
 
 
 # ======================================================================================
+# MIN-003 — a manifest-supplied snapshot path is never joined outside the run directory
+# ======================================================================================
+
+
+def test_a_snapshot_path_that_escapes_the_run_directory_is_refused_not_followed(tmp_path: Path) -> None:
+    """A traversal path pointing at a real, digest-matching file outside the run dir.
+
+    The snapshot outside the run directory is genuine and its recorded digest agrees, so a
+    verifier that followed the join would return an empty failure list — vouching for a
+    binding to a file the run directory does not contain. The refusal has to come from the
+    path itself.
+    """
+    directory = tmp_path / RUN_ID
+    directory.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside-the-run"
+    outside.mkdir(parents=True, exist_ok=True)
+    _write_snapshot(outside, SNAPSHOT_ROWS)
+    records = source_snapshot_records(outside)
+    records[0]["path"] = f"../outside-the-run/{records[0]['path']}"
+    write_artifact(directory, [tamperable_operation()], source_snapshot=records)
+
+    failures = _verify(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION)
+
+    failure = _failure(failures, "source_snapshot")
+    assert "run-relative" in _text(failure)
+    assert "../outside-the-run/A/BuiltinTag.parquet" in _text(failure)
+
+
+def test_an_absolute_snapshot_path_is_refused_not_followed(tmp_path: Path) -> None:
+    """Same rule, other escape shape: an absolute path never reaches the filesystem."""
+    directory = tmp_path / RUN_ID
+    directory.mkdir(parents=True, exist_ok=True)
+    write_artifact(
+        directory,
+        [tamperable_operation()],
+        source_snapshot=[{"path": "/etc/passwd", "digest": "d", "row_count": 0}],
+    )
+
+    failures = _verify(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION)
+
+    failure = _failure(failures, "source_snapshot")
+    assert "run-relative" in _text(failure)
+    assert "/etc/passwd" in _text(failure)
+
+
+def test_a_snapshot_record_missing_its_path_is_a_failure_about_the_path_not_the_literal_none(tmp_path: Path) -> None:
+    """A record with no `path` used to be probed at `<run_dir>/None` and reported as `None: absent`."""
+    directory = tmp_path / RUN_ID
+    directory.mkdir(parents=True, exist_ok=True)
+    write_artifact(
+        directory,
+        [tamperable_operation()],
+        source_snapshot=[{"digest": "d", "row_count": 0}],
+    )
+
+    failures = _verify(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION)
+
+    failure = _failure(failures, "source_snapshot")
+    assert "run-relative" in _text(failure)
+    assert "None: absent" not in _text(failure)
+
+
+# ======================================================================================
 # AD058 — the write-surface parameter is the adapter's name
 # ======================================================================================
 

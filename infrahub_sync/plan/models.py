@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import PurePath
 from typing import Any, Literal, TypeAlias
 from urllib.parse import urlsplit, urlunsplit
 
@@ -201,6 +202,36 @@ class PlannedOperation(BaseModel):
         return self
 
 
+def require_run_relative_path(value: str) -> str:
+    """Refuse a snapshot path that could escape the run directory (MIN-003).
+
+    The manifest is operator-editable input joined onto the run directory, so a `..`
+    segment, an absolute path, or a bare `.` would send the verifier to digest — and vouch
+    for — a file outside the run directory the plan claims to be bound to. Mirrors
+    `_require_safe_segment` (`infrahub_sync/cache/paths.py`), relaxed to allow multiple
+    segments because the writer records paths like `A/BuiltinTag.parquet`. Shared by
+    `SourceSnapshotRecord` below and by the verifier, which reads the raw manifest mapping
+    without constructing the model.
+
+    Raises:
+        ValueError: the path is absolute, empty, or carries a `.` or `..` segment.
+    """
+    pure = PurePath(value)
+    # The raw `/`-split alongside `PurePath.parts`, because `PurePath` silently *normalizes*
+    # `.` and empty segments away — a path the writer would never emit must be refused, not
+    # laundered — while `parts` is what understands platform-native absolutes.
+    raw_segments = value.split("/")
+    if (
+        pure.is_absolute()
+        or not value
+        or any(segment in {"", ".", ".."} for segment in raw_segments)
+        or any(part in {".", ".."} for part in pure.parts)
+    ):
+        msg = f"a snapshot path must be run-relative with no '.' or '..' segments (got {value!r})"
+        raise ValueError(msg)
+    return value
+
+
 class SourceSnapshotRecord(BaseModel):
     """One source-snapshot file the plan was computed against (FR-004, AD037)."""
 
@@ -209,6 +240,12 @@ class SourceSnapshotRecord(BaseModel):
     path: str
     digest: str
     row_count: int = Field(ge=0)
+
+    @field_validator("path")
+    @classmethod
+    def _require_run_relative(cls, value: str) -> str:
+        """MIN-003: the recorded path never escapes the run directory it is joined onto."""
+        return require_run_relative_path(value)
 
 
 def _normalized_destination_url(url: str) -> str:

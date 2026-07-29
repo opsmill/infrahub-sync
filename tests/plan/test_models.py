@@ -785,6 +785,46 @@ def test_operations_count_and_row_count_are_non_negative() -> None:
 
 
 # ======================================================================================
+# MIN-003 — a snapshot path is run-relative, or it is refused
+# ======================================================================================
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param("../escape.parquet", id="parent traversal"),
+        pytest.param("A/../../escape.parquet", id="nested traversal"),
+        pytest.param("/etc/passwd", id="absolute"),
+        pytest.param("..", id="bare parent"),
+        pytest.param(".", id="bare dot"),
+        pytest.param("", id="empty"),
+        pytest.param("A/./x.parquet", id="dot segment"),
+    ],
+)
+def test_a_snapshot_path_that_could_escape_the_run_directory_is_refused(path: str) -> None:
+    """The manifest is operator-editable input joined onto the run directory (MIN-003).
+
+    A `..` segment or an absolute path would send the verifier to digest — and vouch for —
+    a file outside the run directory the plan claims to be bound to.
+    """
+    with pytest.raises(ValidationError):
+        SourceSnapshotRecord(path=path, digest="d", row_count=0)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param("A/BuiltinTag.parquet", id="the writer's own shape"),
+        pytest.param("BuiltinTag.parquet", id="single segment"),
+        pytest.param("A/nested/deeper/x.parquet", id="deeply nested"),
+    ],
+)
+def test_a_run_relative_snapshot_path_is_accepted(path: str) -> None:
+    """The positive half: every path the writer actually records still validates."""
+    assert SourceSnapshotRecord(path=path, digest="d", row_count=0).path == path
+
+
+# ======================================================================================
 # The remaining record types
 # ======================================================================================
 
