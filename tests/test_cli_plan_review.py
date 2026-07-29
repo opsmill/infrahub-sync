@@ -1918,8 +1918,8 @@ def test_a_delete_bearing_plan_applies_exits_zero_and_records_the_skipped_delete
     `summary` is the empty one the command built, and it runs *after* `apply_plan` returns.
     A CLI that saved without merging would leave `applied_operations: []` and
     `skipped_delete_count: 0` on a run that applied two operations and skipped one — and
-    every other assertion in this test would still pass. So the three keys are read back
-    **from the file, by name**, and a later relocation of any of them trips here.
+    every other assertion in this test would still pass. So the keys are read back **from the
+    file, by name**, and a later relocation of any of them trips here.
 
     The exit code is asserted at the CLI because a delete-bearing apply must not translate a
     skipped delete into a non-zero exit, and an in-process assertion cannot see an exit code.

@@ -689,7 +689,7 @@ def apply_cmd(
         except PlanArtifactError as exc:
             # Every remaining member of the taxonomy is a **designed refusal** that wrote
             # nothing and names its own remedy, so it reaches the operator as that message
-            # rather than as a stack trace (AD059). It records the three fields as present
+            # rather than as a stack trace (AD059). It records every summary key as present
             # and empty rather than absent: "nothing was applied" must be readable from the
             # run, not inferred from a missing key (AD062).
             _record_and_abort(run_file, exc, ApplyRecord())
