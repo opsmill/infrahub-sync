@@ -1,12 +1,14 @@
 """The emptied-peer-set flush on the planned-write path, and its SDK-boundary tripwire.
 
-`InfrahubAdapter.apply_planned_operation` reconciles every cardinality-many relationship as an
-explicit replace-set after the convergent upsert and then flushes it with a **targeted
-relationship write** — `id` plus only the fields being replaced (AD088, amending AD085's
-amendment of AD075). These tests exist because the case that decides the flush's form — a
-relationship reconciled to the **empty** set — is invisible to any assertion made against a
-mock: the reconciliation is purely in-memory, so a mock adapter call proves nothing about what
-reached the destination.
+`InfrahubAdapter.apply_planned_operation` writes every cardinality-many relationship
+explicitly as a replace-set after the convergent upsert, with a **targeted relationship
+write** — `id` plus only the fields being replaced (AD088, amending AD085's amendment of
+AD075). Surplus-peer removal relies on the destination Update mutation's replace semantics,
+pinned by the live shrink test
+(`tests/integration/test_infrahub_replace_set_shrink_integration.py`, FIX-001). These tests
+exist because the case that decides the flush's form — a relationship recorded as the
+**empty** set — is invisible to any assertion made against a mock: only the issued mutation
+proves what reached the destination.
 
 Every test here therefore works against a real `InfrahubNodeSync` built over a real
 `NodeSchemaAPI` and reads the **rendered mutation**, and all of them run offline: no live
@@ -131,7 +133,11 @@ class RecordingClient(InfrahubClientSync):
         return {mutation_name: {"ok": True, "object": {"id": NODE_ID}}}
 
     def get(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
-        """Answer the relationship re-read with the destination's seeded peer set."""
+        """Answer a destination read with the seeded peer set — and record that it happened.
+
+        The planned-write path issues no such read (FIX-001), which the emptied-set case
+        asserts off `self.reads`.
+        """
         self.reads.append(kwargs)
         return InfrahubNodeSync(
             client=self,
@@ -209,8 +215,12 @@ def test_emptied_peer_set_is_carried_by_the_issued_flush_mutation() -> None:
     assert _rendered_member_ids(query) == [], (
         f"The flush must carry an empty `members` list. Rendered mutation:\n{query}"
     )
-    assert f'id: "{NODE_ID}"' in query, "The flush must target the node whose manager was reconciled."
-    assert client.reads, "The reconciliation must re-read the destination peer set before comparing (AD065)."
+    assert f'id: "{NODE_ID}"' in query, "The flush must target the node the upsert converged on."
+    assert not client.reads, (
+        "The planned-write path issues no destination read (FIX-001): the flush writes the plan's "
+        "peer set directly, and surplus-peer removal is the destination Update mutation's replace "
+        "semantics, pinned by the live shrink test."
+    )
 
 
 def test_non_empty_replace_set_is_carried_by_the_issued_flush_mutation() -> None:
@@ -226,8 +236,7 @@ def test_non_empty_replace_set_is_carried_by_the_issued_flush_mutation() -> None
     mutation_name, query = _flush_mutation(client)
     assert mutation_name == f"{THING_KIND}Update"
     assert _rendered_member_ids(query) == ["member-2"], (
-        f"The flush must carry exactly the reconciled peer set, with the surplus peer removed. "
-        f"Rendered mutation:\n{query}"
+        f"The flush must carry exactly the plan's peer set. Rendered mutation:\n{query}"
     )
 
 

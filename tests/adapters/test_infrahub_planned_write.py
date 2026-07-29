@@ -14,10 +14,12 @@ the properties under test are invisible to an assertion made against a `MagicMoc
   time `data` is complete a relationship-crossing human-friendly-ID component is a resolved
   node-id string, so "every component present in `data`" holds while the mutation goes out
   with neither `id` nor `hfid` (AD054, AD066);
-- the **replace-set** reconciliation is purely in-memory — `RelationshipManagerSync` has no
-  `save` and `add()`/`remove()` only mutate a list and set a flag — so an assertion on
-  `rm.peer_ids` is satisfied in full by a helper that removes nothing at a real destination
-  (AD075);
+- the **replace-set** is only real if it is *issued* — nothing about a peer set reaches the
+  destination except through a write, so an assertion on any in-memory peer list is satisfied
+  in full by a helper that writes nothing at a real destination (AD075). Surplus-peer
+  *removal* relies on the destination Update mutation's replace semantics, which no offline
+  assertion can pin — the live shrink test
+  (`tests/integration/test_infrahub_replace_set_shrink_integration.py`) pins it (FIX-001);
 - the **flush** that carries it is a targeted `<kind>Update` naming `id` plus only the replaced
   relationship fields, and only the rendered mutation *name* separates that from a second
   `save(allow_upsert=True)` (AD075, AD085, AD088). That the flush names no **unmapped** field is
@@ -43,7 +45,6 @@ import pytest
 from infrahub_sdk import Config, InfrahubClientSync
 from infrahub_sdk.exceptions import AuthenticationError, ServerNotResponsiveError
 from infrahub_sdk.node import InfrahubNodeSync
-from infrahub_sdk.node.relationship import RelationshipManagerBase, RelationshipManagerSync
 from infrahub_sdk.schema import NodeSchemaAPI
 from infrahub_sdk.schema.main import (
     AttributeKind,
@@ -230,9 +231,9 @@ SCHEMAS: dict[str, NodeSchemaAPI] = {
 class RecordingClient(InfrahubClientSync):
     """A real client whose destination calls are recorded on one ordered event log.
 
-    One log rather than three lists, because two of the properties under test are about
-    **order**: that the relationship re-read was issued before the peer set was compared
-    (AD065), and that the flush followed the reconciliation (AD075).
+    One log rather than three lists: the flush's ordering after the upsert (AD075) and the
+    **absence** of any destination read on the planned-write path (FIX-001's simplification)
+    are both read off the same log, so neither can be satisfied by an unrelated call.
     """
 
     def __init__(self) -> None:
@@ -269,7 +270,12 @@ class RecordingClient(InfrahubClientSync):
         return {mutation_name: {"ok": True, "object": {"id": NODE_ID}}}
 
     def get(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
-        """Answer the relationship re-read with the destination's seeded peer set."""
+        """Answer a destination read with the seeded peer set — and record that it happened.
+
+        The planned-write path issues **no** such read (FIX-001's simplification), so the
+        replace-set cases assert this event is absent from the log; seeding `existing_peers`
+        to differ from the plan's set is what keeps that assertion honest.
+        """
         self.events.append(("get", kwargs))
         kind = kwargs["kind"]
         schema = SCHEMAS[kind]
@@ -424,58 +430,14 @@ def record_payload_create(client: RecordingClient) -> Iterator[list[dict[str, An
         yield calls
 
 
-@contextmanager
-def record_peer_set_reads(client: RecordingClient) -> Iterator[None]:
-    """Log every read of `RelationshipManagerBase.peer_ids` onto the client's event log.
+def issued_reads(client: RecordingClient) -> list[dict[str, Any]]:
+    """Every destination read (`client.get`) on the client's event log.
 
-    AD065's observable is an **ordering**: the destination read has to have been *issued*
-    before the peer set was compared. "The manager was fetched" is the weaker observable
-    that the broken implementation also satisfies — a manager built from the write payload
-    reports `initialized = True`, so `fetch()` returns through its own guard without ever
-    reaching the `client.get` inside it, and `peer_ids` is still the desired set.
+    The planned-write path must issue none (FIX-001): the flush writes the plan's peer set
+    directly, and surplus-peer removal is the destination Update mutation's replace
+    semantics, pinned live — not a fetch-and-reconcile round trip.
     """
-    original = RelationshipManagerBase.__dict__["peer_ids"]
-
-    def read(self: RelationshipManagerBase) -> list[str]:
-        client.events.append(("peer_ids", self.schema.name))
-        return original.fget(self)
-
-    with patch.object(RelationshipManagerBase, "peer_ids", property(read)):
-        yield
-
-
-@contextmanager
-def count_reconciliation_edits() -> Iterator[list[tuple[str, Any]]]:
-    """Record every `add`/`remove` the replace-set performs on a relationship manager.
-
-    The observable for "`existing_only` and `new_only` are both empty" without asserting on
-    the in-memory peer set the AD075 ban is about.
-    """
-    edits: list[tuple[str, Any]] = []
-    real_add = RelationshipManagerSync.add
-    real_remove = RelationshipManagerSync.remove
-
-    def add(self: RelationshipManagerSync, data: Any) -> None:  # noqa: ANN401
-        edits.append(("add", data))
-        real_add(self, data)
-
-    def remove(self: RelationshipManagerSync, data: Any) -> None:  # noqa: ANN401
-        edits.append(("remove", data))
-        real_remove(self, data)
-
-    with (
-        patch.object(RelationshipManagerSync, "add", add),
-        patch.object(RelationshipManagerSync, "remove", remove),
-    ):
-        yield edits
-
-
-def event_index(client: RecordingClient, name: str, predicate: Any = None) -> int:  # noqa: ANN401
-    """The index of the first matching event on the client's log, or -1."""
-    for index, (event_name, payload) in enumerate(client.events):
-        if event_name == name and (predicate is None or predicate(payload)):
-            return index
-    return -1
+    return [payload for name, payload in client.events if name == "get"]
 
 
 def unkeyed_reports(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
@@ -764,14 +726,15 @@ def test_the_dedup_set_lives_for_one_apply_and_not_for_the_adapter_instance(
 # ---------------------------------------------------------------------------------------
 
 
-def test_the_replace_set_removes_surplus_peers_and_adds_new_ones_in_one_issued_update() -> None:
-    """AD038/AD075/AD085: the reconciled peer set reaches the destination.
+def test_the_flush_carries_exactly_the_plans_peer_set_with_no_destination_read() -> None:
+    """AD038/AD075/AD085 + FIX-001: the plan's peer set reaches the destination as the flush.
 
-    The destination's set is seeded to *differ* from the plan's, which is what makes
-    `existing_only` non-empty and the removal decidable. Every assertion is on the issued
-    mutation: the reconciliation itself is in-memory, so a helper that computes the surplus
-    and never flushes satisfies any assertion on `rm.peer_ids` while removing nothing at a
-    real destination.
+    The destination's set is seeded to *differ* from the plan's, which is what makes the
+    no-read assertion honest: an implementation that still fetch-and-reconciles would issue a
+    `client.get` here. It must not — the flush writes the plan's peer set directly, and
+    surplus-peer removal (`tag-id-1` here) relies on the destination Update mutation's
+    replace semantics, pinned by the live shrink test
+    (`tests/integration/test_infrahub_replace_set_shrink_integration.py`).
 
     The flush must be `<kind>Update`, not a second `<kind>Upsert`: an upsert flush would
     carry the full peer list too, so the peer list alone cannot separate the two and the
@@ -784,28 +747,20 @@ def test_the_replace_set_removes_surplus_peers_and_adds_new_ones_in_one_issued_u
     peers.remember(TAG_KIND, {"name": "tag-b"}, "tag-id-2")
     peers.remember(TAG_KIND, {"name": "tag-c"}, "tag-id-3")
 
-    with record_peer_set_reads(client):
-        adapter.apply_planned_operation(operation=team_operation(["tag-b", "tag-c"]), peers=peers)
+    adapter.apply_planned_operation(operation=team_operation(["tag-b", "tag-c"]), peers=peers)
 
     assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"], (
         "The convergent upsert, then exactly one flush, and the flush is an update."
     )
     _, flush = client.mutations[1]
     assert rendered_relationship_ids(flush, "members") == ["tag-id-2", "tag-id-3"], (
-        f"The flush must carry exactly the plan's peer set, with 'tag-id-1' removed. Rendered:\n{flush}"
+        f"The flush must carry exactly the plan's peer set. Rendered:\n{flush}"
     )
-    assert f'id: "{NODE_ID}"' in flush, "The flush must target the node whose manager was reconciled (AD075)."
-
-    read_index = event_index(client, "get", lambda kwargs: kwargs.get("include") == ["members"])
-    assert read_index >= 0, (
-        "A destination read scoped to the relationship must be ISSUED (AD065). A manager built from "
-        "the write payload reports initialized=True, so fetch() returns through its own guard without "
-        "reaching the client.get inside it and peer_ids is still the desired set."
-    )
-    compare_index = event_index(client, "peer_ids", lambda rel: rel == "members")
-    assert 0 <= read_index < compare_index, (
-        f"The destination read must precede the peer-set comparison, got read at {read_index} and "
-        f"comparison at {compare_index}."
+    assert f'id: "{NODE_ID}"' in flush, "The flush must target the node the upsert converged on (AD075)."
+    assert issued_reads(client) == [], (
+        "The planned-write path issues no destination read: the fetch-and-reconcile round trips were "
+        "simplified away because the SDK renders no removal directive either way, and removal is the "
+        "destination Update mutation's replace semantics (FIX-001/OQ-4)."
     )
 
 
@@ -832,12 +787,12 @@ def test_an_empty_peer_list_empties_the_set_in_the_issued_flush() -> None:
     )
 
 
-def test_a_peer_set_the_upsert_already_matches_is_reconciled_as_a_no_op() -> None:
-    """AD038: when the destination already holds the plan's set, nothing is added or removed.
+def test_a_peer_set_the_destination_already_holds_is_flushed_unchanged() -> None:
+    """AD038: when the destination already holds the plan's set, the flush is a no-op write.
 
-    `existing_only` and `new_only` are both empty, observed through the manager edits the
-    replace-set performs rather than through the in-memory peer set (AD075). The flush still
-    goes out carrying the same set, which is what keeps the write idempotent.
+    The flush goes out carrying the same set the destination holds — under replace semantics
+    that changes nothing, which is what keeps the write idempotent — and no destination read
+    was needed to decide anything (FIX-001).
     """
     client = RecordingClient()
     client.existing_peers[TEAM_KIND, "members"] = ["tag-id-2"]
@@ -845,13 +800,12 @@ def test_a_peer_set_the_upsert_already_matches_is_reconciled_as_a_no_op() -> Non
     peers = PeerResolver(adapter)
     peers.remember(TAG_KIND, {"name": "tag-b"}, "tag-id-2")
 
-    with count_reconciliation_edits() as edits:
-        adapter.apply_planned_operation(operation=team_operation(["tag-b"]), peers=peers)
+    adapter.apply_planned_operation(operation=team_operation(["tag-b"]), peers=peers)
 
-    assert edits == [], f"Nothing to reconcile means no add and no remove, got {edits}."
     assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"]
     _, flush = client.mutations[1]
     assert rendered_relationship_ids(flush, "members") == ["tag-id-2"]
+    assert issued_reads(client) == []
 
 
 def test_one_flush_is_issued_per_operation_not_one_per_relationship() -> None:
@@ -1058,9 +1012,7 @@ def test_a_partial_filter_warns_once_per_kind_naming_the_dropped_components(
     assert all("name__value" in query and "site__name__value" not in query for query in client.resolver_queries)
 
     warnings = [record for record in captured_logs.records if "PARTIAL filter" in record.getMessage()]
-    assert len(warnings) == 1, (
-        f"One warning per kind per apply, got {[record.getMessage() for record in warnings]}."
-    )
+    assert len(warnings) == 1, f"One warning per kind per apply, got {[record.getMessage() for record in warnings]}."
     record = warnings[0]
     assert record.levelno >= logging.WARNING, (
         f"The report is pinned to WARNING because --quiet floors the logger there; it was emitted at "

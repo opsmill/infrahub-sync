@@ -20,9 +20,11 @@ Five assertions, because keyedness splits in two (AD067):
 2. the same assertion on the kind whose human-friendly ID **crosses a relationship**, marked
    `xfail(strict=True)` — it cannot pass today, and the day the write surface closes the hole
    it becomes an xpass and fails the suite, so the limitation retires itself;
-3. the replace-set is issued for every cardinality-many relationship including `peers: []`, a
-   destination **read** was issued before the peer set it compares against was read, and the
-   **flush** is an issued update of the node the upsert converged on;
+3. the replace-set is issued for every cardinality-many relationship including `peers: []`,
+   with **no destination read** on the way (FIX-001: surplus-peer removal is the destination
+   Update mutation's replace semantics, pinned by the live shrink test at
+   `tests/integration/test_infrahub_replace_set_shrink_integration.py`), and the **flush** is
+   an issued update of the node the upsert converged on;
 4. the flush names **only** the relationship fields being replaced — no unmapped destination
    field appears in it (AD088);
 5. applying the same operation twice renders **byte-identical** mutation inputs.
@@ -48,7 +50,6 @@ from unittest.mock import patch
 import pytest
 from infrahub_sdk import Config, InfrahubClientSync
 from infrahub_sdk.node import InfrahubNodeSync
-from infrahub_sdk.node.relationship import RelationshipManagerBase
 from infrahub_sdk.schema import NodeSchemaAPI
 from infrahub_sdk.schema.main import BranchSchema
 
@@ -119,9 +120,9 @@ SCHEMAS = _load_schemas()
 class ConformanceClient(InfrahubClientSync):
     """A real client whose transport edge alone is replaced, recording one ordered event log.
 
-    One log rather than separate lists, because two properties under test are about **order**:
-    that the relationship re-read was issued before the peer set was compared (AD065), and that
-    the flush followed the reconciliation (AD075).
+    One log rather than separate lists: the flush's ordering after the upsert (AD075) and the
+    **absence** of any destination read on the planned-write path (FIX-001) are both read off
+    the same log, so neither can be satisfied by an unrelated call.
     """
 
     def __init__(self) -> None:
@@ -141,7 +142,12 @@ class ConformanceClient(InfrahubClientSync):
         return {match.group(1): {"ok": True, "object": {"id": NODE_ID}}}
 
     def get(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
-        """Answer the relationship re-read with the destination's seeded peer set."""
+        """Answer a destination read with the seeded peer set — and record that it happened.
+
+        The planned-write path issues no such read (FIX-001); assertion 3 reads the absence
+        off the event log, and the seeded peer set differing from the plan's is what keeps
+        that assertion honest.
+        """
         self.events.append(("get", kwargs))
         kind = kwargs["kind"]
         schema = SCHEMAS[kind]
@@ -272,24 +278,9 @@ def record_rendered_inputs() -> Iterator[list[tuple[str, dict[str, Any]]]]:
         yield rendered
 
 
-@contextmanager
-def record_peer_set_reads(client: ConformanceClient) -> Iterator[None]:
-    """Log every read of `RelationshipManagerBase.peer_ids` onto the client's event log.
-
-    AD065's observable is an ordering, and "the manager was fetched" is the weaker observable
-    the broken implementation also satisfies: a manager built from the write payload reports
-    `initialized = True`, so `fetch()` returns through its own guard
-    (`infrahub_sdk/node/relationship.py:286-288`) without reaching the `client.get` inside it,
-    and `peer_ids` is still the desired set.
-    """
-    original = RelationshipManagerBase.__dict__["peer_ids"]
-
-    def read(self: RelationshipManagerBase) -> list[str]:
-        client.events.append(("peer_ids", self.schema.name))
-        return original.fget(self)
-
-    with patch.object(RelationshipManagerBase, "peer_ids", property(read)):
-        yield
+def issued_reads(client: ConformanceClient) -> list[dict[str, Any]]:
+    """Every destination read (`client.get`) on the client's event log (FIX-001)."""
+    return [payload for name, payload in client.events if name == "get"]
 
 
 def keys_of(rendered: list[tuple[str, dict[str, Any]]], kind: str) -> list[set[str]]:
@@ -316,14 +307,6 @@ def mutation_input_fields(query: str) -> list[str]:
     `_generate_input_data` at all.
     """
     return re.findall(r"^ {12}(\w+):", query, flags=re.MULTILINE)
-
-
-def event_index(client: ConformanceClient, name: str, predicate: Any = None) -> int:  # noqa: ANN401
-    """The index of the first matching event on the client's log, or -1."""
-    for index, (event_name, payload) in enumerate(client.events):
-        if event_name == name and (predicate is None or predicate(payload)):
-            return index
-    return -1
 
 
 def seeded_adapter(**existing: list[str]) -> tuple[ConformanceClient, InfrahubAdapter, PeerResolver]:
@@ -459,26 +442,25 @@ def test_a_relationship_crossing_kind_renders_a_keyed_mutation() -> None:
 # ---------------------------------------------------------------------------------------
 
 
-def test_the_replace_set_re_reads_the_destination_and_flushes_an_update() -> None:
-    """AD054/AD065/AD075/AD085: the reconciled peer set reaches the destination.
+def test_the_replace_set_flushes_an_update_with_no_destination_read() -> None:
+    """AD054/AD075/AD085 + FIX-001: the plan's peer set reaches the destination as the flush.
 
     Three separable failures, each with its own observable:
 
-    - **no re-read.** The observable is an *issued* `client.get` scoped to the relationship,
-      ordered before the peer set is read. "The manager was fetched" is satisfied by an
-      implementation that reads nothing: `fetch()` self-guards on `initialized`, and a manager
-      built from the write payload reports `initialized = True`, so `peer_ids` *is* the desired
-      set and the comparison finds nothing to do.
     - **no flush.** `RelationshipManagerSync` has no `save`; `add()` and `remove()` only mutate
       a list and set a flag. "The surplus is removed" is therefore true of an in-memory list
       that is then discarded, so the observable is the issued mutation.
     - **the wrong flush.** An `<kind>Upsert` would carry the full peer list too, so the peer
       list cannot separate a correct flush from a second upsert; the **mutation name** can.
+    - **a reintroduced round trip.** The destination's set is seeded to differ from the plan's,
+      so an implementation that fetch-and-reconciles issues a `client.get` here — and it must
+      not: the flush writes the plan's peer set directly, and surplus-peer removal
+      ('conf-tag-id-9' here) is the destination Update mutation's replace semantics, pinned by
+      the live shrink test (FIX-001/OQ-4).
     """
     client, adapter, peers = seeded_adapter(members=["conf-tag-id-9", "conf-tag-id-2"])
 
-    with record_peer_set_reads(client):
-        adapter.apply_planned_operation(operation=team_operation(["tag-b", "tag-c"]), peers=peers)
+    adapter.apply_planned_operation(operation=team_operation(["tag-b", "tag-c"]), peers=peers)
 
     assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"], (
         "The convergent upsert, then exactly one flush, and the flush is an update rather than a "
@@ -486,16 +468,12 @@ def test_the_replace_set_re_reads_the_destination_and_flushes_an_update() -> Non
     )
     _, flush = client.mutations[1]
     assert rendered_relationship_ids(flush, "members") == ["conf-tag-id-2", "conf-tag-id-3"], (
-        f"The flush must carry exactly the plan's peer set, with 'conf-tag-id-9' removed. Rendered:\n{flush}"
+        f"The flush must carry exactly the plan's peer set. Rendered:\n{flush}"
     )
-    assert f'id: "{NODE_ID}"' in flush, "The flush must target the node whose manager was reconciled."
-
-    read_index = event_index(client, "get", lambda kwargs: kwargs.get("include") == ["members"])
-    assert read_index >= 0, "A destination read scoped to the relationship must be ISSUED (AD065)."
-    compare_index = event_index(client, "peer_ids", lambda rel: rel == "members")
-    assert 0 <= read_index < compare_index, (
-        f"The destination read must precede the peer-set comparison, got read at {read_index} and "
-        f"comparison at {compare_index}."
+    assert f'id: "{NODE_ID}"' in flush, "The flush must target the node the upsert converged on."
+    assert issued_reads(client) == [], (
+        "The planned-write path issues no destination read (FIX-001): the fetch-and-reconcile "
+        "round trips added nothing, because the SDK renders no removal directive either way."
     )
 
 

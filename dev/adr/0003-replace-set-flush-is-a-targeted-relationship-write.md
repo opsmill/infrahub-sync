@@ -1,16 +1,18 @@
 # 3. The replace-set flush is a targeted relationship write
 
-**Status**: Accepted
+**Status**: Accepted — amended 2026-07-29 (FIX-001/OQ-4: pin-and-reword; the fetch/reconcile
+round-trips are removed)
 **Date**: 2026-07-28
-**Source**: `dev/specs/archive/001-plan-artifact-saved-apply/research.md` (PD-005), `contracts/destination-write-surface.md` (AD054, AD065, AD075, AD085, AD088)
+**Source**: `dev/specs/archive/001-plan-artifact-saved-apply/research.md` (PD-005), `contracts/destination-write-surface.md` (AD054, AD065, AD075, AD085, AD088); spec 002 FIX-001 (OQ-4)
 
 ## Context
 
 A planned write must make cardinality-many relationships a replace-set: the destination ends holding
 exactly the peers the plan names, with surplus peers removed. The convergent path a planned write is
 required to use is `client.create(...)` then `save(allow_upsert=True)`, and whether the server's upsert
-mutation replaces or merges a relationship list cannot be determined without a live Infrahub. So the
-apply path reconciles the peer set explicitly after the upsert instead of assuming the mutation did.
+mutation replaces or merges a relationship list could not be determined in the environment this was
+built in — no live Infrahub was reachable. So the apply path first reconciled the peer set explicitly
+after the upsert instead of assuming the mutation did.
 
 Getting that reconciliation to actually reach the destination took three shapes across the run. The
 reasoning is the durable part of this record, because every intermediate shape passed a plausible test.
@@ -34,8 +36,18 @@ describing a fix as an ordering when the property at stake is whether an operati
   the comparison compares a set against itself and removes nothing. It can pass only against a mock.
 - "Call `fetch()` first" does not fix that. `fetch()` opens with `if not self.initialized:` and the
   manager already reports itself initialized, so the `client.get` that would read the destination
-  never runs. The helper must force the manager cold — clear `initialized`, then `fetch()` — so a
-  destination read is actually **issued**.
+  never runs. The helper had to force the manager cold — clear `initialized`, then `fetch()` — so a
+  destination read was actually **issued**.
+
+A fourth finding then unwound the reconciliation itself (FIX-001, reviewed against the vendored
+SDK). `RelationshipManagerBase._generate_input_data` renders **only the surviving peer list** —
+`[{id: …}, …]` with no removal directive — so nothing about a *removal* ever reaches the wire, no
+matter what the manager was reconciled to. The fetch-and-reconcile therefore decided nothing: if the
+destination's Update mutation **replaces** a relationship list, the written list is the new set with
+or without the round trip; if it **merged**, no in-process reconciliation could remove a peer either.
+The earlier claim that the replace-set semantics were "true by construction" was unsound — they were
+always true by server semantics. OQ-4 (2026-07-29) settled the response: pin the server semantics
+with a live test instead of hedging them, and remove the round trips.
 
 ## Decision
 
@@ -49,8 +61,19 @@ Mutation(mutation=f"{kind}Update",
   -> client.execute_graphql(...) -> node._process_mutation_result(...)
 ```
 
-It is issued **once**, after the loop over every cardinality-many relationship on the operation, and it
-is issued against the same node object whose managers were reconciled.
+It is issued **once** per operation, after the convergent upsert, against the same node object the
+upsert converged on. Each manager is the one the create payload built, so it already holds exactly
+the plan's resolved peer set — including the per-peer `source`/`owner`/`is_protected` metadata the
+upsert carried, which the earlier fetch-and-reconcile shape dropped (MIN-010). No destination read
+precedes it: the fetch/reconcile round-trips were removed (FIX-001), because the SDK renders no
+removal directive either way.
+
+**Surplus-peer removal relies on the destination Update mutation's replace semantics, pinned by the
+live shrink test** `tests/integration/test_infrahub_replace_set_shrink_integration.py::test_shrinking_a_cardinality_many_peer_set_removes_surplus_peers`,
+which shrinks a peer set N → fewer and N → 0 through the planned-write surface and asserts the
+surplus peers are gone at the destination. The claim is not "true by construction" — it never was —
+it is true by pinned server semantics. If that test ever fails, Infrahub has been proven to merge
+rather than replace, and the escalation OQ-4 names is explicit per-peer removal mutations.
 
 The reason no whole-node render qualifies: rendering a node the SDK considers **existing** emits
 `data[<rel>] = None` for every **optional cardinality-one** relationship left uninitialized — the SDK's
@@ -66,25 +89,26 @@ render modes, which means it was latent in the first design rather than introduc
 
 Two invariants come with it:
 
-- **The node that is written must be the node whose managers were reconciled.** Reconciling a manager
-  on a separately fetched node leaves the flush carrying the create payload's peer list — the desired
-  set, never compared against anything — and silently reproduces the discarded-reconciliation defect.
-  Forcing the manager cold satisfies this by construction, because `fetch()` assigns the peers it
-  reads back onto the manager it was called on.
-- **The observable is the issued destination write carrying the reconciled peer list** — not the
-  manager's in-memory `peer_ids`, and not a mocked adapter call. Every weaker observable is satisfied
-  by a helper that reconciles and never writes.
+- **The node that is written must be the node the upsert converged on**, carrying the plan's peer
+  set: the flush targets that node's `id` and renders that node's managers.
+- **The observable is the issued destination write carrying the plan's peer list** — not any
+  in-memory `peer_ids`, and not a mocked adapter call. Every weaker observable is satisfied by a
+  helper that never writes. And for peer *removal*, no offline observable exists at all — which is
+  why the live shrink test is part of this decision rather than an accessory to it.
 
-The enforcement is **new code on the planned-write path**. `update_node` keeps its present code and its
-present behavior; the eight-line shape is written a second time, and that duplication is the price.
+The flush is **new code on the planned-write path**. `update_node` keeps its present code and its
+present behavior (AD070); the FIX-001 amendment removed the planned-write copy of its
+compare-and-reconcile shape, so the duplication that was the original price is gone with it.
 
 ## Consequences
 
-The replace-set clause is true by construction rather than by an assumption about server behavior
-nobody could test offline. It costs one extra destination read per cardinality-many relationship and
-one extra write per operation that carries any. If the upsert already replaces, the reconciliation is a
-no-op — and now a no-op for the right reason: the difference sets are empty because the destination
-already holds the desired set, not because the comparison never looked.
+The replace-set clause relies on the destination Update mutation's replace semantics, pinned by the
+live shrink test named above — not on an in-process construction, which was never capable of removing
+a peer. The cost is one extra write per operation that carries a cardinality-many relationship, and
+**no** extra destination read: removing the fetch/reconcile also removed the SDK's
+`populate_store=True` peer-hydration batch the forced-cold `fetch()` triggered — 1 + O(peer kinds)
+queries per cardinality-many relationship per operation (MIN-009) — and restored the resolver's
+"never populates the store" hygiene story on the whole planned-write path.
 
 The flush's **field set** is asserted, not only its values: it must name `id` plus the replaced
 cardinality-many fields and nothing else, against a fixture kind that declares an unmapped optional
@@ -105,8 +129,15 @@ duplicate shapes is not authority to make it.
 
 ## Alternatives Considered
 
-- **Trust the upsert to replace.** Rejected: unverifiable offline, and a silent merge leaves stale
-  peers attached — caught only against a live server, which is late.
+- **Trust the upsert to replace.** Rejected: the explicit flush stays, as the one write whose field
+  set is asserted and whose semantics the live shrink test pins. What the amendment removed is the
+  fetch-and-reconcile *before* the flush, which could not affect what went out on the wire.
+- **Keep the fetch-and-reconcile as defense in depth.** Rejected (OQ-4): it defended nothing — the
+  render emits no removal directive, so under merge semantics it removed nothing and under replace
+  semantics it changed nothing — while costing the reads named in Consequences and dropping the
+  peers' lineage metadata from the flush (MIN-010).
+- **Implement explicit per-peer removal mutations now.** Rejected (OQ-4): escalate to it only if the
+  live shrink test ever proves Infrahub merges rather than replaces.
 - **Route through `update_node`.** Rejected: it needs `client.get(id=local_id)`, and a saved-plan apply
   must not read the destination that way.
 - **Extract one shared helper and correct its ordering for both callers.** Ratified first, then
