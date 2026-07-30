@@ -267,8 +267,13 @@ reaches — and the command's last line names the count:
 
 ```text
 WARNING | Apply of run 20260518T1430-abc12345: 1 recorded delete operation(s) were not executed. ...
-INFO    | Applied run 20260518T1430-abc12345: 3 operations applied, 1 deletes skipped
+WARNING | Applied run 20260518T1430-abc12345: 3 operations applied, 1 deletes skipped
 ```
+
+Both lines are logged at `WARNING`, so `--quiet` still shows them: a skipped-delete count is the one
+piece of a completed apply an operator must not have to go looking for. A delete-free apply logs its
+completion line at `INFO` instead, which is what keeps `--quiet` silent when there is nothing to
+disclose.
 
 **This is a designed limitation of this release, not a failure.** Applying deletes is out of scope
 here and is assigned to later work. An operator who runs this against a non-pristine destination —
