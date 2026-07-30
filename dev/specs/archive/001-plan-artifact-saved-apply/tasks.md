@@ -10,6 +10,12 @@ description: "Dependency-ordered task list for the saved plan artifact and apply
 [plan.md](./plan.md) (phases A–G, V1–V43; this file adds phases H–J), [research.md](./research.md) (PD-001…PD-010),
 [data-model.md](./data-model.md), [quickstart.md](./quickstart.md), [contracts/](./contracts/).
 
+**Records kept outside this archive**: `opsmill-implement-report.md` and
+`planner-feedback-additions.md` are the run's own process records rather than design artifacts, so
+they are not archived here. Both live only on the tagged record branch
+`speckit-run/001-plan-artifact-saved-apply`, and every reference to them below names that branch's
+copy.
+
 **Tests**: required. The specification states eighteen measurable success criteria, each of which
 names its evidence, so every criterion below has a task that produces it. Twelve criteria and two
 half-criteria run locally; SC-001, SC-002, SC-003, SC-008 and the live halves of SC-007 and SC-016

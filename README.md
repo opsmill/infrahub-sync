@@ -103,7 +103,7 @@ After the sync completes, every NetBox device, interface, VLAN, prefix, and rela
 
 - **Sync engine.** Built on `diffsync` with three sync flags (`SKIP_UNMATCHED_DST` default, `SKIP_UNMATCHED_SRC`, `SKIP_MODIFIED`) and optional Redis-backed store for stateful sync.
 - **Declarative YAML configuration.** Per-field mapping with 14 filter operations (including `regex` and `is_ip_within`), per-field transforms, custom Jinja filters, and ordered cross-reference resolution.
-- **Typer-based CLI.** Four commands — `list`, `diff` (read-only), `generate`, `sync`.
+- **Typer-based CLI.** Five commands — `list`, `diff` (read-only), `generate`, `sync`, `apply` (write a previously reviewed saved plan to the destination without re-extracting the source).
 - **Custom adapters and certificates.** Load custom adapters from filesystem paths, Python module paths, or installed entry points (`INFRAHUB_SYNC_ADAPTER_PATHS`); custom CA certificate support for internal PKI.
 - **Example library.** Ready-to-run YAML configurations under `examples/` covering every pre-configured adapter plus additional targets (Device42, PeeringDB) and a custom adapter template.
 

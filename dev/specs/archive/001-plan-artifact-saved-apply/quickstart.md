@@ -220,8 +220,9 @@ already written to therefore fails inside the fixture's own `_plan_run` with
 identifier key(s) ['device']`. The defect is **pre-existing** — the predicate and its gate are
 byte-identical to `main` — lives on the destination-extract path shared with the live `sync` command,
 which AD070 puts off limits for this delivery, and is **not** on the apply path, since a saved-plan apply
-re-extracts nothing (FR-012). Recorded in plan.md's Risks and in `planner-feedback-additions.md` for a
-later outcome to own.
+re-extracts nothing (FR-012). Recorded in plan.md's Risks and, for a later outcome to own, in
+`planner-feedback-additions.md` on the tagged record branch
+`speckit-run/001-plan-artifact-saved-apply` — a process record kept off this branch.
 
 | SC | What the test does |
 |---|---|

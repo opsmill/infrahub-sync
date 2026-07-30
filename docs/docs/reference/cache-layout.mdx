@@ -136,6 +136,9 @@ duckdb -c "SELECT action, resource, source_id, new_value FROM read_parquet('.inf
   surface — and refuses if any of those checks fails. See
   [Refusals you will meet](../running-a-sync#refusals-you-will-meet). The gate does **not**
   compare `schema-sub-hash.txt`: that file guards incremental extraction, not apply.
+  Separately from that gate, `apply` also refuses when the live destination endpoint or branch
+  differs from the one recorded in the plan, unless `--allow-destination-change` is passed —
+  which is why the comparison sits outside the gate, whose checks are not overridable.
 - `--allow-rowcount-drop` (on `sync`) bypasses the rowcount guardrail when the operator knows the source has legitimately shrunk.
 - `--continue-on-error` (on `sync`) skips peer relationships missing identifier values rather than aborting; the engine logs each skip so you can review what was dropped.
 - `--no-concurrent-load` (on `diff` and `sync`) falls back to loading source then destination sequentially. The default (concurrent) is safe with all built-in adapters and roughly halves load wall-clock time on real APIs.

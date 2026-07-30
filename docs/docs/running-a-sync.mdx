@@ -344,6 +344,22 @@ converge: the safe move is to inspect that kind at the destination between appli
 re-apply and check afterwards. `diff` also warns about these kinds by name as it writes the plan, so
 which kinds are affected is knowable before an apply rather than only from the apply's own output.
 
+#### A plan cannot clear a cardinality-one relationship
+
+**A planned update never empties a relationship that holds exactly one peer.** The plan format has
+no way to say it: a cardinality-one reference carries exactly one peer, and a relationship the plan
+does not mention is one the apply leaves alone rather than one it clears. An emptied
+cardinality-many set is expressible — the plan carries the empty set and the apply writes it — but
+the same is not true one peer at a time.
+
+**This matches live `sync`**, which skips a cleared cardinality-one relationship for the same
+reason. It is not something the plan path introduces, and reviewing a plan will not show you a
+clearing operation that then fails to happen: the operation is never in the plan to begin with.
+
+An operator who needs such a relationship cleared clears it at the destination. Everything else in
+the plan applies normally; nothing about the run refuses or warns, because from the plan's point of
+view there is nothing to do.
+
 ### Refusals you will meet
 
 `apply` verifies the plan as one gate **before the first write**, so a refusal never leaves the
