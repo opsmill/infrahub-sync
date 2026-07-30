@@ -220,7 +220,7 @@ Requirement IDs are the brief's own; origin (QUOTED/DERIVED) and source referenc
 - The integration is packaged capability; `examples/` contains only consumption and demonstration material.
 - The default self-hosted Prefect Server is for a trusted development environment and must not be documented as safe for public internet exposure; the example README owns this caveat and must state it.
 - The implementation follows the repository workflow (format → lint → CLI sanity) and preserves required CLI sanity behavior.
-- Prefect 3.7.2 is the fixed external dependency version for the preview, pinned in the optional extra's dependency specification — consistent with the out-of-scope exclusion of supporting multiple Prefect major versions.
+- Prefect 3.5.0 is the pinned optional-extra version for the preview — PROVISIONAL (CHECKPOINT, D005): the brief's 3.7.2 pin is unsatisfiable alongside the unchanged base dependency set (redis <5.0 via diffsync[redis] vs >=5 via pydocket in prefect>=3.6); 3.5.0 is the newest resolvable Prefect 3 release. Pinned in the optional extra's dependency specification — consistent with the out-of-scope exclusion of supporting multiple Prefect major versions.
 
 ## Success Criteria *(mandatory)*
 
@@ -251,7 +251,7 @@ Documented defaults and inherited facts. The brief records "Unresolved questions
 - **Clarified (Session 2026-07-30, PROVISIONAL CHECKPOINT)**: The "canonical plan fingerprint" (DBA-009) is fixed to the definition under Key Entities — a SHA-256 digest over the sorted, canonically serialized plan rows, computed by one shared helper for both the CLI and remote comparison.
 - **Clarified (Session 2026-07-30, PROVISIONAL CHECKPOINT)**: The server-configured configuration directory (DBR-005) is supplied through the required `INFRAHUB_SYNC_CONFIG_DIRECTORY` environment variable read at serve start — not through remote parameters — consistent with DBR-006; missing or invalid values fail at serve start, not per-run.
 - **Dependency (satisfied)**: Existing CLI `diff` and serial `sync --no-parallel` behavior in `infrahub_sync/cli.py`, and the `Potenda` engine's load/diff/write-plan/sync operations in `infrahub_sync/potenda/__init__.py`, provide everything the shared execution surface must move behind the seam.
-- **Dependency (available)**: Prefect 3.7.2 — flow, served deployment, REST run creation, state, and logging behavior; VAL-6 and VAL-12 already exercised Prefect locally (supporting evidence only).
+- **Dependency (available)**: Prefect 3.5.0 — PROVISIONAL (CHECKPOINT, D005): the brief's 3.7.2 pin is unsatisfiable alongside the unchanged base dependency set (redis <5.0 via diffsync[redis] vs >=5 via pydocket in prefect>=3.6); 3.5.0 is the newest resolvable Prefect 3 release — flow, served deployment, REST run creation, state, and logging behavior; VAL-6 and VAL-12 already exercised Prefect locally (supporting evidence only), and this feature's Phase 0 probes (research.md) verified install, served-deployment REST runs, log bridging, and parameter validation against 3.5.0.
 - **Approved decisions carried forward**: Build a thin package integration plus one example (no example-only CLI wrapper, no engine rewrite around Prefect); record speculative follow-ons in `backlog.md` instead of creating DB-002 now.
 
 ## Completion Conditions (from DB-001)
