@@ -9,7 +9,7 @@ were `null`. (A manifest that already carries them as `null` hashes the same as 
 omits them, because the filter is by name — the removed/blanked distinction is only
 observable on a manifest whose excluded fields carry real values.)
 
-`source_snapshot_digest` digests a snapshot's **logical rows** — the Parquet table with
+`snapshot_digest_and_row_count` digests a snapshot's **logical rows** — the Parquet table with
 the engine-injected `_extract_ts` column dropped — and not the file's bytes (AD037,
 PD-008). `_extract_ts` is allocated once per side per run
 (`infrahub_sync/potenda/__init__.py:177`, stored per side at `:182`) and injected into every row
@@ -27,7 +27,6 @@ every batch size — including one row — yields the same digest.
 from __future__ import annotations
 
 import hashlib
-from operator import itemgetter
 from typing import TYPE_CHECKING, Any
 
 from pyarrow import ArrowInvalid
@@ -70,8 +69,15 @@ def compute_plan_checksum(manifest_mapping: Mapping[str, Any], operations_bytes:
     return hashlib.sha256(canonical_json_bytes(body) + operations_bytes).hexdigest()
 
 
-def _digest_and_row_count(path: Path, *, batch_size: int = SNAPSHOT_DIGEST_BATCH_SIZE) -> tuple[str, int]:
-    """Return the logical-row digest and the row count of one snapshot file.
+def snapshot_digest_and_row_count(path: Path, *, batch_size: int = SNAPSHOT_DIGEST_BATCH_SIZE) -> tuple[str, int]:
+    """Return one snapshot file's logical-row digest and its row count together.
+
+    The pre-apply verifier compares **both** against the manifest, and reading the Parquet
+    file twice to get them separately would double the cost of the check for no benefit.
+
+    The file is read with `_extract_ts` projected out, rows kept in file order, each row
+    encoded with `canonical_json_bytes` and the encodings joined by LF (AD037, PD-008).
+    The digest is lowercase hex, no prefix.
 
     Hashed **incrementally**, from one open of the file, one bounded record batch at a
     time. SHA-256 is streamable, and the previous shape — the whole decompressed table,
@@ -99,32 +105,12 @@ def _digest_and_row_count(path: Path, *, batch_size: int = SNAPSHOT_DIGEST_BATCH
     return digest.hexdigest(), row_count
 
 
-def snapshot_digest_and_row_count(path: Path, *, batch_size: int = SNAPSHOT_DIGEST_BATCH_SIZE) -> tuple[str, int]:
-    """Return one snapshot file's logical-row digest and its row count together.
-
-    The pre-apply verifier compares **both** against the manifest, and reading the Parquet
-    file twice to get them separately would double the cost of the check for no benefit.
-    """
-    return _digest_and_row_count(path, batch_size=batch_size)
-
-
-def source_snapshot_digest(path: Path, *, batch_size: int = SNAPSHOT_DIGEST_BATCH_SIZE) -> str:
-    """Digest one source-snapshot Parquet file's logical rows (AD037, PD-008).
-
-    The file is read with `_extract_ts` projected out, rows kept in file order, each row
-    encoded with `canonical_json_bytes` and the encodings joined by LF. Returns lowercase
-    hex, no prefix. `batch_size` bounds how much of the file is held at once and does not
-    affect the digest.
-    """
-    digest, _row_count = _digest_and_row_count(path, batch_size=batch_size)
-    return digest
-
-
 def source_snapshot_records(run_dir: Path) -> list[dict[str, Any]]:
     """Record every source-side snapshot the plan was computed against (FR-004, FR-010).
 
     One `{"path", "digest", "row_count"}` mapping per `A/<resource>.parquet` file, `path`
-    run-relative and POSIX, the list ordered by `path`. The mappings are what
+    run-relative and POSIX, the list ordered by `path` — which is the glob's sorted order,
+    since every `path` is derived from it. The mappings are what
     `PlanManifest.source_snapshot` validates into `SourceSnapshotRecord` instances. A run
     directory with no source side yields an empty list, which is a legitimate manifest
     value.
@@ -135,7 +121,7 @@ def source_snapshot_records(run_dir: Path) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for path in sorted(side_dir.glob("*.parquet")):
         try:
-            digest, row_count = _digest_and_row_count(path)
+            digest, row_count = snapshot_digest_and_row_count(path)
         except ArrowInvalid as exc:
             # A snapshot this run cannot digest cannot be bound to the plan, so the plan
             # write fails with the taxonomy's message rather than a raw pyarrow traceback
@@ -171,4 +157,4 @@ def source_snapshot_records(run_dir: Path) -> list[dict[str, Any]]:
                 "row_count": row_count,
             }
         )
-    return sorted(records, key=itemgetter("path"))
+    return records

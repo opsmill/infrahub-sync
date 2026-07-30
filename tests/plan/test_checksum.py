@@ -1,7 +1,7 @@
 """T012 and T013 — the plan checksum and the source-snapshot binding.
 
 T012 (FR-004, FR-027, AD035) covers `compute_plan_checksum`; T013 (FR-004, FR-010, AD037)
-covers `source_snapshot_digest` / `source_snapshot_records`.
+covers `snapshot_digest_and_row_count` / `source_snapshot_records`.
 
 **On AD035's "removed, not blanked"** — asserting that "a manifest with `run_id: null`
 hashes differently from one with the key absent" cannot fail against a correct
@@ -29,7 +29,6 @@ from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import (
     compute_plan_checksum,
     snapshot_digest_and_row_count,
-    source_snapshot_digest,
     source_snapshot_records,
 )
 from infrahub_sync.plan.errors import PlanArtifactUnreadableError
@@ -41,6 +40,13 @@ if TYPE_CHECKING:
     from typing import NoReturn
 
 OPERATIONS_BYTES = b'{"action":"create","kind":"BuiltinTag"}\n{"action":"update","kind":"BuiltinTag"}\n'
+
+
+def _digest(path: Path, *, batch_size: int = checksum_module.SNAPSHOT_DIGEST_BATCH_SIZE) -> str:
+    """One snapshot file's logical-row digest, for the cases that ignore the row count."""
+    digest, _row_count = snapshot_digest_and_row_count(path, batch_size=batch_size)
+    return digest
+
 
 MANIFEST: dict[str, Any] = {
     "format_version": 2,
@@ -268,21 +274,21 @@ def test_digest_is_invariant_to_extract_ts(tmp_path: Path) -> None:
     """
     first = _write_side(tmp_path / "one", extract_ts=_TS_ONE, source_ids=SOURCE_IDS)
     second = _write_side(tmp_path / "two", extract_ts=_TS_TWO, source_ids=SOURCE_IDS)
-    assert source_snapshot_digest(first) == source_snapshot_digest(second)
+    assert _digest(first) == _digest(second)
 
 
 def test_digest_is_sensitive_to_source_id(tmp_path: Path) -> None:
     """`_source_id` stays inside the digest (AD037)."""
     first = _write_side(tmp_path / "one", source_ids=SOURCE_IDS)
     second = _write_side(tmp_path / "two", source_ids=["prod", "staging", "renamed"])
-    assert source_snapshot_digest(first) != source_snapshot_digest(second)
+    assert _digest(first) != _digest(second)
 
 
 def test_digest_is_sensitive_to_tombstone(tmp_path: Path) -> None:
     """`_tombstone` stays inside the digest (AD037)."""
     first = _write_side(tmp_path / "one", source_ids=SOURCE_IDS, tombstones=[False, False, False])
     second = _write_side(tmp_path / "two", source_ids=SOURCE_IDS, tombstones=[False, False, True])
-    assert source_snapshot_digest(first) != source_snapshot_digest(second)
+    assert _digest(first) != _digest(second)
 
 
 def test_digest_is_sensitive_to_row_order(tmp_path: Path) -> None:
@@ -293,7 +299,7 @@ def test_digest_is_sensitive_to_row_order(tmp_path: Path) -> None:
         rows=[ROWS[1], ROWS[0], ROWS[2]],
         source_ids=[SOURCE_IDS[1], SOURCE_IDS[0], SOURCE_IDS[2]],
     )
-    assert source_snapshot_digest(first) != source_snapshot_digest(second)
+    assert _digest(first) != _digest(second)
 
 
 @pytest.mark.parametrize(
@@ -321,7 +327,7 @@ def test_digest_is_sensitive_to_any_data_value(tmp_path: Path, mutated_rows: lis
         rows=mutated_rows,
         source_ids=SOURCE_IDS[: len(mutated_rows)],
     )
-    assert source_snapshot_digest(mutated) != source_snapshot_digest(baseline)
+    assert _digest(mutated) != _digest(baseline)
 
 
 def test_digest_matches_the_spelled_out_rule(tmp_path: Path) -> None:
@@ -331,7 +337,7 @@ def test_digest_matches_the_spelled_out_rule(tmp_path: Path) -> None:
     columns = [name for name in table.column_names if name != "_extract_ts"]
     rows = table.select(columns).to_pylist()
     expected = hashlib.sha256(b"\n".join(canonical_json_bytes(row) for row in rows)).hexdigest()
-    assert source_snapshot_digest(path) == expected
+    assert _digest(path) == expected
 
 
 def test_record_row_count_is_the_tables_row_count(tmp_path: Path) -> None:
@@ -409,7 +415,7 @@ def test_records_digest_matches_the_per_file_digest(tmp_path: Path) -> None:
     """The record's digest is the same function the per-file helper exposes."""
     path = _write_side(tmp_path, resource="BuiltinTag", rows=ROWS, source_ids=SOURCE_IDS)
     (record,) = source_snapshot_records(tmp_path)
-    assert record["digest"] == source_snapshot_digest(path)
+    assert record["digest"] == _digest(path)
 
 
 # ======================================================================================
@@ -468,7 +474,6 @@ def test_the_digest_and_row_count_are_identical_at_every_batch_size(tmp_path: Pa
     digest, row_count = snapshot_digest_and_row_count(path, batch_size=batch_size)
 
     assert digest == _whole_table_digest(path)
-    assert digest == source_snapshot_digest(path, batch_size=batch_size)
     assert row_count == len(MANY_ROWS)
 
 
@@ -492,7 +497,7 @@ def test_the_digest_never_reads_the_whole_table(tmp_path: Path, monkeypatch: pyt
     monkeypatch.setattr("infrahub_sync.cache.parquet_io.read_table", _refuse)
     monkeypatch.setattr(pq, "read_table", _refuse)
 
-    assert source_snapshot_digest(path) == expected
+    assert _digest(path) == expected
 
 
 def test_no_batch_the_digest_folds_is_larger_than_the_bound(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -517,7 +522,7 @@ def test_no_batch_the_digest_folds_is_larger_than_the_bound(tmp_path: Path, monk
 
     monkeypatch.setattr(checksum_module, "iter_row_batches", _observe)
 
-    assert source_snapshot_digest(path, batch_size=2) == _whole_table_digest(path)
+    assert _digest(path, batch_size=2) == _whole_table_digest(path)
     assert observed, "the digest consumed no record batch at all"
     assert max(observed) <= 2, f"a batch exceeded the bound: {observed}"
     assert sum(observed) == len(MANY_ROWS)
