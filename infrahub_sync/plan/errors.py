@@ -4,7 +4,7 @@ Every failure on a plan-artifact path is one of the classes below, and every one
 them tells the operator what to do next: `PlanArtifactError` declares `next_action`
 on the base class, so a subclass cannot be added without one (AD059). The wording of
 each class's next action is the taxonomy table in
-`dev/specs/001-plan-artifact-saved-apply/contracts/plan-reader-api.md`.
+`dev/specs/archive/001-plan-artifact-saved-apply/contracts/plan-reader-api.md`.
 
 Constructing an error whose class declares no non-empty `next_action` raises
 `TypeError`: the guarantee is enforced where it can be observed rather than left to

@@ -103,7 +103,7 @@ never by a whole-node update. If your destination client re-renders whole object
 what it does with the fields you did not set.
 
 The full contract lives in
-[the destination write surface contract](../specs/001-plan-artifact-saved-apply/contracts/destination-write-surface.md);
+[the destination write surface contract](../specs/archive/001-plan-artifact-saved-apply/contracts/destination-write-surface.md);
 `infrahub_sync/adapters/infrahub.py` is the reference implementation.
 
 ## The model contract (`DiffSyncModelMixin`)

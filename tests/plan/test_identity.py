@@ -1,7 +1,7 @@
 """T011 — canonical identity and operation-identifier derivation (FR-003, FR-028.3).
 
 The four worked vectors are copied verbatim from
-`dev/specs/001-plan-artifact-saved-apply/contracts/plan-artifact-format.md`. Both halves of
+`dev/specs/archive/001-plan-artifact-saved-apply/contracts/plan-artifact-format.md`. Both halves of
 each vector are asserted: the exact canonical **input bytes** and the resulting identifier.
 Asserting only the identifier would let an input-shape change (say, a JSON object instead of
 PD-001's array) pass unnoticed as long as both sides changed together.

@@ -163,7 +163,7 @@ If you do implement it, the method must:
 
 The full contract — the convergent upsert sequence, the keyedness gate, relationship
 replace-set reconciliation and the error taxonomy — is in
-[the destination write surface contract](../specs/001-plan-artifact-saved-apply/contracts/destination-write-surface.md).
+[the destination write surface contract](../specs/archive/001-plan-artifact-saved-apply/contracts/destination-write-surface.md).
 `infrahub_sync/adapters/infrahub.py` is the reference implementation.
 
 ### Step 5: Write the schema mapping and `config.yml`

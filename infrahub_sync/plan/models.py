@@ -3,7 +3,7 @@
 Pydantic v2 models in the existing `SyncConfig` style. These are the records nine later
 outcomes consume, so the field sets here are the contract: the artifact format fixes their
 on-disk encoding and the data model fixes the rules they enforce, both under
-`dev/specs/001-plan-artifact-saved-apply/`.
+`dev/specs/archive/001-plan-artifact-saved-apply/`.
 
 Two asymmetries are deliberate. `PlanManifest` tolerates unknown fields — FR-027's
 forward-compatibility carve-out is written about the manifest, where a later outcome adds
