@@ -85,6 +85,7 @@ from infrahub_sync.plan.errors import (
     UnkeyedWriteRefusedError,
     UnknownPlanKindError,
     UnknownRunIdentifierError,
+    UnsafeRunIdentifierError,
     UnserializablePayloadValueError,
     UnsupportedOperationActionError,
 )
@@ -1342,6 +1343,7 @@ TAXONOMY_CASES: dict[str, Callable[[], PlanArtifactError]] = {
         "The apply record does not account for the plan.", apply_record=ApplyRecord()
     ),
     "plan_generation_exists": lambda: PlanGenerationExistsError("Run 'r' already holds a committed plan."),
+    "unsafe_run_identifier": lambda: UnsafeRunIdentifierError("Run identifier '../evil' is not usable."),
 }
 
 
@@ -1418,6 +1420,68 @@ def test_the_source_peer_remedies_are_distinct_from_the_destination_peer_remedy(
 
     assert destination_side != SourcePeerUnresolvedError.ABSENT_NEXT_ACTION
     assert destination_side != SourcePeerUnresolvedError.AMBIGUOUS_NEXT_ACTION
+
+
+# A run *path* pasted where a run *id* goes, and an absolute one — the two shapes the cache
+# layout's traversal guard rejects, which used to escape as a raw `ValueError` traceback.
+TRAVERSAL_RUN_IDS = ("../evil", "/tmp/evil")  # noqa: S108 — a literal in a refusal case, nothing is written
+
+
+@pytest.mark.parametrize("run_id", TRAVERSAL_RUN_IDS, ids=("relative_traversal", "absolute_path"))
+def test_a_traversal_shaped_run_id_is_refused_as_one_line_on_the_review_path(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, run_id: str
+) -> None:
+    """FIX-004 (spec 002): the guard's `ValueError` reaches the operator as a designed refusal.
+
+    Safe before and after — nothing is written and the exit code is non-zero either way — but a
+    rich traceback is not this feature's error contract, and the value is easy to produce by
+    pasting a run path where a run id goes, which the `Cached run <id> at <dir>` line invites.
+    """
+    _store(tmp_path)
+
+    with caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"):
+        result = _review("--from-plan", run_id)
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"the refusal escaped as a raw {type(result.exception).__name__} traceback"
+    )
+    message = _operator_errors(caplog)
+    assert repr(run_id) in message
+    assert "is not usable" in message
+    assert UnsafeRunIdentifierError.next_action in message
+
+
+@pytest.mark.parametrize("run_id", TRAVERSAL_RUN_IDS, ids=("relative_traversal", "absolute_path"))
+def test_a_traversal_shaped_run_id_is_refused_as_one_line_on_the_apply_path(
+    tmp_path: Path, destination_double: RecordingDestination, caplog: pytest.LogCaptureFixture, run_id: str
+) -> None:
+    """The same verdict from the other command, which is why the translation is at one site.
+
+    Both guards catch only `PlanArtifactError`, so a `ValueError` raised beneath them escaped
+    from *both*; translating it inside `require_stored_run` is what fixes the pair at once.
+    """
+    _appliable_run(tmp_path)
+    constructed: list[str] = []
+
+    with (
+        caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"),
+        patch(
+            "infrahub_sync.cli.PlanApplier.open_existing",
+            _patched_open_existing(destination_double, constructed=constructed),
+        ),
+    ):
+        result = _apply(run_id)
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"the refusal escaped as a raw {type(result.exception).__name__} traceback"
+    )
+    assert constructed == []
+    assert destination_double.writes == []
+    message = _operator_errors(caplog)
+    assert "is not usable" in message
+    assert UnsafeRunIdentifierError.next_action in message
 
 
 def test_the_unknown_kind_message_lists_the_kinds_the_plan_holds(

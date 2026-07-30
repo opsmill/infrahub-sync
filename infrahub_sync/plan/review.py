@@ -25,7 +25,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from infrahub_sync.cache.paths import cache_root_for, run_dir
-from infrahub_sync.plan.errors import UnknownPlanKindError, UnknownRunIdentifierError
+from infrahub_sync.plan.errors import UnknownPlanKindError, UnknownRunIdentifierError, UnsafeRunIdentifierError
 from infrahub_sync.plan.models import PlanSummary
 from infrahub_sync.plan.reader import (
     RUN_ID_LISTING_LIMIT,
@@ -196,6 +196,7 @@ def require_stored_run(sync_name: str, run_id: str) -> Path:
     written once and cannot drift between the two commands an operator reaches them from.
 
     Raises:
+        UnsafeRunIdentifierError: the identifier is not a single path segment (FIX-004).
         UnknownRunIdentifierError: no run with that identifier is stored. The message lists
             the most recent stored identifiers, or states plainly that the sync has no
             stored runs at all (AD073).
@@ -204,8 +205,19 @@ def require_stored_run(sync_name: str, run_id: str) -> Path:
     """
     # `run_dir` applies `_require_safe_segment`'s traversal guard to **both** arguments
     # (`infrahub_sync/cache/paths.py:11-23`, `:56-59`), so a `..` or absolute value is
-    # rejected before any path is joined.
-    directory = run_dir(sync_name, run_id)
+    # rejected before any path is joined — as a `ValueError`, which is translated into the
+    # taxonomy here rather than left to escape as a traceback out of the two commands that
+    # reach this function (FIX-004, spec 002). The translation lives at the single raising
+    # site, so neither guard has to catch a second exception type to stay one line of output.
+    try:
+        directory = run_dir(sync_name, run_id)
+    except ValueError as exc:
+        msg = (
+            f"Run identifier {run_id!r} is not usable: a run id names one directory under the "
+            f"synchronization's cache root, so it cannot contain '/' or '..' segments or be an "
+            f"absolute path ({exc})."
+        )
+        raise UnsafeRunIdentifierError(msg) from exc
     if not _run_directory_exists(directory):
         raise _unknown_run_error(sync_name, run_id, directory / PLAN_DIR_NAME / MANIFEST_FILE_NAME)
     return directory
@@ -231,6 +243,7 @@ def read_saved_plan(
         returned value as data rather than parsed output.
 
     Raises:
+        UnsafeRunIdentifierError: the identifier is not a single path segment (FIX-004).
         UnknownRunIdentifierError: no run with that identifier is stored. The message lists
             the most recent stored identifiers, or states plainly that the sync has no
             stored runs (AD073).

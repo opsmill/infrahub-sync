@@ -149,6 +149,22 @@ class PlanGenerationExistsError(PlanArtifactError):
     )
 
 
+class UnsafeRunIdentifierError(PlanArtifactError):
+    """A run identifier is not a single path segment (FIX-004, spec 002).
+
+    A value carrying `/` or `..`, or an absolute path, is rejected by the cache-layout guard
+    (`infrahub_sync/cache/paths.py`) with a `ValueError` — which reached the operator as a raw
+    traceback out of two commands whose every other bad-identifier verdict is one designed
+    line. It is easy to produce: pasting a run *path* where a run *id* goes, which the
+    `Cached run <id> at <dir>` line invites. Inside the taxonomy it carries its own remedy
+    like every other refusal (AD059).
+    """
+
+    next_action = (
+        "Pass only the run identifier — the last component of the run directory's path — with no '/' or '..' segments."
+    )
+
+
 class UnknownPlanKindError(PlanArtifactError):
     """A `kind` filter selects nothing, from either of the two conditions that can cause it.
 
