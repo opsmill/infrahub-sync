@@ -44,7 +44,7 @@ from unittest.mock import patch
 import pytest
 from infrahub_sdk import Config, InfrahubClientSync
 from infrahub_sdk.exceptions import AuthenticationError, GraphQLError, ServerNotResponsiveError
-from infrahub_sdk.node import InfrahubNodeSync
+from infrahub_sdk.node import InfrahubNodeSync, RelationshipManagerSync
 from infrahub_sdk.schema import NodeSchemaAPI
 from infrahub_sdk.schema.main import (
     AttributeKind,
@@ -192,7 +192,10 @@ ORPHAN_SCHEMA = NodeSchemaAPI(
     relationships=[],
 )
 
-# One cardinality-many relationship: the replace-set cases.
+# One cardinality-many relationship: the replace-set cases. `owner` is mapped by no
+# operation here and is **load-bearing**: an unmapped optional cardinality-one relationship is
+# the shape the SDK's whole-node render nulls, which is what the AD088 tripwire at the end of
+# this module pins. Do not remove it.
 TEAM_SCHEMA = NodeSchemaAPI(
     id="team-schema",
     name="Team",
@@ -201,7 +204,18 @@ TEAM_SCHEMA = NodeSchemaAPI(
     default_filter="name__value",
     human_friendly_id=["name__value"],
     attributes=[_text("team-name", "name", optional=False)],
-    relationships=[_many("team-members", "members", TAG_KIND)],
+    relationships=[
+        _many("team-members", "members", TAG_KIND),
+        RelationshipSchemaAPI(
+            id="team-owner",
+            name="owner",
+            peer=TAG_KIND,
+            cardinality="one",
+            kind=RelationshipKind.ATTRIBUTE,
+            optional=True,
+            identifier="team__owner",
+        ),
+    ],
 )
 
 # Two cardinality-many relationships, so "one flush per operation, not one per
@@ -1889,3 +1903,62 @@ def test_a_failing_transport_or_auth_on_peer_resolution_is_named_and_actionable(
         "The failing operation's own write must not have been attempted: the resolver runs first, so "
         "only the preceding operation's upsert reached the transport."
     )
+
+
+# ======================================================================================
+# The SDK-boundary tripwire for AD088 (folded in from test_infrahub_empty_peer_set_flush)
+# ======================================================================================
+
+SDK_BOUNDARY_MESSAGE = (
+    "The infrahub-sdk's node render behaviour has changed. `pyproject.toml` pins "
+    "`infrahub-sdk[all]>=1.17,<2`, a range, and this behaviour is undocumented internals, so a "
+    "permitted upgrade can move it without any other signal — and this one render has already "
+    "produced two defects on the planned-write flush, which is why it is pinned here. AD088 "
+    "depends on it: the flush in `InfrahubAdapter.apply_planned_operation` is a targeted "
+    "relationship write, issuing `id` plus only the cardinality-many fields being replaced, "
+    "precisely because rendering the whole node emits `<rel>: null` for every unmapped optional "
+    "cardinality-one relationship and so clears destination fields the plan never mapped. AD075 "
+    "(the flush exists at all) and AD085 (the emptied peer set must survive it) depend on the same "
+    "render. Re-derive AD088 against the new SDK before changing this test."
+)
+
+
+def test_the_sdk_nulls_an_unmapped_optional_relationship_under_both_render_modes() -> None:
+    """SDK-boundary tripwire for AD088: why no re-render of the node can be the flush.
+
+    Straight at the SDK, no adapter code involved. Rendering a node the SDK considers existing
+    emits `owner: None` for the unmapped optional cardinality-one relationship, and it does so
+    **under both render modes** — which is what makes the defect AD088 fixes older than AD085
+    and independent of it:
+
+    - stripping **on** (`exclude_unmodified=True`, a plain `node.save()`): the field survives
+      both stripping loops. The first does not pop it — the pop needs a non-optional
+      `RelatedNodeBase` or a `RelationshipManagerBase`, and an uninitialized optional
+      cardinality-one relationship is neither. The second never visits it, because an unmapped
+      field is absent from the original data the comparison walks.
+    - stripping **off** (`exclude_unmodified=False`, `node.update(do_full_update=True)`):
+      nothing is stripped at all.
+
+    If either arm stops holding, AD088's ground has moved.
+    """
+    client = RecordingClient()
+    create_data = client.schema.generate_payload_create(schema=TEAM_SCHEMA, data={"name": "team-a", "members": []})
+    assert "owner" not in create_data, "Precondition: the plan maps no `owner`, so the payload carries none."
+
+    node = InfrahubNodeSync(client=client, schema=TEAM_SCHEMA, data=create_data)
+    node.id = NODE_ID
+    node._existing = True
+
+    manager = node.members
+    assert isinstance(manager, RelationshipManagerSync)
+    manager.add("tag-id-1")
+    assert manager.peer_ids == ["tag-id-1"], "Precondition: the manager is reconciled."
+
+    for exclude_unmodified in (True, False):
+        rendered = node._generate_input_data(exclude_unmodified=exclude_unmodified)["data"]["data"]
+        message = (
+            f"{SDK_BOUNDARY_MESSAGE}\n\nWith exclude_unmodified={exclude_unmodified} the render produced "
+            f"{rendered!r}, which no longer nulls the unmapped optional cardinality-one relationship."
+        )
+        assert "owner" in rendered, message
+        assert rendered["owner"] is None, message
