@@ -25,7 +25,7 @@ import pytest
 
 from infrahub_sync.plan import writer
 from infrahub_sync.plan.checksum import compute_plan_checksum
-from infrahub_sync.plan.errors import DuplicateOperationIdError
+from infrahub_sync.plan.errors import DuplicateOperationIdError, PlanGenerationExistsError
 from infrahub_sync.plan.identity import operation_id
 from infrahub_sync.plan.models import (
     CHECKSUM_EXCLUDED_FIELDS,
@@ -283,6 +283,86 @@ def test_a_cleanup_failure_never_replaces_the_error_that_tore_the_write(
 
     with pytest.raises(OSError, match="simulated replace failure"):
         writer._atomic_write_bytes(tmp_path / "plan" / OPERATIONS_FILE_NAME, b"payload\n")
+
+
+# ======================================================================================
+# FIX-010 (spec 002) — a committed generation is never overwritten
+# ======================================================================================
+
+
+def test_a_committed_plan_generation_is_never_overwritten(tmp_path: Path) -> None:
+    """FIX-010: a run id whose manifest exists is refused, and its bytes stay untouched.
+
+    The plan a human reviewed has to stay the plan that is applied. Rewriting `plan/` in
+    place produced a *different* plan that verifies just as cleanly under the same run id,
+    so the second write is refused rather than reconciled — and the refusal is asserted
+    against the bytes on disk, because a refusal that still replaced the operations file
+    would leave the reviewed checksum describing nothing.
+    """
+    _write(tmp_path, [_tag("prod")])
+    before = (_operations_path(tmp_path).read_bytes(), _manifest_path(tmp_path).read_bytes())
+
+    with pytest.raises(PlanGenerationExistsError, match="already holds a committed plan generation") as caught:
+        _write(tmp_path, [_tag("staging")])
+
+    assert "Next action" in str(caught.value)
+    assert MANIFEST_FILE_NAME in str(caught.value)
+    assert (_operations_path(tmp_path).read_bytes(), _manifest_path(tmp_path).read_bytes()) == before
+
+
+def test_a_generation_whose_manifest_was_never_published_stays_writable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal keys on the manifest alone, so a first-write crash stays retryable.
+
+    The manifest is the commit point (AD014): a run left holding an operations file and no
+    manifest committed nothing, so the same run id must still accept a write. Keying the
+    refusal on the `plan/` directory instead would strand exactly the runs a crash produced.
+    """
+    real = writer._atomic_write_bytes
+
+    def _fail_at_the_manifest(path: Path, payload: bytes) -> None:
+        if path.name == MANIFEST_FILE_NAME:
+            msg = "simulated crash while publishing the manifest"
+            raise OSError(msg)
+        real(path, payload)
+
+    monkeypatch.setattr(writer, "_atomic_write_bytes", _fail_at_the_manifest)
+    with pytest.raises(OSError, match="simulated crash while publishing the manifest"):
+        _write(tmp_path, [_tag("prod")])
+    assert _operations_path(tmp_path).exists()
+    assert not _manifest_path(tmp_path).exists()
+
+    monkeypatch.setattr(writer, "_atomic_write_bytes", real)
+    manifest = _write(tmp_path, [_tag("staging")])
+
+    assert manifest.operations_count == 1
+    assert json.loads(_manifest_path(tmp_path).read_text(encoding="utf-8"))["plan_checksum"] == manifest.plan_checksum
+
+
+def test_the_refusal_precedes_the_first_write_of_the_new_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing of the refused generation is written, not even the operations file.
+
+    Asserted at the write helper rather than only over the resulting bytes: an
+    implementation that wrote the new operations file and *then* noticed the manifest would
+    leave the committed plan's checksum describing bytes that are gone, which is the state
+    FIX-010 exists to make unreachable.
+    """
+    _write(tmp_path, [_tag("prod")])
+    calls: list[str] = []
+    real = writer._atomic_write_bytes
+
+    def _recording(path: Path, payload: bytes) -> None:
+        calls.append(path.name)
+        real(path, payload)
+
+    monkeypatch.setattr(writer, "_atomic_write_bytes", _recording)
+    with pytest.raises(PlanGenerationExistsError):
+        _write(tmp_path, [_tag("staging")])
+
+    assert calls == []
 
 
 # ======================================================================================

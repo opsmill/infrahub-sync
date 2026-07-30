@@ -37,7 +37,7 @@ infrahub-sync diff --name <sync_project_name> --directory <your_configuration_di
 - `--directory` — directory holding your sync configuration.
 - `--branch` — Infrahub branch to diff against (default `main`).
 - `--show-progress / --no-show-progress` — toggle the per-resource progress bar.
-- `--run-id` — re-use a specific cache run id for the live comparison; useful when you want to overwrite a previous run's plan in place.
+- `--run-id` — re-use a specific cache run id for the live comparison. A run that already holds a committed plan is refused: see [Plan generations are immutable](#plan-generations-are-immutable).
 - `--concurrent-load / --no-concurrent-load` — load source and destination concurrently (default on). Disable if a custom adapter isn't thread-safe; see [Concurrent loads](#concurrent-loads) below.
 - `--full-extract / --no-full-extract` — default on; re-extract everything every run. Pass `--no-full-extract` to enable the cursor-driven incremental warm path. See [Incremental extraction](./reference/incremental-extraction).
 - `--from-plan <run-id>` — review the saved plan of a previous run instead of comparing live systems. See [Reviewing a saved plan](#reviewing-a-saved-plan) below.
@@ -112,6 +112,25 @@ infrahub-sync apply --name from-netbox --run-id 20260518T1430-abc12345 --directo
 
 For the full on-disk layout of the plan artifact and the rest of the run directory, see the
 [Cache layout reference](./reference/cache-layout).
+
+### Plan generations are immutable
+
+A run id holds **one** plan for its lifetime. Once `diff` has written the plan artifact for a run,
+another `diff --run-id <that-id>` is refused before anything is extracted:
+
+```text
+ERROR | Run '20260518T1430-abc12345' already holds a committed plan generation at
+        .infrahub-sync-cache/from-netbox/20260518T1430-abc12345/plan/manifest.json, and a committed
+        plan is never overwritten: a plan that has been reviewed must stay the plan that is applied.
+        Next action: Re-run `diff` without `--run-id` so the new plan is written under a fresh run id. ...
+```
+
+Re-planning means a new run id — run `diff` without `--run-id` and it allocates one. This is what
+makes an approval meaningful: the plan you reviewed under a run id cannot be replaced by a different
+plan that verifies just as cleanly under the same id.
+
+A run whose `diff` failed *before* the plan was committed is not affected: the artifact's commit
+point is `plan/manifest.json`, so a run left without one can be re-planned under the same id.
 
 ### Reviewing a saved plan
 

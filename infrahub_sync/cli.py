@@ -13,6 +13,7 @@ from infrahub_sdk import InfrahubClientSync
 from infrahub_sdk.exceptions import ServerNotResponsiveError
 
 from infrahub_sync.cache.locks import pipeline_lock
+from infrahub_sync.cache.paths import run_dir as stored_run_dir
 from infrahub_sync.cache.sidecars import RunFile
 
 # Imported at module level rather than deferred: `infrahub_sync.utils` below already pulls
@@ -27,6 +28,7 @@ from infrahub_sync.plan.errors import (
 from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.plan.reader import require_plan_directory
 from infrahub_sync.plan.review import read_saved_plan, require_stored_run
+from infrahub_sync.plan.writer import require_uncommitted_plan
 from infrahub_sync.utils import (
     PlanApplier,
     find_missing_schema_model,
@@ -312,6 +314,32 @@ def _review_saved_plan(
         _echo_plan_summary(summary)
 
 
+def _require_a_free_run_id(*, sync_name: str, run_id: str | None) -> None:
+    """Refuse re-planning into a run id whose plan generation is committed (FIX-010, spec 002).
+
+    Here, **above** the pipeline lock and the adapter factory, and not only in the writer:
+    extraction rewrites the run's `A/` snapshots, which the committed plan's manifest binds
+    itself to, so a re-plan that got as far as the writer's refusal would already have
+    invalidated the plan it was refused for. Refusing before anything is constructed leaves
+    the existing generation byte-identical.
+
+    A value that resolves to no run directory is left to the initialization arm below, which
+    already reports it: this guard answers one question — whether a plan is already committed
+    there — and inventing a second refusal for a malformed identifier would give the same
+    condition two different messages depending on which command met it.
+    """
+    if run_id is None:
+        return
+    try:
+        directory = stored_run_dir(sync_name, run_id)
+    except ValueError:
+        return
+    try:
+        require_uncommitted_plan(directory, run_id=run_id)
+    except PlanArtifactError as exc:
+        print_error_and_abort(str(exc))
+
+
 @app.command(name="list")
 def list_projects(
     directory: str = typer.Option(default=None, help="Base directory to search for sync configurations"),
@@ -393,6 +421,11 @@ def diff_cmd(
             ignored_run_id=run_id,
         )
         return
+
+    # A plan generation is immutable once committed, so `--run-id` naming a run that already
+    # holds one is refused here — before the lock, the adapters and the extraction that would
+    # overwrite the snapshots that plan is bound to (FIX-010, spec 002).
+    _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id)
 
     # Add adapter paths from CLI to the sync instance if specified
     if adapter_path is not None:

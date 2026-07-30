@@ -8,6 +8,10 @@ never reached this writer has no `plan/` directory at all and is classified as t
 pre-existing v1 format. The two verdicts are therefore disjoint by construction rather
 than by heuristic.
 
+A committed generation is also **final**: `require_uncommitted_plan` refuses to write into a
+run whose manifest already exists, so re-planning allocates a new run id rather than
+replacing a plan a human may have approved (FIX-010, spec 002).
+
 Both writes go through one helper, `_atomic_write_bytes`, in the tmp+`Path.replace`
 discipline already used for the run sidecars (`infrahub_sync/cache/sidecars.py:13-24`), so
 neither file is ever observed half-written. Routing both through a single helper is also
@@ -25,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
-from infrahub_sync.plan.errors import DuplicateOperationIdError
+from infrahub_sync.plan.errors import DuplicateOperationIdError, PlanGenerationExistsError
 from infrahub_sync.plan.models import PLAN_FORMAT_VERSION, PlanManifest
 
 if TYPE_CHECKING:
@@ -61,6 +65,38 @@ def _atomic_write_bytes(path: Path, payload: bytes) -> None:
         with contextlib.suppress(OSError):
             Path(tmp_name).unlink(missing_ok=True)
         raise
+
+
+def committed_manifest_path(run_dir: Path) -> Path:
+    """The path whose existence means this run holds a committed plan generation (AD014)."""
+    return run_dir / PLAN_DIR_NAME / MANIFEST_FILE_NAME
+
+
+def require_uncommitted_plan(run_dir: Path, *, run_id: str) -> None:
+    """Refuse to write over a plan generation that was already committed (FIX-010, spec 002).
+
+    A generation is committed once its manifest exists, and a committed generation is never
+    overwritten: `diff --run-id R` used to rewrite `R/plan/` in place, so the plan a human
+    reviewed could be replaced by a different one that verifies just as cleanly under the
+    same run id — the checksum proves the integrity of whatever currently occupies the run,
+    not identity with what was approved. Re-planning therefore means a new run id.
+
+    The condition is the manifest's presence **alone**, which is what keeps a first-write
+    crash retryable: the writer publishes `operations.jsonl` first and the manifest last, so
+    a run left holding operations and no manifest never committed a generation and may be
+    written again under the same run id.
+
+    Raises:
+        PlanGenerationExistsError: `<run_dir>/plan/manifest.json` already exists.
+    """
+    manifest = committed_manifest_path(run_dir)
+    if not manifest.exists():
+        return
+    msg = (
+        f"Run {run_id!r} already holds a committed plan generation at {manifest}, and a committed "
+        f"plan is never overwritten: a plan that has been reviewed must stay the plan that is applied."
+    )
+    raise PlanGenerationExistsError(msg)
 
 
 def _refuse_duplicate_identifiers(operations: Sequence[PlannedOperation]) -> None:
@@ -145,9 +181,12 @@ def write_plan_artifact(
     pre-FIX-005 shape, and the apply-time comparison skips such plans.
 
     Raises:
+        PlanGenerationExistsError: the run already holds a committed plan generation, which
+            is never overwritten (FIX-010, spec 002).
         DuplicateOperationIdError: two operations share an operation identifier (FR-021).
         UnserializablePayloadValueError: a payload value is outside the canonical-value table.
     """
+    require_uncommitted_plan(run_dir, run_id=run_id)
     _refuse_duplicate_identifiers(operations)
     ordered = _ordered_operations(operations)
     operations_bytes = _encode_operations(ordered)

@@ -77,6 +77,7 @@ from infrahub_sync.plan.errors import (
     PlanArtifactUnreadableError,
     PlanFormatV1Error,
     PlanFormatVersionError,
+    PlanGenerationExistsError,
     PlanVerificationError,
     SourcePeerUnresolvedError,
     UnaccountedIdentityComponentError,
@@ -1196,6 +1197,7 @@ TAXONOMY_CASES: dict[str, Callable[[], PlanArtifactError]] = {
     "apply_record_invariant": lambda: ApplyRecordInvariantError(
         "The apply record does not account for the plan.", apply_record=ApplyRecord()
     ),
+    "plan_generation_exists": lambda: PlanGenerationExistsError("Run 'r' already holds a committed plan."),
 }
 
 
@@ -2188,6 +2190,150 @@ def test_a_code_defect_escapes_the_command_unchanged_while_the_run_records_what_
     assert recorded["summary"]["applied_operations"] == [first_id]
     assert recorded["summary"]["failed_operation"] == str(APPLY_PLAN[1]["operation_id"])
     assert recorded["summary"]["may_have_partially_written"] is True
+
+
+# ======================================================================================
+# FIX-010 (spec 002) — the reviewed generation is immutable, and approval names its bytes
+# ======================================================================================
+
+
+def _diff_into(run_id: str) -> Any:  # noqa: ANN401 — click's Result type is not exported for annotation
+    """Invoke the **live** `diff` naming `run_id`, which is the re-plan-in-place attempt.
+
+    Not review mode: no `--from-plan`. Adapter construction is refused for every case in this
+    file, so a command that reaches the factory fails on the sentinel — which is what makes
+    "refused before anything was constructed" observable from the construction log.
+    """
+    return runner.invoke(app, ["diff", "--name", SYNC_NAME, "--directory", str(EXAMPLES_DIR), "--run-id", run_id])
+
+
+def test_a_second_diff_into_a_committed_run_id_is_refused_with_the_reviewed_plan_intact(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, adapter_construction_log: list[dict[str, Any]]
+) -> None:
+    """FIX-010: `diff --run-id R` no longer replaces the plan a human reviewed under R.
+
+    Reproduced by the review that raised this: a plan was reviewed, a second `diff` into the
+    same run id replaced it with a different one, and the checksum verified — because it
+    proves the integrity of whichever plan currently occupies the run, not identity with the
+    plan that was approved.
+
+    Three claims, and an implementation can pass one while failing another: the refusal
+    reaches the operator as a designed one-liner naming the existing plan and the next
+    action; the stored artifact is byte-identical afterwards; and nothing was constructed or
+    extracted, because extraction would rewrite the `A/` snapshots the committed plan binds
+    itself to and so would invalidate it even if the writer then refused.
+    """
+    directory = _appliable_run(tmp_path)
+    before = {path: path.read_bytes() for path in sorted(plan_dir(directory).rglob("*")) if path.is_file()} | {
+        _apply_snapshot_path(directory): _apply_snapshot_path(directory).read_bytes()
+    }
+
+    with caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"):
+        result = _diff_into(RUN_ID)
+
+    assert result.exit_code != 0
+    assert adapter_construction_log == [], "the refusal must precede adapter construction and extraction"
+    message = _operator_errors(caplog)
+    assert "already holds a committed plan generation" in message
+    assert str(manifest_path(directory)) in message
+    assert "Next action:" in message
+    assert "without `--run-id`" in message
+    assert {path: path.read_bytes() for path in before} == before
+    assert not (directory / "run.json").exists()
+
+
+# The two states RIG-01's failure injections leave behind: a run whose plan was never
+# started, and a run whose operations file was published while its manifest never was. The
+# writer's own crash injection is `tests/plan/test_writer.py`; what is decided here is what
+# the two commands an operator reaches do with the state it leaves.
+def _crashed_before_the_writer(tmp_path: Path) -> Path:
+    """A run that extracted its source side and then failed before deriving the plan."""
+    directory = _run_directory(tmp_path)
+    _write_apply_snapshot(directory, APPLY_SNAPSHOT_ROWS)
+    return directory
+
+
+def _crashed_publishing_the_manifest(tmp_path: Path) -> Path:
+    """A run whose `operations.jsonl` landed and whose manifest never did (AD014)."""
+    directory = _appliable_run(tmp_path)
+    manifest_path(directory).unlink()
+    return directory
+
+
+# One row per crash state: how it is built, what the review says, and what the apply says.
+# The two verdicts differ in wording because they are reached by different components — the
+# reader on review, the pre-apply verifier's format-version gate on apply — and asserting one
+# phrase for both would hide a path that stopped refusing.
+INCOMPLETE_GENERATIONS: dict[str, tuple[Callable[[Path], Path], tuple[str, str]]] = {
+    "crashed_before_the_writer": (_crashed_before_the_writer, ("holds no plan artifact", "holds no plan artifact")),
+    "crashed_publishing_the_manifest": (
+        _crashed_publishing_the_manifest,
+        ("manifest.json is absent", "no readable, parseable manifest"),
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("build", "fragments"), list(INCOMPLETE_GENERATIONS.values()), ids=list(INCOMPLETE_GENERATIONS)
+)
+def test_an_incomplete_generation_is_refused_by_both_review_and_apply_with_no_destination_call(
+    tmp_path: Path,
+    destination_double: RecordingDestination,
+    caplog: pytest.LogCaptureFixture,
+    build: Callable[[Path], Path],
+    fragments: tuple[str, str],
+) -> None:
+    """RIG-01, folded into FIX-010: a half-written generation is applicable to nobody.
+
+    A crash before the writer and a crash between the two file writes are the two states
+    that made the "manifest last is the commit point" claim worth testing rather than
+    asserting: the first leaves no `plan/` at all and the second leaves one without its
+    commit point. Both must refuse on **both** paths — a review that rendered the second as a
+    plan, or an apply that read its operations without a manifest to verify them against,
+    would be applying bytes nobody approved.
+    """
+    review_fragment, apply_fragment = fragments
+    build(tmp_path)
+    constructed: list[str] = []
+
+    with caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"):
+        review = _review("--from-plan", RUN_ID)
+        assert review.exit_code != 0, review.output
+        assert review_fragment in _operator_errors(caplog)
+        caplog.clear()
+        with patch(
+            "infrahub_sync.cli.PlanApplier.open_existing",
+            _patched_open_existing(destination_double, constructed=constructed),
+        ):
+            applied = _apply(RUN_ID)
+        assert applied.exit_code != 0
+        assert apply_fragment in _operator_errors(caplog)
+
+    assert destination_double.writes == [], "an incomplete generation must reach the destination not at all"
+
+
+@pytest.mark.parametrize(
+    "build", [case[0] for case in INCOMPLETE_GENERATIONS.values()], ids=list(INCOMPLETE_GENERATIONS)
+)
+def test_an_incomplete_generation_stays_re_plannable_under_the_same_run_id(
+    tmp_path: Path, adapter_construction_log: list[dict[str, Any]], build: Callable[[Path], Path]
+) -> None:
+    """The residual FIX-010 has to preserve: neither crash strands the run id.
+
+    The immutability refusal keys on `manifest.json` and nothing else, so a run that never
+    published one is not a committed generation and `diff --run-id R` may still write it.
+    Keying on the `plan/` directory — or on the run directory — would refuse exactly the runs
+    a crash produced, and an operator would have to invent a new id to get out of it.
+
+    Reaching adapter construction is the assertion: the sentinel that refuses it is the first
+    thing past this guard, so the log being non-empty is proof the guard let the run through.
+    """
+    build(tmp_path)
+
+    result = _diff_into(RUN_ID)
+
+    assert result.exit_code != 0, "the construction sentinel is expected to stop this run"
+    assert adapter_construction_log, "the immutability guard refused a generation that was never committed"
 
 
 def test_a_broken_apply_invariant_records_what_was_written_not_an_empty_record(

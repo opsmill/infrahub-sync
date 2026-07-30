@@ -127,6 +127,28 @@ class UnknownRunIdentifierError(PlanArtifactError):
         return cls(message, next_action=cls.NO_RUNS_NEXT_ACTION.format(sync_name=sync_name))
 
 
+class PlanGenerationExistsError(PlanArtifactError):
+    """The run already holds a committed plan generation, which is never overwritten.
+
+    A run id whose `plan/manifest.json` exists names a plan a human may already have
+    reviewed and approved, and the checksum of a rewritten generation proves the integrity
+    of the *new* files rather than identity with the ones that were approved. So re-planning
+    into an occupied run id is refused and re-planning means a fresh run id (FIX-010,
+    spec 002).
+
+    The condition is `manifest.json`'s presence and nothing else, because the manifest is
+    the artifact's commit point (AD014): a run whose operations file was written but whose
+    manifest never was holds no committed generation, so it stays retryable under the same
+    run id.
+    """
+
+    next_action = (
+        "Re-run `diff` without `--run-id` so the new plan is written under a fresh run id. To use the "
+        "existing plan instead, review it with `diff --from-plan <run-id>` or apply it with "
+        "`apply --run-id <run-id>`."
+    )
+
+
 class UnknownPlanKindError(PlanArtifactError):
     """A `kind` filter selects nothing, from either of the two conditions that can cause it.
 
