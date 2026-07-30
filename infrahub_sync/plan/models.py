@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePath
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, get_args
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
@@ -38,7 +38,7 @@ PlanAction = Literal["create", "update", "delete"]
 # FR-002's closed vocabulary (AD009). An operation record whose `action` falls outside it
 # is the genuinely unsupported operation FR-017 fails the run for, refused while reading
 # and therefore before any destination write (AD055).
-ACTIONS: tuple[PlanAction, ...] = ("create", "update", "delete")
+ACTIONS: tuple[PlanAction, ...] = get_args(PlanAction)
 
 # Removed from the manifest before the checksum is computed, not blanked (AD035).
 CHECKSUM_EXCLUDED_FIELDS: tuple[str, ...] = ("plan_checksum", "run_id", "created_at")

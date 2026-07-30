@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import json
 import stat as stat_module
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
@@ -82,9 +82,9 @@ class LoadedPlan:
     """
 
     manifest: PlanManifest
-    operations: list[PlannedOperation] = field(default_factory=list)
-    manifest_mapping: dict[str, Any] = field(default_factory=dict)
-    operations_bytes: bytes = b""
+    operations: list[PlannedOperation]
+    manifest_mapping: dict[str, Any]
+    operations_bytes: bytes
 
 
 @dataclass(frozen=True)

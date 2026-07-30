@@ -141,13 +141,6 @@ def _probe_peer_kind(
             carries its own next action (AD082).
     """
     tried = ", ".join(candidates) if candidates else "<none declared by the schema mapping>"
-    if store is None:
-        msg = (
-            f"Cannot resolve the peer {unique_id!r} referenced by field {field!r} of kind "
-            f"{owning_kind!r}: no object store is loaded for that side. Candidate peer kinds: {tried}."
-        )
-        raise SourcePeerUnresolvedError.absent(msg)
-
     hits: list[tuple[str, Any]] = []
     for candidate in candidates:
         try:
@@ -211,7 +204,7 @@ def _peer_pair(
             ),
         )
 
-    identifiers = peer.get_identifiers() if hasattr(peer, "get_identifiers") else {}
+    identifiers = peer.get_identifiers()
     if not identifiers:
         msg = (
             f"The peer {unique_id!r} of kind {peer_kind!r}, referenced by field {field!r} of kind "
@@ -460,9 +453,9 @@ def operations_from_diff(  # pylint: disable=redefined-outer-name
         UnserializablePayloadValueError: a payload value is outside the canonical-value
             table.
     """
-    store = getattr(source_adapter, "store", None)
+    store = source_adapter.store
     operations: list[PlannedOperation] = []
-    children = getattr(diff, "children", None) or {}
+    children = diff.children
     for group, elements_by_name in children.items():
         for element in elements_by_name.values():
             kind = getattr(element, "type", None) or group
@@ -544,14 +537,14 @@ def derive_deletes(  # pylint: disable=redefined-outer-name
         )
         return []
 
-    store = getattr(destination_adapter, "store", None)
+    store = destination_adapter.store
     operations: list[PlannedOperation] = []
     for kind in kinds:
         source_unique_ids = {record.get_unique_id() for record in source_adapter.get_all(kind)}
         for record in destination_adapter.get_all(kind):
             if record.get_unique_id() in source_unique_ids:
                 continue
-            keys: Mapping[str, Any] = record.get_identifiers() if hasattr(record, "get_identifiers") else {}
+            keys: Mapping[str, Any] = record.get_identifiers()
             resolved = _resolve_references(
                 values=keys,
                 candidates=reference_candidates(config, kind),

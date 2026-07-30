@@ -284,6 +284,11 @@ _COMPONENT_VALUE_SUFFIX = "value"
 _UNRESOLVED = object()
 
 
+def _hfid_components(node_schema: Any) -> list[str]:
+    """The kind's human-friendly-ID component paths, empty when it declares none."""
+    return list(getattr(node_schema, "human_friendly_id", None) or ())
+
+
 def _component_segments(component: str) -> list[str]:
     """Field segments of a schema component path, with a trailing `value` dropped.
 
@@ -510,7 +515,7 @@ class PeerResolver:
                 "destination does not carry"
             )
             raise ValueError(msg)
-        components = list(getattr(node_schema, "human_friendly_id", None) or ())
+        components = _hfid_components(node_schema)
 
         kwargs: dict[str, Any] = {}
         dropped: list[str] = []
@@ -1061,7 +1066,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             return
 
         kind = node_schema.kind
-        components = list(getattr(node_schema, "human_friendly_id", None) or ())
+        components = _hfid_components(node_schema)
 
         if components and all(len(_component_segments(component)) == 1 for component in components):
             msg = (
@@ -1239,7 +1244,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         Raises:
             UnaccountedIdentityComponentError: naming the kind and the missing components.
         """
-        components = list(getattr(node_schema, "human_friendly_id", None) or ())
+        components = _hfid_components(node_schema)
         missing = [
             component
             for component in components
