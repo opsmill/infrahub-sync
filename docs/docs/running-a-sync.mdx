@@ -210,14 +210,18 @@ being synced.
 Both review depths disclose two things about deletes, in the same output you approve.
 
 **A recorded delete will not be executed.** A plan that contains deletes prints a note naming the
-count, and every delete in the `--detail` listing is marked `(not executed)`:
+count, and every delete the `--detail` listing shows is marked `(not executed)`:
 
 ```text
 NOTE  1 delete operation(s) are recorded in this plan and NONE will be executed against the
       destination by this release. Applying this plan will complete successfully and record
-      1 skipped deletes on the run; each delete record is marked "(not executed)" in the
-      --detail listing.
+      1 skipped deletes on the run. Every delete record the --detail listing shows carries a
+      "(not executed)" marker — a --kind filter may narrow the listing so that none of them
+      are shown.
 ```
+
+The count in the note is the whole plan's, so it is the number the apply will skip whether or not
+`--kind` narrows the listing you are reading it above.
 
 **Deletes may never have been computed at all.** Deletes are derived from the loaded destination
 store, which only holds a complete picture when the destination side ran a full extract. When the

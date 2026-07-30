@@ -148,8 +148,9 @@ def _delete_disclosure(summary: PlanSummary) -> list[str]:
             _note(
                 f"{count} delete operation(s) are recorded in this plan and NONE will be executed "
                 f"against the destination by this release. Applying this plan will complete "
-                f"successfully and record {count} skipped deletes on the run; each delete record "
-                f'is marked "(not executed)" in the --detail listing.'
+                f"successfully and record {count} skipped deletes on the run. Every delete record "
+                f'the --detail listing shows carries a "(not executed)" marker — a --kind filter '
+                f"may narrow the listing so that none of them are shown."
             )
         )
     return notes

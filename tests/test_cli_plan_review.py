@@ -659,6 +659,25 @@ def test_a_computed_plan_with_deletes_discloses_them_at_both_depths(tmp_path: Pa
     assert [line for line in detail_lines if line.startswith("op_") and "(not executed)" in line] == marked
 
 
+def test_the_delete_note_does_not_promise_markers_a_kind_filter_removed(tmp_path: Path) -> None:
+    """MIN-006 (spec 002): the note's promise has to survive `--kind` narrowing the listing.
+
+    The note is plan-wide — its count is what the apply will skip — while the listing beneath it
+    is whatever `--kind` selected. Promising markers "in the --detail listing" was therefore
+    false for exactly the invocation that shows no delete record at all, which is a disclosure
+    an operator can check and find missing.
+    """
+    _store(tmp_path, MIXED_PLAN, deletes_computed=True)
+
+    result = _review("--from-plan", RUN_ID, "--detail", "--kind", "LocationSite")
+
+    assert result.exit_code == 0, result.output
+    output = _flat(result.output)
+    assert "1 delete operation(s) are recorded in this plan and NONE will be executed" in output
+    assert "a --kind filter may narrow the listing so that none of them are shown" in output
+    assert [line for line in result.output.splitlines() if line.startswith("op_") and "(not executed)" in line] == []
+
+
 def test_a_computed_plan_without_deletes_carries_no_not_executed_annotation(tmp_path: Path) -> None:
     """(b) The annotation is conditional, not unconditional noise.
 
