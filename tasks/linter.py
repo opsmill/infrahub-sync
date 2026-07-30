@@ -38,13 +38,7 @@ def lint_pylint(context: Context) -> None:
     """This will run pylint for the specified name and Python version."""
 
     print(f" - [{NAMESPACE}] Check code with pylint")
-    # A severity gate rather than a style gate (MIN-014, spec 002). pylint's default exit code
-    # is a bitmask of the message *categories* it emitted, so the pre-existing convention and
-    # refactor advice in this repository made `invoke lint` fail every time and left a reviewer
-    # unable to tell real breakage from long-standing noise. `--fail-on` keeps error- and
-    # fatal-category messages failing the task; `--fail-under` is what stops the advisory
-    # categories from doing so, and holds the score at roughly where it stands today.
-    exec_cmd = "pylint --fail-under=9.5 --fail-on=E,F infrahub_sync/"
+    exec_cmd = "pylint infrahub_sync/"
     with context.cd(ESCAPED_REPO_PATH):
         context.run(exec_cmd)
 
