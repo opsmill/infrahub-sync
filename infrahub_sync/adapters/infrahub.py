@@ -553,6 +553,13 @@ class PeerResolver:
         unfiltered `client.filters(kind=...)` lists every node of the kind, and with exactly
         one node at the destination it returns it — the one shape the zero- and multi-match
         refusals cannot catch, and silent wrong-peer wiring if it binds.
+
+        That refusal overrides `PeerNotFoundError`'s class-level next action (the AD082
+        pattern). The generic one — "create the peer at the destination" — is wrong for
+        **this** condition and dangerous: nothing here established that the peer is absent,
+        only that no filter could be derived to look for it, so the peer very likely exists
+        already and creating it would duplicate it. The remedy is the identity, not the
+        destination.
         """
         filter_kwargs = self._filter_kwargs(peer_kind=peer_kind, identity=identity)
         readable = canonical_json_bytes(canonical_identity(identity, kind=peer_kind)).decode("utf-8")
@@ -564,7 +571,15 @@ class PeerResolver:
                 f"every {peer_kind!r} object and could silently bind the wrong one, so the peer is "
                 "refused instead."
             )
-            raise PeerNotFoundError(msg)
+            raise PeerNotFoundError(
+                msg,
+                next_action=(
+                    f"Whether a {peer_kind!r} peer exists at the destination was never established, so "
+                    "do not create one — that would duplicate it. Re-plan so that kind's identity "
+                    "carries at least one direct attribute value, or add one to its `identifiers` in "
+                    "the schema mapping."
+                ),
+            )
         results = self._adapter.client.filters(
             kind=peer_kind,
             populate_store=False,

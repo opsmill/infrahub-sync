@@ -1030,6 +1030,16 @@ def test_a_reference_only_identity_is_refused_before_querying_not_silently_bound
         "The refusal must come BEFORE the query: an unfiltered query lists every node of the kind "
         "and, with exactly one at the destination, silently binds it."
     )
+    # RF-3: the next action is this condition's own, not `PeerNotFoundError`'s class-level one.
+    # "Create the peer at the destination" is actively dangerous here — nothing established the
+    # peer is absent, only that no filter could be derived to look for it, so the peer very
+    # likely exists and creating it would duplicate it. The remedy is the identity (AD082).
+    next_action = excinfo.value.next_action
+    assert next_action != PeerNotFoundError.next_action, (
+        f"The class-level remedy tells the operator to create the peer, which would duplicate it: {message}"
+    )
+    assert "do not create" in next_action.lower(), f"The next action must warn against creating the peer: {message}"
+    assert "identifiers" in next_action, f"The next action must point at the identity that derived no filter: {message}"
 
 
 def test_a_partial_filter_warns_once_per_kind_naming_the_dropped_components(
