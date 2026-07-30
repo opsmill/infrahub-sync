@@ -100,6 +100,11 @@ token = os.environ.get("NETBOX_TOKEN") or settings.get("token")
 
 ## Implement the planned-write surface as a whole, or not at all
 
+Applies to the Infrahub destination only in v1: both members are typed with Infrahub's concrete
+`PeerResolver`, so another destination cannot conform statically without importing the Infrahub
+adapter. An adapter-neutral resolver type is a tracked follow-up — raise it rather than working
+around the import.
+
 **Always provide both members if a destination adapter supports applying a saved plan:**
 
 ```python

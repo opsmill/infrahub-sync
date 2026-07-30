@@ -31,6 +31,13 @@ The resolver factory is a member because the engine has to build a resolver with
 adapter — that narrowing is what previously forced a `cast("InfrahubAdapter", ...)` in the apply loop,
 and no cast remains.
 
+**In v1 this surface is Infrahub-only.** `PeerResolver` is the Infrahub adapter's concrete class, so
+both members name an Infrahub type and a non-Infrahub destination cannot conform statically without
+importing the Infrahub adapter. The protocol is the boundary the *engine* holds — it is what keeps the
+apply loop free of a concrete adapter — and not yet the boundary a second destination can implement
+against. An adapter-neutral resolver type is a tracked follow-up, to be settled with the first real
+second implementer.
+
 The pre-write gate is `isinstance(destination, PlannedWriteDestination)`, run inside the same gate as
 the artifact verification checks rather than as a per-operation surprise. A destination that is not one
 is refused **before any write**, named, and directed at `sync`.

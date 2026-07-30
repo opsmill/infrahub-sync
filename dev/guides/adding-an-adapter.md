@@ -99,6 +99,13 @@ That covers `infrahub-sync sync`, the live compare-and-write path. Applying a **
 
 ### Step 4b: Implement the planned-write surface (optional, destination only)
 
+**Infrahub-only in v1.** Read this step as documentation of the Infrahub destination's write
+surface, not as a general extension point. Both members are typed with `PeerResolver`, which is
+the Infrahub adapter's concrete resolver class, so a non-Infrahub destination cannot conform to
+the protocol statically without importing the Infrahub adapter. Making the resolver type
+adapter-neutral is a tracked follow-up: raise it before writing a second implementation rather
+than working around the Infrahub import.
+
 `infrahub-sync apply` replays a plan artifact that a previous `diff` saved. It does not load
 either side and does not re-compare, so it cannot go through the model's `create` / `update`.
 It goes through a surface on the **adapter** instead — `PlannedWriteDestination` in
