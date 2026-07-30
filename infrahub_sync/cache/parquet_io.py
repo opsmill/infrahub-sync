@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import fsspec
 
 if TYPE_CHECKING:
+    from collections.abc import Collection, Iterator
     from datetime import datetime
     from pathlib import Path
 import pyarrow as pa
@@ -76,6 +77,32 @@ def read_table(uri: str) -> pa.Table:
     fs, path = fsspec.core.url_to_fs(uri)
     with fs.open(path, "rb") as fh:
         return pq.read_table(fh)
+
+
+def iter_row_batches(
+    uri: str,
+    *,
+    batch_size: int,
+    excluded_columns: Collection[str] = (),
+) -> Iterator[list[dict[str, object]]]:
+    """Yield a Parquet file's rows as bounded lists of row dicts, from one open of the file.
+
+    The streaming counterpart of `read_table(...).to_pylist()`: rows come out in file
+    order, in batches of at most `batch_size`, so a consumer that folds each batch away
+    holds one batch rather than the whole dataset. `excluded_columns` are projected out at
+    read time — the excluded bytes are never decoded.
+
+    The rows are identical to the ones `read_table(uri).select(kept).to_pylist()` produces,
+    including the degenerate case where every column is excluded (one empty dict per row).
+    The file stays open for the life of the generator, so a caller that abandons it early
+    leaves the read incomplete but the handle closed by the generator's own cleanup.
+    """
+    fs, path = fsspec.core.url_to_fs(uri)
+    with fs.open(path, "rb") as fh:
+        parquet_file = pq.ParquetFile(fh)
+        columns = [name for name in parquet_file.schema_arrow.names if name not in excluded_columns]
+        for batch in parquet_file.iter_batches(batch_size=batch_size, columns=columns):
+            yield batch.to_pylist()
 
 
 def write_plan(*, run_dir: Path, rows: list[dict[str, str]]) -> None:

@@ -20,16 +20,25 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+import pyarrow.parquet as pq
 import pytest
 
 from infrahub_sync.cache.parquet_io import read_table, write_resource_side
+from infrahub_sync.plan import checksum as checksum_module
 from infrahub_sync.plan.canonical import canonical_json_bytes
-from infrahub_sync.plan.checksum import compute_plan_checksum, source_snapshot_digest, source_snapshot_records
+from infrahub_sync.plan.checksum import (
+    compute_plan_checksum,
+    snapshot_digest_and_row_count,
+    source_snapshot_digest,
+    source_snapshot_records,
+)
 from infrahub_sync.plan.errors import PlanArtifactUnreadableError
 from infrahub_sync.plan.models import CHECKSUM_EXCLUDED_FIELDS
 
 if TYPE_CHECKING:
+    from collections.abc import Collection, Iterator
     from pathlib import Path
+    from typing import NoReturn
 
 OPERATIONS_BYTES = b'{"action":"create","kind":"BuiltinTag"}\n{"action":"update","kind":"BuiltinTag"}\n'
 
@@ -401,6 +410,117 @@ def test_records_digest_matches_the_per_file_digest(tmp_path: Path) -> None:
     path = _write_side(tmp_path, resource="BuiltinTag", rows=ROWS, source_ids=SOURCE_IDS)
     (record,) = source_snapshot_records(tmp_path)
     assert record["digest"] == source_snapshot_digest(path)
+
+
+# ======================================================================================
+# FIX-014 (spec 002) — the digest is streamed, and streaming does not move a byte of it
+# ======================================================================================
+
+MANY_ROWS: list[dict[str, object]] = [
+    {"name": f"tag-{index:02d}", "description": None if index % 3 else f"description {index}"} for index in range(12)
+]
+MANY_SOURCE_IDS = [str(row["name"]) for row in MANY_ROWS]
+
+
+def _regrouped(path: Path, *, row_group_size: int) -> Path:
+    """Rewrite a snapshot with a fixed row-group size, keeping its rows and schema.
+
+    `write_resource_side` leaves the row-group count to pyarrow's default, which puts every
+    row of any snapshot a test can afford to build in **one** group — and one group is the
+    case in which a whole-table read and a batched read cannot be told apart.
+    """
+    table = read_table(str(path))
+    pq.write_table(table, str(path), compression="snappy", row_group_size=row_group_size)
+    return path
+
+
+def _whole_table_digest(path: Path) -> str:
+    """The digest as the pre-FIX-014 shape computed it: whole table, list of rows, join."""
+    table = read_table(str(path))
+    columns = [name for name in table.column_names if name != "_extract_ts"]
+    rows = table.select(columns).to_pylist()
+    return hashlib.sha256(b"\n".join(canonical_json_bytes(row) for row in rows)).hexdigest()
+
+
+def test_the_snapshot_really_holds_several_row_groups(tmp_path: Path) -> None:
+    """Precondition: without several row groups the batch-size cases prove nothing."""
+    path = _regrouped(
+        _write_side(tmp_path, rows=MANY_ROWS, source_ids=MANY_SOURCE_IDS),
+        row_group_size=5,
+    )
+    assert pq.ParquetFile(str(path)).num_row_groups == 3
+
+
+@pytest.mark.parametrize("batch_size", [1, 2, 5, 7, 12, 10_000])
+def test_the_digest_and_row_count_are_identical_at_every_batch_size(tmp_path: Path, batch_size: int) -> None:
+    """FIX-014: the digest is defined over the rows, so the batch size cannot move it.
+
+    Byte-identity is asserted against the digest **the pre-FIX-014 shape computed** — the
+    whole-table read, the list of row dicts, the joined bytes — recomputed here from the
+    spelled-out rule, so a streaming implementation that dropped a separator, added a
+    trailing one, or lost a row fails rather than agreeing with itself.
+    """
+    path = _regrouped(
+        _write_side(tmp_path, rows=MANY_ROWS, source_ids=MANY_SOURCE_IDS),
+        row_group_size=5,
+    )
+
+    digest, row_count = snapshot_digest_and_row_count(path, batch_size=batch_size)
+
+    assert digest == _whole_table_digest(path)
+    assert digest == source_snapshot_digest(path, batch_size=batch_size)
+    assert row_count == len(MANY_ROWS)
+
+
+def test_the_digest_never_reads_the_whole_table(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """FIX-014: the spy fails the test if the digest falls back to a whole-table read.
+
+    Both whole-table seams are poisoned — the cache layer's `read_table` and pyarrow's own
+    `read_table` beneath it — so an implementation that materialized the table anywhere on
+    this path raises here instead of quietly costing a multiple of the dataset in memory.
+    """
+    path = _regrouped(
+        _write_side(tmp_path, rows=MANY_ROWS, source_ids=MANY_SOURCE_IDS),
+        row_group_size=5,
+    )
+    expected = _whole_table_digest(path)
+
+    def _refuse(*_args: object, **_kwargs: object) -> NoReturn:
+        msg = "the snapshot digest read the whole table instead of streaming record batches (FIX-014)"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr("infrahub_sync.cache.parquet_io.read_table", _refuse)
+    monkeypatch.setattr(pq, "read_table", _refuse)
+
+    assert source_snapshot_digest(path) == expected
+
+
+def test_no_batch_the_digest_folds_is_larger_than_the_bound(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """FIX-014's point: what the digest holds at once is bounded, not a fraction of nothing.
+
+    The batches are observed as they are handed over, so a reader that honoured the
+    parameter's name while yielding the whole file in one batch fails here.
+    """
+    path = _regrouped(
+        _write_side(tmp_path, rows=MANY_ROWS, source_ids=MANY_SOURCE_IDS),
+        row_group_size=5,
+    )
+    observed: list[int] = []
+    streaming = checksum_module.iter_row_batches
+
+    def _observe(
+        uri: str, *, batch_size: int, excluded_columns: Collection[str] = ()
+    ) -> Iterator[list[dict[str, object]]]:
+        for batch in streaming(uri, batch_size=batch_size, excluded_columns=excluded_columns):
+            observed.append(len(batch))
+            yield batch
+
+    monkeypatch.setattr(checksum_module, "iter_row_batches", _observe)
+
+    assert source_snapshot_digest(path, batch_size=2) == _whole_table_digest(path)
+    assert observed, "the digest consumed no record batch at all"
+    assert max(observed) <= 2, f"a batch exceeded the bound: {observed}"
+    assert sum(observed) == len(MANY_ROWS)
 
 
 # ======================================================================================

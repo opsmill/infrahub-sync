@@ -582,10 +582,12 @@ def test_a_read_denied_snapshot_raises_the_unreadable_taxonomy_error(
     """
     directory = _verifiable_run(tmp_path)
 
-    def _deny(path: str) -> NoReturn:
-        raise PermissionError(13, "Permission denied", path)
+    def _deny(uri: str, **_kwargs: object) -> NoReturn:
+        raise PermissionError(13, "Permission denied", uri)
 
-    monkeypatch.setattr("infrahub_sync.plan.checksum.read_table", _deny)
+    # The digest's one read seam, batched since FIX-014; an `OSError` raised anywhere in the
+    # streaming read reaches the verifier the same way the whole-table read's did.
+    monkeypatch.setattr("infrahub_sync.plan.checksum.iter_row_batches", _deny)
 
     with pytest.raises(PlanArtifactUnreadableError) as raised:
         _verify(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION)

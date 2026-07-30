@@ -17,6 +17,11 @@ PD-008). `_extract_ts` is allocated once per side per run
 re-plan of an unchanged source and make SC-006 unachievable. `_source_id` and
 `_tombstone` stay inside the digest: both are deterministic for identical input and both
 are part of what the plan was computed against.
+
+The digest is defined over the whole row sequence and **computed one bounded batch at a
+time**, so its cost in memory is a batch rather than a multiple of the dataset (FIX-014).
+The definition is what the artifact contract fixes; the batch size is a tuning knob, and
+every batch size — including one row — yields the same digest.
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 from pyarrow import ArrowInvalid
 
-from infrahub_sync.cache.parquet_io import read_table
+from infrahub_sync.cache.parquet_io import iter_row_batches
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.errors import PlanArtifactUnreadableError
 from infrahub_sync.plan.models import CHECKSUM_EXCLUDED_FIELDS
@@ -44,6 +49,15 @@ SNAPSHOT_DIGEST_EXCLUDED_COLUMNS = frozenset({"_extract_ts"})
 # destination side (`B/`) is not what the plan is bound to.
 SOURCE_SNAPSHOT_SIDE = "A"
 
+# Written between two logical rows' canonical encodings and nowhere else — no trailing
+# separator, so the digested bytes are the LF-**joined** encodings the rule states.
+ROW_SEPARATOR = b"\n"
+
+# How many rows the snapshot digest holds in memory at once. The digest is defined over the
+# whole row sequence but computed incrementally, so this is a memory bound and not part of
+# the artifact contract: every batch size yields the same digest (FIX-014, spec 002).
+SNAPSHOT_DIGEST_BATCH_SIZE = 10_000
+
 
 def compute_plan_checksum(manifest_mapping: Mapping[str, Any], operations_bytes: bytes) -> str:
     """Compute `plan_checksum` over a manifest mapping and the operations file's bytes.
@@ -56,32 +70,53 @@ def compute_plan_checksum(manifest_mapping: Mapping[str, Any], operations_bytes:
     return hashlib.sha256(canonical_json_bytes(body) + operations_bytes).hexdigest()
 
 
-def _digest_and_row_count(path: Path) -> tuple[str, int]:
-    """Return the logical-row digest and the row count of one snapshot file."""
-    table = read_table(str(path))
-    columns = [name for name in table.column_names if name not in SNAPSHOT_DIGEST_EXCLUDED_COLUMNS]
-    rows = table.select(columns).to_pylist()
-    joined = b"\n".join(canonical_json_bytes(row, kind=path.stem) for row in rows)
-    return hashlib.sha256(joined).hexdigest(), table.num_rows
+def _digest_and_row_count(path: Path, *, batch_size: int = SNAPSHOT_DIGEST_BATCH_SIZE) -> tuple[str, int]:
+    """Return the logical-row digest and the row count of one snapshot file.
+
+    Hashed **incrementally**, from one open of the file, one bounded record batch at a
+    time. SHA-256 is streamable, and the previous shape — the whole decompressed table,
+    then a list of every row as a dict, then every row's canonical encoding, then the
+    joined byte string — made peak memory a multiple of the dataset and put an operational
+    ceiling on the kinds a plan can be created for at all (FIX-014, spec 002).
+
+    The digest is **unchanged** by that: the hash is fed exactly the bytes the join used to
+    allocate — each logical row's canonical encoding in file order, a single LF between two
+    of them and none at either end — and the row count is accumulated over the same pass
+    rather than read from a second one.
+    """
+    digest = hashlib.sha256()
+    row_count = 0
+    for batch in iter_row_batches(
+        str(path),
+        batch_size=batch_size,
+        excluded_columns=SNAPSHOT_DIGEST_EXCLUDED_COLUMNS,
+    ):
+        for row in batch:
+            if row_count:
+                digest.update(ROW_SEPARATOR)
+            digest.update(canonical_json_bytes(row, kind=path.stem))
+            row_count += 1
+    return digest.hexdigest(), row_count
 
 
-def snapshot_digest_and_row_count(path: Path) -> tuple[str, int]:
+def snapshot_digest_and_row_count(path: Path, *, batch_size: int = SNAPSHOT_DIGEST_BATCH_SIZE) -> tuple[str, int]:
     """Return one snapshot file's logical-row digest and its row count together.
 
     The pre-apply verifier compares **both** against the manifest, and reading the Parquet
     file twice to get them separately would double the cost of the check for no benefit.
     """
-    return _digest_and_row_count(path)
+    return _digest_and_row_count(path, batch_size=batch_size)
 
 
-def source_snapshot_digest(path: Path) -> str:
+def source_snapshot_digest(path: Path, *, batch_size: int = SNAPSHOT_DIGEST_BATCH_SIZE) -> str:
     """Digest one source-snapshot Parquet file's logical rows (AD037, PD-008).
 
-    The table is read with `_extract_ts` dropped, rows kept in file order, each row
+    The file is read with `_extract_ts` projected out, rows kept in file order, each row
     encoded with `canonical_json_bytes` and the encodings joined by LF. Returns lowercase
-    hex, no prefix.
+    hex, no prefix. `batch_size` bounds how much of the file is held at once and does not
+    affect the digest.
     """
-    digest, _row_count = _digest_and_row_count(path)
+    digest, _row_count = _digest_and_row_count(path, batch_size=batch_size)
     return digest
 
 
