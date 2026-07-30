@@ -2276,7 +2276,55 @@ def test_an_expected_checksum_against_a_non_utf8_manifest_refuses_instead_of_tra
     )
     assert destination_double.writes == [], "nothing may be written for an unreadable manifest"
     message = _operator_errors(caplog)
-    assert "no readable, parseable manifest" in message, message
+    assert "could not be hashed" in message, message
+    assert "Next action:" in message, message
+
+
+def test_an_expected_checksum_against_an_unhashable_plan_refuses_rather_than_applying(
+    tmp_path: Path, destination_double: RecordingDestination, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The approval check fails closed: a plan that cannot be hashed matched nothing.
+
+    An artifact too incomplete to hash cannot be compared against the operator's approved
+    value, and the pre-apply verifier never makes that comparison — it tests the artifact's
+    self-consistency. Passing the unhashable case through would therefore skip the control
+    the operator asked for, not defer it, and the apply would reach the destination with a
+    plan no approval ever named.
+    """
+    directory = _appliable_run(tmp_path)
+    manifest_path(directory).unlink()
+    constructed: list[str] = []
+
+    with (
+        caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"),
+        patch(
+            "infrahub_sync.cli.PlanApplier.open_existing",
+            _patched_open_existing(destination_double, constructed=constructed),
+        ),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "apply",
+                "--name",
+                SYNC_NAME,
+                "--directory",
+                str(EXAMPLES_DIR),
+                "--run-id",
+                RUN_ID,
+                "--expected-checksum",
+                "0" * 64,
+            ],
+        )
+
+    assert result.exit_code != 0, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"the refusal escaped as a raw {type(result.exception).__name__} traceback"
+    )
+    assert constructed == [], "an unverifiable approval must refuse before the destination is constructed"
+    assert destination_double.writes == [], "an unverifiable approval must write nothing"
+    message = _operator_errors(caplog)
+    assert "could not be hashed" in message, message
     assert "Next action:" in message, message
 
 

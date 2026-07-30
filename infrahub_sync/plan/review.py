@@ -23,16 +23,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from infrahub_sync.cache.paths import cache_root_for, run_dir
+from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.errors import UnknownPlanKindError, UnknownRunIdentifierError, UnsafeRunIdentifierError
 from infrahub_sync.plan.models import PlanSummary
 from infrahub_sync.plan.reader import (
     RUN_ID_LISTING_LIMIT,
     load_plan_artifact,
+    read_plan_artifact_bytes,
     run_id_listing_text,
     stat_or_unreadable,
     stored_run_ids,
 )
-from infrahub_sync.plan.verify import plan_checksum_failure, source_snapshot_failures
+from infrahub_sync.plan.verify import manifest_mapping_or_none, plan_checksum_failure, source_snapshot_failures
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, PLAN_DIR_NAME
 
 if TYPE_CHECKING:
@@ -45,7 +47,13 @@ if TYPE_CHECKING:
 # Re-exported from the reader, which owns the bound and the enumeration's wording because
 # FR-008 puts the same enumeration on the arm that module raises (AD073). Kept importable from
 # here: this is the module the review surface is read from.
-__all__ = ["RUN_ID_LISTING_LIMIT", "SavedPlan", "read_saved_plan", "require_stored_run"]
+__all__ = [
+    "RUN_ID_LISTING_LIMIT",
+    "SavedPlan",
+    "expected_checksum_refusal",
+    "read_saved_plan",
+    "require_stored_run",
+]
 
 
 class SavedPlan:
@@ -219,6 +227,67 @@ def require_stored_run(sync_name: str, run_id: str) -> Path:
     if not _run_directory_exists(directory):
         raise _unknown_run_error(sync_name, run_id, directory / PLAN_DIR_NAME / MANIFEST_FILE_NAME)
     return directory
+
+
+def _stored_plan_checksum(run_directory: Path) -> str | None:
+    """Recompute the stored plan's checksum from its bytes, or `None` when it cannot be.
+
+    Recomputed rather than read out of the manifest: the approval check asks whether these are
+    the bytes that were approved, and the manifest's recorded value is only a claim about them —
+    one the pre-apply verifier is what tests. The mapping step is the verifier's own
+    `manifest_mapping_or_none` rather than a second copy of it here: a copy caught
+    `JSONDecodeError` alone, and non-UTF-8 manifest bytes raise `UnicodeDecodeError` from
+    `json.loads`, which left the refusal above it as a bare traceback.
+    """
+    artifact = read_plan_artifact_bytes(run_directory)
+    if artifact.operations_bytes is None:
+        return None
+    mapping = manifest_mapping_or_none(artifact.manifest_bytes)
+    if mapping is None:
+        return None
+    return compute_plan_checksum(mapping, artifact.operations_bytes)
+
+
+def expected_checksum_refusal(*, run_directory: Path, run_id: str, expected: str) -> str | None:
+    """Return why the stored plan is not the plan `expected` approved, or `None` when it is.
+
+    The operator's half of the immutability guarantee: immutable generations stop a plan being
+    replaced under its run id, and an approved checksum names the exact bytes it approved — for a
+    plan reviewed on one host and applied on another, or a pipeline that carries the checksum
+    forward rather than the run id alone. Surrounding whitespace and hex case are tolerated;
+    nothing else about `expected` is interpreted.
+
+    It fails **closed**. A stored plan that cannot be hashed is refused rather than passed on to
+    the pre-apply verifier, which tests the artifact's self-consistency and never compares the
+    operator's value: passing it on would skip the control the approval asked for, not defer it.
+
+    Returns text and raises nothing of its own, so the caller decides how a refusal reaches its
+    operator and nothing here needs the answer rendered a second way.
+
+    Raises:
+        PlanArtifactUnreadableError: a path under the run directory exists but could not be
+            read, which is the reader's verdict and not an answer about the approval (AD036).
+    """
+    actual = _stored_plan_checksum(run_directory)
+    approved = expected.strip().lower()
+    if actual is None:
+        return (
+            f"The plan stored for run {run_id!r} could not be hashed, so the checksum this apply "
+            f"approved cannot be checked: the artifact's manifest or operations file is missing, "
+            f"unreadable or unparseable. Nothing was written and no destination was contacted. "
+            f"Next action: review the stored plan with `diff --from-plan {run_id}`, which names what "
+            f"the artifact is missing, then re-plan under a fresh run id and approve the checksum of "
+            f"the plan that replaces it."
+        )
+    if actual == approved:
+        return None
+    return (
+        f"The plan stored for run {run_id!r} is not the plan this apply approved: --expected-checksum "
+        f"names {approved!r} and the stored artifact hashes to {actual!r}. Nothing was "
+        f"written and no destination was contacted. Next action: review the stored plan with "
+        f"`diff --from-plan {run_id}` and approve its checksum, or apply the run whose checksum you "
+        f"already approved."
+    )
 
 
 def read_saved_plan(

@@ -15,7 +15,6 @@ from infrahub_sdk.exceptions import ServerNotResponsiveError
 from infrahub_sync.cache.locks import pipeline_lock
 from infrahub_sync.cache.paths import run_dir as stored_run_dir
 from infrahub_sync.cache.sidecars import RunFile
-from infrahub_sync.plan.checksum import compute_plan_checksum
 
 # Imported at module level rather than deferred: `infrahub_sync.utils` below already pulls
 # the engine, which pulls this package, so deferring these would buy no import time and only
@@ -27,9 +26,8 @@ from infrahub_sync.plan.errors import (
     UnknownPlanKindError,
 )
 from infrahub_sync.plan.models import ApplyRecord
-from infrahub_sync.plan.reader import read_plan_artifact_bytes, require_plan_directory
-from infrahub_sync.plan.review import read_saved_plan, require_stored_run
-from infrahub_sync.plan.verify import manifest_mapping_or_none
+from infrahub_sync.plan.reader import require_plan_directory
+from infrahub_sync.plan.review import expected_checksum_refusal, read_saved_plan, require_stored_run
 from infrahub_sync.plan.writer import require_uncommitted_plan
 from infrahub_sync.utils import (
     PlanApplier,
@@ -709,53 +707,22 @@ def _require_applicable_plan(*, sync_name: str, run_id: str) -> Path:
     return directory
 
 
-def _stored_plan_checksum(run_directory: Path) -> str | None:
-    """Recompute the stored plan's checksum from its bytes, or `None` when it cannot be.
-
-    Recomputed rather than read out of the manifest: the approval check asks whether these are the
-    bytes that were approved, and the manifest's recorded value is only a claim about them — one
-    the pre-apply verifier is what tests. An artifact too incomplete to hash returns `None` and is
-    left to that verifier, which names the tear — as is a manifest whose bytes will not decode or
-    parse, which is why the mapping step is the verifier's own `manifest_mapping_or_none` and not a second
-    copy of it here: the copy caught `JSONDecodeError` alone, and non-UTF-8 manifest bytes
-    raise `UnicodeDecodeError` from `json.loads`, which left this refusal as a bare traceback.
-    """
-    artifact = read_plan_artifact_bytes(run_directory)
-    if artifact.operations_bytes is None:
-        return None
-    mapping = manifest_mapping_or_none(artifact.manifest_bytes)
-    if mapping is None:
-        return None
-    return compute_plan_checksum(mapping, artifact.operations_bytes)
-
-
 def _require_expected_checksum(*, run_directory: Path, run_id: str, expected: str | None) -> None:
-    """Refuse an apply whose stored plan is not the plan the operator approved.
+    """Refuse an apply whose stored plan is not the plan the operator approved (FR-030).
 
-    The operator's half of the immutability guarantee: immutable generations stop a plan being
-    replaced under its run id, and `--expected-checksum` lets an approval name the exact bytes
-    it approved — for a plan reviewed on one host and applied on another, or a pipeline that
-    carries the checksum forward rather than the run id alone.
-
-    In the command, and therefore **before the destination is constructed**: the comparison needs
-    nothing but the stored artifact. Surrounding whitespace and hex case are tolerated; nothing else
-    about the value is interpreted.
+    Here in the command, and therefore **before the destination is constructed**: the comparison
+    needs nothing but the stored artifact. The comparison itself, its tolerances and its wording
+    belong to `expected_checksum_refusal`, which returns text and leaves the presentation to this
+    one line — including the fail-closed arm for a stored plan that cannot be hashed at all.
     """
     if expected is None:
         return
     try:
-        actual = _stored_plan_checksum(run_directory)
+        refusal = expected_checksum_refusal(run_directory=run_directory, run_id=run_id, expected=expected)
     except PlanArtifactError as exc:
         print_error_and_abort(str(exc))
-    if actual is None or actual == expected.strip().lower():
-        return
-    print_error_and_abort(
-        f"The plan stored for run {run_id!r} is not the plan this apply approved: --expected-checksum "
-        f"names {expected.strip().lower()!r} and the stored artifact hashes to {actual!r}. Nothing was "
-        f"written and no destination was contacted. Next action: review the stored plan with "
-        f"`diff --from-plan {run_id}` and approve its checksum, or apply the run whose checksum you "
-        f"already approved."
-    )
+    if refusal is not None:
+        print_error_and_abort(refusal)
 
 
 def _record_and_abort(run_file: RunFile, exc: PlanArtifactError, record: ApplyRecord) -> NoReturn:
