@@ -55,6 +55,7 @@ __all__ = [
     "expected_checksum_refusal",
     "read_saved_plan",
     "require_stored_run",
+    "resolve_run_directory",
 ]
 
 
@@ -196,6 +197,34 @@ def _snapshot_note(failure: VerificationFailure) -> str:
     )
 
 
+def resolve_run_directory(sync_name: str, run_id: str) -> Path:
+    """Return where a run's directory would be, refusing an identifier that is not one segment.
+
+    The **single** translation site for the cache layout's traversal guard. `run_dir` applies
+    `_require_safe_segment` to **both** arguments (`infrahub_sync.cache.paths`), so a `..` or
+    absolute value is rejected before any path is joined — as a `ValueError`, which every
+    command reaching a stored run would otherwise show as a raw traceback while its every other
+    bad-identifier verdict is one designed line. Translating it here means no guard has to catch
+    a second exception type to stay one line of output.
+
+    It answers about the identifier alone and says nothing about whether the run exists, which
+    is what lets `diff --run-id` — where a *fresh* identifier is the normal case — reach the
+    same refusal as the commands that require the run to be there already.
+
+    Raises:
+        UnsafeRunIdentifierError: the identifier is not a single path segment.
+    """
+    try:
+        return run_dir(sync_name, run_id)
+    except ValueError as exc:
+        msg = (
+            f"Run identifier {run_id!r} is not usable: a run id names one directory under the "
+            f"synchronization's cache root, so it cannot contain '/' or '..' segments or be an "
+            f"absolute path ({exc})."
+        )
+        raise UnsafeRunIdentifierError(msg) from exc
+
+
 def require_stored_run(sync_name: str, run_id: str) -> Path:
     """Return the run's directory, refusing with the enumerated message when it is absent.
 
@@ -211,21 +240,7 @@ def require_stored_run(sync_name: str, run_id: str) -> Path:
         PlanArtifactUnreadableError: the run directory or the cache root exists but could
             not be examined or listed (AD036).
     """
-    # `run_dir` applies `_require_safe_segment`'s traversal guard to **both** arguments
-    # (`infrahub_sync.cache.paths`), so a `..` or absolute value is
-    # rejected before any path is joined — as a `ValueError`, which is translated into the
-    # taxonomy here rather than left to escape as a traceback out of the two commands that
-    # reach this function. The translation lives at the single raising
-    # site, so neither guard has to catch a second exception type to stay one line of output.
-    try:
-        directory = run_dir(sync_name, run_id)
-    except ValueError as exc:
-        msg = (
-            f"Run identifier {run_id!r} is not usable: a run id names one directory under the "
-            f"synchronization's cache root, so it cannot contain '/' or '..' segments or be an "
-            f"absolute path ({exc})."
-        )
-        raise UnsafeRunIdentifierError(msg) from exc
+    directory = resolve_run_directory(sync_name, run_id)
     if not _run_directory_exists(directory):
         raise _unknown_run_error(sync_name, run_id, directory / PLAN_DIR_NAME / MANIFEST_FILE_NAME)
     return directory

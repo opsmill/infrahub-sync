@@ -13,7 +13,6 @@ from infrahub_sdk import InfrahubClientSync
 from infrahub_sdk.exceptions import ServerNotResponsiveError
 
 from infrahub_sync.cache.locks import pipeline_lock
-from infrahub_sync.cache.paths import run_dir as stored_run_dir
 from infrahub_sync.cache.sidecars import RunFile
 
 # Imported at module level rather than deferred: `infrahub_sync.utils` below already pulls
@@ -27,7 +26,12 @@ from infrahub_sync.plan.errors import (
 )
 from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.plan.reader import read_plan_artifact_bytes, require_plan_directory
-from infrahub_sync.plan.review import expected_checksum_refusal, read_saved_plan, require_stored_run
+from infrahub_sync.plan.review import (
+    expected_checksum_refusal,
+    read_saved_plan,
+    require_stored_run,
+    resolve_run_directory,
+)
 from infrahub_sync.plan.writer import require_uncommitted_plan
 from infrahub_sync.utils import (
     PlanApplier,
@@ -407,20 +411,21 @@ def _review_saved_plan(
 
 
 def _require_a_free_run_id(*, sync_name: str, run_id: str | None) -> None:
-    """Refuse re-planning into a run id whose plan generation is committed.
+    """Refuse re-planning into a run id that is unusable, or whose plan generation is committed.
 
     Here as well as in the writer, because extraction rewrites the run's `A/` snapshots that the
     committed plan's manifest binds itself to: a re-plan reaching only the writer's refusal would
-    already have invalidated the plan it was refused for. A value resolving to no run directory is
-    left to the initialization arm below, which reports it already.
+    already have invalidated the plan it was refused for.
+
+    Both verdicts come from the functions the review and apply paths reach, so `diff --run-id`
+    refuses an identifier carrying `/` or `..` with the designed refusal those commands give it,
+    rather than letting the layout guard's `ValueError` surface later as a mislabelled
+    initialization failure.
     """
     if run_id is None:
         return
     try:
-        directory = stored_run_dir(sync_name, run_id)
-    except ValueError:
-        return
-    try:
+        directory = resolve_run_directory(sync_name, run_id)
         require_uncommitted_plan(directory, run_id=run_id)
     except PlanArtifactError as exc:
         print_error_and_abort(str(exc))

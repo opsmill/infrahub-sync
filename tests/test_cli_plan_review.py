@@ -1255,6 +1255,33 @@ def test_a_traversal_shaped_run_id_is_refused_as_one_line_on_the_apply_path(
     assert UnsafeRunIdentifierError.next_action in message
 
 
+@pytest.mark.parametrize("run_id", TRAVERSAL_RUN_IDS, ids=("relative_traversal", "absolute_path"))
+def test_a_traversal_shaped_run_id_is_refused_before_the_live_diff_builds_anything(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, adapter_construction_log: list[dict[str, Any]], run_id: str
+) -> None:
+    """The third command that takes a run id gives the same verdict, and gives it as early.
+
+    `diff --run-id` used to import and construct both adapters before the layout guard's
+    `ValueError` surfaced as a mislabelled initialization failure — the one command of the three
+    where a pasted run path was answered with the wrong diagnosis.
+    """
+    _ = tmp_path
+
+    with caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"):
+        result = _diff_into(run_id)
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"the refusal escaped as a raw {type(result.exception).__name__} traceback"
+    )
+    assert adapter_construction_log == [], "the refusal must precede adapter construction"
+    message = _operator_errors(caplog)
+    assert repr(run_id) in message
+    assert "is not usable" in message
+    assert UnsafeRunIdentifierError.next_action in message
+    assert "Failed to initialize the Sync Instance" not in message
+
+
 def test_the_unknown_kind_message_lists_the_kinds_the_plan_holds(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
