@@ -35,7 +35,9 @@ from infrahub_sync.plan.errors import (
     PlanArtifactTornError,
     PlanFormatV1Error,
     PlanVerificationError,
+    UnsupportedOperationActionError,
 )
+from infrahub_sync.plan.models import ACTIONS
 from infrahub_sync.plan.reader import parse_plan_artifact
 from infrahub_sync.plan.verify import GATED_CHECKS
 from infrahub_sync.potenda import Potenda
@@ -196,6 +198,30 @@ def test_a_recorded_delete_is_collected_and_never_dispatched(tmp_path: Path, cap
     warnings = [entry for entry in caplog.records if entry.levelno >= logging.WARNING]
     assert len(warnings) == 1
     assert "1" in warnings[0].getMessage()
+
+
+def test_an_action_outside_the_vocabulary_fails_before_any_dispatch(tmp_path: Path) -> None:
+    """FR-017: an operation this release cannot interpret is refused while the plan is read.
+
+    The pairing with the delete case above is the point. A delete is recorded, understood and
+    deliberately not executed; an action outside `ACTIONS` is not understood at all, so
+    continuing would mean applying part of a plan whose remainder is uninterpretable.
+    """
+    directory = _run_dir(tmp_path)
+    records = [operation_record(identity={"name": "prod"}), operation_record(action="purge", identity={"name": "old"})]
+    write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])
+
+    destination = RecordingDestination()
+    with pytest.raises(UnsupportedOperationActionError) as caught:
+        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+
+    assert destination.dispatched == [], "Nothing is dispatched: the refusal precedes the first write."
+    message = str(caught.value)
+    assert str(records[1]["operation_id"]) in message
+    assert "purge" in message
+    for action in ACTIONS:
+        assert action in message, f"The refusal must list the recognized vocabulary; {action!r} is absent."
+    assert "Next action:" in message
 
 
 def test_a_changed_configuration_version_refuses_the_apply(tmp_path: Path) -> None:

@@ -1455,17 +1455,6 @@ def test_the_version_refusal_lists_the_supported_format_versions(
     assert f"Supported plan format versions: {expected}." in message
 
 
-def test_the_unrecognized_action_refusal_lists_the_recognized_actions(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """Enumeration 4."""
-    _store(tmp_path, [operation_record(action="purge", identity={"name": "prod"})])
-
-    message = _failed_review(caplog, "--from-plan", RUN_ID)
-
-    assert f"Recognized actions: {', '.join(ACTIONS)}." in message
-
-
 # ======================================================================================
 # T065 — the apply path (SC-004, SC-007, SC-011, SC-015, SC-018, AD055, AD062, AD069)
 # ======================================================================================

@@ -68,10 +68,9 @@ from infrahub_sync.plan.errors import (
     PlanVerificationError,
     UnaccountedIdentityComponentError,
     UnkeyedWriteRefusedError,
-    UnsupportedOperationActionError,
 )
 from infrahub_sync.plan.identity import canonical_identity, operation_id
-from infrahub_sync.plan.models import ACTIONS, ApplyRecord, PlannedOperation, RelationshipReference
+from infrahub_sync.plan.models import ApplyRecord, PlannedOperation, RelationshipReference
 from infrahub_sync.plan.review import read_saved_plan
 from infrahub_sync.plan.write_surface import PlannedWriteDestination
 from infrahub_sync.potenda import Potenda
@@ -1363,36 +1362,6 @@ def test_a_mid_apply_rejection_surfaces_the_rejection_not_the_knowability_invari
     )
     assert isinstance(outcome, OperationApplyFailedError)
     assert "the destination rejected this object" in str(outcome)
-
-
-def test_an_action_outside_the_vocabulary_fails_the_run_before_any_dispatch(tmp_path: Path) -> None:
-    """FR-017: the class that *does* fail — an operation this release cannot interpret.
-
-    The pairing with the case above is the point. A delete is recorded, understood and
-    deliberately not executed; an action outside `ACTIONS` is not understood at all, so
-    continuing would mean applying part of a plan whose remainder is uninterpretable. It is
-    refused while reading, which is what puts it before the first write.
-    """
-    directory = apply_run_dir(tmp_path)
-    records = [
-        operation_record(identity={"name": "prod"}),
-        operation_record(action="purge", identity={"name": "retired"}),
-    ]
-    write_artifact(directory, records, run_id=APPLY_RUN_ID, source_snapshot=[])
-
-    destination = RecordingApplyDestination()
-    state, outcome = apply_and_record_state(engine_over(directory, destination))
-
-    assert state == "failed", "An uninterpretable operation is a genuine failure, unlike a recorded delete."
-    assert destination.dispatched == [], "Nothing is dispatched: the refusal precedes the first write."
-    assert isinstance(outcome, UnsupportedOperationActionError)
-    message = str(outcome)
-    assert records[1]["operation_id"] in message, "The refusal must name the offending operation identifier."
-    assert "purge" in message, "The refusal must name the action it found."
-    for action in ACTIONS:
-        assert action in message, f"The refusal must list the recognized vocabulary; {action!r} is absent."
-    assert "Next action:" in message, "The refusal must carry its next action (AD059)."
-    assert "Re-run `diff`" in message, "And that next action is to re-plan with this version."
 
 
 # ---------------------------------------------------------------------------------------

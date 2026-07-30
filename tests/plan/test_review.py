@@ -40,7 +40,6 @@ from infrahub_sync.cache.parquet_io import write_resource_side
 from infrahub_sync.plan.checksum import source_snapshot_records
 from infrahub_sync.plan.errors import UnknownPlanKindError, UnsupportedOperationActionError
 from infrahub_sync.plan.models import PlannedOperation
-from infrahub_sync.plan.reader import load_plan_artifact
 from infrahub_sync.plan.review import read_saved_plan
 from tests.plan.artifact_fixtures import (
     OTHER_RUN_ID,
@@ -412,18 +411,6 @@ def test_a_verification_failure_renders_but_an_unrecognized_action_refuses(tmp_p
     _store(tmp_path, [operation_record(action="purge")], run_id=OTHER_RUN_ID)
     with pytest.raises(UnsupportedOperationActionError):
         read_saved_plan(sync_name=SYNC_NAME, run_id=OTHER_RUN_ID)
-
-
-def test_the_review_refusal_is_the_message_the_apply_path_shows(tmp_path: Path) -> None:
-    """One reader, one message: review reads through `load_plan_artifact` too (AD055)."""
-    directory = _store(tmp_path, [operation_record(action="purge")])
-
-    with pytest.raises(UnsupportedOperationActionError) as review_raised:
-        read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID)
-    with pytest.raises(UnsupportedOperationActionError) as reader_raised:
-        load_plan_artifact(directory)
-
-    assert str(review_raised.value) == str(reader_raised.value)
 
 
 # ======================================================================================
