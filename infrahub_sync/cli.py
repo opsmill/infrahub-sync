@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import textwrap
 from collections.abc import Mapping
@@ -15,6 +16,7 @@ from infrahub_sdk.exceptions import ServerNotResponsiveError
 from infrahub_sync.cache.locks import pipeline_lock
 from infrahub_sync.cache.paths import run_dir as stored_run_dir
 from infrahub_sync.cache.sidecars import RunFile
+from infrahub_sync.plan.checksum import compute_plan_checksum
 
 # Imported at module level rather than deferred: `infrahub_sync.utils` below already pulls
 # the engine, which pulls this package, so deferring these would buy no import time and only
@@ -26,7 +28,7 @@ from infrahub_sync.plan.errors import (
     UnknownPlanKindError,
 )
 from infrahub_sync.plan.models import ApplyRecord
-from infrahub_sync.plan.reader import require_plan_directory
+from infrahub_sync.plan.reader import read_plan_artifact_bytes, require_plan_directory
 from infrahub_sync.plan.review import read_saved_plan, require_stored_run
 from infrahub_sync.plan.writer import require_uncommitted_plan
 from infrahub_sync.utils import (
@@ -41,6 +43,7 @@ from infrahub_sync.utils import (
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
+    from pathlib import Path
 
     from infrahub_sdk.schema import GenericSchema, NodeSchema
 
@@ -183,6 +186,10 @@ def _echo_plan_header(*, plan: SavedPlan, summary: PlanSummary, sync_name: str, 
         f"operations: {summary.total}   "
         f"deletes computed: {'yes' if summary.delete_operations_computed else 'NO'}"
     )
+    # The **full** checksum, not just the verdict above (FIX-010, spec 002): an approval that
+    # names it can be bound to these exact bytes with `apply --expected-checksum`, which is
+    # the difference between approving a run id and approving a plan.
+    typer.echo(f"plan checksum: {plan.manifest.plan_checksum}")
     for note in plan.verification_notes:
         typer.echo(textwrap.fill(note, width=REVIEW_WIDTH, initial_indent="          ", subsequent_indent="          "))
 
@@ -602,18 +609,73 @@ def sync_cmd(
         logger.info("Sync run %s at %s", ptd.run_id, ptd.run_dir)
 
 
-def _require_applicable_plan(*, sync_name: str, run_id: str) -> None:
+def _require_applicable_plan(*, sync_name: str, run_id: str) -> Path:
     """Refuse an apply whose run does not exist, or holds no plan artifact (AD026, AD059).
 
     Both verdicts come from the same functions the review path reaches, so the unknown-run
     enumeration (bounded to the most recent twenty, with the total when it truncates, and a
     stated no-runs message when the sync has never run — AD073) and the re-plan instruction
     are written once and cannot drift between the two commands an operator meets them from.
+
+    Returns the located run directory, so the approval check below reads the stored artifact
+    without resolving the run a second time.
     """
     try:
-        require_plan_directory(require_stored_run(sync_name, run_id))
+        directory = require_stored_run(sync_name, run_id)
+        require_plan_directory(directory)
     except PlanArtifactError as exc:
         print_error_and_abort(str(exc))
+    return directory
+
+
+def _stored_plan_checksum(run_directory: Path) -> str | None:
+    """Recompute the stored plan's checksum from its bytes, or `None` when it cannot be.
+
+    Recomputed rather than read out of the manifest, because the question the approval check
+    answers is "are these the bytes I approved" — a manifest's recorded value is a claim
+    about the bytes and the pre-apply verifier is what tests that claim. An artifact too
+    incomplete to hash returns `None` and is left to that verifier, which names the tear.
+    """
+    artifact = read_plan_artifact_bytes(run_directory)
+    if artifact.manifest_bytes is None or artifact.operations_bytes is None:
+        return None
+    try:
+        mapping = json.loads(artifact.manifest_bytes)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(mapping, Mapping):
+        return None
+    return compute_plan_checksum(mapping, artifact.operations_bytes)
+
+
+def _require_expected_checksum(*, run_directory: Path, run_id: str, expected: str | None) -> None:
+    """Refuse an apply whose stored plan is not the plan the operator approved (FIX-010).
+
+    The operator's half of the immutability guarantee: immutable generations stop a plan
+    being replaced under its run id, and `--expected-checksum` lets an approval name the
+    exact bytes it approved — a plan reviewed on one host and applied on another, or through
+    a pipeline that carries the checksum forward rather than the run id alone.
+
+    Here, in the command, and therefore **before the destination is constructed**: the
+    comparison needs nothing but the stored artifact, and a mismatch must not connect to a
+    destination at all. Matching is case-insensitive on surrounding whitespace and hex case
+    only; nothing else about the value is interpreted.
+    """
+    if expected is None:
+        return
+    try:
+        actual = _stored_plan_checksum(run_directory)
+    except PlanArtifactError as exc:
+        print_error_and_abort(str(exc))
+    if actual is None or actual == expected.strip().lower():
+        return
+    print_error_and_abort(
+        f"The plan stored for run {run_id!r} is not the plan this apply approved: --expected-checksum "
+        f"names {expected.strip().lower()!r} and the stored artifact hashes to {actual!r}. Nothing was "
+        f"written and no destination was contacted. Next action: review the stored plan with "
+        f"`diff --from-plan {run_id}` and approve its checksum, or apply the run whose checksum you "
+        f"already approved."
+    )
 
 
 def _record_and_abort(run_file: RunFile, exc: PlanArtifactError, record: ApplyRecord) -> NoReturn:
@@ -669,6 +731,13 @@ def apply_cmd(
             "any write."
         ),
     ),
+    expected_checksum: str | None = typer.Option(
+        default=None,
+        help=(
+            "Apply only if the stored plan hashes to this checksum — the `plan checksum` line "
+            "of the review output. A mismatch refuses before the destination is contacted."
+        ),
+    ),
 ) -> None:
     """Apply a previously cached plan against the destination — no source extraction."""
     if sum([bool(name), bool(config_file)]) != 1:
@@ -681,7 +750,11 @@ def apply_cmd(
     # exist, or whose run holds no plan, is refused before even the destination adapter is
     # imported — the applier below constructs the destination and locates the stored run
     # without creating anything, so this refusal leaves no trace of the attempt.
-    _require_applicable_plan(sync_name=sync_instance.name, run_id=run_id)
+    run_directory = _require_applicable_plan(sync_name=sync_instance.name, run_id=run_id)
+
+    # The approval binding, also before anything is constructed: an apply that names the
+    # checksum it approved must not reach a destination with a plan that is not it (FIX-010).
+    _require_expected_checksum(run_directory=run_directory, run_id=run_id, expected=expected_checksum)
 
     verbosity_level = ctx.obj.get("verbosity", logging.INFO) if ctx.obj else logging.INFO
 

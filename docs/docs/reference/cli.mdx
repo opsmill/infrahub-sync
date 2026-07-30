@@ -110,6 +110,7 @@ $ infrahub-sync apply [OPTIONS]
 * `--run-id TEXT`: Cache run id produced by a previous `diff`.  [required]
 * `--branch TEXT`: Branch to use for the apply.
 * `--allow-destination-change / --no-allow-destination-change`: Apply even though the live destination endpoint or branch differs from the one the plan was computed against. Without it, a destination mismatch refuses before any write.  [default: no-allow-destination-change]
+* `--expected-checksum TEXT`: Apply only if the stored plan hashes to this checksum — the `plan checksum` line of the review output. A mismatch refuses before the destination is contacted.
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync generate`

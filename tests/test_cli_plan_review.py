@@ -2336,6 +2336,137 @@ def test_an_incomplete_generation_stays_re_plannable_under_the_same_run_id(
     assert adapter_construction_log, "the immutability guard refused a generation that was never committed"
 
 
+def _stored_checksum(tmp_path: Path, run_id: str = RUN_ID) -> str:
+    """The `plan_checksum` the stored manifest records, read from disk."""
+    recorded = json.loads(manifest_path(_cache_root(tmp_path) / run_id).read_text(encoding="utf-8"))
+    return str(recorded["plan_checksum"])
+
+
+@pytest.mark.parametrize("options", [(), ("--detail",)], ids=["summary", "detail"])
+def test_the_review_prints_the_full_plan_checksum_at_both_depths(tmp_path: Path, options: tuple[str, ...]) -> None:
+    """FIX-010 part 2: the review shows the checksum, not only the verdict about it.
+
+    `checksum: OK` says the artifact is internally consistent. It does not let an operator
+    record *which* plan they approved, which is what `apply --expected-checksum` consumes —
+    so the full value is printed at whichever depth the review was run at.
+    """
+    _store(tmp_path)
+
+    result = _review("--from-plan", RUN_ID, *options)
+
+    assert result.exit_code == 0, result.output
+    assert f"plan checksum: {_stored_checksum(tmp_path)}" in result.output
+
+
+def test_an_apply_naming_the_reviewed_checksum_applies(
+    tmp_path: Path, destination_double: RecordingDestination
+) -> None:
+    """The positive half: the approved bytes are the stored bytes, so the apply proceeds."""
+    _appliable_run(tmp_path)
+
+    with patch("infrahub_sync.cli.PlanApplier.open_existing", _patched_open_existing(destination_double)):
+        result = runner.invoke(
+            app,
+            [
+                "apply",
+                "--name",
+                SYNC_NAME,
+                "--directory",
+                str(EXAMPLES_DIR),
+                "--run-id",
+                RUN_ID,
+                "--expected-checksum",
+                _stored_checksum(tmp_path),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert len(destination_double.writes) == len(APPLY_PLAN)
+
+
+def test_an_apply_naming_another_generations_checksum_refuses_before_the_destination_exists(
+    tmp_path: Path, destination_double: RecordingDestination, caplog: pytest.LogCaptureFixture
+) -> None:
+    """FIX-010 part 2's whole point: a valid plan that is not the approved one is refused.
+
+    Plan A is reviewed and its checksum captured; a different — and perfectly valid — plan B
+    then occupies the run id (which is how a plan reached here before immutability, and how
+    it still reaches here across hosts and archives). The apply names A's checksum, so it
+    refuses, and it refuses **before the destination is constructed**: `constructed` staying
+    empty is the assertion, because a check that ran inside the applier would already have
+    connected to a destination to reject a plan it never intended to write.
+    """
+    _appliable_run(tmp_path)
+    approved = _stored_checksum(tmp_path)
+    substituted = _appliable_run(tmp_path, [operation_record(identity={"name": "substituted"})])
+    assert _stored_checksum(tmp_path) != approved, "the substituted plan must be a different generation"
+    assert manifest_path(substituted).is_file()
+    constructed: list[str] = []
+
+    with (
+        caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"),
+        patch(
+            "infrahub_sync.cli.PlanApplier.open_existing",
+            _patched_open_existing(destination_double, constructed=constructed),
+        ),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "apply",
+                "--name",
+                SYNC_NAME,
+                "--directory",
+                str(EXAMPLES_DIR),
+                "--run-id",
+                RUN_ID,
+                "--expected-checksum",
+                approved,
+            ],
+        )
+
+    assert result.exit_code != 0
+    assert constructed == [], "the refusal must precede destination construction"
+    assert destination_double.writes == []
+    message = _operator_errors(caplog)
+    assert "is not the plan this apply approved" in message
+    assert approved in message
+    assert _stored_checksum(tmp_path) in message
+    assert "Next action:" in message
+    assert not (_cache_root(tmp_path) / RUN_ID / "run.json").exists()
+
+
+def test_the_expected_checksum_comparison_ignores_hex_case_and_surrounding_space(
+    tmp_path: Path, destination_double: RecordingDestination
+) -> None:
+    """A checksum copied out of a terminal or a ticket still matches.
+
+    Nothing else about the value is interpreted — a prefix or a truncation is a mismatch —
+    but rejecting an approval because it arrived upper-cased would teach operators to stop
+    passing it, which is worse than the typo it would catch.
+    """
+    _appliable_run(tmp_path)
+
+    with patch("infrahub_sync.cli.PlanApplier.open_existing", _patched_open_existing(destination_double)):
+        result = runner.invoke(
+            app,
+            [
+                "apply",
+                "--name",
+                SYNC_NAME,
+                "--directory",
+                str(EXAMPLES_DIR),
+                "--run-id",
+                RUN_ID,
+                "--expected-checksum",
+                f"  {_stored_checksum(tmp_path).upper()} ",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert len(destination_double.writes) == len(APPLY_PLAN)
+
+
 def test_a_broken_apply_invariant_records_what_was_written_not_an_empty_record(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

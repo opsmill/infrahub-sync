@@ -143,10 +143,24 @@ The default depth prints a header, a count per action and a count per kind:
 ```text
 Plan 20260518T1430-abc12345  (from-netbox)
 checksum: OK   format: 2   operations: 4   deletes computed: yes
+plan checksum: 9b1c4f0a7e5d3268b4a17c90ef2d5813a6c04b7fe98213d5c6a0b74e1f83d2c9
 
 By action     create 2   delete 1   update 1
 By kind       BuiltinTag 2   InfraDevice 2
 ```
+
+The `plan checksum` line is the value to record when you approve a plan. Pass it back on the apply
+and the apply refuses unless the stored plan still hashes to it:
+
+```bash
+infrahub-sync apply --name from-netbox --run-id 20260518T1430-abc12345 --directory examples/ \
+  --expected-checksum 9b1c4f0a7e5d3268b4a17c90ef2d5813a6c04b7fe98213d5c6a0b74e1f83d2c9
+```
+
+The mismatch is reported before the destination is contacted. Combined with immutable generations
+above, an approval then names the exact bytes it approved rather than a run id that could hold
+something else — worth passing whenever the plan is reviewed somewhere other than where it is
+applied.
 
 Add `--detail` for one record per operation — its identifier, action, destination kind and
 destination identity — and `--kind <kind>` to narrow that listing to a single destination kind:
@@ -264,6 +278,7 @@ destination half-written. Every refusal names its next action.
 | The artifact is torn | The plan is present but incomplete or inconsistent — a missing manifest, or a line count disagreeing with the recorded operation count. Re-run `diff` to rebuild it. |
 | Unsupported format version | The artifact was written by a version this release does not understand. The remaining checks are not evaluated, and the message says so. Rebuild the plan, or apply it with the version that wrote it. |
 | The plan checksum does not match | The artifact changed after it was written, so it is not the plan that was reviewed. Re-run `diff`. |
+| The stored plan is not the plan this apply approved | `--expected-checksum` was passed and the stored plan hashes to something else. Nothing is written and no destination is contacted. Review the stored plan and approve its checksum, or apply the run whose checksum you approved. |
 | The source snapshot no longer matches | A snapshot the plan was computed against is absent or has changed. Re-run `diff`. |
 | The configuration version does not match | The configuration changed since the plan was derived, so the plan is no longer what this configuration would do. Re-run `diff`. |
 | The plan is bound to a different destination | The live destination endpoint or branch — environment variables included — differs from the one the plan was computed against. Re-run `diff` against this destination, or pass `--allow-destination-change` to deliberately apply the plan across environments. Plans written before this field existed skip the check. |
