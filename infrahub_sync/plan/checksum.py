@@ -9,14 +9,12 @@ were `null`. (A manifest that already carries them as `null` hashes the same as 
 omits them, because the filter is by name — the removed/blanked distinction is only
 observable on a manifest whose excluded fields carry real values.)
 
-`snapshot_digest_and_row_count` digests a snapshot's **logical rows** — the Parquet table with
-the engine-injected `_extract_ts` column dropped — and not the file's bytes (AD037,
-PD-008). `_extract_ts` is allocated once per side per run
-(`infrahub_sync/potenda/__init__.py:177`, stored per side at `:182`) and injected into every row
-(`infrahub_sync/cache/parquet_io.py:126`), so a raw-bytes digest would differ on every
-re-plan of an unchanged source and make SC-006 unachievable. `_source_id` and
-`_tombstone` stay inside the digest: both are deterministic for identical input and both
-are part of what the plan was computed against.
+`snapshot_digest_and_row_count` digests a snapshot's **logical rows** — the Parquet table
+with the engine-injected `_extract_ts` column dropped — and not the file's bytes (AD037,
+PD-008). `_extract_ts` is allocated once per side per run and injected into every row, so a
+raw-bytes digest would differ on every re-plan of an unchanged source and make SC-006
+unachievable. `_source_id` and `_tombstone` stay inside the digest: both are deterministic
+for identical input and both are part of what the plan was computed against.
 
 The digest is defined over the whole row sequence and **computed one bounded batch at a
 time**, so its cost in memory is a batch rather than a multiple of the dataset (FIX-014).

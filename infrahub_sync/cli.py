@@ -769,7 +769,7 @@ def _record_and_abort(run_file: RunFile, exc: PlanArtifactError, record: ApplyRe
 
     The recording happens **before** the abort and merges `record` into the summary before
     `save()`, because `RunFile.save()` writes the whole payload from this instance
-    (`infrahub_sync/cache/sidecars.py:88-90`) and would otherwise destroy it (AD062, AD069).
+    (`infrahub_sync.cache.sidecars`) and would otherwise destroy it (AD062, AD069).
     """
     run_file.summary.update(record.as_summary_keys())
     run_file.status = "failed"
@@ -858,7 +858,7 @@ def apply_cmd(
         # This command is the **single writer** of `run.json` (AD069). `apply_plan` returns
         # the record and writes no run file; the merge below has to happen before every
         # `save()`, because `RunFile.save()` writes the whole payload from this instance
-        # (`infrahub_sync/cache/sidecars.py:88-90`) and would otherwise destroy the record
+        # (`infrahub_sync.cache.sidecars`) and would otherwise destroy the record
         # with the empty summary built above.
         try:
             record = applier.apply_plan(allow_destination_change=allow_destination_change)
@@ -914,19 +914,12 @@ def apply_cmd(
         run_file.finished_at = datetime.now(timezone.utc).isoformat()
         run_file.save()
         if record.skipped_delete_count:
-            # A delete-bearing plan completes: it applied every non-delete operation and
-            # executed no delete, which is a designed limitation of this release and not a
-            # failure (AD055). The count belongs on the completion line as well as in the
-            # engine's warning, because this is the last line an operator reads.
-            #
-            # At `WARNING`, and pinned there for the same reason the engine's own warning is
-            # (AD089): SC-007 names this line as required evidence, and `--quiet` floors the
-            # package logger at `logging.WARNING` (`:48`, `:78-79`), so an `INFO` emission
-            # satisfies every prose description of the obligation and vanishes for exactly the
-            # scripted invocations where it is the only completion signal. The level follows
-            # the count it reports — the branch below carries no skipped count and stays at
-            # `INFO`, which is what keeps `--quiet` silent on an apply with nothing to
-            # disclose.
+            # A delete-bearing plan completes, which is a designed limitation of this release
+            # and not a failure (AD055) — so the count belongs on the last line an operator
+            # reads as well as in the engine's warning, and at `WARNING` for the same reason
+            # that one is pinned there (AD089). The level follows the count it reports: the
+            # branch below carries none and stays at `INFO`, which keeps `--quiet` silent on
+            # an apply with nothing to disclose.
             logger.warning(
                 "Applied run %s: %d operations applied, %d deletes skipped",
                 applier.run_id,

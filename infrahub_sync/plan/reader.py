@@ -147,7 +147,7 @@ def stored_run_ids(cache_root: Path) -> list[str]:
     """Return the sync's stored run identifiers, most recent first.
 
     `cache_root_for` **computes** a path and neither creates nor checks it
-    (`infrahub_sync/cache/paths.py:26-43`), so an unguarded listing raises `FileNotFoundError`
+    (`infrahub_sync.cache.paths`), so an unguarded listing raises `FileNotFoundError`
     for a sync that never ran — from what is supposed to be a helpful error path (AD073). An
     absent root is therefore "no stored runs", not a failure. A root that exists but cannot be
     listed keeps its own verdict rather than being degraded to "no runs" (AD036).
@@ -391,7 +391,7 @@ def require_plan_directory(run_dir: Path) -> Path:
     enumeration on this arm as well as on the unknown-run arm: a run located but holding no
     plan artifact leaves the operator with the same next question, and answering it here
     means they do not have to guess a second time. The identifiers come from `run_dir.parent`,
-    which is the sync's cache root by construction (`infrahub_sync/cache/paths.py:56-59`),
+    which is the sync's cache root by construction,
     so no synchronization name has to be threaded into the reader to produce them.
 
     Raises:

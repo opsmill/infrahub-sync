@@ -228,7 +228,7 @@ def _flush_replaced_relationship_sets(node: InfrahubNodeSync, rel_names: Sequenc
     **Why it does not re-render the node.** The obvious flush — `node.update(...)` — renders the
     whole node through `InfrahubNodeBase._generate_input_data`, and that render emits
     `data[<rel>] = None` for **every** uninitialized optional cardinality-one relationship once
-    the node is marked existing (`infrahub_sdk/node/node.py:260-266`; the SDK's own comment says
+    the node is marked existing (the SDK's own comment says
     it is there "to allow clearing relationships"). The convergent upsert marks the node existing,
     so any re-render clears every optional cardinality-one relationship the plan never mapped —
     and FR-013 requires an update payload to touch no unmapped destination field. The null goes
@@ -246,10 +246,10 @@ def _flush_replaced_relationship_sets(node: InfrahubNodeSync, rel_names: Sequenc
     is what `_generate_input_data` would have called for these same fields, so the value written
     here is byte-identical to what the full render produced for them — including `[]` for a peer
     set the plan records as empty, which is the case AD085 exists for. `id` is set last, mirroring the
-    SDK's own ordering (`node.py:295-298`), so the write targets this node.
+    SDK's own ordering, so the write targets this node.
 
     The mutation is built and issued the way `InfrahubNodeSync.update` builds and issues its own
-    (`node.py:1867-1888`), and the response is handed back to the SDK, so nothing about transport,
+    and the response is handed back to the SDK, so nothing about transport,
     error handling or the mutation's response shape changes.
     """
     node_id = _require_node_id(node, context="for the replace-set flush")

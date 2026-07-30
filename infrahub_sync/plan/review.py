@@ -204,7 +204,7 @@ def require_stored_run(sync_name: str, run_id: str) -> Path:
             not be examined or listed (AD036).
     """
     # `run_dir` applies `_require_safe_segment`'s traversal guard to **both** arguments
-    # (`infrahub_sync/cache/paths.py:11-23`, `:56-59`), so a `..` or absolute value is
+    # (`infrahub_sync.cache.paths`), so a `..` or absolute value is
     # rejected before any path is joined — as a `ValueError`, which is translated into the
     # taxonomy here rather than left to escape as a traceback out of the two commands that
     # reach this function (FIX-004, spec 002). The translation lives at the single raising

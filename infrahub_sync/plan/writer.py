@@ -13,9 +13,9 @@ run whose manifest already exists, so re-planning allocates a new run id rather 
 replacing a plan a human may have approved (FIX-010, spec 002).
 
 Both writes go through one helper, `_atomic_write_bytes`, in the tmp+`Path.replace`
-discipline already used for the run sidecars (`infrahub_sync/cache/sidecars.py:13-24`), so
-neither file is ever observed half-written. Routing both through a single helper is also
-what makes the write order observable to a test.
+discipline already used for the run sidecars, so neither file is ever observed
+half-written. Routing both through a single helper is also what makes the write order
+observable to a test.
 """
 
 from __future__ import annotations
@@ -46,10 +46,10 @@ MANIFEST_FILE_NAME = "manifest.json"
 def _atomic_write_bytes(path: Path, payload: bytes) -> None:
     """Write `payload` to `path` via tmp+`Path.replace`, creating the parent directory.
 
-    The same discipline as `infrahub_sync/cache/sidecars.py:13-24`, in bytes rather than
-    text because the artifact's encoding is fixed by `canonical_json_bytes` and must not be
-    re-encoded by a text layer. Both artifact files are written through this one function,
-    which is what lets a test observe that the operations file goes first.
+    The same discipline as the run sidecars', in bytes rather than text because the
+    artifact's encoding is fixed by `canonical_json_bytes` and must not be re-encoded by a
+    text layer. Both artifact files are written through this one function, which is what
+    lets a test observe that the operations file goes first.
 
     **Accepted tradeoff (MIN-004): no fsync.** Neither the temporary file's data nor the
     parent directory entry is fsynced, so "never observed half-written" is a guarantee

@@ -9,11 +9,10 @@ payload that can key its own upsert, and relationship peers named by kind and id
 
 Four rules in here are load-bearing and each is enforced where it is stated:
 
-- **The payload is the union of `element.keys` and `element.source_attrs`** (AD042). `source_attrs` comes
-  from `get_attrs()`, whose contract excludes the fields in `_identifiers`
-  (`.venv/…/diffsync/__init__.py:340-347`), and the generator strips identifiers out of
-  `_attributes` (`infrahub_sync/generator/__init__.py:95`), so a payload taken from
-  `source_attrs` alone carries **no identity field at all**: the destination's
+- **The payload is the union of `element.keys` and `element.source_attrs`** (AD042).
+  `source_attrs` comes from `get_attrs()`, whose contract excludes the fields in
+  `_identifiers`, and the generator strips identifiers out of `_attributes` — so a payload
+  taken from `source_attrs` alone carries **no identity field at all**: the destination's
   human-friendly ID cannot be formed, the upsert is unkeyed, and every re-apply
   duplicates. Today's create path converges only because it passes both.
 - **A peer is named by kind and identity, recursively** (AD043). A peer identity component
@@ -21,17 +20,16 @@ Four rules in here are load-bearing and each is enforced where it is stated:
   whatever depth the configuration nests, so no consumer ever splits a DiffSync unique-id
   on `__`.
 - **A peer's kind is probed, never read from the mapping** (AD046, AD050). `DcimDevice` is
-  declared by two schema-mapping entries with different `location` references
-  (`examples/netbox_to_infrahub/config.yml:215`, `:257`), so the mapping alone is
-  ambiguous. The probe is bounded to the kinds the mapping declares for that field across
+  declared by two schema-mapping entries with different `location` references in the
+  shipped NetBox example, so the mapping alone is ambiguous. The probe is bounded to the kinds the mapping declares for that field across
   every entry for the owning kind, and **zero hits and more than one hit both fail the
   command** — with no fallback to the mapping-declared kind, not even for a single
   candidate, because an unprobed sole candidate is the mapping-derived answer AD046
   forbids.
 - **A derivation failure fails the command, on `diff` as on `sync`** (AD047). There is no
-  tolerance option here: `--continue-on-error` is declared on `sync` only
-  (`infrahub_sync/cli.py:466`) while derivation also runs under `diff`, and degrading to
-  warn-and-drop would emit a silently incomplete plan.
+  tolerance option here: `--continue-on-error` is declared on `sync` only while derivation
+  also runs under `diff`, and degrading to warn-and-drop would emit a silently incomplete
+  plan.
 
 The walk is **one level deep**, as `_diff_to_rows`' is. An element that carries child
 elements is refused rather than silently flattened — see `_refuse_child_elements` (MIN-007).
@@ -130,8 +128,7 @@ def _probe_peer_kind(
     """Probe `candidates` in `store` for `unique_id` and return the single hit (AD050).
 
     `BaseStore.get` and `LocalStore.get` both require a `model` and select the per-model
-    bucket before touching the identifier (`.venv/…/diffsync/store/__init__.py:40-52`,
-    `.venv/…/diffsync/store/local.py:30-49`), and the only kind-free call,
+    bucket before touching the identifier, and the only kind-free call,
     `get_all_model_names()`, enumerates kinds rather than answering for a unique-id — so an
     entry cannot be asked for its own kind and the candidate set has to be probed.
 
@@ -699,9 +696,8 @@ def warn_missing_convergence_key(*, destination: Any, operations: Sequence[Plann
        `_warn_identity_finer_than_destination_key` (DISC-002, OQ-8).
 
     **Guarded on the destination exposing a schema at all (AD052).** `self.schema` is
-    defined on the Infrahub adapter and on no other
-    (`infrahub_sync/adapters/infrahub.py:676`), while derivation now runs on the `diff` path
-    for every destination with its failures fatal — so an unguarded read would be a hard
+    defined on the Infrahub adapter and on no other, while derivation now runs on the `diff`
+    path for every destination with its failures fatal — so an unguarded read would be a hard
     regression on the adapters that compare fine today. Where no schema is exposed the whole
     warning is skipped, and skipping it is never an error.
 
