@@ -540,35 +540,21 @@ class Potenda:
         Neither side is loaded, nothing is re-compared and nothing is re-derived: the stored
         operations are executed in **stored order**, exactly as recorded (FR-012, SC-001).
 
-        The order of the first steps is load-bearing, and it is **read once, verify those
-        bytes, then parse them**. The `plan/` directory's presence is settled first, so a
-        run in the pre-existing row format keeps FR-019's own verdict rather than arriving
-        as a manifest that could not be parsed. The artifact's files are then read from disk
-        exactly once, and verification, parsing and the loop below all consume that one
-        `RawPlanArtifact` — a second read is what let files replaced mid-apply execute
-        unverified (DBR-006, DBA-004). Verification runs as one gate over the raw bytes, the
-        write-surface check included, so an adapter that cannot apply a saved plan is
-        refused before the first write rather than surprising the operator mid-plan (FR-023,
-        AD058). **Verification precedes the parse** because FR-009 requires the
-        format-version gate's message to state that the remaining four checks were not
-        evaluated, and requires a tear co-occurring with a `config_version` or
-        `source_snapshot` mismatch to report every failure rather than only the tear:
-        parsing first raises the parser's single-condition refusal and neither obligation
-        can be met. The parser still runs **before the loop**, so an operation whose
-        `action` this release does not recognize is refused before any destination write
-        (FR-017, AD055). The write-surface check asks `isinstance` against
-        `infrahub_sync.plan.write_surface.PlannedWriteDestination`, which verifies member
-        **presence** and not signatures — for a duck-typed destination it is as strong as the
-        `hasattr` gate it replaced and no stronger (AD086).
+        The step order is load-bearing: **read once, verify those bytes, then parse them.**
+        FR-019's `plan/`-directory verdict is settled first, on its own. The artifact is then
+        read from disk exactly once, and verification, parsing and the loop below all consume
+        that one `RawPlanArtifact`, so the bytes verified are the bytes applied (DBR-006,
+        DBA-004). Verification is one gate over those raw bytes, the write-surface check
+        included, and it **precedes** the parse: FR-009 requires the format-version gate to
+        report that the remaining checks were not evaluated, and a co-occurring tear to be
+        reported alongside every other failure, neither of which survives the parser's
+        single-condition refusal. The parse still precedes the loop, so an unrecognized
+        `action` is refused before any destination write (FR-017, AD055).
 
-        A recorded `delete` is **collected, never dispatched**: applying deletes is out of
-        scope for this release, so a delete-bearing plan ends `applied` with the skipped
-        identifiers, their count and one `logging.WARNING` naming that count (FR-016,
-        FR-017, AD055). The loop below recognizes the action itself and never calls the
-        write surface for it, so the surface's own `SkippedDeleteOperation` is a defensive
-        contract rather than the path taken here. The level is pinned because `--quiet`
-        floors the package logger at `WARNING`, so an `INFO` emission would vanish for
-        exactly the scripted runs where this warning is the only signal.
+        A recorded `delete` is **collected, never dispatched**: a delete-bearing plan ends
+        `applied` with the skipped identifiers, their count, and one `WARNING` naming that
+        count — pinned at that level because `--quiet` floors the package logger there
+        (FR-016, FR-017, AD055, AD089).
 
         This method **writes no run file** (AD069). It returns the record; the CLI is the
         single writer and merges `as_summary_keys()` into `run_file.summary` before saving.
@@ -581,31 +567,22 @@ class Potenda:
         Returns:
             The `ApplyRecord`: the ordered applied identifiers (whose final element is
             FR-025's last-applied pointer), the skipped deletes in stored order, and their
-            count. On a **completed** apply no operation failed, so the record's
-            `failed_operation` is `None`.
+            count. A completed apply records `failed_operation` as `None`.
 
         Raises:
             ValueError: this run has no `run_dir`, or no configuration version can be formed.
             PlanFormatV1Error: this run holds no `plan/` directory (FR-019).
-            PlanVerificationError: any pre-apply check failed; nothing was written. Every
-                failure the gate evaluated is named in the one message (FR-009, AD036).
-            PlanArtifactTornError: the artifact passed verification but an operations record
-                fails validation for a reason the line count cannot see (FR-010).
-            UnsupportedOperationActionError: an operation's `action` is outside `ACTIONS`,
-                refused while reading and therefore before any write (FR-017, AD055).
-            OperationApplyFailedError: an operation failed **inside the operational boundary**
-                — `OPERATIONAL_APPLY_FAILURES`, the plan taxonomy plus the destination
-                library's own rejections. Carries the partial record — earlier writes stay
-                written (AD027), and the failing operation is named on it because its own write
-                may have landed in part before the failure.
+            PlanVerificationError: a pre-apply check failed; nothing was written.
+            PlanArtifactTornError: an operations record fails validation for a reason the
+                line count cannot see (FR-010).
+            UnsupportedOperationActionError: an operation's `action` is outside `ACTIONS`.
+            OperationApplyFailedError: an operation failed inside the operational boundary
+                (`OPERATIONAL_APPLY_FAILURES`), carrying the partial record.
             ApplyRecordInvariantError: a completed apply's record does not account for every
                 operation in the plan (AD062). Carries the record it is complaining about.
-            BaseException: anything outside that boundary — an interrupt, `KeyboardInterrupt`
-                above all, or a defect such as a `TypeError` from an SDK shape change —
-                propagates **unchanged** rather than being converted into a taxonomy error a
-                working destination would be blamed for, and carries the partial record on an
-                `apply_record` attribute so the caller can still record what was written
-                (FIX-011).
+            BaseException: anything outside that boundary — an interrupt, or a defect such as
+                a `TypeError` from an SDK shape change — propagates **unchanged** with the
+                partial record attached as `apply_record` (FIX-011).
         """
         from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes, require_plan_directory
         from infrahub_sync.plan.verify import verify_plan
@@ -629,12 +606,9 @@ class Potenda:
         destination = self.destination
         # FR-023's write-surface check joins the same pre-write gate as the five verification
         # checks, so one attempt tells the operator everything that is wrong (AD036). The
-        # adapter's **name** goes in, not a boolean: the failure it drives names the adapter,
-        # which a boolean cannot supply (AD058). `isinstance` against the `runtime_checkable`
-        # protocol verifies member **presence**, not signatures — against a duck-typed
-        # destination it is exactly as strong as the `hasattr` gate it replaced and no
-        # stronger (AD086); what the protocol fixes is static, in the dispatch and resolver
-        # below.
+        # adapter's **name** goes in, not a boolean, because the failure it drives names the
+        # adapter (AD058). On what the protocol check does and does not verify, see
+        # `infrahub_sync.plan.write_surface`.
         failures = verify_plan(
             artifact=raw,
             run_id=run_id,
@@ -676,23 +650,15 @@ class Potenda:
                     skipped_delete_operations=tuple(skipped_deletes),
                     # Named on the record because applying one operation is not one write: the
                     # base upsert precedes the relationship flush, so this operation may have
-                    # changed the destination while belonging to neither recorded set. The
-                    # record says so rather than leaving the write uncounted (FIX-006).
+                    # changed the destination while belonging to neither recorded set (FIX-006).
                     failed_operation=operation.operation_id,
                 )
                 if not isinstance(exc, OPERATIONAL_APPLY_FAILURES):
-                    # Outside the operational boundary, and therefore never presented as a
-                    # destination refusal: an interrupt — `KeyboardInterrupt` above all, which
-                    # is how an operator deliberately stops a long apply — or a defect, this
-                    # code's or an SDK shape change's (FIX-011). Wrapping either would send the
-                    # operator to repair a destination that is working and would swallow the
-                    # very signal that stops the process. It propagates as itself, with its own
-                    # traceback, and carries the record as an attribute instead: the operations
-                    # written before it are written either way and "what was applied" has to
-                    # stay readable from the run (AD062). The suppression below is not masking a
-                    # defect: no annotation can declare an attribute on an exception type this
-                    # module does not own, and every `BaseException` carries an instance
-                    # `__dict__` that accepts one.
+                    # An interrupt or a defect: it propagates as itself, with its own
+                    # traceback, carrying the record so what was written stays readable from the
+                    # run (FIX-011, AD062). See `OPERATIONAL_APPLY_FAILURES` for the boundary.
+                    # The suppression is not masking a defect — no annotation can declare an
+                    # attribute on an exception type this module does not own.
                     exc.apply_record = partial  # ty: ignore[unresolved-attribute]
                     raise
                 msg = (

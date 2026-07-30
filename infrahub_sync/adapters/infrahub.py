@@ -1083,9 +1083,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             else f"the kind's convergence key crosses a relationship ({', '.join(components)}), which the "
             "client cannot render from a peer supplied as a resolved node id"
         )
-        # `new_peer_resolver` allocates this at an apply's start, which is the lifetime AD078
-        # fixes. The fallback covers a caller that dispatches an operation without asking for a
-        # resolver first: it still deduplicates, it just cannot know where the apply began.
+        # Allocated by `new_peer_resolver` at an apply's start (AD078). The fallback covers a
+        # caller that dispatches without asking for a resolver first: it still deduplicates.
         reported = self._unkeyed_render_reported
         if reported is None:
             reported = self._unkeyed_render_reported = set()
@@ -1106,20 +1105,13 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         The second member of the planned-write surface
         (`infrahub_sync.plan.write_surface.PlannedWriteDestination`). The engine calls this
-        instead of constructing a `PeerResolver` itself, which is what removes the cast to
-        this class from `Potenda.apply_plan`: the destination that owns the resolver's
-        dependency is the one that builds it.
+        rather than constructing a `PeerResolver` itself: the destination that owns the
+        resolver's dependency is the one that builds it.
 
-        One resolver per apply, created at its start and discarded with it — nothing about it
-        is persisted, and it is never shared between applies.
-
-        The keyedness report's dedup set is allocated here for that same reason (AD078). Its
-        contract is "once per destination kind **per apply**", and this is the one call the
-        engine makes at an apply's start, so it is the only place on the write surface where
-        that lifetime can be established. Allocated in `__init__` instead, it would live for
-        the adapter instance: a second apply through a reused adapter would then find every
-        kind already reported and disclose nothing at all, on the run where the operator has
-        no other signal.
+        One resolver per apply, created at its start and discarded with it — never persisted,
+        never shared between applies. The keyedness report's dedup set is allocated here for
+        the same reason (AD078): its contract is "once per destination kind **per apply**",
+        and on an adapter instance it would silence every disclosure on a second apply.
         """
         self._unkeyed_render_reported = set()
         return PeerResolver(self)
@@ -1131,16 +1123,11 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         exactly as recorded: nothing is recomputed, and neither side is extracted or loaded
         (FR-012).
 
-        A `delete` raises `SkippedDeleteOperation` and never touches the destination. That
-        raise is **defensive**, not the mechanism: `Potenda.apply_plan` recognizes a delete in
-        its own apply loop, records the identifier and never dispatches it here, so on the
-        engine's path this branch is unreachable and nothing catches the class. Applying
-        deletes is out of scope for this release (AD055).
-
-        Recording the skip and completing the plan are the **apply loop's** behavior, not this
-        method's. A caller that dispatches a delete straight to this method gets the raise and
-        nothing else: no identifier is recorded anywhere, and there is no run for the operation
-        to end `applied`.
+        A `delete` raises `SkippedDeleteOperation` and never touches the destination. The raise
+        is **defensive**: `Potenda.apply_plan` recognizes a delete in its own loop, records the
+        identifier and never dispatches it here (AD055). Recording the skip and completing the
+        plan are the **apply loop's** behavior — a caller that dispatches a delete straight to
+        this method gets the raise and nothing else.
 
         A `create` and an `update` both route through the same convergent upsert —
         `client.create(...)` then `save(allow_upsert=True)` — and neither routes through
@@ -1159,9 +1146,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         Raises:
             SkippedDeleteOperation: the operation is a recorded delete (a designed
-                limitation, not a failure). Not reached when the engine drives the apply,
-                which filters deletes out before dispatch — and on any other path the raise is
-                all that happens: recording the skip belongs to the apply loop.
+                limitation, not a failure), and no skip is recorded — see above.
             UnaccountedIdentityComponentError: a human-friendly-ID component of the
                 destination kind is not accounted for by the payload and the operation.
             UnkeyedWriteRefusedError: the rendered mutation is unkeyed for a kind whose
@@ -1212,12 +1197,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         # than left to the upsert alone (PD-005), and `peers: []` means empty the set.
         many_references = [reference for reference in references if reference.cardinality == "many"]
         if many_references:
-            # THE FLUSH (AD075, form amended by AD085 and again by AD088). One write per
-            # operation, not one per relationship — a **targeted** relationship write rather
-            # than any re-render of the node, because a re-render nulls every unmapped
-            # optional cardinality-one relationship. Peer removal relies on the destination
-            # Update mutation's replace semantics, pinned by the live shrink test
-            # (FIX-001/OQ-4). See `_flush_replaced_relationship_sets`.
+            # One write per operation, not one per relationship, and targeted rather than a
+            # re-render of the node — a re-render nulls every unmapped optional cardinality-one
+            # relationship. See `_flush_replaced_relationship_sets` (AD075, AD085, AD088).
             _flush_replaced_relationship_sets(node, [reference.field for reference in many_references])
 
         node_id = _require_node_id(node, context=f"for operation {operation.operation_id!r}")

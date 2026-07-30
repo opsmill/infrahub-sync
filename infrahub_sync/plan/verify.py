@@ -11,26 +11,18 @@ parse and apply — a verifier that re-read the disk would certify a copy that i
 discarded (DBR-006, DBA-004). Only the source snapshots are digested from disk, because
 they are verification *subjects*, never applied.
 
-Two rules shape the check order and they are each other's exception, which is why both are
-stated here rather than left to a reader of the loop (AD053):
+Two rules shape the check order and they are each other's exception (AD053):
 
 - **Check 1 is a gate.** An artifact whose `format_version` this release does not
   understand cannot have its remaining fields meaningfully interpreted, so when the gate
   fails checks 2 to 5 are **not evaluated** and the failure says so (PD-006).
 - **Once the gate passes, all of 2 to 5 are evaluated and every failure is named**, so one
-  apply attempt tells the operator everything that is wrong rather than one thing at a time
-  (AD036).
+  apply attempt tells the operator everything that is wrong (AD036).
 
-The `write_surface` check is deliberately **not** behind the gate. It is derived from an
-argument, not from the artifact, so there is nothing about it a bad format version makes
-uninterpretable; the gate's rationale simply does not reach it. It is evaluated last
-because it is the only check whose subject is the destination adapter rather than the
-artifact.
-
-Its parameter is the adapter's **name**, not a boolean (AD058). The failure it drives
-promises a message that *names the adapter*, which a boolean cannot supply — the earlier
-signature made its own promised message unwritable from the arguments the function
-received. `None` means the planned-write surface is present.
+The `write_surface` check sits outside the gate and runs last: its subject is the
+destination adapter rather than the artifact, so no format version makes it
+uninterpretable. Its parameter is the adapter's **name** rather than a boolean, because the
+failure it drives names the adapter (AD058); `None` means the surface is present.
 """
 
 from __future__ import annotations

@@ -356,20 +356,15 @@ class ApplyRecord:
 
     Not an artifact record — nothing here is written to `plan/`. It is the value
     `Potenda.apply_plan` **returns**, and the CLI is the single writer that merges
-    `as_summary_keys()` into the run file's `summary` before saving it (AD069). It carries a
-    name and a type rather than loose keys because it crosses a layer boundary: a bare
-    mapping infers as `dict[str, Any]`, which loses every guarantee at the merge site and
-    turns a later key relocation into a `KeyError` downstream instead of a type error here.
+    `as_summary_keys()` into the run file's `summary` before saving it (AD069).
 
     A destination rejection mid-apply carries the **partial** record on the raised
     `OperationApplyFailedError`, so the CLI can merge what was written before recording
-    `failed` — which is what lets FR-025's last-applied pointer survive a partial apply. The
-    operation that failed is named on the record as well, because applying one operation is
-    not one destination write: the base upsert is issued before the cardinality-many
-    relationship flush, so a failure between the two leaves the destination changed by an
-    operation that belongs to neither the applied nor the skipped-delete set. Naming it, and
-    marking that it may have written part of its change, keeps that state readable from the
-    run instead of inferred from where the output stopped; re-applying converges it (AD033).
+    `failed`, and FR-025's last-applied pointer survives a partial apply. The failing
+    operation is named on the record too: applying one operation is not one destination write,
+    so a failure between the base upsert and the relationship flush leaves the destination
+    changed by an operation in neither the applied nor the skipped-delete set. Re-applying
+    converges it (AD033).
     """
 
     applied_operations: tuple[str, ...] = ()

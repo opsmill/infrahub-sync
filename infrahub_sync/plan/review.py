@@ -9,15 +9,13 @@ modifies nothing in the run directory, and never mutates run state (FR-008, AD02
 A plan that would fail apply verification is **rendered anyway**, with a verification note
 saying why — and with `checksum_ok` false when the failing check is the checksum itself; a
 plan bound to a torn source snapshot checksums clean and is disclosed by the note alone
-(FR-010). The one bound on rendering-rather-than-refusing is an operation whose `action`
-this release cannot interpret, which is refused while reading, because a count of operations
-the tool does not understand is not a review (AD031, AD055).
+(FR-010). The one bound is an operation whose `action` this release cannot interpret, which
+is refused while reading (AD031, AD055).
 
-Two obligations sit on the **renderer**, not here, and the split is deliberate. Turning an
-empty `operations(kind=…)` result into FR-006's error is a *presentation* rule: FR-029
-requires a programmatic caller to consume this as data, and forcing one to catch an
-exception to learn a count is that rule leaking into the interface (AD058). Annotating
-`deletes_not_executed` is likewise the renderer's; `summary()` only has to carry the field.
+Two obligations sit on the **renderer**, not here: turning an empty `operations(kind=…)`
+result into FR-006's error, and annotating `deletes_not_executed`. Both are presentation
+rules, and a programmatic caller must not have to catch an exception to learn a count
+(AD058).
 """
 
 from __future__ import annotations

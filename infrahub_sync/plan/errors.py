@@ -1,21 +1,16 @@
 """The plan-artifact error taxonomy.
 
-Every failure on a plan-artifact path is one of the classes below, and every one of
-them tells the operator what to do next: `PlanArtifactError` declares `next_action`
-on the base class, so a subclass cannot be added without one (AD059). The wording of
-each class's next action is the taxonomy table in
-`dev/specs/archive/001-plan-artifact-saved-apply/contracts/plan-reader-api.md`.
+Every failure on a plan-artifact path is one of the classes below, and each tells the
+operator what to do next: `PlanArtifactError` declares `next_action` on the base class and
+constructing a subclass without a non-empty one raises `TypeError` (AD059). The taxonomy
+table in `dev/specs/archive/001-plan-artifact-saved-apply/contracts/plan-reader-api.md`
+fixes the wording. Callers may override it with the `next_action` keyword, which is how
+`SourcePeerUnresolvedError` routes its two conditions to two remedies (AD082).
 
-Constructing an error whose class declares no non-empty `next_action` raises
-`TypeError`: the guarantee is enforced where it can be observed rather than left to
-review. Callers may override the declared wording with the `next_action` keyword,
-which is how `SourcePeerUnresolvedError` routes its two conditions to two remedies
-(AD082).
-
-`SkippedDeleteOperation` is the one class here that is **not** a failure. It is the
-control signal a destination write surface raises if it is ever handed a recorded delete,
-which this release does not execute, and it deliberately sits outside `PlanArtifactError`
-so no caller reads it as an error or asks it for a remedy (AD055).
+`SkippedDeleteOperation` is the one class here that is **not** a failure: it is the control
+signal a destination write surface raises if it is ever handed a recorded delete. It sits
+outside `PlanArtifactError` so no caller reads it as an error or asks it for a remedy
+(AD055).
 """
 
 from __future__ import annotations
@@ -29,23 +24,15 @@ if TYPE_CHECKING:
 class SkippedDeleteOperation(Exception):  # noqa: N818 — a control signal, not an error
     """A recorded delete a write surface declines to execute (FR-016, FR-017, AD055).
 
-    The **defensive** half of the contract. Applying deletes is out of scope for this
-    release, so a write surface handed a `delete` operation must raise this instead of
-    touching the destination.
+    The **defensive** half of the contract: applying deletes is out of scope for this
+    release, so a write surface handed a `delete` must raise this rather than touch the
+    destination. Nothing catches it in product code and the apply loop never raises it —
+    `Potenda.apply_plan` recognizes a delete itself, records the identifier and continues.
 
-    In normal operation it is never raised, because the engine never dispatches a delete:
-    `Potenda.apply_plan`'s loop recognizes `operation.action == "delete"` itself, records the
-    identifier and continues without calling the write surface at all. Nothing catches this
-    class in product code. It exists so that an adapter reached by some other route still
-    refuses rather than deletes.
-
-    **Under the apply loop**, every non-delete operation in the plan is applied and the run
-    ends `applied`, with the count and the skipped identifiers recorded on the apply record.
-    That accounting is the loop's, not this signal's: a caller that dispatches a delete
-    directly to a write surface gets this raise and nothing more — no identifier is recorded
-    and no run is completed. It is a designed limitation reported as one, which is why this
-    class is not part of the `PlanArtifactError` taxonomy and carries no `next_action`: there
-    is nothing for the operator to repair.
+    The skip accounting is the **apply loop's**, not this signal's: a caller that dispatches
+    a delete straight to a write surface gets this raise and nothing more — no identifier
+    recorded, no run completed. It is a designed limitation rather than a failure, so it sits
+    outside `PlanArtifactError` and carries no `next_action`.
     """
 
 
@@ -103,16 +90,13 @@ class PlanFormatVersionError(PlanArtifactError):
 class PlanArtifactUnreadableError(PlanArtifactError):
     """An artifact path could not be turned into the bytes or rows it should hold.
 
-    Two conditions, because both leave the caller without a value and neither is the path
-    being *absent* — which is a separate verdict with a separate remedy (AD036):
+    Two conditions, neither of which is the path being *absent* — that is a separate verdict
+    with a separate remedy (AD036):
 
     - a permission or I/O failure stopped the path from being read at all;
-    - the path was read, but its bytes are not the Parquet table they claim to be, which is
-      what `checksum.py` raises this for on a snapshot it cannot digest.
+    - the path was read, but its bytes are not the Parquet table they claim to be.
 
-    The class-level next action fits the first. The second overrides it at the raise site,
-    since checking permissions on a file that was read successfully would send the operator
-    nowhere.
+    The class-level next action fits the first; the second overrides it at the raise site.
     """
 
     next_action = "Check permissions and ownership on the named path, then retry."
@@ -121,12 +105,10 @@ class PlanArtifactUnreadableError(PlanArtifactError):
 class UnknownRunIdentifierError(PlanArtifactError):
     """No run with the requested identifier is stored for this synchronization (FR-008, AD073).
 
-    Two arms, because the audiences differ. When runs **do** exist the operator mistyped or
-    is looking at the wrong sync, and the remedy is one of the identifiers the message
-    lists. When the cache root is absent or holds no runs at all the audience is by
-    construction the first-run operator, for whom "pick from the list" is a dead end, so
-    that arm names the command that produces a plan — as the sibling `PlanFormatV1Error`
-    row does. Use `no_runs()` for the second arm.
+    Two arms, because the remedies differ. When runs **do** exist, the remedy is one of the
+    identifiers the message lists. When the cache root is absent or holds no runs, "pick from
+    the list" is a dead end, so that arm names the command that produces a plan instead —
+    use `no_runs()` for it.
     """
 
     next_action = "Re-run naming one of the run identifiers listed above."
@@ -260,13 +242,12 @@ class UnaccountedIdentityComponentError(PlanArtifactError):
 class UnkeyedWriteRefusedError(PlanArtifactError):
     """The rendered mutation carries no key for a kind whose HFID is all-direct (AD066).
 
-    Keyedness is a property of the rendered mutation input, not of the assembled data, so
-    it is read there. For a kind every one of whose human-friendly-ID components is a
-    direct attribute, a render carrying neither `id` nor `hfid` can only mean the payload
+    Keyedness is a property of the rendered mutation input rather than of the assembled
+    data, so it is read there. For a kind every one of whose human-friendly-ID components is
+    a direct attribute, a render carrying neither `id` nor `hfid` can only mean the payload
     lost its identity components, so the write is refused. A kind whose components cross a
-    relationship, and a kind that declares no human-friendly ID at all, are **warned**
-    about and proceed — being unkeyed is expected for the first and a schema fact for the
-    second (AD076).
+    relationship, and a kind declaring no human-friendly ID at all, are **warned** about and
+    proceed instead (AD076).
     """
 
     next_action = (
@@ -287,14 +268,11 @@ class OperationApplyFailedError(PlanArtifactError):
     Carries the **partial** apply record — every operation applied before this one, every
     delete skipped before it, and this operation's own identifier under `failed_operation` —
     because the CLI is the single writer of the run record (AD069) and cannot record what it
-    was never handed. Without it, FR-025's last-applied pointer could not survive a partial
-    apply at all.
+    was never handed.
 
-    Nothing is rolled back: what was written stays written, which is also what keeps a
-    partial apply distinguishable from a completed one — neither clause of the knowability
-    invariant holds for it, since the unattempted operations are in neither set. Applying one
-    operation is not one write either: the base upsert precedes the relationship flush, so the
-    failing operation may have changed the destination as well, and the record marks that.
+    Nothing is rolled back. Applying one operation is not one write either: the base upsert
+    precedes the relationship flush, so the failing operation may have changed the
+    destination as well, which is what `may_have_partially_written` marks.
     """
 
     next_action = (

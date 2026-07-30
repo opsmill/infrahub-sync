@@ -100,18 +100,16 @@ def print_error_and_abort(message: str) -> NoReturn:
 
 
 # ---------------------------------------------------------------------------------------
-# Review mode — rendering a saved plan artifact (FR-006, FR-008, FR-029, AD032, AD056, AD058)
+# Review mode — rendering a saved plan artifact
 #
-# Presentation only. Everything read, filtered or counted below comes from `read_saved_plan`,
-# FR-029's single supported reading entry point, so the command-line depth and the in-process
-# depth disclose from one source and neither re-implements the other. Output goes to
-# **stdout** through `typer.echo` — the framework facility the CLI already uses for help —
-# never through the logger, which the live comparison path keeps for itself (AD023, AD032).
+# Presentation only: everything read, filtered or counted below comes from `read_saved_plan`,
+# so the command-line depth and the in-process depth disclose from one source (FR-029).
+# Output goes to **stdout** through `typer.echo`, never through the logger, which the live
+# comparison path keeps for itself (AD032).
 #
-# The layout below is operator-facing text and **not** a stability contract: wording, field
-# order and column widths may change without that being a breaking change (AD030). What is
-# **not** free to change is the delete-computation record, the not-executed annotation and
-# the never-empty `--kind` rule, which are obligations under FR-006 and FR-015 (AD056, AD058).
+# The layout is operator-facing text and **not** a stability contract (AD030). What is not
+# free to change is the delete-computation record, the not-executed annotation and the
+# never-empty `--kind` rule (FR-006, FR-015, AD056).
 # ---------------------------------------------------------------------------------------
 
 REVIEW_WIDTH = 92

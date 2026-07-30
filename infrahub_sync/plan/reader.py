@@ -20,14 +20,13 @@ with the artifact before any of its contents are interpreted:
    unrecognized action refuses review too — the one bound on AD031's "review renders
    rather than refuses", which is scoped to verification failures (AD055).
 
-The last arm matters most in practice. An operations line that parses as JSON but fails
-model validation for any reason **other** than its action — a `create` with no `payload`, a
-stored `operation_id` that does not match its own triple, a `cardinality: "one"` carrying
-two peers — is caught per line and re-raised as `PlanArtifactTornError` naming the **line
-number** and the field that failed. Without that arm the likeliest corruption class reaches
-the operator as a raw pydantic traceback with no next action, which is what AD059 forbids.
-The action case takes precedence, so a hand-edited artifact reports the action rather than
-a generic tear.
+An operations line that parses as JSON but fails model validation for any reason **other**
+than its action — a `create` with no `payload`, a stored `operation_id` that does not match
+its own triple, a `cardinality: "one"` carrying two peers — is caught per line and re-raised
+as `PlanArtifactTornError` naming the **line number** and the field that failed, rather than
+reaching the operator as a raw pydantic traceback with no next action (AD059). The action
+case takes precedence, so a hand-edited artifact reports its action rather than a generic
+tear.
 
 Unknown manifest fields survive verbatim: `PlanManifest` allows extras, so they stay in the
 model and therefore stay inside the recomputed checksum (FR-027, AD028).
@@ -382,17 +381,14 @@ def _parse_operations(
 def require_plan_directory(run_dir: Path) -> Path:
     """Return `<run_dir>/plan/`, refusing when it is absent or is not a directory.
 
-    Split out of `load_plan_artifact` so the CLI's apply path can reach the *same* verdict —
+    Split out of `load_plan_artifact` so the CLI's apply path reaches the same verdict —
     and therefore the same message and next action — **before** it constructs an adapter or
-    allocates a run directory, which is what AD026 requires and what a check living only
-    inside the loader could not give it.
+    allocates a run directory (AD026).
 
     The refusal **enumerates the run identifiers that exist**, because FR-008 puts that
-    enumeration on this arm as well as on the unknown-run arm: a run located but holding no
-    plan artifact leaves the operator with the same next question, and answering it here
-    means they do not have to guess a second time. The identifiers come from `run_dir.parent`,
-    which is the sync's cache root by construction,
-    so no synchronization name has to be threaded into the reader to produce them.
+    enumeration on this arm as well as on the unknown-run arm. They come from
+    `run_dir.parent`, the sync's cache root by construction, so no synchronization name has
+    to be threaded into the reader.
 
     Raises:
         PlanFormatV1Error: no `plan/` directory exists — the run predates this format, or its

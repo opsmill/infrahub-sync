@@ -687,22 +687,21 @@ def warn_missing_convergence_key(*, destination: Any, operations: Sequence[Plann
     each warned about on the **log stream** naming the kind and what is missing:
 
     1. the kind declares no `human_friendly_id`, or the plan's identity does not supply
-       every one of its components — the observable convergence actually rides on;
+       every one of its components — what observable convergence rides on;
     2. the kind declares no `uniqueness_constraints` entry covered by the plan's identity
-       attributes — the brief's own condition, and a different one, because a kind with a
-       complete human-friendly ID and no uniqueness constraint still duplicates silently;
-    3. no key the destination declares covers the plan's identity — the opposite direction
-       from the first two, where source objects **merge** rather than duplicate; see
-       `_warn_identity_finer_than_destination_key` (DISC-002, OQ-8).
+       attributes — a different condition, because a kind with a complete human-friendly ID
+       and no uniqueness constraint still duplicates silently;
+    3. no key the destination declares covers the plan's identity — the opposite direction,
+       where source objects **merge** rather than duplicate; see
+       `_warn_identity_finer_than_destination_key` (DISC-002).
 
-    **Guarded on the destination exposing a schema at all (AD052).** `self.schema` is
-    defined on the Infrahub adapter and on no other, while derivation now runs on the `diff`
-    path for every destination with its failures fatal — so an unguarded read would be a hard
-    regression on the adapters that compare fine today. Where no schema is exposed the whole
-    warning is skipped, and skipping it is never an error.
+    **Guarded on the destination exposing a schema at all (AD052)**, since `self.schema` is
+    defined on the Infrahub adapter and on no other while derivation runs for every
+    destination. Where no schema is exposed the warning is skipped, and skipping it is never
+    an error.
 
-    Warning only, never a manifest field, so it stays outside `plan_checksum` and outside
-    SC-006's byte comparison. The plan run succeeds either way.
+    Warning only, never a manifest field, so it stays outside `plan_checksum` and SC-006's
+    byte comparison. The plan run succeeds either way.
     """
     schema = getattr(destination, "schema", None)
     if not schema:

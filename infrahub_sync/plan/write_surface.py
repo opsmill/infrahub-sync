@@ -1,25 +1,14 @@
-"""The destination planned-write surface, expressed as a type (AD086).
+"""The destination planned-write surface, expressed as a type — see `dev/adr/0002`.
 
 `PlannedWriteDestination` is what a destination has to offer for a saved plan to be applied
-through it, and it has exactly two members: the write surface a saved-plan apply calls per
-operation, and the factory that builds the per-apply peer resolver that surface is handed.
-The factory is a member of the surface because the engine has to build the resolver without
-knowing the concrete adapter — that is what previously forced a cast to `InfrahubAdapter` in
-`Potenda.apply_plan`.
+through it: the per-operation write surface, and the factory that builds the per-apply peer
+resolver it is handed. The factory is a member because the engine builds the resolver
+without naming a concrete adapter.
 
-**What this type enforces, and what it does not.** `runtime_checkable` makes `isinstance`
-legal against it, and an `isinstance` check against a Protocol verifies **member presence
-only, never signatures**. Against a duck-typed destination it is therefore **equivalent to
-the `hasattr` gate it replaced** — no stronger. FR-023's refusal is still presence-checking,
-and this type does not harden it.
-
-What it genuinely fixes is the **static** boundary: `ty` verifies every call site and the
-resolver factory's type, the untyped `getattr` dispatch is gone, and `PeerResolver`'s
-parameter is no longer narrowed by a cast that the gate could not justify.
-
-Making FR-023's refusal real at **runtime** needs an explicit opt-in from the destination —
-ABC inheritance or a class-level marker — which is a **separate design decision** that
-AD086 deliberately does not take, and this module does not implement.
+**The check is presence-only.** `isinstance` against a `runtime_checkable` Protocol verifies
+member presence and never signatures, so against a duck-typed destination it is exactly as
+strong as a `hasattr` gate. FR-023's refusal is presence-checking and this type does not
+harden it; what it fixes is the static boundary, where `ty` verifies every call site.
 """
 
 from __future__ import annotations
