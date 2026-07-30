@@ -537,7 +537,11 @@ def diff_cmd(
                 run_id=run_id,
                 concurrent_load=concurrent_load,
             )
-        except ValueError as exc:
+        except (ImportError, ValueError) as exc:
+            # `ImportError` as well as `ValueError`: an adapter that cannot be loaded — a missing
+            # optional dependency, most often — is a configuration or environment problem with a
+            # remedy, and it escaped as a raw traceback while adapter *initialization* failures
+            # one line away were reported as one line.
             print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}")
 
         ptd.force_full_extract = full_extract
@@ -635,7 +639,7 @@ def sync_cmd(
                 continue_on_error=continue_on_error,
                 concurrent_load=concurrent_load,
             )
-        except ValueError as exc:
+        except (ImportError, ValueError) as exc:
             print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}")
 
         ptd.force_full_extract = full_extract
@@ -822,12 +826,18 @@ def apply_cmd(
         # — and no sidecar writes: the stored run's files are the immutable provenance of
         # the plan under apply. The plan's destination binding is the supported apply-time
         # guard against a drifted destination.
-        applier = PlanApplier.open_existing(
-            sync_instance,
-            run_id=run_id,
-            branch=branch,
-            verbosity=verbosity_level,
-        )
+        # Assembly failures are reported the way `diff` and `sync` report theirs: an adapter that
+        # cannot be loaded or initialized has a remedy, and it escaped here as a raw traceback
+        # because this construction sits outside the apply loop's own arms below.
+        try:
+            applier = PlanApplier.open_existing(
+                sync_instance,
+                run_id=run_id,
+                branch=branch,
+                verbosity=verbosity_level,
+            )
+        except (ImportError, ValueError) as exc:
+            print_error_and_abort(f"Failed to initialize the destination for the apply: {exc}")
         run_file = RunFile(path=applier.run_dir / "run.json", status="running", mode="apply")
         run_file.save()
 
