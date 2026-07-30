@@ -221,22 +221,37 @@ manager's in-memory state and not a mocked adapter call.
 
 ## The apply loop
 
+The order of the first four steps is load-bearing: **require `plan/`, read once, verify those bytes,
+then parse them.**
+
 ```text
-1. load the artifact; classify v1 / torn / unrecognized version.
+1. require_plan_directory(run_dir) — settled FIRST, so a run in the pre-existing row format
+   keeps FR-019's own verdict instead of arriving as an unparseable manifest
+2. read the artifact's bytes ONCE. Verification, the parse and the loop all consume that one
+   RawPlanArtifact; a second read is what let files replaced mid-apply execute unverified
+   (DBR-006, DBA-004)
+3. verify THOSE bytes + isinstance(destination, PlannedWriteDestination) → refuse before any write
+4. parse them; classify v1 / torn / unrecognized version.
    An action outside ACTIONS is refused HERE, before any write → run state failed
-2. verification checks + isinstance(destination, PlannedWriteDestination) → refuse before any write
-3. peers = destination.new_peer_resolver()
-4. applied: list[str] = []   ;   skipped_deletes: list[str] = []      # both ORDERED
-5. for operation in stored order:
+5. peers = destination.new_peer_resolver()
+6. applied: list[str] = []   ;   skipped_deletes: list[str] = []      # both ORDERED
+7. for operation in stored order:
        delete            → record the identifier and continue, never dispatched
        peer/destination failure → attach the PARTIAL record — including this operation's id
                                   under failed_operation — to the error, name the next
                                   action, STOP
        otherwise         → applied.append(operation.operation_id)
-6. AFTER the loop, on a COMPLETED apply, check the knowability invariant
-7. if skipped_deletes: one warning naming the count
-8. RETURN the record; apply_plan writes no run file
+8. AFTER the loop, on a COMPLETED apply, check the knowability invariant
+9. if skipped_deletes: one warning naming the count
+10. RETURN the record; apply_plan writes no run file
 ```
+
+**Verification precedes the parse**, and not the other way round, because FR-009 requires the
+format-version gate's message to state that the remaining four checks were not evaluated, and requires a
+tear co-occurring with a `config_version` or `source_snapshot` mismatch to report every failure rather
+than only the tear. Parsing first raises the parser's single-condition refusal, and neither obligation
+can then be met. The parse still runs **before the loop**, so an unrecognized `action` is refused before
+any destination write (FR-017, AD055).
 
 Stored order is executed exactly. `applied` is an ordered sequence, so "the last operation reported as
 applied" is its final element rather than a separate field. An empty plan applies as a successful no-op —

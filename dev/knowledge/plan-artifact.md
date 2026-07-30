@@ -195,9 +195,13 @@ runs at different extraction modes are *expected* to differ.
 
 - `reader.load_plan_artifact(run_dir)` classifies v1 / torn / unrecognized-version and returns the
   parsed manifest and operations.
-- `verify_plan(*, run_dir, run_id, config_version, write_surface_missing_on=None)` runs the pre-apply
+- `verify_plan(*, artifact, run_id, config_version, write_surface_missing_on=None)` runs the pre-apply
   checks and returns **every** failure, each naming itself, the refused run, expected and found where
-  neither is secret, and the operator's next action. An empty list means safe to apply.
+  neither is secret, and the operator's next action. An empty list means safe to apply. It takes the
+  already-read `RawPlanArtifact`, **not** a `run_dir`: the bytes it verifies are the bytes the caller
+  goes on to parse and apply, so no second read exists for a concurrent rewrite to slip through
+  (FIX-008, DBR-006). Only the source snapshots it names are digested from disk, because they are
+  verification subjects and are never applied.
 - `review.read_saved_plan(...)` is the review path. It reads and renders without constructing an
   adapter and without creating a run directory, so a review writes nothing.
 
