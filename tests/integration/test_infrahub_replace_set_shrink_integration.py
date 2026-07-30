@@ -27,6 +27,7 @@ so no NetBox source is involved. Run with::
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -87,6 +88,36 @@ def _env_or_skip() -> tuple[str, str]:
     return address, token
 
 
+def _await_schema_kinds(address: str, token: str, kinds: tuple[str, ...], timeout: float = 90.0) -> None:
+    """Block until the destination serves every one of `kinds`.
+
+    `POST /api/schema/load` returns once the payload is accepted, not once the kinds it
+    declares are queryable. Creating a node in that window fails with `SchemaNotFoundError`,
+    which reads as a broken destination rather than a slow one — and the window is widest
+    exactly where it matters, on a freshly reset instance running the whole `-m integration`
+    suite, where a sibling module's schema load is still settling when this one lands.
+    """
+    deadline = time.monotonic() + timeout
+    missing = set(kinds)
+    while True:
+        response = requests.get(
+            f"{address}/api/schema?branch={DESTINATION_BRANCH}",
+            headers={"X-INFRAHUB-KEY": token},
+            timeout=30,
+        )
+        response.raise_for_status()
+        missing = set(kinds) - {node["kind"] for node in response.json().get("nodes", [])}
+        if not missing:
+            return
+        if time.monotonic() >= deadline:
+            msg = (
+                f"Destination did not serve {sorted(missing)} within {timeout:.0f}s of a successful "
+                f"schema load — the throwaway schema this test measures against is not in place."
+            )
+            raise AssertionError(msg)
+        time.sleep(1.0)
+
+
 def _make_client(address: str, token: str) -> Any:  # noqa: ANN401 — the SDK client is dynamically typed
     """A sync Infrahub client, imported lazily so unit-only runs need no SDK extras."""
     from infrahub_sdk import Config, InfrahubClientSync
@@ -144,6 +175,7 @@ def live_shrink_fixture() -> Iterator[tuple[Any, InfrahubAdapter, dict[str, str]
         timeout=60,
     )
     schema_response.raise_for_status()
+    _await_schema_kinds(address, token, (TAG_KIND, TEAM_KIND))
 
     client = _make_client(address, token)
     tag_ids: dict[str, str] = {}
