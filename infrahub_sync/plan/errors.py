@@ -331,6 +331,26 @@ class UnformableDestinationIdentityError(PlanArtifactError):
     )
 
 
+class UnwalkedDiffChildrenError(PlanArtifactError):
+    """A comparison element carries child elements, which plan derivation does not walk (MIN-007).
+
+    Derivation walks `diff.children` one level deep, exactly as `Potenda._diff_to_rows` does.
+    No model this repository generates declares `_children`, so no comparison it produces
+    nests — but a custom adapter whose models do would have every child change dropped from
+    the plan silently, which is an incomplete plan presented as a complete one (FR-001).
+
+    So the condition is refused rather than warned about, on the same reasoning as AD047:
+    a derivation that degrades to warn-and-drop emits an artifact whose reviewer cannot see
+    what is missing from it. Recursing into children is not in this release's scope; the
+    guard names the limitation at the one place where it would otherwise be invisible.
+    """
+
+    next_action = (
+        "Plan derivation does not descend into child objects in this release: remove `_children` from "
+        "that model, or synchronize the child kinds as top-level kinds of their own."
+    )
+
+
 class SourcePeerUnresolvedError(PlanArtifactError):
     """A relationship peer could not be resolved against the loaded source store (AD071, AD082).
 

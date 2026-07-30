@@ -88,6 +88,7 @@ from infrahub_sync.plan.errors import (
     UnsafeRunIdentifierError,
     UnserializablePayloadValueError,
     UnsupportedOperationActionError,
+    UnwalkedDiffChildrenError,
 )
 from infrahub_sync.plan.models import ACTIONS, SUPPORTED_FORMAT_VERSIONS, ApplyRecord, DestinationBindingRecord
 from infrahub_sync.plan.reader import parse_plan_artifact
@@ -1345,6 +1346,7 @@ TAXONOMY_CASES: dict[str, Callable[[], PlanArtifactError]] = {
     "unformable_destination_identity": lambda: UnformableDestinationIdentityError(
         "No destination identity can be formed for kind 'K'."
     ),
+    "unwalked_diff_children": lambda: UnwalkedDiffChildrenError("Element 'e' of kind 'K' carries 2 children."),
     "source_peer_absent": lambda: SourcePeerUnresolvedError.absent("Peer 'p' is absent from the source store."),
     "source_peer_ambiguous": lambda: SourcePeerUnresolvedError.ambiguous("Peer 'p' resolved in two kinds."),
     "unsupported_action": lambda: UnsupportedOperationActionError("Operation 'o' declares action 'purge'."),

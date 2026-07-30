@@ -57,6 +57,7 @@ from infrahub_sync.plan.errors import (
     SourcePeerUnresolvedError,
     UnformableDestinationIdentityError,
     UnserializablePayloadValueError,
+    UnwalkedDiffChildrenError,
 )
 from infrahub_sync.plan.identity import operation_id
 from infrahub_sync.plan.models import SC006_MASKED_FIELDS
@@ -2162,3 +2163,103 @@ def test_the_diff_command_succeeds_end_to_end_against_a_destination_with_no_sche
     assert manifest["delete_operations_computed"] is True
     run_record = json.loads((plan_run_dir(potenda) / "run.json").read_text(encoding="utf-8"))
     assert run_record["status"] == "dry-run"
+
+
+# =======================================================================================
+# MIN-007 (spec 002) — an element carrying children is refused, not silently flattened
+# =======================================================================================
+
+
+class _ChildBearingElement(_FakeElement):
+    """A comparison element with a populated `child_diff`, as diffsync builds for `_children`.
+
+    diffsync hangs children off `child_diff`, a `Diff` whose `get_children()` yields them
+    (`.venv/…/diffsync/diff.py`). Nothing this repository generates declares `_children`,
+    so this shape has to be constructed to be tested at all — which is exactly why the
+    condition is worth a guard rather than an assumption.
+    """
+
+    def __init__(  # noqa: PLR0913 — `_FakeElement`'s own parameters, plus the children
+        self,
+        *,
+        kind: str,
+        name: str,
+        keys: Mapping[str, Any],
+        children: Sequence[_FakeElement],
+        source_attrs: Mapping[str, Any] | None = None,
+        dest_attrs: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(kind=kind, name=name, keys=keys, source_attrs=source_attrs, dest_attrs=dest_attrs)
+        self.child_diff = SimpleNamespace(get_children=lambda: iter(children))
+
+
+def test_an_element_carrying_children_fails_the_derivation() -> None:
+    """MIN-007: the walk is one level deep, so nested changes must not be dropped quietly."""
+    child = _FakeElement(kind="InterfacePhysical", name="eth0", keys={"name": "eth0"}, source_attrs={"mtu": 9000})
+    element = _ChildBearingElement(
+        kind="BuiltinTag",
+        name="prod",
+        keys={"name": "prod"},
+        source_attrs={"description": "production"},
+        children=[child],
+    )
+
+    with pytest.raises(UnwalkedDiffChildrenError) as caught:
+        operations_from_diff(
+            _FakeDiff({"BuiltinTag": [element]}),
+            config=build_config(),
+            tier_of=resolver(),
+            source_adapter=qualified_source(),
+        )
+
+    message = str(caught.value)
+    for fragment in ("BuiltinTag", "prod", "InterfacePhysical", "one level deep"):
+        assert fragment in message, f"{fragment!r} missing from: {message}"
+    assert caught.value.next_action, "AD059: every taxonomy failure names the operator's next action"
+
+
+def test_children_are_refused_even_when_the_parent_element_has_no_action_of_its_own() -> None:
+    """The dangerous shape: an unchanged parent whose children changed.
+
+    A guard placed after the no-op filter would let precisely this case through — the plan
+    would carry nothing for the parent, which is correct, and nothing for the children,
+    which is the FR-001 violation MIN-007 is about.
+    """
+    child = _FakeElement(kind="InterfacePhysical", name="eth0", keys={"name": "eth0"}, source_attrs={"mtu": 9000})
+    unchanged = _ChildBearingElement(
+        kind="BuiltinTag",
+        name="prod",
+        keys={"name": "prod"},
+        source_attrs={"description": "production"},
+        dest_attrs={"description": "production"},
+        children=[child],
+    )
+    assert unchanged.action is None, "fixture error: the parent element must be a no-op"
+
+    with pytest.raises(UnwalkedDiffChildrenError):
+        operations_from_diff(
+            _FakeDiff({"BuiltinTag": [unchanged]}),
+            config=build_config(),
+            tier_of=resolver(),
+            source_adapter=qualified_source(),
+        )
+
+
+def test_an_element_with_an_empty_child_diff_derives_as_before() -> None:
+    """The guard is silent on every comparison this repository's models actually produce."""
+    element = _ChildBearingElement(
+        kind="BuiltinTag",
+        name="prod",
+        keys={"name": "prod"},
+        source_attrs={"description": "production"},
+        children=[],
+    )
+
+    operations = operations_from_diff(
+        _FakeDiff({"BuiltinTag": [element]}),
+        config=build_config(),
+        tier_of=resolver(),
+        source_adapter=qualified_source(),
+    )
+
+    assert operation_for(operations, "BuiltinTag").identity == {"name": "prod"}
