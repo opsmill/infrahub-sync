@@ -599,17 +599,111 @@ def _identity_attributes_by_kind(operations: Sequence[PlannedOperation]) -> dict
     return by_kind
 
 
+def _destination_keys(node: Any) -> list[tuple[str, ...]]:
+    """Every key the destination could converge a kind on, as mapping field names (DISC-002).
+
+    The kind's human-friendly ID and each of its uniqueness constraints, each reduced from
+    component paths to the mapping field names the plan's identity is keyed by. Sorted and
+    deduplicated so which key a warning names does not depend on schema iteration order.
+    """
+    constraints = getattr(node, "uniqueness_constraints", None) or []
+    human_friendly_id = getattr(node, "human_friendly_id", None)
+    declared = [*constraints, *([human_friendly_id] if human_friendly_id else [])]
+    keys = {tuple(sorted({_component_field(component) for component in key})) for key in declared if key}
+    return sorted(keys)
+
+
+def _merged_identity_counts(operations: Sequence[PlannedOperation], *, key: tuple[str, ...]) -> tuple[int, int]:
+    """How many source objects collide, and onto how many destination identities (DISC-002).
+
+    The plan's operations for one kind, grouped by their identity projected onto `key` — what
+    the destination will actually distinguish them by. Returns the number of operations that
+    land in a group of more than one, and the number of such groups. Deletes are excluded:
+    they are destination objects the source no longer has, not source objects being written.
+    """
+    groups: dict[bytes, int] = {}
+    for operation in operations:
+        if operation.action == DIFF_DELETE_ACTION:
+            continue
+        projection = {name: value for name, value in operation.identity.items() if name in key}
+        encoded = canonical_json_bytes(projection, kind=operation.kind)
+        groups[encoded] = groups.get(encoded, 0) + 1
+    collided = [count for count in groups.values() if count > 1]
+    return sum(collided), len(collided)
+
+
+def _warn_identity_finer_than_destination_key(
+    *,
+    kind: str,
+    node: Any,
+    supplied: set[str],
+    operations: Sequence[PlannedOperation],
+) -> None:
+    """Warn where the destination cannot tell the plan's identities apart (DISC-002, OQ-8).
+
+    FR-024's two arms both test whether the *destination's* key is covered by the plan's
+    identity — `HFID ⊄ identity`, an unkeyed write that duplicates. This is the other
+    direction, `identity ⊄ HFID`: the sync distinguishes source objects more finely than the
+    destination does, so distinct source objects converge onto **one** destination object and
+    the surplus is silently lost. On the qualified path thirteen `LocationRack` objects named
+    `Comms closet`, one per site, become one — exit 0, no signal.
+
+    FR-024's condition is *satisfied* in exactly this case, which is why it needs its own
+    arm. The warning names the kind, the identity attributes the destination cannot
+    distinguish, and how many of this plan's own source objects already share a destination
+    identity — a count of what would be lost rather than a caution about what might be.
+
+    Skipped where the kind declares no key at all: there is nothing to be finer than, and
+    FR-024's first arm already reports that write as unkeyed. Warning only; the resolution
+    (tighten the destination schema, loosen the mapping, or override per kind) is a
+    per-deployment decision and out of this release's scope.
+    """
+    keys = _destination_keys(node)
+    if not keys or any(supplied <= set(key) for key in keys):
+        return
+
+    # The key the destination will really converge on: the one that accounts for most of the
+    # plan's identity. Ties break on the sorted order, so the choice is deterministic.
+    closest = min(keys, key=lambda key: (-len(supplied & set(key)), key))
+    uncovered = sorted(supplied - set(closest))
+    collided, destination_identities = _merged_identity_counts(operations, key=closest)
+    if collided:
+        identities = "identity" if destination_identities == 1 else "identities"
+        observed = (
+            f"{kind}: {collided} source objects share {destination_identities} destination {identities}, "
+            f"and all but one of each group will be lost"
+        )
+    else:
+        observed = (
+            f"{kind}: no two of this plan's operations share a destination identity yet, but two source "
+            f"objects differing only in those attributes would silently become one"
+        )
+    logger.warning(
+        "Plan: the plan's identity for destination kind %s (%s) is finer than every key the destination "
+        "can converge it on (%s), so distinct source objects merge instead of duplicating; the destination "
+        "does not distinguish: %s. %s",
+        kind,
+        ", ".join(sorted(supplied)),
+        ", ".join(closest),
+        ", ".join(uncovered),
+        observed,
+    )
+
+
 def warn_missing_convergence_key(*, destination: Any, operations: Sequence[PlannedOperation]) -> None:
     """Warn where a destination kind's convergent write may not be keyed (FR-024, AD044).
 
-    Two independent conditions, both read from the same cached destination schema object,
+    Three independent conditions, all read from the same cached destination schema object,
     each warned about on the **log stream** naming the kind and what is missing:
 
     1. the kind declares no `human_friendly_id`, or the plan's identity does not supply
        every one of its components — the observable convergence actually rides on;
     2. the kind declares no `uniqueness_constraints` entry covered by the plan's identity
        attributes — the brief's own condition, and a different one, because a kind with a
-       complete human-friendly ID and no uniqueness constraint still duplicates silently.
+       complete human-friendly ID and no uniqueness constraint still duplicates silently;
+    3. no key the destination declares covers the plan's identity — the opposite direction
+       from the first two, where source objects **merge** rather than duplicate; see
+       `_warn_identity_finer_than_destination_key` (DISC-002, OQ-8).
 
     **Guarded on the destination exposing a schema at all (AD052).** `self.schema` is
     defined on the Infrahub adapter and on no other
@@ -632,6 +726,12 @@ def warn_missing_convergence_key(*, destination: Any, operations: Sequence[Plann
             logger.debug("Plan: the destination schema declares no kind %s; convergence-key warning skipped", kind)
             continue
         readable = ", ".join(sorted(supplied))
+        _warn_identity_finer_than_destination_key(
+            kind=kind,
+            node=node,
+            supplied=supplied,
+            operations=[operation for operation in operations if operation.kind == kind],
+        )
 
         human_friendly_id = getattr(node, "human_friendly_id", None)
         if not human_friendly_id:

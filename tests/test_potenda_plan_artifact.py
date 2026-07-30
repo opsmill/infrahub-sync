@@ -2354,3 +2354,183 @@ def test_a_non_empty_many_peer_set_under_a_multi_candidate_mapping_still_probes(
     assert reference.peers == [{"name": "prod"}]
     for candidate in ("BuiltinTag", "LocationSite"):
         assert (candidate, "prod") in source.store.probes, f"{candidate} was never probed"
+
+
+# =======================================================================================
+# DISC-002 (spec 002, OQ-8) — the identity the destination is too coarse to tell apart
+# =======================================================================================
+
+# The live shape this arm exists for: `LocationRack` is identified by `(name, site)` on the
+# source side, the destination distinguishes racks by `name` alone, and thirteen NetBox demo
+# racks are named `Comms closet` — one per site. Two are enough to make the arithmetic
+# observable; the count in the message is the count of what would be lost.
+COARSE_RACK_SCHEMA = {
+    "LocationRack": schema_node(human_friendly_id=["name__value"], uniqueness_constraints=[["name__value"]])
+}
+
+
+def rack_elements(*sites: str, name: str = "Comms closet") -> _FakeDiff:
+    """One `LocationRack` element per site, all sharing one rack name."""
+    return _FakeDiff(
+        {
+            "LocationRack": [
+                _FakeElement(
+                    kind="LocationRack",
+                    name=f"{name}__{site}",
+                    keys={"name": name, "site": site},
+                    # `{}` and not `None`: the comparison's create shape, identifiers excluded.
+                    source_attrs={},
+                )
+                for site in sites
+            ]
+        }
+    )
+
+
+def rack_operations(*sites: str, name: str = "Comms closet") -> list[PlannedOperation]:
+    """Derive the racks, with a source store holding every site they reference."""
+    source = _FakeAdapter("source", [_FakeRecord("LocationSite", {"name": site}) for site in sites])
+    return operations_from_diff(
+        rack_elements(*sites, name=name),
+        config=build_config(),
+        tier_of=resolver(),
+        source_adapter=source,
+    )
+
+
+def test_warns_when_the_destination_cannot_distinguish_the_plan_identity(caplog: pytest.LogCaptureFixture) -> None:
+    """DISC-002: `identity ⊄ HFID` merges source objects, and FR-024's arms stay silent on it.
+
+    The kind's human-friendly ID is complete and a uniqueness constraint covers the plan's
+    identity attributes, so both FR-024 conditions pass — precisely in the dangerous case.
+    The message has to name the kind, the attributes the destination cannot distinguish, and
+    the number of source objects that already collide.
+    """
+    operations = rack_operations("dm-akron", "dm-albany", "dm-buffalo")
+
+    with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
+        warn_missing_convergence_key(
+            destination=_FakeAdapter("destination", schema=COARSE_RACK_SCHEMA),
+            operations=operations,
+        )
+
+    messages = derive_warnings(caplog)
+    assert len(messages) == 1, messages
+    message = messages[0]
+    assert "LocationRack" in message
+    # The uncovered attribute, named — `name` is covered, `site` is not.
+    assert "does not distinguish: site" in message
+    # The count of what would be lost, in the shape the decision asked for.
+    assert "LocationRack: 3 source objects share 1 destination identity" in message
+    # Not misreported as the duplication hazard FR-024 covers.
+    assert "duplicate" not in message
+
+
+def test_the_merge_count_distinguishes_groups_from_objects(caplog: pytest.LogCaptureFixture) -> None:
+    """Two names, each shared by two sites: four objects onto two destination identities."""
+    operations = [
+        *rack_operations("dm-akron", "dm-albany", name="Comms closet"),
+        *rack_operations("dm-buffalo", "dm-camden", name="Cage 2"),
+        # A rack whose name is unique collides with nothing and must not be counted.
+        *rack_operations("dm-akron", name="MDF"),
+    ]
+
+    with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
+        warn_missing_convergence_key(
+            destination=_FakeAdapter("destination", schema=COARSE_RACK_SCHEMA),
+            operations=operations,
+        )
+
+    (message,) = derive_warnings(caplog)
+    assert "LocationRack: 4 source objects share 2 destination identities" in message
+
+
+def test_the_hazard_is_reported_even_before_any_two_objects_collide(caplog: pytest.LogCaptureFixture) -> None:
+    """The condition is the schema's, not the dataset's: today's data may just not collide yet."""
+    # Distinct rack names, so nothing in *this* plan merges.
+    operations = [
+        *rack_operations("dm-akron", name="MDF"),
+        *rack_operations("dm-albany", name="IDF"),
+    ]
+
+    with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
+        warn_missing_convergence_key(
+            destination=_FakeAdapter("destination", schema=COARSE_RACK_SCHEMA),
+            operations=operations,
+        )
+
+    (message,) = derive_warnings(caplog)
+    assert "no two of this plan's operations share a destination identity yet" in message
+    assert "does not distinguish: site" in message
+
+
+def test_no_merge_warning_where_a_destination_key_covers_the_plan_identity(caplog: pytest.LogCaptureFixture) -> None:
+    """The control case: a constraint that does distinguish `(name, site)` is silent.
+
+    Only the *coverage* changes between this case and the first one, so a third arm that
+    warned unconditionally — or read the wrong direction — fails here.
+    """
+    schema = {
+        "LocationRack": schema_node(
+            human_friendly_id=["name__value"],
+            uniqueness_constraints=[["name__value", "site__name__value"]],
+        )
+    }
+
+    with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
+        warn_missing_convergence_key(
+            destination=_FakeAdapter("destination", schema=schema),
+            operations=rack_operations("dm-akron", "dm-albany", "dm-buffalo"),
+        )
+
+    assert derive_warnings(caplog) == []
+
+
+def test_a_kind_declaring_no_destination_key_at_all_is_left_to_the_unkeyed_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Nothing to be finer than: FR-024's first arm is the accurate report there."""
+    schema = {"LocationRack": schema_node(human_friendly_id=None, uniqueness_constraints=[])}
+
+    with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
+        warn_missing_convergence_key(
+            destination=_FakeAdapter("destination", schema=schema),
+            operations=rack_operations("dm-akron", "dm-albany"),
+        )
+
+    messages = derive_warnings(caplog)
+    # FR-024's two arms, both accurate here; the third one adds nothing.
+    assert len(messages) == 2, messages
+    assert any("declares no human-friendly ID" in message for message in messages)
+    assert not any("is finer than" in message for message in messages)
+
+
+def test_the_merge_warning_stays_out_of_the_manifest_and_the_run_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A warning, not a refusal: the plan run completes and the manifest is unchanged.
+
+    OQ-8 ships the limitation documented rather than blocked, so an operator whose schema has
+    this shape must still be able to create, review and apply a plan.
+    """
+    config = build_config()
+    source = qualified_source()
+    destination = destination_with_orphan(schema=COARSE_RACK_SCHEMA)
+
+    potenda = build_potenda(config=config, source=source, destination=destination, run_id="20260729T1200-abcdef01")
+    with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
+        result = invoke_command(
+            "diff",
+            config=config,
+            potenda=potenda,
+            project_dir=tmp_path / "project",
+            monkeypatch=monkeypatch,
+        )
+
+    assert result.exit_code == 0, result.output
+    assert result.exception is None, f"an error escaped the plan run: {result.exception!r}"
+    manifest = read_manifest(plan_run_dir(potenda))
+    assert set(manifest) == MANIFEST_KEYS, "the warning leaked into the manifest"
+    assert manifest["operations_count"] > 0
