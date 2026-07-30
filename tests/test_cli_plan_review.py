@@ -2354,6 +2354,53 @@ def test_the_expected_checksum_comparison_ignores_hex_case_and_surrounding_space
     assert len(destination_double.writes) == len(APPLY_PLAN)
 
 
+def test_a_plan_substituted_after_the_early_approval_check_is_never_applied(
+    tmp_path: Path, destination_double: RecordingDestination, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The approval has to answer about the bytes that are applied, not an earlier read of them.
+
+    The command's own check runs before the destination is built, so it necessarily reads the
+    artifact before the apply consumes it. A plan replaced in that window — by a concurrent
+    re-plan, a restore, or a hand edit — is internally valid and passes verification, so nothing
+    but an approval comparison against the applied bytes can catch it.
+    """
+    _appliable_run(tmp_path)
+    approved = _stored_checksum(tmp_path)
+    opener = _patched_open_existing(destination_double)
+
+    def _substitute_then_open(sync_instance: Any, **kwargs: Any) -> PlanApplier:  # noqa: ANN401
+        applier = opener(sync_instance, **kwargs)
+        _appliable_run(tmp_path, [operation_record(identity={"name": "substituted"})])
+        return applier
+
+    with (
+        caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"),
+        patch("infrahub_sync.cli.PlanApplier.open_existing", _substitute_then_open),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "apply",
+                "--name",
+                SYNC_NAME,
+                "--directory",
+                str(EXAMPLES_DIR),
+                "--run-id",
+                RUN_ID,
+                "--expected-checksum",
+                approved,
+            ],
+        )
+
+    assert result.exit_code != 0, result.output
+    assert destination_double.writes == [], "the substituted plan must not be dispatched"
+    message = _operator_errors(caplog)
+    assert "is not the plan this apply approved" in message, message
+    assert _stored_checksum(tmp_path) in message, message
+    assert "Next action:" in message, message
+    assert _run_json(tmp_path)["status"] == "failed"
+
+
 def test_a_broken_apply_invariant_records_what_was_written_not_an_empty_record(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

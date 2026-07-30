@@ -219,10 +219,20 @@ class _RecordingEngine:
     def __init__(self, destination: object) -> None:
         self.destination = destination
         self.apply_calls = 0
+        self.artifacts: list[object] = []
 
-    def apply_plan(self, *, config_version: str | None = None) -> ApplyRecord:
-        _ = config_version
+    def apply_plan(
+        self,
+        *,
+        config_version: str | None = None,
+        artifact: object = None,
+        expected_checksum: str | None = None,
+    ) -> ApplyRecord:
+        _ = config_version, expected_checksum
         self.apply_calls += 1
+        # Recorded, not ignored: the seam's read is what the engine must apply, so a delegation
+        # that arrived without it would mean the engine reads the artifact a second time.
+        self.artifacts.append(artifact)
         return ApplyRecord()
 
 
@@ -273,6 +283,10 @@ def test_a_matching_destination_applies_without_ceremony(tmp_path: Path) -> None
     applier.apply_plan()
 
     assert engine.apply_calls == 1
+    assert engine.artifacts == [engine.artifacts[0]], "the engine was delegated to exactly once"
+    assert engine.artifacts[0] is not None, (
+        "the binding was compared against a read the engine never received, so the two could diverge"
+    )
 
 
 def test_a_plan_without_the_field_applies_against_any_destination(tmp_path: Path) -> None:

@@ -26,7 +26,7 @@ from infrahub_sync.plan.errors import (
     UnknownPlanKindError,
 )
 from infrahub_sync.plan.models import ApplyRecord
-from infrahub_sync.plan.reader import require_plan_directory
+from infrahub_sync.plan.reader import read_plan_artifact_bytes, require_plan_directory
 from infrahub_sync.plan.review import expected_checksum_refusal, read_saved_plan, require_stored_run
 from infrahub_sync.plan.writer import require_uncommitted_plan
 from infrahub_sync.utils import (
@@ -708,21 +708,26 @@ def _require_applicable_plan(*, sync_name: str, run_id: str) -> Path:
 
 
 def _require_expected_checksum(*, run_directory: Path, run_id: str, expected: str | None) -> None:
-    """Refuse an apply whose stored plan is not the plan the operator approved (FR-030).
+    """Refuse early an apply whose stored plan is not the plan the operator approved (FR-030).
 
-    Here in the command, and therefore **before the destination is constructed**: the comparison
-    needs nothing but the stored artifact. The comparison itself, its tolerances and its wording
-    belong to `expected_checksum_refusal`, which returns text and leaves the presentation to this
-    one line — including the fail-closed arm for a stored plan that cannot be hashed at all.
+    The **fast path**, and the only one that can promise no destination was contacted: it needs
+    nothing but the stored artifact, so a wrong approval refuses here rather than after an adapter
+    is built. It is not the authoritative answer — the artifact could still change between this
+    read and the one the apply consumes, so the applier asks again about the bytes it applies.
+
+    The comparison itself, its tolerances and its wording belong to `expected_checksum_refusal`,
+    which returns text and leaves the presentation to this one line — including the fail-closed
+    arm for a stored plan that cannot be hashed at all.
     """
     if expected is None:
         return
     try:
-        refusal = expected_checksum_refusal(run_directory=run_directory, run_id=run_id, expected=expected)
+        artifact = read_plan_artifact_bytes(run_directory)
+        refusal = expected_checksum_refusal(artifact=artifact, run_id=run_id, expected=expected)
     except PlanArtifactError as exc:
         print_error_and_abort(str(exc))
     if refusal is not None:
-        print_error_and_abort(refusal)
+        print_error_and_abort(refusal.text)
 
 
 def _record_and_abort(run_file: RunFile, exc: PlanArtifactError, record: ApplyRecord) -> NoReturn:
@@ -799,8 +804,9 @@ def apply_cmd(
     # without creating anything, so this refusal leaves no trace of the attempt.
     run_directory = _require_applicable_plan(sync_name=sync_instance.name, run_id=run_id)
 
-    # The approval binding, also before anything is constructed: an apply that names the
-    # checksum it approved must not reach a destination with a plan that is not it.
+    # The approval binding's fast path, before anything is constructed: an apply that names the
+    # checksum it approved must not reach a destination with a plan that is not it. The
+    # authoritative comparison is the applier's, against the bytes it applies.
     _require_expected_checksum(run_directory=run_directory, run_id=run_id, expected=expected_checksum)
 
     verbosity_level = ctx.obj.get("verbosity", logging.INFO) if ctx.obj else logging.INFO
@@ -826,7 +832,9 @@ def apply_cmd(
         # (`infrahub_sync.cache.sidecars`) and would otherwise destroy the record
         # with the empty summary built above.
         try:
-            record = applier.apply_plan(allow_destination_change=allow_destination_change)
+            record = applier.apply_plan(
+                allow_destination_change=allow_destination_change, expected_checksum=expected_checksum
+            )
             run_file.summary.update(record.as_summary_keys())
             run_file.status = "applied"
         except (OperationApplyFailedError, ApplyRecordInvariantError) as exc:

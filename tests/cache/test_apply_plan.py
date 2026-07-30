@@ -14,6 +14,7 @@ expressed against one.
 
 from __future__ import annotations
 
+import json
 import logging
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -213,6 +214,63 @@ def test_a_changed_configuration_version_refuses_the_apply(tmp_path: Path) -> No
         _potenda(directory, destination).apply_plan(config_version="a-different-configuration-version")
 
     assert "config_version" in str(caught.value)
+    assert destination.dispatched == []
+
+
+def _recorded_checksum(run_directory: Path) -> str:
+    """The `plan_checksum` the stored manifest records, read from disk."""
+    recorded = json.loads((run_directory / "plan" / "manifest.json").read_text(encoding="utf-8"))
+    return str(recorded["plan_checksum"])
+
+
+def test_an_approved_checksum_matching_the_artifact_applies(tmp_path: Path) -> None:
+    """The approval is answered here, so the matching case has to pass here too."""
+    directory = _run_dir(tmp_path)
+    record_written = operation_record()
+    write_artifact(directory, [record_written], run_id=RUN_ID, source_snapshot=[])
+
+    destination = RecordingDestination()
+    applied = _potenda(directory, destination).apply_plan(
+        config_version=CONFIG_VERSION, expected_checksum=_recorded_checksum(directory)
+    )
+
+    assert destination.dispatched == [record_written["operation_id"]]
+    assert applied.applied_operations == (record_written["operation_id"],)
+
+
+def test_an_unapproved_artifact_is_refused_by_the_engine_before_any_dispatch(tmp_path: Path) -> None:
+    """The authoritative approval comparison: it is made where the applied bytes are read.
+
+    The command's own check reads the artifact before the destination exists and therefore
+    before the apply consumes it, so only this comparison can bind an approval to what is
+    written. It refuses after the verification gate — a torn artifact still gets FR-009's
+    evaluate-all disclosure — and before the parse, so nothing is dispatched.
+    """
+    directory = _run_dir(tmp_path)
+    write_artifact(directory, [operation_record()], run_id=RUN_ID, source_snapshot=[])
+
+    destination = RecordingDestination()
+    with pytest.raises(PlanVerificationError) as caught:
+        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION, expected_checksum="0" * 64)
+
+    assert destination.dispatched == [], "nothing may be dispatched for a plan no approval named"
+    message = str(caught.value)
+    assert "is not the plan this apply approved" in message, message
+    assert _recorded_checksum(directory) in message, message
+    assert "Next action:" in message, message
+    assert message.count("Next action:") == 1, f"the remedy is rendered twice: {message}"
+
+
+def test_an_unhashable_artifact_refuses_an_approval_rather_than_passing_it(tmp_path: Path) -> None:
+    """Fail closed at the engine too: an artifact that cannot be hashed matched no approval."""
+    directory = _run_dir(tmp_path)
+    write_artifact(directory, [operation_record()], run_id=RUN_ID, source_snapshot=[])
+    (directory / "plan" / "manifest.json").write_bytes(b'{"format_version": 2, "config_version": "\xff\xfe"}')
+
+    destination = RecordingDestination()
+    with pytest.raises(PlanVerificationError):
+        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION, expected_checksum="0" * 64)
+
     assert destination.dispatched == []
 
 

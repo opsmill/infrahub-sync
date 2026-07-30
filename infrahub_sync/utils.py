@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from infrahub_sdk.schema import GenericSchema, NodeSchema
 
     from infrahub_sync.plan.models import ApplyRecord
+    from infrahub_sync.plan.reader import RawPlanArtifact
 
 
 def find_missing_schema_model(
@@ -380,34 +381,50 @@ class PlanApplier:
         )
         return cls(engine, run_dir=rdir, run_id=run_id)
 
-    def apply_plan(self, *, config_version: str | None = None, allow_destination_change: bool = False) -> ApplyRecord:
+    def apply_plan(
+        self,
+        *,
+        config_version: str | None = None,
+        allow_destination_change: bool = False,
+        expected_checksum: str | None = None,
+    ) -> ApplyRecord:
         """Apply the stored plan — the engine's contract, unchanged; writes no run file (AD069).
 
-        Before delegating, the destination-binding precheck compares
-        the manifest's recorded destination against the live adapter's and refuses on a
-        mismatch; `allow_destination_change` turns that refusal into a logged warning for
-        a deliberate cross-environment apply. Plans without the recorded field, and
-        destinations that expose no binding, skip the check.
+        **This seam performs the apply's one read.** The artifact is read here and handed to
+        both the destination-binding precheck below and the engine, so the bytes the binding
+        was compared against, the bytes verified, and the bytes applied are the same bytes —
+        a plan swapped under the run between two reads cannot be applied by an apply that
+        checked the other copy (DBR-006).
+
+        The binding precheck compares the manifest's recorded destination against the live
+        adapter's and refuses on a mismatch; `allow_destination_change` turns that refusal into
+        a logged warning for a deliberate cross-environment apply. Plans without the recorded
+        field, and destinations that expose no binding, skip the check.
+
+        `expected_checksum` travels to the engine rather than being answered here, so the
+        operator's approval is decided against the artifact the apply loop consumes.
 
         Raises:
             PlanVerificationError: the plan was computed against a different destination
                 and `allow_destination_change` is false; nothing was written.
         """
-        self._require_recorded_destination(allow_destination_change=allow_destination_change)
-        return self.engine.apply_plan(config_version=config_version)
+        artifact = read_plan_artifact_bytes(self.run_dir)
+        self._require_recorded_destination(artifact=artifact, allow_destination_change=allow_destination_change)
+        return self.engine.apply_plan(
+            config_version=config_version, artifact=artifact, expected_checksum=expected_checksum
+        )
 
-    def _require_recorded_destination(self, *, allow_destination_change: bool) -> None:
+    def _require_recorded_destination(self, *, artifact: RawPlanArtifact, allow_destination_change: bool) -> None:
         """The apply-time destination-binding guard, on the seam that owns apply-specific assembly.
 
         Here rather than inside `Potenda.apply_plan` because the check's subject is the
         destination this seam constructed, and its refusal is the one pre-apply verdict an
-        operator may deliberately override. The manifest read below is advisory only — the
-        engine still verifies and applies its own single read (DBR-006), so a swap between
-        the two reads changes nothing about what gets checksum-verified and applied.
+        operator may deliberately override. It answers about `artifact` — the same object the
+        engine verifies and applies — rather than a read of its own.
         """
         failure = destination_binding_failure(
             run_id=self.run_id,
-            artifact=read_plan_artifact_bytes(self.run_dir),
+            artifact=artifact,
             live=getattr(self.engine.destination, "destination_binding", None),
         )
         if failure is None:

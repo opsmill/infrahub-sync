@@ -76,6 +76,7 @@ if TYPE_CHECKING:
 
     from infrahub_sync import SyncInstance
     from infrahub_sync.plan.models import PlanManifest, VerificationFailure
+    from infrahub_sync.plan.reader import RawPlanArtifact
 
 
 def _plan_refusal(failures: Sequence[VerificationFailure], *, run_id: str) -> PlanVerificationError:
@@ -534,7 +535,13 @@ class Potenda:
             raise ValueError(msg)
         return validate_config_version(supplied)
 
-    def apply_plan(self, *, config_version: str | None = None) -> ApplyRecord:
+    def apply_plan(
+        self,
+        *,
+        config_version: str | None = None,
+        artifact: RawPlanArtifact | None = None,
+        expected_checksum: str | None = None,
+    ) -> ApplyRecord:
         """Apply this run's saved plan artifact to the destination, and return what it did.
 
         Neither side is loaded, nothing is re-compared and nothing is re-derived: the stored
@@ -542,9 +549,11 @@ class Potenda:
 
         The step order is load-bearing: **read once, verify those bytes, then parse them.**
         FR-019's `plan/`-directory verdict is settled first, on its own. The artifact is then
-        read from disk exactly once, and verification, parsing and the loop below all consume
-        that one `RawPlanArtifact`, so the bytes verified are the bytes applied (DBR-006,
-        DBA-004). Verification is one gate over those raw bytes, the write-surface check
+        read from disk exactly once — or supplied by a caller that has already read it, so a
+        caller with its own pre-apply check answers it about these bytes rather than a second
+        read — and verification, the approval comparison, parsing and the loop below all
+        consume that one `RawPlanArtifact`, so the bytes verified and approved are the bytes
+        applied (DBR-006, DBA-004). Verification is one gate over those raw bytes, the write-surface check
         included, and it **precedes** the parse: FR-009 requires the format-version gate to
         report that the remaining checks were not evaluated, and a co-occurring tear to be
         reported alongside every other failure, neither of which survives the parser's
@@ -563,6 +572,12 @@ class Potenda:
             config_version: The comparison value for the configuration-version check,
                 compared for equality and never parsed. `None` recomputes it from the
                 parsed configuration by the default rule (FR-011, AD013).
+            artifact: The plan artifact's bytes, when the caller has already read them.
+                `None` reads them here. Either way it is read once per apply.
+            expected_checksum: An approved plan checksum the artifact must hash to. The
+                **authoritative** answer to `--expected-checksum`, because it is given about
+                the bytes this call applies; a caller's earlier check is a fast path, not a
+                substitute. `None` asks for no approval comparison at all.
 
         Returns:
             The `ApplyRecord`: the ordered applied identifiers (whose final element is
@@ -572,7 +587,8 @@ class Potenda:
         Raises:
             ValueError: this run has no `run_dir`, or no configuration version can be formed.
             PlanFormatV1Error: this run holds no `plan/` directory (FR-019).
-            PlanVerificationError: a pre-apply check failed; nothing was written.
+            PlanVerificationError: a pre-apply check failed, or the artifact does not hash to
+                `expected_checksum`; nothing was written.
             PlanArtifactTornError: an operations record fails validation for a reason the
                 line count cannot see (FR-010).
             UnsupportedOperationActionError: an operation's `action` is outside `ACTIONS`.
@@ -585,6 +601,7 @@ class Potenda:
                 partial record attached as `apply_record`.
         """
         from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes, require_plan_directory
+        from infrahub_sync.plan.review import expected_checksum_refusal
         from infrahub_sync.plan.verify import verify_plan
 
         if not self.run_dir:
@@ -599,10 +616,11 @@ class Potenda:
         # this before it constructs anything (AD026); an in-process caller reaches it here.
         require_plan_directory(self.run_dir)
 
-        # The one read. Verification, parsing and the loop below all consume this object,
-        # so the bytes verified are the bytes applied — nothing re-reads the disk between
-        # the gate and the writes (DBR-006, DBA-004).
-        raw = read_plan_artifact_bytes(self.run_dir)
+        # The one read — the caller's, when it has already read the artifact for a check of its
+        # own. Verification, the approval comparison, parsing and the loop below all consume this
+        # object, so the bytes verified and approved are the bytes applied and nothing re-reads
+        # the disk between the gate and the writes (DBR-006, DBA-004).
+        raw = read_plan_artifact_bytes(self.run_dir) if artifact is None else artifact
         destination = self.destination
         # FR-023's write-surface check joins the same pre-write gate as the five verification
         # checks, so one attempt tells the operator everything that is wrong (AD036). The
@@ -619,6 +637,19 @@ class Potenda:
         )
         if failures:
             raise _plan_refusal(failures, run_id=run_id)
+
+        # The operator's approval, decided about the bytes above and therefore the bytes applied.
+        # **After** the gate so FR-009's evaluate-all disclosure still reaches an operator whose
+        # artifact is torn as well as unapproved, and **before** the parse and the loop so a plan
+        # that is not the approved one is refused with nothing written. A caller's earlier check
+        # is a fast path that spares building a destination; this one is what decides.
+        if expected_checksum is not None:
+            refusal = expected_checksum_refusal(
+                artifact=raw, run_id=run_id, expected=expected_checksum, destination_contacted=True
+            )
+            if refusal is not None:
+                raise PlanVerificationError(refusal.reason, next_action=refusal.next_action)
+
         # The gate evaluated the write-surface check, so an empty failure list proves the
         # surface is present — the cast narrows for the type checker; it is not a second gate.
         destination = cast("PlannedWriteDestination", destination)

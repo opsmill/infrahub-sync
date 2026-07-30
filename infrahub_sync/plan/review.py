@@ -20,7 +20,7 @@ rules, and a programmatic caller must not have to catch an exception to learn a 
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from infrahub_sync.cache.paths import cache_root_for, run_dir
 from infrahub_sync.plan.checksum import compute_plan_checksum
@@ -29,7 +29,6 @@ from infrahub_sync.plan.models import PlanSummary
 from infrahub_sync.plan.reader import (
     RUN_ID_LISTING_LIMIT,
     load_plan_artifact,
-    read_plan_artifact_bytes,
     run_id_listing_text,
     stat_or_unreadable,
     stored_run_ids,
@@ -43,13 +42,16 @@ if TYPE_CHECKING:
 
     from infrahub_sync import SyncConfig
     from infrahub_sync.plan.models import PlanManifest, PlannedOperation, VerificationFailure
+    from infrahub_sync.plan.reader import RawPlanArtifact
 
 # Re-exported from the reader, which owns the bound and the enumeration's wording because
 # FR-008 puts the same enumeration on the arm that module raises (AD073). Kept importable from
 # here: this is the module the review surface is read from.
 __all__ = [
     "RUN_ID_LISTING_LIMIT",
+    "ChecksumApprovalRefusal",
     "SavedPlan",
+    "artifact_checksum",
     "expected_checksum_refusal",
     "read_saved_plan",
     "require_stored_run",
@@ -229,8 +231,8 @@ def require_stored_run(sync_name: str, run_id: str) -> Path:
     return directory
 
 
-def _stored_plan_checksum(run_directory: Path) -> str | None:
-    """Recompute the stored plan's checksum from its bytes, or `None` when it cannot be.
+def artifact_checksum(artifact: RawPlanArtifact) -> str | None:
+    """Recompute a plan's checksum from the bytes it was read as, or `None` when it cannot be.
 
     Recomputed rather than read out of the manifest: the approval check asks whether these are
     the bytes that were approved, and the manifest's recorded value is only a claim about them —
@@ -239,7 +241,6 @@ def _stored_plan_checksum(run_directory: Path) -> str | None:
     `JSONDecodeError` alone, and non-UTF-8 manifest bytes raise `UnicodeDecodeError` from
     `json.loads`, which left the refusal above it as a bare traceback.
     """
-    artifact = read_plan_artifact_bytes(run_directory)
     if artifact.operations_bytes is None:
         return None
     mapping = manifest_mapping_or_none(artifact.manifest_bytes)
@@ -248,8 +249,27 @@ def _stored_plan_checksum(run_directory: Path) -> str | None:
     return compute_plan_checksum(mapping, artifact.operations_bytes)
 
 
-def expected_checksum_refusal(*, run_directory: Path, run_id: str, expected: str) -> str | None:
-    """Return why the stored plan is not the plan `expected` approved, or `None` when it is.
+class ChecksumApprovalRefusal(NamedTuple):
+    """Why an approved checksum does not hold, with the cause and the remedy kept apart.
+
+    Split because the two callers frame a refusal differently: the command prints one line,
+    and the engine raises a taxonomy error that appends `next_action` itself (AD059). One
+    joined string would have to be taken apart again by one of them.
+    """
+
+    reason: str
+    next_action: str
+
+    @property
+    def text(self) -> str:
+        """The refusal as the single line the taxonomy would render for it."""
+        return f"{self.reason} Next action: {self.next_action}"
+
+
+def expected_checksum_refusal(
+    *, artifact: RawPlanArtifact, run_id: str, expected: str, destination_contacted: bool = False
+) -> ChecksumApprovalRefusal | None:
+    """Return why `artifact` is not the plan `expected` approved, or `None` when it is.
 
     The operator's half of the immutability guarantee: immutable generations stop a plan being
     replaced under its run id, and an approved checksum names the exact bytes it approved — for a
@@ -257,36 +277,58 @@ def expected_checksum_refusal(*, run_directory: Path, run_id: str, expected: str
     forward rather than the run id alone. Surrounding whitespace and hex case are tolerated;
     nothing else about `expected` is interpreted.
 
-    It fails **closed**. A stored plan that cannot be hashed is refused rather than passed on to
-    the pre-apply verifier, which tests the artifact's self-consistency and never compares the
+    The subject is the artifact **as read**, never a run directory, so the caller decides which
+    bytes an approval is answered about — and the authoritative answer is the one given about the
+    bytes that are applied.
+
+    It fails **closed**. A plan that cannot be hashed is refused rather than passed on to the
+    pre-apply verifier, which tests the artifact's self-consistency and never compares the
     operator's value: passing it on would skip the control the approval asked for, not defer it.
 
-    Returns text and raises nothing of its own, so the caller decides how a refusal reaches its
-    operator and nothing here needs the answer rendered a second way.
+    Args:
+        artifact: The plan artifact's bytes, as read.
+        run_id: The run the refusal names.
+        expected: The operator's approved checksum.
+        destination_contacted: Whether a destination has been constructed by the time this
+            answer is given. It selects the assurance the refusal may truthfully make; both
+            forms promise that nothing was written.
 
-    Raises:
-        PlanArtifactUnreadableError: a path under the run directory exists but could not be
-            read, which is the reader's verdict and not an answer about the approval (AD036).
+    Returns:
+        A `ChecksumApprovalRefusal`, or `None`. It raises nothing of its own, so the caller
+        decides how a refusal reaches its operator and nothing here renders it a second way.
     """
-    actual = _stored_plan_checksum(run_directory)
+    assurance = (
+        "Nothing was written to the destination."
+        if destination_contacted
+        else "Nothing was written and no destination was contacted."
+    )
+    actual = artifact_checksum(artifact)
     approved = expected.strip().lower()
     if actual is None:
-        return (
-            f"The plan stored for run {run_id!r} could not be hashed, so the checksum this apply "
-            f"approved cannot be checked: the artifact's manifest or operations file is missing, "
-            f"unreadable or unparseable. Nothing was written and no destination was contacted. "
-            f"Next action: review the stored plan with `diff --from-plan {run_id}`, which names what "
-            f"the artifact is missing, then re-plan under a fresh run id and approve the checksum of "
-            f"the plan that replaces it."
+        return ChecksumApprovalRefusal(
+            reason=(
+                f"The plan stored for run {run_id!r} could not be hashed, so the checksum this apply "
+                f"approved cannot be checked: the artifact's manifest or operations file is missing, "
+                f"unreadable or unparseable. {assurance}"
+            ),
+            next_action=(
+                f"Review the stored plan with `diff --from-plan {run_id}`, which names what the "
+                f"artifact is missing, then re-plan under a fresh run id and approve the checksum of "
+                f"the plan that replaces it."
+            ),
         )
     if actual == approved:
         return None
-    return (
-        f"The plan stored for run {run_id!r} is not the plan this apply approved: --expected-checksum "
-        f"names {approved!r} and the stored artifact hashes to {actual!r}. Nothing was "
-        f"written and no destination was contacted. Next action: review the stored plan with "
-        f"`diff --from-plan {run_id}` and approve its checksum, or apply the run whose checksum you "
-        f"already approved."
+    return ChecksumApprovalRefusal(
+        reason=(
+            f"The plan stored for run {run_id!r} is not the plan this apply approved: "
+            f"--expected-checksum names {approved!r} and the stored artifact hashes to "
+            f"{actual!r}. {assurance}"
+        ),
+        next_action=(
+            f"Review the stored plan with `diff --from-plan {run_id}` and approve its checksum, or "
+            f"apply the run whose checksum you already approved."
+        ),
     )
 
 
