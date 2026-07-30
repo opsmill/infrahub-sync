@@ -980,6 +980,12 @@ def test_an_unknown_peer_kind_is_refused_loudly_before_any_destination_query() -
     degrading the resolver to the scalar fallback and querying a kind that does not exist.
     The operation path raises before writing an unknown kind; resolving a peer against one is
     the same condition and must be as loud.
+
+    It states the diagnosis and **no remedy** (RF-2). `ValueError` is deliberately outside
+    `OPERATIONAL_APPLY_FAILURES`, so FIX-011 routes it to the CLI's defect arm, which already
+    tells the operator not to re-plan on the assumption the destination is at fault; a
+    "re-plan" instruction here reached them in the same ERROR line as its own contradiction.
+    The message ends without a full stop because that arm's format string supplies one.
     """
     client = RecordingClient()
     client.filter_results = [[make_node(client, SITE_KIND, "site-id-1")]]
@@ -989,7 +995,11 @@ def test_an_unknown_peer_kind_is_refused_loudly_before_any_destination_query() -
     with pytest.raises(ValueError, match="declares no kind 'TestNowhere'") as excinfo:
         resolver.resolve(peer_kind="TestNowhere", identity={"name": "site-a"}, referring_operation_id="op_0000")
 
-    assert "re-plan" in str(excinfo.value), "The refusal must tell the operator what to do next."
+    message = str(excinfo.value)
+    assert "re-plan" not in message.lower(), (
+        "The defect arm tells the operator NOT to re-plan; the message must not tell them to."
+    )
+    assert not message.endswith("."), "The defect arm's format string supplies the full stop."
     assert client.resolver_queries == [], "No destination query may be issued for a kind the schema lacks."
 
 

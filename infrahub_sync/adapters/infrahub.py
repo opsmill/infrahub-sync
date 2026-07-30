@@ -492,14 +492,22 @@ class PeerResolver:
                 operation path raises on an unknown kind before writing; resolving a peer
                 against a kind the destination does not know is the same condition, so it is
                 refused just as loudly instead of silently degrading to the scalar fallback.
+
+                Deliberately outside `OPERATIONAL_APPLY_FAILURES`, which routes it to the
+                CLI's defect arm — so the message states the diagnosis and **prescribes no
+                remedy** (RF-2). That arm already tells the operator this is a defect rather
+                than a destination refusal and not to re-plan on the assumption the
+                destination is at fault; a remedy here would contradict it in the same ERROR
+                line. It ends without a full stop for the same reason, because the arm's
+                format string supplies one — the sibling guard in
+                `apply_planned_operation` is worded on both counts.
         """
         node_schema = self._adapter.schema.get(peer_kind)
         if node_schema is None:
             msg = (
                 f"The destination schema declares no kind {peer_kind!r}, so no peer of that kind "
                 "can be resolved. The plan was derived against a configuration or schema this "
-                "destination does not carry — re-plan against this destination, or load the "
-                "schema that declares the kind."
+                "destination does not carry"
             )
             raise ValueError(msg)
         components = list(getattr(node_schema, "human_friendly_id", None) or ())
