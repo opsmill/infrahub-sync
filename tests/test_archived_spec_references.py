@@ -6,11 +6,9 @@ links and three module docstrings were left pointing at the old location: the li
 not exist. Both are the same one-line mistake, and both come back the next time a spec is
 archived — so the sweep is a test rather than a one-time grep.
 
-`dev/specs/` is exempt, on one reason that covers both files in it that still say the old
-path: the archived `plan.md` records the path the spec was written at, and the landing spec
-quotes it while describing this very fix. Both are history rather than pointers to follow.
-Everything a reader might actually navigate — code, user docs, developer docs, tests — is in
-scope.
+`dev/specs/` is exempt: the archived `plan.md` records the path the spec was written at, which
+is history rather than a pointer to follow. Everything a reader might actually navigate — code,
+user docs, developer docs, tests — is in scope.
 """
 
 from __future__ import annotations
