@@ -30,14 +30,18 @@ does not make.
 
 **The positive controls are the point of the file.** A scan that finds nothing proves nothing
 until it is shown finding something, so `test_a_planted_canary_is_caught_*` plants the canary
-at three sites and asserts the exact set of surfaces each one reaches — the payload plant the
-task names, an identity plant, and a destination-kind plant. Their union is all four surfaces,
-asserted as its own case, so no scanned surface is scanned by a matcher that has never fired.
-The three reach different surfaces because the two review depths render different things: the
+at four sites and asserts the exact set of surfaces each one reaches — a payload plant, an
+identity plant, a destination-kind plant, and a plant in a payload field whose name falls
+under the review's redaction policy. Their union is all four surfaces, asserted as its own
+case, so no scanned surface is scanned by a matcher that has never fired.
+
+The four reach different surfaces because the two review depths render different things: the
 summary depth renders counts keyed by action and kind and nothing per-record, so only a kind
-name reaches it, while the detail depth renders each operation's identity but never its
-payload. That asymmetry is real behavior, and pinning it here means a renderer that started
-echoing payloads would break this file rather than pass it.
+name reaches it, while the detail depth renders each operation's identity **and** — since
+FIX-012 (spec 002) — the desired destination state it would write, payload values included.
+That is why the redaction-policy plant is here: it lands in the artifact and in the reader's
+data like any other payload value, and the detail depth withholds it, so the policy is pinned
+by a control that fires rather than by the reading of a constant.
 """
 
 from __future__ import annotations
@@ -89,6 +93,11 @@ SURFACES = (ARTIFACT_FILES, SUMMARY_STDOUT, DETAIL_STDOUT, READER_DATA)
 # thing a summary depth that renders nothing but counts can be made to echo, and a positive
 # control for that surface has to reach it somehow.
 CANARY_KIND = f"Canary{CANARY}"
+
+# A payload field whose **name** falls under the review's redaction policy (FIX-012), used by
+# the plant that proves the policy withholds the value while the artifact still carries it.
+REDACTED_FIELD = "api_token"
+REDACTED_PLANT = "redacted_payload_field"
 
 runner = CliRunner()
 
@@ -195,7 +204,7 @@ def _canary_settings(url: str) -> dict[str, str]:
     return {"url": url, "token": CANARY, "password": CANARY}
 
 
-def _write_configuration(projects_root: Path, *, extra_kind: str | None = None) -> Path:
+def _write_configuration(projects_root: Path, *, extra_kind: str | None = None, extra_field: str | None = None) -> Path:
     """Write a real `config.yml` whose `settings` carry the canary, and return its directory.
 
     Written to disk and loaded back through `get_instance` rather than constructed in
@@ -207,6 +216,14 @@ def _write_configuration(projects_root: Path, *, extra_kind: str | None = None) 
     if extra_kind is not None:
         mapping.append(mapping_entry(extra_kind, identifiers=["name"], fields={"name": None}))
         order.append(extra_kind)
+    if extra_field is not None:
+        # Declared on `BuiltinTag`, the kind the payload plants use, so the planted value is
+        # mapped into the plan's payload rather than dropped as an unmapped attribute.
+        mapping[0] = mapping_entry(
+            "BuiltinTag",
+            identifiers=["name"],
+            fields={"name": None, "description": None, "slug": None, extra_field: None},
+        )
     project = projects_root / "canary-project"
     project.mkdir(parents=True, exist_ok=True)
     document = {
@@ -234,6 +251,14 @@ def _source_adapter(*, plant: str | None) -> _FakeAdapter:
         records.append(_FakeRecord("BuiltinTag", {"name": CANARY}, {"description": "planted", "slug": "planted"}))
     if plant == "kind":
         records.append(_FakeRecord(CANARY_KIND, {"name": "planted"}, {}))
+    if plant == REDACTED_PLANT:
+        records.append(
+            _FakeRecord(
+                "BuiltinTag",
+                {"name": "planted"},
+                {"description": "planted", "slug": "planted", REDACTED_FIELD: CANARY},
+            )
+        )
     return _FakeAdapter("source", records)
 
 
@@ -263,7 +288,11 @@ def _plan_and_scan(projects_root: Path, *, plant: str | None = None) -> dict[str
     Returns the canary's hits per surface — empty lists for the SC-010 case, and the
     positive controls' expected non-empty ones.
     """
-    project = _write_configuration(projects_root, extra_kind=CANARY_KIND if plant == "kind" else None)
+    project = _write_configuration(
+        projects_root,
+        extra_kind=CANARY_KIND if plant == "kind" else None,
+        extra_field=REDACTED_FIELD if plant == REDACTED_PLANT else None,
+    )
     instance = get_instance(name=SYNC_NAME, directory=str(project.parent))
     assert instance is not None, "the canary configuration did not load"
     # The injection is asserted rather than assumed: a configuration that lost the canary
@@ -378,13 +407,19 @@ def test_the_manifest_binds_the_canary_bearing_settings_without_disclosing_them(
 # ======================================================================================
 
 PLANTED_CASES: dict[str, frozenset[str]] = {
-    # The task's own case: a canary in an operation's payload. It reaches the artifact and
-    # the reader's data; neither review depth renders a payload, which is why it stops there.
-    "payload": frozenset({ARTIFACT_FILES, READER_DATA}),
-    # An identity value additionally reaches the per-object depth, which renders identities.
+    # A canary in an operation's payload. It reaches the artifact, the reader's data and — since
+    # FIX-012 renders the desired destination state — the per-object depth. The summary depth
+    # renders nothing per-record, which is why it stops short of that one.
+    "payload": frozenset({ARTIFACT_FILES, DETAIL_STDOUT, READER_DATA}),
+    # An identity value reaches the same three, through the identity the record line renders.
     "identity": frozenset({ARTIFACT_FILES, DETAIL_STDOUT, READER_DATA}),
     # A destination kind reaches all four: the summary depth renders a count per kind.
     "kind": frozenset({ARTIFACT_FILES, SUMMARY_STDOUT, DETAIL_STDOUT, READER_DATA}),
+    # The same payload plant in a field the redaction policy covers, which is why it reaches
+    # every surface the plant above does **except** the rendered one: the artifact carries the
+    # value, and the review withholds it. The negative half of the case above, and the control
+    # that would fire if the policy stopped applying.
+    REDACTED_PLANT: frozenset({ARTIFACT_FILES, READER_DATA}),
 }
 
 

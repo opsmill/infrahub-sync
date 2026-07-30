@@ -174,6 +174,37 @@ infrahub-sync diff --name from-netbox --directory examples/ \
 `--from-plan` logs a warning and is ignored: `--from-plan` names the run being reviewed, and nothing
 is created for the ignored value.
 
+Beneath each record, `--detail` lists the **desired destination state** that record would write —
+its payload field by field, then each relationship field with its peer kind and every peer's
+identity:
+
+```text
+op_00b6d81a69dcd19b  update  LocationRack  name=rack-7 site=LocationSite(name=dc1)
+      name = rack-7
+      site -> LocationSite (one): name=dc1
+      tags -> BuiltinTag (many, 2 peer(s)): name=edge | name=prod
+```
+
+These are the values as they will be *after* the apply, not a diff against what the destination
+holds now: a saved plan records what to write and nothing about the destination's current
+contents. An emptied cardinality-many relationship reads `(many, empty peer set)` — a value the
+apply writes, not a missing one. A delete carries no payload, so nothing is listed beneath it.
+
+Two rules govern the values shown:
+
+- **Redaction.** A field whose name suggests a credential — `password`, `token`, `secret`,
+  `api_key`, `credential`, `passphrase`, `private_key` and their spellings — is listed with its
+  value replaced by `<redacted: field name matches the redaction policy>`, at every nesting level.
+  The field is still listed, so you can see that something is being written to it.
+- **Elision.** A value longer than 200 characters is shortened, with its full length stated, so one
+  large value cannot bury the rest of the listing. An elided value says it was elided, which is
+  deliberately distinguishable from a redacted one.
+
+Credentials from your configuration's `settings` never reach a plan artifact at all — the plan
+records source data, and the configuration's secrets are bound into it only as a one-way digest.
+The redaction rule above is for a credential that arrives as *source data*, in a field of an object
+being synced.
+
 ### What the review says about deletes
 
 Both review depths disclose two things about deletes, in the same output you approve.

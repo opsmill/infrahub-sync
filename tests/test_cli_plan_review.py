@@ -478,6 +478,150 @@ def test_the_cli_detail_renders_a_nested_peer_identity_recursively(tmp_path: Pat
 
 
 # ======================================================================================
+# FIX-012 (spec 002) — `--detail` renders the desired destination state
+# ======================================================================================
+
+# Two operations on the **same** object: same action, same kind, same identity, and therefore
+# the same operation identifier — differing only in the change they propose. Before FIX-012
+# these two rendered byte-identically, which is the defect: a reviewer could approve the
+# object's presence in a plan without ever seeing what would be written to it.
+ROUTER_IDENTITY: dict[str, Any] = {"name": "router1"}
+
+
+def _payload_variant(**payload: Any) -> tuple[dict[str, Any], ...]:  # noqa: ANN401 — a payload value is any JSON value
+    """A one-operation plan whose payload is `payload` plus the identity component."""
+    return (operation_record(kind="DcimDevice", identity=ROUTER_IDENTITY, payload={**ROUTER_IDENTITY, **payload}),)
+
+
+def _peer_variant(*peers: str) -> tuple[dict[str, Any], ...]:
+    """A one-operation plan whose `tags` peer set is `peers`, empty set included."""
+    return (
+        operation_record(
+            kind="DcimDevice",
+            identity=ROUTER_IDENTITY,
+            payload=dict(ROUTER_IDENTITY),
+            relationships=[
+                {
+                    "field": "tags",
+                    "peer_kind": "BuiltinTag",
+                    "cardinality": "many",
+                    "peers": [{"name": peer} for peer in peers],
+                }
+            ],
+        ),
+    )
+
+
+def _detail_of(tmp_path: Path, records: tuple[dict[str, Any], ...], *, run_id: str) -> str:
+    """Store `records` under `run_id` and return the `--detail` rendering."""
+    _store(tmp_path, records, run_id=run_id)
+    result = _review("--from-plan", run_id, "--detail")
+    assert result.exit_code == 0, result.output
+    return _strip_ansi(result.output)
+
+
+def test_two_operations_differing_only_in_payload_render_differently(tmp_path: Path) -> None:
+    """FIX-012 (IHR-02), as the reviewer reproduced it: `role=router` versus `role=server`.
+
+    The two operations share an identifier — the identity is the same object and the payload
+    is deliberately excluded from the hash — so the record lines are identical by design. What
+    must differ is the desired state beneath them, and both values are asserted present rather
+    than only that the outputs differ: an implementation that rendered `<payload>` for
+    everything would make them differ from nothing.
+    """
+    first = _detail_of(tmp_path, _payload_variant(role="router"), run_id=RUN_ID)
+    second = _detail_of(tmp_path, _payload_variant(role="server"), run_id=OTHER_RUN_ID)
+
+    assert "role = router" in first
+    assert "role = server" in second
+    assert "role = server" not in first
+    assert _flat(first).replace(RUN_ID, "") != _flat(second).replace(OTHER_RUN_ID, "")
+
+
+def test_two_operations_differing_only_in_their_peer_set_render_differently(tmp_path: Path) -> None:
+    """The relationship half: peer kind and every peer's identity, per relationship field.
+
+    A peer set is as much of the change being approved as a scalar is — and the empty
+    cardinality-many set is a value the apply writes, not the absence of one (FR-028.2), so it
+    is spelled out rather than rendered as nothing.
+    """
+    two_peers = _detail_of(tmp_path, _peer_variant("edge", "prod"), run_id=RUN_ID)
+    one_peer = _detail_of(tmp_path, _peer_variant("edge"), run_id=OTHER_RUN_ID)
+    emptied = _detail_of(tmp_path, _peer_variant(), run_id="20260728T0000-cccccccc")
+
+    assert "tags -> BuiltinTag (many, 2 peer(s)): name=edge | name=prod" in two_peers
+    assert "tags -> BuiltinTag (many, 1 peer(s)): name=edge" in one_peer
+    assert "name=prod" not in one_peer
+    assert "tags -> BuiltinTag (many, empty peer set)" in emptied
+
+
+def test_the_desired_state_is_labelled_as_desired_state_and_not_as_a_diff(tmp_path: Path) -> None:
+    """The label is part of the fix: the plan holds nothing about the destination's current state.
+
+    Rendering these values without saying what they are would invite reading them as a diff —
+    a comparison the artifact never recorded — which is a worse misreading than showing
+    nothing at all.
+    """
+    output = _flat(_detail_of(tmp_path, _payload_variant(role="router"), run_id=RUN_ID))
+
+    assert "desired destination state" in output
+    assert "not a diff" in output
+
+
+def test_a_credential_shaped_field_name_is_redacted_while_its_siblings_render(tmp_path: Path) -> None:
+    """The redaction policy, stated rather than implied — and scoped rather than total.
+
+    Suppressing every value was the behavior FIX-012 replaced; suppressing none of them would
+    print a credential that reached a payload through source data. The policy is by field
+    name, at every nesting level, and the field is still **listed** so a reviewer sees that
+    something is being written to it.
+    """
+    output = _detail_of(
+        tmp_path,
+        _payload_variant(
+            role="router",
+            api_token="tok-should-not-be-shown",  # noqa: S106 — synthetic literals, not credentials
+            config={"password": "pw-should-not-be-shown", "hostname": "router1.example"},
+        ),
+        run_id=RUN_ID,
+    )
+
+    assert "tok-should-not-be-shown" not in output
+    assert "pw-should-not-be-shown" not in output
+    assert "api_token = <redacted" in output
+    assert "password=<redacted" in output
+    assert "role = router" in output
+    assert "hostname=router1.example" in output
+
+
+def test_an_overlong_value_is_elided_and_says_it_was(tmp_path: Path) -> None:
+    """Elision is a readability bound and is rendered distinguishably from a redaction.
+
+    A reviewer must be able to tell "this value is long" from "this value is withheld": the
+    two carry different follow-up actions, so they must not share a rendering.
+    """
+    output = _detail_of(tmp_path, _payload_variant(description="x" * 500), run_id=RUN_ID)
+
+    assert "elided, 500 characters" in output
+    assert "<redacted" not in output
+
+
+def test_a_delete_record_renders_no_desired_state(tmp_path: Path) -> None:
+    """A delete carries no payload by construction, so there is nothing to show beneath it.
+
+    Worth pinning: a renderer that printed an empty `desired destination state` block under
+    every delete would suggest a delete writes something, which is the opposite of what this
+    release does with one (AD055).
+    """
+    output = _detail_of(tmp_path, (operation_record(action="delete", identity={"name": "retired"}),), run_id=RUN_ID)
+
+    record_lines = [line for line in output.splitlines() if line.startswith("op_")]
+    assert len(record_lines) == 1
+    trailing = output.splitlines()[output.splitlines().index(record_lines[0]) + 1 :]
+    assert [line for line in trailing if line.strip()] == []
+
+
+# ======================================================================================
 # T087 — the four delete-disclosure cases (FR-006, FR-015, SC-009, AD024, AD056)
 # ======================================================================================
 

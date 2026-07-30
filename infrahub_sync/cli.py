@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from infrahub_sdk.schema import GenericSchema, NodeSchema
 
     from infrahub_sync import SyncInstance
-    from infrahub_sync.plan.models import PlannedOperation, PlanSummary
+    from infrahub_sync.plan.models import PlannedOperation, PlanSummary, RelationshipReference
     from infrahub_sync.plan.review import SavedPlan
 
 VERBOSITY_MAP = {"quiet": logging.WARNING, "default": logging.INFO, "verbose": logging.DEBUG}
@@ -172,6 +172,78 @@ def _identity_text(identity: Mapping[str, Any]) -> str:
     return " ".join(f"{key}={_identity_value_text(identity[key])}" for key in sorted(identity))
 
 
+# The redaction policy for the values `--detail` renders (FIX-012, spec 002): a payload field whose
+# **name** suggests a credential renders as `REDACTION_PLACEHOLDER` at every nesting level, and is
+# still listed so the reviewer sees it is being written; nothing else is suppressed. A value longer
+# than `DETAIL_VALUE_LIMIT` is *elided* with its length stated — a readability bound, rendered
+# distinguishably from a redaction. Field names are the only signal, and the one that matters:
+# FR-018 keeps the configuration's `settings`, where credentials enter (AD018), out of the artifact.
+REDACTED_FIELD_MARKERS: tuple[str, ...] = (
+    "password",
+    "passwd",
+    "passphrase",
+    "secret",
+    "token",
+    "credential",
+    "api_key",
+    "apikey",
+    "private_key",
+)
+REDACTION_PLACEHOLDER = "<redacted: field name matches the redaction policy>"
+DETAIL_VALUE_LIMIT = 200
+
+
+def _redacted(value: Any, *, field: str) -> Any:
+    """Apply the redaction policy to one payload value, recursing into mappings and lists.
+
+    Recursive because the policy is about field names and a nested mapping carries its own: a
+    field the policy allows can hold a sub-field it does not.
+    """
+    if any(marker in field.replace("-", "_").lower() for marker in REDACTED_FIELD_MARKERS):
+        return REDACTION_PLACEHOLDER
+    if isinstance(value, Mapping):
+        return {key: _redacted(value[key], field=str(key)) for key in value}
+    if isinstance(value, (list, tuple)):
+        return [_redacted(item, field=field) for item in value]
+    return value
+
+
+def _payload_value_text(value: Any, *, field: str) -> str:
+    """Render one payload value under the redaction policy, eliding an overlong one."""
+    text = _identity_value_text(_redacted(value, field=field))
+    if len(text) <= DETAIL_VALUE_LIMIT:
+        return text
+    return f"{text[:DETAIL_VALUE_LIMIT]}… (elided, {len(text)} characters)"
+
+
+def _reference_text(reference: RelationshipReference) -> str:
+    """Render one relationship field as its peer kind and each peer's identity.
+
+    An **empty** cardinality-many peer set is spelled out rather than rendered as an empty list,
+    because it is a value the apply writes — the replace-set write empties the relationship —
+    and not the absence of one (FR-028.2).
+    """
+    peers = " | ".join(_identity_text(peer) for peer in reference.peers)
+    many = f"many, {len(reference.peers)} peer(s)" if reference.peers else "many, empty peer set"
+    shape = many if reference.cardinality == "many" else "one"
+    rendered = f"{reference.field} -> {reference.peer_kind} ({shape})"
+    return f"{rendered}: {peers}" if peers else rendered
+
+
+def _echo_desired_state(record: PlannedOperation, *, indent: str) -> None:
+    """Echo the desired destination state one operation would write (FIX-012, spec 002).
+
+    The canonical payload field by field, then every relationship field with its peer kind and each
+    peer's identity. **Desired state, not a diff**: the artifact records what the apply will write
+    and nothing about what the destination currently has, so presenting these lines as changes would
+    invent a comparison the plan never made. A delete carries neither, so nothing is echoed under it.
+    """
+    for field in sorted(record.payload or {}):
+        typer.echo(f"{indent}{field} = {_payload_value_text((record.payload or {})[field], field=field)}")
+    for reference in record.relationships or ():
+        typer.echo(f"{indent}{_reference_text(reference)}")
+
+
 def _echo_plan_header(*, plan: SavedPlan, summary: PlanSummary, sync_name: str, run_id: str) -> None:
     """Echo the two header lines both depths share, plus any verification verdict.
 
@@ -186,9 +258,8 @@ def _echo_plan_header(*, plan: SavedPlan, summary: PlanSummary, sync_name: str, 
         f"operations: {summary.total}   "
         f"deletes computed: {'yes' if summary.delete_operations_computed else 'NO'}"
     )
-    # The **full** checksum, not just the verdict above (FIX-010, spec 002): an approval that
-    # names it can be bound to these exact bytes with `apply --expected-checksum`, which is
-    # the difference between approving a run id and approving a plan.
+    # The **full** checksum, not just the verdict above (FIX-010, spec 002): an approval naming
+    # it binds to these exact bytes through `apply --expected-checksum`.
     typer.echo(f"plan checksum: {plan.manifest.plan_checksum}")
     for note in plan.verification_notes:
         typer.echo(textwrap.fill(note, width=REVIEW_WIDTH, initial_indent="          ", subsequent_indent="          "))
@@ -216,12 +287,26 @@ def _echo_plan_summary(summary: PlanSummary) -> None:
         typer.echo(note)
 
 
+DESIRED_STATE_LEGEND = (
+    "Beneath each record is the desired destination state that record would write: its canonical payload field "
+    "by field, then each relationship field with its peer kind and the identity of every peer. These are the "
+    "values as they will be at the destination afterwards — a desired state and not a diff, since the plan "
+    "records nothing about what the destination holds now. A field whose name suggests a credential is listed "
+    "with its value redacted; an overlong value is elided and says so."
+)
+
+DESIRED_STATE_INDENT = " " * 6
+
+
 def _echo_plan_detail(summary: PlanSummary, records: list[PlannedOperation]) -> None:
     """Echo the per-object depth: one record per operation, disclosures first.
 
     Each record carries at least the operation identifier, the action, the destination kind
     and the destination identity (AD020) — the review-side source SC-005 compares the apply
-    result against — and every `delete` carries its not-executed marker (AD056).
+    result against — and every `delete` carries its not-executed marker (AD056). Beneath each
+    record sits the desired destination state it would write (FIX-012, spec 002): two
+    operations differing only in a payload value rendered identically before that, so a
+    reviewer approved an object's *presence* in a plan without seeing the *change* proposed.
     """
     for note in _delete_disclosure(summary):
         typer.echo("")
@@ -230,6 +315,8 @@ def _echo_plan_detail(summary: PlanSummary, records: list[PlannedOperation]) -> 
     if not records:
         typer.echo("This plan contains no operations.")
         return
+    typer.echo(textwrap.fill(DESIRED_STATE_LEGEND, width=REVIEW_WIDTH))
+    typer.echo("")
     action_width = max(len(record.action) for record in records)
     kind_width = max(len(record.kind) for record in records)
     for record in records:
@@ -238,6 +325,7 @@ def _echo_plan_detail(summary: PlanSummary, records: list[PlannedOperation]) -> 
             f"{record.operation_id}  {record.action:<{action_width}}  "
             f"{record.kind:<{kind_width}}  {_identity_text(record.identity)}{marker}"
         )
+        _echo_desired_state(record, indent=DESIRED_STATE_INDENT)
 
 
 def _select_review_records(plan: SavedPlan, *, run_id: str, kind: str | None) -> list[PlannedOperation]:
@@ -324,16 +412,10 @@ def _review_saved_plan(
 def _require_a_free_run_id(*, sync_name: str, run_id: str | None) -> None:
     """Refuse re-planning into a run id whose plan generation is committed (FIX-010, spec 002).
 
-    Here, **above** the pipeline lock and the adapter factory, and not only in the writer:
-    extraction rewrites the run's `A/` snapshots, which the committed plan's manifest binds
-    itself to, so a re-plan that got as far as the writer's refusal would already have
-    invalidated the plan it was refused for. Refusing before anything is constructed leaves
-    the existing generation byte-identical.
-
-    A value that resolves to no run directory is left to the initialization arm below, which
-    already reports it: this guard answers one question — whether a plan is already committed
-    there — and inventing a second refusal for a malformed identifier would give the same
-    condition two different messages depending on which command met it.
+    Here as well as in the writer, because extraction rewrites the run's `A/` snapshots that the
+    committed plan's manifest binds itself to: a re-plan reaching only the writer's refusal would
+    already have invalidated the plan it was refused for. A value resolving to no run directory is
+    left to the initialization arm below, which reports it already.
     """
     if run_id is None:
         return
@@ -429,9 +511,9 @@ def diff_cmd(
         )
         return
 
-    # A plan generation is immutable once committed, so `--run-id` naming a run that already
-    # holds one is refused here — before the lock, the adapters and the extraction that would
-    # overwrite the snapshots that plan is bound to (FIX-010, spec 002).
+    # A plan generation is immutable once committed, so `--run-id` naming a run that already holds
+    # one is refused before the lock, the adapters and the extraction that would overwrite the
+    # snapshots that plan is bound to (FIX-010, spec 002).
     _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id)
 
     # Add adapter paths from CLI to the sync instance if specified
@@ -617,8 +699,8 @@ def _require_applicable_plan(*, sync_name: str, run_id: str) -> Path:
     stated no-runs message when the sync has never run — AD073) and the re-plan instruction
     are written once and cannot drift between the two commands an operator meets them from.
 
-    Returns the located run directory, so the approval check below reads the stored artifact
-    without resolving the run a second time.
+    Returns the located run directory, so the approval check below reads the stored artifact without
+    resolving the run a second time.
     """
     try:
         directory = require_stored_run(sync_name, run_id)
@@ -631,10 +713,10 @@ def _require_applicable_plan(*, sync_name: str, run_id: str) -> Path:
 def _stored_plan_checksum(run_directory: Path) -> str | None:
     """Recompute the stored plan's checksum from its bytes, or `None` when it cannot be.
 
-    Recomputed rather than read out of the manifest, because the question the approval check
-    answers is "are these the bytes I approved" — a manifest's recorded value is a claim
-    about the bytes and the pre-apply verifier is what tests that claim. An artifact too
-    incomplete to hash returns `None` and is left to that verifier, which names the tear.
+    Recomputed rather than read out of the manifest: the approval check asks whether these are the
+    bytes that were approved, and the manifest's recorded value is only a claim about them — one
+    the pre-apply verifier is what tests. An artifact too incomplete to hash returns `None` and is
+    left to that verifier, which names the tear.
     """
     artifact = read_plan_artifact_bytes(run_directory)
     if artifact.manifest_bytes is None or artifact.operations_bytes is None:
@@ -651,15 +733,14 @@ def _stored_plan_checksum(run_directory: Path) -> str | None:
 def _require_expected_checksum(*, run_directory: Path, run_id: str, expected: str | None) -> None:
     """Refuse an apply whose stored plan is not the plan the operator approved (FIX-010).
 
-    The operator's half of the immutability guarantee: immutable generations stop a plan
-    being replaced under its run id, and `--expected-checksum` lets an approval name the
-    exact bytes it approved — a plan reviewed on one host and applied on another, or through
-    a pipeline that carries the checksum forward rather than the run id alone.
+    The operator's half of the immutability guarantee: immutable generations stop a plan being
+    replaced under its run id, and `--expected-checksum` lets an approval name the exact bytes
+    it approved — for a plan reviewed on one host and applied on another, or a pipeline that
+    carries the checksum forward rather than the run id alone.
 
-    Here, in the command, and therefore **before the destination is constructed**: the
-    comparison needs nothing but the stored artifact, and a mismatch must not connect to a
-    destination at all. Matching is case-insensitive on surrounding whitespace and hex case
-    only; nothing else about the value is interpreted.
+    In the command, and therefore **before the destination is constructed**: the comparison needs
+    nothing but the stored artifact. Surrounding whitespace and hex case are tolerated; nothing else
+    about the value is interpreted.
     """
     if expected is None:
         return
