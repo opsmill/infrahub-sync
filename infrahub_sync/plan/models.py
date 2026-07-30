@@ -357,7 +357,7 @@ class ApplyRecord:
     Not an artifact record — nothing here is written to `plan/`. It is the value
     `Potenda.apply_plan` **returns**, and the CLI is the single writer that merges
     `as_summary_keys()` into the run file's `summary` before saving it (AD069). It carries a
-    name and a type rather than three loose keys because it crosses a layer boundary: a bare
+    name and a type rather than loose keys because it crosses a layer boundary: a bare
     mapping infers as `dict[str, Any]`, which loses every guarantee at the merge site and
     turns a later key relocation into a `KeyError` downstream instead of a type error here.
 
