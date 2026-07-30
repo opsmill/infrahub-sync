@@ -187,6 +187,51 @@ declared dependency set, which is what CI runs), but the underlying hole — an 
 dependency is undeclared is never type-checked or tested in CI — is a real follow-up for WP-10.
 A `uv sync` restores the 3/exit-0 result locally.
 
+## WP-8 completion (2026-07-30) — the PR gate is cleared
+
+Commits: `a2826b4` (tutorial caveat, DISC-003 disposition (b)) and `f340654` (shrink-fixture
+schema-readiness poll).
+
+**Integration gate GREEN: 9 passed / 2 skipped / 0 errors, exit 0** against a freshly reset
+destination (7 → 9 over R2 = the shrink test plus `test_applying_a_stored_plan_runs_no_extraction`).
+
+- **R2's "one setup error" — WP-8's own prediction was FALSIFIED, and the truth is better.**
+  It was never DISC-003. It is SC-016's live half (`test_an_ambiguous_peer_refuses_the_operation`),
+  already converted from a hard error into a reasoned skip by `12d7a27` **before this landing work
+  began**: seeding a genuinely ambiguous peer needs a kind whose uniqueness constraints do not
+  cover the resolver's filters, and every kind the qualified config touches declares one that does.
+  Nothing was left to clear.
+- **A different, real error was found and fixed** (`f340654`): the new shrink test passed alone but
+  errored in-suite with `SchemaNotFoundError: Unable to find the schema 'TestShrinkTag'`.
+  `POST /api/schema/load` returns when a payload is *accepted*, not when its kinds are *queryable* —
+  confirmed outside pytest (`infrahubctl` reported "16 schemas processed" while `/api/schema` served
+  56 of 82 kinds). Fix is a bounded 90s readiness poll; no assertion touched.
+- **The suite's non-repeatability IS DISC-003**, now proven: a deliberate warm second pass gave
+  `2 passed / 1 skipped / 8 errors`, all eight dying in fixture setup on the
+  `PeerIdentifierError … missing identifier key(s) ['device']` chain.
+- **SC-003's `InjectedCrashError` verified live** — `test_the_write_class_conformance_matrix` passed
+  for all three write classes; **6 crash injections all escaped unwrapped** and each post-crash
+  re-apply returned state to its clean single-run counts. WP-3's FIX-011 change is confirmed
+  against a real destination.
+
+Evidence coverage: **SC-001, SC-002, SC-003, SC-008 and SC-007's live half** evidenced live
+(DBA-001/002/003/008 + DBA-007's live half), plus FIX-001/OQ-4's replace-semantics pin.
+**SC-016's live half is unseedable by design** and stays a reasoned skip. **The unbounded
+tutorial path end-to-end is not evidenced**, blocked by two pre-existing defects, neither
+this feature's: the stale checked-in example adapters (`AttributeError: 'NetboxSync' object has
+no attribute 'IpamRouteTarget'` — INFP-652) and a duplicate identity in the public demo data
+(two of 8,382 IPs share `address`+`vrf(None)`). Neither can reach the suite, which narrows the
+qualified config to nine kinds, generates its own adapters into a temp workspace, and drops every
+`IpamIPAddress`/`IpamVLAN`-referencing field.
+
+Accepted deviation: the tutorial caveat carries **no follow-up issue link**, matching the
+convention of the two existing recorded limitations in `running-a-sync.mdx` (prose, no link); a
+placeholder URL would ship broken. WP-10 adds links after filing.
+
+**A FOURTH unassigned spec item, found by WP-8:** DISC-001's action requires a docs/release-note
+entry stating derivation failures are fatal even under `--continue-on-error`. No such statement
+exists in `docs/`. Added to WP-9's dispatch alongside MIN-004, MIN-019 and FIX-007's docs half.
+
 ## Escalations
 
 **E-1 — RESOLVED BY BLAKE 2026-07-30: do not loosen the repo-wide lint standards.** WP-7's
