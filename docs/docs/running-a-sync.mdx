@@ -185,10 +185,12 @@ infrahub-sync apply --name from-netbox --run-id 20260518T1430-abc12345 --directo
   --expected-checksum 9b1c4f0a7e5d3268b4a17c90ef2d5813a6c04b7fe98213d5c6a0b74e1f83d2c9
 ```
 
-The mismatch is reported before the destination is contacted. Combined with immutable generations
-above, an approval then names the exact bytes it approved rather than a run id that could hold
-something else — worth passing whenever the plan is reviewed somewhere other than where it is
-applied.
+A mismatch is reported before the destination is contacted, and the comparison is made a second
+time against the bytes the apply itself reads — so a plan replaced between the two, by a concurrent
+re-plan or a restore, is refused before any write rather than applied. Combined with immutable
+generations above, an approval then names the exact bytes it approved rather than a run id that
+could hold something else — worth passing whenever the plan is reviewed somewhere other than where
+it is applied.
 
 Add `--detail` for one record per operation — its identifier, action, destination kind and
 destination identity — and `--kind <kind>` to narrow that listing to a single destination kind:
