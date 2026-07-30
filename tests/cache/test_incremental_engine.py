@@ -105,13 +105,7 @@ def test_uses_incremental_when_prior_run_matches(tmp_path: Path) -> None:
 
 
 def test_side_full_extract_answers_per_side_on_a_mixed_run(tmp_path: Path) -> None:
-    """FR-015 needs a per-side answer; `_did_full_extract` keeps its OR-accumulated one.
-
-    Deletes are derived only when the *destination* side ran a full extract, and
-    `_did_full_extract` is deliberately true when *either* side did — which is what
-    `persist_baseline_counts` reads and what a per-side question must not be answered
-    with. So the two coexist and this asserts both.
-    """
+    """FR-015 needs a per-side answer; `_did_full_extract` keeps its OR-accumulated one."""
     import json
 
     from infrahub_sync.cache.parquet_io import write_resource_side

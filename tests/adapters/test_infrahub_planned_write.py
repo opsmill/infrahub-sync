@@ -492,13 +492,7 @@ def captured_logs(caplog: pytest.LogCaptureFixture) -> Iterator[pytest.LogCaptur
 
 
 def test_the_write_is_client_create_then_an_upsert_of_payload_plus_resolved_peer_ids() -> None:
-    """FR-013: `data` is the payload plus resolved peer ids, issued as a convergent upsert.
-
-    The mutation *name* is the discriminating observable for the write shape:
-    `client.create(...)` then `save(allow_upsert=True)` renders `<kind>Upsert`, whereas a
-    route through `InfrahubModel.update` would render `<kind>Update` against a node the
-    saved-plan path cannot key.
-    """
+    """FR-013: `data` is the payload plus resolved peer ids, issued as a convergent upsert."""
     client = RecordingClient()
     adapter = make_adapter(client)
     peers = PeerResolver(adapter)
@@ -518,11 +512,7 @@ def test_the_write_is_client_create_then_an_upsert_of_payload_plus_resolved_peer
 
 
 def test_no_unmapped_destination_field_is_written() -> None:
-    """FR-013: the payload is authoritative for the fields it carries and touches no other.
-
-    `TestSite` declares `comment` and no payload here carries it, so an implementation that
-    filled the destination's declared fields from anywhere but the payload would write it.
-    """
+    """FR-013: the payload is authoritative for the fields it carries and touches no other."""
     client = RecordingClient()
     adapter = make_adapter(client)
 
@@ -541,12 +531,7 @@ def test_no_unmapped_destination_field_is_written() -> None:
 
 
 def test_generate_payload_create_receives_the_source_owner_and_protection_arguments() -> None:
-    """FR-013: lineage parity with the live `sync` create path.
-
-    `InfrahubModel.create` passes `source`, `owner` and `is_protected=True`; a planned write
-    that dropped them would produce objects whose provenance metadata differs from the ones
-    the same configuration writes through `sync`.
-    """
+    """FR-013: lineage parity with the live `sync` create path."""
     client = RecordingClient()
     adapter = make_adapter(client, source="source-account-1", owner="owner-account-1")
 
@@ -564,16 +549,7 @@ def test_generate_payload_create_receives_the_source_owner_and_protection_argume
 
 
 def test_a_payload_missing_an_identity_component_is_refused_before_any_write() -> None:
-    """AD042/AD051: a payload assembled from attributes alone leaves the upsert unkeyed.
-
-    The payload is `keys` union `source_attrs` precisely so it carries the components the
-    convergent write keys on. A payload built from `get_attrs()` alone excludes
-    `_identifiers`, so the write goes out with no key and **every re-apply duplicates the
-    object** — silently, because the destination accepts each one.
-
-    The refusal must name *which* component is unaccounted for: an operator told only that
-    "the write would be unkeyed" has nothing to act on.
-    """
+    """AD042/AD051: a payload assembled from attributes alone leaves the upsert unkeyed."""
     client = RecordingClient()
     adapter = make_adapter(client)
 
@@ -590,12 +566,7 @@ def test_a_payload_missing_an_identity_component_is_refused_before_any_write() -
 
 
 def test_an_unkeyed_render_for_an_all_direct_hfid_kind_raises_naming_lost_components() -> None:
-    """AD066: the gate's raising arm reads the **rendered mutation**, not the assembled data.
-
-    For a kind whose every human-friendly-ID component is a direct attribute, a render
-    carrying neither `id` nor `hfid` can only mean the payload lost its identity components,
-    so this arm refuses rather than warns — and the message has to name that cause.
-    """
+    """AD066: the gate's raising arm reads the **rendered mutation**, not the assembled data."""
     client = RecordingClient()
     adapter = make_adapter(client)
     node = client.create(kind=SITE_KIND, data={"description": {"value": "carries no name at all"}})
@@ -612,15 +583,7 @@ def test_an_unkeyed_render_for_an_all_direct_hfid_kind_raises_naming_lost_compon
 def test_a_kind_declaring_no_human_friendly_id_is_written_and_never_refused(
     captured_logs: pytest.LogCaptureFixture,
 ) -> None:
-    """AD076: the gate's third arm — no human-friendly ID is a schema fact, not a defect.
-
-    FR-024 permits such a kind and requires the run to survive it. An implementation that
-    reads an **empty** component list as "every component is direct" — `all(...)` over an
-    empty sequence is `True` — refuses the operation instead, and that refusal is the
-    failure this case exists to catch. The report must name the **no-convergence-key**
-    condition: routing an operator at "the payload lost its identity components" points at
-    a cause that is not there, which is the defect AD059 exists to remove.
-    """
+    """AD076: the gate's third arm — no human-friendly ID is a schema fact, not a defect."""
     client = RecordingClient()
     adapter = make_adapter(client)
 
@@ -645,15 +608,7 @@ def test_a_kind_declaring_no_human_friendly_id_is_written_and_never_refused(
 def test_the_unkeyed_render_is_reported_once_per_kind_at_warning_level(
     captured_logs: pytest.LogCaptureFixture,
 ) -> None:
-    """AD078: one report per destination kind, at `WARNING`, saying what to watch for.
-
-    `apply_planned_operation` is entered once per operation, so a per-operation report would
-    put one line per row into a four-thousand-operation apply. The level is pinned rather
-    than described: `--quiet` floors the package logger at `WARNING`
-    (`infrahub_sync/cli.py:29`), so an `INFO` emission satisfies every text-only assertion
-    and then vanishes for exactly the scripted invocations where this report and the run
-    record are the only signals.
-    """
+    """AD078: one report per destination kind, at `WARNING`, saying what to watch for."""
     client = RecordingClient()
     adapter = make_adapter(client)
     peers = PeerResolver(adapter)
@@ -686,13 +641,7 @@ def test_the_unkeyed_render_is_reported_once_per_kind_at_warning_level(
 def test_the_unkeyed_render_report_is_deduplicated_per_kind_not_per_run(
     captured_logs: pytest.LogCaptureFixture,
 ) -> None:
-    """AD078: two unkeyed kinds produce two reports.
-
-    The counterpart to the case above, and the one that separates per-kind deduplication
-    from per-run suppression — an implementation that reports only the first unkeyed render
-    of the whole apply passes that case and fails this one, while silently withdrawing the
-    disclosure for every other kind in the plan.
-    """
+    """AD078: two unkeyed kinds produce two reports."""
     client = RecordingClient()
     adapter = make_adapter(client)
     peers = PeerResolver(adapter)
@@ -715,14 +664,7 @@ def test_the_unkeyed_render_report_is_deduplicated_per_kind_not_per_run(
 def test_the_dedup_set_lives_for_one_apply_and_not_for_the_adapter_instance(
     captured_logs: pytest.LogCaptureFixture,
 ) -> None:
-    """T102 / AD078: "once per kind" is once per **apply**, and the state's lifetime says so.
-
-    Two applies through one adapter instance, each entered the way the engine enters one — by
-    asking the destination for a resolver — and each discloses the kind. With the set allocated
-    for the instance instead, the second apply finds every kind already reported and says
-    nothing: the disclosure is withdrawn silently, on a run whose operator has no other signal,
-    and the per-kind case above still passes because it only ever runs one apply.
-    """
+    """T102 / AD078: "once per kind" is once per **apply**, and the state's lifetime says so."""
     client = RecordingClient()
     adapter = make_adapter(client)
 
@@ -743,19 +685,7 @@ def test_the_dedup_set_lives_for_one_apply_and_not_for_the_adapter_instance(
 
 
 def test_the_flush_carries_exactly_the_plans_peer_set_with_no_destination_read() -> None:
-    """AD038/AD075/AD085 + FIX-001: the plan's peer set reaches the destination as the flush.
-
-    The destination's set is seeded to *differ* from the plan's, which is what makes the
-    no-read assertion honest: an implementation that still fetch-and-reconciles would issue a
-    `client.get` here. It must not — the flush writes the plan's peer set directly, and
-    surplus-peer removal (`tag-id-1` here) relies on the destination Update mutation's
-    replace semantics, pinned by the live shrink test
-    (`tests/integration/test_infrahub_replace_set_shrink_integration.py`).
-
-    The flush must be `<kind>Update`, not a second `<kind>Upsert`: an upsert flush would
-    carry the full peer list too, so the peer list alone cannot separate the two and the
-    **mutation name** is the discriminating observable.
-    """
+    """AD038/AD075/AD085 + FIX-001: the plan's peer set reaches the destination as the flush."""
     client = RecordingClient()
     client.existing_peers[TEAM_KIND, "members"] = ["tag-id-1", "tag-id-2"]
     adapter = make_adapter(client)
@@ -781,15 +711,7 @@ def test_the_flush_carries_exactly_the_plans_peer_set_with_no_destination_read()
 
 
 def test_an_empty_peer_list_empties_the_set_in_the_issued_flush() -> None:
-    """AD085: `peers: []` under `cardinality: many` reaches the destination.
-
-    The case that decides the flush's form. A plain `node.save()` renders with
-    unmodified-field stripping on; the create payload already wrote `[]` for the same field, so
-    the rendered value matches, the key is popped, and the emptied set never leaves the process
-    while the mutation name stays identical. The rendered relationship value is therefore the
-    only observable that separates them — and it is what the targeted flush AD088 specifies
-    writes explicitly rather than leaving to survive a comparison.
-    """
+    """AD085: `peers: []` under `cardinality: many` reaches the destination."""
     client = RecordingClient()
     client.existing_peers[TEAM_KIND, "members"] = ["tag-id-1", "tag-id-2"]
     adapter = make_adapter(client)
@@ -804,12 +726,7 @@ def test_an_empty_peer_list_empties_the_set_in_the_issued_flush() -> None:
 
 
 def test_a_peer_set_the_destination_already_holds_is_flushed_unchanged() -> None:
-    """AD038: when the destination already holds the plan's set, the flush is a no-op write.
-
-    The flush goes out carrying the same set the destination holds — under replace semantics
-    that changes nothing, which is what keeps the write idempotent — and no destination read
-    was needed to decide anything (FIX-001).
-    """
+    """AD038: when the destination already holds the plan's set, the flush is a no-op write."""
     client = RecordingClient()
     client.existing_peers[TEAM_KIND, "members"] = ["tag-id-2"]
     adapter = make_adapter(client)
@@ -825,16 +742,7 @@ def test_a_peer_set_the_destination_already_holds_is_flushed_unchanged() -> None
 
 
 def test_the_flush_retains_the_peer_lineage_metadata_the_upsert_carried() -> None:
-    """MIN-010: planned-apply-managed peers keep their lineage metadata through the flush.
-
-    The upsert's create payload renders every cardinality-many peer with the adapter's
-    `source`/`owner`/`is_protected` metadata (`generate_payload_create` with
-    `is_protected=True`, lineage parity with the live `sync` path). The old
-    fetch-and-reconcile flush re-rendered peers as bare `{id: ...}`, so kinds with
-    cardinality-many relationships lost that metadata on exactly the write that stuck —
-    only on the planned-apply path. The FIX-001 simplification renders the create payload's
-    own managers, so the metadata survives; this pins it.
-    """
+    """MIN-010: planned-apply-managed peers keep their lineage metadata through the flush."""
     client = RecordingClient()
     adapter = make_adapter(client, source="source-account-1", owner="owner-account-1")
     peers = PeerResolver(adapter)
@@ -859,11 +767,7 @@ def test_the_flush_retains_the_peer_lineage_metadata_the_upsert_carried() -> Non
 
 
 def test_one_flush_is_issued_per_operation_not_one_per_relationship() -> None:
-    """V40: the flush follows the whole reconciliation loop, once.
-
-    Two cardinality-many relationships on one operation, both reconciled against a
-    destination set that differs from the plan's, and one update carrying both.
-    """
+    """V40: the flush follows the whole reconciliation loop, once."""
     client = RecordingClient()
     client.existing_peers[GROUP_KIND, "members"] = ["tag-id-1"]
     client.existing_peers[GROUP_KIND, "watchers"] = ["tag-id-9"]
@@ -898,11 +802,7 @@ def test_one_flush_is_issued_per_operation_not_one_per_relationship() -> None:
 
 
 def test_a_completed_operation_resolves_a_later_reference_with_no_destination_query() -> None:
-    """FR-014: an operation's own result resolves the operations that refer to it.
-
-    Dependency-tier ordering puts the peer's create before its referrer, so the memo is what
-    keeps a plan-internal reference from costing a destination round trip per row.
-    """
+    """FR-014: an operation's own result resolves the operations that refer to it."""
     client = RecordingClient()
     adapter = make_adapter(client)
     peers = PeerResolver(adapter)
@@ -919,11 +819,7 @@ def test_a_completed_operation_resolves_a_later_reference_with_no_destination_qu
 
 
 def test_a_failed_lookup_is_not_memoized_and_the_next_reference_reattempts() -> None:
-    """AD036: a negative result is never cached.
-
-    A peer absent when the first referring operation ran may have been created by an
-    operation in between, so inheriting the failure would refuse a plan that is applicable.
-    """
+    """AD036: a negative result is never cached."""
     client = RecordingClient()
     client.filter_results = [[], [make_node(client, SITE_KIND, "site-id-9")]]
     adapter = make_adapter(client)
@@ -941,11 +837,7 @@ def test_a_failed_lookup_is_not_memoized_and_the_next_reference_reattempts() -> 
 
 
 def test_a_failed_write_is_not_memoized_and_a_later_reference_queries_the_destination() -> None:
-    """AD036: only a **completed** write is remembered.
-
-    Memoizing an operation whose write was rejected would hand later operations a node id
-    for an object that does not exist.
-    """
+    """AD036: only a **completed** write is remembered."""
     client = RecordingClient()
     client.write_error = RuntimeError("the destination rejected the write")
     adapter = make_adapter(client)
@@ -967,12 +859,7 @@ def test_a_failed_write_is_not_memoized_and_a_later_reference_queries_the_destin
 
 
 def test_the_resolver_never_reads_the_client_store() -> None:
-    """FR-014: the resolver has no store dependency.
-
-    `resolve_peer_node` on the live `sync` path resolves peers out of `client.store`, which
-    a destination load populates. A saved plan is applied without loading either side, so a
-    resolver that fell back to the store would read an empty one and refuse every peer.
-    """
+    """FR-014: the resolver has no store dependency."""
     client = RecordingClient()
     client.filter_results = [[make_node(client, SITE_KIND, "site-id-3")]]
     adapter = make_adapter(client)
@@ -986,20 +873,7 @@ def test_the_resolver_never_reads_the_client_store() -> None:
 
 
 def test_an_unknown_peer_kind_is_refused_loudly_before_any_destination_query() -> None:
-    """MIN-012: a peer kind the destination schema does not declare raises, like the operation path.
-
-    `self._adapter.schema` is a plain mapping, so `.get()` on an unknown kind returns `None` —
-    and `getattr(None, "human_friendly_id", ...)` reads as "no human-friendly ID", silently
-    degrading the resolver to the scalar fallback and querying a kind that does not exist.
-    The operation path raises before writing an unknown kind; resolving a peer against one is
-    the same condition and must be as loud.
-
-    It states the diagnosis and **no remedy** (RF-2). `ValueError` is deliberately outside
-    `OPERATIONAL_APPLY_FAILURES`, so FIX-011 routes it to the CLI's defect arm, which already
-    tells the operator not to re-plan on the assumption the destination is at fault; a
-    "re-plan" instruction here reached them in the same ERROR line as its own contradiction.
-    The message ends without a full stop because that arm's format string supplies one.
-    """
+    """MIN-012: a peer kind the destination schema does not declare raises, like the operation path."""
     client = RecordingClient()
     client.filter_results = [[make_node(client, SITE_KIND, "site-id-1")]]
     adapter = make_adapter(client)
@@ -1017,15 +891,7 @@ def test_an_unknown_peer_kind_is_refused_loudly_before_any_destination_query() -
 
 
 def test_a_reference_only_identity_is_refused_before_querying_not_silently_bound() -> None:
-    """FIX-002: an empty filter set refuses, even when exactly one node of the kind exists.
-
-    A peer identity every value of which is reference-shaped derives no filter kwargs at all,
-    so `client.filters(kind=...)` would list **every** node of the kind — and with exactly one
-    at the destination, return it. That is the one shape the zero- and multi-match refusals
-    cannot catch: the wrong peer is bound, memoized (AD036) and reused for the rest of the
-    apply, silently. The destination here is seeded with exactly that single-node state, so an
-    implementation that still queries binds it and fails this test.
-    """
+    """FIX-002: an empty filter set refuses, even when exactly one node of the kind exists."""
     client = RecordingClient()
     client.filter_results = [[make_node(client, SITE_KIND, "the-only-site")]]
     adapter = make_adapter(client)
@@ -1058,14 +924,7 @@ def test_a_reference_only_identity_is_refused_before_querying_not_silently_bound
 def test_a_partial_filter_warns_once_per_kind_naming_the_dropped_components(
     captured_logs: pytest.LogCaptureFixture,
 ) -> None:
-    """FIX-002: silently skipped HFID components are disclosed at apply time, per kind.
-
-    `TestDevice`'s destination human-friendly ID is `[site__name__value, name__value]`. An
-    identity supplying only `name` drops the crossing component and queries on a strict subset
-    of the convergence key — FR-024's plan-time degraded mode, which nothing signalled at apply
-    time. The warning must name the dropped component; it is deduplicated per kind for the
-    resolver's one-apply lifetime, the same rule as the unkeyed-render report (AD078).
-    """
+    """FIX-002: silently skipped HFID components are disclosed at apply time, per kind."""
     client = RecordingClient()
     client.filter_results = [
         [make_node(client, DEVICE_KIND, "device-id-1")],
@@ -1099,12 +958,7 @@ def test_a_partial_filter_warns_once_per_kind_naming_the_dropped_components(
 
 
 def test_a_zero_match_peer_refuses_the_operation_and_dispatches_nothing() -> None:
-    """SC-016: an unresolvable peer fails the run rather than being silently skipped.
-
-    Writing the object without the relationship would leave the destination holding a
-    half-applied object that no later run detects, because the plan records the reference as
-    applied.
-    """
+    """SC-016: an unresolvable peer fails the run rather than being silently skipped."""
     client = RecordingClient()
     adapter = make_adapter(client)
     operation = device_operation("device-a")
@@ -1120,11 +974,7 @@ def test_a_zero_match_peer_refuses_the_operation_and_dispatches_nothing() -> Non
 
 
 def test_a_multi_match_peer_refuses_naming_the_match_count() -> None:
-    """SC-016: an ambiguous peer refuses too, with the count that makes it actionable.
-
-    Picking the first match would bind the relationship to an arbitrary one of several
-    destination objects, and nothing downstream would record which.
-    """
+    """SC-016: an ambiguous peer refuses too, with the count that makes it actionable."""
     client = RecordingClient()
     client.filter_results = [[make_node(client, SITE_KIND, "site-id-1"), make_node(client, SITE_KIND, "site-id-2")]]
     adapter = make_adapter(client)
@@ -1143,13 +993,7 @@ def test_a_multi_match_peer_refuses_naming_the_match_count() -> None:
 def test_the_live_sync_write_path_still_warns_and_continues_on_an_unresolvable_peer(
     captured_logs: pytest.LogCaptureFixture,
 ) -> None:
-    """AD048: the refusal is scoped to the planned-write resolver and has not leaked out.
-
-    `update_node` is the live `sync` write path's relationship handler. It warns and
-    continues on a peer it cannot resolve, and this brief does not authorize changing that:
-    turning it into a refusal would make `infrahub-sync sync` start failing runs that
-    complete today.
-    """
+    """AD048: the refusal is scoped to the planned-write resolver and has not leaked out."""
     client = RecordingClient()
     node = InfrahubNodeSync(client=client, schema=DEVICE_SCHEMA, data={"id": "device-1", "name": {"value": "device-a"}})
 
@@ -1162,12 +1006,7 @@ def test_the_live_sync_write_path_still_warns_and_continues_on_an_unresolvable_p
 
 
 def test_the_live_sync_write_path_still_drops_an_unresolvable_cardinality_many_peer() -> None:
-    """AD048: the cardinality-many arm of the live path is unchanged too.
-
-    A peer absent from the store is dropped from the new set and the run continues. The
-    planned-write resolver refuses the same condition; that difference is deliberate and
-    scoped to the new path.
-    """
+    """AD048: the cardinality-many arm of the live path is unchanged too."""
     client = RecordingClient()
     client.existing_peers[TEAM_KIND, "members"] = []
     node = InfrahubNodeSync(
@@ -1271,17 +1110,7 @@ def test_a_delete_bearing_plan_applies_every_non_delete_and_ends_applied(
     tmp_path: Path,
     engine_logs: pytest.LogCaptureFixture,
 ) -> None:
-    """SC-007: a recorded delete is collected, never dispatched, and the run still succeeds.
-
-    **A run state of `failed` fails this test.** Not executing a delete is a designed
-    limitation of this release, and reporting a designed limitation as a fault is the defect
-    AD055 corrects: an operator whose delete-bearing plan reports `failed` cannot tell it
-    from a plan whose creates were rejected, and the creates *were* applied.
-
-    Every value is read off the **returned** record, because `apply_plan` writes no run file
-    (AD069). T065 asserts the same three read back from `run.json` after the CLI has merged
-    them, which is what proves the merge happens.
-    """
+    """SC-007: a recorded delete is collected, never dispatched, and the run still succeeds."""
     directory = apply_run_dir(tmp_path)
     create = operation_record(identity={"name": "prod"})
     update = operation_record(action="update", identity={"name": "staging"})
@@ -1332,12 +1161,7 @@ def test_a_delete_bearing_plan_applies_every_non_delete_and_ends_applied(
 
 
 def test_a_mid_apply_rejection_surfaces_the_rejection_not_the_knowability_invariant(tmp_path: Path) -> None:
-    """AD062: the invariant is checked on a **completed** apply and nowhere else.
-
-    A partial apply breaks both of its clauses by construction, so an implementation that
-    checked it unconditionally would replace a clear destination-rejection message with an
-    internal invariant error and send the operator after the wrong cause.
-    """
+    """AD062: the invariant is checked on a **completed** apply and nowhere else."""
     directory = apply_run_dir(tmp_path)
     records = [operation_record(identity={"name": "prod"}), operation_record(identity={"name": "staging"})]
     write_artifact(directory, records, run_id=APPLY_RUN_ID, source_snapshot=[])
@@ -1366,21 +1190,7 @@ def test_the_reviewed_operation_identifiers_equal_the_applied_record_in_the_same
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SC-005: what a review showed is exactly what an apply then wrote.
-
-    The review-side set comes from `read_saved_plan`'s per-object output — the same call the
-    command-line review mode renders — and the apply-side set from the FR-020 record on the
-    apply result. The comparison is **ordered**, so an implementation recording the applied
-    identifiers as a set or sorting them fails here: an operator reconciling a review against
-    a partial apply reads the record positionally, and an unordered record cannot answer
-    "where did it stop".
-
-    **The fixture carries no delete**, asserted before comparing. A delete is reviewed but
-    never applied, so its identifier lands in `skipped_delete_operations` rather than
-    `applied_operations`, and an ordered equality over a delete-bearing plan would fail for a
-    reason that has nothing to do with SC-005. T054 is where a delete-bearing plan is
-    exercised.
-    """
+    """SC-005: what a review showed is exactly what an apply then wrote."""
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path))
     directory = apply_run_dir(tmp_path)
     records = [
@@ -1469,11 +1279,7 @@ def test_the_infrahub_adapter_is_a_planned_write_destination() -> None:
 
 
 def test_the_adapters_factory_builds_a_resolver_bound_to_that_adapter() -> None:
-    """The factory is what replaced the engine's cast to this class (AD086).
-
-    A fresh resolver per call, each bound to the adapter that built it, so the memo's lifetime
-    is one apply and two applies never share one (FR-014).
-    """
+    """The factory is what replaced the engine's cast to this class (AD086)."""
     adapter = make_adapter(RecordingClient())
 
     resolver = adapter.new_peer_resolver()
@@ -1484,12 +1290,7 @@ def test_the_adapters_factory_builds_a_resolver_bound_to_that_adapter() -> None:
 
 
 def test_a_destination_missing_only_the_resolver_factory_is_refused_before_any_write(tmp_path: Path) -> None:
-    """FR-023/AD086: the surface is both members, and the refusal still names the adapter.
-
-    A destination carrying `apply_planned_operation` alone would have passed the single-method
-    `hasattr` gate this protocol replaced, then died where the engine built its resolver —
-    after the gate that exists to keep exactly that from happening.
-    """
+    """FR-023/AD086: the surface is both members, and the refusal still names the adapter."""
     directory = apply_run_dir(tmp_path)
     write_artifact(directory, [operation_record()], run_id=APPLY_RUN_ID, source_snapshot=[])
 
@@ -1508,20 +1309,7 @@ def test_a_destination_missing_only_the_resolver_factory_is_refused_before_any_w
 
 
 def test_the_gate_verifies_member_presence_only_and_is_no_stronger_than_hasattr(tmp_path: Path) -> None:
-    """AD086's honesty clause, asserted rather than described.
-
-    `isinstance` against a `runtime_checkable` protocol checks that the members **exist**. It
-    does not check their signatures, so a destination whose members have the right names and
-    the wrong shapes is accepted by the pre-write gate and fails later, mid-apply — exactly
-    where the `hasattr` gate this replaced would have failed. FR-023's refusal is still
-    presence-checking, and this test is here so nobody reads the protocol as having hardened
-    it. Making the refusal real at runtime needs an explicit opt-in — ABC inheritance or a
-    class-level marker — and is a separate design decision that AD086 does not take.
-
-    What the protocol did fix is static, and no runtime assertion can show it: `ty` checks the
-    dispatch and the resolver factory at every call site, and the untyped `getattr` dispatch
-    and the cast to `InfrahubAdapter` are gone.
-    """
+    """AD086's honesty clause, asserted rather than described."""
     directory = apply_run_dir(tmp_path)
     write_artifact(directory, [operation_record()], run_id=APPLY_RUN_ID, source_snapshot=[])
     duck = DuckTypedDestination()
@@ -1646,12 +1434,7 @@ def _assert_named_and_actionable(
 def test_a_failing_transport_or_auth_on_the_write_is_named_and_actionable(
     tmp_path: Path, injected: Exception, expected_fragment: str
 ) -> None:
-    """The planned-write surface's transport and auth edges (Constitution V, plan.md's Principle V row).
-
-    The write is armed to fail on the *second* mutation, so the first operation's upsert
-    succeeds and the failure lands on the second operation's own write rather than before any
-    write at all.
-    """
+    """The planned-write surface's transport and auth edges (Constitution V, plan.md's Principle V row)."""
     directory = apply_run_dir(tmp_path)
     first, second = _tag_then_team_plan(directory)
     client = RecordingClient()
@@ -1677,16 +1460,7 @@ def test_a_failing_transport_or_auth_on_the_write_is_named_and_actionable(
 def test_a_failing_transport_or_auth_on_peer_resolution_is_named_and_actionable(
     tmp_path: Path, injected: Exception, expected_fragment: str
 ) -> None:
-    """The apply-time peer resolver's transport and auth edges.
-
-    Distinct from the case above, and not a duplicate of it: the resolver's destination query
-    is a **read** issued from a different call site (`client.filters`, not the mutation
-    transport), it happens *before* the operation's own write, and its two designed refusals —
-    `PeerNotFoundError` and `PeerAmbiguousError` — are the paths a naive implementation would
-    route a timeout into. A timeout is neither: nothing is missing and nothing is ambiguous, so
-    reporting it as either would send the operator to create a peer that already exists. The
-    assertion is therefore that it stays a transport/auth failure and is named as one.
-    """
+    """The apply-time peer resolver's transport and auth edges."""
     directory = apply_run_dir(tmp_path)
     first, second = _tag_then_team_plan(directory)
     client = RecordingClient()

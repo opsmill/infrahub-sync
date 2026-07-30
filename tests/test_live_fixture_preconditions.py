@@ -100,11 +100,7 @@ def test_a_kind_declaring_no_human_friendly_id_is_a_fixture_error() -> None:
 
 
 def test_a_component_the_identity_does_not_supply_is_named_in_the_refusal() -> None:
-    """The refusal names **which** component is missing — the reason it is checked per component.
-
-    `location__name__value` is declared by the schema and unanswerable from a flat identity,
-    so the fixture is refused before any assertion about convergence can be made on it.
-    """
+    """The refusal names **which** component is missing — the reason it is checked per component."""
     operation = _operation(kind="DcimDevice", identity={"name": "router1"})
 
     with pytest.raises(LivePlanPreconditionError) as caught:
@@ -119,12 +115,7 @@ def test_a_component_the_identity_does_not_supply_is_named_in_the_refusal() -> N
 
 
 def test_a_nested_peer_component_the_identity_does_supply_passes() -> None:
-    """AD043's nesting is followed, not flattened: the pair answers `location__name__value`.
-
-    The negative cases above all pass against a check that answered "missing" for every
-    relationship-crossing component. This one is what distinguishes a check that follows the
-    nesting from one that only ever refuses.
-    """
+    """AD043's nesting is followed, not flattened: the pair answers `location__name__value`."""
     operations = [
         _operation(kind="DcimDevice", identity=NESTED_DEVICE_IDENTITY),
         _operation(kind="BuiltinTag", identity={"name": "edge"}),
@@ -137,11 +128,7 @@ def test_a_nested_peer_component_the_identity_does_supply_passes() -> None:
 
 
 def test_a_nested_component_the_pair_does_not_reach_is_still_refused() -> None:
-    """The pair is present but its own identity lacks the segment, which is not "supplied".
-
-    Distinguishes following the nesting from merely finding a mapping at the head segment —
-    a check that stopped at `location` would accept this and let an unkeyed write through.
-    """
+    """The pair is present but its own identity lacks the segment, which is not "supplied"."""
     operation = _operation(
         kind="DcimDevice",
         identity={"name": "router1", "location": {"peer_kind": "LocationRack", "identity": {"slug": "rack-7"}}},
@@ -187,11 +174,7 @@ def _peer_schema(
 
 
 def test_a_constraint_the_resolver_filters_pin_admits_no_ambiguity() -> None:
-    """The live case: the covering constraint is returned, so SC-016's live half skips.
-
-    `device` is not filtered on directly; it is pinned because the filters reach through it to
-    a device name that the device kind's own constraint makes unique.
-    """
+    """The live case: the covering constraint is returned, so SC-016's live half skips."""
     covering = covering_uniqueness_constraint(
         destination_schema=_peer_schema(
             lag_constraints=[["device", "name__value"]], device_constraints=[["name__value"]]
@@ -204,12 +187,7 @@ def test_a_constraint_the_resolver_filters_pin_admits_no_ambiguity() -> None:
 
 
 def test_a_constraint_left_free_by_the_filters_admits_an_ambiguity() -> None:
-    """A constraint carrying a component the resolver does not filter on: the test would run.
-
-    This is the case that keeps the guard a skip rather than a deletion — the same filters, a
-    schema whose constraint leaves `description__value` free, and a second matching object is
-    creatable.
-    """
+    """A constraint carrying a component the resolver does not filter on: the test would run."""
     covering = covering_uniqueness_constraint(
         destination_schema=_peer_schema(
             lag_constraints=[["device", "name__value", "description__value"]],
@@ -234,12 +212,7 @@ def test_a_kind_declaring_no_uniqueness_constraint_admits_an_ambiguity() -> None
 
 
 def test_a_relationship_component_is_pinned_only_when_its_peer_is_keyed() -> None:
-    """`device__name__value` pins `device` only if a device name identifies one device.
-
-    Distinguishes this check from a prefix match: with device names unconstrained, two devices
-    may share the name, two LAGs may match the filters, and the ambiguity is seedable — so the
-    same constraint that covers the query above does not cover it here.
-    """
+    """`device__name__value` pins `device` only if a device name identifies one device."""
     covering = covering_uniqueness_constraint(
         destination_schema=_peer_schema(lag_constraints=[["device", "name__value"]], device_constraints=None),
         kind="InterfaceLag",

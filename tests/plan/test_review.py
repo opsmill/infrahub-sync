@@ -198,15 +198,7 @@ def test_the_reviewed_identifiers_are_the_artifacts_own(tmp_path: Path) -> None:
 
 
 def test_the_reviewed_identifiers_are_returned_in_stored_order(tmp_path: Path) -> None:
-    """T056/SC-005's review half: the review side is an ordered sequence, not a set.
-
-    The apply side compares its FR-020 record against this **positionally**
-    (`tests/adapters/test_infrahub_planned_write.py`, the SC-005 case), and that comparison
-    is only meaningful if the review side preserves the order the artifact stored. The
-    sibling case above asserts the same identifiers as a set, which a review that sorted or
-    regrouped its output would also satisfy — so this case is what pins the order, and the
-    fixture's stored order is deliberately not its sorted order.
-    """
+    """T056/SC-005's review half: the review side is an ordered sequence, not a set."""
     _store(tmp_path)
     stored_order = [str(record["operation_id"]) for record in MIXED_PLAN]
     assert stored_order != sorted(stored_order), "the fixture must not already be in sorted order"
@@ -231,12 +223,7 @@ def test_kind_narrows_the_operations_returned(tmp_path: Path) -> None:
 
 
 def test_a_declared_kind_with_no_operations_returns_an_empty_list(tmp_path: Path) -> None:
-    """It does **not** raise (AD058).
-
-    The never-empty rule is FR-006's *presentation* obligation and belongs to the renderer:
-    FR-029 requires a programmatic caller to consume this as data, and forcing one to catch an
-    exception to learn a count is that rule leaking into the interface.
-    """
+    """It does **not** raise (AD058)."""
     _store(tmp_path)
     config = _config("BuiltinTag", "LocationSite", "BuiltinRole")
 
@@ -246,12 +233,7 @@ def test_a_declared_kind_with_no_operations_returns_an_empty_list(tmp_path: Path
 
 
 def test_an_undeclared_kind_raises_naming_the_kinds_the_plan_holds(tmp_path: Path) -> None:
-    """The other half of AD058's split — and it must be the *other* half.
-
-    Kept in its own test next to the case above so that an implementation raising for both
-    fails one of them. A single test covering only this arm would pass against the behaviour
-    AD058 corrected.
-    """
+    """The other half of AD058's split — and it must be the *other* half."""
     _store(tmp_path)
     config = _config("BuiltinTag", "LocationSite", "BuiltinRole")
 
@@ -266,22 +248,7 @@ def test_an_undeclared_kind_raises_naming_the_kinds_the_plan_holds(tmp_path: Pat
 
 
 def test_a_kind_the_plan_holds_but_the_configuration_omits_raises(tmp_path: Path) -> None:
-    """The case that distinguishes the specified guard from a conjunction (T104).
-
-    The two tests above both use a kind absent from **both** the plan and the configuration, so
-    they only ever exercise the intersection and pass against a guard that raises on
-    `kind not in held and not declared`. Under that conjunction a kind the plan *holds* and the
-    configuration does *not* declare returns operations instead of raising, because the first
-    term is false — the `held` term is correct only in the no-configuration branch below, and
-    applying it unconditionally is the defect.
-
-    The specified behaviour is that where a configuration was supplied it is the sole authority:
-    `operations()` raises for any kind it does not declare (AD058, and
-    `contracts/plan-reader-api.md:86`, which says only an undeclared kind raises). A plan can
-    outlive the configuration that produced it, so this is reachable without anything being
-    corrupt: the operator drops `LocationSite` from the schema mapping and then reviews a plan
-    recorded before the change.
-    """
+    """The case that distinguishes the specified guard from a conjunction (T104)."""
     _store(tmp_path)
     # `MIXED_PLAN` holds `BuiltinTag` and `LocationSite`; the configuration declares only the
     # first, so `LocationSite` is held-but-undeclared.
@@ -352,12 +319,7 @@ def test_the_summary_discloses_that_deletes_were_computed_and_how_many(tmp_path:
 
 
 def test_the_summary_discloses_that_deletes_were_not_computed(tmp_path: Path) -> None:
-    """The `false` / zero fixture (AD056).
-
-    Without `delete_operations_computed`, a plan whose whole delete class was never computed
-    renders identically to one that genuinely has no deletes, and FR-015's "explicit and
-    reviewable" claim would be carried by nothing.
-    """
+    """The `false` / zero fixture (AD056)."""
     _store(tmp_path, [operation_record()], deletes_computed=False)
 
     summary = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID).summary()
@@ -396,13 +358,7 @@ def test_a_plan_whose_checksum_fails_is_still_rendered_with_a_note(tmp_path: Pat
 
 
 def test_a_verification_failure_renders_but_an_unrecognized_action_refuses(tmp_path: Path) -> None:
-    """The pairing AD055 and AD031 draw between them, asserted in one place.
-
-    A plan whose checksum fails is shown, because the operator can act on knowing it changed.
-    A plan carrying an action this release cannot interpret is refused, because a count of
-    operations the tool does not understand is not a review. Splitting these into two files
-    would let "review never refuses to show" be read as absolute.
-    """
+    """The pairing AD055 and AD031 draw between them, asserted in one place."""
     tampered = _store(tmp_path, [tamperable_operation()], run_id=RUN_ID)
     tamper_with_operations(tampered)
     renders = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID)
@@ -419,11 +375,7 @@ def test_a_verification_failure_renders_but_an_unrecognized_action_refuses(tmp_p
 
 
 def test_no_review_call_writes_a_run_file(tmp_path: Path) -> None:
-    """No `run.json`, and nothing else either: the run directory is untouched.
-
-    Asserted over the whole subtree rather than over `run.json` alone, so a review that
-    started caching a rendering beside the artifact would fail here too.
-    """
+    """No `run.json`, and nothing else either: the run directory is untouched."""
     directory = _store(tmp_path)
     before = _tree(directory)
 
@@ -506,13 +458,7 @@ def test_a_plan_bound_to_an_intact_snapshot_carries_no_note(tmp_path: Path) -> N
 
 
 def test_a_review_of_a_run_whose_snapshot_is_absent_notes_the_tear(tmp_path: Path) -> None:
-    """FR-010 on the review path: the torn binding is named, not silently rendered clean.
-
-    The plan checksum covers the manifest and the operations file only, so `checksum_ok` is
-    **true** here — which is exactly why the note is the whole signal. A review that read
-    only the checksum renders `checksum: OK` for a run whose snapshot is gone, reporting a
-    check it never performed.
-    """
+    """FR-010 on the review path: the torn binding is named, not silently rendered clean."""
     directory = _store_with_snapshot(tmp_path)
     _snapshot_path(directory).unlink()
 
@@ -531,12 +477,7 @@ def test_a_review_of_a_run_whose_snapshot_is_absent_notes_the_tear(tmp_path: Pat
 
 
 def test_a_review_of_a_run_whose_snapshot_was_truncated_notes_both_values(tmp_path: Path) -> None:
-    """The truncation arm, whose expected and found values are both readable (FR-010).
-
-    Absent and truncated are different conditions with the same remedy, and a note that
-    said only "the snapshot does not match" would leave an operator unable to tell how far
-    it had drifted — so the recorded row count and the found one are both asserted.
-    """
+    """The truncation arm, whose expected and found values are both readable (FR-010)."""
     directory = _store_with_snapshot(tmp_path)
     write_resource_side(
         run_dir=directory,
@@ -559,13 +500,7 @@ def test_a_review_of_a_run_whose_snapshot_was_truncated_notes_both_values(tmp_pa
 
 
 def test_the_review_note_and_the_apply_refusal_report_the_same_binding(tmp_path: Path) -> None:
-    """One check, two paths (FR-010).
-
-    The point is not that the two texts are identical — the apply path refuses and review
-    annotates — but that neither can say the binding holds while the other says it is torn.
-    A review that recomputed the digest by its own rule could drift from the verifier
-    silently, and this is the case that would fail if it did.
-    """
+    """One check, two paths (FR-010)."""
     directory = _store_with_snapshot(tmp_path)
     _snapshot_path(directory).unlink()
     from infrahub_sync.plan.reader import read_plan_artifact_bytes
@@ -732,12 +667,7 @@ def test_the_new_process_had_no_adapter_environment_and_no_importable_adapter(tm
 
 
 def test_the_new_process_reads_the_not_computed_disclosure(tmp_path: Path) -> None:
-    """AD056's fields cross the process boundary, on the plan SC-009 names.
-
-    The fixture is a plan whose destination side was loaded incrementally — deletes were not
-    computed — so the not-computed wording the renderer has to show is asserted **reachable**
-    from a new process rather than assumed to be.
-    """
+    """AD056's fields cross the process boundary, on the plan SC-009 names."""
     _store(tmp_path, [operation_record()], deletes_computed=False)
 
     reported = _review_in_a_new_process(tmp_path)
@@ -754,13 +684,7 @@ def test_the_new_process_reads_the_not_computed_disclosure(tmp_path: Path) -> No
 
 
 def test_a_review_of_a_run_whose_snapshot_bytes_are_corrupt_notes_it(tmp_path: Path) -> None:
-    """Garbage bytes at the recorded snapshot path are a rendered note (AD031, FIX-003).
-
-    `pyarrow` raises `ArrowInvalid` — not an `OSError` — for a file that is not a Parquet
-    table, so without the verifier's classification this review crashes with a raw
-    traceback instead of rendering. The plan checksum does not cover the snapshot, so
-    `checksum_ok` stays true and the note is the whole signal, as in the absent case above.
-    """
+    """Garbage bytes at the recorded snapshot path are a rendered note (AD031, FIX-003)."""
     directory = _store_with_snapshot(tmp_path)
     _snapshot_path(directory).write_bytes(b"these bytes are not a Parquet table")
 

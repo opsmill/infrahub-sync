@@ -381,12 +381,7 @@ def test_a_settings_credential_reaches_none_of_the_four_scanned_surfaces(project
 
 
 def test_the_manifest_binds_the_canary_bearing_settings_without_disclosing_them(projects_root: Path) -> None:
-    """`config_version` is a digest **over** `settings`, which is exactly why it is safe (AD041).
-
-    Worth its own case: the manifest does bind the credential-bearing configuration — a
-    rotated credential invalidates saved plans — so "no canary in the artifact" is a claim
-    about the one-way digest holding, not about the settings being ignored.
-    """
+    """`config_version` is a digest **over** `settings`, which is exactly why it is safe (AD041)."""
     _write_configuration(projects_root)
     instance = get_instance(name=SYNC_NAME, directory=str(projects_root))
     assert instance is not None
@@ -439,12 +434,7 @@ def test_a_planted_canary_is_caught_on_exactly_the_surfaces_it_reaches(
 
 
 def test_every_scanned_surface_has_a_plant_that_proves_it() -> None:
-    """No surface is scanned by a matcher that has never been shown to fire.
-
-    Asserted over the same declaration the cases above are parametrized from, so a surface
-    added to `SURFACES` without a plant that reaches it fails here instead of joining the
-    scan as a permanently silent check.
-    """
+    """No surface is scanned by a matcher that has never been shown to fire."""
     proven: set[str] = set()
     for surfaces in PLANTED_CASES.values():
         proven |= set(surfaces)

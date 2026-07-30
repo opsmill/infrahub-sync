@@ -239,11 +239,7 @@ def test_identity_component_as_a_relationship_reference_satisfies_the_guard(acti
 
 @pytest.mark.parametrize("action", ["create", "update"])
 def test_identity_component_in_neither_is_rejected(action: str) -> None:
-    """AD042: the payload from `source_attrs` alone. This is the case that must not pass.
-
-    `get_attrs()` excludes `_identifiers`, so a payload built from it carries no identity
-    component; the upsert would be unkeyed and every re-apply would duplicate.
-    """
+    """AD042: the payload from `source_attrs` alone. This is the case that must not pass."""
     with pytest.raises(ValidationError) as excinfo:
         PlannedOperation(
             **_operation(action=action, kind="BuiltinTag", identity={"name": "prod"}, payload={"description": "x"})
@@ -317,11 +313,7 @@ def test_an_empty_identity_passes_the_guard_vacuously() -> None:
 
 
 def test_duplicate_relationship_reference_fields_are_rejected() -> None:
-    """Two references for one field make the replace-set write depend on reference order.
-
-    Which peer set the apply flushes would be whichever reference the loop visits last, so
-    the record is ambiguous and is refused at validation (MIN-015).
-    """
+    """Two references for one field make the replace-set write depend on reference order."""
     with pytest.raises(ValidationError) as excinfo:
         PlannedOperation(
             **_operation(
@@ -404,12 +396,7 @@ def test_distinct_reference_fields_beside_a_disjoint_payload_stay_accepted() -> 
 
 
 def test_a_scalar_identity_component_disagreeing_with_its_payload_value_is_rejected() -> None:
-    """`identity={"name": "reviewed"}` beside `payload={"name": "actually-written"}`.
-
-    Review, the operation id and the write would each describe a different object: apply
-    builds the mutation from the payload, writes the other object, then memoizes the result
-    under the reviewed identity — so a later same-run reference is wired to the wrong node.
-    """
+    """`identity={"name": "reviewed"}` beside `payload={"name": "actually-written"}`."""
     with pytest.raises(ValidationError) as excinfo:
         PlannedOperation(**_operation(identity={"name": "reviewed"}, payload={"name": "actually-written"}))
     message = str(excinfo.value)
@@ -537,11 +524,7 @@ def test_every_declared_action_is_accepted(action: str) -> None:
     ],
 )
 def test_an_action_outside_the_vocabulary_raises_the_named_error(action: str) -> None:
-    """FR-017's genuinely-unsupported class, refused while reading (AD055).
-
-    Not pydantic's `ValidationError`: the taxonomy names its own class, and the message
-    names the recorded identifier, the action found and the recognized set (AD059).
-    """
+    """FR-017's genuinely-unsupported class, refused while reading (AD055)."""
     record = _operation(action="create")
     record["action"] = action
     with pytest.raises(UnsupportedOperationActionError) as excinfo:
@@ -702,11 +685,7 @@ def test_no_field_name_expresses_a_grouping(model: type[BaseModel]) -> None:
 
 
 def test_tier_is_an_ordering_not_a_grouping() -> None:
-    """`tier` orders operations; nothing reads it as a write-unit boundary.
-
-    It is a plain non-negative integer on the operation with no companion field — no count,
-    no barrier, no membership list — so there is nothing for a consumer to group on.
-    """
+    """`tier` orders operations; nothing reads it as a write-unit boundary."""
     assert PlannedOperation.model_fields["tier"].annotation is int
     with pytest.raises(ValidationError):
         PlannedOperation(**_operation(tier=-1))
@@ -756,11 +735,7 @@ def test_planned_operation_rejects_unknown_fields() -> None:
 
 
 def test_plan_manifest_still_requires_its_declared_fields() -> None:
-    """`extra="allow"` does not make the declared fields optional.
-
-    `destination_binding` is the one exception by design: it is FIX-005's **additive**
-    field, and manifests written before it existed must keep validating (spec 002).
-    """
+    """`extra="allow"` does not make the declared fields optional."""
     for missing in PLAN_MANIFEST_FIELDS - {"destination_binding"}:
         record = _manifest()
         del record[missing]
@@ -802,11 +777,7 @@ def test_operations_count_and_row_count_are_non_negative() -> None:
     ],
 )
 def test_a_snapshot_path_that_could_escape_the_run_directory_is_refused(path: str) -> None:
-    """The manifest is operator-editable input joined onto the run directory (MIN-003).
-
-    A `..` segment or an absolute path would send the verifier to digest — and vouch for —
-    a file outside the run directory the plan claims to be bound to.
-    """
+    """The manifest is operator-editable input joined onto the run directory (MIN-003)."""
     with pytest.raises(ValidationError):
         SourceSnapshotRecord(path=path, digest="d", row_count=0)
 
@@ -875,11 +846,7 @@ def test_verification_failure_check_is_a_closed_vocabulary() -> None:
 
 
 def test_an_apply_record_renders_every_summary_key() -> None:
-    """The shape every in-repo construction site builds, and the defaults `ApplyRecord()` uses.
-
-    Every key is present on both records: an operator reading the run must be able to see
-    "nothing was applied" and "nothing failed" rather than infer them from absent keys.
-    """
+    """The shape every in-repo construction site builds, and the defaults `ApplyRecord()` uses."""
     record = ApplyRecord(applied_operations=("op_a",), skipped_delete_operations=("op_b", "op_c"))
 
     assert record.as_summary_keys() == {
@@ -899,12 +866,7 @@ def test_an_apply_record_renders_every_summary_key() -> None:
 
 
 def test_the_skipped_delete_count_cannot_be_set_apart_from_the_list_it_counts() -> None:
-    """The count is the length of the list, so no record can be built that disagrees with it.
-
-    It stays one of the serialized keys (AD062) and is derived at render time instead of
-    stored: a stored count is a second source of truth on the record that is the only account
-    of what an apply did, and the contradiction is better made unrepresentable than refused.
-    """
+    """The count is the length of the list, so no record can be built that disagrees with it."""
     with pytest.raises(TypeError, match="skipped_delete_count"):
         ApplyRecord(skipped_delete_count=2)  # ty: ignore[unknown-argument]
 
@@ -912,13 +874,7 @@ def test_the_skipped_delete_count_cannot_be_set_apart_from_the_list_it_counts() 
 
 
 def test_a_failed_operation_marks_the_record_as_possibly_partially_written() -> None:
-    """FIX-006: the failing identifier is recorded, and it implies the partial-write marker.
-
-    Applying one operation issues the base upsert before the relationship flush, so a failure
-    between them leaves the destination changed by an operation in neither recorded set. The
-    marker follows the identifier rather than being set separately, because the engine never
-    learns how far the failing call got — so the two can never disagree.
-    """
+    """FIX-006: the failing identifier is recorded, and it implies the partial-write marker."""
     failed = ApplyRecord(applied_operations=("op_a",), failed_operation="op_b")
 
     assert failed.may_have_partially_written is True

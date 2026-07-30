@@ -132,11 +132,7 @@ SENTINEL_RUN_FILE = '{"sentinel": "the CLI wrote this"}'
 
 
 def test_apply_plan_writes_no_run_file(tmp_path: Path) -> None:
-    """The engine returns the record and writes nothing — the CLI is the single writer (AD069).
-
-    A run file seeded before the apply must come back byte-identical, so an engine that wrote
-    its own record over an existing one fails here rather than passing an absence check.
-    """
+    """The engine returns the record and writes nothing — the CLI is the single writer (AD069)."""
     directory = _run_dir(tmp_path)
     write_artifact(directory, [operation_record()], run_id=RUN_ID, source_snapshot=[])
     run_file = directory / "run.json"
@@ -169,13 +165,7 @@ def test_a_destination_without_the_write_surface_is_refused_before_any_write(tmp
 
 
 def test_a_recorded_delete_is_collected_and_never_dispatched(tmp_path: Path, caplog) -> None:
-    """A delete-bearing plan applies its non-deletes and ends with the skip recorded (AD055).
-
-    Not a failure: applying deletes is out of scope for this release, so the delete is
-    collected, the create is still applied, and the count is reported at `logging.WARNING`
-    — the level `--quiet` floors the package logger at, so an `INFO` emission would vanish
-    for exactly the scripted runs where this warning is the only signal.
-    """
+    """A delete-bearing plan applies its non-deletes and ends with the skip recorded (AD055)."""
     directory = _run_dir(tmp_path)
     create = operation_record(identity={"name": "prod"})
     delete = operation_record(action="delete", identity={"name": "retired"})
@@ -201,12 +191,7 @@ def test_a_recorded_delete_is_collected_and_never_dispatched(tmp_path: Path, cap
 
 
 def test_an_action_outside_the_vocabulary_fails_before_any_dispatch(tmp_path: Path) -> None:
-    """FR-017: an operation this release cannot interpret is refused while the plan is read.
-
-    The pairing with the delete case above is the point. A delete is recorded, understood and
-    deliberately not executed; an action outside `ACTIONS` is not understood at all, so
-    continuing would mean applying part of a plan whose remainder is uninterpretable.
-    """
+    """FR-017: an operation this release cannot interpret is refused while the plan is read."""
     directory = _run_dir(tmp_path)
     records = [operation_record(identity={"name": "prod"}), operation_record(action="purge", identity={"name": "old"})]
     write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])
@@ -238,16 +223,7 @@ def test_a_changed_configuration_version_refuses_the_apply(tmp_path: Path) -> No
 
 
 def test_no_configuration_and_no_supplied_version_refuses_before_any_write(tmp_path: Path) -> None:
-    """`_apply_config_version`'s documented `ValueError`, which nothing else reaches (FR-011, AD013).
-
-    A `Potenda` built without a parsed configuration cannot recompute the comparison value,
-    so an in-process caller that also supplies none is asking for a comparison that cannot be
-    made. Refusing is not the same as comparing against a blank value: an empty comparison
-    version would still be *a* comparison, and the plan whose manifest happened to record one
-    would apply. The refusal is asserted on its own wording for that reason — degrading it to
-    `validate_config_version("")` still raises `ValueError`, just the wrong one, about the
-    wrong thing, and against a caller who supplied nothing rather than something bad.
-    """
+    """`_apply_config_version`'s documented `ValueError`, which nothing else reaches (FR-011, AD013)."""
     directory = _run_dir(tmp_path)
     write_artifact(directory, [operation_record()], run_id=RUN_ID, source_snapshot=[])
 
@@ -266,12 +242,7 @@ def test_no_configuration_and_no_supplied_version_refuses_before_any_write(tmp_p
 
 
 def test_an_empty_plan_applies_as_a_successful_no_op(tmp_path: Path) -> None:
-    """FR-022: zero operations is a success, and verification still runs first (AD033).
-
-    The surfaceless pairing is the second clause: an implementation that short-circuited an
-    empty plan before verification would return success for a destination that cannot apply a
-    plan at all, and the operator would learn nothing.
-    """
+    """FR-022: zero operations is a success, and verification still runs first (AD033)."""
     directory = _run_dir(tmp_path)
     write_artifact(directory, [], run_id=RUN_ID, source_snapshot=[])
 
@@ -290,12 +261,7 @@ def test_an_empty_plan_applies_as_a_successful_no_op(tmp_path: Path) -> None:
 
 
 def test_an_identity_value_disagreement_refuses_the_apply_before_any_destination_call(tmp_path: Path) -> None:
-    """FIX-013 at the apply boundary: the mismatched record never reaches the destination.
-
-    The checksum is valid — the artifact was *written* with the disagreement — so nothing
-    upstream of record validation can catch it. The parse refuses it as torn, after the
-    verification gate and before the first dispatch.
-    """
+    """FIX-013 at the apply boundary: the mismatched record never reaches the destination."""
     directory = _run_dir(tmp_path)
     mismatched = operation_record(identity={"name": "reviewed"}, payload={"name": "actually-written"})
     write_artifact(directory, [mismatched], run_id=RUN_ID, source_snapshot=[])
@@ -308,14 +274,7 @@ def test_an_identity_value_disagreement_refuses_the_apply_before_any_destination
 
 
 def test_a_tear_and_a_config_version_mismatch_are_both_reported_by_one_apply_attempt(tmp_path: Path) -> None:
-    """FR-009: once the gate passes, every failure is named in one refusal (AD036).
-
-    The artifact is broken **twice** — its operations file is gone and its configuration
-    version disagrees — and both are named. An apply that read the artifact before verifying
-    it raises the reader's single-condition tear instead, so the operator fixes the tear,
-    re-runs, and only then learns the configuration also changed. That second break is what
-    makes this assertion falsifiable.
-    """
+    """FR-009: once the gate passes, every failure is named in one refusal (AD036)."""
     directory = _run_dir(tmp_path)
     write_artifact(directory, [operation_record()], run_id=RUN_ID, source_snapshot=[])
     (directory / "plan" / "operations.jsonl").unlink()
@@ -332,13 +291,7 @@ def test_a_tear_and_a_config_version_mismatch_are_both_reported_by_one_apply_att
 
 
 def test_the_format_version_gate_tells_the_operator_what_it_did_not_evaluate(tmp_path: Path) -> None:
-    """FR-009's gate message, reachable from an apply and not only from a direct verify call.
-
-    An artifact whose `format_version` this release does not understand cannot have its
-    remaining fields meaningfully interpreted, so checks 2 to 5 are skipped **and the refusal
-    says so, naming them**. The configuration version below also disagrees, so an
-    implementation that evaluated everything anyway would report two failures and fail here.
-    """
+    """FR-009's gate message, reachable from an apply and not only from a direct verify call."""
     directory = _run_dir(tmp_path)
     write_artifact(directory, [operation_record()], run_id=RUN_ID, source_snapshot=[], format_version=99)
     destination = RecordingDestination()
@@ -355,12 +308,7 @@ def test_the_format_version_gate_tells_the_operator_what_it_did_not_evaluate(tmp
 
 
 def test_a_run_holding_no_plan_artifact_keeps_its_own_verdict(tmp_path: Path) -> None:
-    """FR-019's verdict is not degraded into "the manifest could not be parsed" (SC-011).
-
-    Verification now precedes the read, and the gate's first arm answers a missing manifest —
-    so without the FR-019 check standing in front of it, a run in the pre-existing row format
-    would be refused as an unreadable manifest and sent to the wrong remedy.
-    """
+    """FR-019's verdict is not degraded into "the manifest could not be parsed" (SC-011)."""
     directory = _run_dir(tmp_path)
     (directory / "plan.parquet").write_bytes(b"pre-existing row format")
     destination = RecordingDestination()
@@ -373,16 +321,7 @@ def test_a_run_holding_no_plan_artifact_keeps_its_own_verdict(tmp_path: Path) ->
 
 
 def test_an_artifact_substituted_after_verification_is_not_what_gets_applied(tmp_path: Path) -> None:
-    """The bytes verified are the bytes applied (DBR-006, DBA-004) — T097's guard, extended.
-
-    T097 fixed *which refusal fires first*; this case pins the other property of the same
-    code: verification and application consume **one** read. A structurally valid
-    replacement artifact lands on disk the instant the pre-apply gate has passed — the
-    reachable race is a concurrent `diff --run-id X` rewriting `plan/` while `apply
-    --run-id X` runs. An apply that re-read the artifact after verifying it would dispatch
-    the substituted, never-checksum-verified operations; the one-read apply dispatches
-    exactly what it verified and the replacement on disk is inert.
-    """
+    """The bytes verified are the bytes applied (DBR-006, DBA-004) — T097's guard, extended."""
     directory = _run_dir(tmp_path)
     verified = [operation_record(identity={"name": "verified"})]
     write_artifact(directory, verified, run_id=RUN_ID, source_snapshot=[])
@@ -431,14 +370,7 @@ class PartiallyWritingDestination(RecordingDestination):
 
 
 def test_a_failure_after_the_base_write_names_the_operation_and_marks_the_partial_write(tmp_path: Path) -> None:
-    """FIX-006: the record must not imply the failing operation wrote nothing.
-
-    The destination is changed by the failing operation's base upsert, and that operation is
-    in neither the applied nor the skipped-delete set — so without the identifier and the
-    marker the run undercounts the writes it caused, and the error message reads as though
-    only the earlier operations landed. Convergent re-apply (AD033) is what recovers it, which
-    the message has to say rather than leave the operator to know.
-    """
+    """FIX-006: the record must not imply the failing operation wrote nothing."""
     directory = _run_dir(tmp_path)
     records = [operation_record(identity={"name": "first"}), operation_record(identity={"name": "second"})]
     write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])
@@ -498,13 +430,7 @@ DESTINATION_REJECTIONS = (
 def test_a_known_destination_failure_is_wrapped_with_the_operation_and_run_context(
     tmp_path: Path, rejection: Exception
 ) -> None:
-    """FIX-011: inside the operational boundary, a failure becomes the named taxonomy refusal.
-
-    The four cases are the boundary's whole membership as an operator meets it — the SDK's
-    GraphQL, authentication and transport rejections, and the plan taxonomy the write surface
-    raises itself. Each has a remedy at the destination, so each is reported as one message
-    naming the operation, the run and the next action rather than as a traceback.
-    """
+    """FIX-011: inside the operational boundary, a failure becomes the named taxonomy refusal."""
     directory = _run_dir(tmp_path)
     records = [operation_record(identity={"name": "first"}), operation_record(identity={"name": "second"})]
     write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])
@@ -537,15 +463,7 @@ CODE_DEFECTS = (
 def test_a_code_defect_escapes_the_apply_unchanged_and_still_carries_the_partial_record(
     tmp_path: Path, defect: Exception
 ) -> None:
-    """FIX-011: a defect must not be presented to the operator as a destination refusal.
-
-    Wrapping these in `OperationApplyFailedError` advises repairing a destination that is
-    working, re-planning against a plan that is fine, and hides the traceback that is the only
-    diagnosis of the real fault — the first of which an operator will do, because the message
-    told them to. So the exception keeps its own type and traceback. It still has to carry the
-    record: the earlier operations are written either way, and the failing one may have written
-    part of its own change (AD062).
-    """
+    """FIX-011: a defect must not be presented to the operator as a destination refusal."""
     directory = _run_dir(tmp_path)
     records = [operation_record(identity={"name": "first"}), operation_record(identity={"name": "second"})]
     write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])
@@ -572,14 +490,7 @@ class InterruptingDestination(RecordingDestination):
 
 
 def test_an_interrupt_mid_apply_propagates_as_itself_and_carries_the_partial_record(tmp_path: Path) -> None:
-    """Ctrl-C on a long apply keeps its own type **and** the record of what was written.
-
-    Two claims, and both matter. Converting a `KeyboardInterrupt` into
-    `OperationApplyFailedError` would swallow the one signal an operator expects to stop the
-    process, so the type is asserted. Re-raising it bare would lose the operations already
-    written, which the caller has no other way to learn — so the partial record riding on the
-    exception is asserted too (AD062, AD069).
-    """
+    """Ctrl-C on a long apply keeps its own type **and** the record of what was written."""
     directory = _run_dir(tmp_path)
     records = [operation_record(identity={"name": "first"}), operation_record(identity={"name": "second"})]
     write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])
@@ -597,13 +508,7 @@ def test_an_interrupt_mid_apply_propagates_as_itself_and_carries_the_partial_rec
 
 
 def test_the_invariant_error_carries_the_record_of_what_was_actually_written(tmp_path: Path) -> None:
-    """AD062's safety net must not zero the record it exists to protect.
-
-    The check runs *after* the loop wrote every non-delete operation, so an error carrying an
-    empty record would report a run that wrote everything as having applied nothing — and
-    invite a re-apply against a populated destination. The manifest's count is inflated here
-    because that is the only clause of the invariant a well-formed artifact can violate.
-    """
+    """AD062's safety net must not zero the record it exists to protect."""
     directory = _run_dir(tmp_path)
     records = [operation_record(identity={"name": "first"}), operation_record(identity={"name": "second"})]
     write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])

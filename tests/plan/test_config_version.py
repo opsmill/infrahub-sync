@@ -267,11 +267,7 @@ def test_empty_and_non_printable_supplied_values_are_rejected(supplied: str) -> 
 
 
 def test_a_trailing_newline_is_rejected_rather_than_matched_by_dollar() -> None:
-    """`re.fullmatch` must consume the whole string, so `$`'s before-LF quirk cannot apply.
-
-    This is the one regex hazard the module calls out; without the case, switching to
-    `re.match(CONFIG_VERSION_PATTERN, value)` would pass the suite.
-    """
+    """`re.fullmatch` must consume the whole string, so `$`'s before-LF quirk cannot apply."""
     with pytest.raises(ValueError):
         validate_config_version("v1\n")
     assert validate_config_version("v1") == "v1"
@@ -361,14 +357,7 @@ def _apply_with(run_directory: Path, *, config_version: str) -> tuple[str, NoOpP
 
 
 def test_an_opaque_supplied_version_round_trips_the_manifest_and_applies_verbatim(tmp_path: Path) -> None:
-    """SC-013: supplied by an in-process caller, stored byte for byte, matched by equality.
-
-    Three hops, each of which is somewhere a value gets normalised by accident: the model's
-    validation, the canonical JSON encoding of the manifest, and the apply-time comparison.
-    The stored bytes are asserted directly, not just the parsed field, because a normalization
-    applied on the way **in** and undone on the way **out** would leave the parsed value
-    correct and the artifact wrong for every other reader.
-    """
+    """SC-013: supplied by an in-process caller, stored byte for byte, matched by equality."""
     directory = tmp_path / RUN_ID
     directory.mkdir(parents=True)
 
@@ -389,14 +378,7 @@ def test_an_opaque_supplied_version_round_trips_the_manifest_and_applies_verbati
 
 @pytest.mark.parametrize("comparison", NORMALIZED_FORMS)
 def test_a_normalized_form_of_the_stored_version_is_refused(tmp_path: Path, comparison: str) -> None:
-    """FR-011/AD013: the comparison is equality on the raw value, never a parse.
-
-    Every parameter here is what some plausible interpretation of the stored value produces,
-    and every one is a **different string**. An implementation that trimmed, folded case,
-    collapsed whitespace or parsed the value as a version would accept at least one of them
-    and apply a plan bound to a configuration the operator no longer has — which is precisely
-    the mismatch SC-004's sibling case exists to catch.
-    """
+    """FR-011/AD013: the comparison is equality on the raw value, never a parse."""
     directory = tmp_path / RUN_ID
     directory.mkdir(parents=True)
     _store_plan(directory, config_version=OPAQUE_VERSION)

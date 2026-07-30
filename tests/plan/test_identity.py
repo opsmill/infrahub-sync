@@ -135,11 +135,7 @@ def test_identifier_is_stable_across_re_derivation() -> None:
 
 
 def test_identifier_is_unchanged_when_only_the_payload_changes() -> None:
-    """The payload is not an input (AD002): the identifier names the logical operation.
-
-    `operation_id` takes no payload argument at all, so the check is that two operations
-    over the same triple — which is what differing payloads reduce to — collide by design.
-    """
+    """The payload is not an input (AD002): the identifier names the logical operation."""
     identity = {"name": "dev1"}
     before = operation_id("update", "DcimDevice", identity)
     after = operation_id("update", "DcimDevice", identity)

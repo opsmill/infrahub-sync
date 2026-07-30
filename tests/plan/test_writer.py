@@ -262,13 +262,7 @@ def test_the_manifest_is_absent_until_the_operations_file_is_complete(
 def test_a_cleanup_failure_never_replaces_the_error_that_tore_the_write(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """MIN-025: the tmp-file cleanup is best-effort and must stay that way.
-
-    `replace` fails (the disk-full shape that explains the torn artifact), then `unlink`
-    fails too (permissions shifted underneath). The operator's error must be the replace
-    failure; a cleanup `PermissionError` that superseded it would hide why the artifact
-    is torn.
-    """
+    """MIN-025: the tmp-file cleanup is best-effort and must stay that way."""
 
     def _failing_replace(self: Path, target: object) -> None:  # noqa: ARG001 — the target is irrelevant to the failure
         msg = "simulated replace failure: no space left on device"
@@ -291,14 +285,7 @@ def test_a_cleanup_failure_never_replaces_the_error_that_tore_the_write(
 
 
 def test_a_committed_plan_generation_is_never_overwritten(tmp_path: Path) -> None:
-    """FIX-010: a run id whose manifest exists is refused, and its bytes stay untouched.
-
-    The plan a human reviewed has to stay the plan that is applied. Rewriting `plan/` in
-    place produced a *different* plan that verifies just as cleanly under the same run id,
-    so the second write is refused rather than reconciled — and the refusal is asserted
-    against the bytes on disk, because a refusal that still replaced the operations file
-    would leave the reviewed checksum describing nothing.
-    """
+    """FIX-010: a run id whose manifest exists is refused, and its bytes stay untouched."""
     _write(tmp_path, [_tag("prod")])
     before = (_operations_path(tmp_path).read_bytes(), _manifest_path(tmp_path).read_bytes())
 
@@ -313,12 +300,7 @@ def test_a_committed_plan_generation_is_never_overwritten(tmp_path: Path) -> Non
 def test_a_generation_whose_manifest_was_never_published_stays_writable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The refusal keys on the manifest alone, so a first-write crash stays retryable.
-
-    The manifest is the commit point (AD014): a run left holding an operations file and no
-    manifest committed nothing, so the same run id must still accept a write. Keying the
-    refusal on the `plan/` directory instead would strand exactly the runs a crash produced.
-    """
+    """The refusal keys on the manifest alone, so a first-write crash stays retryable."""
     real = writer._atomic_write_bytes
 
     def _fail_at_the_manifest(path: Path, payload: bytes) -> None:
@@ -343,13 +325,7 @@ def test_a_generation_whose_manifest_was_never_published_stays_writable(
 def test_the_refusal_precedes_the_first_write_of_the_new_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Nothing of the refused generation is written, not even the operations file.
-
-    Asserted at the write helper rather than only over the resulting bytes: an
-    implementation that wrote the new operations file and *then* noticed the manifest would
-    leave the committed plan's checksum describing bytes that are gone, which is the state
-    FIX-010 exists to make unreachable.
-    """
+    """Nothing of the refused generation is written, not even the operations file."""
     _write(tmp_path, [_tag("prod")])
     calls: list[str] = []
     real = writer._atomic_write_bytes
@@ -733,12 +709,7 @@ def test_the_manifest_carries_no_key_outside_the_permitted_set(tmp_path: Path) -
 
 
 def test_no_written_key_reads_as_a_write_unit_grouping(tmp_path: Path) -> None:
-    """Names the rule FR-026 states, so a future failure reads as the rule it broke.
-
-    The enumerations above are what bite; this says *why* they are enumerated. Only the
-    structural keys are swept — a payload attribute or an identity component is source data
-    and may legitimately be called anything.
-    """
+    """Names the rule FR-026 states, so a future failure reads as the rule it broke."""
     _write(tmp_path, _all_shapes())
 
     structural: set[str] = set(json.loads(_manifest_path(tmp_path).read_text(encoding="utf-8")))

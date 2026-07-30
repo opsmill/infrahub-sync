@@ -73,12 +73,7 @@ def test_pd002_table_row(value: Any, expected: Any) -> None:  # noqa: ANN401 —
     [pytest.param(value, expected, id=label) for label, value, expected in PD002_ROWS],
 )
 def test_pd002_table_row_is_idempotent(value: Any, expected: Any) -> None:  # noqa: ANN401 — see above
-    """Normalizing an already-normalized value is a no-op.
-
-    `canonical_json_bytes` normalizes before encoding, so a caller that normalized first
-    must not get a different result — otherwise double normalization would be a silent
-    determinism hazard.
-    """
+    """Normalizing an already-normalized value is a no-op."""
     assert canonical_value(canonical_value(value)) == expected
 
 
@@ -145,11 +140,7 @@ def test_payload_list_attribute_keeps_source_order() -> None:
 
 
 def test_two_list_orders_are_two_different_payloads() -> None:
-    """Reordering a list changes the bytes — proof the list is not being normalized away.
-
-    Without this the "source order preserved" assertion above could pass against an
-    implementation that sorted, if the fixture happened to be sorted already.
-    """
+    """Reordering a list changes the bytes — proof the list is not being normalized away."""
     first = canonical_json_bytes({"tags": ["a", "b"]})
     second = canonical_json_bytes({"tags": ["b", "a"]})
     assert first != second
@@ -236,12 +227,7 @@ def test_failure_inside_a_list_names_the_index() -> None:
     ],
 )
 def test_a_non_finite_float_is_refused_rather_than_encoded(value: float) -> None:
-    """MIN-001: `NaN`/`Infinity` pass the type table as floats, but have no JSON encoding.
-
-    `json.dumps`'s default `allow_nan=True` would emit the literal `NaN`/`Infinity` —
-    invalid JSON — into a file the contract calls canonical, so the encoder refuses with
-    the same named error as any other unencodable value.
-    """
+    """MIN-001: `NaN`/`Infinity` pass the type table as floats, but have no JSON encoding."""
     with pytest.raises(UnserializablePayloadValueError):
         canonical_json_bytes({"metric": value})
 

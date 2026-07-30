@@ -366,13 +366,7 @@ def test_sc009_cli_case_renders_from_a_stored_artifact(
     options: tuple[str, ...],
     deletes_computed: bool,  # noqa: FBT001 — a parametrized case discriminator, not a caller-facing switch
 ) -> None:
-    """Each of SC-009's CLI cases renders, and states its delete-computation record (AD056).
-
-    The disclosure assertion is inside every case on purpose: SC-009's pass condition is not
-    "the counts are right", it is "the counts are right **and** both depths state the
-    delete-computation record". A case that only checked the counts would pass against a
-    renderer that dropped the disclosure entirely.
-    """
+    """Each of SC-009's CLI cases renders, and states its delete-computation record (AD056)."""
     run_id = RUN_ID if deletes_computed else INCREMENTAL_RUN_ID
 
     result = _review("--from-plan", run_id, *options)
@@ -461,13 +455,7 @@ NESTED_PEER_DETAIL = (
 
 
 def test_the_cli_detail_renders_a_nested_peer_identity_recursively(tmp_path: Path) -> None:
-    """AD043's identity shapes, as `--detail` renders them (FR-006, AD020).
-
-    The identity of a relationship-bearing operation is not flat: a component that crosses a
-    reference is a `{peer_kind, identity}` pair, recursively. SC-005 compares the apply
-    against what this listing showed, so an identity rendered as `{...}` — or with its
-    nesting flattened away — is an operator approving an object they cannot name.
-    """
+    """AD043's identity shapes, as `--detail` renders them (FR-006, AD020)."""
     _store(tmp_path, NESTED_PEER_PLAN, run_id=OTHER_RUN_ID)
 
     result = _review("--from-plan", OTHER_RUN_ID, "--detail")
@@ -523,14 +511,7 @@ def _detail_of(tmp_path: Path, records: tuple[dict[str, Any], ...], *, run_id: s
 
 
 def test_two_operations_differing_only_in_payload_render_differently(tmp_path: Path) -> None:
-    """FIX-012 (IHR-02), as the reviewer reproduced it: `role=router` versus `role=server`.
-
-    The two operations share an identifier — the identity is the same object and the payload
-    is deliberately excluded from the hash — so the record lines are identical by design. What
-    must differ is the desired state beneath them, and both values are asserted present rather
-    than only that the outputs differ: an implementation that rendered `<payload>` for
-    everything would make them differ from nothing.
-    """
+    """FIX-012 (IHR-02), as the reviewer reproduced it: `role=router` versus `role=server`."""
     first = _detail_of(tmp_path, _payload_variant(role="router"), run_id=RUN_ID)
     second = _detail_of(tmp_path, _payload_variant(role="server"), run_id=OTHER_RUN_ID)
 
@@ -541,12 +522,7 @@ def test_two_operations_differing_only_in_payload_render_differently(tmp_path: P
 
 
 def test_two_operations_differing_only_in_their_peer_set_render_differently(tmp_path: Path) -> None:
-    """The relationship half: peer kind and every peer's identity, per relationship field.
-
-    A peer set is as much of the change being approved as a scalar is — and the empty
-    cardinality-many set is a value the apply writes, not the absence of one (FR-028.2), so it
-    is spelled out rather than rendered as nothing.
-    """
+    """The relationship half: peer kind and every peer's identity, per relationship field."""
     two_peers = _detail_of(tmp_path, _peer_variant("edge", "prod"), run_id=RUN_ID)
     one_peer = _detail_of(tmp_path, _peer_variant("edge"), run_id=OTHER_RUN_ID)
     emptied = _detail_of(tmp_path, _peer_variant(), run_id="20260728T0000-cccccccc")
@@ -558,12 +534,7 @@ def test_two_operations_differing_only_in_their_peer_set_render_differently(tmp_
 
 
 def test_the_desired_state_is_labelled_as_desired_state_and_not_as_a_diff(tmp_path: Path) -> None:
-    """The label is part of the fix: the plan holds nothing about the destination's current state.
-
-    Rendering these values without saying what they are would invite reading them as a diff —
-    a comparison the artifact never recorded — which is a worse misreading than showing
-    nothing at all.
-    """
+    """The label is part of the fix: the plan holds nothing about the destination's current state."""
     output = _flat(_detail_of(tmp_path, _payload_variant(role="router"), run_id=RUN_ID))
 
     assert "desired destination state" in output
@@ -571,13 +542,7 @@ def test_the_desired_state_is_labelled_as_desired_state_and_not_as_a_diff(tmp_pa
 
 
 def test_a_credential_shaped_field_name_is_redacted_while_its_siblings_render(tmp_path: Path) -> None:
-    """The redaction policy, stated rather than implied — and scoped rather than total.
-
-    Suppressing every value was the behavior FIX-012 replaced; suppressing none of them would
-    print a credential that reached a payload through source data. The policy is by field
-    name, at every nesting level, and the field is still **listed** so a reviewer sees that
-    something is being written to it.
-    """
+    """The redaction policy, stated rather than implied — and scoped rather than total."""
     output = _detail_of(
         tmp_path,
         _payload_variant(
@@ -597,11 +562,7 @@ def test_a_credential_shaped_field_name_is_redacted_while_its_siblings_render(tm
 
 
 def test_an_overlong_value_is_elided_and_says_it_was(tmp_path: Path) -> None:
-    """Elision is a readability bound and is rendered distinguishably from a redaction.
-
-    A reviewer must be able to tell "this value is long" from "this value is withheld": the
-    two carry different follow-up actions, so they must not share a rendering.
-    """
+    """Elision is a readability bound and is rendered distinguishably from a redaction."""
     output = _detail_of(tmp_path, _payload_variant(description="x" * 500), run_id=RUN_ID)
 
     assert "elided, 500 characters" in output
@@ -609,12 +570,7 @@ def test_an_overlong_value_is_elided_and_says_it_was(tmp_path: Path) -> None:
 
 
 def test_a_delete_record_renders_no_desired_state(tmp_path: Path) -> None:
-    """A delete carries no payload by construction, so there is nothing to show beneath it.
-
-    Worth pinning: a renderer that printed an empty `desired destination state` block under
-    every delete would suggest a delete writes something, which is the opposite of what this
-    release does with one (AD055).
-    """
+    """A delete carries no payload by construction, so there is nothing to show beneath it."""
     output = _detail_of(tmp_path, (operation_record(action="delete", identity={"name": "retired"}),), run_id=RUN_ID)
 
     record_lines = [line for line in output.splitlines() if line.startswith("op_")]
@@ -661,13 +617,7 @@ def test_a_computed_plan_with_deletes_discloses_them_at_both_depths(tmp_path: Pa
 
 
 def test_the_delete_note_does_not_promise_markers_a_kind_filter_removed(tmp_path: Path) -> None:
-    """MIN-006 (spec 002): the note's promise has to survive `--kind` narrowing the listing.
-
-    The note is plan-wide — its count is what the apply will skip — while the listing beneath it
-    is whatever `--kind` selected. Promising markers "in the --detail listing" was therefore
-    false for exactly the invocation that shows no delete record at all, which is a disclosure
-    an operator can check and find missing.
-    """
+    """MIN-006 (spec 002): the note's promise has to survive `--kind` narrowing the listing."""
     _store(tmp_path, MIXED_PLAN, deletes_computed=True)
 
     result = _review("--from-plan", RUN_ID, "--detail", "--kind", "LocationSite")
@@ -680,11 +630,7 @@ def test_the_delete_note_does_not_promise_markers_a_kind_filter_removed(tmp_path
 
 
 def test_a_computed_plan_without_deletes_carries_no_not_executed_annotation(tmp_path: Path) -> None:
-    """(b) The annotation is conditional, not unconditional noise.
-
-    Paired with (a) on purpose: an implementation that printed the annotation always would
-    pass (a) and fail here, which is the only way to tell "disclosed" from "boilerplate".
-    """
+    """(b) The annotation is conditional, not unconditional noise."""
     _store(tmp_path, DELETELESS_PLAN, deletes_computed=True)
 
     summary, detail = _both_depths(RUN_ID)
@@ -697,12 +643,7 @@ def test_a_computed_plan_without_deletes_carries_no_not_executed_annotation(tmp_
 
 
 def test_a_plan_whose_deletes_were_not_computed_says_so_in_words_at_both_depths(tmp_path: Path) -> None:
-    """(c) The not-computed wording, and its distinctness from (b)'s output.
-
-    The whole point of AD056 is that "this plan has no deletes" and "nobody looked for
-    deletes" must not read alike, so the two renderings are compared against each other
-    rather than each being checked in isolation.
-    """
+    """(c) The not-computed wording, and its distinctness from (b)'s output."""
     _store(tmp_path, DELETELESS_PLAN, deletes_computed=False)
     not_computed_summary, not_computed_detail = _both_depths(RUN_ID)
 
@@ -723,11 +664,7 @@ def test_a_plan_whose_deletes_were_not_computed_says_so_in_words_at_both_depths(
 
 
 def test_the_in_process_reader_carries_both_disclosure_fields(tmp_path: Path) -> None:
-    """(d) The CLI and the in-process reader disclose from **one** source (FR-029, AD056).
-
-    Without this the two surfaces could disagree, and SC-009's four cases would be measuring
-    two implementations rather than one.
-    """
+    """(d) The CLI and the in-process reader disclose from **one** source (FR-029, AD056)."""
     from infrahub_sync.plan import read_saved_plan
 
     _store(tmp_path, MIXED_PLAN, deletes_computed=True)
@@ -785,12 +722,7 @@ def test_an_unknown_run_identifier_names_it_the_path_the_stored_runs_and_the_nex
 def test_an_unknown_run_identifier_is_never_presented_as_a_zero_operation_plan(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The refusal is a refusal, not an empty rendering (AD021).
-
-    Its own test because the failure mode is silence: a mode that created the run directory
-    before checking would render a mistyped identifier as a valid plan with nothing in it,
-    and every assertion about the message above would still hold on the *other* cases.
-    """
+    """The refusal is a refusal, not an empty rendering (AD021)."""
     _store(tmp_path)
 
     with caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"):
@@ -805,12 +737,7 @@ def test_an_unknown_run_identifier_is_never_presented_as_a_zero_operation_plan(
 def test_a_sync_whose_cache_root_does_not_exist_gets_the_no_runs_message(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """AD073's first-run arm: a stated message, not a `FileNotFoundError` traceback.
-
-    `cache_root_for` computes a path and neither creates nor checks it, so an unguarded
-    listing raises on a sync that has never run — which is precisely the operator most likely
-    to reach for `--from-plan` before ever having produced a plan.
-    """
+    """AD073's first-run arm: a stated message, not a `FileNotFoundError` traceback."""
     assert not _cache_root(tmp_path).exists()
 
     message = _failed_review(caplog, "--from-plan", RUN_ID)
@@ -856,13 +783,7 @@ def test_the_run_identifier_enumeration_is_bounded_and_states_the_total(
 def test_a_run_with_no_plan_directory_errors_with_the_re_plan_message(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """FR-019: a run with no `plan/` directory has nothing to review.
-
-    The verdict keys on the absent directory, and the message says so without asserting which
-    of its causes applies: a run predating the format, a `diff` that failed before the writer,
-    and a run directory archived without its `plan/` all arrive here, and an operator told only
-    "the run predates the format" is sent to diagnose the wrong one (MIN-016).
-    """
+    """FR-019: a run with no `plan/` directory has nothing to review."""
     directory = _run_directory(tmp_path)
     (directory / "plan.parquet").write_bytes(b"pre-existing row format")
 
@@ -940,8 +861,7 @@ def test_a_declared_kind_the_plan_holds_no_operation_for_lists_the_kinds_it_does
 def test_an_undeclared_kind_errors_the_same_way_from_the_reader(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """AD058's reader arm. Paired with the case above so an implementation that raised for
-    both — the behaviour AD058 corrected — cannot satisfy the pair."""
+    """AD058's reader arm."""
     _store(tmp_path)
 
     message = _failed_review(caplog, "--from-plan", RUN_ID, "--detail", "--kind", UNDECLARED_KIND)
@@ -954,19 +874,7 @@ def test_an_undeclared_kind_errors_the_same_way_from_the_reader(
 def test_a_kind_the_plan_holds_but_the_configuration_omits_errors_at_the_cli(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """T104's CLI arm: the case the two above cannot reach.
-
-    Both cases above use a kind the plan does not hold, so neither can distinguish the
-    specified single condition — "the configuration does not declare it" — from a conjunction
-    that also requires the plan not to hold it. Here the plan *does* hold operations for the
-    undeclared kind, which is the state a review is designed to render: review deliberately
-    does not verify the configuration version (AD031), so a plan written before an entry was
-    dropped from `schema_mapping` is read against a configuration that no longer declares it.
-
-    The renderer cannot recover the obligation on its own — `_select_review_records` turns only
-    an **empty** reader result into FR-006's error, so under the conjunction these operations
-    would print as ordinary per-object detail for a kind this synchronization does not have.
-    """
+    """T104's CLI arm: the case the two above cannot reach."""
     _store(tmp_path, [*MIXED_PLAN, operation_record(kind=UNDECLARED_KIND, identity={"name": "held"})])
 
     message = _failed_review(caplog, "--from-plan", RUN_ID, "--detail", "--kind", UNDECLARED_KIND)
@@ -1005,8 +913,7 @@ def test_a_missing_option_prerequisite_is_enforced_and_not_silently_ignored(
 def test_run_id_alongside_from_plan_is_ignored_with_a_warning_naming_the_selected_run(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The one ignored option this mode warns about, because it is the only other one that
-    names a run (AD057). The run actually read is asserted, not only the warning."""
+    """The one ignored option this mode warns about, because it is the only other one that names a run (AD057)."""
     _store(tmp_path, MIXED_PLAN, run_id=RUN_ID)
     _store(tmp_path, DELETELESS_PLAN, run_id=OTHER_RUN_ID)
 
@@ -1028,12 +935,7 @@ def test_run_id_alongside_from_plan_is_ignored_with_a_warning_naming_the_selecte
 def test_an_operation_whose_action_is_outside_the_vocabulary_refuses_the_review(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The one bound on "review renders rather than refuses" (AD055).
-
-    Asserted here as well as at T026 because it is a *bound*, and an untested bound is one a
-    later tidy-up removes: a plan whose operation vocabulary this release cannot interpret
-    cannot be honestly summarized either.
-    """
+    """The one bound on "review renders rather than refuses" (AD055)."""
     _store(tmp_path, [operation_record(action="purge", identity={"name": "prod"})])
 
     message = _failed_review(caplog, "--from-plan", RUN_ID)
@@ -1044,11 +946,7 @@ def test_an_operation_whose_action_is_outside_the_vocabulary_refuses_the_review(
 
 
 def test_a_plan_that_would_fail_verification_is_still_rendered(tmp_path: Path) -> None:
-    """AD031's other half, kept next to the refusal above so the pair cannot be collapsed.
-
-    A checksum that does not verify is a *verification* failure, which review reports and
-    renders around; an unrecognized action is not, and review refuses it.
-    """
+    """AD031's other half, kept next to the refusal above so the pair cannot be collapsed."""
     directory = _store(tmp_path, [tamperable_operation()])
     tamper_with_operations(directory)
 
@@ -1072,12 +970,7 @@ LOCK_FREE_SECONDS = 20.0
 
 
 def test_the_review_path_constructs_no_adapter(tmp_path: Path, adapter_construction_log: list[dict[str, Any]]) -> None:
-    """FR-008 and SC-009: the mode branches above `get_potenda_from_instance`.
-
-    The sentinel raises if it is reached, so this asserts the call log is empty **and** that
-    the command succeeded — a review that constructed an adapter would fail rather than pass
-    quietly, and a review that succeeded without touching the sentinel is the positive half.
-    """
+    """FR-008 and SC-009: the mode branches above `get_potenda_from_instance`."""
     _store(tmp_path)
 
     result = _review("--from-plan", RUN_ID, "--detail")
@@ -1087,12 +980,7 @@ def test_the_review_path_constructs_no_adapter(tmp_path: Path, adapter_construct
 
 
 def test_the_review_path_creates_nothing_under_the_cache_root(tmp_path: Path) -> None:
-    """No run directory, no `run.json`, no cached rendering — the whole subtree is unchanged.
-
-    Asserted over the subtree rather than over `run.json` alone: branching above
-    `get_potenda_from_instance` is what stops a typo'd run id rendering as a valid
-    zero-operation plan, and that guarantee is about the directory, not about one file.
-    """
+    """No run directory, no `run.json`, no cached rendering — the whole subtree is unchanged."""
     _store(tmp_path)
     before = _tree(_cache_root(tmp_path))
 
@@ -1112,12 +1000,7 @@ def test_the_review_path_creates_nothing_under_the_cache_root(tmp_path: Path) ->
 
 
 def test_the_review_path_is_not_blocked_by_a_held_pipeline_lock(tmp_path: Path) -> None:
-    """AD021: review neither blocks nor is blocked by a running sync.
-
-    The lock is genuinely held for the duration — proven by a second acquisition attempt
-    timing out — so a review that took it would sit for the full 60-second timeout and fail
-    the bound below instead of passing on an unlocked cache.
-    """
+    """AD021: review neither blocks nor is blocked by a running sync."""
     _store(tmp_path)
     lock_path = _cache_root(tmp_path) / ".lock"
     holder = FileLock(str(lock_path), timeout=0.5)
@@ -1282,12 +1165,7 @@ TAXONOMY_CASES: dict[str, Callable[[], PlanArtifactError]] = {
 
 @pytest.mark.parametrize("build", list(TAXONOMY_CASES.values()), ids=list(TAXONOMY_CASES))
 def test_every_taxonomy_entry_names_a_next_action(build: Callable[[], PlanArtifactError]) -> None:
-    """AD059 over the declared taxonomy, message included.
-
-    The containment half matters as much as the presence half: the CLI renders `str(exc)`
-    (`print_error_and_abort(str(exc))`), so a `next_action` attribute the message did not
-    carry would satisfy a presence-only assertion and still reach the operator as a dead end.
-    """
+    """AD059 over the declared taxonomy, message included."""
     error = build()
 
     assert error.next_action.strip()
@@ -1331,12 +1209,7 @@ def test_a_subclass_without_a_next_action_cannot_be_constructed() -> None:
 
 
 def test_the_two_source_peer_conditions_carry_textually_distinct_next_actions() -> None:
-    """AD082: one class, two conditions, two remedies.
-
-    The absent-case remedy is *wrong* for the ambiguous case — nothing is missing there, the
-    same unique-id resolved in two buckets — so routing an operator at a condition they do
-    not have is the dead end AD059 exists to remove.
-    """
+    """AD082: one class, two conditions, two remedies."""
     absent = SourcePeerUnresolvedError.absent("Peer 'p' is absent from the source store.")
     ambiguous = SourcePeerUnresolvedError.ambiguous("Peer 'p' resolved in two candidate kinds.")
 
@@ -1364,12 +1237,7 @@ TRAVERSAL_RUN_IDS = ("../evil", "/tmp/evil")  # noqa: S108 — a literal in a re
 def test_a_traversal_shaped_run_id_is_refused_as_one_line_on_the_review_path(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, run_id: str
 ) -> None:
-    """FIX-004 (spec 002): the guard's `ValueError` reaches the operator as a designed refusal.
-
-    Safe before and after — nothing is written and the exit code is non-zero either way — but a
-    rich traceback is not this feature's error contract, and the value is easy to produce by
-    pasting a run path where a run id goes, which the `Cached run <id> at <dir>` line invites.
-    """
+    """FIX-004 (spec 002): the guard's `ValueError` reaches the operator as a designed refusal."""
     _store(tmp_path)
 
     with caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"):
@@ -1389,11 +1257,7 @@ def test_a_traversal_shaped_run_id_is_refused_as_one_line_on_the_review_path(
 def test_a_traversal_shaped_run_id_is_refused_as_one_line_on_the_apply_path(
     tmp_path: Path, destination_double: RecordingDestination, caplog: pytest.LogCaptureFixture, run_id: str
 ) -> None:
-    """The same verdict from the other command, which is why the translation is at one site.
-
-    Both guards catch only `PlanArtifactError`, so a `ValueError` raised beneath them escaped
-    from *both*; translating it inside `require_stored_run` is what fixes the pair at once.
-    """
+    """The same verdict from the other command, which is why the translation is at one site."""
     _appliable_run(tmp_path)
     constructed: list[str] = []
 
@@ -1745,21 +1609,7 @@ def test_an_apply_refusal_writes_nothing_and_records_failed(
     mutate: Callable[[Path], tuple[str, ...]],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Every refusal: named cause, its next action, zero writes, and `failed` on disk.
-
-    The zero-writes and run-state halves of SC-004, SC-011, SC-015 and SC-018 live here
-    rather than with the Phase C unit tests, because no apply exists in that phase and a
-    verifier's return value cannot evidence a destination that was never touched.
-
-    The recorded fields are read back **as present and empty** rather than checked for
-    absence: "nothing was applied" must be readable from the run, not inferred from a missing
-    key (AD062).
-
-    The message is read from the **operator-facing channel** rather than from the exception,
-    because how a designed refusal arrives is part of what is being asserted: each of these
-    is a decision the tool made on purpose and names its own remedy for, so it reaches the
-    operator as that one line and not as a stack trace out of `apply_plan` (AD059).
-    """
+    """Every refusal: named cause, its next action, zero writes, and `failed` on disk."""
     expected_fragments = mutate(tmp_path)
 
     with caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"):
@@ -1788,13 +1638,7 @@ LIVE_BINDING = DestinationBindingRecord(url="http://live.example:8000", branch="
 def test_an_apply_to_a_drifted_destination_refuses_with_the_binding_message(
     tmp_path: Path, destination_double: RecordingDestination, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """FIX-005 (spec 002): the plan is bound to its effective destination, and a mismatch refuses.
-
-    The manifest records the resolved endpoint the plan was computed against; the live
-    destination exposes a different one, so the apply refuses before any write, names both
-    values, and names the override — the same operator-facing channel and run-state
-    discipline as every other designed refusal above (AD059, AD062).
-    """
+    """FIX-005 (spec 002): the plan is bound to its effective destination, and a mismatch refuses."""
     _appliable_run(tmp_path, destination_binding=RECORDED_BINDING)
     destination_double.destination_binding = LIVE_BINDING
 
@@ -1857,13 +1701,7 @@ def test_a_plan_without_a_recorded_binding_applies_to_any_destination(
 def test_a_v1_plan_is_refused_before_anything_is_constructed(
     tmp_path: Path, destination_double: RecordingDestination
 ) -> None:
-    """SC-011, under AD026's rule that this refusal creates nothing.
-
-    The run-state half of the other refusals deliberately does **not** apply here: the
-    contract's `apply` table requires this case to create **no run directory**, so there is
-    no sidecar to record `failed` in — and a test that demanded one would be demanding the
-    directory AD026 forbids.
-    """
+    """SC-011, under AD026's rule that this refusal creates nothing."""
     directory = _run_directory(tmp_path)
     (directory / "plan.parquet").write_bytes(b"pre-existing row format")
     before = _tree(_cache_root(tmp_path))
@@ -1912,11 +1750,7 @@ def test_the_v1_message_differs_from_the_unrecognized_version_message(
 def test_a_missing_run_refuses_naming_the_runs_that_exist_and_creates_no_directory(
     tmp_path: Path, destination_double: RecordingDestination, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """AD026, AD059 and AD073 on the apply path, guarded exactly as review's are.
-
-    Both verdicts come from the same functions the review path reaches, so the enumeration
-    and the next action cannot drift between the two commands an operator meets them from.
-    """
+    """AD026, AD059 and AD073 on the apply path, guarded exactly as review's are."""
     _appliable_run(tmp_path)
     before = _tree(_cache_root(tmp_path))
     constructed: list[str] = []
@@ -1965,15 +1799,7 @@ def _side_sensitive_import(destination: RecordingDestination, *, allow_source: b
 def test_apply_assembles_no_source_adapter_and_still_applies(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, destination_double: RecordingDestination
 ) -> None:
-    """The real assembly seam constructs the destination only.
-
-    No seam is patched here: the command runs through the real `PlanApplier.open_existing`,
-    and `import_adapter` **raises if asked for the source** while yielding the recording
-    destination — so this apply succeeding is the proof that a host with destination
-    credentials but no source dependency or token can apply a reviewed plan. The shared
-    diff/sync factory imports and constructs both adapters, so routing apply through it
-    fails this case before verification is even reached.
-    """
+    """The real assembly seam constructs the destination only."""
     _appliable_run(tmp_path)
     monkeypatch.setattr("infrahub_sync.utils.import_adapter", _side_sensitive_import(destination_double))
 
@@ -2001,14 +1827,7 @@ class SchemaBearingDestination(RecordingDestination):
 def test_apply_leaves_the_stored_schema_sub_hash_byte_identical(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The stored run's sidecars are immutable extraction provenance.
-
-    Asserted through **both** outcomes — a designed refusal and a successful apply — because
-    the clobbering happened at assembly time, before either outcome was decided: the shared
-    diff/sync factory recomputed `schema-sub-hash.txt` from the live destination and wrote
-    it into the stored run before anything compared it, erasing the recorded provenance a
-    stored-vs-live comparison would need.
-    """
+    """The stored run's sidecars are immutable extraction provenance."""
     seeded = b"OLD\n"
     destination = SchemaBearingDestination()
     monkeypatch.setattr("infrahub_sync.utils.import_adapter", _side_sensitive_import(destination, allow_source=True))
@@ -2035,27 +1854,7 @@ def test_apply_leaves_the_stored_schema_sub_hash_byte_identical(
 def test_a_delete_bearing_plan_applies_exits_zero_and_records_the_skipped_deletes(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """SC-007's **local half** and AD055 on the CLI path — and AD069's merge, from `run.json`.
-
-    Scoped, because SC-007 is evidenced against a live destination: object counts before and
-    after, and the direct assertion that each delete's target object is still present. Neither
-    is expressible against the in-memory double below. What this case carries is the rest of the
-    criterion's evidence list — the recorded run state, the recorded skipped-delete count and
-    identifiers, the closure of applied plus skipped over the plan, the warning at a level
-    `--quiet` does not suppress, and the command's own completion line. The live half is
-    `tests/integration/test_saved_plan_apply_integration.py`.
-
-    This is the case that would have caught the collision. `apply_plan` returns the record
-    and writes no run file; `RunFile.save()` writes the whole payload from an instance whose
-    `summary` is the empty one the command built, and it runs *after* `apply_plan` returns.
-    A CLI that saved without merging would leave `applied_operations: []` and
-    `skipped_delete_count: 0` on a run that applied two operations and skipped one — and
-    every other assertion in this test would still pass. So the keys are read back **from the
-    file, by name**, and a later relocation of any of them trips here.
-
-    The exit code is asserted at the CLI because a delete-bearing apply must not translate a
-    skipped delete into a non-zero exit, and an in-process assertion cannot see an exit code.
-    """
+    """SC-007's **local half** and AD055 on the CLI path — and AD069's merge, from `run.json`."""
     delete = operation_record(action="delete", identity={"name": "retired"})
     records = [*APPLY_PLAN, delete]
     _appliable_run(tmp_path, records)
@@ -2096,15 +1895,7 @@ def test_a_delete_bearing_plan_applies_exits_zero_and_records_the_skipped_delete
 def test_the_completion_line_naming_the_skipped_count_survives_quiet(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """T098 / SC-007: the command's own completion line is required evidence, so it must arrive.
-
-    `--quiet` is the invocation this clause is about. It floors the package logger at
-    `logging.WARNING`, so a completion line emitted at `INFO` satisfies every prose
-    description of the obligation — "the command's own completion line naming the skipped
-    count" — and is then dropped for exactly the scripted runs where it is the only signal the
-    operator gets. The level is asserted through the real `--quiet` invocation rather than by
-    reading the call site, because the level and the floor only interact at run time (AD089).
-    """
+    """T098 / SC-007: the command's own completion line is required evidence, so it must arrive."""
     delete = operation_record(action="delete", identity={"name": "retired"})
     _appliable_run(tmp_path, [*APPLY_PLAN, delete])
     destination = RecordingDestination()
@@ -2124,13 +1915,7 @@ def test_the_completion_line_naming_the_skipped_count_survives_quiet(
 def test_a_quiet_apply_with_nothing_to_disclose_emits_no_completion_line(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The negative control for the case above (AD089).
-
-    The level rises with the count it reports and not with the command: an apply that skipped
-    nothing has nothing to disclose, and raising *that* line too would make `--quiet` noisy on
-    every clean apply. Without this case, "emit the completion line at WARNING" could be
-    satisfied by shouting on every run.
-    """
+    """The negative control for the case above (AD089)."""
     _appliable_run(tmp_path)
     destination = RecordingDestination()
 
@@ -2142,11 +1927,7 @@ def test_a_quiet_apply_with_nothing_to_disclose_emits_no_completion_line(
 
 
 def test_a_clean_apply_records_the_applied_operations_it_actually_performed(tmp_path: Path) -> None:
-    """The merge again, without a delete in the plan, so the two halves are separable.
-
-    A CLI that merged only on the delete-bearing path would pass the case above and fail
-    here, which is what keeps AD069 a property of the command rather than of one branch.
-    """
+    """The merge again, without a delete in the plan, so the two halves are separable."""
     _appliable_run(tmp_path)
     destination = RecordingDestination()
 
@@ -2161,17 +1942,7 @@ def test_a_clean_apply_records_the_applied_operations_it_actually_performed(tmp_
 
 
 def test_a_rejection_mid_plan_records_the_partial_applied_set(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    """FR-025's last-applied pointer survives a partial apply (AD027, AD069).
-
-    The rejection carries the partial record, and the CLI merges *that* before recording
-    `failed`. Without the merge the run would say nothing was applied while the first
-    operation stayed written at the destination — the one state an operator cannot recover
-    from by reading the run.
-
-    The rejection is also a member of the taxonomy, so it reaches the operator as its own
-    message — naming what stays written, and what to do next — rather than as a traceback
-    out of the apply loop (AD059).
-    """
+    """FR-025's last-applied pointer survives a partial apply (AD027, AD069)."""
     _appliable_run(tmp_path)
     destination = RejectingDestination()
 
@@ -2219,15 +1990,7 @@ class PeerlessDestination(RecordingDestination):
 
 
 def test_a_zero_match_peer_fails_the_run_and_records_it(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    """T100 / SC-016: the refusal must **fail the run**, not merely leave the write surface.
-
-    The write-surface half — the raise, and zero dispatch — is asserted against the adapter in
-    `tests/adapters/test_infrahub_planned_write.py`. Neither half implies the other: an engine
-    that swallowed `PeerNotFoundError` and carried on, or a command that recorded `applied`
-    anyway, would satisfy the adapter case in full while leaving an operator with a run that
-    says it succeeded and a destination missing the object. Unlike the multi-match arm there is
-    no live counterpart, so the run-state half is asserted here, offline.
-    """
+    """T100 / SC-016: the refusal must **fail the run**, not merely leave the write surface."""
     _appliable_run(tmp_path)
     destination = PeerlessDestination()
 
@@ -2257,17 +2020,7 @@ class InterruptedDestination(RecordingDestination):
 
 
 def test_an_interrupt_mid_apply_records_failed_and_the_partial_applied_set(tmp_path: Path) -> None:
-    """Ctrl-C between two operations: the run says what was written, and still exits 130.
-
-    An interrupt is the one stop an operator causes deliberately on a long apply, and it is
-    the case where "nothing was applied must be readable from the run" is least inferable —
-    the writes have landed and the operator has no return value to read. A command whose
-    guards only catch `Exception` leaves the sidecar exactly as it was saved before the loop:
-    `running`, with an empty summary, on a run that wrote to the destination (AD062).
-
-    The interrupt itself is asserted to survive, because recording it must not swallow it:
-    the exit code stays 130 and the exception is still a `KeyboardInterrupt`.
-    """
+    """Ctrl-C between two operations: the run says what was written, and still exits 130."""
     _appliable_run(tmp_path)
     destination = InterruptedDestination()
 
@@ -2288,15 +2041,7 @@ def test_an_interrupt_mid_apply_records_failed_and_the_partial_applied_set(tmp_p
 def test_a_code_defect_escapes_the_command_unchanged_while_the_run_records_what_was_written(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """FIX-011 (RIG-05) on the CLI path: the defect keeps its traceback, the run keeps the record.
-
-    The destination succeeds once and then raises `AssertionError`. Two claims, and a command
-    can pass one while failing the other. The assertion must reach the operator as itself — a
-    command that reported it as a designed refusal would send them to repair a destination that
-    is working, and would swallow the traceback that is the only diagnosis. And `run.json` must
-    still name the first operation as applied, because it *is* applied: without the merge the
-    run claims nothing happened on a destination that was written to.
-    """
+    """FIX-011 (RIG-05) on the CLI path: the defect keeps its traceback, the run keeps the record."""
     _appliable_run(tmp_path)
     destination = DefectiveDestination()
 
@@ -2340,19 +2085,7 @@ def _diff_into(run_id: str) -> Any:  # noqa: ANN401 — click's Result type is n
 def test_a_second_diff_into_a_committed_run_id_is_refused_with_the_reviewed_plan_intact(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, adapter_construction_log: list[dict[str, Any]]
 ) -> None:
-    """FIX-010: `diff --run-id R` no longer replaces the plan a human reviewed under R.
-
-    Reproduced by the review that raised this: a plan was reviewed, a second `diff` into the
-    same run id replaced it with a different one, and the checksum verified — because it
-    proves the integrity of whichever plan currently occupies the run, not identity with the
-    plan that was approved.
-
-    Three claims, and an implementation can pass one while failing another: the refusal
-    reaches the operator as a designed one-liner naming the existing plan and the next
-    action; the stored artifact is byte-identical afterwards; and nothing was constructed or
-    extracted, because extraction would rewrite the `A/` snapshots the committed plan binds
-    itself to and so would invalidate it even if the writer then refused.
-    """
+    """FIX-010: `diff --run-id R` no longer replaces the plan a human reviewed under R."""
     directory = _appliable_run(tmp_path)
     before = {path: path.read_bytes() for path in sorted(plan_dir(directory).rglob("*")) if path.is_file()} | {
         _apply_snapshot_path(directory): _apply_snapshot_path(directory).read_bytes()
@@ -2413,15 +2146,7 @@ def test_an_incomplete_generation_is_refused_by_both_review_and_apply_with_no_de
     build: Callable[[Path], Path],
     fragments: tuple[str, str],
 ) -> None:
-    """RIG-01, folded into FIX-010: a half-written generation is applicable to nobody.
-
-    A crash before the writer and a crash between the two file writes are the two states
-    that made the "manifest last is the commit point" claim worth testing rather than
-    asserting: the first leaves no `plan/` at all and the second leaves one without its
-    commit point. Both must refuse on **both** paths — a review that rendered the second as a
-    plan, or an apply that read its operations without a manifest to verify them against,
-    would be applying bytes nobody approved.
-    """
+    """RIG-01, folded into FIX-010: a half-written generation is applicable to nobody."""
     review_fragment, apply_fragment = fragments
     build(tmp_path)
     constructed: list[str] = []
@@ -2448,16 +2173,7 @@ def test_an_incomplete_generation_is_refused_by_both_review_and_apply_with_no_de
 def test_an_incomplete_generation_stays_re_plannable_under_the_same_run_id(
     tmp_path: Path, adapter_construction_log: list[dict[str, Any]], build: Callable[[Path], Path]
 ) -> None:
-    """The residual FIX-010 has to preserve: neither crash strands the run id.
-
-    The immutability refusal keys on `manifest.json` and nothing else, so a run that never
-    published one is not a committed generation and `diff --run-id R` may still write it.
-    Keying on the `plan/` directory — or on the run directory — would refuse exactly the runs
-    a crash produced, and an operator would have to invent a new id to get out of it.
-
-    Reaching adapter construction is the assertion: the sentinel that refuses it is the first
-    thing past this guard, so the log being non-empty is proof the guard let the run through.
-    """
+    """The residual FIX-010 has to preserve: neither crash strands the run id."""
     build(tmp_path)
 
     result = _diff_into(RUN_ID)
@@ -2474,12 +2190,7 @@ def _stored_checksum(tmp_path: Path, run_id: str = RUN_ID) -> str:
 
 @pytest.mark.parametrize("options", [(), ("--detail",)], ids=["summary", "detail"])
 def test_the_review_prints_the_full_plan_checksum_at_both_depths(tmp_path: Path, options: tuple[str, ...]) -> None:
-    """FIX-010 part 2: the review shows the checksum, not only the verdict about it.
-
-    `checksum: OK` says the artifact is internally consistent. It does not let an operator
-    record *which* plan they approved, which is what `apply --expected-checksum` consumes —
-    so the full value is printed at whichever depth the review was run at.
-    """
+    """FIX-010 part 2: the review shows the checksum, not only the verdict about it."""
     _store(tmp_path)
 
     result = _review("--from-plan", RUN_ID, *options)
@@ -2517,15 +2228,7 @@ def test_an_apply_naming_the_reviewed_checksum_applies(
 def test_an_apply_naming_another_generations_checksum_refuses_before_the_destination_exists(
     tmp_path: Path, destination_double: RecordingDestination, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """FIX-010 part 2's whole point: a valid plan that is not the approved one is refused.
-
-    Plan A is reviewed and its checksum captured; a different — and perfectly valid — plan B
-    then occupies the run id (which is how a plan reached here before immutability, and how
-    it still reaches here across hosts and archives). The apply names A's checksum, so it
-    refuses, and it refuses **before the destination is constructed**: `constructed` staying
-    empty is the assertion, because a check that ran inside the applier would already have
-    connected to a destination to reject a plan it never intended to write.
-    """
+    """FIX-010 part 2's whole point: a valid plan that is not the approved one is refused."""
     _appliable_run(tmp_path)
     approved = _stored_checksum(tmp_path)
     substituted = _appliable_run(tmp_path, [operation_record(identity={"name": "substituted"})])
@@ -2569,16 +2272,7 @@ def test_an_apply_naming_another_generations_checksum_refuses_before_the_destina
 def test_an_expected_checksum_against_a_non_utf8_manifest_refuses_instead_of_tracing_back(
     tmp_path: Path, destination_double: RecordingDestination, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """LOC-03: the approval check's bytes-to-mapping step must not crash on undecodable bytes.
-
-    `json.loads` **decodes** before it parses, so manifest bytes that are not valid UTF-8 raise
-    `UnicodeDecodeError` — a `ValueError`, not a `JSONDecodeError`. A copy of the mapping step
-    that caught only the latter let it escape `_require_expected_checksum`'s `except
-    PlanArtifactError` and reach the operator as a raw traceback with **no** output at all: the
-    FIX-004 defect class, at a new refusal site. The check now shares the verifier's
-    `manifest_mapping`, which classifies both conditions, so an unhashable artifact falls
-    through to the pre-apply verifier that names the tear.
-    """
+    """LOC-03: the approval check's bytes-to-mapping step must not crash on undecodable bytes."""
     directory = _appliable_run(tmp_path)
     approved = _stored_checksum(tmp_path)
     manifest_path(directory).write_bytes(b'{"format_version": 2, "config_version": "\xff\xfe"}')
@@ -2615,12 +2309,7 @@ def test_an_expected_checksum_against_a_non_utf8_manifest_refuses_instead_of_tra
 def test_the_expected_checksum_comparison_ignores_hex_case_and_surrounding_space(
     tmp_path: Path, destination_double: RecordingDestination
 ) -> None:
-    """A checksum copied out of a terminal or a ticket still matches.
-
-    Nothing else about the value is interpreted — a prefix or a truncation is a mismatch —
-    but rejecting an approval because it arrived upper-cased would teach operators to stop
-    passing it, which is worse than the typo it would catch.
-    """
+    """A checksum copied out of a terminal or a ticket still matches."""
     _appliable_run(tmp_path)
 
     with patch("infrahub_sync.cli.PlanApplier.open_existing", _patched_open_existing(destination_double)):
@@ -2646,14 +2335,7 @@ def test_the_expected_checksum_comparison_ignores_hex_case_and_surrounding_space
 def test_a_broken_apply_invariant_records_what_was_written_not_an_empty_record(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """AD062's safety net must not zero the record it exists to protect.
-
-    The invariant is checked *after* the loop wrote every non-delete operation, so a command
-    that merged an empty record here would report a run that wrote everything as having
-    applied nothing — and an operator reading that would re-apply against a populated
-    destination. The manifest's count is inflated because that is the only clause of the
-    invariant a well-formed artifact can violate.
-    """
+    """AD062's safety net must not zero the record it exists to protect."""
     _appliable_run(tmp_path)
     destination = RecordingDestination()
     applied_ids = [str(record["operation_id"]) for record in APPLY_PLAN]

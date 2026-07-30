@@ -206,11 +206,7 @@ SC004_CASES: dict[str, tuple[Callable[[Path], str], str]] = {
 def test_sc004_case_is_refused_naming_the_failed_check(
     tmp_path: Path, mutate: Callable[[Path], str], expected_check: str
 ) -> None:
-    """Each of SC-004's six cases returns a non-empty list naming its own check.
-
-    The list being non-empty is the refusal: a non-empty return is what the caller turns into
-    a refusal before any destination write, and the write side of that is T065's.
-    """
+    """Each of SC-004's six cases returns a non-empty list naming its own check."""
     directory = _verifiable_run(tmp_path)
     config_version = mutate(directory)
 
@@ -240,11 +236,7 @@ def test_every_sc004_failure_carries_a_next_action(
 
 
 def test_an_absent_operations_file_is_reported_as_torn_and_not_as_a_checksum_mismatch(tmp_path: Path) -> None:
-    """A checksum cannot be computed over bytes that are not there (FR-010).
-
-    Reporting a mismatch here would send the operator looking for tampering when the artifact
-    is simply incomplete.
-    """
+    """A checksum cannot be computed over bytes that are not there (FR-010)."""
     directory = _verifiable_run(tmp_path)
     operations_path(directory).unlink()
 
@@ -286,11 +278,7 @@ def test_the_config_version_failure_carries_both_opaque_values(tmp_path: Path) -
 
 
 def test_a_plan_directory_copied_into_another_run_fails_the_run_binding(tmp_path: Path) -> None:
-    """The copied artifact is not this run's plan, and nothing else about it disagrees.
-
-    `run_id` is deliberately outside `plan_checksum` for SC-006, which is exactly what would
-    let a copied `plan/` verify clean without this separate equality check (AD012).
-    """
+    """The copied artifact is not this run's plan, and nothing else about it disagrees."""
     source = _verifiable_run(tmp_path, run_id=RUN_ID)
     destination = tmp_path / OTHER_RUN_ID
     shutil.copytree(source, destination)
@@ -321,13 +309,7 @@ def test_the_copied_artifacts_checksum_still_verifies(tmp_path: Path) -> None:
 
 
 def test_the_format_version_gate_short_circuits_the_remaining_checks(tmp_path: Path) -> None:
-    """One failure and no other, and its message says the rest were not evaluated.
-
-    The plan below is broken **twice** — an unsupported format version and a configuration
-    version that disagrees — so an implementation that evaluated checks 2 to 5 anyway would
-    return two failures and fail here. That second break is what makes the assertion
-    falsifiable.
-    """
+    """One failure and no other, and its message says the rest were not evaluated."""
     directory = _verifiable_run(tmp_path)
     write_artifact(
         directory,
@@ -352,12 +334,7 @@ def test_the_gate_names_the_checks_it_did_not_evaluate() -> None:
 
 
 def test_an_unhashable_format_version_fails_the_gate_rather_than_raising(tmp_path: Path) -> None:
-    """MIN-002: a hand-edited `format_version` like `[2]` is unhashable.
-
-    A bare `declared in SUPPORTED_FORMAT_VERSIONS` raises `TypeError` against a frozenset —
-    a raw traceback from the very component built to classify corrupt manifests. It must be
-    the gate's ordinary refusal instead.
-    """
+    """MIN-002: a hand-edited `format_version` like `[2]` is unhashable."""
     directory = _verifiable_run(tmp_path)
     write_artifact(
         directory,
@@ -412,13 +389,7 @@ def test_all_four_gated_checks_can_fail_in_one_call(tmp_path: Path) -> None:
 
 
 def test_a_snapshot_path_that_escapes_the_run_directory_is_refused_not_followed(tmp_path: Path) -> None:
-    """A traversal path pointing at a real, digest-matching file outside the run dir.
-
-    The snapshot outside the run directory is genuine and its recorded digest agrees, so a
-    verifier that followed the join would return an empty failure list — vouching for a
-    binding to a file the run directory does not contain. The refusal has to come from the
-    path itself.
-    """
+    """A traversal path pointing at a real, digest-matching file outside the run dir."""
     directory = tmp_path / RUN_ID
     directory.mkdir(parents=True, exist_ok=True)
     outside = tmp_path / "outside-the-run"
@@ -475,12 +446,7 @@ def test_a_snapshot_record_missing_its_path_is_a_failure_about_the_path_not_the_
 
 
 def test_the_write_surface_failure_names_the_adapter_that_was_passed_in(tmp_path: Path) -> None:
-    """FR-023's message names the adapter, which a `bool` argument could not have supplied.
-
-    This is the whole reason the parameter is `write_surface_missing_on: str | None` and not
-    `write_surface_available: bool` (AD058): the earlier signature made its own promised
-    message unwritable from the arguments the function received.
-    """
+    """FR-023's message names the adapter, which a `bool` argument could not have supplied."""
     directory = _verifiable_run(tmp_path)
 
     failures = _verify(
@@ -513,11 +479,7 @@ def test_none_means_the_write_surface_is_present(tmp_path: Path) -> None:
 
 
 def test_the_write_surface_check_is_not_behind_the_format_version_gate(tmp_path: Path) -> None:
-    """Its subject is the adapter, not the artifact, so a bad version makes it no less legible.
-
-    The gate's rationale — an unreadable revision cannot have its remaining fields
-    interpreted — simply does not reach a check derived from an argument.
-    """
+    """Its subject is the adapter, not the artifact, so a bad version makes it no less legible."""
     directory = _verifiable_run(tmp_path)
     write_artifact(
         directory,
@@ -542,12 +504,7 @@ def test_the_write_surface_check_is_not_behind_the_format_version_gate(tmp_path:
 
 
 def test_a_byte_corrupt_snapshot_is_a_classified_source_snapshot_failure(tmp_path: Path) -> None:
-    """Garbage bytes at the manifest-declared snapshot path land on check 4, not a crash.
-
-    `pyarrow` raises `ArrowInvalid` — not an `OSError` — for a file whose bytes are not a
-    Parquet table, so without the classification the verifier raises an undocumented
-    exception instead of returning the refusal (FIX-003).
-    """
+    """Garbage bytes at the manifest-declared snapshot path land on check 4, not a crash."""
     directory = _verifiable_run(tmp_path)
     _snapshot_path(directory).write_bytes(b"these bytes are not a Parquet table")
 
@@ -573,13 +530,7 @@ def test_a_byte_corrupt_snapshot_still_lets_every_other_failure_be_named(tmp_pat
 def test_a_read_denied_snapshot_raises_the_unreadable_taxonomy_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """RIG-07: a read-time `OSError` after a successful stat is unreadable, not absent.
-
-    The snapshot stats fine, then the digest read is denied — removed between stat and
-    open, or stat-allowed/read-denied permissions. That must surface as the taxonomy's
-    `PlanArtifactUnreadableError` naming the path, with its next action, rather than as a
-    raw `PermissionError` (AD036, AD059).
-    """
+    """RIG-07: a read-time `OSError` after a successful stat is unreadable, not absent."""
     directory = _verifiable_run(tmp_path)
 
     def _deny(uri: str, **_kwargs: object) -> NoReturn:

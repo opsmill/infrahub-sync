@@ -95,14 +95,7 @@ def test_excluded_fields_are_the_three_declared_ones() -> None:
 
 @pytest.mark.parametrize("excluded", sorted(CHECKSUM_EXCLUDED_FIELDS))
 def test_excluded_field_is_removed_not_blanked(excluded: str) -> None:
-    """AD035, in its falsifiable form, per excluded field.
-
-    A manifest carrying a **real value** in the excluded field must hash as though the key
-    were wholly absent, and must **not** hash as though it were set to `null`. A blanking
-    implementation fails the second assertion; a removing one passes both. The other two
-    excluded fields are removed on both sides of the comparison, so the field under test is
-    the only thing that differs between the two references.
-    """
+    """AD035, in its falsifiable form, per excluded field."""
     manifest = dict(MANIFEST)
     manifest[excluded] = "a-real-value"
     others = tuple(field for field in CHECKSUM_EXCLUDED_FIELDS if field != excluded)
@@ -267,11 +260,7 @@ def test_the_writer_really_stamps_extract_ts_per_run(tmp_path: Path) -> None:
 
 
 def test_digest_is_invariant_to_extract_ts(tmp_path: Path) -> None:
-    """AD037: two tables identical but for `_extract_ts` digest **equal**.
-
-    A raw-bytes digest fails here, and SC-006 — two consecutive plan runs byte-identical —
-    would be unachievable, because `_extract_ts` is allocated once per side per run.
-    """
+    """AD037: two tables identical but for `_extract_ts` digest **equal**."""
     first = _write_side(tmp_path / "one", extract_ts=_TS_ONE, source_ids=SOURCE_IDS)
     second = _write_side(tmp_path / "two", extract_ts=_TS_TWO, source_ids=SOURCE_IDS)
     assert _digest(first) == _digest(second)
@@ -459,13 +448,7 @@ def test_the_snapshot_really_holds_several_row_groups(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("batch_size", [1, 2, 5, 7, 12, 10_000])
 def test_the_digest_and_row_count_are_identical_at_every_batch_size(tmp_path: Path, batch_size: int) -> None:
-    """FIX-014: the digest is defined over the rows, so the batch size cannot move it.
-
-    Byte-identity is asserted against the digest **the pre-FIX-014 shape computed** — the
-    whole-table read, the list of row dicts, the joined bytes — recomputed here from the
-    spelled-out rule, so a streaming implementation that dropped a separator, added a
-    trailing one, or lost a row fails rather than agreeing with itself.
-    """
+    """FIX-014: the digest is defined over the rows, so the batch size cannot move it."""
     path = _regrouped(
         _write_side(tmp_path, rows=MANY_ROWS, source_ids=MANY_SOURCE_IDS),
         row_group_size=5,
@@ -478,12 +461,7 @@ def test_the_digest_and_row_count_are_identical_at_every_batch_size(tmp_path: Pa
 
 
 def test_the_digest_never_reads_the_whole_table(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """FIX-014: the spy fails the test if the digest falls back to a whole-table read.
-
-    Both whole-table seams are poisoned — the cache layer's `read_table` and pyarrow's own
-    `read_table` beneath it — so an implementation that materialized the table anywhere on
-    this path raises here instead of quietly costing a multiple of the dataset in memory.
-    """
+    """FIX-014: the spy fails the test if the digest falls back to a whole-table read."""
     path = _regrouped(
         _write_side(tmp_path, rows=MANY_ROWS, source_ids=MANY_SOURCE_IDS),
         row_group_size=5,
@@ -501,11 +479,7 @@ def test_the_digest_never_reads_the_whole_table(tmp_path: Path, monkeypatch: pyt
 
 
 def test_no_batch_the_digest_folds_is_larger_than_the_bound(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """FIX-014's point: what the digest holds at once is bounded, not a fraction of nothing.
-
-    The batches are observed as they are handed over, so a reader that honoured the
-    parameter's name while yielding the whole file in one batch fails here.
-    """
+    """FIX-014's point: what the digest holds at once is bounded, not a fraction of nothing."""
     path = _regrouped(
         _write_side(tmp_path, rows=MANY_ROWS, source_ids=MANY_SOURCE_IDS),
         row_group_size=5,
@@ -534,12 +508,7 @@ def test_no_batch_the_digest_folds_is_larger_than_the_bound(tmp_path: Path, monk
 
 
 def test_plan_write_refuses_a_corrupt_snapshot_with_the_taxonomy_error(tmp_path: Path) -> None:
-    """A snapshot whose bytes are not Parquet fails the plan write with a named remedy.
-
-    `source_snapshot_records` runs while the artifact is being written; a garbage
-    `A/<resource>.parquet` there would otherwise escape as a raw `ArrowInvalid`
-    traceback from what is supposed to be a designed failure path (AD059).
-    """
+    """A snapshot whose bytes are not Parquet fails the plan write with a named remedy."""
     side = tmp_path / "A"
     side.mkdir(parents=True)
     (side / "BuiltinTag.parquet").write_bytes(b"these bytes are not a Parquet table")
@@ -557,17 +526,7 @@ def test_plan_write_refuses_a_corrupt_snapshot_with_the_taxonomy_error(tmp_path:
 def test_plan_write_refuses_a_read_denied_snapshot_with_the_taxonomy_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """RF-7: FIX-003's OSError arm belongs at plan-write time too, not only at apply time.
-
-    `glob` listed the snapshot, so it exists; the digest read is then denied — removed
-    between listing and open, or stat-allowed/read-denied. The verifier already classifies
-    this at apply time (`ArrowInvalid` **and** `OSError`), but `source_snapshot_records`
-    caught `ArrowInvalid` alone, so the condition escaped `diff` as a raw `PermissionError`
-    from what is a designed failure path (AD059).
-
-    Its next action is the class-level permissions one, not "re-run `diff`": re-running would
-    meet the same denial and loop the operator (AD036).
-    """
+    """RF-7: FIX-003's OSError arm belongs at plan-write time too, not only at apply time."""
     _write_side(tmp_path)
 
     def _deny(uri: str, **_kwargs: object) -> NoReturn:

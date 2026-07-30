@@ -609,13 +609,7 @@ def test_payload_is_not_narrowed_to_the_attribute_diff() -> None:
 
 
 def test_every_identity_key_is_in_the_payload_or_a_relationship_reference() -> None:
-    """No identity component ends up in neither place — AD042's whole point.
-
-    Asserted against elements whose `source_attrs` deliberately omit the identifiers, since
-    that is what the comparison engine actually produces: a derivation that took its payload
-    from `source_attrs` alone would leave `name` unaccounted for here rather than at a live
-    destination.
-    """
+    """No identity component ends up in neither place — AD042's whole point."""
     diff = _FakeDiff(
         {
             "BuiltinTag": [
@@ -977,12 +971,7 @@ def test_warns_when_no_uniqueness_constraint_covers_the_plan_identity(
     caplog: pytest.LogCaptureFixture,
     uniqueness_constraints: list[list[str]],
 ) -> None:
-    """FR-024 condition 2 — the brief's own condition, and a different one.
-
-    The kind's `human_friendly_id` is **complete** here, so condition 1 stays silent: an
-    implementation that had substituted condition 1 for condition 2 emits nothing and this
-    case fails on the count.
-    """
+    """FR-024 condition 2 — the brief's own condition, and a different one."""
     schema = {
         "BuiltinTag": schema_node(human_friendly_id=["name__value"], uniqueness_constraints=uniqueness_constraints)
     }
@@ -1072,19 +1061,7 @@ def test_each_convergence_key_case_warns_and_the_plan_run_still_succeeds(
     caplog: pytest.LogCaptureFixture,
     case: ConvergenceCase,
 ) -> None:
-    """T099 / SC-014: all three cases, each as a plan run, each asserted to succeed.
-
-    The three content assertions elsewhere in this section call
-    `warn_missing_convergence_key` directly — no plan run, no run outcome — so they evidence
-    the message and nothing about the criterion's other half. SC-014's own evidence procedure
-    is three **plan runs**, so each case is driven through the real `diff` command here and
-    the successful outcome is read from the exit code and the recorded run state, not inferred
-    from the absence of an exception.
-
-    The run outcome is the point of the pairing: FR-024 raises this edge case from
-    documentation to detection, and a detection that failed the run would make the plan
-    unreachable for every kind whose destination schema happens to look like this.
-    """
+    """T099 / SC-014: all three cases, each as a plan run, each asserted to succeed."""
     config = build_config()
     source = qualified_source()
     destination = destination_with_orphan(schema=case.schema)
@@ -1119,13 +1096,7 @@ def test_a_destination_exposing_no_schema_is_skipped_rather_than_failing(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """AD052: every adapter but Infrahub exposes no `schema`, and `diff` must still work.
-
-    A regression assertion: derivation is newly wired onto the non-mutating path for every
-    destination and AD047 makes its failures fatal, so an unguarded `destination.schema`
-    read would break the eight adapters that compare fine today. Removing the guard raises
-    `AttributeError` out of `warn_missing_convergence_key` and fails here.
-    """
+    """AD052: every adapter but Infrahub exposes no `schema`, and `diff` must still work."""
     config = build_config()
     source = qualified_source()
     destination = destination_with_orphan()
@@ -1171,15 +1142,7 @@ class _RecordingPotenda(Potenda):
 def test_the_tier_branch_computes_every_diff_and_writes_the_artifact_before_the_first_write(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AD039: two loops, and the narrowing sits in the compute loop.
-
-    The single sequence equality below carries four claims at once: every tier's diff is
-    computed before the artifact is written, the artifact is written before the first
-    `sync_from`, each retained diff holds **exactly** its own tier's kinds — which is what
-    proves the `top_level` narrowing was applied around `diff()` rather than moved into the
-    execution loop — and the execution order is unchanged, tier by tier. A call-order-only
-    assertion would pass just as happily against six identical full-destination diffs.
-    """
+    """AD039: two loops, and the narrowing sits in the compute loop."""
     tiers = [{"BuiltinTag", "LocationSite"}, {"LocationRack"}, {"DcimDevice"}]
     config = build_config()
     source = qualified_source()
@@ -1230,20 +1193,7 @@ def _delete_records(potenda: Potenda) -> list[dict[str, Any]]:
 
 
 def test_a_serial_and_a_tiered_sync_record_deletes_exactly_as_a_diff_does(monkeypatch: pytest.MonkeyPatch) -> None:
-    """FR-015: the delete class is recorded, never executed — and identically in all three modes.
-
-    This is structurally true today, because `write_plan` and the tier branch of
-    `sync_in_tiers` are the only artifact-writing call sites and both go through
-    `write_plan_artifact`. Structurally true and unasserted is exactly the shape that regresses
-    silently: a second artifact-writing call site added later — a new execution mode, a
-    resumed apply — would only have to forget `derive_deletes` to make `sync` record no delete
-    at all, and FR-015's "explicit and reviewable" claim would be carried by nothing on the two
-    paths an operator actually writes from.
-
-    Asserted as the recorded delete **records**, not their count: a mode that recorded a delete
-    for the wrong object, at the wrong tier, or with a differently derived identifier would
-    keep the count and break the parity a reviewer relies on.
-    """
+    """FR-015: the delete class is recorded, never executed — and identically in all three modes."""
     config = build_config()
 
     pin_extraction_decisions(monkeypatch, [False, False])
@@ -1579,15 +1529,7 @@ def derive_over(config: SyncInstance, source: _FakeAdapter) -> list[PlannedOpera
 
 
 def test_the_peer_kind_is_the_kind_that_actually_holds_the_peer() -> None:
-    """AD046 / AD050 arm (a): the probe answers, and the mapping's `reference` cannot.
-
-    Two `DcimDevice` entries declare `location` differently, one device is located at a
-    rack and the other at a site. A derivation that read `peer_kind` off the mapping would
-    have to pick one of the two declarations and would therefore label one of these two
-    devices wrongly — whichever it picked. The probe assertion is separate and deliberate:
-    with the *right* answer alone this case would also pass against an unprobed
-    mapping read on a one-candidate set, so what is asserted is that the store was asked.
-    """
+    """AD046 / AD050 arm (a): the probe answers, and the mapping's `reference` cannot."""
     config = duplicate_location_config(*LOCATION_CANDIDATES)
     # Fixture precondition: the mapping really is ambiguous for this field.
     assert reference_candidates(config, "DcimDevice") == {"location": LOCATION_CANDIDATES}
@@ -1677,12 +1619,7 @@ def test_a_peer_under_both_candidate_kinds_fails_rather_than_picking_one(
 
 
 def test_a_single_candidate_is_probed_and_never_used_as_a_fallback() -> None:
-    """AD050's no-fallback rule: one declared candidate that does not hold the peer fails.
-
-    Returning an unprobed sole candidate *is* the mapping-derived answer AD046 forbids, so
-    the one-candidate set is probed like any other and its miss is a refusal rather than a
-    default.
-    """
+    """AD050's no-fallback rule: one declared candidate that does not hold the peer fails."""
     config = duplicate_location_config("LocationRack")
     assert reference_candidates(config, "DcimDevice") == {"location": ("LocationRack",)}
     # The peer exists — as a site, which is not the sole declared candidate.
@@ -1869,12 +1806,7 @@ def test_a_derivation_failure_fails_the_diff_command(
     monkeypatch: pytest.MonkeyPatch,
     build_case: Callable[[], _DerivationFailure],
 ) -> None:
-    """AD047: each FR-030 failure fails the non-mutating `diff` with a non-zero exit.
-
-    No arm degrades to a warning: the command's run record ends `failed` and the plan
-    artifact's commit point is absent, so nothing partial is left for a later `apply` to
-    read.
-    """
+    """AD047: each FR-030 failure fails the non-mutating `diff` with a non-zero exit."""
     case = build_case()
     potenda = build_potenda(
         config=case.config,
@@ -1931,12 +1863,7 @@ def test_a_derivation_failure_is_equally_hard_on_the_sync_path(
 
 
 def test_the_diff_command_offers_no_continue_on_error_tolerance() -> None:
-    """AD047: the tolerance option is declared on `sync` only (`infrahub_sync/cli.py:190`).
-
-    If it existed on `diff` too, a derivation failure could degrade to a warning and emit a
-    silently incomplete plan — which is exactly what AD047 forbids, on the most-run command
-    in the tool.
-    """
+    """AD047: the tolerance option is declared on `sync` only (`infrahub_sync/cli.py:190`)."""
     diff_help = CLI_RUNNER.invoke(app, ["diff", "--help"])
     sync_help = CLI_RUNNER.invoke(app, ["sync", "--help"])
     assert diff_help.exit_code == 0
@@ -1950,12 +1877,7 @@ def test_the_diff_command_offers_no_continue_on_error_tolerance() -> None:
 
 
 def test_the_source_side_failures_do_not_route_the_operator_at_the_destination() -> None:
-    """AD071: reusing `PeerNotFoundError` here would hand out a remedy that fixes nothing.
-
-    Both source-side classes must read differently from the destination-side miss, whose
-    remedy is to create the peer at the destination — while the plan-time problem is that
-    the peer is not in the loaded source store, or that its kind cannot be established.
-    """
+    """AD071: reusing `PeerNotFoundError` here would hand out a remedy that fixes nothing."""
     destination_remedy = PeerNotFoundError.next_action
     assert "at the destination" in destination_remedy
 
@@ -1994,12 +1916,7 @@ def nested_destination_orphans() -> _FakeAdapter:
 
 
 def test_a_derived_delete_identity_nests_peer_pairs_probed_against_the_destination() -> None:
-    """AD049: the same recursive rule as any other operation, probed destination-side.
-
-    A probe wired to the source store finds nothing there — the source is empty by
-    construction — so this case fails rather than the derivation quietly recording a
-    unique-id string.
-    """
+    """AD049: the same recursive rule as any other operation, probed destination-side."""
     source = _FakeAdapter("source")
     destination = nested_destination_orphans()
 
@@ -2097,12 +2014,7 @@ def test_a_delete_whose_nested_peer_is_ambiguous_destination_side_fails_the_comm
 
 
 def test_only_the_infrahub_adapter_exposes_a_schema_attribute() -> None:
-    """V38, asserted rather than assumed: the guard covers eight adapters, not a fake.
-
-    `self.schema` is set by the Infrahub adapter alone
-    (`infrahub_sync/adapters/infrahub.py:345`). If another adapter ever gained one this
-    case would say so, and the regression below would no longer be the whole story.
-    """
+    """V38, asserted rather than assumed: the guard covers eight adapters, not a fake."""
     modules = sorted(path.stem for path in ADAPTERS_DIR.glob("*.py") if path.stem not in NON_ADAPTER_MODULES)
     exposing = [
         module for module in modules if "self.schema" in (ADAPTERS_DIR / f"{module}.py").read_text(encoding="utf-8")
@@ -2117,17 +2029,7 @@ def test_the_diff_command_succeeds_end_to_end_against_a_destination_with_no_sche
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """AD052 regression: derivation is newly wired onto `diff` for **every** destination.
-
-    Because AD047 makes a derivation failure fatal, an unguarded `destination.schema` read
-    would turn `diff` — which works today on all eight schema-less adapters — into an
-    `AttributeError` at a non-zero exit. Removing the guard in
-    `warn_missing_convergence_key` fails this case on the exit code.
-
-    The warning is asserted **absent**, not empty: a guard that emitted a warning naming
-    nothing would tell an operator their destination has a convergence problem it cannot
-    know anything about.
-    """
+    """AD052 regression: derivation is newly wired onto `diff` for **every** destination."""
     config = build_config()
     source = qualified_source()
     destination = destination_with_orphan()
@@ -2220,12 +2122,7 @@ def test_an_element_carrying_children_fails_the_derivation() -> None:
 
 
 def test_children_are_refused_even_when_the_parent_element_has_no_action_of_its_own() -> None:
-    """The dangerous shape: an unchanged parent whose children changed.
-
-    A guard placed after the no-op filter would let precisely this case through — the plan
-    would carry nothing for the parent, which is correct, and nothing for the children,
-    which is the FR-001 violation MIN-007 is about.
-    """
+    """The dangerous shape: an unchanged parent whose children changed."""
     child = _FakeElement(kind="InterfacePhysical", name="eth0", keys={"name": "eth0"}, source_attrs={"mtu": 9000})
     unchanged = _ChildBearingElement(
         kind="BuiltinTag",
@@ -2304,13 +2201,7 @@ def tag_reference_config(*references: str) -> SyncInstance:
     ],
 )
 def test_a_deliberately_empty_many_peer_set_derives(references: tuple[str, ...], expected_peer_kind: str) -> None:
-    """OQ-2: an empty set references no peer, so no candidate kind needs choosing.
-
-    Before MIN-008 the multi-candidate case raised `SourcePeerUnresolvedError.ambiguous` and
-    killed the run over a set with nothing in it to be ambiguous about. AD046 is untouched:
-    the reference records no peer, and the replace-set write empties the relationship by
-    field, not by kind.
-    """
+    """OQ-2: an empty set references no peer, so no candidate kind needs choosing."""
     config = tag_reference_config(*references)
     assert reference_candidates(config, "DcimDevice")["tags"] == tuple(sorted(references))
 
@@ -2400,13 +2291,7 @@ def rack_operations(*sites: str, name: str = "Comms closet") -> list[PlannedOper
 
 
 def test_warns_when_the_destination_cannot_distinguish_the_plan_identity(caplog: pytest.LogCaptureFixture) -> None:
-    """DISC-002: `identity ⊄ HFID` merges source objects, and FR-024's arms stay silent on it.
-
-    The kind's human-friendly ID is complete and a uniqueness constraint covers the plan's
-    identity attributes, so both FR-024 conditions pass — precisely in the dangerous case.
-    The message has to name the kind, the attributes the destination cannot distinguish, and
-    the number of source objects that already collide.
-    """
+    """DISC-002: `identity ⊄ HFID` merges source objects, and FR-024's arms stay silent on it."""
     operations = rack_operations("dm-akron", "dm-albany", "dm-buffalo")
 
     with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
@@ -2466,11 +2351,7 @@ def test_the_hazard_is_reported_even_before_any_two_objects_collide(caplog: pyte
 
 
 def test_no_merge_warning_where_a_destination_key_covers_the_plan_identity(caplog: pytest.LogCaptureFixture) -> None:
-    """The control case: a constraint that does distinguish `(name, site)` is silent.
-
-    Only the *coverage* changes between this case and the first one, so a third arm that
-    warned unconditionally — or read the wrong direction — fails here.
-    """
+    """The control case: a constraint that does distinguish `(name, site)` is silent."""
     schema = {
         "LocationRack": schema_node(
             human_friendly_id=["name__value"],
@@ -2511,11 +2392,7 @@ def test_the_merge_warning_stays_out_of_the_manifest_and_the_run_succeeds(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A warning, not a refusal: the plan run completes and the manifest is unchanged.
-
-    OQ-8 ships the limitation documented rather than blocked, so an operator whose schema has
-    this shape must still be able to create, review and apply a plan.
-    """
+    """A warning, not a refusal: the plan run completes and the manifest is unchanged."""
     config = build_config()
     source = qualified_source()
     destination = destination_with_orphan(schema=COARSE_RACK_SCHEMA)
@@ -2543,15 +2420,7 @@ def test_the_merge_warning_stays_out_of_the_manifest_and_the_run_succeeds(
 
 
 def test_a_none_valued_cardinality_one_reference_is_absent_from_the_plan() -> None:
-    """The documented v1 scope limit, pinned so the docstring cannot drift from the code.
-
-    A rack whose `site` is `None` yields no `site` reference and no `site` payload entry: the
-    operation says nothing about the relationship, and an apply that says nothing about a
-    relationship leaves it alone. `RelationshipReference` has no encoding for an emptied
-    cardinality-one peer to record instead — `cardinality: "one"` requires exactly one peer.
-    Parity with live `sync`, which skips a `None` there for the same reason; encoding "clear
-    this" is a `format_version` extension and a follow-up issue, not a defect here.
-    """
+    """The documented v1 scope limit, pinned so the docstring cannot drift from the code."""
     operations = operations_from_diff(
         _FakeDiff(
             {

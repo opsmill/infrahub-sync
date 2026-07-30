@@ -384,16 +384,7 @@ def test_the_committed_fixture_holds_the_shapes_every_assertion_needs() -> None:
     ids=[description for description, _ in ALL_DIRECT_OPERATIONS],
 )
 def test_an_all_direct_kind_renders_a_keyed_mutation(description: str, operation: PlannedOperation) -> None:
-    """AD042's regression detector: the **rendered** mutation carries `id` or `hfid`.
-
-    Not "every identity component is present in `data`" — that assertion holds for a mutation
-    that goes out with no key at all, which is exactly the defect. The SDK sets `data["id"]`
-    when the node has one and otherwise `data["hfid"]` when `exclude_hfid` is false
-    (`infrahub_sdk/node/node.py:295-298`), and the upsert path renders with `exclude_hfid=False`
-    (`:1843-1846`). A payload assembled from `source_attrs` alone loses the identity components,
-    `get_human_friendly_id()` returns `None`, neither key is set, and the destination accepts a
-    duplicate on every re-apply — silently.
-    """
+    """AD042's regression detector: the **rendered** mutation carries `id` or `hfid`."""
     _ = description
     _client, adapter, peers = seeded_adapter(members=[])
 
@@ -416,15 +407,7 @@ def test_an_all_direct_kind_renders_a_keyed_mutation(description: str, operation
 
 @pytest.mark.xfail(strict=True, reason=XFAIL_REASON)
 def test_a_relationship_crossing_kind_renders_a_keyed_mutation() -> None:
-    """The *same* assertion as above, on the kind that cannot satisfy it today.
-
-    Writing assertion 1 as a universal over the whole fixture is what made the earlier form of
-    this task unsatisfiable: an implementer would have dropped the relationship-crossing kind —
-    losing the only thing that exercises AD051's second arm — or quietly weakened the claim.
-    The split keeps the kind in the fixture and records the limitation as an expected failure,
-    and `strict=True` means the day the write surface closes the hole this becomes an xpass and
-    fails the suite. The limitation retires itself.
-    """
+    """The *same* assertion as above, on the kind that cannot satisfy it today."""
     client, adapter, peers = seeded_adapter()
 
     with record_rendered_inputs() as rendered:
@@ -443,21 +426,7 @@ def test_a_relationship_crossing_kind_renders_a_keyed_mutation() -> None:
 
 
 def test_the_replace_set_flushes_an_update_with_no_destination_read() -> None:
-    """AD054/AD075/AD085 + FIX-001: the plan's peer set reaches the destination as the flush.
-
-    Three separable failures, each with its own observable:
-
-    - **no flush.** `RelationshipManagerSync` has no `save`; `add()` and `remove()` only mutate
-      a list and set a flag. "The surplus is removed" is therefore true of an in-memory list
-      that is then discarded, so the observable is the issued mutation.
-    - **the wrong flush.** An `<kind>Upsert` would carry the full peer list too, so the peer
-      list cannot separate a correct flush from a second upsert; the **mutation name** can.
-    - **a reintroduced round trip.** The destination's set is seeded to differ from the plan's,
-      so an implementation that fetch-and-reconciles issues a `client.get` here — and it must
-      not: the flush writes the plan's peer set directly, and surplus-peer removal
-      ('conf-tag-id-9' here) is the destination Update mutation's replace semantics, pinned by
-      the live shrink test (FIX-001/OQ-4).
-    """
+    """AD054/AD075/AD085 + FIX-001: the plan's peer set reaches the destination as the flush."""
     client, adapter, peers = seeded_adapter(members=["conf-tag-id-9", "conf-tag-id-2"])
 
     adapter.apply_planned_operation(operation=team_operation(["tag-b", "tag-c"]), peers=peers)
@@ -478,16 +447,7 @@ def test_the_replace_set_flushes_an_update_with_no_destination_read() -> None:
 
 
 def test_an_empty_peer_list_is_issued_as_an_emptied_set() -> None:
-    """AD085: `peers: []` under `cardinality: many` survives the flush as `[]`.
-
-    The case that decides the flush's form. A plain `node.save()` renders with unmodified-field
-    stripping on; the create payload already wrote `[]` for the same field, so the rendered
-    value matches, the key is popped, and the emptied set never leaves the process **while the
-    mutation name stays identical**. The rendered relationship value is the only observable that
-    tells them apart — and the targeted flush AD088 specifies writes it explicitly rather than
-    leaving it to survive a comparison, which is what keeps this case passing alongside
-    assertion 4.
-    """
+    """AD085: `peers: []` under `cardinality: many` survives the flush as `[]`."""
     client, adapter, peers = seeded_adapter(members=["conf-tag-id-1", "conf-tag-id-2"])
 
     adapter.apply_planned_operation(operation=team_operation([]), peers=peers)
@@ -506,18 +466,7 @@ def test_an_empty_peer_list_is_issued_as_an_emptied_set() -> None:
 
 @pytest.mark.parametrize("peer_names", [["tag-b", "tag-c"], []], ids=["a non-empty replace", "an emptied set"])
 def test_the_flush_names_only_the_relationship_fields_being_replaced(peer_names: list[str]) -> None:
-    """AD088: the flush is a **targeted** relationship write, not a re-render of the node.
-
-    `ConfTeam` carries an optional cardinality-one `owner` that no operation here maps. A flush
-    that re-renders the whole node emits `owner: null` for it — the SDK does that deliberately
-    for an uninitialized optional cardinality-one relationship on a node it considers existing,
-    and the convergent upsert marks the node existing — so applying any relationship-bearing
-    operation would clear the destination's `owner`. FR-013 forbids exactly that: an update
-    payload "MUST NOT touch unmapped destination fields".
-
-    Both replace shapes are asserted, because the emptied set is the case AD085 exists for and
-    the one a naive narrowing of the payload is most likely to drop.
-    """
+    """AD088: the flush is a **targeted** relationship write, not a re-render of the node."""
     client, adapter, peers = seeded_adapter(members=["conf-tag-id-9"])
 
     adapter.apply_planned_operation(operation=team_operation(peer_names), peers=peers)
@@ -546,18 +495,7 @@ def test_applying_the_same_operation_twice_renders_byte_identical_inputs(
     description: str,
     operation: PlannedOperation,
 ) -> None:
-    """AD068: two applies of one operation render the same bytes — the same `data`, the same key.
-
-    This is the strongest convergence claim decidable offline. "Two applies yield one object"
-    is not assertable against a fixture that holds no destination state — two applies simply
-    issue two creates — so byte-identity stands in its place, and it regresses whenever
-    assertion 1 or assertion 3 regresses. Anything time-dependent, counter-dependent or
-    carried over from the first apply's state shows up here and nowhere else offline.
-
-    The two applies use **separate** clients and resolvers, so the second render cannot inherit
-    a node id or a memo entry the first produced: the claim is about the operation record
-    rendering the same way, not about a warm cache making it look that way.
-    """
+    """AD068: two applies of one operation render the same bytes — the same `data`, the same key."""
     _ = description
     renders: list[list[tuple[str, dict[str, Any]]]] = []
     queries: list[list[bytes]] = []

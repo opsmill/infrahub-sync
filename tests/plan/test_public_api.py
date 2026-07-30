@@ -94,11 +94,7 @@ def test_every_export_other_than_the_entry_point_is_a_record_type() -> None:
 
 
 def test_no_other_reading_surface_is_reachable_on_the_package() -> None:
-    """No reading callable defined anywhere under `infrahub_sync/plan/` is re-exported.
-
-    `load_plan_artifact` is the concrete case: it is the reader every path goes through, so
-    it is the one a later phase is most likely to hoist into `__init__.py` for convenience.
-    """
+    """No reading callable defined anywhere under `infrahub_sync/plan/` is re-exported."""
     offenders: list[str] = []
     for module_name in _plan_submodules():
         module = importlib.import_module(module_name)
@@ -113,11 +109,7 @@ def test_no_other_reading_surface_is_reachable_on_the_package() -> None:
 
 
 def test_the_scan_would_catch_the_low_level_reader() -> None:
-    """Guards the negative test above: prove the scan actually sees `load_plan_artifact`.
-
-    Without this, `test_no_other_reading_surface_is_reachable_on_the_package` would pass
-    just as happily if the scan matched nothing at all.
-    """
+    """Guards the negative test above: prove the scan actually sees `load_plan_artifact`."""
     reader = importlib.import_module("infrahub_sync.plan.reader")
     candidates = [name for name in vars(reader) if name.startswith(READING_PREFIXES) and not name.startswith("_")]
     assert "load_plan_artifact" in candidates

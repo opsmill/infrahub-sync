@@ -114,13 +114,7 @@ def test_the_v1_verdict_does_not_depend_on_the_row_file_being_present(tmp_path: 
 
 
 def test_a_run_holding_no_plan_artifact_names_the_run_identifiers_that_do_exist(tmp_path: Path) -> None:
-    """FR-008 names this arm as well as the unknown-run arm.
-
-    A located run with no `plan/` leaves the operator with the same next question an unknown
-    run identifier does — which run *can* I apply? — so the same enumeration answers it. The
-    sibling run below is what makes the assertion falsifiable: a message that named only the
-    run asked for would pass any test that searched for that identifier alone.
-    """
+    """FR-008 names this arm as well as the unknown-run arm."""
     _v1_run_dir(tmp_path)
     sibling = tmp_path / OTHER_RUN_ID
     sibling.mkdir(parents=True, exist_ok=True)
@@ -136,12 +130,7 @@ def test_a_run_holding_no_plan_artifact_names_the_run_identifiers_that_do_exist(
 
 
 def test_the_enumeration_on_that_arm_is_bounded_the_same_way_the_unknown_run_one_is(tmp_path: Path) -> None:
-    """AD073's bound, on the arm that acquired the enumeration second.
-
-    Nothing prunes a run directory, so an unbounded listing would answer an hourly pipeline's
-    typo with thousands of lines. The total is stated when the list truncates, so the operator
-    knows the listing is partial rather than assuming it is all there is.
-    """
+    """AD073's bound, on the arm that acquired the enumeration second."""
     _v1_run_dir(tmp_path)
     for index in range(RUN_ID_LISTING_LIMIT + 5):
         (tmp_path / f"20260101T{index:04d}-aaaaaaaa").mkdir(parents=True, exist_ok=True)
@@ -157,12 +146,7 @@ def test_the_enumeration_on_that_arm_is_bounded_the_same_way_the_unknown_run_one
 
 
 def test_the_two_arms_of_the_enumeration_are_worded_identically(tmp_path: Path) -> None:
-    """One wording, so the two commands an operator meets it from cannot drift (FR-008).
-
-    Asserted against the shared renderer rather than by comparing two hand-written strings:
-    what must not diverge is the sentence, and a duplicated sentence is exactly what would
-    diverge silently.
-    """
+    """One wording, so the two commands an operator meets it from cannot drift (FR-008)."""
     _v1_run_dir(tmp_path)
     sibling = tmp_path / OTHER_RUN_ID
     sibling.mkdir(parents=True, exist_ok=True)
@@ -254,12 +238,7 @@ def test_a_count_mismatch_names_both_the_recorded_and_the_found_count(tmp_path: 
 
 
 def test_a_create_with_no_payload_is_torn_naming_the_line_number_and_the_field(tmp_path: Path) -> None:
-    """The likeliest corruption class in practice, and the one AD059 exists for.
-
-    The record parses as JSON, so nothing structural catches it; only the record type
-    refuses it. That refusal must arrive as a line number and a field with a next action —
-    not as a raw pydantic traceback.
-    """
+    """The likeliest corruption class in practice, and the one AD059 exists for."""
     directory = _run_dir(tmp_path)
     broken = operation_record(identity={"name": "staging"})
     del broken["payload"]
@@ -311,13 +290,7 @@ def test_a_line_that_is_not_json_at_all_is_torn_naming_the_line(tmp_path: Path) 
 
 
 def test_a_repeated_operation_identifier_is_torn_naming_the_id_and_both_lines(tmp_path: Path) -> None:
-    """The writer refuses duplicates, so the reader re-establishes the same invariant.
-
-    Lines validate independently, so a checksum-valid, hand-built artifact carrying the same
-    identifier twice — with different payloads — would otherwise load, review, and apply with
-    last-write-wins semantics and an ambiguous apply record. Both records below are
-    individually valid; only the pair is pathological.
-    """
+    """The writer refuses duplicates, so the reader re-establishes the same invariant."""
     directory = _run_dir(tmp_path)
     first = operation_record(payload={"name": "prod", "description": "first"})
     second = operation_record(payload={"name": "prod", "description": "second"})
@@ -356,11 +329,7 @@ def test_the_repeated_identifier_verdict_names_the_two_offending_lines_not_the_f
 
 
 def test_a_scalar_identity_payload_disagreement_read_from_disk_is_torn(tmp_path: Path) -> None:
-    """`identity` names one object, `payload` writes another: refused while reading.
-
-    Refusing at the read is what keeps the disagreement from reaching apply, where the
-    mutation would be built from the payload and memoized under the reviewed identity.
-    """
+    """`identity` names one object, `payload` writes another: refused while reading."""
     directory = _run_dir(tmp_path)
     mismatched = operation_record(identity={"name": "reviewed"}, payload={"name": "actually-written"})
     write_artifact(directory, [mismatched])
@@ -484,12 +453,7 @@ def test_an_unsupported_format_version_names_the_version_and_lists_those_support
 
 
 def test_an_unhashable_format_version_is_version_refused_rather_than_raising(tmp_path: Path) -> None:
-    """MIN-002: `format_version: [2]` in a hand-edited manifest is unhashable.
-
-    A bare `not in SUPPORTED_FORMAT_VERSIONS` raises `TypeError` against a frozenset — a raw
-    traceback with no next action (AD059). A non-integer is a version this release does not
-    support, so it gets the version refusal, naming what was found.
-    """
+    """MIN-002: `format_version: [2]` in a hand-edited manifest is unhashable."""
     directory = _run_dir(tmp_path)
     write_artifact(directory, [operation_record()], format_version=[2])
 
@@ -503,12 +467,7 @@ def test_an_unhashable_format_version_is_version_refused_rather_than_raising(tmp
 
 
 def test_the_version_message_differs_from_the_pre_existing_format_message(tmp_path: Path) -> None:
-    """SC-018's own clause: the two remedies differ, so the two messages must differ.
-
-    Asserted as neither message containing the other, not merely as inequality — a version
-    message that appended a sentence to the v1 one would satisfy `!=` while still telling
-    the operator the artifact predates the format.
-    """
+    """SC-018's own clause: the two remedies differ, so the two messages must differ."""
     versioned = _run_dir(tmp_path / "versioned")
     write_artifact(versioned, [operation_record()], format_version=UNSUPPORTED_FORMAT_VERSION)
 
@@ -540,12 +499,7 @@ def test_a_manifest_declaring_no_format_version_is_torn_rather_than_version_refu
 
 
 def test_an_unrecognized_action_is_refused_naming_the_operation_and_listing_the_actions(tmp_path: Path) -> None:
-    """FR-017's genuinely-unsupported class, refused **while reading** (AD055).
-
-    Refusing here is what puts it before any destination write. This file cannot assert that
-    consequence — no apply exists in this phase — so it asserts the refusal's content, and
-    T065 asserts the zero writes on the CLI apply path.
-    """
+    """FR-017's genuinely-unsupported class, refused **while reading** (AD055)."""
     directory = _run_dir(tmp_path)
     purge = operation_record(action="purge")
     write_artifact(directory, [purge])
@@ -573,12 +527,7 @@ def test_a_delete_bearing_plan_reads_cleanly(tmp_path: Path) -> None:
 
 
 def test_the_unrecognized_action_wording_is_not_the_delete_wording(tmp_path: Path) -> None:
-    """The two classes must not be conflated: one is refused, the other is applied-around.
-
-    A delete is skipped at apply and disclosed; an unrecognized action stops the read. So the
-    refusal must not read as the skipped-delete disclosure, or an operator will treat a
-    corrupt artifact as this release's known limitation.
-    """
+    """The two classes must not be conflated: one is refused, the other is applied-around."""
     directory = _run_dir(tmp_path)
     write_artifact(directory, [operation_record(action="purge")])
 
@@ -592,11 +541,7 @@ def test_the_unrecognized_action_wording_is_not_the_delete_wording(tmp_path: Pat
 
 
 def test_an_unrecognized_action_takes_precedence_over_a_generic_tear(tmp_path: Path) -> None:
-    """A hand-edited artifact reports its action, not a generic validation tear (T020).
-
-    The record below is invalid twice over — an unrecognized action *and* a missing payload —
-    and the action verdict is the one that must surface.
-    """
+    """A hand-edited artifact reports its action, not a generic validation tear (T020)."""
     directory = _run_dir(tmp_path)
     doubly_broken = operation_record(action="purge")
     del doubly_broken["payload"]
