@@ -29,7 +29,7 @@ from infrahub_sync.plan.errors import (
 from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.plan.reader import read_plan_artifact_bytes, require_plan_directory
 from infrahub_sync.plan.review import read_saved_plan, require_stored_run
-from infrahub_sync.plan.verify import manifest_mapping
+from infrahub_sync.plan.verify import manifest_mapping_or_none
 from infrahub_sync.plan.writer import require_uncommitted_plan
 from infrahub_sync.utils import (
     PlanApplier,
@@ -718,14 +718,14 @@ def _stored_plan_checksum(run_directory: Path) -> str | None:
     bytes that were approved, and the manifest's recorded value is only a claim about them — one
     the pre-apply verifier is what tests. An artifact too incomplete to hash returns `None` and is
     left to that verifier, which names the tear — as is a manifest whose bytes will not decode or
-    parse, which is why the mapping step is the verifier's own `manifest_mapping` and not a second
+    parse, which is why the mapping step is the verifier's own `manifest_mapping_or_none` and not a second
     copy of it here (LOC-03): the copy caught `JSONDecodeError` alone, and non-UTF-8 manifest bytes
     raise `UnicodeDecodeError` from `json.loads`, which left this refusal as a bare traceback.
     """
     artifact = read_plan_artifact_bytes(run_directory)
     if artifact.operations_bytes is None:
         return None
-    mapping = manifest_mapping(artifact.manifest_bytes)
+    mapping = manifest_mapping_or_none(artifact.manifest_bytes)
     if mapping is None:
         return None
     return compute_plan_checksum(mapping, artifact.operations_bytes)
