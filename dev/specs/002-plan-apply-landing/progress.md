@@ -83,6 +83,50 @@ Backup posture: the local push guard (`remote.origin.pushurl=DISABLED`) was lift
 opened, per the work order and DISC-003's gate). A local bundle also exists in the session
 scratchpad. History is append-only — no force-push has been or will be needed.
 
+## Cross-cutting consistency review (2026-07-30) — WP-1…7 combined diff
+
+Verdict: coherent enough for human reviewers **once six blocking findings are fixed**; no
+shipped guarantee found broken (bytes-verified = bytes-applied holds; FIX-010 immutability
+holds at writer and pre-extraction; FIX-014 digest byte-identity structurally sound). Findings
+dispatched as RF-1…RF-8 on worktree branch `rf/review-findings`:
+
+- **RF-1** (reproduced crash) `apply --expected-checksum` dies with a raw `UnicodeDecodeError`
+  and zero operator output on a non-UTF-8 manifest — WP-4 hand-copied a manifest read that
+  WP-1/WP-2 had already hardened, the exact divergence LOC-03 existed to remove.
+- **RF-2** MIN-012's refusal says "re-plan" while FIX-011's defect arm says "do not re-plan";
+  both reach the operator in one line. Fix strips the remedy, keeps the deliberate `ValueError`.
+- **RF-3** FIX-002's empty-filter refusal inherits "Create the peer at the destination", which
+  would duplicate a peer that almost certainly exists.
+- **RF-4** dev docs still show `verify_plan(run_dir=…)` and load-before-verify (both removed by
+  FIX-008). **RF-5** `destination_binding` absent from both manifest format references.
+  **RF-6** `ApplyRecord` docstring still says three summary keys (now five).
+- **RF-7** FIX-003's own "consider the same at plan-write time" was never folded in — a
+  read-denied snapshot still escapes `diff` as a raw `PermissionError`. **RF-8** the three new
+  write-path taxonomy members reach operators as tracebacks (deferred if `cli.py` would pass
+  pylint's 1000-line ceiling; it is at 994).
+
+Non-blocking duplication/style findings (D-1…D-6 and the stale line citations) are WP-9's.
+
 ## Escalations
 
-(none yet — the cross-cutting consistency review over WP-1…7 is running)
+**E-1 — RESOLVED BY BLAKE 2026-07-30: do not loosen the repo-wide lint standards.** WP-7's
+MIN-014 companion shipped `pylint --fail-under=9.5 --fail-on=E,F` in `tasks/linter.py`, which
+made `invoke lint` exit 0 but stopped any new C/R/W message from failing the task while the
+aggregate score stays ≥ 9.5. Blake's decision: this cannot land without a team discussion, and
+belongs in a separate branch/PR if pursued at all. **Action: reverted as RF-9** (`tasks/linter.py`
+back to `pylint infrahub_sync/`); MIN-014's import hoists in `potenda/__init__.py` are kept, as
+they fix code this feature touched. The RF agent's gate was corrected mid-flight accordingly.
+
+Orchestrator-measured evidence for the PR body (2026-07-30) — **this branch does not regress
+lint; it improves it, and `invoke lint` has never passed on `main`**:
+
+| Tree | pylint exit | C | E | R | W | Score |
+|------|-------------|---|---|---|---|-------|
+| `main` (`9edc1bc`) | 30 | 39 | **1** | 11 | 5 | 9.60 |
+| this branch | 28 | 15 | **0** | 11 | 5 | **9.89** |
+
+The exit codes are category bitmasks (16+8+4 = 28; +2 for E = 30), not failure counts. Main's
+sole error-class message — `E0213 no-self-argument` on the `convert_str_to_enum` pydantic
+validator in `infrahub_sync/__init__.py:98` — is **fixed on this branch** (came in with intake
+slice 5, `e271cc7`). So if the team later adopts a `--fail-on=E` gate, this branch already
+satisfies it while `main` does not: useful framing for that separate discussion.
