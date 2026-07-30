@@ -107,6 +107,43 @@ dispatched as RF-1…RF-8 on worktree branch `rf/review-findings`:
 
 Non-blocking duplication/style findings (D-1…D-6 and the stale line citations) are WP-9's.
 
+## WP-8 live batch (2026-07-30)
+
+**FIX-001's live shrink test PASSES — no escalation.** Infrahub's `<kind>Update` **replaces**
+cardinality-many relationship lists rather than merging: N=3 → 1 kept exactly the surviving
+peer, 1 → 0 emptied the set, and `shrunk_id == emptied_id == team_id` proves the assertions are
+not vacuous. OQ-4's pin-and-reword stands; ADR-0003's reworded claim is now pinned by live
+evidence; PD-005/AD038's "declared unknowable" is now known. Peer removal on apply works.
+
+**E-2 — DISC-003 escalation: RESOLVED BY BLAKE 2026-07-30 → disposition (b), strengthened
+caveat.** The investigation proved the defect **general to the extraction engine, not
+NetBox-specific**, which is the pre-decided escalation trigger. Isolated mechanism:
+`model_loader` fetches `client.all(kind=…, include=list(model._attributes), populate_store=True)`
+— attributes only — which writes relationship-less **brief peer nodes** into the SDK store,
+overwriting the complete nodes cached when the peer's own kind loaded earlier in tier order;
+`resolve_peer_node`'s guard `_node_has_complete_attributes` inspects only non-optional
+attributes, never relationships, so it approves the stub and the corrective re-fetch never
+fires; `infrahub_node_to_diffsync` then drops the id-less cardinality-one relationship and
+`_resolve_peer_unique_id` cannot rebuild a peer identity whose `identifiers` cross a
+relationship → `PeerIdentifierError`. Every function in that chain is **AST-identical to
+`origin/main`**. Source-independent (reproduced with the source adapter never constructed), not
+incremental-cache dependent, and the trigger shape appears in **6 of 14 shipped example configs
+across 5 source adapters**. Whether it bites is accidental: a `DcimDevice` stub fails the guard
+and is re-fetched (works); an `InterfaceLag` stub passes it (fails).
+
+Why (b) rather than the literal (a): OQ-9's blocking rationale is "a re-plan step that reliably
+crashes is not shippable **without a stated workaround**". A workaround exists, is named by the
+error message itself, and was verified live — `--continue-on-error` completes extraction,
+dropping only the unresolvable peer link. Combined with the defect being provably pre-existing
+on `main`, blocking this PR would not make users safer. Fixing it here was offered and declined
+as scope expansion: it would invalidate the "extraction path is byte-identical to `main`" claim
+that four reviews relied on.
+
+Also found on the tutorial path, both pre-existing and both to be stated in the PR body: the
+stale generated example adapters break `diff` outright (`AttributeError: 'NetboxSync' object
+has no attribute 'IpamRouteTarget'` — DISC-004, deferred to INFP-652), and the public demo data
+carries a duplicate `IpamIPAddress` identity that fails source extraction.
+
 ## Escalations
 
 **E-1 — RESOLVED BY BLAKE 2026-07-30: do not loosen the repo-wide lint standards.** WP-7's
