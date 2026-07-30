@@ -81,6 +81,16 @@ Phase 1 design (both evaluations below reflect the final design).*
 is empty.** One deviation from the *brief* (not the constitution) is recorded: D005
 replaces the unsatisfiable 3.7.2 pin (BLOCKING checkpoint decision, root-issued).
 
+**Deviation note — logging (recorded as governance decision D008)**: new modules log
+via stdlib `logging.getLogger(__name__)`, not structlog, despite the constitution's
+structlog sentence. This matches the entire existing codebase — there is zero structlog
+usage anywhere in `infrahub_sync/` today — and is required by the DBR-012 log-bridge
+design, which attaches a stdlib `logging.Handler` to the `infrahub_sync` logger
+hierarchy to forward records to the Prefect run logger (structlog-emitted records would
+bypass that bridge). A constitution PATCH correcting the structlog sentence (and the
+stale markdownlint-cli2 → rumdl tooling reference) is queued OUTSIDE this delivery run;
+the constitution itself is not edited here.
+
 ## Project Structure
 
 ### Documentation (this feature)

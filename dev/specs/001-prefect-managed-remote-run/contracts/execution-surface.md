@@ -150,6 +150,21 @@ def run_remote_request(
 | `cli.py::sync_cmd` (serial branch only: `--no-parallel`, or `--parallel` with explicit `order:`) | same resolution, then `execute_run(instance, operation="sync", confirm_writes=True, print_diff=<--diff>, allow_rowcount_drop=..., continue_on_error=..., ...)` — the explicit human CLI invocation IS the confirmation | `--parallel ignored` warning and the parallel `sync_in_tiers` branch stay in cli.py untouched |
 | `orchestration/flow.py` | `run_remote_request(sync_name, operation, confirm_writes, branch, config_directory=os.environ["INFRAHUB_SYNC_CONFIG_DIRECTORY"])` | Engine defaults pinned; `show_progress=False` |
 
+### CLI error mapping (binding — DBR-009: exit codes and output identical to the current CLI at `9edc1bc`)
+
+The CLI commands map surface errors back to today's behavior **by origin**
+(`__cause__`), not by wrapper class alone:
+
+- `RunValidationError`, and any surface error wrapping the factory `ValueError`
+  (`__cause__` is `ValueError`, execute_run step 3) → `print_error_and_abort` with
+  today's exact wording (`"Failed to initialize the Sync Instance: <exc>"` for the
+  factory case), preserving today's exit code.
+- A surface error wrapping a factory `ImportError` (`__cause__` is `ImportError`,
+  `RunExecutionError`-typed per step 3) → the CLI re-raises the original
+  `ImportError` unchanged. The CLI at `9edc1bc` catches only `ValueError` around
+  factory construction, so a missing optional dependency surfaces as an uncaught
+  traceback today; that traceback behavior (and its exit code) must be preserved.
+
 ## Compatibility constraints (binding)
 
 - The DBA-009 test population (`tests/test_cli_full_extract.py`,
