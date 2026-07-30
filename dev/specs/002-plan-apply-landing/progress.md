@@ -144,6 +144,49 @@ stale generated example adapters break `diff` outright (`AttributeError: 'Netbox
 has no attribute 'IpamRouteTarget'` — DISC-004, deferred to INFP-652), and the public demo data
 carries a duplicate `IpamIPAddress` identity that fails source extraction.
 
+## Review-finding fixes (RF-1…RF-9) — landed 2026-07-30
+
+All nine on the branch (cherry-picked from `rf/review-findings`, no conflicts): `3122aa4`
+(RF-1) `63317a1` (RF-2) `25bbef0` (**RF-9** lint-gate revert) `cc7bda8` (RF-3) `85c0fc8`
+(RF-4) `a3a75ce` (RF-5) `b79d5a2` (RF-6) `cc17911` (RF-7) `57940cb` (RF-1 follow-up rename).
+Every finding reproduced as the reviewer described it. RF-9's revert is **byte-exact** against
+the pre-fix-pass baseline (`git diff 69063ff HEAD -- tasks/linter.py` is empty).
+
+**RF-8 deferred on measurement, not assumption.** The agent implemented it fully, measured
+`cli.py` at **1014** lines (pylint `C0302` at 1000 → a new message), and reverted; even a bare
+8-line version reaches 1003. `cli.py` final: **995**, zero `C0302`. The real unblock is
+MIN-022's `cli.py` split, already a post-merge follow-up. WP-10 should file RF-8 with it.
+
+Two disclosed judgment calls, both accepted: the RF-1 helper is named `manifest_mapping_or_none`
+because `manifest_mapping` collided with an existing `plan_checksum_failure` keyword (a new
+`W0621` otherwise), landing as a second commit rather than an amendment; and RF-6's identical
+"three keys" wording in `dev/specs/archive/…/data-model.md` + `tasks.md` was deliberately left
+alone as archived spec-001 history adjacent to WI-000's byte-exactness constraint.
+
+### Final pylint numbers for the PR body (measured post-revert)
+
+`uv run pylint infrahub_sync/` → **exit 28** (bitmask 16 C + 8 R + 4 W, not a failure count),
+**31 messages: 15 C, 11 R, 5 W, 0 E, 0 F**, score **9.89/10**. Versus the pre-fix-pass baseline
+`69063ff` the fix pass **net removed 32** messages (63 → 31), and at file+message-id granularity
+there is **not one new pair**; `infrahub_sync/plan/`, where this feature mostly lives, carries
+zero messages. One existing threshold deepened rather than a new message: `cli.py` `R0917`
+6/5 → 8/5, from `apply_cmd`'s two new flags. State it that way.
+
+### `ty` gate: a pynetbox-dependent result worth a follow-up
+
+On the final tree `ty` reports **6 diagnostics, exit 1** in the WP-8 checkout but **3
+diagnostics, exit 0** in the RF worktree — on **byte-identical** Python and test code
+(`git diff rf/review-findings HEAD -- infrahub_sync/ tests/` is empty). Cause: WP-8's ad-hoc
+`uv pip install pynetbox` (the runbook's §5 step; `pynetbox` is declared in **no** extra). With
+it installed, `ty` can resolve the import and then surfaces two genuine **errors** —
+`unresolved-attribute: Unresolved attribute 'devices' on type 'App'` at
+`tests/adapters/test_netbox_incremental.py:88,132` — plus a now-unused `ty: ignore` at
+`infrahub_sync/adapters/netbox.py:8`. Both files are **untouched by this branch** (no commits in
+`main..HEAD`), so these are pre-existing and masked in CI. **The gate is met** (exit 0 with the
+declared dependency set, which is what CI runs), but the underlying hole — an adapter whose
+dependency is undeclared is never type-checked or tested in CI — is a real follow-up for WP-10.
+A `uv sync` restores the 3/exit-0 result locally.
+
 ## Escalations
 
 **E-1 — RESOLVED BY BLAKE 2026-07-30: do not loosen the repo-wide lint standards.** WP-7's
