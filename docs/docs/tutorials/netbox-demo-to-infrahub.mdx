@@ -252,9 +252,9 @@ uv run infrahub-sync sync --name from-netbox --directory sync-projects --branch 
 
 The `--diff` option prints the diff before applying the changes. The first sync can take a few minutes because it writes the imported objects and relationships into the `netbox-import` branch — `main` is untouched until you merge the resulting proposed change. Because this configuration omits `order:`, Infrahub Sync derives the write order from the mapping references.
 
-:::warning A second `diff` against this branch needs `--continue-on-error`
+:::warning A second `diff` against this branch fails once interfaces exist
 
-Once the sync has written interfaces, running `diff` or `sync` against the same branch again fails while loading the destination. This is a known defect, and it is not specific to NetBox. See [`diff` fails after a sync that wrote interfaces](#diff-fails-after-a-sync-that-wrote-interfaces) for the error and the workaround.
+Once the sync has written interfaces, running `diff` or `sync` against the same branch again fails while loading the destination. This is a known defect, and it is not specific to NetBox. See [`diff` fails after a sync that wrote interfaces](#diff-fails-after-a-sync-that-wrote-interfaces) for the error and how to get moving again.
 
 :::
 
@@ -342,18 +342,22 @@ A first `diff` succeeds. Once a `sync` or `apply` has written an `InterfacePhysi
 
 The cause is that the destination loader rebuilds each related peer's identifier from a cached copy of the peer node, and the copy it finds carries the peer's attributes but not its relationships. `InterfaceLag` is identified by `device` **and** `name`, so its identifier cannot be rebuilt and the load aborts.
 
-Pass `--continue-on-error` to complete the load:
+**`diff` has no `--continue-on-error` option** — the flag exists only on `sync`, so the advice in the error message does not apply when the failure came from `diff`. There are two ways forward, depending on whether you need a plan you can review before it is applied.
+
+**To keep the plan, review, and apply loop:** delete the interface objects at the destination, then re-run `diff`. Those objects are re-imported by the next sync.
+
+**If you do not need to review the plan first:** run `sync` with the flag, which loads, plans, and applies in one step.
 
 ```bash
-uv run infrahub-sync diff --name from-netbox --directory sync-projects --branch netbox-import --continue-on-error
+uv run infrahub-sync sync --name from-netbox --directory sync-projects --branch netbox-import --continue-on-error
 ```
 
-The unresolvable peer link is logged and skipped rather than aborting the run. The cost is that the affected interface's `bundle` peer is then absent from the extracted destination state, so the plan carries an update for that object on every run even when nothing changed upstream. Review the warnings before relying on the result.
+The unresolvable peer link is logged and skipped rather than aborting the run. The cost is that the affected interface's `bundle` peer is then absent from the extracted destination state, so the run carries an update for that object every time, even when nothing changed upstream. Read the warnings before relying on the result.
 
 Two things to be clear about:
 
 - **This is not a NetBox-specific defect, and it is not introduced by the saved-plan workflow.** It is present in the released destination adapter, and it affects any configuration in which a mapped kind references a peer kind whose `identifiers` include a relationship — the `nautobot`, `ipfabric`, `slurpit`, and `aci` example configurations all contain that shape. It is a recorded limitation of this release, assigned to later work.
-- **`--continue-on-error` only covers this loading failure.** It does not make a run tolerant of everything: a source record that references a peer the source itself cannot resolve still fails the whole run when the plan is derived, by design. Use the flag for this destination-loading case, not as a general "keep going" switch.
+- **`--continue-on-error` is a `sync` option, and it only covers this loading failure.** It does not make a run tolerant of everything: a source record that references a peer the source itself cannot resolve still fails the whole run when the plan is derived, by design. Use it for this destination-loading case, not as a general "keep going" switch.
 
 ## Next steps
 
