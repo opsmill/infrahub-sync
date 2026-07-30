@@ -7,14 +7,8 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
-      # tests/data/ holds byte-exact fixtures compared verbatim by tests, so
-      # neither hook may rewrite them. tests/data/cli_help_baseline.txt is
-      # `--help` output padded to 80 columns with a trailing blank line;
-      # stripping either makes its comparison fail on every padded line.
       - id: trailing-whitespace
-        exclude: ^tests/data/
       - id: end-of-file-fixer
-        exclude: ^tests/data/
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict

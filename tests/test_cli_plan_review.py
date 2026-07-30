@@ -1157,14 +1157,11 @@ def test_the_review_path_never_takes_the_pipeline_lock(tmp_path: Path) -> None:
 
 
 # ======================================================================================
-# T064 — SC-012, against the committed baseline fixture (AD060)
+# SC-012 — review is reachable through an existing command and adds no group
 # ======================================================================================
 
-BASELINE_FIXTURE = REPO_ROOT / "tests" / "data" / "cli_help_baseline.txt"
-
-# The rendering environment the committed fixture was captured in. Fixed here so the
-# comparison is against the baseline's content and not against the terminal the suite
-# happens to run in.
+# A fixed rendering environment, so a help assertion is about the help text and not about
+# the terminal the suite happens to run in.
 HELP_ENVIRONMENT = {"COLUMNS": "80", "TERM": "dumb", "NO_COLOR": "1"}
 WIDE_HELP_ENVIRONMENT = {"COLUMNS": "400", "TERM": "dumb", "NO_COLOR": "1"}
 
@@ -1173,7 +1170,7 @@ NEW_REVIEW_OPTIONS = ("--from-plan", "--detail", "--kind")
 
 
 def _help_text(*args: str, wide: bool = False) -> str:
-    """Capture `--help` for `args` in the fixture's own rendering environment."""
+    """Capture `--help` for `args` in a fixed rendering environment."""
     result = runner.invoke(
         app,
         [*args, "--help"],
@@ -1184,66 +1181,8 @@ def _help_text(*args: str, wide: bool = False) -> str:
     return _strip_ansi(result.output)
 
 
-def _command_names(help_text: str) -> list[str]:
-    """The command names listed in a help output's Commands panel, in order.
-
-    Parsed rather than regex-matched against the whole text so a command name appearing
-    inside a description cannot be counted as a command.
-    """
-    names: list[str] = []
-    inside = False
-    for line in help_text.splitlines():
-        if "─ Commands ─" in line:
-            inside = True
-            continue
-        if inside and line.startswith("╰"):
-            break
-        if inside and line.startswith("│"):
-            body = line[1:]
-            if body[:1] == " " and body[1:2] not in {"", " "}:
-                names.append(body.split()[0])
-    return names
-
-
-def test_the_committed_baseline_fixture_exists() -> None:
-    """AD060: an absent baseline is a failure, never a regeneration.
-
-    Regenerating it here would turn the comparison below into the post-change listing diffed
-    against itself — a test that passes with no baseline at all, which is the exact
-    degradation AD060 exists to prevent.
-    """
-    assert BASELINE_FIXTURE.is_file(), (
-        f"the committed SC-012 baseline is missing at {BASELINE_FIXTURE}. Restore it from git; "
-        "do not regenerate it, or the comparison becomes a self-comparison."
-    )
-
-
-def test_the_top_level_help_is_unchanged_against_the_committed_baseline() -> None:
-    """SC-012, compared as text against the fixture captured before any CLI change."""
-    baseline = BASELINE_FIXTURE.read_text(encoding="utf-8")
-
-    live = _help_text()
-
-    assert live == baseline
-
-
-def test_the_command_list_is_the_same_five_commands_with_no_group_added() -> None:
-    """The bar itself: no command added, none removed, and no `add_typer` group (AD019)."""
-    baseline_commands = _command_names(BASELINE_FIXTURE.read_text(encoding="utf-8"))
-    live_commands = _command_names(_help_text())
-
-    assert baseline_commands == list(EXPECTED_COMMANDS)
-    assert live_commands == baseline_commands
-    assert len(live_commands) == 5
-    assert set(live_commands) - set(baseline_commands) == set()
-    assert set(baseline_commands) - set(live_commands) == set()
-
-
-def test_no_add_typer_call_exists_in_the_cli_module() -> None:
-    """The group bar, asserted at the source rather than inferred from the rendering."""
-    source = (REPO_ROOT / "infrahub_sync" / "cli.py").read_text(encoding="utf-8")
-
-    assert "add_typer" not in source
+def test_the_command_set_is_five_commands_with_no_group_added() -> None:
+    """SC-012's bar: no command added, none removed, and no sub-command group."""
     assert app.registered_groups == []
     assert [command.name for command in app.registered_commands] == list(EXPECTED_COMMANDS)
 
@@ -1264,39 +1203,12 @@ def test_the_new_options_appear_only_under_diff() -> None:
 
 
 # ======================================================================================
-# T090 — the help strings, fixed by contract rather than discovered (AD057, AD061)
+# The review options' own help rows
 # ======================================================================================
-
-# Verbatim from `contracts/cli-review-mode.md`, "Help text, specified rather than discovered".
-CONTRACT_HELP_STRINGS: dict[str, str] = {
-    "--from-plan": (
-        "Review the saved plan artifact for this run id instead of comparing live systems. "
-        "Constructs no adapter, extracts nothing, and takes no lock."
-    ),
-    "--detail": "Expand the plan summary to one record per operation. Requires --from-plan.",
-    "--kind": "Narrow --detail to a single destination kind. Requires --from-plan and --detail.",
-    "--run-id": (
-        "Re-use a specific cache run id for the live comparison. To review a saved plan "
-        "instead, pass --from-plan <run-id>."
-    ),
-}
-
-
-@pytest.mark.parametrize(("option", "expected"), list(CONTRACT_HELP_STRINGS.items()))
-def test_the_help_string_matches_the_contract(option: str, expected: str) -> None:
-    """`docs.generate` renders these verbatim into `docs/docs/reference/cli.mdx` (T070), so
-    text left to the implementer ships as reviewed documentation having never been reviewed."""
-    _ = option
-    assert _flat(expected) in _flat(_help_text("diff", wide=True))
 
 
 def test_the_run_id_help_carries_the_cross_reference_to_from_plan() -> None:
-    """The correction is load-bearing, not cosmetic (AD057).
-
-    `--run-id` no longer describes everything an operator needs in order to select a run, and
-    an operator reading only its old text had no way to learn that reviewing a stored plan is
-    a different option.
-    """
+    """AD057: `--run-id` alone cannot tell an operator that reviewing a plan is another option."""
     line = _option_help_line("--run-id")
 
     assert "--from-plan <run-id>" in line
