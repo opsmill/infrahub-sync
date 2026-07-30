@@ -148,6 +148,22 @@ def source_snapshot_records(run_dir: Path) -> list[dict[str, Any]]:
                 msg,
                 next_action="Re-run `diff` for this sync to rebuild the snapshot and its plan artifact.",
             ) from exc
+        except OSError as exc:
+            # `glob` listed the path, so the file was there: this is removed-between-listing-
+            # and-open, or stat-allowed/read-denied. FIX-003 asked for the same treatment here
+            # that the verifier already gives the condition at apply time; without this arm a
+            # read-denied snapshot escaped `diff` as a raw `PermissionError` from what is a
+            # designed failure path (AD059).
+            #
+            # It keeps the class-level next action — check permissions and ownership — rather
+            # than the re-plan one above. Unreadable is a different condition from corrupt
+            # bytes and has a different remedy (AD036): re-running `diff` would meet the same
+            # denial, so telling the operator to do that would loop them.
+            msg = (
+                f"The source snapshot at {str(path)!r} exists but could not be read for the plan "
+                f"manifest: {exc.strerror or exc}."
+            )
+            raise PlanArtifactUnreadableError(msg) from exc
         records.append(
             {
                 "path": path.relative_to(run_dir).as_posix(),

@@ -101,7 +101,19 @@ class PlanFormatVersionError(PlanArtifactError):
 
 
 class PlanArtifactUnreadableError(PlanArtifactError):
-    """A permission or I/O failure stopped an artifact path from being read."""
+    """An artifact path could not be turned into the bytes or rows it should hold.
+
+    Two conditions, because both leave the caller without a value and neither is the path
+    being *absent* — which is a separate verdict with a separate remedy (AD036):
+
+    - a permission or I/O failure stopped the path from being read at all;
+    - the path was read, but its bytes are not the Parquet table they claim to be, which is
+      what `checksum.py` raises this for on a snapshot it cannot digest.
+
+    The class-level next action fits the first. The second overrides it at the raise site,
+    since checking permissions on a file that was read successfully would send the operator
+    nowhere.
+    """
 
     next_action = "Check permissions and ownership on the named path, then retry."
 

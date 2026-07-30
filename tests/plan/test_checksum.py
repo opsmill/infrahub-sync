@@ -547,3 +547,36 @@ def test_plan_write_refuses_a_corrupt_snapshot_with_the_taxonomy_error(tmp_path:
     assert "not a readable Parquet table" in message
     assert "Next action:" in message
     assert "Re-run `diff`" in message
+
+
+def test_plan_write_refuses_a_read_denied_snapshot_with_the_taxonomy_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RF-7: FIX-003's OSError arm belongs at plan-write time too, not only at apply time.
+
+    `glob` listed the snapshot, so it exists; the digest read is then denied — removed
+    between listing and open, or stat-allowed/read-denied. The verifier already classifies
+    this at apply time (`ArrowInvalid` **and** `OSError`), but `source_snapshot_records`
+    caught `ArrowInvalid` alone, so the condition escaped `diff` as a raw `PermissionError`
+    from what is a designed failure path (AD059).
+
+    Its next action is the class-level permissions one, not "re-run `diff`": re-running would
+    meet the same denial and loop the operator (AD036).
+    """
+    _write_side(tmp_path)
+
+    def _deny(uri: str, **_kwargs: object) -> NoReturn:
+        raise PermissionError(13, "Permission denied", uri)
+
+    monkeypatch.setattr(checksum_module, "iter_row_batches", _deny)
+
+    with pytest.raises(PlanArtifactUnreadableError) as raised:
+        source_snapshot_records(tmp_path)
+
+    message = str(raised.value)
+    assert "BuiltinTag.parquet" in message, message
+    assert "could not be read" in message, message
+    assert "Permission denied" in message, message
+    assert "Next action:" in message, message
+    assert "Re-run `diff`" not in message, f"re-running would meet the same denial: {message}"
+    assert "permissions" in message.lower(), message
