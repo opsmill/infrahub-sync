@@ -254,11 +254,12 @@ def get_potenda_from_instance(
 
     # Compute (and persist) the schema sub-hash *before* constructing Potenda so
     # the engine receives fully-formed cache identity rather than being mutated
-    # into shape afterwards. `apply` uses it to refuse cached runs whose shape no
-    # longer matches the destination's live schema, and `should_use_incremental`
-    # compares it against the prior run. Uses the destination adapter's live
-    # schema (populated at __init__); falls back to `sync_instance._cached_schema`
-    # for test seams.
+    # into shape afterwards. Its **only** reader is incremental extraction:
+    # `should_use_incremental` compares it against the prior run's, and a run whose
+    # shape has changed re-extracts in full. `apply` does not read it — the plan
+    # artifact's own gate is what an apply is refused by. Uses the destination
+    # adapter's live schema (populated at __init__); falls back to
+    # `sync_instance._cached_schema` for test seams.
     subhash = ""
     try:
         from infrahub_sync.cache import compute_schema_subhash
