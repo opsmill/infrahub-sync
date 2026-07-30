@@ -16,6 +16,15 @@ Infrahub Sync is operated today only through a local CLI. A developer who wants 
 
 The preview delivers: a narrow, typed Python execution surface shared by the existing CLI (`diff` lifecycle and the serial branch of `sync --no-parallel`) and a package-owned Prefect flow; an optional Prefect dependency (the base package stays Prefect-free); a default self-hosted Prefect Server with a locally served deployment; remote submission and inspection through Prefect's own REST API; and one reproducible example plus one qualified demonstration. The remote operation name `plan` maps to the existing `diff` lifecycle.
 
+## Clarifications
+
+### Session 2026-07-30
+
+- Q: What exactly is the "canonical plan fingerprint" (DBA-009, SC-007) that CLI `diff` and remote `plan` must agree on? → A: A SHA-256 hex digest over the run's plan rows (`plan.parquet` fields `action`, `resource`, `source_id`, `attribute`, `new_value`), rows sorted by (`resource`, `source_id`, `action`, `attribute`), each serialized as compact sorted-key JSON, joined by newlines, UTF-8; timestamps, run identifiers, and paths are excluded; computed by one shared helper used for both sides of the comparison. — PROVISIONAL (CHECKPOINT)
+- Q: How is the server-configured configuration directory (DBR-005) supplied to the runner? → A: One required environment variable, `INFRAHUB_SYNC_CONFIG_DIRECTORY`, read by the serving process at startup; no default; a missing or non-directory value fails at serve start rather than per-run. — PROVISIONAL (CHECKPOINT)
+- Q: What values do the CLI's engine options that are absent from the fixed execution request take on remote runs, and does the per-configuration pipeline lock apply? → A: Remote runs pin today's CLI defaults — full extract, concurrent side load, rowcount guardrail enforced with no drop allowance, continue-on-error off, no cache run-id reuse, adapter paths only from the resolved configuration — with progress display disabled; the existing per-configuration pipeline lock is owned by the shared execution surface, so CLI and remote runs of the same configuration mutually exclude exactly as CLI invocations do today, and lock contention surfaces as a run failure (`RunExecutionError`), not a hang. — PROVISIONAL (CHECKPOINT)
+- Q: By what mechanism are Infrahub Sync lifecycle logs forwarded into the Prefect flow-run log (DBR-012)? → A: The packaged flow programmatically bridges the `infrahub_sync` logger hierarchy into the Prefect run logger for the duration of the run (handler attached before the execution-surface call and removed after), so forwarding does not depend on operator-set Prefect logging environment variables. — PROVISIONAL (CHECKPOINT)
+
 ## Mandated Enabling Work (pre-implementation readiness)
 
 These items come from the brief's readiness check of the repository at commit `9edc1bc` and are in-scope, ordered, mandated work — not optional cleanup:
@@ -108,7 +117,7 @@ A developer unfamiliar with the implementation follows one shipped example READM
 - An unreadable or invalid configuration fails before either adapter loads and names the configuration without printing its contents.
 - A missing credential fails clearly while leaving the credential value absent from Prefect-visible state and logs.
 - A Prefect Server outage prevents remote submission but does not change ordinary local CLI behavior.
-- Concurrent requests retain Prefect's default served-run behavior. The preview makes no overlap or same-configuration concurrency guarantee, and the qualified demonstration must not issue concurrent destination-writing runs.
+- Concurrent requests retain Prefect's default served-run behavior. The preview makes no overlap or same-configuration concurrency guarantee, and the qualified demonstration must not issue concurrent destination-writing runs. The existing per-configuration pipeline lock is owned by the shared execution surface, so CLI and remote runs of the same configuration mutually exclude exactly as CLI invocations do today; lock contention surfaces as a failed run (`RunExecutionError`), not a hang.
 - Failure after destination writes begin retains today's Sync behavior; the preview makes no durable-recovery claim.
 
 ## Requirements *(mandatory)*
@@ -135,7 +144,7 @@ Requirement IDs are the brief's own; origin (QUOTED/DERIVED) and source referenc
 
 ### Key Entities
 
-- **Execution request (shared contract, owned by this brief)**: The minimal input accepted by the shared execution surface and the Prefect flow. Fixed to `sync_name` (logical configuration name), `operation` (`plan` or `sync`; `plan` is the default), `confirm_writes` (explicit write gate), and optional Infrahub `branch`. Remote parameters never carry paths, CLI fragments, credentials, or environment overrides. Future API or orchestration briefs must extend this contract rather than create a second run lifecycle.
+- **Execution request (shared contract, owned by this brief)**: The minimal input accepted by the shared execution surface and the Prefect flow. Fixed to `sync_name` (logical configuration name), `operation` (`plan` or `sync`; `plan` is the default), `confirm_writes` (explicit write gate), and optional Infrahub `branch`. Remote parameters never carry paths, CLI fragments, credentials, or environment overrides. Engine options that exist as CLI flags but are absent from this contract are pinned on remote runs to today's CLI defaults — full extract, concurrent side load, rowcount guardrail enforced with no drop allowance, continue-on-error off, no cache run-id reuse, adapter paths only from the resolved configuration — with progress display disabled. Future API or orchestration briefs must extend this contract rather than create a second run lifecycle.
 - **RunResult (immutable success result)**: One immutable result returned by the shared execution surface, with exactly these fields:
 
   | Field | Type | Meaning |
@@ -149,7 +158,8 @@ Requirement IDs are the brief's own; origin (QUOTED/DERIVED) and source referenc
   | `artifact_path` | `str` | Absolute runner-local path containing the ordinary Sync artifacts |
 
 - **Failure contract**: Request or configuration failure raises `RunValidationError`; adapter or engine failure raises `RunExecutionError`. Both preserve a specific human-readable cause while redacting configured secret values. A failure produces no successful `RunResult`, and Prefect records the flow as failed.
-- **Sync configuration**: An existing Infrahub Sync project (YAML config plus generated models) installed manually on the runner and selected by logical name from one server-configured directory.
+- **Sync configuration**: An existing Infrahub Sync project (YAML config plus generated models) installed manually on the runner and selected by logical name from one server-configured directory. The directory is supplied through the required environment variable `INFRAHUB_SYNC_CONFIG_DIRECTORY`, read by the serving process at startup; no default is assumed, and a missing or non-directory value fails at serve start rather than per-run.
+- **Canonical plan fingerprint**: The deterministic digest DBA-009/SC-007 compare across the CLI and remote plans. Defined as the SHA-256 hex digest over the run's plan rows (`action`, `resource`, `source_id`, `attribute`, `new_value` from the plan artifact), rows sorted by (`resource`, `source_id`, `action`, `attribute`), each serialized as compact sorted-key JSON, joined by newlines, UTF-8-encoded. Timestamps, run identifiers, and filesystem paths are excluded so reset-fixture runs compare equal. One shared helper computes it for both sides of the comparison.
 - **Qualified demonstration fixture**: `examples/custom_adapter` — its local JSON MockDB source (`custom_adapter_src/mock_db.json`), the five named device records already in that file, and a live Infrahub destination whose schema contains `InfraDevice` with `name` and `type`. Against an empty qualified destination: the expected first plan is five creates, the confirmed sync creates those five devices, and the next plan has no changes.
 
 ### Acceptance Criteria (verbatim traceability from DB-001)
@@ -178,10 +188,10 @@ Requirement IDs are the brief's own; origin (QUOTED/DERIVED) and source referenc
 - A package-owned Prefect flow that calls the execution surface directly rather than spawning or wrapping the CLI.
 - A default self-hosted Prefect Server using its default local database and UI; a locally served Prefect deployment; no work pool or separate worker service.
 - Direct remote submission and inspection through Prefect's REST API.
-- Manually installed Sync configurations selected by logical name from one server-configured directory.
+- Manually installed Sync configurations selected by logical name from one server-configured directory, supplied via the `INFRAHUB_SYNC_CONFIG_DIRECTORY` environment variable read at serve start.
 - Credentials and endpoints supplied to the runner through environment variables.
 - Flow parameters for `sync_name`, `operation`, `confirm_writes`, and an optional Infrahub branch; `plan` as the default operation and an explicit confirmation gate for `sync`.
-- Infrahub Sync lifecycle output available in the Prefect run log.
+- Infrahub Sync lifecycle output available in the Prefect run log, forwarded by the flow bridging the `infrahub_sync` logger hierarchy into the Prefect run logger for the duration of the run (no reliance on operator-set Prefect logging environment variables).
 - One example containing setup instructions and remote request examples, including authoring the loadable `InfraDevice(name, type)` schema file (per R-3).
 - One qualified demonstration using `examples/custom_adapter` as defined under Key Entities.
 - Mandated enabling work R-1 and R-2 as the first two commits.
@@ -226,15 +236,15 @@ Requirement IDs are the brief's own; origin (QUOTED/DERIVED) and source referenc
 
 ## Assumptions
 
-Documented defaults and inherited facts; none require interactive clarification. The brief records "Unresolved questions: None."
+Documented defaults and inherited facts. The brief records "Unresolved questions: None." Two of the original informed defaults (the canonical plan fingerprint and the configuration-directory mechanism) were promoted to provisional checkpoint decisions in the Clarifications session above and are encoded in Key Entities and In Scope; the entries below record what remains assumption-level.
 
 - **Brief-owned assumption**: Direct use of Prefect's REST API is acceptable for a developer-facing preview; if wrong, a Sync-shaped façade must be promoted from backlog B-001 before delivery.
 - **Brief-owned assumption**: The existing `examples/custom_adapter` fixture can run against a lab Infrahub schema containing `InfraDevice(name, type)`. If wrong, the example must be repaired within this brief without changing its five-device outcome, or the brief returns for intake rather than selecting an unspecified substitute. (Repository check on 2026-07-30 confirms the fixture exists with its MockDB source at `examples/custom_adapter/custom_adapter_src/mock_db.json`.)
 - **Brief-owned assumption**: Refactoring the CLI `diff` lifecycle and the serial branch selected by `sync --no-parallel` behind one execution surface is small enough for the preview; if wrong, the brief returns for intake rather than silently falling back to an example-only subprocess wrapper.
 - **Environment**: Lab facts per R-3 (Infrahub 1.9.8 at `http://localhost:8000`, `InfraDevice(name, type)` schema loaded on `main` with deprecation warnings for `display_labels` and `default_filter`, zero existing `InfraDevice` objects). If the live instance or credentials are unavailable at demonstration time, the run records the live-environment ceiling rather than blocking.
-- **Informed default (documented, not a clarification)**: "Before either adapter loads" (DBA-006, edge cases) is interpreted as: validation of `confirm_writes`, `operation`, and `sync_name` resolution completes before any source or destination adapter object is constructed or any network connection is attempted.
-- **Informed default (documented, not a clarification)**: The "canonical plan fingerprint" (DBA-009) is a deterministic digest over the ordered plan actions in the run artifact, defined once during planning and used identically for the CLI and remote comparison.
-- **Informed default (documented, not a clarification)**: The server-configured configuration directory (DBR-005) is supplied through the runner's environment/serve-time setup — not through remote parameters — consistent with DBR-006; its exact configuration mechanism is a planning decision.
+- **Informed default (documented, not a clarification)**: "Before either adapter loads" (DBA-006, edge cases) is interpreted as: validation of `confirm_writes`, `operation`, and `sync_name` resolution completes before any source or destination adapter object is constructed or any network connection is attempted. This definition is already concrete and testable, so it stays assumption-level rather than becoming a checkpoint decision.
+- **Clarified (Session 2026-07-30, PROVISIONAL CHECKPOINT)**: The "canonical plan fingerprint" (DBA-009) is fixed to the definition under Key Entities — a SHA-256 digest over the sorted, canonically serialized plan rows, computed by one shared helper for both the CLI and remote comparison.
+- **Clarified (Session 2026-07-30, PROVISIONAL CHECKPOINT)**: The server-configured configuration directory (DBR-005) is supplied through the required `INFRAHUB_SYNC_CONFIG_DIRECTORY` environment variable read at serve start — not through remote parameters — consistent with DBR-006; missing or invalid values fail at serve start, not per-run.
 - **Dependency (satisfied)**: Existing CLI `diff` and serial `sync --no-parallel` behavior in `infrahub_sync/cli.py`, and the `Potenda` engine's load/diff/write-plan/sync operations in `infrahub_sync/potenda/__init__.py`, provide everything the shared execution surface must move behind the seam.
 - **Dependency (available)**: Prefect 3.7.2 — flow, served deployment, REST run creation, state, and logging behavior; VAL-6 and VAL-12 already exercised Prefect locally (supporting evidence only).
 - **Approved decisions carried forward**: Build a thin package integration plus one example (no example-only CLI wrapper, no engine rewrite around Prefect); record speculative follow-ons in `backlog.md` instead of creating DB-002 now.
