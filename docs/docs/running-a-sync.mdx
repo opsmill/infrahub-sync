@@ -65,7 +65,7 @@ infrahub-sync sync --name <sync_project_name> --directory <your_configuration_di
 - `--show-progress / --no-show-progress` — progress bar during sync.
 - `--parallel / --no-parallel` — run tier-by-tier using the auto-computed dep graph (default on). Requires `order:` to be omitted from `config.yml` (see [Auto-tiered execution](./reference/config#auto-tiered-execution)). Falls back to serial when `order:` is set; a warning is logged so the no-op is visible.
 - `--allow-rowcount-drop / --no-allow-rowcount-drop` — bypass the rowcount guardrail. Use only when you know the source intentionally shrank — otherwise sync refuses to proceed when any resource's row count has dropped by more than 50% since the last successful run.
-- `--continue-on-error / --no-continue-on-error` — log and skip peer relationships whose identifier values are missing, instead of aborting the run. Useful when source data is partial; review the warnings before relying on the result.
+- `--continue-on-error / --no-continue-on-error` — log and skip peer relationships whose identifier values are missing while **loading** a system, instead of aborting the run. Useful when source data is partial; review the warnings before relying on the result. It does not cover an unresolvable reference in the *source* data — see [Unresolvable source references fail the run](#unresolvable-source-references-fail-the-run) below.
 - `--concurrent-load / --no-concurrent-load` — load source and destination concurrently (default on). See [Concurrent loads](#concurrent-loads) below.
 - `--full-extract / --no-full-extract` — default on. Pass `--no-full-extract` for the cursor-driven incremental warm path; see [Incremental extraction](./reference/incremental-extraction).
 
@@ -74,6 +74,34 @@ Example:
 ```bash
 infrahub-sync sync --name my_project --directory configs --diff --show-progress
 ```
+
+### Unresolvable source references fail the run
+
+**This is a behavior change in this release.** Both `diff` and `sync` now derive a plan from the
+comparison before anything is written, and a source record referencing a peer the loaded source
+cannot resolve **fails the whole run** at that point:
+
+```text
+ERROR | The peer 'leaf-99' referenced by field 'device' of kind 'InterfacePhysical' is not present
+        in the loaded store under any candidate peer kind. Candidate peer kinds tried: DcimDevice.
+        Next action: Add the peer's kind to the configuration so it is loaded, or remove the
+        relationship from the schema mapping.
+```
+
+The run stops with that error and **nothing is written to the destination**. Previously the same
+source data completed: the destination write path logged `Unable to find … Ignored` for the
+unresolvable link and carried on, so the object was written with that relationship silently absent.
+A configuration that syncs today can therefore start failing on this release without the source or
+the configuration having changed.
+
+**`--continue-on-error` does not soften it.** That flag covers peer identifiers missing while a
+system is being *loaded*; a reference the source itself cannot resolve is fatal either way. The
+reasoning is that a plan is a record of what would be written, and an operation whose relationship
+was quietly dropped is not that — the reference is either resolvable and recorded, or the run
+refuses and names it.
+
+The remedy is in the error: add the peer's kind to `config.yml` so it is loaded, or drop the
+relationship from the schema mapping. Both make the reference resolvable rather than suppressing it.
 
 ### Concurrent loads
 
