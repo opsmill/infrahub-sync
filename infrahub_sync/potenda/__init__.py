@@ -31,6 +31,15 @@ from infrahub_sync.plan.errors import (
 from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.plan.write_surface import PlannedWriteDestination
 
+# Justified once here rather than per site (MIN-014, spec 002). Nearly every `infrahub_sync`
+# import in this module is deliberately deferred into the function that needs it: the cache
+# layer and the plan reader, verifier and writer all reach `pyarrow`, which costs hundreds of
+# milliseconds to import and is not needed to construct an engine, list runs, or fail on a
+# configuration error. Hoisting them would trade that for tidiness in a module whose import
+# cost every CLI invocation pays. The four cheap plan imports that *are* at module level say
+# so where they sit; anything reaching pyarrow stays local to its caller.
+# pylint: disable=import-outside-toplevel
+
 logger = logging.getLogger(__name__)
 
 # The apply path's **operational** exception boundary (FIX-011, spec 002). An exception from
