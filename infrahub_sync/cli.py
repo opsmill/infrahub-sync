@@ -22,6 +22,7 @@ from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
     OperationApplyFailedError,
     PlanArtifactError,
+    PlanGenerationExistsError,
     UnknownPlanKindError,
 )
 from infrahub_sync.plan.models import ApplyRecord
@@ -528,6 +529,11 @@ def diff_cmd(
     verbosity_level = ctx.obj.get("verbosity", logging.INFO) if ctx.obj else logging.INFO
 
     with pipeline_lock(sync_instance.name):
+        # Asked again under the lock and still before anything is built or extracted: the check
+        # above is a fast path, and a generation committed while this invocation waited for the lock
+        # would otherwise have its snapshots rewritten before the writer refused it. One `stat`.
+        _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id)
+
         try:
             ptd = get_potenda_from_instance(
                 sync_instance=sync_instance,
@@ -538,10 +544,9 @@ def diff_cmd(
                 concurrent_load=concurrent_load,
             )
         except (ImportError, ValueError) as exc:
-            # `ImportError` as well as `ValueError`: an adapter that cannot be loaded — a missing
-            # optional dependency, most often — is a configuration or environment problem with a
-            # remedy, and it escaped as a raw traceback while adapter *initialization* failures
-            # one line away were reported as one line.
+            # `ImportError` too: an adapter that cannot be loaded — a missing optional dependency,
+            # most often — has a remedy, and escaped as a traceback while an adapter that could not
+            # be *initialized* was one line.
             print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}")
 
         ptd.force_full_extract = full_extract
@@ -558,6 +563,13 @@ def diff_cmd(
             logger.info("\n%s", mydiff.str())
             run_file.status = "dry-run"
             run_file.summary = {"resources": len(ptd.top_level)}
+        except PlanGenerationExistsError as exc:
+            # The residual race the guard above cannot close — the writer's own refusal — reported
+            # as the one line the guard would have given it rather than as a stack trace. Narrow on
+            # purpose: the derivation failures are raised for their traceback (AD047).
+            run_file.status = "failed"
+            run_file.save()
+            print_error_and_abort(str(exc))
         except Exception:
             run_file.status = "failed"
             run_file.save()

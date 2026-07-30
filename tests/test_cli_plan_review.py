@@ -24,6 +24,7 @@ import stat
 import subprocess  # noqa: S404 — an exited producer is the point: FR-007 measures reading after it is gone
 import sys
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -82,7 +83,7 @@ from tests.plan.artifact_fixtures import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
 
     from infrahub_sync.plan.models import PlannedOperation
 
@@ -2104,6 +2105,54 @@ def test_a_second_diff_into_a_committed_run_id_is_refused_with_the_reviewed_plan
     assert "without `--run-id`" in message
     assert {path: path.read_bytes() for path in before} == before
     assert not (directory / "run.json").exists()
+
+
+def test_a_generation_committed_while_the_diff_waited_for_the_lock_is_left_intact(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, adapter_construction_log: list[dict[str, Any]]
+) -> None:
+    """The immutability guard has to hold at the point the lock stops serializing invocations.
+
+    Two `diff --run-id R` invocations race: the first commits its generation while the second is
+    blocked on the pipeline lock, so the second's pre-lock check saw a free run id and is wrong
+    by the time it acquires the lock. Extraction from there rewrites the `A/` snapshots the
+    committed plan binds itself to, which — with the source moved on — leaves the reviewed plan
+    unappliable, and the writer's refusal comes too late to prevent it.
+
+    The commit is staged inside the lock's `__enter__` because that is exactly the window: the
+    invocation under test has already passed its pre-lock check and has not yet built anything.
+    """
+    _run_directory(tmp_path)
+    committed: dict[Path, bytes] = {}
+
+    @contextmanager
+    def _commit_while_waiting(name: str) -> Iterator[None]:
+        with pipeline_lock(name):
+            directory = _appliable_run(tmp_path)
+            committed.update(
+                {path: path.read_bytes() for path in sorted(plan_dir(directory).rglob("*")) if path.is_file()}
+            )
+            committed[_apply_snapshot_path(directory)] = _apply_snapshot_path(directory).read_bytes()
+            yield
+
+    with (
+        caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"),
+        patch("infrahub_sync.cli.pipeline_lock", _commit_while_waiting),
+    ):
+        result = _diff_into(RUN_ID)
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"the refusal escaped as a raw {type(result.exception).__name__} traceback"
+    )
+    assert adapter_construction_log == [], "the refusal must precede adapter construction and extraction"
+    assert committed, "the fixture must have committed a generation inside the window"
+    assert {path: path.read_bytes() for path in committed} == committed, (
+        "the refused re-plan rewrote the snapshots the committed plan is bound to"
+    )
+    assert not (_cache_root(tmp_path) / RUN_ID / "run.json").exists()
+    message = _operator_errors(caplog)
+    assert "already holds a committed plan generation" in message
+    assert "Next action:" in message
 
 
 # The two states the failure injections leave behind: a run whose plan was never
