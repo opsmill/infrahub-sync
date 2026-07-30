@@ -306,6 +306,16 @@ But if it does not, **a duplicate object of that kind is the recorded limitation
 not something you did wrong. Watch for the warning, and check that kind at the destination before
 re-applying the same plan. A kind that declares no human-friendly ID at all warns on the same terms.
 
+**What this limits, stated plainly.** Safe re-application — apply the same plan twice, converge on
+the same objects — is a property this release establishes for kinds whose convergence key is made of
+plain attributes. It is **not established** for a kind whose key crosses a relationship. Whether such
+a write converges depends on the destination schema's own uniqueness constraints, not on anything the
+plan or the apply controls, so it holds for some schemas and not for others and this release does not
+tell the two apart. Treat every kind that warns as one where a second apply may duplicate rather than
+converge: the safe move is to inspect that kind at the destination between applies rather than to
+re-apply and check afterwards. `diff` also warns about these kinds by name as it writes the plan, so
+which kinds are affected is knowable before an apply rather than only from the apply's own output.
+
 ### Refusals you will meet
 
 `apply` verifies the plan as one gate **before the first write**, so a refusal never leaves the
