@@ -12,7 +12,8 @@ sequence and a lowercase kebab-case title, no `adr-` prefix (e.g. `0001-use-uv.m
   — the typed boundary a saved-plan apply writes through, and the member-presence-only limit of
   the runtime check.
 - [0003 — The replace-set flush is a targeted relationship write](0003-replace-set-flush-is-a-targeted-relationship-write.md)
-  — why no whole-node re-render can flush a reconciled peer set.
+  — why no whole-node re-render can flush a reconciled peer set, and the live test that pins the
+  destination's replace semantics.
 - [0004 — Deletes are recorded but never executed](0004-deletes-are-recorded-but-never-executed.md)
   — the delete contract and the knowability invariant that backs it.
 

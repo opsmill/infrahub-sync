@@ -2,7 +2,8 @@
 
 **Status**: Accepted
 **Date**: 2026-07-28
-**Source**: `dev/specs/archive/001-plan-artifact-saved-apply/research.md` (PD-010), `contracts/destination-write-surface.md` (AD086)
+**Source**: `dev/specs/archive/001-plan-artifact-saved-apply/research.md` (PD-010),
+`dev/specs/archive/001-plan-artifact-saved-apply/contracts/destination-write-surface.md` (AD086)
 
 ## Context
 
@@ -12,9 +13,10 @@ resolver. The engine had no typed way to ask for either.
 
 What it had was a `hasattr` probe for the v1 row-apply method, a `getattr` dispatch, and a
 `cast("InfrahubAdapter", self.destination)` in the apply loop so the resolver could be built at all.
-That cast asserted something the gate never checked. The retrospective records the cost: with no
+That cast asserted something the gate never checked, and the cost showed up during the work: with no
 typed and no documented write boundary, a prescription to change `update_node` — whose only caller is
-the live `sync` write path — reached a quality gate before the fidelity lens caught it.
+the live `sync` write path, so the change would have made `infrahub-sync sync` start removing
+destination relationship peers — reached a quality gate before it was caught.
 
 ## Decision
 
@@ -56,6 +58,14 @@ The limit is asserted rather than described: a test passes the gate with a desti
 carry the right names and the wrong shapes, and shows it failing later. That test is the guard against
 a later reader mistaking the Protocol for a conformance check.
 
+**In v1 the surface is Infrahub-only.** Both members name `PeerResolver`, the Infrahub adapter's
+concrete resolver class, so a non-Infrahub destination cannot conform to the protocol statically
+without importing the Infrahub adapter. The boundary this decision buys is the one the **engine**
+holds — it is what keeps the apply loop free of a concrete adapter — and not yet a boundary a second
+destination can implement against. An adapter-neutral resolver type is a tracked follow-up, to be
+settled with the first real second implementer; the adapter-writing guide and guideline are scoped to
+say so.
+
 Making the refusal real at runtime needs an explicit opt-in from the destination — ABC inheritance or
 a class-level marker. That is a **separate decision** this one deliberately does not take.
 
@@ -65,8 +75,7 @@ there is no user to deprecate for; `plan.parquet` keeps being written and is sim
 ## Alternatives Considered
 
 - **Keep the `hasattr` probe.** Rejected: it leaves the cast unjustified and gives the type checker
-  nothing to verify, which is the condition the retrospective identifies as letting a bad
-  prescription through.
+  nothing to verify, which is the condition that let the `update_node` prescription above through.
 - **An abstract base class the destination must inherit.** Would make the runtime check real, at the
   cost of forcing inheritance on every destination adapter. Deferred as its own decision rather than
   taken quietly inside this one.

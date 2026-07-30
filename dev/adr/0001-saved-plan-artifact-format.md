@@ -2,7 +2,9 @@
 
 **Status**: Accepted
 **Date**: 2026-07-28
-**Source**: `dev/specs/archive/001-plan-artifact-saved-apply/research.md` (PD-001, PD-002, PD-003, PD-007, PD-008), `contracts/plan-artifact-format.md`
+**Source**: `dev/specs/archive/001-plan-artifact-saved-apply/research.md` (PD-001, PD-002, PD-003,
+PD-007, PD-008),
+`dev/specs/archive/001-plan-artifact-saved-apply/contracts/plan-artifact-format.md`
 
 ## Context
 
@@ -11,8 +13,8 @@ for a destination object and recovered a record's identifiers by splitting the D
 on `__`. Nothing bound a stored plan to the data or the configuration it was computed from, so there
 was no way to tell whether applying a plan would do what a reviewer had read.
 
-The format that replaces it is not private to one command. It is produced by `plan`, read by `apply`,
-and named as an interface by nine later outcomes — the public API's apply, the configuration-version
+The format that replaces it is not private to one command. It is produced by the derivation step in
+`diff` and `sync`, read by `apply`, and named as an interface by nine later outcomes — the public API's apply, the configuration-version
 binding, a schema-fingerprint field, branch review, the apply ledger's operation identifiers, scoped
 plans, per-operation dependency tiers, plan summaries, and byte-for-byte comparison against this
 format. A change to it after it ships is breaking for all nine, so its details are fixed here rather
@@ -80,7 +82,12 @@ Absent versus empty becomes load-bearing, and consumers have to respect it. An a
 `relationships` is absent, never `[]`, when an operation carries none.
 
 Unknown manifest keys are tolerated on read, preserved, and included in the checksummed bytes, so a
-later outcome can add a field without a format bump. An unrecognized `format_version` is a gate: it
+later outcome can add a field without a format bump. `destination_binding` — the resolved endpoint URL
+and branch a plan was computed against, which `apply` compares before it writes — is the first field
+added under that rule, and it demonstrates the shape the rule requires: additive, checksum-covered,
+and absent rather than null on plans written before it existed, so the comparison is skipped for them
+instead of failing. The current field list lives in `dev/knowledge/plan-artifact.md`; this record fixes
+the rules, not the roster. An unrecognized `format_version` is a gate: it
 short-circuits the remaining pre-apply checks, because a reader that does not know what the fields
 mean would otherwise report failures that are artifacts of its own ignorance.
 

@@ -2,7 +2,9 @@
 
 **Status**: Accepted
 **Date**: 2026-07-28
-**Source**: `dev/specs/archive/001-plan-artifact-saved-apply/research.md` (confirmed non-questions), `contracts/destination-write-surface.md` (AD004, AD049, AD055)
+**Source**: `dev/specs/archive/001-plan-artifact-saved-apply/research.md` (confirmed non-questions),
+`dev/specs/archive/001-plan-artifact-saved-apply/contracts/destination-write-surface.md`
+(AD004, AD049, AD055)
 
 ## Context
 
