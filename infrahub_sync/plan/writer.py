@@ -50,6 +50,15 @@ def _atomic_write_bytes(path: Path, payload: bytes) -> None:
     text because the artifact's encoding is fixed by `canonical_json_bytes` and must not be
     re-encoded by a text layer. Both artifact files are written through this one function,
     which is what lets a test observe that the operations file goes first.
+
+    **Accepted tradeoff (MIN-004): no fsync.** Neither the temporary file's data nor the
+    parent directory entry is fsynced, so "never observed half-written" is a guarantee
+    against *process* failure — a crash or an exception between the two writes — and not
+    against power loss or a filesystem crash, where a `replace` may be durable while the
+    data it points at is not. The consequence is bounded: an artifact whose bytes did not
+    survive fails the checksum comparison or classifies as torn, and is refused before any
+    destination write. Adding fsync would be a deliberate change to the run directory's
+    durability contract, which the run sidecars share and do not currently make.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
