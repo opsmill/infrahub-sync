@@ -247,7 +247,12 @@ def _resolve_one_reference(
 
     Cardinality follows the mapped value's shape — a list is `many`, anything else is `one`.
     A many reference's peers are ordered canonically by peer identity so two derivations of
-    the same input encode identically (AD003, FR-005).
+    the same input encode identically (AD003, FR-005). An **empty** many set resolves
+    trivially, whatever the mapping's candidate count — see the branch below (MIN-008).
+
+    Raises:
+        SourcePeerUnresolvedError: the resolved peers span more than one kind, or the field
+            names an empty set and the mapping declares no candidate kind at all.
     """
     is_many = isinstance(value, (list, tuple))
     unique_ids = list(value) if is_many else [value]
@@ -274,17 +279,20 @@ def _resolve_one_reference(
         raise SourcePeerUnresolvedError.ambiguous(msg)
     if peer_kinds:
         peer_kind = peer_kinds.pop()
-    elif len(candidates) == 1:
-        # An empty peer set is a deliberately empty set the replace-set write acts on
-        # (FR-028.2) and there is no peer to probe. With one declared candidate the kind is
-        # not a guess; with more than one it would be, so that arm fails instead.
+    elif candidates:
+        # An empty peer set is **trivially resolved** (MIN-008, OQ-2 decided): it names no
+        # peer, so no candidate kind has to be chosen for one. It is the deliberately empty
+        # set the replace-set write acts on (FR-028.2), and that write is keyed by the
+        # relationship's field rather than by a peer kind — `peers: []` empties the set
+        # identically whichever candidate labels it. So the first candidate in the sorted
+        # order labels the reference, deterministically, and AD046's "never read the peer
+        # kind off the mapping" stands unchanged for every non-empty set, where a peer
+        # exists to probe and mislabelling it would bind the wrong object.
         peer_kind = candidates[0]
     else:
         msg = (
-            f"Field {field!r} of kind {owning_kind!r} names an empty peer set while the schema "
-            f"mapping declares more than one candidate peer kind for it "
-            f"({', '.join(candidates) or '<none>'}), so the reference's peer kind cannot be "
-            f"established without guessing."
+            f"Field {field!r} of kind {owning_kind!r} names an empty peer set and the schema mapping "
+            f"declares no candidate peer kind for it at all, so the reference cannot be recorded."
         )
         raise SourcePeerUnresolvedError.ambiguous(msg)
     return _ResolvedReference(peer_kind=peer_kind, pairs=pairs, is_many=is_many)

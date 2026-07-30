@@ -2263,3 +2263,94 @@ def test_an_element_with_an_empty_child_diff_derives_as_before() -> None:
     )
 
     assert operation_for(operations, "BuiltinTag").identity == {"name": "prod"}
+
+
+# =======================================================================================
+# MIN-008 (spec 002, OQ-2) — an empty many-peer set resolves, whatever the candidate count
+# =======================================================================================
+
+
+def tag_reference_config(*references: str) -> SyncInstance:
+    """A configuration declaring `DcimDevice` once per entry in `references`, keyed on `name`.
+
+    `tags` is the cardinality-many reference, and each entry gives it a different
+    `reference`, so passing more than one produces the multi-candidate mapping that used to
+    refuse an empty set. `location` is deliberately absent so `tags` is the only reference
+    in play and the identity needs no peer.
+    """
+    return build_config(
+        order=("BuiltinTag", "LocationSite", "DcimDevice"),
+        schema_mapping=[
+            mapping_entry("BuiltinTag", identifiers=["name"], fields={"name": None}),
+            mapping_entry("LocationSite", identifiers=["name"], fields={"name": None}),
+            *(
+                mapping_entry(
+                    "DcimDevice",
+                    identifiers=["name"],
+                    fields={"name": None, "tags": reference, "model": None},
+                )
+                for reference in references
+            ),
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    ("references", "expected_peer_kind"),
+    [
+        pytest.param(("BuiltinTag",), "BuiltinTag", id="single-candidate"),
+        pytest.param(("BuiltinTag", "LocationSite"), "BuiltinTag", id="multi-candidate"),
+    ],
+)
+def test_a_deliberately_empty_many_peer_set_derives(references: tuple[str, ...], expected_peer_kind: str) -> None:
+    """OQ-2: an empty set references no peer, so no candidate kind needs choosing.
+
+    Before MIN-008 the multi-candidate case raised `SourcePeerUnresolvedError.ambiguous` and
+    killed the run over a set with nothing in it to be ambiguous about. AD046 is untouched:
+    the reference records no peer, and the replace-set write empties the relationship by
+    field, not by kind.
+    """
+    config = tag_reference_config(*references)
+    assert reference_candidates(config, "DcimDevice")["tags"] == tuple(sorted(references))
+
+    source = _FakeAdapter("source", [_FakeRecord("DcimDevice", {"name": "d1"}, {"model": "c9300", "tags": []})])
+    operations = operations_from_diff(
+        diff_between(source=source, destination=_FakeAdapter("destination"), kinds=config.order),
+        config=config,
+        tier_of=resolver(top_level=config.order),
+        source_adapter=source,
+    )
+
+    device = operation_for(operations, "DcimDevice")
+    reference = references_by_field(device)["tags"]
+    assert reference.cardinality == "many"
+    assert reference.peers == []
+    assert reference.peer_kind == expected_peer_kind
+    # The empty set is recorded rather than dropped: absent and deliberately empty are not
+    # interchangeable (FR-028.2).
+    assert "tags" not in (device.payload or {})
+
+
+def test_a_non_empty_many_peer_set_under_a_multi_candidate_mapping_still_probes() -> None:
+    """AD046 stays intact for every non-empty set — the guard is scoped to the empty one."""
+    config = tag_reference_config("BuiltinTag", "LocationSite")
+    source = _FakeAdapter(
+        "source",
+        [
+            _FakeRecord("BuiltinTag", {"name": "prod"}),
+            _FakeRecord("DcimDevice", {"name": "d1"}, {"model": "c9300", "tags": ["prod"]}),
+        ],
+    )
+
+    operations = operations_from_diff(
+        diff_between(source=source, destination=_FakeAdapter("destination"), kinds=config.order),
+        config=config,
+        tier_of=resolver(top_level=config.order),
+        source_adapter=source,
+    )
+
+    reference = references_by_field(operation_for(operations, "DcimDevice"))["tags"]
+    assert reference.peer_kind == "BuiltinTag"
+    assert reference.peers == [{"name": "prod"}]
+    for candidate in ("BuiltinTag", "LocationSite"):
+        assert (candidate, "prod") in source.store.probes, f"{candidate} was never probed"
