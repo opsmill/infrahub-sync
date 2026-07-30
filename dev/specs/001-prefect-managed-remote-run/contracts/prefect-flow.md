@@ -17,14 +17,21 @@ prefect = [
 ]
 ```
 
-Base `dependencies` are unchanged. Install: `pip install 'infrahub-sync[prefect]'`
-(or `uv pip install 'infrahub-sync[prefect]'`).
+Base `dependencies` are unchanged. Install (preview-accurate form — the preview
+exists only on this branch and is not published to PyPI, matching T034's binding
+install-source rule): from the repository checkout, `pip install -e '.[prefect]'`
+(or `uv pip install -e '.[prefect]'`). The PyPI form
+`pip install 'infrahub-sync[prefect]'` is the post-publication shape only and must
+not appear in the example README.
 
 ## 2. Flow definition (`infrahub_sync/orchestration/flow.py`)
 
 ```python
 # NO `from __future__ import annotations` in this module: deferred annotations break
 # prefect 3.5.0 run-time parameter validation (PydanticUndefinedAnnotation — research F3).
+# Module docstring notes that this module requires the optional `prefect` extra
+# (`pip install -e '.[prefect]'` from the repo checkout) so programmatic importers
+# hitting ImportError know the fix (X4).
 
 import dataclasses
 import logging
@@ -35,7 +42,12 @@ from prefect import flow
 from prefect.logging import get_run_logger
 
 FLOW_NAME = "infrahub-sync"
-DEPLOYMENT_NAME = "infrahub-sync"
+# Deployment named "run" (NOT a repeat of the flow name): the lookup path reads
+# /api/deployments/name/infrahub-sync/run instead of the stuttering
+# .../infrahub-sync/infrahub-sync, and future orchestration briefs get sibling
+# deployments as .../infrahub-sync/<verb> for free. Deliberate choice (X12);
+# renaming after the preview would break every remote caller's lookup.
+DEPLOYMENT_NAME = "run"
 CONFIG_DIR_ENV = "INFRAHUB_SYNC_CONFIG_DIRECTORY"
 
 
@@ -57,16 +69,27 @@ def infrahub_sync_run(
 
 Contractual body behavior, in order:
 
-1. `get_run_logger()`; attach the log bridge (§4) to `logging.getLogger("infrahub_sync")`.
-2. Inside `try/finally` (bridge removal in `finally`):
+1. `get_run_logger()`; attach the log bridge (§4) to `logging.getLogger("infrahub_sync")`
+   AND take ownership of that logger's LEVEL: capture
+   `logging.getLogger("infrahub_sync").level`, then set it to the run's intended
+   level (`logging.INFO`) before the surface call. Attaching a handler alone does
+   not defeat `isEnabledFor`; without owning the level, forwarding would silently
+   depend on whatever root/Prefect logging configuration is ambient (E4).
+2. Inside `try/finally` (bridge removal AND level restoration — restore the captured
+   prior level — in the same `finally`):
    read `os.environ[CONFIG_DIR_ENV]` (inherited from the serving process — the value
    was validated at serve start; a missing var here still raises `RunExecutionError`
    defensively), then
    `result = run_remote_request(sync_name, operation, confirm_writes, branch, config_directory=...)`.
-3. Log one summary line
-   (`"run %s finished: status=%s changed=%s summary=%s artifact=%s"`) so DBA-003's
-   plan summary is remotely observable in the run log.
-4. Return `dataclasses.asdict(result)`.
+3. Log one summary line with the FIXED key=value format
+   (`"run %s finished: status=%s changed=%s summary=create:%d,update:%d,delete:%d artifact=%s"`)
+   so DBA-003's plan summary is remotely observable in the run log. This line is the
+   **supported remote observation surface** for the run result (X7): its format is
+   contractual (never a Python dict repr), its fields mirror `RunResult`
+   (`status`, `changed`, the three `summary` counts, `artifact_path`), and remote
+   callers may parse it. Any format change is a breaking contract change.
+4. Return `dataclasses.asdict(result)` (with `summary` materialized as a plain
+   `dict` — the result's mappingproxy is not deep-copyable).
 
 The flow calls the execution surface **in-process**; it never spawns the CLI
 (DBR-008). Exceptions propagate: Prefect marks the flow run FAILED and stores the
@@ -78,18 +101,35 @@ Run as: `python -m infrahub_sync.orchestration.serve`
 
 Contract:
 
-1. At startup, read `INFRAHUB_SYNC_CONFIG_DIRECTORY`. If unset, empty, or not an
-   existing directory: log/print one error line **naming the variable** and exit with a
-   non-zero status **before any deployment is served** (spec clarification #2).
-2. Call `infrahub_sync_run.serve(name=DEPLOYMENT_NAME)` — a locally served deployment;
+1. At startup, guard the prefect import: if importing `prefect` (via
+   `orchestration.flow`) raises `ImportError`, emit exactly one error line naming
+   the optional extra and the install command (e.g.
+   `prefect is not installed - install the optional integration: pip install -e '.[prefect]'`)
+   and exit non-zero — never a bare traceback (X4).
+2. Read `INFRAHUB_SYNC_CONFIG_DIRECTORY`. If unset, empty, or not an existing
+   directory: emit one error line **naming the variable** and exit with a non-zero
+   status **before any deployment is served** (spec clarification #2).
+3. Error-line mechanism (binding — the repo's AST no-print test covers every new
+   module): `logging` (the lastResort handler writes ERROR to stderr without
+   configuration) or `sys.stderr.write` — **never `print()`** (E13).
+4. Call `infrahub_sync_run.serve(name=DEPLOYMENT_NAME)` — a locally served deployment;
    no work pool, no separate worker, default `enforce_parameter_schema=True`
    (probe a₆ verified the served deployment reports `enforce_parameter_schema: true`
    and an `enum: ["plan", "sync"]` schema for `operation`).
-3. The process serves until interrupted; configurations under the directory are
+5. The process serves until interrupted; configurations under the directory are
    re-resolved per run (no restart needed for content changes).
 
-Prerequisite (documented in the example README, not enforced by code): a Prefect
-server started with `prefect server start` and `PREFECT_API_URL` pointing at it.
+Prerequisites (documented in the example README, not enforced by code):
+
+- A Prefect server started with `prefect server start` and `PREFECT_API_URL`
+  pointing at it.
+- **Working directory (binding for the qualified example)**: the serve process must
+  be started from the repository root. The qualified fixture's `config.yml` uses
+  repo-root-relative `./` paths (adapter spec and `db_path`), resolved against the
+  serving process's CWD (`plugin_loader.py:235-238`), and the cache root defaults
+  to `Path.cwd()/.infrahub-sync-cache` — started elsewhere, the example degrades to
+  a silently empty plan or an adapter import failure (X1/E11). The example README
+  states this both as a prerequisite and next to the serve command.
 
 ## 4. Log bridge (run-scoped, DBR-012 / spec clarification #4)
 
@@ -107,8 +147,16 @@ class RunLoggerBridge(logging.Handler):
 ```
 
 - Attached to `logging.getLogger("infrahub_sync")` immediately before the
-  execution-surface call, removed in `finally` — forwarding never depends on
-  operator-set Prefect logging environment variables.
+  execution-surface call, removed in `finally`.
+- **The flow owns the source logger's LEVEL, not just the handler** (E4): a handler
+  never defeats `Logger.isEnabledFor`, and the `infrahub_sync` hierarchy is
+  level-`NOTSET` by default (the CLI makes INFO effective via `_setup_logging`,
+  which the flow never calls). The flow therefore captures
+  `logging.getLogger("infrahub_sync").level`, sets it to `logging.INFO` before the
+  surface call, and restores the captured level in the same `finally` that removes
+  the handler. Only with both does forwarding become independent of operator-set
+  Prefect logging environment variables and ambient root-logger configuration
+  (spec clarification #4 / D004; verified by T016's root-at-WARNING case).
 - Probe c₁ evidence: a child-logger record (`probe_pkg.potenda`) forwarded this way is
   returned by `POST /api/logs/filter` for the flow run, name preserved in the message.
 - Records are forwarded at the run's effective level (INFO and above by default —
@@ -124,18 +172,29 @@ request corpus documents (and what DBA-008 scans).
 
 | Step | Request | Verified response shape |
 |---|---|---|
-| Find deployment | `GET /api/deployments/name/infrahub-sync/infrahub-sync` | `200`, body has `id`, `status: "READY"`, `enforce_parameter_schema: true`, `parameter_openapi_schema.properties.operation.enum == ["plan","sync"]` |
+| Find deployment | `GET /api/deployments/name/infrahub-sync/run` | `200`, body has `id`, `status: "READY"`, `enforce_parameter_schema: true`, `parameter_openapi_schema.properties.operation.enum == ["plan","sync"]` |
 | Create run | `POST /api/deployments/{id}/create_flow_run` body `{"parameters": {"sync_name": "custom-example", "operation": "plan"}}` | `201/200` with flow-run `id` **synchronously** (state `SCHEDULED`) — SC-001's "identifier in the synchronous response" |
 | Observe state | `GET /api/flow_runs/{id}` | `state.type` progresses to `COMPLETED` (probe b: ~7 s) or `FAILED`; `state.message` carries the sanitized failure cause |
 | Read logs | `POST /api/logs/filter` body `{"logs": {"flow_run_id": {"any_": ["{id}"]}}}` | Array of records incl. bridged `infrahub_sync` lifecycle lines (probe c₁/c₂) |
+| Read the result | same `POST /api/logs/filter` response — locate the flow's summary line | The §2-step-3 summary line with its FIXED key=value format (`... summary=create:N,update:N,delete:N ...`) is the supported remote carrier of the RunResult fields (X7); result retrieval via Prefect result persistence is NOT part of this preview's contract |
 | Invalid `operation` | same create-run call with `"operation": "apply"` | **`409`**, body `{"detail": "Error creating flow run: Validation failed for field 'operation'. Failure reason: 'apply' is not one of ['plan', 'sync']"}` — **no flow run object is created** (probe d₁; satisfies spec edge case 1 in its strongest form: no RunResult, no log lines, no run directory) |
 
 ## 6. Import boundary (DBR-010 / DBA-001 / SC-006)
 
 - `import infrahub_sync`, `import infrahub_sync.cli`, `import infrahub_sync.execution`,
-  and every CLI sanity command load **zero** `prefect*` modules — asserted by a test
-  that runs the commands and checks `sys.modules`, executed in an environment where
-  prefect is absent (so any import fails loudly).
+  and every CLI sanity command load **zero** `prefect*` modules — asserted by a
+  **subprocess-isolated probe** (E3/X3): the test builds a small script that imports
+  the package, runs the CLI sanity in-process, and asserts over ITS OWN
+  `sys.modules`, then executes it in a fresh interpreter via
+  `subprocess.run([sys.executable, "-c", script])`, asserting the exit code and
+  output. An in-process `sys.modules` assertion is unsound in the dev+prefect
+  full-suite environment: pytest collection imports `tests/orchestration/test_flow.py`
+  (whose module-level `importorskip` loads prefect) before the probe runs, and under
+  `--dist loadscope` the pollution is per-worker arbitrary. Quickstart Scenario 0
+  (clean venv without the extra) remains the authoritative SC-006 evidence.
+- The static import-graph check stays in-process (collection-safe):
+  `infrahub_sync/execution.py` imports nothing from `infrahub_sync.orchestration` or
+  `prefect`, and nothing in the base package imports `infrahub_sync.orchestration`.
 - Installing the extra changes nothing about plain CLI invocations: only
   `infrahub_sync.orchestration.flow` / `.serve` import prefect, and nothing in the base
   package imports `infrahub_sync.orchestration`.

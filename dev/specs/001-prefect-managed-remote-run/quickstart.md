@@ -19,6 +19,12 @@ semantics: [`data-model.md`](data-model.md).
 - Credentials in the runner environment only: `INFRAHUB_ADDRESS`, `INFRAHUB_API_TOKEN`
   (never in files, parameters, or results — DBR-006).
 - Port 4200 free for the Prefect server.
+- **Working directory: all commands below run from the repository root.** The serve
+  process in particular MUST start from the repo root: the qualified example's
+  `config.yml` uses repo-root-relative `./` paths (adapter spec and `db_path`)
+  resolved against the serving process's CWD, and the cache root defaults to
+  `$PWD/.infrahub-sync-cache` — started elsewhere, the plan silently reports zero
+  creates or the adapter import fails (X1/E11; contracts/prefect-flow.md §3).
 
 ## Setup
 
@@ -57,25 +63,32 @@ Terminal A — server (default local database, built-in UI):
 uv run prefect server start            # serves http://127.0.0.1:4200
 ```
 
-Terminal B — served deployment:
+Terminal B — served deployment (start from the repository root — the example
+config's `./` paths and the cache root resolve against this process's CWD):
 
 ```bash
+# from the repository root
 export PREFECT_API_URL="http://127.0.0.1:4200/api"
-export INFRAHUB_SYNC_CONFIG_DIRECTORY="$PWD/examples"
+export INFRAHUB_SYNC_CONFIG_DIRECTORY="$PWD/examples/custom_adapter"
 export INFRAHUB_ADDRESS="http://localhost:8000"
 export INFRAHUB_API_TOKEN="<runner-env token>"
 uv run python -m infrahub_sync.orchestration.serve
 ```
 
+Point `INFRAHUB_SYNC_CONFIG_DIRECTORY` at a directory containing only the
+configurations you intend to expose remotely (X6) — scoping to
+`examples/custom_adapter` exposes exactly the qualified `custom-example`
+configuration instead of all fourteen example configs.
+
 **Expected**: serve validates the config directory at startup (unset it to see the
 serve-start failure naming `INFRAHUB_SYNC_CONFIG_DIRECTORY`);
-`GET $PREFECT_API_URL/deployments/name/infrahub-sync/infrahub-sync` returns
+`GET $PREFECT_API_URL/deployments/name/infrahub-sync/run` returns
 `status: "READY"` with `enforce_parameter_schema: true`.
 
 Terminal C — remote caller (pure REST):
 
 ```bash
-DEP_ID=$(curl -s "$PREFECT_API_URL/deployments/name/infrahub-sync/infrahub-sync" | jq -r .id)
+DEP_ID=$(curl -s "$PREFECT_API_URL/deployments/name/infrahub-sync/run" | jq -r .id)
 RUN_ID=$(curl -s -X POST "$PREFECT_API_URL/deployments/$DEP_ID/create_flow_run" \
   -H "Content-Type: application/json" \
   -d '{"parameters": {"sync_name": "custom-example", "operation": "plan"}}' | jq -r .id)
@@ -86,8 +99,9 @@ curl -s -X POST "$PREFECT_API_URL/logs/filter" -H "Content-Type: application/jso
 ```
 
 **Expected**: state reaches `COMPLETED`; logs contain the bridged `infrahub_sync`
-lifecycle lines (load/diff/plan) and the result summary line reporting
-`create: 5, update: 0, delete: 0`; the runner-local run directory
+lifecycle lines (load/diff/plan) and the result summary line in its fixed key=value
+format (`summary=create:5,update:0,delete:0` — the supported remote observation
+surface, contracts/prefect-flow.md §2/§5); the runner-local run directory
 (`.infrahub-sync-cache/custom-example/<run_id>/`) contains `run.json`
 (`status: dry-run`, `mode: diff`) and `plan.parquet` with five creates. Same lifecycle
 and logs visible in the UI at `http://127.0.0.1:4200`.

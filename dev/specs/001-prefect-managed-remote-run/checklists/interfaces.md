@@ -113,3 +113,7 @@
 - Add comments or findings inline
 - Items are numbered sequentially for easy reference
 - Reviewer result: 38/38 items pass; 28 items required spec remediation, applied 2026-07-30. All remediations are code- or brief-grounded readings; the two PROVISIONAL clarifications touched (fingerprint, engine defaults/lock) were sharpened in wording only. No brief defects found; no BLOCKED-ON items.
+
+---
+
+**Post-D005 revalidation note (2026-07-30, round-1 remediation — F4; append-only, original attestations left untouched)**: CHK026 and CHK036 attest README-prerequisite and pin-consistency facts in terms of "Prefect 3.7.2", the pre-D005 spec text. Re-checked against the D005-remediated text: the pinned version is now `prefect==3.5.0` (PROVISIONAL, CHECKPOINT, D005) with D006 companion pins inside the optional extra. CHK026's substance holds — the README's machine prerequisites remain required to be explicit (Python range, the pinned extra now at 3.5.0, reachable Infrahub) and the placeholder convention stands (tasks T033/T034); CHK036's substance holds — the 3.5.0 pin remains consistent with the out-of-scope exclusion of multiple Prefect major versions and its location (the optional extra's dependency specification) is specified in spec §Constraints and contracts/prefect-flow.md §1. Both items remain PASS against the current text; only the version literal in the original attestations is stale.

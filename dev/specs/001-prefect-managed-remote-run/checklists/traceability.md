@@ -76,3 +76,7 @@
 - Add comments or findings inline
 - Items are numbered sequentially for easy reference
 - Reviewer result: 29/29 items pass; 2 items (CHK010, CHK023) required spec remediation, applied 2026-07-30. No brief defects found; no BLOCKED-ON items.
+
+---
+
+**Post-D005 revalidation note (2026-07-30, round-1 remediation — F4; append-only, original attestations left untouched)**: CHK021 and CHK027 quote and verify the pre-D005 spec constraint "Prefect 3.7.2 is the fixed external dependency version", which no longer exists. Re-checked against the D005-remediated text: the spec constraint now reads "Prefect 3.5.0 is the pinned optional-extra version — PROVISIONAL (CHECKPOINT, D005)" and the Assumptions dependency row matches; both still name the pin location (the optional extra's dependency specification), and the constraint is no longer a plain restatement of the brief row — it is a flagged deviation awaiting gate ratification, with the brief-repair feedback recorded (fidelity-r1.md F1). CHK021's consistency claim therefore holds in its amended form (constraint consistent with the brief's *intent*, deviation honestly flagged); CHK027's "VAL evidence supporting only" verification is unaffected by the version change. Both items remain PASS against the current text.

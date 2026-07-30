@@ -20,7 +20,7 @@ class RunResult:
     run_id: str           # cache run id (YYYYMMDDTHHMM-<8 hex>); == Path(artifact_path).name
     status: Status        # planned (plan w/ changes) | applied (sync that wrote) | no-change
     changed: bool         # plan contained destination changes
-    summary: dict[ActionKey, int]  # all three keys ALWAYS present, zero-filled
+    summary: Mapping[ActionKey, int]  # all three keys ALWAYS present, zero-filled; read-only
     artifact_path: str    # absolute runner-local run directory (run.json + plan.parquet)
 ```
 
@@ -29,7 +29,11 @@ Binding properties (all asserted by DBA-010's result-schema tests):
 1. **Exact field set** — a successful result carries these seven fields and no others
    (`slots=True` prevents extra attributes; `dataclasses.fields()` count == 7).
 2. **Immutability** — `frozen=True`; assignment after construction raises
-   `dataclasses.FrozenInstanceError`.
+   `dataclasses.FrozenInstanceError`. `summary` is additionally exposed as an
+   immutable mapping: `__post_init__` wraps the constructed value in
+   `types.MappingProxyType` via `object.__setattr__` (E14 — `frozen` prevents only
+   rebinding; a plain dict could be mutated after validation, silently breaking the
+   cross-field invariants). `result.summary["create"] += 1` raises `TypeError`.
 3. **Invariants** (validated in `__post_init__`, raising `ValueError` on violation —
    an invariant violation is a bug, not a run failure):
    - `changed ⇔ status != "no-change" ⇔ sum(summary.values()) > 0`
@@ -37,9 +41,13 @@ Binding properties (all asserted by DBA-010's result-schema tests):
    - `status == "applied"` ⇒ `operation == "sync"`
    - `run_id == Path(artifact_path).name`
    - `set(summary) == {"create", "update", "delete"}`
-4. `summary` counts the run's plan rows (`plan.parquet`) per action.
-5. The Prefect flow returns `dataclasses.asdict(RunResult)`; the typed object itself is
-   the surface-level contract.
+4. `summary` counts the run's plan rows per action — derived from the in-memory
+   materialized row list (the same rows written to `plan.parquet`), never by
+   re-reading the file (single-source derivation, execute_run step 7 / D009-adjacent
+   E8 remediation).
+5. The Prefect flow returns `dataclasses.asdict(RunResult)` with `summary`
+   materialized as a plain `dict` (a mappingproxy is not deep-copyable); the typed
+   object itself is the surface-level contract.
 
 ## 2. Failure classes
 
@@ -74,13 +82,29 @@ class RunExecutionError(Exception):
 
 Shared obligations (both classes):
 
-- **Specific**: the message names the failing input or stage and the underlying cause
-  (original exceptions are chained via `raise ... from exc`).
-- **Sanitized**: before raising, the message passes value-based redaction — every
-  occurrence of a configured secret value is replaced with `***`. Secret values are
-  collected from: the runner-environment credential variables (at minimum
-  `INFRAHUB_API_TOKEN`) and the values of secret-valued keys (`token`, `password`,
-  `secret`, `api_key`) in the resolved configuration's source/destination settings.
+- **Wrap locus (D009)**: these classes are raised by the surface's own validation
+  (`resolve_sync_instance`, `execute_run` step 1) and by the sanitize-and-wrap
+  boundary in `run_remote_request` — never by `execute_run`'s lifecycle handling,
+  which preserves the `9edc1bc` CLI pattern and re-raises original types
+  (contracts/execution-surface.md "Failure semantics").
+- **Specific**: the message names the failing input or stage and the underlying cause.
+- **Sanitized — over the WHOLE cause chain (E5)**: before raising, the message passes
+  value-based redaction — every occurrence of a configured secret value is replaced
+  with `***`. Because Prefect logs a failed flow's exception WITH traceback, and a
+  traceback renders every `__cause__`/`__context__` message, redacting only the
+  wrapper message is insufficient: at the wrap point the original cause is either
+  rebuilt as a sanitized copy (e.g. re-chained from an exception constructed with
+  `redact(str(exc))`) or suppressed via `__suppress_context__` with its redacted
+  text inlined into the wrapper message. Binding property: a full traceback
+  rendering of the raised error (`traceback.format_exception(...)`) must contain
+  **no unredacted original message** anywhere in the chain. Secret values are
+  collected from: the runner-environment credential variables — at minimum
+  `INFRAHUB_API_TOKEN`, plus the value of every environment variable whose NAME
+  matches the patterns `*_TOKEN`, `*_PASSWORD`, `*_SECRET`, `*_API_KEY` (E10:
+  DBR-006 routes adapter credentials such as `NETBOX_TOKEN` into the runner
+  environment, outside the resolved-settings source) — and the values of
+  secret-valued keys (`token`, `password`, `secret`, `api_key`) in the resolved
+  configuration's source/destination settings.
   The same obligation covers forwarded log records (verified by DBA-008's canary scan:
   seeded canary values appear nowhere in flow parameters, results, Prefect-visible
   logs, or example request bodies).
@@ -108,9 +132,14 @@ def compute_plan_fingerprint(run_dir: Path) -> str:
       2. Serialize each row as compact sorted-key JSON:
          json.dumps(row, sort_keys=True, separators=(",", ":"))
       3. Sort rows by (resource, source_id, action, attribute), using the row's full
-         serialized form as the final tie-breaker. (The current plan writer emits one
-         row per element, so source_id is unique within resource and ties cannot
-         occur; the tie-breaker keeps the digest total under any future row format.)
+         serialized form as the final tie-breaker. Null normalization (binding, E12):
+         each field in the SORT KEY (including the tie-breaker's leading fields)
+         normalizes None to "" (`x if x is not None else ""`) so the tuple sort stays
+         total when a future row format carries nulls (PLAN_SCHEMA already declares
+         `attribute`/`new_value` nullable); the SERIALIZED form is unchanged (None
+         still serializes as JSON `null`). (The current plan writer emits one row per
+         element, so source_id is unique within resource and ties cannot occur; the
+         tie-breaker keeps the digest total under any future row format.)
       4. Join with "\n", encode UTF-8, return hashlib.sha256(...).hexdigest().
 
     Timestamps, run identifiers, and filesystem paths are excluded by construction, so
