@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 import pytest
 import yaml
 from diffsync.exceptions import ObjectNotFound
+from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncInstance
@@ -60,7 +61,7 @@ from infrahub_sync.plan.errors import (
     UnwalkedDiffChildrenError,
 )
 from infrahub_sync.plan.identity import operation_id
-from infrahub_sync.plan.models import SC006_MASKED_FIELDS
+from infrahub_sync.plan.models import SC006_MASKED_FIELDS, RelationshipReference
 from infrahub_sync.plan.review import read_saved_plan
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME
 from infrahub_sync.potenda import Potenda
@@ -70,7 +71,7 @@ if TYPE_CHECKING:
 
     from click.testing import Result
 
-    from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
+    from infrahub_sync.plan.models import PlannedOperation
 
 DERIVE_LOGGER = "infrahub_sync.plan.derive"
 
@@ -2534,3 +2535,44 @@ def test_the_merge_warning_stays_out_of_the_manifest_and_the_run_succeeds(
     manifest = read_manifest(plan_run_dir(potenda))
     assert set(manifest) == MANIFEST_KEYS, "the warning leaked into the manifest"
     assert manifest["operations_count"] > 0
+
+
+# =======================================================================================
+# MIN-013 (spec 002, OQ-3) — a plan cannot clear a cardinality-one peer, and that is v1
+# =======================================================================================
+
+
+def test_a_none_valued_cardinality_one_reference_is_absent_from_the_plan() -> None:
+    """The documented v1 scope limit, pinned so the docstring cannot drift from the code.
+
+    A rack whose `site` is `None` yields no `site` reference and no `site` payload entry: the
+    operation says nothing about the relationship, and an apply that says nothing about a
+    relationship leaves it alone. `RelationshipReference` has no encoding for an emptied
+    cardinality-one peer to record instead — `cardinality: "one"` requires exactly one peer.
+    Parity with live `sync`, which skips a `None` there for the same reason; encoding "clear
+    this" is a `format_version` extension and a follow-up issue, not a defect here.
+    """
+    operations = operations_from_diff(
+        _FakeDiff(
+            {
+                "LocationRack": [
+                    _FakeElement(
+                        kind="LocationRack",
+                        name="r1__none",
+                        keys={"name": "r1"},
+                        source_attrs={"site": None},
+                    )
+                ]
+            }
+        ),
+        config=build_config(),
+        tier_of=resolver(),
+        source_adapter=qualified_source(),
+    )
+
+    rack = operation_for(operations, "LocationRack")
+    assert "site" not in {reference.field for reference in rack.relationships or ()}
+    assert "site" not in (rack.payload or {})
+    # And there is no shape it could have taken: a `one` reference must name a peer.
+    with pytest.raises(ValidationError):
+        RelationshipReference(field="site", peer_kind="LocationSite", cardinality="one", peers=[])

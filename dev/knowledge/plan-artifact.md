@@ -82,6 +82,15 @@ relationship values at all; it is never `[]`. A `peers: []` inside a `cardinalit
 means the peer set is deliberately empty, and the replace-set write acts on it. There is no field
 grouping operations into write units at either level.
 
+**A plan cannot clear a cardinality-one peer.** The asymmetry above only runs one way: an empty
+*many* set is expressible, an emptied *one* peer is not. `cardinality: "one"` requires exactly one
+peer, and an absent reference means "this operation carries no value for that field", not "empty it" —
+so nothing in the format says *clear this*. Derivation cannot produce it either: a reference field
+whose mapped value is `None` is treated as absent and skipped. This is an intended v1 scope limit and
+**parity with live `sync`**, which skips a `None` there for the same reason; a relationship a plan does
+not mention is one the apply leaves alone. Clearing a cardinality-one peer is done at the destination,
+and encoding it is a `format_version` extension for a later release.
+
 ### The payload carries the identity
 
 ```text
@@ -201,8 +210,9 @@ and every failure is named, so one apply attempt tells the operator everything t
 
 Recorded so nothing reads an obligation into the silence: retention, expiry or pruning of a stored
 plan; pagination or truncation; volume or latency targets; the stability of *rendered* review text,
-which is operator-facing output rather than a format; and a governance process for changing the format
-— `format_version` and the unknown-key tolerance are the two mechanisms provided.
+which is operator-facing output rather than a format; a governance process for changing the format
+— `format_version` and the unknown-key tolerance are the two mechanisms provided; and clearing a
+cardinality-one peer, which the operation shape cannot express (see **An operation** above).
 
 ## See also
 

@@ -53,7 +53,22 @@ DestinationIdentity = dict[str, Any]
 
 
 class RelationshipReference(BaseModel):
-    """A peer named by kind and identity, never by a destination-assigned id."""
+    """A peer named by kind and identity, never by a destination-assigned id.
+
+    **A plan cannot clear a cardinality-one peer, by design in v1 (MIN-013, OQ-3 decided).**
+    There is no encoding for an emptied cardinality-one relationship: `cardinality: "one"`
+    requires exactly one peer, and the reference being *absent* from the operation means the
+    field carries no value of that kind at all rather than that it should be emptied — the
+    same asymmetry `_validate_cardinality` records for the many case. Derivation cannot
+    produce one either, because `derive._resolve_references` treats a `None`-valued reference
+    field as absent and skips it.
+
+    This is **parity with live `sync`**, which skips a `None` here for the same reason, not a
+    regression the plan path introduces: a relationship a plan does not mention is a
+    relationship the apply leaves alone. So an operator who needs a cardinality-one peer
+    cleared clears it at the destination. Extending the format to encode it is a follow-up
+    issue; `format_version` is the mechanism that would carry the extension.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
