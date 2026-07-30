@@ -1,20 +1,14 @@
-"""T025 — the pre-apply verifier's return value (FR-009, FR-010, SC-004, SC-015, AD058, AD059).
+"""The pre-apply verifier's return value (FR-009, FR-010, SC-004, SC-015, AD058, AD059).
 
-A **pure unit test of what `verify_plan` returns**, with no apply and no destination in
-scope. `verify_plan` writes nothing, records no run state and constructs no adapter *by
-construction*, so asserting any of those three here would be asserting against a stub rather
-than against behaviour. The zero-writes and `failed`-run-state halves of SC-004 and SC-015
-belong to T065, on the Phase F CLI apply path.
+A **pure unit test of what `verify_plan` returns**. It writes nothing, records no run state
+and constructs no adapter by construction, so asserting those here would assert against a
+stub; the zero-writes and `failed`-run-state halves of SC-004 and SC-015 live on the CLI
+apply path.
 
-Two rules in this module are each other's exception, so both halves are asserted rather than
-one being inferred from the other (AD053):
-
-- the **format-version gate** short-circuits checks 2 to 5 and says they were not evaluated;
-- once the gate passes, **every** remaining failure is named in one call.
-
-A gate test that only asserted "the gate failure is present" would pass against an
-implementation that evaluated everything, and an evaluate-all test alone would pass against
-one that short-circuited on the first failure of any kind.
+Two rules in the module are each other's exception, so both halves are asserted rather than
+one inferred from the other (AD053): the **format-version gate** short-circuits checks 2 to 5
+and says so, and once it passes **every** remaining failure is named in one call. Either
+assertion alone passes against the wrong implementation.
 """
 
 from __future__ import annotations

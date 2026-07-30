@@ -1,27 +1,17 @@
-"""Offline cover for the Phase H fixture's load-bearing preconditions (T074 Trap 2, T080/AD092).
+"""Offline cover for the live fixture's two load-bearing preconditions (AD092).
 
-`assert_convergence_key_is_supplied` lives in `tests/integration/test_saved_plan_apply_integration.py`
-and is called only from fixtures in that module, every one of which is `integration`-marked
-and therefore skipped on a default run. It is the check that decides whether a duplicate
-object at a live destination is reported as a **fixture** error — a kind the plan cannot key
-against — or is misread as a convergence bug in the product. A check with that job cannot
-itself be unexercised, and it does not need a destination to exercise: it is pure, and takes
-a sequence of `PlannedOperation` and a schema mapping as plain data.
+`assert_convergence_key_is_supplied` and `covering_uniqueness_constraint` live in
+`tests/integration/test_saved_plan_apply_integration.py` and are called only from
+`integration`-marked fixtures, so on a default run neither is exercised at all. The first
+decides whether a duplicate object at a live destination is reported as a **fixture** error
+or misread as a convergence bug in the product; the second decides whether SC-016's live half
+**runs or skips**, and a skip decided by an unexercised check is indistinguishable from a
+deletion. Both are pure and take plain data, so the cases below run them offline. They are
+deliberately **not** `integration`-marked and contact nothing.
 
-So the cases below import it and run it offline. They are deliberately **not**
-`integration`-marked and contact nothing, which is what makes the docstring's "exercisable,
-and is exercised, offline" true rather than aspirational.
-
-The schema doubles are `SimpleNamespace`, because the function reads exactly one attribute
-off a node schema — `human_friendly_id`, through `getattr(..., None)`. A richer double would
-assert more about the SDK's schema type than this function depends on.
-
-`covering_uniqueness_constraint` is covered here for the same reason (AD092). It is the check
-that decides whether SC-016's live half **runs or skips**: it answers whether the destination
-schema lets two objects both match the query the resolver issues for one peer identity. A skip
-decided by an unexercised check is indistinguishable from a deletion, so the cases below run it
-offline over schema doubles carrying `uniqueness_constraints` and `relationships` — including the
-case where the schema *does* admit an ambiguity and the live test therefore runs.
+The schema doubles are `SimpleNamespace` because these functions read one or two attributes
+off a node schema; a richer double would assert more about the SDK's schema type than they
+depend on.
 """
 
 from __future__ import annotations

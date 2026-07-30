@@ -1,26 +1,16 @@
-"""T026 and T027 — the review surface (FR-006, FR-007, FR-017, FR-022, FR-029, SC-009).
+"""The review surface (FR-006, FR-007, FR-017, FR-022, FR-029, SC-009).
 
-**T026** covers `read_saved_plan` in-process: the counts, the per-object field set, the `kind`
-filter, the empty plan, the plan that would fail verification and is rendered anyway, AD056's
-two disclosure fields, and the one case where review *does* refuse.
+`read_saved_plan` in-process — the counts, the per-object field set, the `kind` filter, the
+empty plan, the plan that would fail verification and is rendered anyway, AD056's two
+disclosure fields — plus SC-009's in-process half run in a **subprocess** against a stored
+artifact with neither source nor destination reachable, which is what evidences that the
+producing process need not be alive and that no adapter is constructed.
 
-**T027** covers SC-009's in-process half in a **subprocess**, against a stored artifact, with
-neither source nor destination reachable — the adapter environment variables unset and the
-adapter modules made unimportable — which is what evidences that the producing process need
-not be alive and that no adapter is constructed.
-
-No apply and no destination are in scope in either half: Phase C adds no apply path, so no
-test here asserts a destination write count. The one run-state claim asserted is negative and
-belongs to review itself — that review writes no `run.json` at all — which is FR-008's and
-AD021's promise about the read path, not an assertion about an apply.
-
-Two pairings in this file are deliberate and must not be split:
-
-- a kind the configuration **declares** with no operations returns `[]`, while a kind it does
-  **not** declare raises. A test that raised for both would pass against the old, wrong
-  behaviour that AD058 corrected.
-- a plan whose **checksum** fails renders, while a plan carrying an **unrecognized action**
-  refuses. That pairing is what stops "review never refuses to show" being read as absolute.
+Two pairings here are deliberate and **must not be split**: a declared kind with no
+operations returns `[]` while an undeclared kind raises (a test that raised for both would
+pass against the behaviour AD058 corrected), and a failing **checksum** renders while an
+**unrecognized action** refuses (which stops "review never refuses to show" being read as
+absolute).
 """
 
 from __future__ import annotations
@@ -133,7 +123,7 @@ def _tree(directory: Path) -> set[str]:
 
 
 # ======================================================================================
-# T026 — the summary (FR-006)
+# The summary
 # ======================================================================================
 
 
@@ -167,7 +157,7 @@ def test_the_summary_total_is_the_operation_count(tmp_path: Path) -> None:
 
 
 # ======================================================================================
-# T026 — per-object detail (FR-006, AD020)
+# Per-object detail
 # ======================================================================================
 
 
@@ -209,7 +199,7 @@ def test_the_reviewed_identifiers_are_returned_in_stored_order(tmp_path: Path) -
 
 
 # ======================================================================================
-# T026 — the `kind` filter, and AD058's split
+# The `kind` filter, and AD058's split
 # ======================================================================================
 
 
@@ -276,7 +266,7 @@ def test_with_no_configuration_the_plans_own_kinds_are_the_vocabulary(tmp_path: 
 
 
 # ======================================================================================
-# T026 — the empty plan (FR-022)
+# The empty plan
 # ======================================================================================
 
 
@@ -304,7 +294,7 @@ def test_a_zero_operation_plan_still_carries_its_manifest(tmp_path: Path) -> Non
 
 
 # ======================================================================================
-# T026 — AD056's two disclosure fields
+# AD056's two disclosure fields
 # ======================================================================================
 
 
@@ -339,7 +329,7 @@ def test_the_disclosure_matches_the_manifest_rather_than_the_operation_set(tmp_p
 
 
 # ======================================================================================
-# T026 — a verification failure renders; an unrecognized action does not
+# A verification failure renders; an unrecognized action does not
 # ======================================================================================
 
 
@@ -370,7 +360,7 @@ def test_a_verification_failure_renders_but_an_unrecognized_action_refuses(tmp_p
 
 
 # ======================================================================================
-# T026 — review writes nothing (FR-008, AD021, AD031)
+# Review writes nothing
 # ======================================================================================
 
 
@@ -400,7 +390,7 @@ def test_review_writes_nothing_even_when_the_plan_fails_verification(tmp_path: P
 
 
 # ======================================================================================
-# T095 — FR-010's source-snapshot binding, on the review path
+# FR-010's source-snapshot binding, on the review path
 # ======================================================================================
 
 _EXTRACT_TS = datetime(2026, 7, 26, 18, 4, 11, tzinfo=timezone.utc)
@@ -528,7 +518,7 @@ def test_a_review_writes_nothing_while_reading_the_snapshot_binding(tmp_path: Pa
 
 
 # ======================================================================================
-# T027 — SC-009's in-process half, in a new process with nothing reachable
+# SC-009's in-process half, in a new process with nothing reachable
 # ======================================================================================
 
 READER_SCRIPT = '''\

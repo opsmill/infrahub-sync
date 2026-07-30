@@ -274,7 +274,7 @@ def test_a_trailing_newline_is_rejected_rather_than_matched_by_dollar() -> None:
 
 
 # --------------------------------------------------------------------------------------
-# T057 — SC-013's apply side: through the manifest write, compared verbatim at apply.
+# SC-013's apply side: through the manifest write, compared verbatim at apply.
 # --------------------------------------------------------------------------------------
 
 # Deliberately opaque, and deliberately hostile to every way a value like this gets
@@ -337,7 +337,7 @@ def _store_plan(run_directory: Path, *, config_version: str) -> str:
 def _apply_with(run_directory: Path, *, config_version: str) -> tuple[str, NoOpPlannedWriteDestination]:
     """Apply the stored plan with `config_version` and return the run state and destination.
 
-    The state rule is the CLI's (`infrahub_sync/cli.py:343-349`): `applied` when `apply_plan`
+    The state rule is the CLI's (`infrahub_sync/cli.py`): `applied` when `apply_plan`
     returns, `failed` when it raises.
     """
     destination = NoOpPlannedWriteDestination()

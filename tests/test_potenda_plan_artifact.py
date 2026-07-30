@@ -1,24 +1,18 @@
-"""Phase D evidence: what a plan run derives, and what it writes before the first write.
+"""What a plan run derives, and what it writes before the first destination write.
 
-Covers T036 (derivation), T037 (SC-017, the delete-computation record), T038 (tier
-assignment), T039 (SC-014, the convergence-key warning), T040 (AD039, the tier branch's
-two loops) and T041 (SC-006, byte-identical re-plan). Each task has its own labelled
-section below; the shared fakes and builders at the top of the module are deliberately
-task-neutral so the remaining Phase D cases (T082-T085) append to this file without
-re-inventing them.
+Derivation, the delete-computation record, tier assignment, the convergence-key warning, the
+tier branch's two loops, and byte-identical re-plan. The shared fakes and builders at the top
+are deliberately case-neutral.
 
-Two things every case in here has to get right, and both are silent when missed:
+Two things every case has to get right, and both are silent when missed:
 
-- `Potenda.write_plan_artifact` returns `None` early when `run_dir`, `run_id` or `config`
-  is falsy (`infrahub_sync/potenda/__init__.py:380-384`). The engine tests elsewhere in
-  this repository construct `Potenda(config=None)`, so they never reach the artifact write
-  at all. Every case here therefore supplies a real parsed `SyncInstance` **and** a run
-  identity, and asserts against a manifest that was actually written.
-- A comparison element's `source_attrs` is `get_attrs()`, which **excludes** the
-  identifiers (`.venv/…/diffsync/__init__.py:340-347`). `_FakeElement` and `diff_between`
-  reproduce that exclusion rather than papering over it, so AD042's payload union stays
-  load-bearing in every case that drives a comparison instead of only in the case that
-  asserts it directly.
+- `Potenda.write_plan_artifact` returns `None` early when `run_dir`, `run_id` or `config` is
+  falsy, and the engine tests elsewhere construct `Potenda(config=None)`, so they never reach
+  the artifact write at all. Every case here supplies a real parsed `SyncInstance` **and** a
+  run identity, and asserts against a manifest that was actually written.
+- A comparison element's `source_attrs` is `get_attrs()`, which **excludes** the identifiers.
+  `_FakeElement` and `diff_between` reproduce that exclusion rather than papering over it, so
+  AD042's payload union stays load-bearing in every case that drives a comparison.
 """
 
 from __future__ import annotations
@@ -221,7 +215,7 @@ class _FakeElement:
     """diffsync `DiffElement` stand-in, carrying the four fields the derivation reads.
 
     `action` is derived from the source/destination attribute pair by the same rule
-    diffsync uses (`.venv/…/diffsync/diff.py:237-254`), so a delete element is produced the
+    diffsync uses (`.venv/…/diffsync/diff.py`), so a delete element is produced the
     way the real comparison produces one — destination attributes and no source ones —
     rather than by declaring an action string.
     """
@@ -278,7 +272,7 @@ class _FakeDiff:
             kind: {element.name: element for element in elements} for kind, elements in elements_by_kind.items()
         }
         # `diff` and `sync` both log `Diff.str()` once the plan is written
-        # (`infrahub_sync/cli.py:154`, `:274`), so the CLI cases below need it. Bound here
+        # (`infrahub_sync/cli.py`), so the CLI cases below need it. Bound here
         # rather than declared as a method named `str`, which would shadow the builtin for
         # every annotation in this class body.
         self.str = partial(render_diff, self)
@@ -456,11 +450,11 @@ def pin_extraction_decisions(monkeypatch: pytest.MonkeyPatch, decisions: Sequenc
 
     `should_use_incremental` is the function whose answer *defines* the extraction mode:
     `Potenda.load_one_side` records `_side_full_extract[side] = not use_inc` from it
-    (`infrahub_sync/potenda/__init__.py:198-213`). Pinning it therefore pins the mode
+    (`infrahub_sync/potenda/__init__.py`). Pinning it therefore pins the mode
     through the real code path rather than by assigning the flag the code is supposed to
     set. It takes no `side` argument, so the pinning is by call order — deterministic here
     because every Potenda in this module is built with `concurrent_load=False`, which loads
-    A then B (`:277-280`). Callers assert the resulting per-side flags anyway.
+    A then B. Callers assert the resulting per-side flags anyway.
     """
     remaining = list(decisions)
 
@@ -556,7 +550,7 @@ def destination_with_orphan(*, schema: Mapping[str, Any] | None = None) -> _Fake
 
 
 # =======================================================================================
-# T036 — derivation: identity, payload, relationship references, deletes recorded once
+# Derivation: identity, payload, relationship references, deletes recorded once
 # =======================================================================================
 
 
@@ -793,7 +787,7 @@ def test_derived_deletes_carry_identifiers_and_no_payload() -> None:
 
 
 # =======================================================================================
-# T037 — SC-017: the delete-computation record, full versus incremental destination
+# SC-017: the delete-computation record, full versus incremental destination
 # =======================================================================================
 
 
@@ -848,7 +842,7 @@ def test_delete_computation_record_distinguishes_full_from_incremental_extract(
 
 
 # =======================================================================================
-# T038 — tier assignment, with computed tiers and with an explicit order
+# Tier assignment, with computed tiers and with an explicit order
 # =======================================================================================
 
 
@@ -897,7 +891,7 @@ def test_tier_is_recorded_on_every_operation(
 
 
 # =======================================================================================
-# T039 — SC-014: the convergence-key warning, all four FR-024 arms
+# SC-014: the convergence-key warning, all four FR-024 arms
 # =======================================================================================
 
 
@@ -1114,7 +1108,7 @@ def test_a_destination_exposing_no_schema_is_skipped_rather_than_failing(
 
 
 # =======================================================================================
-# T040 — AD039: the tier branch computes every diff, writes the artifact, then executes
+# AD039: the tier branch computes every diff, writes the artifact, then executes
 # =======================================================================================
 
 
@@ -1182,7 +1176,7 @@ def test_the_tier_branch_computes_every_diff_and_writes_the_artifact_before_the_
 
 
 # =======================================================================================
-# T101 — FR-015: `sync` records deletes exactly as `diff` does, serial and tiered
+# FR-015: `sync` records deletes exactly as `diff` does, serial and tiered
 # =======================================================================================
 
 
@@ -1245,7 +1239,7 @@ def test_a_serial_and_a_tiered_sync_record_deletes_exactly_as_a_diff_does(monkey
 
 
 # =======================================================================================
-# T041 — SC-006 / Trap 1: two plan runs over identical input encode identically
+# SC-006 / Trap 1: two plan runs over identical input encode identically
 # =======================================================================================
 
 
@@ -1350,12 +1344,9 @@ def test_two_plan_runs_at_different_extraction_modes_are_expected_to_differ(
     assert masked(full_manifest) != masked(incremental_manifest)
 
 
-# =======================================================================================
-# T082-T085 append below this line. The fakes and builders above are the shared surface.
-# =======================================================================================
-
 # ---------------------------------------------------------------------------------------
-# Shared surface for T082-T085: a real CLI invocation, and a plan run that must fail
+# Shared surface for the derivation-failure cases: a real CLI invocation, and a plan run
+# that must fail
 # ---------------------------------------------------------------------------------------
 
 CLI_RUNNER = CliRunner()
@@ -1406,7 +1397,7 @@ def invoke_command(  # noqa: PLR0913 — one parameter per axis a CLI case varie
     """Run a real `infrahub-sync <command>` against a real Potenda built on this module's fakes.
 
     Only adapter construction is substituted: `get_potenda_from_instance` is the seam the
-    repository's other CLI tests use (`tests/test_cli_full_extract.py:64`), and everything
+    repository's other CLI tests use (`tests/test_cli_full_extract.py`), and everything
     the command does afterwards — the run file, `load_both_sides`, `diff`, `write_plan` and
     the artifact write — is the real code path. That is what makes the exit code these
     cases assert the exit code an operator would get.
@@ -1437,7 +1428,7 @@ def failing_plan_run(  # noqa: PLR0913 — one parameter per axis a failing plan
     """Drive one plan run that must fail, and assert it left no artifact behind.
 
     `manifest.json` is written last and is the artifact's commit point
-    (`infrahub_sync/plan/writer.py:145-160`), so its absence is what "no partial artifact"
+    (`infrahub_sync/plan/writer.py`), so its absence is what "no partial artifact"
     means. `plan.parquet` is written first and unchanged (V23), so it is deliberately not
     asserted absent — the new artifact is the thing a refusal must not leave half-written.
     """
@@ -1461,12 +1452,13 @@ def references_by_field(operation: PlannedOperation) -> dict[str, RelationshipRe
 
 
 # =======================================================================================
-# T082 — AD046 / AD050: the peer kind is probed in the store, and both arms fail loudly
+# AD046 / AD050: the peer kind is probed in the store, and both arms fail loudly
 # =======================================================================================
 
-# `DcimDevice.location` on the qualified path is declared twice with different references
-# (`examples/netbox_to_infrahub/config.yml:212` -> LocationRack, `:254` -> LocationSite,
-# V31). Sorted, because `reference_candidates` sorts and the probe order follows it.
+# `DcimDevice.location` on the qualified path is declared twice in
+# `examples/netbox_to_infrahub/config.yml`, with different references — one naming
+# LocationRack and one LocationSite. Sorted, because `reference_candidates` sorts and the
+# probe order follows it.
 LOCATION_CANDIDATES = ("LocationRack", "LocationSite")
 
 DUPLICATE_ORDER: tuple[str, ...] = ("LocationSite", "LocationRack", "DcimDevice")
@@ -1634,7 +1626,7 @@ def test_a_single_candidate_is_probed_and_never_used_as_a_fallback() -> None:
 
 
 # =======================================================================================
-# T083 — AD047 / AD071 / AD082: five derivation failures, fatal on `diff` as on `sync`
+# AD047 / AD071 / AD082: five derivation failures, fatal on `diff` as on `sync`
 # =======================================================================================
 
 
@@ -1863,7 +1855,7 @@ def test_a_derivation_failure_is_equally_hard_on_the_sync_path(
 
 
 def test_the_diff_command_offers_no_continue_on_error_tolerance() -> None:
-    """AD047: the tolerance option is declared on `sync` only (`infrahub_sync/cli.py:190`)."""
+    """AD047: the tolerance option is declared on `sync` only (`infrahub_sync/cli.py`)."""
     diff_help = CLI_RUNNER.invoke(app, ["diff", "--help"])
     sync_help = CLI_RUNNER.invoke(app, ["sync", "--help"])
     assert diff_help.exit_code == 0
@@ -1894,7 +1886,7 @@ def test_the_source_side_failures_do_not_route_the_operator_at_the_destination()
 
 
 # =======================================================================================
-# T084 — AD049 / AD050: a delete's identity is canonicalised, probed destination-side
+# AD049 / AD050: a delete's identity is canonicalised, probed destination-side
 # =======================================================================================
 
 
@@ -2009,7 +2001,7 @@ def test_a_delete_whose_nested_peer_is_ambiguous_destination_side_fails_the_comm
 
 
 # =======================================================================================
-# T085 — AD052: `diff` end to end against a destination that exposes no schema
+# AD052: `diff` end to end against a destination that exposes no schema
 # =======================================================================================
 
 

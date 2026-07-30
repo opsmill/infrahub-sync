@@ -1,47 +1,22 @@
-"""T072 — SC-010: a credential in `settings` reaches no artifact, no review output, no reader value.
+"""SC-010: a credential in `settings` reaches no artifact, no review output, no reader value.
 
-FR-018 says no secret value appears in the plan artifact or in any review output, and AD018
-fixes both the mechanism and the injection point: credentials enter this system as values in
-the configuration's `settings`, and FR-018 is defended by never writing those values out. So
-this file injects a **synthetic** canary credential into `settings` — into a configuration
-written to disk and loaded through the real loader, not a hand-built object — runs a real
-plan, and scans the four surfaces SC-010 enumerates:
+A **synthetic** canary credential is injected into a configuration written to disk and loaded
+through the real loader, a real plan is run, and the four surfaces SC-010 enumerates are
+scanned: the artifact files as bytes, the CLI's stdout at each review depth, and the
+in-process reader's returned value walked **as data** — `repr(SavedPlan)` would scan almost
+nothing, so `_data_leaves` walks the object graph, pydantic extras and private attributes
+included.
 
-1. the artifact files under `<run_dir>/plan/`, read as bytes straight from disk;
-2. the CLI's captured standard output at the **summary** depth;
-3. the CLI's captured standard output at the **per-object** depth;
-4. the in-process reader's returned value, walked **as data**.
-
-The fourth is the one that needs saying. `read_saved_plan` returns a `SavedPlan`, and
-scanning `repr(plan)` would scan almost nothing — the default `repr` of that object names its
-class and its address. `_data_leaves` therefore walks the object *graph*: pydantic models
-through `model_dump()` **and** their tolerated extra fields (`PlanManifest` allows extras per
-FR-027, and an extra lives in `__pydantic_extra__` rather than in `__dict__`), frozen
-dataclasses through their fields, mappings through keys *and* values, sequences and sets
-through their items, and any other object through `vars()` — falling back to `repr` only for
-something with no attributes at all. Private attributes are walked too, so `SavedPlan`'s
-`_operations` and `_declared_kinds` are scanned rather than trusted. The value the reader
-hands back through its public methods, `summary()` and `operations()`, is walked alongside it.
-
-`plan.parquet` is deliberately **not** scanned. FR-019 keeps the pre-existing plan file
-in place, never reads it through the new reader, and states that it "is not part of the plan
-artifact for FR-004, FR-018, SC-006 or SC-010". Scanning it would assert a claim the spec
-does not make.
+`plan.parquet` is deliberately **not** scanned: FR-019 states it is not part of the plan
+artifact for FR-018 or SC-010, so scanning it would assert a claim the spec does not make.
 
 **The positive controls are the point of the file.** A scan that finds nothing proves nothing
-until it is shown finding something, so `test_a_planted_canary_is_caught_*` plants the canary
-at four sites and asserts the exact set of surfaces each one reaches — a payload plant, an
-identity plant, a destination-kind plant, and a plant in a payload field whose name falls
-under the review's redaction policy. Their union is all four surfaces, asserted as its own
-case, so no scanned surface is scanned by a matcher that has never fired.
-
-The four reach different surfaces because the two review depths render different things: the
-summary depth renders counts keyed by action and kind and nothing per-record, so only a kind
-name reaches it, while the detail depth renders each operation's identity **and** — since
-FIX-012 (spec 002) — the desired destination state it would write, payload values included.
-That is why the redaction-policy plant is here: it lands in the artifact and in the reader's
-data like any other payload value, and the detail depth withholds it, so the policy is pinned
-by a control that fires rather than by the reading of a constant.
+until it is shown finding something, so the canary is planted at four sites and each plant's
+exact set of reached surfaces is asserted; their union is all four, asserted as its own case,
+so no surface is scanned by a matcher that has never fired. The plants reach different
+surfaces because the summary depth renders counts per action and kind while the detail depth
+renders each operation's desired destination state — which is why the redaction-policy plant
+is here, pinned by a control that fires rather than by the reading of a constant.
 """
 
 from __future__ import annotations

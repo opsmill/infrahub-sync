@@ -1,21 +1,15 @@
-"""T066 — `Potenda.apply_plan` applies the saved plan artifact (FR-012, FR-016, FR-020, FR-023).
+"""`Potenda.apply_plan` applies the saved plan artifact (FR-012, FR-016, FR-020, FR-023).
 
-Rewritten with the v1 dispatch it used to assert. The old file wrote `plan.parquet` and
-asserted that a `MagicMock` destination received one per-row call on a write surface no
-adapter in the tree ever implemented — removed here as the second apply path FR-019
-forbids. What replaces it is the artifact-driven apply: the plan is read from
-`<run_dir>/plan/`, verified as one pre-write gate, and executed in **stored order** through
-the destination's `apply_planned_operation`.
+The engine's own contract over the write surface: the plan is read from `<run_dir>/plan/`,
+verified as one pre-write gate, and executed in **stored order** through the destination's
+`apply_planned_operation`. The deep behavioural matrix — peer resolution, the replace-set
+flush, rendered-mutation conformance — belongs to `tests/adapters/test_infrahub_planned_write.py`
+and `tests/plan/test_apply_conformance.py`.
 
-The destination double below is a plain recording object rather than a `MagicMock`, and
-deliberately so: a mock answers every attribute lookup, so it satisfies the write-surface
-protocol's presence check for free and the missing-write-surface case — the one this file has
-to be able to fail on — cannot be expressed against one.
-
-The deep behavioural matrix (peer resolution, the replace-set flush, the rendered-mutation
-conformance) belongs to `tests/adapters/test_infrahub_planned_write.py` and
-`tests/plan/test_apply_conformance.py`. What is asserted here is the engine's own contract:
-stored order, the pre-write gate, the collected delete, and the returned record.
+The destination double is a plain recording object rather than a `MagicMock`, deliberately: a
+mock answers every attribute lookup, so it satisfies the write-surface protocol's presence
+check for free and the missing-surface case this file has to be able to fail on cannot be
+expressed against one.
 """
 
 from __future__ import annotations
@@ -256,7 +250,7 @@ def test_an_empty_plan_applies_as_a_successful_no_op(tmp_path: Path) -> None:
 
 
 # ======================================================================================
-# T097 — FR-009's gate disclosure and evaluate-all rule, reached from the apply path
+# FR-009's gate disclosure and evaluate-all rule, reached from the apply path
 # ======================================================================================
 
 

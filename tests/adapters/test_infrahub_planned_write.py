@@ -1,35 +1,18 @@
 """The Infrahub destination's planned-write surface, offline.
 
 `InfrahubAdapter.apply_planned_operation` is the saved-plan write surface (FR-013) and
-`PeerResolver` is its apply-time peer resolution (FR-014). Everything here runs against a
-real `InfrahubClientSync` whose **transport edge alone** is replaced: `schema.get`,
-`generate_payload_create`, `client.create`, the node classes and the GraphQL rendering all
-stay real, so the mutations recorded here are the ones the SDK would actually send. No live
-Infrahub is contacted and nothing here is `integration`-marked.
+`PeerResolver` its apply-time peer resolution (FR-014). Everything runs against a real
+`InfrahubClientSync` whose **transport edge alone** is replaced, so the mutations recorded
+here are the ones the SDK would actually send. No live Infrahub is contacted.
 
-Recording the rendered mutation rather than a mock adapter call is not decoration. Three of
-the properties under test are invisible to an assertion made against a `MagicMock`:
-
-- **keyedness** is a property of the rendered mutation, not of the assembled `data` — by the
-  time `data` is complete a relationship-crossing human-friendly-ID component is a resolved
-  node-id string, so "every component present in `data`" holds while the mutation goes out
-  with neither `id` nor `hfid` (AD054, AD066);
-- the **replace-set** is only real if it is *issued* — nothing about a peer set reaches the
-  destination except through a write, so an assertion on any in-memory peer list is satisfied
-  in full by a helper that writes nothing at a real destination (AD075). Surplus-peer
-  *removal* relies on the destination Update mutation's replace semantics, which no offline
-  assertion can pin — the live shrink test
-  (`tests/integration/test_infrahub_replace_set_shrink_integration.py`) pins it (FIX-001);
-- the **flush** that carries it is a targeted `<kind>Update` naming `id` plus only the replaced
-  relationship fields, and only the rendered mutation *name* separates that from a second
-  `save(allow_upsert=True)` (AD075, AD085, AD088). That the flush names no **unmapped** field is
-  asserted in `tests/plan/test_apply_conformance.py`, against a fixture kind declaring one.
-
-Covers T050 (payload cases), T051 (replace-set cases), T052 (memo cases), T053 (SC-016's
-local half), T054 (SC-007's local half), T055 (the apply-loop cases) and the apply half of
-T056 (SC-005). The last three drive `Potenda.apply_plan` over a stored artifact against a
-recording fake destination, because what they measure — stored order, the collected delete,
-the returned record — is the **engine's** contract over the write surface above.
+Recording the rendered mutation rather than a mock call is load-bearing, because three
+properties under test are invisible to an assertion made against a `MagicMock`: **keyedness**
+is a property of the rendered mutation and not of the assembled `data` (AD054, AD066); the
+**replace-set** is only real if it is *issued*, and surplus-peer removal rests on the
+destination's replace semantics, which only the live shrink test can pin (AD075, FIX-001); and
+the **flush** is a targeted `<kind>Update` that only the rendered mutation name separates from
+a second upsert (AD085, AD088). That the flush names no *unmapped* field is asserted in
+`tests/plan/test_apply_conformance.py`, against a fixture kind declaring one.
 """
 
 from __future__ import annotations
@@ -487,7 +470,7 @@ def captured_logs(caplog: pytest.LogCaptureFixture) -> Iterator[pytest.LogCaptur
 
 
 # ---------------------------------------------------------------------------------------
-# T050 — payload cases
+# Payload cases
 # ---------------------------------------------------------------------------------------
 
 
@@ -680,7 +663,7 @@ def test_the_dedup_set_lives_for_one_apply_and_not_for_the_adapter_instance(
 
 
 # ---------------------------------------------------------------------------------------
-# T051 — replace-set cases
+# Replace-set cases
 # ---------------------------------------------------------------------------------------
 
 
@@ -797,7 +780,7 @@ def test_one_flush_is_issued_per_operation_not_one_per_relationship() -> None:
 
 
 # ---------------------------------------------------------------------------------------
-# T052 — memo cases
+# Memo cases
 # ---------------------------------------------------------------------------------------
 
 
@@ -953,7 +936,7 @@ def test_a_partial_filter_warns_once_per_kind_naming_the_dropped_components(
 
 
 # ---------------------------------------------------------------------------------------
-# T053 — SC-016's local half
+# SC-016's local half
 # ---------------------------------------------------------------------------------------
 
 
@@ -1082,7 +1065,7 @@ def engine_over(run_directory: Path, destination: object, *, run_id: str = APPLY
 def apply_and_record_state(engine: Potenda) -> tuple[str, ApplyRecord | Exception]:
     """Apply, and return the run state the CLI would record, with what the apply produced.
 
-    The state rule is the CLI's, mirrored rather than described: `infrahub_sync/cli.py:343-349`
+    The state rule is the CLI's, mirrored rather than described: `infrahub_sync/cli.py`
     records `applied` when `apply_plan` returns and `failed` when it raises. Reading the state
     through this helper is what makes "the run ends `applied`" an assertion a `failed` run
     fails, rather than an inference from the absence of an exception (AD055).
@@ -1102,7 +1085,7 @@ def engine_logs(caplog: pytest.LogCaptureFixture) -> Iterator[pytest.LogCaptureF
 
 
 # ---------------------------------------------------------------------------------------
-# T054 — SC-007's local half: a delete-bearing plan, and the class that does still fail
+# SC-007's local half: a delete-bearing plan, and the class that does still fail
 # ---------------------------------------------------------------------------------------
 
 
@@ -1155,7 +1138,7 @@ def test_a_delete_bearing_plan_applies_every_non_delete_and_ends_applied(
     assert len(warnings) == 1, f"One report for the whole apply, got {[w.getMessage() for w in warnings]}."
     assert warnings[0].levelno >= logging.WARNING, (
         f"The report is pinned to WARNING because --quiet floors the package logger there "
-        f"(infrahub_sync/cli.py:29); it was emitted at {warnings[0].levelname}."
+        f"(infrahub_sync/cli.py); it was emitted at {warnings[0].levelname}."
     )
     assert "2" in warnings[0].getMessage(), "The warning must name the count of deletes it did not execute."
 
@@ -1178,7 +1161,7 @@ def test_a_mid_apply_rejection_surfaces_the_rejection_not_the_knowability_invari
 
 
 # ---------------------------------------------------------------------------------------
-# T056 — SC-005's apply half: the reviewed set equals the applied record, in order
+# SC-005's apply half: the reviewed set equals the applied record, in order
 #
 # The engine's own apply-loop matrix — stored order, the surfaceless refusal, the empty plan,
 # the partial record on a rejection — lives at `tests/cache/test_apply_plan.py`, against the
@@ -1330,7 +1313,7 @@ def test_the_gate_verifies_member_presence_only_and_is_no_stronger_than_hasattr(
 
 
 # ---------------------------------------------------------------------------------------
-# T107 — the transport and auth edges on the two live-calling surfaces
+# The transport and auth edges on the two live-calling surfaces
 # ---------------------------------------------------------------------------------------
 #
 # Constitution V asks for adapter edge-case tests covering timeouts and 401/403. The two

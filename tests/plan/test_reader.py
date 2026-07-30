@@ -1,25 +1,16 @@
-"""T024 — the plan reader's classification (FR-010, FR-017, FR-019, FR-027, SC-011, SC-018).
+"""The plan reader's classification (FR-010, FR-017, FR-019, FR-027, SC-011, SC-018).
 
-A **pure unit test of the classification**, with no apply and no destination in scope. Phase
-C adds no apply path and no destination exists yet, so no test in this file asserts a
-destination write count or a run-sidecar state: both halves would be asserted against a stub.
-The zero-writes and `failed`-run-state halves of SC-011 and SC-018 are T065's, on the Phase F
-CLI apply path where an apply actually exists.
+A **pure unit test of the classification**: no apply and no destination are in scope, so the
+zero-writes and `failed`-run-state halves of SC-011 and SC-018 are asserted on the CLI apply
+path instead of against a stub here.
 
-What the classification has to keep apart, and what each case here pins:
-
-- **SC-011**: a run with no `plan/` at all is the pre-existing row format, and the message
-  sends the operator to re-plan.
-- **torn**, in its several shapes, each naming *which* part is torn — including the shape
-  most likely in practice, an operations line that parses as JSON but fails record
-  validation, which must arrive as a line number and a field rather than a raw pydantic
-  traceback (AD059).
-- **SC-018**: an unsupported `format_version` names the version found, lists the versions
-  supported, and reads **differently** from the SC-011 message, because the remedies differ.
-- **AD055**: an `action` outside `ACTIONS` is the genuinely-unsupported class, refused while
-  reading. A recorded `delete` is a *valid* action that never reaches that path, so a
-  delete-bearing fixture is asserted to read cleanly in the same file — the two classes
-  cannot be conflated by accident.
+What the cases keep apart: a run with no `plan/` at all is the pre-existing row format;
+**torn** in its several shapes, each naming which part is torn — including an operations line
+that parses as JSON but fails record validation, which must arrive as a line number and a
+field rather than a raw pydantic traceback (AD059); an unsupported `format_version`, worded
+**differently** from the first because the remedies differ; and an `action` outside `ACTIONS`,
+refused while reading. A delete-bearing fixture is asserted to read cleanly in the same file,
+so the valid-but-unexecuted action and the uninterpretable one cannot be conflated (AD055).
 """
 
 from __future__ import annotations
@@ -109,7 +100,7 @@ def test_the_v1_verdict_does_not_depend_on_the_row_file_being_present(tmp_path: 
 
 
 # ======================================================================================
-# T096 — FR-008's enumeration on the second arm: a run that holds no plan artifact
+# FR-008's enumeration on the second arm: a run that holds no plan artifact
 # ======================================================================================
 
 

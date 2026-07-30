@@ -1,43 +1,17 @@
-"""Phase F — the command-line review mode, its errors, its isolation, and the apply refusals.
+"""The command-line review mode, its errors, its isolation, and the apply refusals.
 
-Eight tasks share this file because they share one surface: `diff --from-plan <run-id>`
-(AD057) and the `apply` it exists to make safe. Splitting them would duplicate the fixtures
-and, worse, let the review assertions and the apply assertions drift apart — which is
-exactly the divergence between "what was reviewed" and "what was applied" the whole outcome
-exists to close.
+`diff --from-plan <run-id>` and the `apply` it exists to make safe share one file because
+they share one surface: splitting them would duplicate the fixtures and let the review
+assertions and the apply assertions drift apart, which is the very divergence between what
+was reviewed and what was applied that this feature closes.
 
-- **T061** — SC-009's CLI half: the summary and the per-object detail, with and without
-  `--kind`, each against a stored artifact **written by a process that has since exited**,
-  with neither source nor destination reachable. Every case also asserts AD056's
-  delete-computation disclosure at that depth, and two of the four run against a plan whose
-  destination side was loaded incrementally, so the "deletes were NOT computed" wording is
-  asserted reachable rather than assumed.
-- **T062** — the error paths, including AD073's bounded run-identifier enumeration and its
-  no-runs arm, the `--run-id`-alongside-`--from-plan` warning, and the one case where review
-  **refuses** rather than renders.
-- **T063** — isolation: no adapter, no directory under the cache root, no `run.json`, and no
-  pipeline lock (asserted while the lock is held by another holder).
-- **T064** — SC-012: the top-level command list compared as text against the **committed**
-  T002 baseline fixture, never one recovered by reverting the tree at test time (AD060).
-- **T065** — the apply path: SC-004's six refusals individually, plus SC-011, SC-015, SC-018
-  and AD055's unrecognized action, each with zero destination writes and the run state read
-  back from `run.json`; plus the delete-bearing apply that **succeeds**, which is where
-  AD069's merge is asserted by name.
-- **T087** — the four delete-disclosure cases, each of which fails if its rendering is
-  removed.
-- **T089** — the next-action obligation across the whole taxonomy (AD059, AD071, AD073,
-  AD082).
-- **T090** — the help strings, which are fixed in `contracts/cli-review-mode.md` rather than
-  discovered, because `docs.generate` renders them verbatim into the reference documentation
-  (AD061).
-
-Two properties of this file are deliberate and must not be "tidied". The review cases assert
-against **stdout** (`typer.echo`, AD032) while every error case asserts against the
-**logger**, because `print_error_and_abort` reports there — a test that read both from one
-stream would pass against an implementation that merged them and broke FR-008's channel
-split. And the apply cases run against a real `Potenda` over a recording destination rather
-than a `MagicMock`: a mock answers `hasattr` for every name, so the missing-write-surface
-refusal cannot be expressed against one.
+Two properties here are deliberate and **must not be "tidied"**. The review cases assert
+against **stdout** (`typer.echo`) while every error case asserts against the **logger**,
+because `print_error_and_abort` reports there — a test reading both from one stream would
+pass against an implementation that merged them and broke FR-008's channel split. And the
+apply cases run against a real `Potenda` over a recording destination rather than a
+`MagicMock`: a mock answers `hasattr` for every name, so the missing-write-surface refusal
+cannot be expressed against one.
 """
 
 from __future__ import annotations
@@ -176,7 +150,7 @@ def adapter_construction_log(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, 
     "Source and destination unreachable" is a precondition of SC-009's CLI cases, and the
     honest way to hold it is to make the attempt fail rather than to hope the code path
     avoided it. `import_adapter` is the single function `get_potenda_from_instance` reaches
-    both adapters through (`infrahub_sync/utils.py:183-184`), so refusing here refuses both.
+    both adapters through (`infrahub_sync/utils.py`), so refusing here refuses both.
 
     Returns the call log, so a test can assert the sentinel never fired rather than only
     that nothing blew up.
@@ -226,7 +200,7 @@ def _apply(run_id: str, *, quiet: bool = False) -> Any:  # noqa: ANN401 — clic
     """Invoke `apply` for `run_id` against the example configuration.
 
     `quiet` passes the app-level `--quiet`, which floors the package logger at
-    `logging.WARNING` (`infrahub_sync/cli.py:48`, `:78-79`) — the invocation SC-007's warning
+    `logging.WARNING` (`infrahub_sync/cli.py`) — the invocation SC-007's warning
     obligations are pinned above, and therefore the one that can tell an `INFO` emission from
     a `WARNING` one.
     """
@@ -271,7 +245,7 @@ def _store(
 
 
 # ======================================================================================
-# T061 — SC-009's CLI half (FR-006, FR-007, FR-008, AD056, AD057)
+# SC-009's CLI half
 # ======================================================================================
 
 # Writes the artifacts and then **exits**. FR-007's claim is that the producing process need
@@ -580,7 +554,7 @@ def test_a_delete_record_renders_no_desired_state(tmp_path: Path) -> None:
 
 
 # ======================================================================================
-# T087 — the four delete-disclosure cases (FR-006, FR-015, SC-009, AD024, AD056)
+# The four delete-disclosure cases
 # ======================================================================================
 
 
@@ -680,7 +654,7 @@ def test_the_in_process_reader_carries_both_disclosure_fields(tmp_path: Path) ->
 
 
 # ======================================================================================
-# T062 — the error paths (FR-006, FR-008, FR-010, FR-017, FR-019, FR-027, AD057-AD059, AD073)
+# The error paths
 # ======================================================================================
 
 
@@ -960,7 +934,7 @@ def test_a_plan_that_would_fail_verification_is_still_rendered(tmp_path: Path) -
 
 
 # ======================================================================================
-# T063 — isolation (FR-008, AD021, AD031)
+# Isolation
 # ======================================================================================
 
 # Generous by two orders of magnitude against the 60-second lock timeout: the claim is "does
@@ -1122,7 +1096,7 @@ def test_from_plan_is_documented_as_taking_a_run_identifier_and_not_as_a_flag() 
 
 
 # ======================================================================================
-# T089 — the next-action obligation across the taxonomy (AD059, AD071, AD073, AD082)
+# The next-action obligation across the taxonomy
 # ======================================================================================
 
 # One entry per declared taxonomy member, built the way its own raising site builds it. The
@@ -1320,7 +1294,7 @@ def test_the_version_refusal_lists_the_supported_format_versions(
 
 
 # ======================================================================================
-# T065 — the apply path (SC-004, SC-007, SC-011, SC-015, SC-018, AD055, AD062, AD069)
+# The apply path
 # ======================================================================================
 
 APPLY_SNAPSHOT_ROWS: list[dict[str, Any]] = [
@@ -1499,7 +1473,7 @@ def _run_json(tmp_path: Path, run_id: str = RUN_ID) -> dict[str, Any]:
     """Read the run sidecar back **from disk** after the command returned.
 
     From disk rather than from an in-memory object: `RunFile.save()` writes the whole payload
-    from its own instance with no merge (`infrahub_sync/cache/sidecars.py:88-90`), so the
+    from its own instance with no merge (`infrahub_sync/cache/sidecars.py`), so the
     file is the only place the CLI's merge can be observed to have happened (AD069).
     """
     path = _cache_root(tmp_path) / run_id / "run.json"

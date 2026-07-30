@@ -1,41 +1,22 @@
-"""T081 — the offline apply-conformance harness (FR-013, FR-028.4, AD054, AD067, AD068).
+"""The offline apply-conformance harness (FR-013, FR-028.4, AD054, AD067, AD068).
 
-What this file measures that nothing else can: **the mutation the SDK renders**. The class of
-defect AD042 named — a payload assembled from source attributes alone, so the convergent write
-goes out unkeyed and every re-apply duplicates the object — is invisible to an assertion made
-against the assembled `data`, because by the time `data` is complete a relationship-crossing
-identity component is already a resolved node-id **string**. "Every component present in
-`data`" can hold while the mutation goes out with neither `id` nor `hfid`.
+What this file measures that nothing else can: **the mutation the SDK renders**. AD042's
+defect class — a payload assembled from source attributes alone, so the convergent write goes
+out unkeyed and every re-apply duplicates the object — is invisible to an assertion against
+the assembled `data`, because a relationship-crossing identity component is already a resolved
+node-id string by then. So the harness runs a **real** `InfrahubNodeSync` built from the
+committed schema fixture with only the transport edge replaced; no server is contacted.
 
-So the harness is built against a **real** `InfrahubNodeSync`, constructed from the committed
-`NodeSchemaAPI` fixture at `tests/data/apply_conformance_schemas.json`, with only the transport
-edge replaced. Everything between the write surface and the wire is the SDK's own: the
-`hfid`/`id` selection (`infrahub_sdk/node/node.py:295-298`), the upsert render's
-`exclude_hfid=False` (`:1843-1846`), and the GraphQL rendering. No server is contacted and
-nothing here is `integration`-marked.
+Five assertions, because keyedness splits in two (AD067): an all-direct human-friendly-ID
+kind renders keyed; the relationship-crossing kind is the same assertion marked
+`xfail(strict=True)`, so the day the hole closes it xpasses and the limitation retires
+itself; the replace-set is issued for every cardinality-many relationship including
+`peers: []`, with no destination read (FIX-001); the flush names only the relationship fields
+being replaced (AD088); and applying the same operation twice renders byte-identical inputs.
 
-Five assertions, because keyedness splits in two (AD067):
-
-1. every operation on an **all-direct** human-friendly-ID kind renders keyed;
-2. the same assertion on the kind whose human-friendly ID **crosses a relationship**, marked
-   `xfail(strict=True)` — it cannot pass today, and the day the write surface closes the hole
-   it becomes an xpass and fails the suite, so the limitation retires itself;
-3. the replace-set is issued for every cardinality-many relationship including `peers: []`,
-   with **no destination read** on the way (FIX-001: surplus-peer removal is the destination
-   Update mutation's replace semantics, pinned by the live shrink test at
-   `tests/integration/test_infrahub_replace_set_shrink_integration.py`), and the **flush** is
-   an issued update of the node the upsert converged on;
-4. the flush names **only** the relationship fields being replaced — no unmapped destination
-   field appears in it (AD088);
-5. applying the same operation twice renders **byte-identical** mutation inputs.
-
-What it deliberately does **not** assert: "two applies produce one object". A fixture holds no
-destination state, there is no operation-level dedup in this design and none is wanted, so two
-applies simply issue two creates and that assertion could only ever pass for the wrong reason.
-Byte-identity is the strongest claim decidable offline, and it is the property convergence
-rests on. This harness is no substitute for SC-002, SC-003 and SC-008, which stay deferred; for
-a relationship-crossing convergence key the offline signal is a recorded expected failure, not
-evidence (V39, AD051).
+It deliberately does **not** assert "two applies produce one object": a fixture holds no
+destination state, so that could only pass for the wrong reason. Byte-identity is the
+strongest claim decidable offline, and no substitute for SC-002, SC-003 and SC-008.
 """
 
 from __future__ import annotations
@@ -86,7 +67,7 @@ UNMAPPED_FIELD_MESSAGE = (
     "signal. The library's render behaviour has changed, or the flush has gone back to re-rendering the "
     "whole node. Either way `InfrahubNodeBase._generate_input_data` emits `data[<rel>] = None` for every "
     "uninitialized OPTIONAL CARDINALITY-ONE relationship once the node is marked existing "
-    "(`infrahub_sdk/node/node.py:260-266`, 'to allow clearing relationships'), and the convergent upsert "
+    "(`infrahub_sdk/node/node.py`, 'to allow clearing relationships'), and the convergent upsert "
     "marks it existing. AD088 depends on this: the flush must issue a mutation carrying `id` plus ONLY the "
     "cardinality-many fields being replaced, never a re-render of the node. AD075 (the flush exists at all) "
     "and AD085 (the emptied peer set must survive it) depend on it too. Re-derive AD088 against the new SDK "
@@ -300,7 +281,7 @@ def mutation_input_fields(query: str) -> list[str]:
     """The field names inside a rendered mutation's top-level `data: { ... }` input block.
 
     `Mutation.render` puts the mutation name at four spaces, `data: {` at eight and each field
-    of that block at twelve (`infrahub_sdk/graphql/query.py:54-64` with
+    of that block at twelve (`infrahub_sdk/graphql/query.py` with
     `render_input_block`), so the field names are the keys at exactly that depth. Reading them
     off the wire rather than off `_generate_input_data` is the point: assertion 4's claim is
     about the mutation the flush **issues**, and after AD088 the flush does not render through
@@ -433,7 +414,7 @@ def test_the_replace_set_flushes_an_update_with_no_destination_read() -> None:
 
     assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"], (
         "The convergent upsert, then exactly one flush, and the flush is an update rather than a "
-        "second upsert (infrahub_sdk/node/node.py:1845 renders the latter)."
+        "second upsert (infrahub_sdk/node/node.py renders the latter)."
     )
     _, flush = client.mutations[1]
     assert rendered_relationship_ids(flush, "members") == ["conf-tag-id-2", "conf-tag-id-3"], (

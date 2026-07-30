@@ -204,7 +204,7 @@ def _canonical(mapping: dict[str, Any]) -> bytes:
 
 
 # ======================================================================================
-# T017 — write order and manifest-last atomicity (FR-019, AD014)
+# Write order and manifest-last atomicity
 # ======================================================================================
 
 
@@ -342,7 +342,7 @@ def test_the_refusal_precedes_the_first_write_of_the_new_generation(
 
 
 # ======================================================================================
-# T017 — ordering by tier, then identifier (AD001)
+# Ordering by tier, then identifier
 # ======================================================================================
 
 
@@ -377,7 +377,7 @@ def test_a_lower_tier_precedes_a_lexically_smaller_identifier_in_a_higher_tier(t
 
 
 # ======================================================================================
-# T017 — a duplicate identifier fails the plan run (FR-021)
+# A duplicate identifier fails the plan run
 # ======================================================================================
 
 
@@ -414,7 +414,7 @@ def test_a_duplicate_across_tiers_is_still_refused(tmp_path: Path) -> None:
 
 
 # ======================================================================================
-# T017 — the empty plan (FR-022)
+# The empty plan
 # ======================================================================================
 
 
@@ -439,7 +439,7 @@ def test_an_empty_plan_still_writes_a_complete_manifest(tmp_path: Path) -> None:
 
 
 # ======================================================================================
-# T017 — the manifest's field set (FR-027)
+# The manifest's field set
 # ======================================================================================
 
 
@@ -498,7 +498,7 @@ def test_an_unknown_manifest_field_is_tolerated_on_read(tmp_path: Path) -> None:
 
 
 # ======================================================================================
-# T017 — the operations file's encoding
+# The operations file's encoding
 # ======================================================================================
 
 
@@ -564,7 +564,7 @@ def test_written_operations_read_back_as_valid_records(tmp_path: Path) -> None:
 
 
 # ======================================================================================
-# T018 — writer-level determinism (FR-005, supporting SC-006; end-to-end is T041)
+# Writer-level determinism
 # ======================================================================================
 
 
@@ -660,7 +660,7 @@ def test_a_differing_extraction_mode_is_expected_to_differ(tmp_path: Path) -> No
 
 
 # ======================================================================================
-# T019 — FR-026 at the byte level
+# FR-026 at the byte level
 # ======================================================================================
 
 

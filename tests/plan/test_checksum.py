@@ -76,7 +76,7 @@ def _hand_computed(manifest: dict[str, Any], operations: bytes = OPERATIONS_BYTE
 
 
 # ======================================================================================
-# T012 — compute_plan_checksum
+# Compute_plan_checksum
 # ======================================================================================
 
 
@@ -203,7 +203,7 @@ def test_empty_operations_bytes_still_produce_a_checksum() -> None:
 
 
 # ======================================================================================
-# T013 — source_snapshot_digest / source_snapshot_records (AD037, PD-008)
+# Source_snapshot_digest / source_snapshot_records
 # ======================================================================================
 
 _TS_ONE = datetime(2026, 7, 26, 18, 4, 11, tzinfo=timezone.utc)
