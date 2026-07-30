@@ -588,7 +588,7 @@ def test_the_unrecognized_action_wording_is_not_the_delete_wording(tmp_path: Pat
     message = str(raised.value).lower()
     assert "skipped" not in message
     assert "not executed" not in message
-    assert "re-plan" in message
+    assert "re-run `diff`" in message
 
 
 def test_an_unrecognized_action_takes_precedence_over_a_generic_tear(tmp_path: Path) -> None:

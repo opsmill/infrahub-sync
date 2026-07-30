@@ -871,7 +871,7 @@ def test_a_run_with_no_plan_directory_errors_with_the_re_plan_message(
     assert f"Run '{RUN_ID}' holds no plan artifact" in message
     assert str(directory / "plan") in message
     assert "was never written or has since been removed" in message
-    assert "Re-plan: re-run `diff` for this sync" in message
+    assert "Re-run `diff` for this sync to rebuild the plan artifact in the current format" in message
 
 
 def test_a_torn_artifact_names_which_part_is_torn_and_expected_versus_found(
@@ -887,7 +887,7 @@ def test_a_torn_artifact_names_which_part_is_torn_and_expected_versus_found(
     assert "operations.jsonl is absent" in message
     assert "Expected 4 operation line(s)" in message
     assert "found no operations file" in message
-    assert "Re-run `diff` to rebuild the plan artifact" in message
+    assert "Re-run `diff` for this sync to rebuild the plan artifact" in message
 
 
 def test_an_unrecognized_format_version_lists_the_versions_supported(
@@ -901,7 +901,7 @@ def test_an_unrecognized_format_version_lists_the_versions_supported(
     assert f"declares format version {UNSUPPORTED_FORMAT_VERSION}" in message
     for version in sorted(SUPPORTED_FORMAT_VERSIONS):
         assert f"Supported plan format versions: {version}" in message
-    assert "re-plan with this version, or apply with the version that wrote it" in message
+    assert "rebuild the plan artifact with this version of infrahub-sync, or apply it with the version" in message
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses the permission bits this case relies on")
@@ -1040,7 +1040,7 @@ def test_an_operation_whose_action_is_outside_the_vocabulary_refuses_the_review(
 
     assert "declares action 'purge'" in message
     assert f"Recognized actions: {', '.join(ACTIONS)}." in message
-    assert "re-plan with this version" in message
+    assert "rebuild the plan artifact with this version of infrahub-sync" in message
 
 
 def test_a_plan_that_would_fail_verification_is_still_rendered(tmp_path: Path) -> None:

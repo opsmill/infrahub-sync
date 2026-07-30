@@ -1378,7 +1378,7 @@ def test_an_action_outside_the_vocabulary_fails_the_run_before_any_dispatch(tmp_
     for action in ACTIONS:
         assert action in message, f"The refusal must list the recognized vocabulary; {action!r} is absent."
     assert "Next action:" in message, "The refusal must carry its next action (AD059)."
-    assert "re-plan" in message, "And that next action is to re-plan with this version."
+    assert "Re-run `diff`" in message, "And that next action is to re-plan with this version."
 
 
 # ---------------------------------------------------------------------------------------

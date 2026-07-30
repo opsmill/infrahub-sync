@@ -432,9 +432,8 @@ def destination_binding_failure(
         expected=f"url {recorded_binding.url!r}, branch {recorded_binding.branch!r}",
         found=f"url {live.url!r}, branch {live.branch!r}",
         next_action=(
-            "The plan was computed against a different destination than this apply would write "
-            "to. Re-run `diff` against this destination to rebuild the plan, or pass "
-            "--allow-destination-change to deliberately apply it across environments."
+            "Re-run `diff` against this destination to rebuild the plan artifact, or pass "
+            "`--allow-destination-change` to deliberately apply it across environments."
         ),
     )
 

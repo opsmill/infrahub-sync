@@ -82,21 +82,21 @@ class PlanFormatV1Error(PlanArtifactError):
     often. The remedy is the same for all three, which is why they are one class.
     """
 
-    next_action = "Re-plan: re-run `diff` for this sync to produce a current-format plan artifact."
+    next_action = "Re-run `diff` for this sync to rebuild the plan artifact in the current format."
 
 
 class PlanArtifactTornError(PlanArtifactError):
     """The artifact is present but incomplete, inconsistent, or unreadable as a record set."""
 
-    next_action = "Re-run `diff` to rebuild the plan artifact; the partial one cannot be repaired."
+    next_action = "Re-run `diff` for this sync to rebuild the plan artifact; the partial one cannot be repaired."
 
 
 class PlanFormatVersionError(PlanArtifactError):
     """The manifest declares a `format_version` this version of the tool does not support."""
 
     next_action = (
-        "The artifact was written by a different version of infrahub-sync: re-plan with this "
-        "version, or apply with the version that wrote it."
+        "Re-run `diff` for this sync to rebuild the plan artifact with this version of "
+        "infrahub-sync, or apply it with the version that wrote it."
     )
 
 
@@ -198,7 +198,10 @@ class UnknownPlanKindError(PlanArtifactError):
 class UnsupportedOperationActionError(PlanArtifactError):
     """An operation record's `action` falls outside the closed action vocabulary."""
 
-    next_action = "The artifact was produced by a tool this version does not understand: re-plan with this version."
+    next_action = (
+        "Re-run `diff` for this sync to rebuild the plan artifact with this version of infrahub-sync, "
+        "which is the only version that can be relied on to interpret it."
+    )
 
 
 class DuplicateOperationIdError(PlanArtifactError):
