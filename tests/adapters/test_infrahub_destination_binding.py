@@ -1,4 +1,4 @@
-"""FIX-005 (spec 002) — the Infrahub adapter's effective-endpoint resolution.
+"""The Infrahub adapter's effective-endpoint resolution.
 
 The adapter connects with `INFRAHUB_ADDRESS`/`INFRAHUB_URL` **over** `settings["url"]` and
 `settings["branch"]` over the `--branch` argument. `resolved_endpoint` is that resolution,

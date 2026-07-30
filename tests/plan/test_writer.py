@@ -262,7 +262,7 @@ def test_the_manifest_is_absent_until_the_operations_file_is_complete(
 def test_a_cleanup_failure_never_replaces_the_error_that_tore_the_write(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """MIN-025: the tmp-file cleanup is best-effort and must stay that way."""
+    """The tmp-file cleanup is best-effort and must stay that way."""
 
     def _failing_replace(self: Path, target: object) -> None:  # noqa: ARG001 — the target is irrelevant to the failure
         msg = "simulated replace failure: no space left on device"
@@ -280,12 +280,12 @@ def test_a_cleanup_failure_never_replaces_the_error_that_tore_the_write(
 
 
 # ======================================================================================
-# FIX-010 (spec 002) — a committed generation is never overwritten
+# A committed generation is never overwritten
 # ======================================================================================
 
 
 def test_a_committed_plan_generation_is_never_overwritten(tmp_path: Path) -> None:
-    """FIX-010: a run id whose manifest exists is refused, and its bytes stay untouched."""
+    """A run id whose manifest exists is refused, and its bytes stay untouched."""
     _write(tmp_path, [_tag("prod")])
     before = (_operations_path(tmp_path).read_bytes(), _manifest_path(tmp_path).read_bytes())
 

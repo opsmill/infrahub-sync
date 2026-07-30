@@ -17,7 +17,7 @@ unachievable. `_source_id` and `_tombstone` stay inside the digest: both are det
 for identical input and both are part of what the plan was computed against.
 
 The digest is defined over the whole row sequence and **computed one bounded batch at a
-time**, so its cost in memory is a batch rather than a multiple of the dataset (FIX-014).
+time**, so its cost in memory is a batch rather than a multiple of the dataset.
 The definition is what the artifact contract fixes; the batch size is a tuning knob, and
 every batch size — including one row — yields the same digest.
 """
@@ -52,7 +52,7 @@ ROW_SEPARATOR = b"\n"
 
 # How many rows the snapshot digest holds in memory at once. The digest is defined over the
 # whole row sequence but computed incrementally, so this is a memory bound and not part of
-# the artifact contract: every batch size yields the same digest (FIX-014, spec 002).
+# the artifact contract: every batch size yields the same digest.
 SNAPSHOT_DIGEST_BATCH_SIZE = 10_000
 
 
@@ -81,7 +81,7 @@ def snapshot_digest_and_row_count(path: Path, *, batch_size: int = SNAPSHOT_DIGE
     time. SHA-256 is streamable, and the previous shape — the whole decompressed table,
     then a list of every row as a dict, then every row's canonical encoding, then the
     joined byte string — made peak memory a multiple of the dataset and put an operational
-    ceiling on the kinds a plan can be created for at all (FIX-014, spec 002).
+    ceiling on the kinds a plan can be created for at all.
 
     The digest is **unchanged** by that: the hash is fed exactly the bytes the join used to
     allocate — each logical row's canonical encoding in file order, a single LF between two
@@ -134,8 +134,8 @@ def source_snapshot_records(run_dir: Path) -> list[dict[str, Any]]:
             ) from exc
         except OSError as exc:
             # `glob` listed the path, so the file was there: this is removed-between-listing-
-            # and-open, or stat-allowed/read-denied. FIX-003 asked for the same treatment here
-            # that the verifier already gives the condition at apply time; without this arm a
+            # and-open, or stat-allowed/read-denied. This arm gives the condition the same
+            # treatment here that the verifier already gives it at apply time; without this arm a
             # read-denied snapshot escaped `diff` as a raw `PermissionError` from what is a
             # designed failure path (AD059).
             #

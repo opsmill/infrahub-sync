@@ -1205,7 +1205,7 @@ def test_the_write_class_conformance_matrix(live_plan: LivePlan, write_class: st
         with (
             # The injected crash escapes as **itself**: it is outside the engine's operational
             # boundary, which is what keeps a defect from being reported as a destination
-            # refusal (FIX-011). What this case measures is unaffected — the destination's
+            # refusal. What this case measures is unaffected — the destination's
             # state after re-applying, in either crash window.
             pytest.raises(InjectedCrashError),
             _crash_at(operation.operation_id, before_the_write=before_the_write),

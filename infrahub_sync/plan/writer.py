@@ -10,7 +10,7 @@ than by heuristic.
 
 A committed generation is also **final**: `require_uncommitted_plan` refuses to write into a
 run whose manifest already exists, so re-planning allocates a new run id rather than
-replacing a plan a human may have approved (FIX-010, spec 002).
+replacing a plan a human may have approved.
 
 Both writes go through one helper, `_atomic_write_bytes`, in the tmp+`Path.replace`
 discipline already used for the run sidecars, so neither file is ever observed
@@ -51,7 +51,7 @@ def _atomic_write_bytes(path: Path, payload: bytes) -> None:
     text layer. Both artifact files are written through this one function, which is what
     lets a test observe that the operations file goes first.
 
-    **Accepted tradeoff (MIN-004): no fsync.** Neither the temporary file's data nor the
+    **Accepted tradeoff: no fsync.** Neither the temporary file's data nor the
     parent directory entry is fsynced, so "never observed half-written" is a guarantee
     against *process* failure — a crash or an exception between the two writes — and not
     against power loss or a filesystem crash, where a `replace` may be durable while the
@@ -68,7 +68,7 @@ def _atomic_write_bytes(path: Path, payload: bytes) -> None:
         Path(tmp_name).replace(path)
     except BaseException:
         # Best-effort cleanup of the tmp file on any failure. Best-effort means its own
-        # failure is suppressed (MIN-025): a cleanup `PermissionError` superseding the
+        # failure is suppressed: a cleanup `PermissionError` superseding the
         # write or replace error would hide the very failure — ENOSPC above all — that
         # explains the torn artifact.
         with contextlib.suppress(OSError):
@@ -82,7 +82,7 @@ def committed_manifest_path(run_dir: Path) -> Path:
 
 
 def require_uncommitted_plan(run_dir: Path, *, run_id: str) -> None:
-    """Refuse to write over a plan generation that was already committed (FIX-010, spec 002).
+    """Refuse to write over a plan generation that was already committed.
 
     A generation is committed once its manifest exists, and a committed generation is never
     overwritten: `diff --run-id R` used to rewrite `R/plan/` in place, so the plan a human
@@ -185,13 +185,13 @@ def write_plan_artifact(
     returned `PlanManifest` is the one on disk, `plan_checksum` included.
 
     `destination_binding` is the resolved destination identity the plan is bound to —
-    endpoint URL and branch, never the token (FIX-005, spec 002). It is additive: `None`
+    endpoint URL and branch, never the token. It is additive: `None`
     (a destination that exposes none) writes a manifest without the field, exactly the
-    pre-FIX-005 shape, and the apply-time comparison skips such plans.
+    shape older manifests carry, and the apply-time comparison skips such plans.
 
     Raises:
         PlanGenerationExistsError: the run already holds a committed plan generation, which
-            is never overwritten (FIX-010, spec 002).
+            is never overwritten.
         DuplicateOperationIdError: two operations share an operation identifier (FR-021).
         UnserializablePayloadValueError: a payload value is outside the canonical-value table.
     """

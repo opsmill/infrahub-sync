@@ -32,7 +32,7 @@ Four rules in here are load-bearing and each is enforced where it is stated:
   plan.
 
 The walk is **one level deep**, as `_diff_to_rows`' is. An element that carries child
-elements is refused rather than silently flattened — see `_refuse_child_elements` (MIN-007).
+elements is refused rather than silently flattened — see `_refuse_child_elements`.
 
 Deletes come from `derive_deletes` and from nowhere else: an element whose action is
 `delete` is skipped while walking the diff (FR-015), so a delete is recorded once and never
@@ -238,7 +238,7 @@ def _resolve_one_reference(
     Cardinality follows the mapped value's shape — a list is `many`, anything else is `one`.
     A many reference's peers are ordered canonically by peer identity so two derivations of
     the same input encode identically (AD003, FR-005). An **empty** many set resolves
-    trivially, whatever the mapping's candidate count — see the branch below (MIN-008).
+    trivially, whatever the mapping's candidate count — see the branch below.
 
     Raises:
         SourcePeerUnresolvedError: the resolved peers span more than one kind, or the field
@@ -270,7 +270,7 @@ def _resolve_one_reference(
     if peer_kinds:
         peer_kind = peer_kinds.pop()
     elif candidates:
-        # An empty peer set is **trivially resolved** (MIN-008, OQ-2 decided): it names no
+        # An empty peer set is **trivially resolved**: it names no
         # peer, so no candidate kind has to be chosen for one. It is the deliberately empty
         # set the replace-set write acts on (FR-028.2), and that write is keyed by the
         # relationship's field rather than by a peer kind — `peers: []` empties the set
@@ -323,7 +323,7 @@ def _resolve_references(
 
 
 def _refuse_child_elements(*, element: Any, kind: str) -> None:
-    """Refuse a comparison element that carries child elements (MIN-007).
+    """Refuse a comparison element that carries child elements.
 
     The walk below is one level deep. diffsync hangs an element's children off its
     `child_diff` (`.venv/…/diffsync/diff.py`), populated for models that declare
@@ -442,7 +442,7 @@ def operations_from_diff(  # pylint: disable=redefined-outer-name
 
     Raises:
         UnwalkedDiffChildrenError: an element carries child elements, which this walk does
-            not descend into (MIN-007).
+            not descend into.
         UnformableDestinationIdentityError: an operation's destination identity cannot be
             formed.
         SourcePeerUnresolvedError: a relationship peer is absent from the loaded source
@@ -457,7 +457,7 @@ def operations_from_diff(  # pylint: disable=redefined-outer-name
         for element in elements_by_name.values():
             kind = getattr(element, "type", None) or group
             # Before the action filter, because an element with no action of its own can
-            # still carry children that have one (MIN-007).
+            # still carry children that have one.
             _refuse_child_elements(element=element, kind=kind)
             action = getattr(element, "action", None) or ""
             if not action or action == DIFF_DELETE_ACTION:
@@ -590,7 +590,7 @@ def _identity_attributes_by_kind(operations: Sequence[PlannedOperation]) -> dict
 
 
 def _destination_keys(node: Any) -> list[tuple[str, ...]]:
-    """Every key the destination could converge a kind on, as mapping field names (DISC-002).
+    """Every key the destination could converge a kind on, as mapping field names.
 
     The kind's human-friendly ID and each of its uniqueness constraints, each reduced from
     component paths to the mapping field names the plan's identity is keyed by. Sorted and
@@ -604,7 +604,7 @@ def _destination_keys(node: Any) -> list[tuple[str, ...]]:
 
 
 def _merged_identity_counts(operations: Sequence[PlannedOperation], *, key: tuple[str, ...]) -> tuple[int, int]:
-    """How many source objects collide, and onto how many destination identities (DISC-002).
+    """How many source objects collide, and onto how many destination identities.
 
     The plan's operations for one kind, grouped by their identity projected onto `key` — what
     the destination will actually distinguish them by. Returns the number of operations that
@@ -629,7 +629,7 @@ def _warn_identity_finer_than_destination_key(
     supplied: set[str],
     operations: Sequence[PlannedOperation],
 ) -> None:
-    """Warn where the destination cannot tell the plan's identities apart (DISC-002, OQ-8).
+    """Warn where the destination cannot tell the plan's identities apart.
 
     FR-024's two arms both test whether the *destination's* key is covered by the plan's
     identity — `HFID ⊄ identity`, an unkeyed write that duplicates. This is the other
@@ -693,7 +693,7 @@ def warn_missing_convergence_key(*, destination: Any, operations: Sequence[Plann
        and no uniqueness constraint still duplicates silently;
     3. no key the destination declares covers the plan's identity — the opposite direction,
        where source objects **merge** rather than duplicate; see
-       `_warn_identity_finer_than_destination_key` (DISC-002).
+       `_warn_identity_finer_than_destination_key`.
 
     **Guarded on the destination exposing a schema at all (AD052)**, since `self.schema` is
     defined on the Infrahub adapter and on no other while derivation runs for every

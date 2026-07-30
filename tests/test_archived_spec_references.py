@@ -1,6 +1,6 @@
-"""MIN-023 — nothing in the tree still points at the pre-archive spec path.
+"""Nothing in the tree still points at the pre-archive spec path.
 
-The completed feature's design artifacts moved to `dev/specs/archive/…` (OQ-1). Two doc
+The completed feature's design artifacts moved to `dev/specs/archive/…`. Two doc
 links and three module docstrings were left pointing at the old location: the links broke
 (rumdl `MD057`) and the docstrings sent a reader looking for a contract to a path that does
 not exist. Both are the same one-line mistake, and both come back the next time a spec is

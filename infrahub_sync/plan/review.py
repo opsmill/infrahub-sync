@@ -194,7 +194,7 @@ def require_stored_run(sync_name: str, run_id: str) -> Path:
     written once and cannot drift between the two commands an operator reaches them from.
 
     Raises:
-        UnsafeRunIdentifierError: the identifier is not a single path segment (FIX-004).
+        UnsafeRunIdentifierError: the identifier is not a single path segment.
         UnknownRunIdentifierError: no run with that identifier is stored. The message lists
             the most recent stored identifiers, or states plainly that the sync has no
             stored runs at all (AD073).
@@ -205,7 +205,7 @@ def require_stored_run(sync_name: str, run_id: str) -> Path:
     # (`infrahub_sync.cache.paths`), so a `..` or absolute value is
     # rejected before any path is joined — as a `ValueError`, which is translated into the
     # taxonomy here rather than left to escape as a traceback out of the two commands that
-    # reach this function (FIX-004, spec 002). The translation lives at the single raising
+    # reach this function. The translation lives at the single raising
     # site, so neither guard has to catch a second exception type to stay one line of output.
     try:
         directory = run_dir(sync_name, run_id)
@@ -241,7 +241,7 @@ def read_saved_plan(
         returned value as data rather than parsed output.
 
     Raises:
-        UnsafeRunIdentifierError: the identifier is not a single path segment (FIX-004).
+        UnsafeRunIdentifierError: the identifier is not a single path segment.
         UnknownRunIdentifierError: no run with that identifier is stored. The message lists
             the most recent stored identifiers, or states plainly that the sync has no
             stored runs (AD073).

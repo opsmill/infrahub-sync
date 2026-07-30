@@ -669,12 +669,12 @@ def test_the_new_process_reads_the_not_computed_disclosure(tmp_path: Path) -> No
 
 
 # ======================================================================================
-# FIX-003 (spec 002) — a byte-corrupt snapshot renders a note, never a traceback
+# A byte-corrupt snapshot renders a note, never a traceback
 # ======================================================================================
 
 
 def test_a_review_of_a_run_whose_snapshot_bytes_are_corrupt_notes_it(tmp_path: Path) -> None:
-    """Garbage bytes at the recorded snapshot path are a rendered note (AD031, FIX-003)."""
+    """Garbage bytes at the recorded snapshot path are a rendered note (AD031)."""
     directory = _store_with_snapshot(tmp_path)
     _snapshot_path(directory).write_bytes(b"these bytes are not a Parquet table")
 

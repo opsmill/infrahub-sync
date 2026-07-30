@@ -171,7 +171,7 @@ def _identity_text(identity: Mapping[str, Any]) -> str:
     return " ".join(f"{key}={_identity_value_text(identity[key])}" for key in sorted(identity))
 
 
-# The redaction policy for the values `--detail` renders (FIX-012, spec 002): a payload field whose
+# The redaction policy for the values `--detail` renders: a payload field whose
 # **name** suggests a credential renders as `REDACTION_PLACEHOLDER` at every nesting level, and is
 # still listed so the reviewer sees it is being written; nothing else is suppressed. A value longer
 # than `DETAIL_VALUE_LIMIT` is *elided* with its length stated — a readability bound, rendered
@@ -230,7 +230,7 @@ def _reference_text(reference: RelationshipReference) -> str:
 
 
 def _echo_desired_state(record: PlannedOperation, *, indent: str) -> None:
-    """Echo the desired destination state one operation would write (FIX-012, spec 002).
+    """Echo the desired destination state one operation would write.
 
     The canonical payload field by field, then every relationship field with its peer kind and each
     peer's identity. **Desired state, not a diff**: the artifact records what the apply will write
@@ -257,7 +257,7 @@ def _echo_plan_header(*, plan: SavedPlan, summary: PlanSummary, sync_name: str, 
         f"operations: {summary.total}   "
         f"deletes computed: {'yes' if summary.delete_operations_computed else 'NO'}"
     )
-    # The **full** checksum, not just the verdict above (FIX-010, spec 002): an approval naming
+    # The **full** checksum, not just the verdict above: an approval naming
     # it binds to these exact bytes through `apply --expected-checksum`.
     typer.echo(f"plan checksum: {plan.manifest.plan_checksum}")
     for note in plan.verification_notes:
@@ -303,7 +303,7 @@ def _echo_plan_detail(summary: PlanSummary, records: list[PlannedOperation]) -> 
     Each record carries at least the operation identifier, the action, the destination kind
     and the destination identity (AD020) — the review-side source SC-005 compares the apply
     result against — and every `delete` carries its not-executed marker (AD056). Beneath each
-    record sits the desired destination state it would write (FIX-012, spec 002): two
+    record sits the desired destination state it would write: two
     operations differing only in a payload value rendered identically before that, so a
     reviewer approved an object's *presence* in a plan without seeing the *change* proposed.
     """
@@ -409,7 +409,7 @@ def _review_saved_plan(
 
 
 def _require_a_free_run_id(*, sync_name: str, run_id: str | None) -> None:
-    """Refuse re-planning into a run id whose plan generation is committed (FIX-010, spec 002).
+    """Refuse re-planning into a run id whose plan generation is committed.
 
     Here as well as in the writer, because extraction rewrites the run's `A/` snapshots that the
     committed plan's manifest binds itself to: a re-plan reaching only the writer's refusal would
@@ -512,7 +512,7 @@ def diff_cmd(
 
     # A plan generation is immutable once committed, so `--run-id` naming a run that already holds
     # one is refused before the lock, the adapters and the extraction that would overwrite the
-    # snapshots that plan is bound to (FIX-010, spec 002).
+    # snapshots that plan is bound to.
     _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id)
 
     # Add adapter paths from CLI to the sync instance if specified
@@ -717,7 +717,7 @@ def _stored_plan_checksum(run_directory: Path) -> str | None:
     the pre-apply verifier is what tests. An artifact too incomplete to hash returns `None` and is
     left to that verifier, which names the tear — as is a manifest whose bytes will not decode or
     parse, which is why the mapping step is the verifier's own `manifest_mapping_or_none` and not a second
-    copy of it here (LOC-03): the copy caught `JSONDecodeError` alone, and non-UTF-8 manifest bytes
+    copy of it here: the copy caught `JSONDecodeError` alone, and non-UTF-8 manifest bytes
     raise `UnicodeDecodeError` from `json.loads`, which left this refusal as a bare traceback.
     """
     artifact = read_plan_artifact_bytes(run_directory)
@@ -730,7 +730,7 @@ def _stored_plan_checksum(run_directory: Path) -> str | None:
 
 
 def _require_expected_checksum(*, run_directory: Path, run_id: str, expected: str | None) -> None:
-    """Refuse an apply whose stored plan is not the plan the operator approved (FIX-010).
+    """Refuse an apply whose stored plan is not the plan the operator approved.
 
     The operator's half of the immutability guarantee: immutable generations stop a plan being
     replaced under its run id, and `--expected-checksum` lets an approval name the exact bytes
@@ -786,7 +786,7 @@ def _record_carried(run_file: RunFile, exc: BaseException) -> None:
     nothing records the keys present and empty rather than absent, for the same reason.
 
     This function does not raise: the caller re-raises, so the exception keeps its own
-    traceback — which for a defect is the only place its diagnosis lives (FIX-011).
+    traceback — which for a defect is the only place its diagnosis lives.
     """
     carried = getattr(exc, "apply_record", None)
     partial = carried if isinstance(carried, ApplyRecord) else ApplyRecord()
@@ -833,7 +833,7 @@ def apply_cmd(
     run_directory = _require_applicable_plan(sync_name=sync_instance.name, run_id=run_id)
 
     # The approval binding, also before anything is constructed: an apply that names the
-    # checksum it approved must not reach a destination with a plan that is not it (FIX-010).
+    # checksum it approved must not reach a destination with a plan that is not it.
     _require_expected_checksum(run_directory=run_directory, run_id=run_id, expected=expected_checksum)
 
     verbosity_level = ctx.obj.get("verbosity", logging.INFO) if ctx.obj else logging.INFO
@@ -842,7 +842,7 @@ def apply_cmd(
         # Apply-specific assembly: the destination only — apply never reads the source, so a
         # host with destination credentials applies a plan without the source's dependencies
         # — and no sidecar writes: the stored run's files are the immutable provenance of
-        # the plan under apply. FIX-005's destination binding is the supported apply-time
+        # the plan under apply. The plan's destination binding is the supported apply-time
         # guard against a drifted destination.
         applier = PlanApplier.open_existing(
             sync_instance,
@@ -884,7 +884,7 @@ def apply_cmd(
             # designed refusal but a defect — this code's, or an SDK shape change's. It keeps
             # its traceback, which is the only place its diagnosis lives, and it is *not*
             # dressed up as a destination rejection: the operator is told the destination is
-            # not the thing to repair, and that the apply may have left writes behind (FIX-011).
+            # not the thing to repair, and that the apply may have left writes behind.
             # The engine attaches the partial record even here, so this arm persists it rather
             # than the empty one it used to record.
             # `logger.error` and not `logger.exception`: the `raise` below carries the traceback

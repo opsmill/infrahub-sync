@@ -31,7 +31,7 @@ from infrahub_sync.plan.errors import (
 from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.plan.write_surface import PlannedWriteDestination
 
-# Justified once here rather than per site (MIN-014, spec 002). Nearly every `infrahub_sync`
+# Justified once here rather than per site. Nearly every `infrahub_sync`
 # import in this module is deliberately deferred into the function that needs it: the cache
 # layer and the plan reader, verifier and writer all reach `pyarrow`, which costs hundreds of
 # milliseconds to import and is not needed to construct an engine, list runs, or fail on a
@@ -42,7 +42,7 @@ from infrahub_sync.plan.write_surface import PlannedWriteDestination
 
 logger = logging.getLogger(__name__)
 
-# The apply path's **operational** exception boundary (FIX-011, spec 002). An exception from
+# The apply path's **operational** exception boundary. An exception from
 # the write surface is reported as `OperationApplyFailedError` — a designed destination refusal,
 # whose remedy is to repair the destination and re-plan — only if it is one of these:
 #
@@ -504,8 +504,8 @@ class Potenda:
             source_snapshot=[SourceSnapshotRecord(**record) for record in source_snapshot_records(self.run_dir)],
             deletes_computed=deletes_computed,
             operations=operations,
-            # FIX-005 (spec 002): the resolved destination identity, when the adapter
-            # captured one; `None` writes the pre-FIX-005 manifest shape.
+            # The resolved destination identity, when the adapter captured one; `None`
+            # writes the manifest shape older plans carry.
             destination_binding=getattr(self.destination, "destination_binding", None),
         )
         logger.info(
@@ -582,7 +582,7 @@ class Potenda:
                 operation in the plan (AD062). Carries the record it is complaining about.
             BaseException: anything outside that boundary — an interrupt, or a defect such as
                 a `TypeError` from an SDK shape change — propagates **unchanged** with the
-                partial record attached as `apply_record` (FIX-011).
+                partial record attached as `apply_record`.
         """
         from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes, require_plan_directory
         from infrahub_sync.plan.verify import verify_plan
@@ -650,13 +650,13 @@ class Potenda:
                     skipped_delete_operations=tuple(skipped_deletes),
                     # Named on the record because applying one operation is not one write: the
                     # base upsert precedes the relationship flush, so this operation may have
-                    # changed the destination while belonging to neither recorded set (FIX-006).
+                    # changed the destination while belonging to neither recorded set.
                     failed_operation=operation.operation_id,
                 )
                 if not isinstance(exc, OPERATIONAL_APPLY_FAILURES):
                     # An interrupt or a defect: it propagates as itself, with its own
                     # traceback, carrying the record so what was written stays readable from the
-                    # run (FIX-011, AD062). See `OPERATIONAL_APPLY_FAILURES` for the boundary.
+                    # run (AD062). See `OPERATIONAL_APPLY_FAILURES` for the boundary.
                     # The suppression is not masking a defect — no annotation can declare an
                     # attribute on an exception type this module does not own.
                     exc.apply_record = partial  # ty: ignore[unresolved-attribute]

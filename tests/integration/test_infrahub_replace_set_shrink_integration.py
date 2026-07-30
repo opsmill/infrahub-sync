@@ -1,4 +1,4 @@
-"""FIX-001 (OQ-4) — pin the destination Update mutation's replace semantics, live.
+"""Pin the destination Update mutation's replace semantics, live.
 
 The planned-write flush is a targeted `<kind>Update` carrying the plan's cardinality-many
 peer sets (ADR-0003). Nothing about a peer *removal* ever reaches the wire — the SDK's
@@ -10,7 +10,7 @@ set N → fewer and N → 0 through the planned-write surface and asserts the su
 gone at the destination.
 
 **If this test ever fails on the peer-set assertions, Infrahub has been proven to merge
-rather than replace**, and OQ-4's named escalation applies: implement explicit per-peer
+rather than replace**, and the named escalation applies: implement explicit per-peer
 removal mutations. Do not weaken the assertions.
 
 Same posture as the sibling `test_infrahub_node_to_diffsync_integration.py`: a throwaway
@@ -209,7 +209,7 @@ def live_shrink_fixture() -> Iterator[tuple[Any, InfrahubAdapter, dict[str, str]
 def test_shrinking_a_cardinality_many_peer_set_removes_surplus_peers(
     live_shrink_fixture: tuple[Any, InfrahubAdapter, dict[str, str], str],
 ) -> None:
-    """FIX-001/OQ-4: the pin. N → fewer and N → 0, surplus peers gone at the destination.
+    """The pin. N → fewer and N → 0, surplus peers gone at the destination.
 
     One test rather than three, because the shrink is a *sequence*: the N-peer state each
     shrink starts from is the previous apply's observed outcome, so a failure names the exact
@@ -241,7 +241,7 @@ def test_shrinking_a_cardinality_many_peer_set_removes_surplus_peers(
     assert observed == {tag_ids[kept]}, (
         f"Shrinking members from 3 peers to 1 left {sorted(observed)} at the destination, expected "
         f"exactly {{{tag_ids[kept]!r}}}. The destination Update mutation did NOT replace the "
-        "relationship list — ADR-0003's pinned semantics do not hold, and OQ-4's escalation "
+        "relationship list — ADR-0003's pinned semantics do not hold, and the escalation "
         "(explicit per-peer removal mutations) applies."
     )
 

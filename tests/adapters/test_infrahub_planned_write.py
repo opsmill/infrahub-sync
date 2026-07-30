@@ -9,7 +9,7 @@ Recording the rendered mutation rather than a mock call is load-bearing, because
 properties under test are invisible to an assertion made against a `MagicMock`: **keyedness**
 is a property of the rendered mutation and not of the assembled `data` (AD054, AD066); the
 **replace-set** is only real if it is *issued*, and surplus-peer removal rests on the
-destination's replace semantics, which only the live shrink test can pin (AD075, FIX-001); and
+destination's replace semantics, which only the live shrink test can pin (AD075); and
 the **flush** is a targeted `<kind>Update` that only the rendered mutation name separates from
 a second upsert (AD085, AD088). That the flush names no *unmapped* field is asserted in
 `tests/plan/test_apply_conformance.py`, against a fixture kind declaring one.
@@ -228,7 +228,7 @@ class RecordingClient(InfrahubClientSync):
     """A real client whose destination calls are recorded on one ordered event log.
 
     One log rather than three lists: the flush's ordering after the upsert (AD075) and the
-    **absence** of any destination read on the planned-write path (FIX-001's simplification)
+    **absence** of any destination read on the planned-write path
     are both read off the same log, so neither can be satisfied by an unrelated call.
     """
 
@@ -268,7 +268,7 @@ class RecordingClient(InfrahubClientSync):
     def get(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
         """Answer a destination read with the seeded peer set — and record that it happened.
 
-        The planned-write path issues **no** such read (FIX-001's simplification), so the
+        The planned-write path issues **no** such read, so the
         replace-set cases assert this event is absent from the log; seeding `existing_peers`
         to differ from the plan's set is what keeps that assertion honest.
         """
@@ -429,7 +429,7 @@ def record_payload_create(client: RecordingClient) -> Iterator[list[dict[str, An
 def issued_reads(client: RecordingClient) -> list[dict[str, Any]]:
     """Every destination read (`client.get`) on the client's event log.
 
-    The planned-write path must issue none (FIX-001): the flush writes the plan's peer set
+    The planned-write path must issue none: the flush writes the plan's peer set
     directly, and surplus-peer removal is the destination Update mutation's replace
     semantics, pinned live — not a fetch-and-reconcile round trip.
     """
@@ -668,7 +668,7 @@ def test_the_dedup_set_lives_for_one_apply_and_not_for_the_adapter_instance(
 
 
 def test_the_flush_carries_exactly_the_plans_peer_set_with_no_destination_read() -> None:
-    """AD038/AD075/AD085 + FIX-001: the plan's peer set reaches the destination as the flush."""
+    """AD038/AD075/AD085: the plan's peer set reaches the destination as the flush."""
     client = RecordingClient()
     client.existing_peers[TEAM_KIND, "members"] = ["tag-id-1", "tag-id-2"]
     adapter = make_adapter(client)
@@ -689,7 +689,7 @@ def test_the_flush_carries_exactly_the_plans_peer_set_with_no_destination_read()
     assert issued_reads(client) == [], (
         "The planned-write path issues no destination read: the fetch-and-reconcile round trips were "
         "simplified away because the SDK renders no removal directive either way, and removal is the "
-        "destination Update mutation's replace semantics (FIX-001/OQ-4)."
+        "destination Update mutation's replace semantics."
     )
 
 
@@ -725,7 +725,7 @@ def test_a_peer_set_the_destination_already_holds_is_flushed_unchanged() -> None
 
 
 def test_the_flush_retains_the_peer_lineage_metadata_the_upsert_carried() -> None:
-    """MIN-010: planned-apply-managed peers keep their lineage metadata through the flush."""
+    """Planned-apply-managed peers keep their lineage metadata through the flush."""
     client = RecordingClient()
     adapter = make_adapter(client, source="source-account-1", owner="owner-account-1")
     peers = PeerResolver(adapter)
@@ -739,13 +739,13 @@ def test_the_flush_retains_the_peer_lineage_metadata_the_upsert_carried() -> Non
         assert members_block is not None, f"The {role} must render the `members` peer list:\n{query}"
         rendered = members_block.group(1)
         assert "_relation__is_protected: true" in rendered, (
-            f"The {role} must carry the peer's protection flag (MIN-010). Rendered:\n{query}"
+            f"The {role} must carry the peer's protection flag. Rendered:\n{query}"
         )
         assert '_relation__source: "source-account-1"' in rendered, (
-            f"The {role} must carry the peer's source attribution (MIN-010). Rendered:\n{query}"
+            f"The {role} must carry the peer's source attribution. Rendered:\n{query}"
         )
         assert '_relation__owner: "owner-account-1"' in rendered, (
-            f"The {role} must carry the peer's owner attribution (MIN-010). Rendered:\n{query}"
+            f"The {role} must carry the peer's owner attribution. Rendered:\n{query}"
         )
 
 
@@ -856,7 +856,7 @@ def test_the_resolver_never_reads_the_client_store() -> None:
 
 
 def test_an_unknown_peer_kind_is_refused_loudly_before_any_destination_query() -> None:
-    """MIN-012: a peer kind the destination schema does not declare raises, like the operation path."""
+    """A peer kind the destination schema does not declare raises, like the operation path."""
     client = RecordingClient()
     client.filter_results = [[make_node(client, SITE_KIND, "site-id-1")]]
     adapter = make_adapter(client)
@@ -874,7 +874,7 @@ def test_an_unknown_peer_kind_is_refused_loudly_before_any_destination_query() -
 
 
 def test_a_reference_only_identity_is_refused_before_querying_not_silently_bound() -> None:
-    """FIX-002: an empty filter set refuses, even when exactly one node of the kind exists."""
+    """An empty filter set refuses, even when exactly one node of the kind exists."""
     client = RecordingClient()
     client.filter_results = [[make_node(client, SITE_KIND, "the-only-site")]]
     adapter = make_adapter(client)
@@ -892,7 +892,7 @@ def test_a_reference_only_identity_is_refused_before_querying_not_silently_bound
         "The refusal must come BEFORE the query: an unfiltered query lists every node of the kind "
         "and, with exactly one at the destination, silently binds it."
     )
-    # RF-3: the next action is this condition's own, not `PeerNotFoundError`'s class-level one.
+    # The next action is this condition's own, not `PeerNotFoundError`'s class-level one.
     # "Create the peer at the destination" is actively dangerous here — nothing established the
     # peer is absent, only that no filter could be derived to look for it, so the peer very
     # likely exists and creating it would duplicate it. The remedy is the identity (AD082).
@@ -907,7 +907,7 @@ def test_a_reference_only_identity_is_refused_before_querying_not_silently_bound
 def test_a_partial_filter_warns_once_per_kind_naming_the_dropped_components(
     captured_logs: pytest.LogCaptureFixture,
 ) -> None:
-    """FIX-002: silently skipped HFID components are disclosed at apply time, per kind."""
+    """Silently skipped HFID components are disclosed at apply time, per kind."""
     client = RecordingClient()
     client.filter_results = [
         [make_node(client, DEVICE_KIND, "device-id-1")],
@@ -919,7 +919,7 @@ def test_a_partial_filter_warns_once_per_kind_naming_the_dropped_components(
     first = resolver.resolve(peer_kind=DEVICE_KIND, identity={"name": "device-a"}, referring_operation_id="op_0002")
     second = resolver.resolve(peer_kind=DEVICE_KIND, identity={"name": "device-b"}, referring_operation_id="op_0003")
 
-    assert (first, second) == ("device-id-1", "device-id-2"), "Partial filters warn; they do not refuse (OQ-5)."
+    assert (first, second) == ("device-id-1", "device-id-2"), "Partial filters warn; they do not refuse."
     assert len(client.resolver_queries) == 2, "Both resolutions must still query the destination."
     assert all("name__value" in query and "site__name__value" not in query for query in client.resolver_queries)
 
@@ -1024,7 +1024,7 @@ class RecordingApplyDestination:
     mid-plan rejection is driven without reaching a real destination. The rejection is the
     SDK's own `GraphQLError` rather than a stand-in `RuntimeError`, because the engine's
     operational boundary is defined by the destination library's error base: a bare
-    `RuntimeError` is a defect and deliberately escapes unwrapped (FIX-011).
+    `RuntimeError` is a defect and deliberately escapes unwrapped.
     """
 
     def __init__(self, *, reject_at: int | None = None) -> None:

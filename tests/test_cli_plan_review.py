@@ -442,11 +442,11 @@ def test_the_cli_detail_renders_a_nested_peer_identity_recursively(tmp_path: Pat
 
 
 # ======================================================================================
-# FIX-012 (spec 002) — `--detail` renders the desired destination state
+# `--detail` renders the desired destination state
 # ======================================================================================
 
 # Two operations on the **same** object: same action, same kind, same identity, and therefore
-# the same operation identifier — differing only in the change they propose. Before FIX-012
+# the same operation identifier — differing only in the change they propose. Before that,
 # these two rendered byte-identically, which is the defect: a reviewer could approve the
 # object's presence in a plan without ever seeing what would be written to it.
 ROUTER_IDENTITY: dict[str, Any] = {"name": "router1"}
@@ -485,7 +485,7 @@ def _detail_of(tmp_path: Path, records: tuple[dict[str, Any], ...], *, run_id: s
 
 
 def test_two_operations_differing_only_in_payload_render_differently(tmp_path: Path) -> None:
-    """FIX-012 (IHR-02), as the reviewer reproduced it: `role=router` versus `role=server`."""
+    """As the reviewer reproduced it: `role=router` versus `role=server`."""
     first = _detail_of(tmp_path, _payload_variant(role="router"), run_id=RUN_ID)
     second = _detail_of(tmp_path, _payload_variant(role="server"), run_id=OTHER_RUN_ID)
 
@@ -591,7 +591,7 @@ def test_a_computed_plan_with_deletes_discloses_them_at_both_depths(tmp_path: Pa
 
 
 def test_the_delete_note_does_not_promise_markers_a_kind_filter_removed(tmp_path: Path) -> None:
-    """MIN-006 (spec 002): the note's promise has to survive `--kind` narrowing the listing."""
+    """The note's promise has to survive `--kind` narrowing the listing."""
     _store(tmp_path, MIXED_PLAN, deletes_computed=True)
 
     result = _review("--from-plan", RUN_ID, "--detail", "--kind", "LocationSite")
@@ -1211,7 +1211,7 @@ TRAVERSAL_RUN_IDS = ("../evil", "/tmp/evil")  # noqa: S108 — a literal in a re
 def test_a_traversal_shaped_run_id_is_refused_as_one_line_on_the_review_path(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, run_id: str
 ) -> None:
-    """FIX-004 (spec 002): the guard's `ValueError` reaches the operator as a designed refusal."""
+    """The guard's `ValueError` reaches the operator as a designed refusal."""
     _store(tmp_path)
 
     with caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"):
@@ -1323,7 +1323,7 @@ class RecordingDestination:
     against the protocol and a destination missing either one is refused (AD086).
     """
 
-    # `None` — no captured binding — skips FIX-005's destination comparison, so every case
+    # `None` — no captured binding — skips the destination comparison, so every case
     # not about that check behaves exactly as before the field existed; the binding cases
     # assign a record here.
     destination_binding: DestinationBindingRecord | None = None
@@ -1347,7 +1347,7 @@ class RejectingDestination(RecordingDestination):
     The rejection is the SDK's own `GraphQLError` — what a server refusing a mutation
     actually raises — because the engine's operational boundary is defined by the destination
     library's error base. A stand-in `RuntimeError` would be a defect, and defects escape
-    unwrapped by design (FIX-011).
+    unwrapped by design.
     """
 
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
@@ -1612,7 +1612,7 @@ LIVE_BINDING = DestinationBindingRecord(url="http://live.example:8000", branch="
 def test_an_apply_to_a_drifted_destination_refuses_with_the_binding_message(
     tmp_path: Path, destination_double: RecordingDestination, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """FIX-005 (spec 002): the plan is bound to its effective destination, and a mismatch refuses."""
+    """The plan is bound to its effective destination, and a mismatch refuses."""
     _appliable_run(tmp_path, destination_binding=RECORDED_BINDING)
     destination_double.destination_binding = LIVE_BINDING
 
@@ -1634,7 +1634,7 @@ def test_an_apply_to_a_drifted_destination_refuses_with_the_binding_message(
 def test_allow_destination_change_applies_across_the_mismatch(
     tmp_path: Path, destination_double: RecordingDestination
 ) -> None:
-    """FIX-005's override: an explicit flag for the deliberate cross-environment apply."""
+    """The binding check's override: an explicit flag for the deliberate cross-environment apply."""
     _appliable_run(tmp_path, destination_binding=RECORDED_BINDING)
     destination_double.destination_binding = LIVE_BINDING
 
@@ -1661,7 +1661,7 @@ def test_allow_destination_change_applies_across_the_mismatch(
 def test_a_plan_without_a_recorded_binding_applies_to_any_destination(
     tmp_path: Path, destination_double: RecordingDestination
 ) -> None:
-    """FIX-005's absent-field skip: plans older than the field are not refused."""
+    """The absent-field skip: plans older than the field are not refused."""
     _appliable_run(tmp_path)
     destination_double.destination_binding = LIVE_BINDING
 
@@ -1939,7 +1939,7 @@ def test_a_rejection_mid_plan_records_the_partial_applied_set(tmp_path: Path, ca
     # FR-025's pointer is the final element, not a separate field.
     assert recorded["summary"]["applied_operations"][-1] == first_id
     assert recorded["summary"]["skipped_delete_count"] == 0
-    # FIX-006: the operation that failed is in neither recorded set, and its own write may
+    # The operation that failed is in neither recorded set, and its own write may
     # have landed in part — so the run names it rather than leaving the write uncounted.
     assert recorded["summary"]["failed_operation"] == str(APPLY_PLAN[1]["operation_id"])
     assert recorded["summary"]["may_have_partially_written"] is True
@@ -2015,7 +2015,7 @@ def test_an_interrupt_mid_apply_records_failed_and_the_partial_applied_set(tmp_p
 def test_a_code_defect_escapes_the_command_unchanged_while_the_run_records_what_was_written(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """FIX-011 (RIG-05) on the CLI path: the defect keeps its traceback, the run keeps the record."""
+    """On the CLI path: the defect keeps its traceback, the run keeps the record."""
     _appliable_run(tmp_path)
     destination = DefectiveDestination()
 
@@ -2042,7 +2042,7 @@ def test_a_code_defect_escapes_the_command_unchanged_while_the_run_records_what_
 
 
 # ======================================================================================
-# FIX-010 (spec 002) — the reviewed generation is immutable, and approval names its bytes
+# The reviewed generation is immutable, and approval names its bytes
 # ======================================================================================
 
 
@@ -2059,7 +2059,7 @@ def _diff_into(run_id: str) -> Any:  # noqa: ANN401 — click's Result type is n
 def test_a_second_diff_into_a_committed_run_id_is_refused_with_the_reviewed_plan_intact(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, adapter_construction_log: list[dict[str, Any]]
 ) -> None:
-    """FIX-010: `diff --run-id R` no longer replaces the plan a human reviewed under R."""
+    """`diff --run-id R` no longer replaces the plan a human reviewed under R."""
     directory = _appliable_run(tmp_path)
     before = {path: path.read_bytes() for path in sorted(plan_dir(directory).rglob("*")) if path.is_file()} | {
         _apply_snapshot_path(directory): _apply_snapshot_path(directory).read_bytes()
@@ -2079,7 +2079,7 @@ def test_a_second_diff_into_a_committed_run_id_is_refused_with_the_reviewed_plan
     assert not (directory / "run.json").exists()
 
 
-# The two states RIG-01's failure injections leave behind: a run whose plan was never
+# The two states the failure injections leave behind: a run whose plan was never
 # started, and a run whose operations file was published while its manifest never was. The
 # writer's own crash injection is `tests/plan/test_writer.py`; what is decided here is what
 # the two commands an operator reaches do with the state it leaves.
@@ -2120,7 +2120,7 @@ def test_an_incomplete_generation_is_refused_by_both_review_and_apply_with_no_de
     build: Callable[[Path], Path],
     fragments: tuple[str, str],
 ) -> None:
-    """RIG-01, folded into FIX-010: a half-written generation is applicable to nobody."""
+    """A half-written generation is applicable to nobody."""
     review_fragment, apply_fragment = fragments
     build(tmp_path)
     constructed: list[str] = []
@@ -2147,7 +2147,7 @@ def test_an_incomplete_generation_is_refused_by_both_review_and_apply_with_no_de
 def test_an_incomplete_generation_stays_re_plannable_under_the_same_run_id(
     tmp_path: Path, adapter_construction_log: list[dict[str, Any]], build: Callable[[Path], Path]
 ) -> None:
-    """The residual FIX-010 has to preserve: neither crash strands the run id."""
+    """The residual that immutability has to preserve: neither crash strands the run id."""
     build(tmp_path)
 
     result = _diff_into(RUN_ID)
@@ -2164,7 +2164,7 @@ def _stored_checksum(tmp_path: Path, run_id: str = RUN_ID) -> str:
 
 @pytest.mark.parametrize("options", [(), ("--detail",)], ids=["summary", "detail"])
 def test_the_review_prints_the_full_plan_checksum_at_both_depths(tmp_path: Path, options: tuple[str, ...]) -> None:
-    """FIX-010 part 2: the review shows the checksum, not only the verdict about it."""
+    """The review shows the checksum, not only the verdict about it."""
     _store(tmp_path)
 
     result = _review("--from-plan", RUN_ID, *options)
@@ -2202,7 +2202,7 @@ def test_an_apply_naming_the_reviewed_checksum_applies(
 def test_an_apply_naming_another_generations_checksum_refuses_before_the_destination_exists(
     tmp_path: Path, destination_double: RecordingDestination, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """FIX-010 part 2's whole point: a valid plan that is not the approved one is refused."""
+    """The whole point of the approval binding: a valid plan that is not the approved one is refused."""
     _appliable_run(tmp_path)
     approved = _stored_checksum(tmp_path)
     substituted = _appliable_run(tmp_path, [operation_record(identity={"name": "substituted"})])
@@ -2246,7 +2246,7 @@ def test_an_apply_naming_another_generations_checksum_refuses_before_the_destina
 def test_an_expected_checksum_against_a_non_utf8_manifest_refuses_instead_of_tracing_back(
     tmp_path: Path, destination_double: RecordingDestination, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """LOC-03: the approval check's bytes-to-mapping step must not crash on undecodable bytes."""
+    """The approval check's bytes-to-mapping step must not crash on undecodable bytes."""
     directory = _appliable_run(tmp_path)
     approved = _stored_checksum(tmp_path)
     manifest_path(directory).write_bytes(b'{"format_version": 2, "config_version": "\xff\xfe"}')

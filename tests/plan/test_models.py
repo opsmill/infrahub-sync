@@ -308,7 +308,7 @@ def test_an_empty_identity_passes_the_guard_vacuously() -> None:
 
 
 # ======================================================================================
-# MIN-015 — one unambiguous source per field
+# One unambiguous source per field
 # ======================================================================================
 
 
@@ -391,7 +391,7 @@ def test_distinct_reference_fields_beside_a_disjoint_payload_stay_accepted() -> 
 
 
 # ======================================================================================
-# FIX-013 — the identity reviewed and hashed must agree with the value written
+# The identity reviewed and hashed must agree with the value written
 # ======================================================================================
 
 
@@ -434,7 +434,7 @@ def test_a_reference_whose_peer_kind_disagrees_with_the_identity_component_is_re
 
 
 def test_a_matching_scalar_identity_component_stays_accepted() -> None:
-    """The positive half FIX-013 must not break: agreement validates."""
+    """The positive half that must not break: agreement validates."""
     operation = PlannedOperation(**_operation(identity={"name": "prod"}, payload={"name": "prod", "color": "red"}))
     assert operation.identity == {"name": "prod"}
 
@@ -635,7 +635,7 @@ PLAN_MANIFEST_FIELDS = {
     "operations_count",
     "delete_operations_computed",
     "plan_checksum",
-    # Additive, FIX-005 (spec 002): the effective destination the plan is bound to. An
+    # Additive: the effective destination the plan is bound to. An
     # identity to compare at apply time, not a grouping of operations into write units.
     "destination_binding",
 }
@@ -760,7 +760,7 @@ def test_operations_count_and_row_count_are_non_negative() -> None:
 
 
 # ======================================================================================
-# MIN-003 — a snapshot path is run-relative, or it is refused
+# A snapshot path is run-relative, or it is refused
 # ======================================================================================
 
 
@@ -777,7 +777,7 @@ def test_operations_count_and_row_count_are_non_negative() -> None:
     ],
 )
 def test_a_snapshot_path_that_could_escape_the_run_directory_is_refused(path: str) -> None:
-    """The manifest is operator-editable input joined onto the run directory (MIN-003)."""
+    """The manifest is operator-editable input joined onto the run directory."""
     with pytest.raises(ValidationError):
         SourceSnapshotRecord(path=path, digest="d", row_count=0)
 
@@ -874,7 +874,7 @@ def test_the_skipped_delete_count_cannot_be_set_apart_from_the_list_it_counts() 
 
 
 def test_a_failed_operation_marks_the_record_as_possibly_partially_written() -> None:
-    """FIX-006: the failing identifier is recorded, and it implies the partial-write marker."""
+    """The failing identifier is recorded, and it implies the partial-write marker."""
     failed = ApplyRecord(applied_operations=("op_a",), failed_operation="op_b")
 
     assert failed.may_have_partially_written is True

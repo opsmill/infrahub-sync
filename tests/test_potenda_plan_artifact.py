@@ -2061,7 +2061,7 @@ def test_the_diff_command_succeeds_end_to_end_against_a_destination_with_no_sche
 
 
 # =======================================================================================
-# MIN-007 (spec 002) — an element carrying children is refused, not silently flattened
+# An element carrying children is refused, not silently flattened
 # =======================================================================================
 
 
@@ -2089,7 +2089,7 @@ class _ChildBearingElement(_FakeElement):
 
 
 def test_an_element_carrying_children_fails_the_derivation() -> None:
-    """MIN-007: the walk is one level deep, so nested changes must not be dropped quietly."""
+    """The walk is one level deep, so nested changes must not be dropped quietly."""
     child = _FakeElement(kind="InterfacePhysical", name="eth0", keys={"name": "eth0"}, source_attrs={"mtu": 9000})
     element = _ChildBearingElement(
         kind="BuiltinTag",
@@ -2156,7 +2156,7 @@ def test_an_element_with_an_empty_child_diff_derives_as_before() -> None:
 
 
 # =======================================================================================
-# MIN-008 (spec 002, OQ-2) — an empty many-peer set resolves, whatever the candidate count
+# An empty many-peer set resolves, whatever the candidate count
 # =======================================================================================
 
 
@@ -2193,7 +2193,7 @@ def tag_reference_config(*references: str) -> SyncInstance:
     ],
 )
 def test_a_deliberately_empty_many_peer_set_derives(references: tuple[str, ...], expected_peer_kind: str) -> None:
-    """OQ-2: an empty set references no peer, so no candidate kind needs choosing."""
+    """An empty set references no peer, so no candidate kind needs choosing."""
     config = tag_reference_config(*references)
     assert reference_candidates(config, "DcimDevice")["tags"] == tuple(sorted(references))
 
@@ -2241,7 +2241,7 @@ def test_a_non_empty_many_peer_set_under_a_multi_candidate_mapping_still_probes(
 
 
 # =======================================================================================
-# DISC-002 (spec 002, OQ-8) — the identity the destination is too coarse to tell apart
+# The identity the destination is too coarse to tell apart
 # =======================================================================================
 
 # The live shape this arm exists for: `LocationRack` is identified by `(name, site)` on the
@@ -2283,7 +2283,7 @@ def rack_operations(*sites: str, name: str = "Comms closet") -> list[PlannedOper
 
 
 def test_warns_when_the_destination_cannot_distinguish_the_plan_identity(caplog: pytest.LogCaptureFixture) -> None:
-    """DISC-002: `identity ⊄ HFID` merges source objects, and FR-024's arms stay silent on it."""
+    """`identity ⊄ HFID` merges source objects, and FR-024's arms stay silent on it."""
     operations = rack_operations("dm-akron", "dm-albany", "dm-buffalo")
 
     with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
@@ -2407,7 +2407,7 @@ def test_the_merge_warning_stays_out_of_the_manifest_and_the_run_succeeds(
 
 
 # =======================================================================================
-# MIN-013 (spec 002, OQ-3) — a plan cannot clear a cardinality-one peer, and that is v1
+# A plan cannot clear a cardinality-one peer, and that is v1
 # =======================================================================================
 
 

@@ -127,8 +127,7 @@ class PlanGenerationExistsError(PlanArtifactError):
     A run id whose `plan/manifest.json` exists names a plan a human may already have
     reviewed and approved, and the checksum of a rewritten generation proves the integrity
     of the *new* files rather than identity with the ones that were approved. So re-planning
-    into an occupied run id is refused and re-planning means a fresh run id (FIX-010,
-    spec 002).
+    into an occupied run id is refused and re-planning means a fresh run id.
 
     The condition is `manifest.json`'s presence and nothing else, because the manifest is
     the artifact's commit point (AD014): a run whose operations file was written but whose
@@ -144,7 +143,7 @@ class PlanGenerationExistsError(PlanArtifactError):
 
 
 class UnsafeRunIdentifierError(PlanArtifactError):
-    """A run identifier is not a single path segment (FIX-004, spec 002).
+    """A run identifier is not a single path segment.
 
     A value carrying `/` or `..`, or an absolute path, is rejected by the cache-layout guard
     (`infrahub_sync/cache/paths.py`) with a `ValueError` — which reached the operator as a raw
@@ -325,7 +324,7 @@ class UnformableDestinationIdentityError(PlanArtifactError):
 
 
 class UnwalkedDiffChildrenError(PlanArtifactError):
-    """A comparison element carries child elements, which plan derivation does not walk (MIN-007).
+    """A comparison element carries child elements, which plan derivation does not walk.
 
     Derivation walks `diff.children` one level deep, exactly as `Potenda._diff_to_rows` does.
     No model this repository generates declares `_children`, so no comparison it produces

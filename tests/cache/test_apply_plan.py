@@ -255,7 +255,7 @@ def test_an_empty_plan_applies_as_a_successful_no_op(tmp_path: Path) -> None:
 
 
 def test_an_identity_value_disagreement_refuses_the_apply_before_any_destination_call(tmp_path: Path) -> None:
-    """FIX-013 at the apply boundary: the mismatched record never reaches the destination."""
+    """The identity-value check at the apply boundary: the mismatched record never reaches the destination."""
     directory = _run_dir(tmp_path)
     mismatched = operation_record(identity={"name": "reviewed"}, payload={"name": "actually-written"})
     write_artifact(directory, [mismatched], run_id=RUN_ID, source_snapshot=[])
@@ -345,7 +345,7 @@ def test_an_artifact_substituted_after_verification_is_not_what_gets_applied(tmp
 class PartiallyWritingDestination(RecordingDestination):
     """A destination whose second operation fails **after** issuing part of its own write.
 
-    The in-tree shape of FIX-006: `apply_planned_operation` issues the base upsert and only
+    The in-tree shape of the problem: `apply_planned_operation` issues the base upsert and only
     then flushes the cardinality-many relationship sets, so a failure in the flush leaves the
     destination changed by an operation the engine never counted as applied. The double
     records the base write separately from the dispatch list so the case can assert the
@@ -364,7 +364,7 @@ class PartiallyWritingDestination(RecordingDestination):
 
 
 def test_a_failure_after_the_base_write_names_the_operation_and_marks_the_partial_write(tmp_path: Path) -> None:
-    """FIX-006: the record must not imply the failing operation wrote nothing."""
+    """The record must not imply the failing operation wrote nothing."""
     directory = _run_dir(tmp_path)
     records = [operation_record(identity={"name": "first"}), operation_record(identity={"name": "second"})]
     write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])
@@ -424,7 +424,7 @@ DESTINATION_REJECTIONS = (
 def test_a_known_destination_failure_is_wrapped_with_the_operation_and_run_context(
     tmp_path: Path, rejection: Exception
 ) -> None:
-    """FIX-011: inside the operational boundary, a failure becomes the named taxonomy refusal."""
+    """Inside the operational boundary, a failure becomes the named taxonomy refusal."""
     directory = _run_dir(tmp_path)
     records = [operation_record(identity={"name": "first"}), operation_record(identity={"name": "second"})]
     write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])
@@ -457,7 +457,7 @@ CODE_DEFECTS = (
 def test_a_code_defect_escapes_the_apply_unchanged_and_still_carries_the_partial_record(
     tmp_path: Path, defect: Exception
 ) -> None:
-    """FIX-011: a defect must not be presented to the operator as a destination refusal."""
+    """A defect must not be presented to the operator as a destination refusal."""
     directory = _run_dir(tmp_path)
     records = [operation_record(identity={"name": "first"}), operation_record(identity={"name": "second"})]
     write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])

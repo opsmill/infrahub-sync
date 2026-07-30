@@ -408,7 +408,7 @@ def test_records_digest_matches_the_per_file_digest(tmp_path: Path) -> None:
 
 
 # ======================================================================================
-# FIX-014 (spec 002) — the digest is streamed, and streaming does not move a byte of it
+# The digest is streamed, and streaming does not move a byte of it
 # ======================================================================================
 
 MANY_ROWS: list[dict[str, object]] = [
@@ -430,7 +430,7 @@ def _regrouped(path: Path, *, row_group_size: int) -> Path:
 
 
 def _whole_table_digest(path: Path) -> str:
-    """The digest as the pre-FIX-014 shape computed it: whole table, list of rows, join."""
+    """The digest as the superseded shape computed it: whole table, list of rows, join."""
     table = read_table(str(path))
     columns = [name for name in table.column_names if name != "_extract_ts"]
     rows = table.select(columns).to_pylist()
@@ -448,7 +448,7 @@ def test_the_snapshot_really_holds_several_row_groups(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("batch_size", [1, 2, 5, 7, 12, 10_000])
 def test_the_digest_and_row_count_are_identical_at_every_batch_size(tmp_path: Path, batch_size: int) -> None:
-    """FIX-014: the digest is defined over the rows, so the batch size cannot move it."""
+    """The digest is defined over the rows, so the batch size cannot move it."""
     path = _regrouped(
         _write_side(tmp_path, rows=MANY_ROWS, source_ids=MANY_SOURCE_IDS),
         row_group_size=5,
@@ -461,7 +461,7 @@ def test_the_digest_and_row_count_are_identical_at_every_batch_size(tmp_path: Pa
 
 
 def test_the_digest_never_reads_the_whole_table(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """FIX-014: the spy fails the test if the digest falls back to a whole-table read."""
+    """The spy fails the test if the digest falls back to a whole-table read."""
     path = _regrouped(
         _write_side(tmp_path, rows=MANY_ROWS, source_ids=MANY_SOURCE_IDS),
         row_group_size=5,
@@ -469,7 +469,7 @@ def test_the_digest_never_reads_the_whole_table(tmp_path: Path, monkeypatch: pyt
     expected = _whole_table_digest(path)
 
     def _refuse(*_args: object, **_kwargs: object) -> NoReturn:
-        msg = "the snapshot digest read the whole table instead of streaming record batches (FIX-014)"
+        msg = "the snapshot digest read the whole table instead of streaming record batches"
         raise AssertionError(msg)
 
     monkeypatch.setattr("infrahub_sync.cache.parquet_io.read_table", _refuse)
@@ -479,7 +479,7 @@ def test_the_digest_never_reads_the_whole_table(tmp_path: Path, monkeypatch: pyt
 
 
 def test_no_batch_the_digest_folds_is_larger_than_the_bound(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """FIX-014's point: what the digest holds at once is bounded, not a fraction of nothing."""
+    """What the digest holds at once is bounded, not a fraction of nothing."""
     path = _regrouped(
         _write_side(tmp_path, rows=MANY_ROWS, source_ids=MANY_SOURCE_IDS),
         row_group_size=5,
@@ -503,7 +503,7 @@ def test_no_batch_the_digest_folds_is_larger_than_the_bound(tmp_path: Path, monk
 
 
 # ======================================================================================
-# FIX-003 (spec 002) — plan-write time: a snapshot that cannot be digested
+# Plan-write time: a snapshot that cannot be digested
 # ======================================================================================
 
 
@@ -526,7 +526,7 @@ def test_plan_write_refuses_a_corrupt_snapshot_with_the_taxonomy_error(tmp_path:
 def test_plan_write_refuses_a_read_denied_snapshot_with_the_taxonomy_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """RF-7: FIX-003's OSError arm belongs at plan-write time too, not only at apply time."""
+    """The OSError arm belongs at plan-write time too, not only at apply time."""
     _write_side(tmp_path)
 
     def _deny(uri: str, **_kwargs: object) -> NoReturn:

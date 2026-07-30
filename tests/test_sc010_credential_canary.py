@@ -69,7 +69,7 @@ SURFACES = (ARTIFACT_FILES, SUMMARY_STDOUT, DETAIL_STDOUT, READER_DATA)
 # control for that surface has to reach it somehow.
 CANARY_KIND = f"Canary{CANARY}"
 
-# A payload field whose **name** falls under the review's redaction policy (FIX-012), used by
+# A payload field whose **name** falls under the review's redaction policy, used by
 # the plant that proves the policy withholds the value while the artifact still carries it.
 REDACTED_FIELD = "api_token"
 REDACTED_PLANT = "redacted_payload_field"
@@ -378,7 +378,7 @@ def test_the_manifest_binds_the_canary_bearing_settings_without_disclosing_them(
 
 PLANTED_CASES: dict[str, frozenset[str]] = {
     # A canary in an operation's payload. It reaches the artifact, the reader's data and — since
-    # FIX-012 renders the desired destination state — the per-object depth. The summary depth
+    # the review renders the desired destination state — the per-object depth. The summary depth
     # renders nothing per-record, which is why it stops short of that one.
     "payload": frozenset({ARTIFACT_FILES, DETAIL_STDOUT, READER_DATA}),
     # An identity value reaches the same three, through the identity the record line renders.

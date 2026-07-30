@@ -55,7 +55,7 @@ DestinationIdentity = dict[str, Any]
 class RelationshipReference(BaseModel):
     """A peer named by kind and identity, never by a destination-assigned id.
 
-    **A plan cannot clear a cardinality-one peer, by design in v1 (MIN-013, OQ-3 decided).**
+    **A plan cannot clear a cardinality-one peer, by design in v1.**
     There is no encoding for an emptied cardinality-one relationship: `cardinality: "one"`
     requires exactly one peer, and the reference being *absent* from the operation means the
     field carries no value of that kind at all rather than that it should be emptied — the
@@ -147,7 +147,7 @@ class PlannedOperation(BaseModel):
                 f"derives {derived!r}: the record is corrupt."
             )
             raise ValueError(msg)
-        # MIN-015: every destination field has exactly one write source. Two references for
+        # Every destination field has exactly one write source. Two references for
         # one field would make the replace-set write depend on reference order.
         reference_fields = [reference.field for reference in self.relationships or ()]
         duplicated = sorted({name for name in reference_fields if reference_fields.count(name) > 1})
@@ -166,7 +166,7 @@ class PlannedOperation(BaseModel):
         if self.payload is None:
             msg = f"Operation {self.operation_id!r} is a {self.action} and must carry a payload."
             raise ValueError(msg)
-        # MIN-015's other half: a field carried by the payload *and* a relationship reference
+        # The other half of that rule: a field carried by the payload *and* a relationship reference
         # has two competing write sources — the upsert value and the flush value.
         referenced_fields = set(reference_fields)
         doubly_sourced = sorted(referenced_fields & set(self.payload))
@@ -187,10 +187,10 @@ class PlannedOperation(BaseModel):
                 "every re-apply would duplicate (AD042)."
             )
             raise ValueError(msg)
-        # FIX-013: presence is not enough — the value the write source carries must equal
+        # Presence is not enough — the value the write source carries must equal
         # the identity component review rendered and the operation id hashed. Otherwise
         # apply builds the mutation from the payload/reference (writing the *other* object)
-        # and memoizes the result under the disagreeing reviewed identity. MIN-015 above
+        # and memoizes the result under the disagreeing reviewed identity. The rule above
         # guarantees exactly one source per field, so the comparison is unambiguous.
         references_by_field = {reference.field: reference for reference in self.relationships or ()}
         for name, recorded in self.identity.items():
@@ -218,7 +218,7 @@ class PlannedOperation(BaseModel):
 
 
 def require_run_relative_path(value: str) -> str:
-    """Refuse a snapshot path that could escape the run directory (MIN-003).
+    """Refuse a snapshot path that could escape the run directory.
 
     The manifest is operator-editable input joined onto the run directory, so a `..`
     segment, an absolute path, or a bare `.` would send the verifier to digest — and vouch
@@ -259,7 +259,7 @@ class SourceSnapshotRecord(BaseModel):
     @field_validator("path")
     @classmethod
     def _require_run_relative(cls, value: str) -> str:
-        """MIN-003: the recorded path never escapes the run directory it is joined onto."""
+        """The recorded path never escapes the run directory it is joined onto."""
         return require_run_relative_path(value)
 
 
@@ -269,7 +269,7 @@ def _normalized_destination_url(url: str) -> str:
     Scheme and host are lowercased and trailing path slashes dropped, so
     `HTTP://Infrahub:8000/` and `http://infrahub:8000` name the same destination and do
     not false-refuse an apply. Userinfo is dropped outright: the record must never carry
-    a credential, however the endpoint was spelled (FIX-005, spec 002).
+    a credential, however the endpoint was spelled.
     """
     parts = urlsplit(url.strip())
     host = (parts.hostname or "").lower()
@@ -278,7 +278,7 @@ def _normalized_destination_url(url: str) -> str:
 
 
 class DestinationBindingRecord(BaseModel):
-    """The effective destination identity a plan was computed against (FIX-005, spec 002).
+    """The effective destination identity a plan was computed against.
 
     The **resolved** endpoint URL and branch — environment variables already applied over
     settings, exactly what the destination adapter connects with — and never the token.
@@ -314,7 +314,7 @@ class PlanManifest(BaseModel):
     operations_count: int = Field(ge=0)
     delete_operations_computed: bool
     plan_checksum: str
-    # Additive (FIX-005, spec 002): manifests written before this field exists carry no
+    # Additive: manifests written before this field exists carry no
     # binding, and the apply-time destination comparison skips them.
     destination_binding: DestinationBindingRecord | None = None
 
@@ -322,7 +322,7 @@ class PlanManifest(BaseModel):
     def _serialize_without_absent_binding(self, handler: Any) -> dict[str, Any]:
         """Serialize an absent binding as **absent**, never as `null`.
 
-        The writer omits the field when there is no binding — the exact pre-FIX-005 bytes —
+        The writer omits the field when there is no binding — the exact byte shape older manifests carry —
         so a manifest read back and re-serialized must not grow a `null` the file never
         carried: the model's rendering stays byte-faithful to the artifact.
         """
@@ -414,7 +414,7 @@ class ApplyRecord:
 
 # The pre-apply check vocabulary, typed once so every construction site — the verifier's
 # failure builder, `GATED_CHECKS`, and any new check — is checked by `ty` rather than
-# failing at runtime on a misspelled name (SIM-07, spec 002). The serialized values are
+# failing at runtime on a misspelled name. The serialized values are
 # unchanged: each member is the exact string the check has always carried.
 VerificationCheck: TypeAlias = Literal[
     "format_version",

@@ -86,7 +86,7 @@ def canonical_json_bytes(value: Any, *, kind: str | None = None, field: str | No
     hook, so an unencodable type raises `UnserializablePayloadValueError` rather than
     being stringified behind the caller's back.
 
-    `allow_nan=False` for the same reason (MIN-001): `NaN` and `Infinity` pass the type
+    `allow_nan=False` for the same reason: `NaN` and `Infinity` pass the type
     table as floats, but the default `allow_nan=True` would emit their JavaScript literals
     — invalid JSON — into a file the contract calls canonical.
     """

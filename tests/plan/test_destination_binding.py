@@ -1,4 +1,4 @@
-"""FIX-005 + SIM-07 (spec 002) — the plan's destination binding, end to end in-process.
+"""The plan's destination binding, end to end in-process.
 
 The config-version digest covers the parsed YAML only (PD-003/AD041), while the adapter
 resolves its endpoint from environment variables **over** settings — so a plan reviewed
@@ -9,7 +9,7 @@ adapter before delegating to the engine.
 
 Four behaviors from the spec's own test list: a mismatch refuses; `allow_destination_change`
 applies anyway; a plan without the field skips the check; normalization keeps equivalent
-addresses from false-refusing. Plus SIM-07's: the typed `destination_binding` check
+addresses from false-refusing. Plus one more: the typed `destination_binding` check
 serializes to its plain string form.
 """
 
@@ -70,7 +70,7 @@ def _artifact(tmp_path: Path, **manifest_overrides: Any) -> Any:  # noqa: ANN401
     ],
 )
 def test_equivalent_urls_normalize_to_one_form(spelled: str, normalized: str) -> None:
-    """Equivalent addresses must not false-refuse an apply (FIX-005)."""
+    """Equivalent addresses must not false-refuse an apply."""
     assert DestinationBindingRecord(url=spelled).url == normalized
 
 
@@ -295,12 +295,12 @@ def test_a_destination_exposing_no_binding_applies_unchecked(tmp_path: Path) -> 
 
 
 # ======================================================================================
-# SIM-07 — the typed check vocabulary
+# The typed check vocabulary
 # ======================================================================================
 
 
 def test_the_destination_binding_check_serializes_to_its_plain_string() -> None:
-    """The `VerificationCheck` alias changes no serialized value (SIM-07)."""
+    """The `VerificationCheck` alias changes no serialized value."""
     failure = VerificationFailure(check="destination_binding", run_id=RUN_ID, next_action="re-plan")
 
     assert failure.model_dump()["check"] == "destination_binding"

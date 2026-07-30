@@ -11,7 +11,7 @@ Five assertions, because keyedness splits in two (AD067): an all-direct human-fr
 kind renders keyed; the relationship-crossing kind is the same assertion marked
 `xfail(strict=True)`, so the day the hole closes it xpasses and the limitation retires
 itself; the replace-set is issued for every cardinality-many relationship including
-`peers: []`, with no destination read (FIX-001); the flush names only the relationship fields
+`peers: []`, with no destination read; the flush names only the relationship fields
 being replaced (AD088); and applying the same operation twice renders byte-identical inputs.
 
 It deliberately does **not** assert "two applies produce one object": a fixture holds no
@@ -102,7 +102,7 @@ class ConformanceClient(InfrahubClientSync):
     """A real client whose transport edge alone is replaced, recording one ordered event log.
 
     One log rather than separate lists: the flush's ordering after the upsert (AD075) and the
-    **absence** of any destination read on the planned-write path (FIX-001) are both read off
+    **absence** of any destination read on the planned-write path are both read off
     the same log, so neither can be satisfied by an unrelated call.
     """
 
@@ -125,7 +125,7 @@ class ConformanceClient(InfrahubClientSync):
     def get(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
         """Answer a destination read with the seeded peer set — and record that it happened.
 
-        The planned-write path issues no such read (FIX-001); assertion 3 reads the absence
+        The planned-write path issues no such read; assertion 3 reads the absence
         off the event log, and the seeded peer set differing from the plan's is what keeps
         that assertion honest.
         """
@@ -260,7 +260,7 @@ def record_rendered_inputs() -> Iterator[list[tuple[str, dict[str, Any]]]]:
 
 
 def issued_reads(client: ConformanceClient) -> list[dict[str, Any]]:
-    """Every destination read (`client.get`) on the client's event log (FIX-001)."""
+    """Every destination read (`client.get`) on the client's event log."""
     return [payload for name, payload in client.events if name == "get"]
 
 
@@ -407,7 +407,7 @@ def test_a_relationship_crossing_kind_renders_a_keyed_mutation() -> None:
 
 
 def test_the_replace_set_flushes_an_update_with_no_destination_read() -> None:
-    """AD054/AD075/AD085 + FIX-001: the plan's peer set reaches the destination as the flush."""
+    """AD054/AD075/AD085: the plan's peer set reaches the destination as the flush."""
     client, adapter, peers = seeded_adapter(members=["conf-tag-id-9", "conf-tag-id-2"])
 
     adapter.apply_planned_operation(operation=team_operation(["tag-b", "tag-c"]), peers=peers)
@@ -422,7 +422,7 @@ def test_the_replace_set_flushes_an_update_with_no_destination_read() -> None:
     )
     assert f'id: "{NODE_ID}"' in flush, "The flush must target the node the upsert converged on."
     assert issued_reads(client) == [], (
-        "The planned-write path issues no destination read (FIX-001): the fetch-and-reconcile "
+        "The planned-write path issues no destination read: the fetch-and-reconcile "
         "round trips added nothing, because the SDK renders no removal directive either way."
     )
 

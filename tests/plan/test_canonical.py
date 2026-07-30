@@ -227,7 +227,7 @@ def test_failure_inside_a_list_names_the_index() -> None:
     ],
 )
 def test_a_non_finite_float_is_refused_rather_than_encoded(value: float) -> None:
-    """MIN-001: `NaN`/`Infinity` pass the type table as floats, but have no JSON encoding."""
+    """`NaN`/`Infinity` pass the type table as floats, but have no JSON encoding."""
     with pytest.raises(UnserializablePayloadValueError):
         canonical_json_bytes({"metric": value})
 

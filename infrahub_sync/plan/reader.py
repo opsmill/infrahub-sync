@@ -291,7 +291,7 @@ def _parse_manifest(raw: RawPlanArtifact, run_id: str) -> tuple[PlanManifest, di
             found="no 'format_version' field",
         )
     found_version = mapping["format_version"]
-    # The `isinstance` guard runs first (MIN-002): an unhashable hand-edited value like
+    # The `isinstance` guard runs first: an unhashable hand-edited value like
     # `[2]` would raise `TypeError` from the frozenset membership test. A non-integer is a
     # version this release does not support, so it takes the version refusal below.
     if not isinstance(found_version, int) or found_version not in SUPPORTED_FORMAT_VERSIONS:
@@ -337,7 +337,7 @@ def _parse_operations(
         )
 
     operations: list[PlannedOperation] = []
-    # MIN-024: the writer asserts identifier uniqueness (FR-021) but lines validate
+    # The writer asserts identifier uniqueness (FR-021) but lines validate
     # independently here, so a checksum-valid, hand-built artifact repeating an identifier
     # would otherwise load, review, and apply with last-write-wins semantics. The invariant
     # is re-established at this boundary, naming the identifier and both lines.

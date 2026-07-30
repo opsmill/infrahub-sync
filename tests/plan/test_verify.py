@@ -328,7 +328,7 @@ def test_the_gate_names_the_checks_it_did_not_evaluate() -> None:
 
 
 def test_an_unhashable_format_version_fails_the_gate_rather_than_raising(tmp_path: Path) -> None:
-    """MIN-002: a hand-edited `format_version` like `[2]` is unhashable."""
+    """A hand-edited `format_version` like `[2]` is unhashable."""
     directory = _verifiable_run(tmp_path)
     write_artifact(
         directory,
@@ -378,7 +378,7 @@ def test_all_four_gated_checks_can_fail_in_one_call(tmp_path: Path) -> None:
 
 
 # ======================================================================================
-# MIN-003 — a manifest-supplied snapshot path is never joined outside the run directory
+# A manifest-supplied snapshot path is never joined outside the run directory
 # ======================================================================================
 
 
@@ -493,7 +493,7 @@ def test_the_write_surface_check_is_not_behind_the_format_version_gate(tmp_path:
 
 
 # ======================================================================================
-# FIX-003 / RIG-07 (spec 002) — snapshot bytes that stat fine but cannot be digested
+# Snapshot bytes that stat fine but cannot be digested
 # ======================================================================================
 
 
@@ -524,13 +524,13 @@ def test_a_byte_corrupt_snapshot_still_lets_every_other_failure_be_named(tmp_pat
 def test_a_read_denied_snapshot_raises_the_unreadable_taxonomy_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """RIG-07: a read-time `OSError` after a successful stat is unreadable, not absent."""
+    """A read-time `OSError` after a successful stat is unreadable, not absent."""
     directory = _verifiable_run(tmp_path)
 
     def _deny(uri: str, **_kwargs: object) -> NoReturn:
         raise PermissionError(13, "Permission denied", uri)
 
-    # The digest's one read seam, batched since FIX-014; an `OSError` raised anywhere in the
+    # The digest's one read seam, now batched; an `OSError` raised anywhere in the
     # streaming read reaches the verifier the same way the whole-table read's did.
     monkeypatch.setattr("infrahub_sync.plan.checksum.iter_row_batches", _deny)
 

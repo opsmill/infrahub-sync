@@ -83,7 +83,7 @@ def manifest_mapping_or_none(manifest_bytes: bytes | None) -> dict[str, Any] | N
     Public because the CLI's `--expected-checksum` check needs the same bytes-to-mapping step
     before it can hash a stored manifest, and its own copy of it caught `JSONDecodeError`
     alone: `json.loads` decodes first, so non-UTF-8 manifest bytes raise `UnicodeDecodeError`,
-    which escaped that refusal path as a traceback (LOC-03). One helper, one answer for both
+    which escaped that refusal path as a traceback. One helper, one answer for both
     callers.
 
     Named `..._or_none` rather than `manifest_mapping`, which `plan_checksum_failure` below
@@ -104,7 +104,7 @@ def _gate_failure(run_id: str, mapping: dict[str, Any] | None) -> VerificationFa
         found = "no readable, parseable manifest"
     else:
         declared = mapping.get("format_version")
-        # The `isinstance` guard runs first (MIN-002): an unhashable hand-edited value like
+        # The `isinstance` guard runs first: an unhashable hand-edited value like
         # `[2]` would raise `TypeError` from the frozenset membership test, in the component
         # built to classify corrupt manifests.
         if isinstance(declared, int) and declared in SUPPORTED_FORMAT_VERSIONS:
@@ -254,7 +254,7 @@ def source_snapshot_failures(*, run_id: str, run_dir: Path, mapping: dict[str, A
                 )
             )
             continue
-        # MIN-003: the check reads the raw manifest mapping, so the model's run-relative
+        # The check reads the raw manifest mapping, so the model's run-relative
         # rule is mirrored here — a `..` segment or an absolute path would send the digest
         # below to a file outside the run directory, and a record with no `path` at all
         # used to be probed at `<run_dir>/None`.
@@ -384,7 +384,7 @@ def destination_binding_failure(
     artifact: RawPlanArtifact,
     live: DestinationBindingRecord | None,
 ) -> VerificationFailure | None:
-    """Compare the manifest's recorded destination against the live one (FIX-005, spec 002).
+    """Compare the manifest's recorded destination against the live one.
 
     The plan records the **effective** destination — endpoint URL and branch as the adapter
     resolved them, environment variables included — precisely because the config-version

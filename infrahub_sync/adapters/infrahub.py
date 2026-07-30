@@ -46,7 +46,7 @@ def resolved_endpoint(settings: Mapping[str, Any], branch: str | None) -> tuple[
     """The effective `(url, branch)` this adapter connects with — env vars before settings.
 
     One resolution for both consumers: the SDK client's construction and the plan's
-    destination binding (FIX-005, spec 002). The environment-over-settings precedence is
+    destination binding. The environment-over-settings precedence is
     the whole point of recording the *effective* values — the config-version digest covers
     the parsed YAML only, and the repo's own guidance keeps credentials and addresses in
     environment variables, exactly where that digest is blind.
@@ -214,8 +214,8 @@ def _flush_replaced_relationship_sets(node: InfrahubNodeSync, rel_names: Sequenc
     same per-peer `source`/`owner`/`is_protected` metadata the upsert carried.
 
     **Peer removal relies on the destination Update mutation's replace semantics, pinned by
-    the live shrink test** (`tests/integration/test_infrahub_replace_set_shrink_integration.py`,
-    FIX-001/OQ-4). Nothing about a *removal* can reach the wire from here: the SDK's
+    the live shrink test** (`tests/integration/test_infrahub_replace_set_shrink_integration.py`).
+    Nothing about a *removal* can reach the wire from here: the SDK's
     `RelationshipManagerBase._generate_input_data` renders only the surviving peer list —
     `[{id: ...}, ...]` with no removal directive — so a fetch-and-reconcile round trip before
     this write added nothing. Under replace semantics the written list *is* the destination's
@@ -223,7 +223,7 @@ def _flush_replaced_relationship_sets(node: InfrahubNodeSync, rel_names: Sequenc
     in-process reconciliation could have removed a peer either, and the pinned test is what
     would catch the change. The round trips were therefore simplified away: this path issues
     **no destination read** — which also removes the SDK's `populate_store=True` peer-hydration
-    batch the forced-cold `fetch()` used to trigger (MIN-009).
+    batch the forced-cold `fetch()` used to trigger.
 
     **Why it does not re-render the node.** The obvious flush — `node.update(...)` — renders the
     whole node through `InfrahubNodeBase._generate_input_data`, and that render emits
@@ -477,7 +477,7 @@ class PeerResolver:
 
         Two degraded cases, and neither is silent — a too-loose query can match **exactly
         one** node and bind it wrongly, so `_query`'s zero- and multi-match refusals are not
-        a defense against degradation (FIX-002):
+        a defense against degradation:
 
         - a component whose value the identity does not supply is **skipped**, and the skip
           is disclosed by a per-kind apply-time warning naming the dropped components. The
@@ -493,14 +493,14 @@ class PeerResolver:
           kind, and with exactly one at the destination it would bind silently.
 
         Raises:
-            ValueError: the destination schema declares no kind `peer_kind` (MIN-012). The
+            ValueError: the destination schema declares no kind `peer_kind`. The
                 operation path raises on an unknown kind before writing; resolving a peer
                 against a kind the destination does not know is the same condition, so it is
                 refused just as loudly instead of silently degrading to the scalar fallback.
 
                 Deliberately outside `OPERATIONAL_APPLY_FAILURES`, which routes it to the
                 CLI's defect arm — so the message states the diagnosis and **prescribes no
-                remedy** (RF-2). That arm already tells the operator this is a defect rather
+                remedy**. That arm already tells the operator this is a defect rather
                 than a destination refusal and not to re-plan on the assumption the
                 destination is at fault; a remedy here would contradict it in the same ERROR
                 line. It ends without a full stop for the same reason, because the arm's
@@ -554,7 +554,7 @@ class PeerResolver:
         multi-match, are existing behavior on an existing path and are left exactly as they
         are.
 
-        An **empty** filter set is refused before the query is issued (FIX-002): an
+        An **empty** filter set is refused before the query is issued: an
         unfiltered `client.filters(kind=...)` lists every node of the kind, and with exactly
         one node at the destination it returns it — the one shape the zero- and multi-match
         refusals cannot catch, and silent wrong-peer wiring if it binds.
@@ -745,7 +745,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             raise ValueError(msg)
 
         # The effective destination identity a plan of this adapter is bound to — the
-        # resolved URL and branch, never the token (FIX-005, spec 002). The branch falls
+        # resolved URL and branch, never the token. The branch falls
         # back to "main" because that is the SDK's `default_branch` when none is set, so
         # the record names the branch actually written to.
         self.destination_binding = DestinationBindingRecord(url=infrahub_url, branch=infrahub_branch or "main")
@@ -1142,7 +1142,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         The write is not the last destination interaction: every cardinality-many
         relationship is then written explicitly as a replace-set by a single targeted
         relationship write (AD075, amended by AD085 and AD088), whose surplus-peer removal
-        relies on the destination Update mutation's replace semantics (FIX-001/OQ-4).
+        relies on the destination Update mutation's replace semantics.
 
         Raises:
             SkippedDeleteOperation: the operation is a recorded delete (a designed

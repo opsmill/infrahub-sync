@@ -383,7 +383,7 @@ class PlanApplier:
     def apply_plan(self, *, config_version: str | None = None, allow_destination_change: bool = False) -> ApplyRecord:
         """Apply the stored plan — the engine's contract, unchanged; writes no run file (AD069).
 
-        Before delegating, the destination-binding precheck (FIX-005, spec 002) compares
+        Before delegating, the destination-binding precheck compares
         the manifest's recorded destination against the live adapter's and refuses on a
         mismatch; `allow_destination_change` turns that refusal into a logged warning for
         a deliberate cross-environment apply. Plans without the recorded field, and
@@ -397,7 +397,7 @@ class PlanApplier:
         return self.engine.apply_plan(config_version=config_version)
 
     def _require_recorded_destination(self, *, allow_destination_change: bool) -> None:
-        """The FIX-005 apply-time guard, on the seam that owns apply-specific assembly.
+        """The apply-time destination-binding guard, on the seam that owns apply-specific assembly.
 
         Here rather than inside `Potenda.apply_plan` because the check's subject is the
         destination this seam constructed, and its refusal is the one pre-apply verdict an

@@ -276,7 +276,7 @@ def test_a_line_that_is_not_json_at_all_is_torn_naming_the_line(tmp_path: Path) 
 
 
 # ======================================================================================
-# Torn — a repeated operation identifier (MIN-024)
+# Torn — a repeated operation identifier
 # ======================================================================================
 
 
@@ -315,7 +315,7 @@ def test_the_repeated_identifier_verdict_names_the_two_offending_lines_not_the_f
 
 
 # ======================================================================================
-# Torn — the identity reviewed and hashed disagrees with the value written (FIX-013)
+# Torn — the identity reviewed and hashed disagrees with the value written
 # ======================================================================================
 
 
@@ -444,7 +444,7 @@ def test_an_unsupported_format_version_names_the_version_and_lists_those_support
 
 
 def test_an_unhashable_format_version_is_version_refused_rather_than_raising(tmp_path: Path) -> None:
-    """MIN-002: `format_version: [2]` in a hand-edited manifest is unhashable."""
+    """`format_version: [2]` in a hand-edited manifest is unhashable."""
     directory = _run_dir(tmp_path)
     write_artifact(directory, [operation_record()], format_version=[2])
 
