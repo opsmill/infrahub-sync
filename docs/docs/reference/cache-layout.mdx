@@ -67,10 +67,13 @@ mistaken for a missing one.
 | `source_snapshot` | One `{path, digest, row_count}` record per source snapshot file the plan was computed against. |
 | `operations_count` | Number of lines in `operations.jsonl`. A disagreement makes the artifact torn. |
 | `delete_operations_computed` | Whether deletes could be enumerated at all — see [Deletes in a plan](#deletes-in-a-plan). |
+| `destination_binding` | The destination the plan was computed against, as `{url, branch}`: the resolved endpoint URL — environment variables already applied over settings, and normalized — and the branch. **Never the token.** `apply` compares it against the destination it is about to write to and refuses before any write on a mismatch, so a plan reviewed for staging is not applied to production by accident; `--allow-destination-change` applies anyway. Plans written before this field existed carry no binding, and the comparison is skipped for them. |
 | `plan_checksum` | Checksum over the manifest body and the operations bytes. `run_id`, `created_at` and `plan_checksum` itself are excluded from it, so two runs of the same configuration over the same source produce the same value. |
 
-Unknown manifest fields are tolerated and preserved; an operation record with an unknown
-field is not.
+Every field above is written and read by `infrahub-sync` itself and is inside the checksum.
+Manifest fields *beyond* them are tolerated and preserved — also inside the checksum — so
+hand-editing one invalidates the plan; an operation record with an unknown field is refused
+outright.
 
 ### Write order and the commit point
 

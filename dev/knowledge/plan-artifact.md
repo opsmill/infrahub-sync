@@ -154,6 +154,7 @@ The data model rejects a stored identifier that does not match its own triple.
 | `source_snapshot` | `{path, digest, row_count}` per bound snapshot, ordered by `path` |
 | `operations_count` | Keeps an empty plan distinguishable from a torn one |
 | `delete_operations_computed` | `false` when the destination side was loaded incrementally |
+| `destination_binding` | `{url, branch}` — the destination the plan was computed against, resolved (env over settings) and URL-normalized, **never the token**. Compared for equality at apply time. Additive: absent on plans written before it existed, and the check is skipped for them |
 | `plan_checksum` | Lowercase sha256 hex over the manifest body plus the operations bytes |
 | *(any other key)* | Tolerated on read, preserved, and included in the checksummed bytes |
 
