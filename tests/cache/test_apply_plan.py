@@ -126,14 +126,23 @@ def test_apply_plan_executes_the_stored_operations_in_stored_order(tmp_path: Pat
     assert record.applied_operations[-1] == stored_order[-1]
 
 
+SENTINEL_RUN_FILE = '{"sentinel": "the CLI wrote this"}'
+
+
 def test_apply_plan_writes_no_run_file(tmp_path: Path) -> None:
-    """The engine returns the record and writes nothing — the CLI is the single writer (AD069)."""
+    """The engine returns the record and writes nothing — the CLI is the single writer (AD069).
+
+    A run file seeded before the apply must come back byte-identical, so an engine that wrote
+    its own record over an existing one fails here rather than passing an absence check.
+    """
     directory = _run_dir(tmp_path)
     write_artifact(directory, [operation_record()], run_id=RUN_ID, source_snapshot=[])
+    run_file = directory / "run.json"
+    run_file.write_text(SENTINEL_RUN_FILE, encoding="utf-8")
 
     record = _potenda(directory, RecordingDestination()).apply_plan(config_version=CONFIG_VERSION)
 
-    assert not (directory / "run.json").exists()
+    assert run_file.read_text(encoding="utf-8") == SENTINEL_RUN_FILE
     assert record.as_summary_keys() == {
         "applied_operations": list(record.applied_operations),
         "skipped_delete_operations": [],
@@ -231,7 +240,12 @@ def test_no_configuration_and_no_supplied_version_refuses_before_any_write(tmp_p
 
 
 def test_an_empty_plan_applies_as_a_successful_no_op(tmp_path: Path) -> None:
-    """FR-022: zero operations is a success, and verification still runs first (AD033)."""
+    """FR-022: zero operations is a success, and verification still runs first (AD033).
+
+    The surfaceless pairing is the second clause: an implementation that short-circuited an
+    empty plan before verification would return success for a destination that cannot apply a
+    plan at all, and the operator would learn nothing.
+    """
     directory = _run_dir(tmp_path)
     write_artifact(directory, [], run_id=RUN_ID, source_snapshot=[])
 
@@ -239,6 +253,9 @@ def test_an_empty_plan_applies_as_a_successful_no_op(tmp_path: Path) -> None:
 
     assert record.applied_operations == ()
     assert record.skipped_delete_count == 0
+
+    with pytest.raises(PlanVerificationError):
+        _potenda(directory, SurfacelessDestination()).apply_plan(config_version=CONFIG_VERSION)
 
 
 # ======================================================================================
@@ -477,6 +494,10 @@ def test_a_known_destination_failure_is_wrapped_with_the_operation_and_run_conte
     assert caught.value.__cause__ is rejection, "…and chains it, so the library traceback survives"
     assert caught.value.apply_record.applied_operations == (str(records[0]["operation_id"]),)
     assert caught.value.apply_record.failed_operation == str(records[1]["operation_id"])
+    assert destination.dispatched == [str(records[0]["operation_id"])], "the apply stops at the rejection"
+    assert "stay written" in message, "…and says the earlier writes were kept"
+    assert caught.value.next_action, "every member of the taxonomy carries a next action (AD059)"
+    assert "Next action:" in message
 
 
 CODE_DEFECTS = (
