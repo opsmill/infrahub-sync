@@ -2665,6 +2665,52 @@ def test_an_apply_naming_another_generations_checksum_refuses_before_the_destina
     assert not (_cache_root(tmp_path) / RUN_ID / "run.json").exists()
 
 
+def test_an_expected_checksum_against_a_non_utf8_manifest_refuses_instead_of_tracing_back(
+    tmp_path: Path, destination_double: RecordingDestination, caplog: pytest.LogCaptureFixture
+) -> None:
+    """LOC-03: the approval check's bytes-to-mapping step must not crash on undecodable bytes.
+
+    `json.loads` **decodes** before it parses, so manifest bytes that are not valid UTF-8 raise
+    `UnicodeDecodeError` — a `ValueError`, not a `JSONDecodeError`. A copy of the mapping step
+    that caught only the latter let it escape `_require_expected_checksum`'s `except
+    PlanArtifactError` and reach the operator as a raw traceback with **no** output at all: the
+    FIX-004 defect class, at a new refusal site. The check now shares the verifier's
+    `manifest_mapping`, which classifies both conditions, so an unhashable artifact falls
+    through to the pre-apply verifier that names the tear.
+    """
+    directory = _appliable_run(tmp_path)
+    approved = _stored_checksum(tmp_path)
+    manifest_path(directory).write_bytes(b'{"format_version": 2, "config_version": "\xff\xfe"}')
+
+    with (
+        caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"),
+        patch("infrahub_sync.cli.PlanApplier.open_existing", _patched_open_existing(destination_double)),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "apply",
+                "--name",
+                SYNC_NAME,
+                "--directory",
+                str(EXAMPLES_DIR),
+                "--run-id",
+                RUN_ID,
+                "--expected-checksum",
+                approved,
+            ],
+        )
+
+    assert result.exit_code == 1, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"the refusal escaped as a raw {type(result.exception).__name__} traceback"
+    )
+    assert destination_double.writes == [], "nothing may be written for an unreadable manifest"
+    message = _operator_errors(caplog)
+    assert "no readable, parseable manifest" in message, message
+    assert "Next action:" in message, message
+
+
 def test_the_expected_checksum_comparison_ignores_hex_case_and_surrounding_space(
     tmp_path: Path, destination_double: RecordingDestination
 ) -> None:

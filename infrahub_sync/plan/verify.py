@@ -82,11 +82,17 @@ def _failure(
     return VerificationFailure(check=check, run_id=run_id, expected=expected, found=found, next_action=next_action)
 
 
-def _manifest_mapping(manifest_bytes: bytes | None) -> dict[str, Any] | None:
+def manifest_mapping(manifest_bytes: bytes | None) -> dict[str, Any] | None:
     """Return the manifest bytes as a mapping, or `None` when absent or unparseable.
 
     Both conditions are the gate's, per the contract's check-1 row: "not in
     `SUPPORTED_FORMAT_VERSIONS`, **or the manifest cannot be parsed**".
+
+    Public because the CLI's `--expected-checksum` check needs the same bytes-to-mapping step
+    before it can hash a stored manifest, and its own copy of it caught `JSONDecodeError`
+    alone: `json.loads` decodes first, so non-UTF-8 manifest bytes raise `UnicodeDecodeError`,
+    which escaped that refusal path as a traceback (LOC-03). One helper, one answer for both
+    callers.
     """
     if manifest_bytes is None:
         return None
@@ -400,7 +406,7 @@ def destination_binding_failure(
     unparseable (the format gate owns that verdict), when it predates the field, or when
     the live adapter exposes no binding to compare against.
     """
-    mapping = _manifest_mapping(artifact.manifest_bytes)
+    mapping = manifest_mapping(artifact.manifest_bytes)
     if mapping is None or live is None:
         return None
     recorded = mapping.get("destination_binding")
@@ -463,7 +469,7 @@ def verify_plan(
             from absent, with a different remedy, so it is not flattened into a failure
             entry (AD036).
     """
-    mapping = _manifest_mapping(artifact.manifest_bytes)
+    mapping = manifest_mapping(artifact.manifest_bytes)
     gate = _gate_failure(run_id, mapping)
     if gate is not None or mapping is None:
         # `mapping is None` cannot occur with `gate is None`; the second clause is what
