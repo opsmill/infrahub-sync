@@ -1221,17 +1221,6 @@ class RecordingApplyDestination:
         return f"node-{len(self.dispatched)}"
 
 
-class DestinationWithoutPlannedWriteSurface:
-    """A destination that cannot apply a saved plan — FR-023's refusal case.
-
-    Deliberately named at length: the verifier's message has to carry **this** class name,
-    which it can only do because it receives the name rather than a boolean (AD058).
-    """
-
-    def __init__(self) -> None:
-        self.dispatched: list[str] = []
-
-
 def apply_run_dir(tmp_path: Path, *, run_id: str = APPLY_RUN_ID) -> Path:
     """A run directory under the sync's cache layout, so review and apply see one artifact."""
     directory = tmp_path / SYNC_NAME / run_id
