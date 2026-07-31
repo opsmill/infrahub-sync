@@ -1025,3 +1025,283 @@ evidence for DBA-005 and were not cleaned up.
 
 A later task needing an empty destination must reset it first (the destination is
 disposable per the brief's R-3).
+
+---
+
+## Phase 5 (US3) live verification — T024
+
+**Trace**: DBA-006, DBA-007, DBA-008 (live transcript grep); SC-004; DBR-004, DBR-005,
+DBR-008; research probe d₁; spec edge case 1.
+**Measured**: 2026-07-31T11:32Z → 2026-07-31T11:37Z (UTC), on branch
+`001-prefect-managed-remote-run-local-dp-001`.
+**Environment**: darwin (macOS 25.5.0), Python 3.12.2,
+`uv sync --extra dev --extra prefect` (`Resolved 180 packages`, `Audited 171 packages`),
+prefect 3.8.1. Infrahub 1.9.8 at `http://localhost:8000` with `InfraDevice(name, type)` on
+`main`. `INFRAHUB_ADDRESS` / `INFRAHUB_API_TOKEN` supplied from the session environment
+only — neither value appears in any file, parameter, request body, or log line below.
+`PREFECT_HOME` pointed at a fresh scratchpad directory
+(`…/scratchpad/t024/prefect-home`).
+
+**This task writes nothing.** Every request below is refused; the destination is read
+twice, read-only, to prove it.
+
+### Destination baseline — the unchanged-five reading
+
+The destination arrived holding the five `InfraDevice` objects T021 deliberately left as
+DBA-005 evidence. T024's obligation is that a refused request leaves the destination
+UNCHANGED, so **the five were asserted unchanged rather than reset to zero** — the cheaper
+reading of the same property, and it preserves T021's evidence instead of destroying it.
+Recorded before AND after, and not only by count: the five object **ids are identical**
+across the two reads, so nothing was deleted and recreated either.
+
+```text
+$ # POST $INFRAHUB_ADDRESS/graphql/main  {"query": "{ InfraDevice { count edges { node { name { value } type { value } id } } } }"}
+BEFORE 2026-07-31T11:32:53Z  HTTP 200
+count = 5
+names = ['core01', 'core02', 'core03', 'edge01', 'edge02']
+
+AFTER  2026-07-31T11:36:40Z  HTTP 200
+count = 5
+  core01  juniper mx204     18c75b6f-d370-b3dd-3049-c514cc4183d7
+  core02  arista 7504       18c75b6f-f65f-5899-304f-c51c92c7d7f1
+  core03  cisco asr9001     18c75b70-00ea-cab4-3048-c512dfb97231
+  edge01  cisco nexus9000   18c75b70-038a-1574-304c-c517ce1592df
+  edge02  cisco nexus9000   18c75b70-05cb-56a2-3045-c518258d60fe
+```
+
+### Preconditions
+
+```text
+$ date -u +%Y-%m-%dT%H:%M:%SZ ; lsof -nP -iTCP:4200 -sTCP:LISTEN ; pgrep -fl "prefect|orchestration.serve"
+2026-07-31T11:32:42Z
+PORT4200_FREE
+NO_PREFECT_PROCS
+```
+
+Prefect state empty immediately after `prefect server start` against the fresh
+`PREFECT_HOME` (`GET /api/health` → `true` at 2026-07-31T11:33:07Z):
+
+```text
+deployments: []
+flow_runs count: 0
+```
+
+Serve process started **from the repository root** (X1/E11 — the fixture's `./`-relative
+paths resolve against the serving process's CWD):
+
+```bash
+export INFRAHUB_SYNC_CONFIG_DIRECTORY="$PWD/examples/custom_adapter"
+uv run python -m infrahub_sync.orchestration.serve
+```
+
+Deployment READY at 2026-07-31T11:33:26Z from `GET /api/deployments/name/infrahub-sync/run`:
+
+```text
+{
+  "id": "a4f1c38a-bdb2-4aa1-9357-dadfbaff8ec8",
+  "name": "run",
+  "flow_id": "20bdcae8-c50d-41c1-bdf0-ab99a977ad83",
+  "status": "READY",
+  "enforce_parameter_schema": true,
+  "work_pool_name": null
+}
+```
+
+### Leg (a) — DBA-006: `operation=sync` without `confirm_writes`
+
+```bash
+curl -s -X POST "$PREFECT_API_URL/deployments/$DEP_ID/create_flow_run" \
+  -H "Content-Type: application/json" \
+  -d '{"parameters": {"sync_name": "custom-example", "operation": "sync"}}'
+```
+
+Create response at 2026-07-31T11:34:00Z — accepted, because a missing confirmation is a
+*surface* refusal, not a parameter-schema violation:
+
+```text
+HTTP 201
+{"id": "cb5405e4-dae9-41da-aa22-46e3ab0b3d9a", "name": "smart-mastodon",
+ "state_type": "SCHEDULED", "state_name": "Scheduled",
+ "parameters": {"sync_name": "custom-example", "operation": "sync"}}
+```
+
+| Timestamp (UTC) | type | name |
+|---|---|---|
+| 2026-07-31T11:34:00.814982Z | SCHEDULED | Scheduled |
+| 2026-07-31T11:34:00.955977Z | PENDING | Pending |
+| 2026-07-31T11:34:00.965675Z | PENDING | Submitting |
+| 2026-07-31T11:34:02.206885Z | RUNNING | Running |
+| 2026-07-31T11:34:02.237998Z | FAILED | Failed |
+
+**State message, verbatim:**
+
+```text
+Flow run encountered an exception: RunValidationError: confirm_writes=true is required to run operation=sync
+```
+
+All three log records for the run — the refusal happens between "Beginning flow run" and
+"Finished in state Failed", with **no adapter-load line in between**:
+
+```text
+2026-07-31T11:34:02.222430Z [20] prefect.flow_runs :: Beginning flow run 'smart-mastodon' for flow 'infrahub-sync'
+2026-07-31T11:34:02.230085Z [40] prefect.flow_runs :: Encountered exception during execution: RunValidationError('confirm_writes=true is required to run operation=sync')
+2026-07-31T11:34:02.406922Z [20] prefect.flow_runs :: Finished in state Failed('Flow run encountered an exception: RunValidationError: confirm_writes=true is required to run operation=sync')
+```
+
+The traceback in that ERROR record terminates at `execution.py:400` inside `execute_run`'s
+step-1 gate, reached through `run_remote_request` — i.e. **before** the
+`potenda_factory` call on line 415, so neither adapter was constructed. The run took
+**31 ms** of run time (`start_time` 11:34:02.206885Z → `end_time` 11:34:02.237998Z); a run
+that loaded both adapters takes ~1.8 s (T021, measured on the same fixture).
+
+### Leg (b) — probe d₁: `"operation": "apply"` is rejected at run creation
+
+```text
+$ # POST .../create_flow_run  {"parameters": {"sync_name": "custom-example", "operation": "apply"}}
+HTTP 409
+{"detail": "Error creating flow run: Validation failed for field 'operation'. Failure reason: 'apply' is not one of ['plan', 'sync']"}
+```
+
+**No flow run was created** — the run inventory (`POST /api/flow_runs/count`) read `1`
+immediately before the request and `1` two seconds after it. Consequently there is no
+`RunResult`, no log record, and no new run directory for this request: the `Literal`
+parameter type on the flow, enforced by `enforce_parameter_schema: true`, refuses the
+value before the deployment's runner ever sees it.
+
+### Leg (c) — DBA-007 / SC-004: the six negative `sync_name` values
+
+Every value was sent as a literal JSON string (the request bodies were built in Python, so
+no shell ever expanded `$(touch /tmp/pwned)`).
+
+| # | `sync_name` | create HTTP | flow-run id | terminal state | run inventory |
+|---|---|---|---|---|---|
+| 1 | `nope` | 201 | `cccbaf2c-632b-4f3a-8341-6e1a398f4566` | FAILED | 1 → 2 |
+| 2 | `../custom-example` | 201 | `d405dae4-b498-4570-a324-26d4ed05c9ff` | FAILED | 2 → 3 |
+| 3 | `/etc/passwd` | 201 | `6ba53a55-0135-499d-927c-16ddabcb90d1` | FAILED | 3 → 4 |
+| 4 | `a/b` | 201 | `374da002-c32c-404e-8214-e93a20e92b67` | FAILED | 4 → 5 |
+| 5 | `--help` | 201 | `7d7c8ea1-eedc-4ed1-8da9-cad1388325ec` | FAILED | 5 → 6 |
+| 6 | `$(touch /tmp/pwned)` | 201 | `501ed5cb-9851-4dd9-8346-ef4c33386c5b` | FAILED | 6 → 7 |
+
+State messages, verbatim — each **names the logical name and nothing else**: no directory
+listing, no file contents, no interpretation of the value as a path, flag, or command:
+
+```text
+Flow run encountered an exception: RunValidationError: No sync configuration named 'nope' was found in the configured directory
+Flow run encountered an exception: RunValidationError: No sync configuration named '../custom-example' was found in the configured directory
+Flow run encountered an exception: RunValidationError: No sync configuration named '/etc/passwd' was found in the configured directory
+Flow run encountered an exception: RunValidationError: No sync configuration named 'a/b' was found in the configured directory
+Flow run encountered an exception: RunValidationError: No sync configuration named '--help' was found in the configured directory
+Flow run encountered an exception: RunValidationError: No sync configuration named '$(touch /tmp/pwned)' was found in the configured directory
+```
+
+Every one of the six raises from `execution.py:270` — the `resolve_sync_instance`
+no-match branch — so the tolerant walk found nothing and never constructed a path from the
+requested value. `/etc/passwd` is refused with exactly the wording `nope` gets: the value
+is compared as a string against each discovered configuration's `name` key, never joined
+to the configured directory.
+
+The command-substitution value started no subprocess:
+
+```text
+$ ls -la /tmp/pwned
+ls: /tmp/pwned: No such file or directory
+```
+
+**No new run directory** for any of the seven refused runs — the newest entry under
+`.infrahub-sync-cache/custom-example/` is still T021's follow-up plan at 07:12 local
+(11:12Z), an hour and twenty minutes before this task ran:
+
+```text
+$ ls -latd .infrahub-sync-cache/custom-example/*/ | head -5
+drwxr-xr-x@ 7 blake  staff  224 Jul 31 07:12 .infrahub-sync-cache/custom-example/20260731T1112-40e8cdc2/
+drwxr-xr-x@ 7 blake  staff  224 Jul 31 07:11 .infrahub-sync-cache/custom-example/20260731T1111-3290d1b4/
+drwxr-xr-x@ 7 blake  staff  224 Jul 31 06:58 .infrahub-sync-cache/custom-example/20260731T1058-07e1e25e/
+drwxr-xr-x@ 7 blake  staff  224 Jul 30 15:24 .infrahub-sync-cache/custom-example/20260730T1924-1489db53/
+drwxr-xr-x@ 7 blake  staff  224 Jul 30 14:58 .infrahub-sync-cache/custom-example/20260730T1858-17aa1f1c/
+```
+
+Across all 21 log records of the seven refused runs, the only logger name present is
+`prefect.flow_runs`: **zero bridged `infrahub_sync` lifecycle lines**, because no lifecycle
+ever started.
+
+### DBA-008 live half — canary/secret grep over the collected transcripts
+
+Every request and response of this task was written verbatim to
+`…/scratchpad/t024/transcripts/` — the eight per-leg records (create response, state
+history, flow-run object, per-run log payload), plus whole-server dumps
+`POST /api/flow_runs/filter` (7 runs), `POST /api/logs/filter` (21 records) and
+`POST /api/deployments/filter`. 20 JSON files, 248 177 bytes, plus the serve and server
+process logs. Scanned with `grep -F` for the `INFRAHUB_API_TOKEN` value (read from the
+environment, never echoed):
+
+```text
+$ HITS=$(cat transcripts/*.json serve.log server.log | grep -cF -- "$INFRAHUB_API_TOKEN")
+token-value occurrences: 0
+$ # per-file form, over all 22 files
+TOKEN_SCAN_COMPLETE: NO_TOKEN_VALUE in all 22 scanned files
+```
+
+No credential value appears anywhere in the Prefect-visible surface this task produced:
+flow-run records, parameters, state messages, or log payloads.
+
+### Outcome
+
+DBA-006 satisfied live: `operation=sync` without `confirm_writes` reached FAILED with a
+state message naming the requirement, in 31 ms, before either adapter was constructed, and
+the destination is byte-for-byte the same five objects (same ids) afterward. DBA-007's
+remote form satisfied live: all six SC-004 negative `sync_name` values were refused by
+logical name with no out-of-directory read, no subprocess (`/tmp/pwned` absent), and no run
+directory. Probe d₁ confirmed at 3.8.1: an `operation` outside the `Literal` is rejected
+with **HTTP 409 and no flow run created**. DBA-008's live half satisfied: zero occurrences
+of the credential value across 248 KB of collected REST transcripts.
+
+No live-environment ceiling applies to T024: every leg ran against the real lab.
+
+### Teardown
+
+```text
+$ date -u +%Y-%m-%dT%H:%M:%SZ ; pkill -f "infrahub_sync.orchestration.serve" ; pkill -f "prefect server start"
+2026-07-31T11:37:01Z
+$ lsof -nP -iTCP:4200 -sTCP:LISTEN
+PORT4200_FREE
+$ pgrep -fl "prefect|orchestration.serve"
+NO_PREFECT_PROCS
+$ docker ps --format '{{.Names}} {{.Status}}'
+infrahub-server-1 Up 24 hours (healthy)      # …and the other seven, all "Up 24 hours"
+```
+
+No lab container was stopped, restarted, modified, or exec'd into — all eight report the
+same 24-hour uptime after the task as before it.
+
+**Final destination state — the five devices REMAIN, unchanged**: they are still DBA-005's
+evidence, and their survival across seven refused runs is DBA-006's.
+
+```text
+{"count":5,"names":["core01","core02","core03","edge01","edge02"]}
+```
+
+### Incidental finding — `PREFECT_LOCAL_STORAGE_PATH` does not follow `PREFECT_HOME`
+
+Not a defect in this delivery, recorded because it changed a test fixture. Prefect
+persists a run's result (including a failed run's exception) to
+`settings.results.local_storage_path`, which is resolved from the developer's profile and
+**not** from `PREFECT_HOME`. Measured:
+
+```text
+$ PREFECT_HOME=/tmp/ph-probe uv run python -c "…get_current_settings()…"
+home: /tmp/ph-probe
+local_storage_path: /Users/blake/.prefect/storage      # ← did NOT follow PREFECT_HOME
+$ PREFECT_HOME=/tmp/ph-probe PREFECT_LOCAL_STORAGE_PATH=/tmp/ph-probe/storage uv run python -c "…"
+local_storage_path: /tmp/ph-probe/storage
+```
+
+So the X10 isolation fixture in `tests/orchestration/test_flow.py` now sets
+`PREFECT_LOCAL_STORAGE_PATH` alongside `PREFECT_HOME`. Verified: a full
+`uv run pytest -q` leaves the developer's `~/.prefect/storage` file count unchanged
+(84 → 84). Residue from the runs made before the fixture was fixed — roughly a dozen
+pickled result files written into `~/.prefect/storage` between 11:25Z and 11:37Z by the
+flow-executing unit tests and by this task's serve process — was left in place rather than
+deleted: the directory is shared with the developer's own Prefect use and the files are
+indistinguishable by name. None of them can carry a credential (a successful run's result
+is the seven-key `RunResult` dict; a failed run's is the already-sanitized
+`RunExecutionError`).
