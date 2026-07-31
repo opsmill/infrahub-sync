@@ -66,13 +66,24 @@ prose line itself).
 ### Linters
 
 ```bash
-uv run invoke lint   # exit 1 — NOT exit 0
+uv run invoke lint   # exit 30 — NOT exit 0
 ```
 
-**Discrepancy vs tasks.md T003.** The task text expects exit 0. The measured baseline is
-**exit 1**, and the cause is *not* the pylint warnings the task text anticipated:
-`invoke lint` runs `docs.lint` (rumdl) first, and rumdl fails on three Markdown issues
-in this feature's own committed planning artifacts:
+**Corrected inherited lint baseline — RATIFIED (D014, Blake Ellis, 2026-07-31).**
+The T003 task text expects exit 0. That expectation is wrong: the measured inherited
+baseline is **exit 30**, and it is **INHERITED**, not caused by this run. Cause: pylint
+reports **29 × `C0415`** (`import-outside-toplevel`) across six modules plus
+**1 × `E0213`** (`infrahub_sync/__init__.py:98` — `convert_str_to_enum` should take
+`self`), rating **9.60/10**. Proof that it is inherited: `pylint infrahub_sync/` is
+pylint's only target (`tasks/linter.py:41`), and `git diff main..HEAD -- infrahub_sync/`
+is empty — this run does not touch that directory. The gate for later phases is therefore
+**no regression against exit 30 with that diagnostic set**, not exit 0 (see T039).
+
+**Ordering hazard that masked this.** `invoke lint` runs `docs.lint` (rumdl) FIRST with no
+`warn=True`, so any Markdown lint issue anywhere aborts the chain before
+ruff/pylint/yamllint/ty run at all. At first measurement rumdl failed on three Markdown
+issues in this feature's own committed planning artifacts, which hid the pylint status
+entirely (exit 1 from rumdl, the Python linters never reached):
 
 ```text
 dev/specs/001-prefect-managed-remote-run/spec.md:161:1: [MD076] Unexpected blank line between list items
@@ -84,11 +95,13 @@ Issues: Found 3 issues in 3/70 files (25ms)
 
 These arrived with planning commit `a65f568` ("[Spec Kit] Apply ratified gate
 decisions"); they are absent from `main`, which carries no `dev/specs/001-*` content.
-They are inherited by this chunk, not caused by it. Note that `MD018` on `tasks.md:262`
-is the same prose line `rumdl fmt` corrupts (above), so "just autofix it" is not
-available — flagged upward.
+Note that `MD018` on `tasks.md:262` is the same prose line `rumdl fmt` corrupts (above),
+so "just autofix it" was not available. All three were fixed by hand in this run's own
+spec artifacts, which is what exposed the pylint status; `uv run rumdl check .` is clean
+and must stay clean, because the pylint assertion is meaningless otherwise.
 
-Because rumdl aborts the run, `invoke lint` never reaches the Python linters. Measured
+With rumdl clean the chain reaches the Python linters and stops at pylint (exit 30
+propagates), so yamllint and ty must be asserted by direct invocation. Measured
 individually:
 
 | Task | Exit | Result |
@@ -98,9 +111,12 @@ individually:
 | `linter.lint-yaml` | 0 | clean |
 | `linter.lint-ty` | 0 | `Found 3 diagnostics` |
 
-**Pylint would fail the gate independently of rumdl.** `tasks/linter.py` calls
-`context.run(exec_cmd)` with no `warn=True`, so a non-zero pylint exit propagates. The
-inherited message population over `infrahub_sync/`:
+**Pylint fails the gate independently of rumdl, and that is the corrected baseline
+(exit 30, rating 9.60/10 — D014).** `tasks/linter.py` calls `context.run(exec_cmd)` with
+no `warn=True`, so a non-zero pylint exit propagates. Exit 30 is the bitmask for the
+convention/refactor/warning/error classes present below; the two codes that define the
+ratified baseline set are `C0415` (29) and `E0213` (1). Full inherited message population
+over `infrahub_sync/` — all of it inherited, none of it this run's:
 
 | Code | Count | Meaning |
 |---|---|---|
@@ -114,7 +130,7 @@ inherited message population over `infrahub_sync/`:
 | `R1720` | 1 | `no-else-raise` |
 | `R1705` | 1 | `no-else-return` |
 | `C0412` | 1 | `ungrouped-imports` |
-| `E0213` | 1 | `no-self-argument` — `infrahub_sync/__init__.py:98`, a pydantic validator false positive |
+| `E0213` | 1 | `no-self-argument` — `infrahub_sync/__init__.py:98`, `convert_str_to_enum` should take `self`; part of the ratified inherited baseline set (D014) |
 
 Refinement of the task text: the `import-outside-toplevel` warnings are **not** confined
 to `infrahub_sync/potenda/__init__.py` as T003 states. They span `__init__.py`,
@@ -165,7 +181,7 @@ delegates to `AGENTS.md` via `@AGENTS.md`.
 Post-T001 verification: `uv sync --extra dev` succeeded and
 `uv run pytest -q --collect-only` reported `111 tests collected in 0.47s`.
 
-### T002 open item — `generate` output is not reproducible
+### T002 open item — `generate` output is not reproducible over time
 
 T002's stated verification is "re-run the same command and confirm
 `git status --porcelain examples/` is empty afterward". **This verification fails**, and
@@ -181,26 +197,71 @@ template loops iterate that mapping **unsorted**:
 | `diffsync_adapter.j2` | 26 | `schema.items()` | **server response order** (class body) |
 | `diffsync_models.j2` | 29 | `schema.items()` | **server response order** (whole file) |
 
-So the emitted order tracks whatever order the Infrahub API returns, which is not stable
-across calls. Observed: the committed run produced adapter md5 `a9b76fb…`; every
-subsequent run in this worktree produced `cd9fcda…` — a pure reordering
+So the emitted order tracks whatever order the Infrahub API returns, which holds one value
+for a stretch of calls and then shifts. Observed: the committed run produced adapter md5
+`a9b76fb…`; every subsequent run in this worktree produced `cd9fcda…` — a pure reordering
 (242 insertions / 242 deletions, zero content change). Restoring the exact pre-T002 file
 state and regenerating still yields `cd9fcda…`, so this is not
 previous-file-state dependence; it is response-order dependence. Runs 2–6 were
 byte-identical to each other.
 
-`e04f262` therefore records one honest `generate` run (as mandated) but is **not** a
-fixed point: a fresh `generate` here now produces a 242-line reordering diff. Resolving
-this needs a decision that exceeds this chunk's authority, because the options differ in
-scope and blast radius:
+`e04f262` therefore records one honest `generate` run (as mandated) but is no longer *the*
+fixed point: a fresh `generate` here now produces a 242-line reordering diff. The fixed
+point exists — it has simply moved since T002 was committed. Resolving this needs a
+decision that exceeds this chunk's authority, because the options differ in scope and
+blast radius:
 
 - **A** — add `|sort()` to `diffsync_adapter.j2:26` and `diffsync_models.j2:29`, making
   `generate` deterministic for every user. A real bug fix, but it is source change
   outside Phase 1 and it rewrites generated output repo-wide.
-- **B** — commit the current stable fixed point as a follow-up regeneration commit. Cheap
-  and reversible, but it splits T002 across two commits (the plan binds commit 2 to T002
-  "alone") and still enshrines one server's ordering.
+- **B** — commit the current stable fixed point as a follow-up regeneration commit.
+  **Viable**: cheap and reversible, and it does yield a clean tree. But it splits T002
+  across two commits (the plan binds commit 2 to T002 "alone"), it enshrines one server's
+  ordering, and the clean tree lasts only until the order shifts again.
 - **C** — leave `e04f262` as the baseline-hygiene commit and accept that T002's re-run
   check cannot pass until A lands.
 
-Left at **C** pending orchestrator direction; the working tree is clean at `e04f262`.
+**Resolved — RATIFIED (D014, option C, Blake Ellis, 2026-07-31).** Disposition is
+**report, do not fix**: `infrahub-sync generate` is not idempotent over time, and this is
+an **INHERITED** defect (`git diff main..HEAD -- infrahub_sync/generator/` is empty, so
+the behavior comes from `main`).
+
+**Correction — root's "no fixed point" measurement was malformed and is withdrawn.** An
+earlier pass recorded here that root's later measurement superseded the "runs 2–6
+byte-identical" observation above, and that there was **no stable fixed point** because
+two consecutive `generate` runs differed from each other. That supersession is
+**reversed**: the measurement compared a flattened directory copy in which
+`infrahub/sync_adapter.py` collided with `netbox/sync_adapter.py`, and the collision — not
+the generator — produced the spurious diff. **The worker's observation stands.** Root
+re-ran `generate --name from-netbox --directory examples/` three consecutive times and
+verified pairwise that run1 == run2 == run3, **byte-identical across all four generated
+files**, independently confirming the "runs 2–6 byte-identical" finding.
+
+**The fixed point exists but MOVES.** The committed T002 output (`e04f262`) differs from
+today's stable output by **484 lines across 4 files** (22 + 220 + 22 + 220 — the same
+churn as the 242-insertion / 242-deletion count above, counted as diff lines). The emitted
+order therefore held one value when T002 was generated and committed, and a different —
+internally stable — value hours later. The order is **stable within a window and shifts
+across windows**. The cause of the shift is **unverified**; most plausibly a cold-vs-warm
+server schema cache or a schema reload. It was not tested, because testing it would
+require restarting the lab containers, which is out of bounds for this run.
+
+**Why still C, given that.** Option **B** is **viable, not impossible** — committing the
+current fixed point does produce a clean tree. B was re-offered to the decision-maker
+after root corrected its error, and was **declined**: the clean tree holds only until the
+order shifts again, at which point a clean-tree gate silently starts failing for someone
+who changed nothing. A gate that passes today and fails later without anyone touching the
+generator is worse than one documented as failing — it hides itself. **C** never pretends
+the defect is fixed, so C remains ratified.
+
+Unchanged and still correct: the churn is **ordering only**, at two levels (generated
+model-block order, and member order inside `_attributes` tuples), with **no content lost**
+(20 models and 20 classes in the committed state and in every fresh run, matching
+attribute multisets), and no known correctness impact (diffsync matches attributes by
+name; this feature's canonical plan fingerprint per D001 sorts plan rows explicitly, so it
+is order-insensitive). Option **A** (sorting in the generator, then regenerating all
+checked-in examples) is **deliberately deferred to a separate PR**, tracked as
+`bug-generate-output-is-not-deterministic-across-runs.md` in the planning repo's
+proposed-issues directory. T002 keeps its completed status and its commit `e04f262`;
+T041 records the ~242-line churn relative to whatever is committed and restores it with
+`git checkout -- examples/netbox_to_infrahub/` rather than committing it.
