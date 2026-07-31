@@ -1305,3 +1305,207 @@ deleted: the directory is shared with the developer's own Prefect use and the fi
 indistinguishable by name. None of them can carry a credential (a successful run's result
 is the seven-key `RunResult` dict; a failed run's is the already-sanitized
 `RunExecutionError`).
+
+---
+
+## Phase 6 (US4) live verification — T030, T031
+
+Environment: macOS 25.5.0, Python 3.12.2, Infrahub 1.9.8 at `http://localhost:8000`,
+Prefect 3.8.1, repository root `/Users/blake/repos/opsmill/infrahub-sync-dev-preview`,
+branch `001-prefect-managed-remote-run-local-dp-001`. Credential values are never printed
+anywhere below; only variable NAMES appear.
+
+### T030 — DBA-001 / SC-006: clean venv WITHOUT the extra (quickstart Scenario 0)
+
+Built at 2026-07-31T11:56:19Z in the session scratchpad — the repository's own environment
+was never mutated:
+
+```bash
+uv venv "$SCRATCH/base-venv"
+uv pip install -p "$SCRATCH/base-venv/bin/python" .
+```
+
+```text
+### 1. prefect NOT in the installed distribution list ###
+  (no prefect distribution installed)
+
+### 2. import + sys.modules probe ###
+prefect NOT importable (expected): No module named 'prefect'
+BASE-VENV-OK: package + cli + execution imported, prefect absent
+
+### 3. infrahub-sync --help ###
+ Usage: infrahub-sync [OPTIONS] COMMAND [ARGS]...
+ Infrahub-sync: synchronize data between infrastructure sources and destinations.
+exit=0
+
+### 4. infrahub-sync list --directory examples/ ###
+INFO | infrahub_sync.cli | from-netbox | netbox >> infrahub | examples/netbox_to_infrahub
+… 14 configurations listed, including
+INFO | infrahub_sync.cli | custom-example | mockdb >> infrahub | examples/custom_adapter
+
+### 5. infrahub-sync diff --help (the refactored command loads) ###
+ Usage: infrahub-sync diff [OPTIONS]
+```
+
+The probe script imported `infrahub_sync`, `infrahub_sync.cli` AND
+`infrahub_sync.execution` and asserted its own `sys.modules` carries no `prefect*` entry;
+a subsequent `import prefect` failed loudly with `ModuleNotFoundError`. Completed
+2026-07-31T11:56:36Z. **DBA-001 / SC-006 PASS** — the base install imports and the CLI
+runs, including the two commands this phase refactored, with Prefect unavailable.
+
+### T031 — DBA-009 / SC-007: CLI `diff` versus remote `operation=plan`
+
+**Destination reset (authorised by R-3 — the lab destination is disposable).** With the
+five `InfraDevice` objects left by T021 in place, both sides would have reported
+`no-change`, which is a degenerate oracle. So the destination was returned to zero first.
+
+Before, 2026-07-31T11:56:59Z — `count: 5`, deleted by id via `InfraDeviceDelete`:
+
+| name | id | delete |
+|---|---|---|
+| core01 | `18c75b6f-d370-b3dd-3049-c514cc4183d7` | `ok: true` |
+| core02 | `18c75b6f-f65f-5899-304f-c51c92c7d7f1` | `ok: true` |
+| core03 | `18c75b70-00ea-cab4-3048-c512dfb97231` | `ok: true` |
+| edge01 | `18c75b70-038a-1574-304c-c517ce1592df` | `ok: true` |
+| edge02 | `18c75b70-05cb-56a2-3045-c518258d60fe` | `ok: true` |
+
+After, 2026-07-31T11:57:08Z: `{"data": {"InfraDevice": {"count": 0}}}`. No `infrahub-*`
+container was stopped, restarted, modified, or exec'd into; only the GraphQL API was used.
+
+**Leg 1 — CLI `diff`**, 2026-07-31T11:57:12Z, MockDB fixture unmodified:
+
+```bash
+uv run infrahub-sync diff --name custom-example --directory examples/
+```
+
+```text
+INFO | infrahub_sync.execution |
+InfraDevice
+  InfraDevice: core01 MISSING in Infrahub
+  InfraDevice: core02 MISSING in Infrahub
+  InfraDevice: core03 MISSING in Infrahub
+  InfraDevice: edge01 MISSING in Infrahub
+  InfraDevice: edge02 MISSING in Infrahub
+INFO | infrahub_sync.execution | Cached run 20260731T1157-7e78e2c4 at …/.infrahub-sync-cache/custom-example/20260731T1157-7e78e2c4
+```
+
+**Leg 2 — remote `operation=plan`** on the same still-zero destination. Port 4200 was
+verified free before starting; `PREFECT_HOME` and `PREFECT_LOCAL_STORAGE_PATH` both pointed
+inside the scratchpad; served from the repository root with
+`INFRAHUB_SYNC_CONFIG_DIRECTORY="$PWD/examples/custom_adapter"`.
+
+```text
+server healthy      2026-07-31T11:57:30Z   GET /api/health → true
+deployment READY    2026-07-31T11:57:44Z   c5888d04-7c87-40bf-9144-3394d3a72443
+flow run created    2026-07-31T11:57:52Z   19aefcb4-3410-45a3-a932-09e51879fbf6  (SCHEDULED)
+                    {"parameters": {"sync_name": "custom-example", "operation": "plan"}}
+terminal state      2026-07-31T11:58:01Z   COMPLETED
+```
+
+Flow-run log (via `POST /api/logs/filter`), closing lines:
+
+```text
+2026-07-31T11:58:01.610960Z [20] infrahub_sync.execution |
+InfraDevice
+  InfraDevice: core01 MISSING in Infrahub
+  … core02, core03, edge01, edge02 …
+2026-07-31T11:58:01.612233Z [20] infrahub_sync.execution | Cached run 20260731T1158-154693d8 at …/.infrahub-sync-cache/custom-example/20260731T1158-154693d8
+2026-07-31T11:58:01.612978Z [20] run 20260731T1158-154693d8 finished: status=planned changed=True summary=create:5,update:0,delete:0 artifact=…/20260731T1158-154693d8
+```
+
+**Comparison.** Both run directories, both `run.json` files, and the canonical fingerprint
+computed by the shared helper (`cache.fingerprint.compute_plan_fingerprint`, never a
+reimplementation) over each:
+
+```text
+### run.json — CLI diff (…/custom-example/20260731T1157-7e78e2c4/run.json) ###
+{ "finished_at": "2026-07-31T11:57:14.713279+00:00", "mode": "diff",
+  "status": "dry-run", "summary": { "resources": 1 } }
+
+### run.json — remote plan (…/custom-example/20260731T1158-154693d8/run.json) ###
+{ "finished_at": "2026-07-31T11:58:01.611756+00:00", "mode": "diff",
+  "status": "dry-run", "summary": { "resources": 1 } }
+
+### result fields + canonical fingerprints ###
+cli-diff     run_id=20260731T1157-7e78e2c4
+             status=planned changed=True summary={'create': 5, 'update': 0, 'delete': 0}
+             fingerprint=669cdb370f8a3c6e0c91b78a18ba03999901ae57e0d38f0b8b4b8778f32c2780
+remote-plan  run_id=20260731T1158-154693d8
+             status=planned changed=True summary={'create': 5, 'update': 0, 'delete': 0}
+             fingerprint=669cdb370f8a3c6e0c91b78a18ba03999901ae57e0d38f0b8b4b8778f32c2780
+
+fingerprints equal: True
+```
+
+The remote side's `status` / `changed` / `summary` are the flow's own reported
+`RunResult` values (the summary log line above). The CLI discards its `RunResult`, so its
+three fields were derived from its materialized plan rows through the same shared helper
+the surface uses (`execution._summarize_rows` over `cache.parquet_io.read_plan`) — the
+same rows `write_plan` received. Both `run.json` files are byte-identical apart from their
+timestamps. **DBA-009 / SC-007 PASS.**
+
+### Teardown
+
+```text
+2026-07-31T11:58:31Z
+$ pkill -f "infrahub_sync.orchestration.serve"    # exit 0
+$ pkill -f "prefect server start"                 # exit 0
+$ pgrep -fl prefect
+  none
+$ lsof -ti :4200
+  free
+$ docker ps --format '{{.Names}} {{.Status}}'
+infrahub-server-1 Up 24 hours (healthy)           # …and the other seven, all "Up 24 hours"
+```
+
+**Final destination state: ZERO `InfraDevice` objects** — the five were deleted for the
+reset above and both compared runs are read-only previews, so nothing recreated them.
+`{"data": {"InfraDevice": {"count": 0}}}` at 2026-07-31T11:58:31Z. T021's DBA-005 write
+evidence is unaffected (it is the transcript recorded in Phase 4, not the live rows); a
+future run needing the five present must re-run `operation=sync` with
+`confirm_writes=true`.
+
+### DBR-009 deviation found and NOT resolved — the rendered logger NAME (open decision)
+
+Byte-comparing the CLI's observable output before and after the refactor (same fake
+engine, same fixture, normalized timestamps and paths) shows exactly one difference, in
+both directions of the moved lifecycle lines:
+
+```diff
+ ===== diff exit=0 =====
+-INFO | infrahub_sync.cli |
++INFO | infrahub_sync.execution |
+ DIFF-BODY
+-INFO | infrahub_sync.cli | Cached run test-run at <CACHE>/from-netbox/test-run
++INFO | infrahub_sync.execution | Cached run test-run at <CACHE>/from-netbox/test-run
+```
+
+Everything else is identical: level, message text, ordering, exit codes, and `run.json`
+contents (`status`, `mode`, `summary`, `finished_at` fields all unchanged — see the
+comparison above).
+
+The cause is structural, not incidental. `cli.py`'s `_setup_logging` formatter is
+`"%(levelname)s | %(name)s | %(message)s"`, so the record's origin logger name is
+rendered; the lifecycle log calls now execute in `infrahub_sync/execution.py`, which logs
+via `logging.getLogger(__name__)` per the binding logging convention (tasks.md line 18)
+and as already built by T005–T008.
+
+It is not resolvable inside T025/T026's pinned structures, which are silent on the logger
+name — nothing `cli.py` can do changes a record emitted by another module. The three
+available resolutions all touch ratified ground:
+
+1. **Accept the deviation** and scope DBR-009's "log lines" to level + message + ordering.
+   Costs nothing; makes the byte-identity claim non-absolute.
+2. **Make `execution.py` log through `logging.getLogger("infrahub_sync.cli")`.** Restores
+   byte-identity, but contradicts tasks.md line 18, misnames the module for the flow
+   caller, breaks the six `caplog.at_level(..., logger="infrahub_sync.execution")`
+   assertions already passing in `tests/test_execution_surface.py`, and contradicts the
+   T019/T021/T024 live evidence above, which records `infrahub_sync.execution` as the
+   origin logger name in the Prefect run log.
+3. **Add a caller-supplied logger seam to `execute_run`.** New surface not in
+   `contracts/execution-surface.md` — a contract change.
+
+Left as implemented (option 1's behavior) and surfaced as an open decision rather than
+silently accepted or silently "fixed". Everything else DBR-009 names is proven identical:
+`tests/test_cli_execution_mapping.py`'s nine per-stage tests pass UNMODIFIED against both
+`9edc1bc`'s `cli.py` and the refactored one, and the DBA-009 population passes unmodified.
