@@ -61,9 +61,10 @@ def infrahub_sync_run(
     """Run one Infrahub Sync plan or explicitly confirmed sync via the shared surface.
 
     EXACTLY these four parameters (DBR-003); no parameter accepts paths, CLI
-    fragments, credentials, or environment overrides (DBR-005/006). Returns
-    dataclasses.asdict(RunResult) on success; raises RunValidationError /
-    RunExecutionError on failure so Prefect records the run FAILED (DBR-015).
+    fragments, credentials, or environment overrides (DBR-005/006). Returns an
+    asdict-SHAPED seven-key dict built explicitly (never dataclasses.asdict —
+    see body step 4 / X15); raises RunValidationError / RunExecutionError on
+    failure so Prefect records the run FAILED (DBR-015).
     """
 ```
 
@@ -85,11 +86,27 @@ Contractual body behavior, in order:
    (`"run %s finished: status=%s changed=%s summary=create:%d,update:%d,delete:%d artifact=%s"`)
    so DBA-003's plan summary is remotely observable in the run log. This line is the
    **supported remote observation surface** for the run result (X7): its format is
-   contractual (never a Python dict repr), its fields mirror `RunResult`
-   (`status`, `changed`, the three `summary` counts, `artifact_path`), and remote
-   callers may parse it. Any format change is a breaking contract change.
-4. Return `dataclasses.asdict(result)` (with `summary` materialized as a plain
-   `dict` — the result's mappingproxy is not deep-copyable).
+   contractual (never a Python dict repr) and remote callers may parse it. Every
+   substitution is pinned — **the leading `%s` is `result.run_id`** (X18), followed by
+   `status`, `changed`, the three `summary` counts, and `artifact_path`, so six of
+   `RunResult`'s seven fields appear on the line. Any format change is a breaking
+   change for consumers of this preview; a future API brief supersedes it via the
+   owned contract's extend-not-fork rule (F11) rather than by silently reformatting.
+4. Return an **asdict-shaped dict** built by EXPLICIT seven-key construction
+   (binding — X15):
+
+   ```python
+   # NOT dataclasses.asdict(result): asdict() deep-copies field values, and the
+   # E14 `summary` mappingproxy is not deep-copyable — root-probed, it raises
+   # TypeError: cannot pickle 'mappingproxy' object, so the flow's success path
+   # would fail at return time. Do not "simplify" this back to asdict().
+   out = {f.name: getattr(result, f.name) for f in dataclasses.fields(result)}
+   out["summary"] = dict(result.summary)
+   return out
+   ```
+
+   The shape is a shallow seven-key dict with `summary` as a plain `dict` — exactly
+   what T016 asserts, so T016 needs no change.
 
 The flow calls the execution surface **in-process**; it never spawns the CLI
 (DBR-008). Exceptions propagate: Prefect marks the flow run FAILED and stores the
@@ -157,6 +174,19 @@ class RunLoggerBridge(logging.Handler):
   the handler. Only with both does forwarding become independent of operator-set
   Prefect logging environment variables and ambient root-logger configuration
   (spec clarification #4 / D004; verified by T016's root-at-WARNING case).
+- **Process-isolation assumption (stated, not assumed — E21)**: attaching the handler
+  and setting the level mutate PROCESS-GLOBAL logging state, which is safe only
+  because each flow run occupies its own process — the preview's default served
+  behavior (`flow.serve(...)` runs each flow run in a subprocess). Concurrent
+  same-process flow runs would race on the `infrahub_sync` logger: two runs of
+  DIFFERENT configurations are not excluded by the per-configuration pipeline lock, so
+  they would cross-attach bridges (one run's records, including adapter detail,
+  forwarded into the other run's Prefect log) and one run's `finally` would restore the
+  level under the other. In-process concurrent execution is OUT OF SCOPE for this
+  preview; if a later brief runs flows in-process, the bridge must key on the current
+  run and the level mutation must be reference-counted. Worth one confirmation with the
+  existing probe rig (submit two concurrent runs of two configurations, confirm
+  distinct PIDs); probe c₁ was a single run.
 - Probe c₁ evidence: a child-logger record (`probe_pkg.potenda`) forwarded this way is
   returned by `POST /api/logs/filter` for the flow run, name preserved in the message.
 - Records are forwarded at the run's effective level (INFO and above by default —
@@ -176,7 +206,7 @@ request corpus documents (and what DBA-008 scans).
 | Create run | `POST /api/deployments/{id}/create_flow_run` body `{"parameters": {"sync_name": "custom-example", "operation": "plan"}}` | `201/200` with flow-run `id` **synchronously** (state `SCHEDULED`) — SC-001's "identifier in the synchronous response" |
 | Observe state | `GET /api/flow_runs/{id}` | `state.type` progresses to `COMPLETED` (probe b: ~7 s) or `FAILED`; `state.message` carries the sanitized failure cause |
 | Read logs | `POST /api/logs/filter` body `{"logs": {"flow_run_id": {"any_": ["{id}"]}}}` | Array of records incl. bridged `infrahub_sync` lifecycle lines (probe c₁/c₂) |
-| Read the result | same `POST /api/logs/filter` response — locate the flow's summary line | The §2-step-3 summary line with its FIXED key=value format (`... summary=create:N,update:N,delete:N ...`) is the supported remote carrier of the RunResult fields (X7); result retrieval via Prefect result persistence is NOT part of this preview's contract |
+| Read the result | same `POST /api/logs/filter` response — locate the flow's summary line | The §2-step-3 summary line with its FIXED key=value format (`... summary=create:N,update:N,delete:N ...`) is the supported remote carrier of the RunResult fields (X7; leading `%s` = `run_id`, X18) — its stability is scoped to THIS PREVIEW, and a future API brief supersedes it via the owned contract's extend-not-fork rule (F11); result retrieval via Prefect result persistence is NOT part of this preview's contract |
 | Invalid `operation` | same create-run call with `"operation": "apply"` | **`409`**, body `{"detail": "Error creating flow run: Validation failed for field 'operation'. Failure reason: 'apply' is not one of ['plan', 'sync']"}` — **no flow run object is created** (probe d₁; satisfies spec edge case 1 in its strongest form: no RunResult, no log lines, no run directory) |
 
 ## 6. Import boundary (DBR-010 / DBA-001 / SC-006)

@@ -45,9 +45,15 @@ Binding properties (all asserted by DBA-010's result-schema tests):
    materialized row list (the same rows written to `plan.parquet`), never by
    re-reading the file (single-source derivation, execute_run step 7 / D009-adjacent
    E8 remediation).
-5. The Prefect flow returns `dataclasses.asdict(RunResult)` with `summary`
-   materialized as a plain `dict` (a mappingproxy is not deep-copyable); the typed
-   object itself is the surface-level contract.
+5. The Prefect flow returns an **asdict-shaped dict** built by explicit seven-key
+   construction — `{f.name: getattr(result, f.name) for f in dataclasses.fields(result)}`
+   with `summary` replaced by `dict(result.summary)` — and **never**
+   `dataclasses.asdict(result)`: `asdict()` deep-copies field values and the E14
+   `summary` mappingproxy is not deep-copyable, so the call raises
+   `TypeError: cannot pickle 'mappingproxy' object` (root-probed) and would fail
+   every successful run at return time (X15). The reason is recorded inline at the
+   construction site so nobody simplifies it back. The typed object itself remains
+   the surface-level contract.
 
 ## 2. Failure classes
 
@@ -70,8 +76,13 @@ class RunExecutionError(Exception):
     """Adapter or engine failure after validation passed.
 
     Qualifying causes include:
-      - missing runner-environment credentials (raised at adapter initialization,
-        naming the missing input)
+      - missing runner-environment credentials (raised at adapter initialization;
+        the `run_remote_request` wrap message names the missing input — for the
+        infrahub adapter the variables `INFRAHUB_ADDRESS` and
+        `INFRAHUB_API_TOKEN`, by NAME only, never a value. D012 option A: the
+        naming is added at the remote wrap boundary, NOT in
+        `infrahub_sync/adapters/infrahub.py`, which this delivery leaves
+        untouched so DBR-009's CLI byte-identity stays absolute)
       - unreachable source/destination systems
       - a nonexistent Infrahub branch (surfaces from the adapter/engine phase)
       - pipeline-lock contention (existing 60 s acquisition timeout elapsed — bounded,

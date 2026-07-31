@@ -26,17 +26,27 @@ attempted — the single gate the spec's informed default defines):**
    is required to run `operation=sync`.
 3. `sync_name` resolution — surface-level; no exact match under the configured
    directory → `RunValidationError` naming the logical name and the fact that it was
-   not found (never echoing directory contents).
+   not found (never echoing directory contents). When the walk skipped N > 0 files
+   whose name was undeterminable (step 4), the same message additionally states that
+   N file(s) could not be read — the count only — so a typo is distinguishable from a
+   broken configuration.
 4. Resolved-configuration readability/validity — `resolve_sync_instance` performs a
    tolerant per-file walk (D010; same `**/config.yml` glob and exact-name match as the
    CLI lookup, but per-file error handling instead of `get_all_sync`'s eager
-   validate-everything pass): an unreadable/invalid file whose raw `name:` does NOT
-   match the request is skipped with a WARNING naming that file (path only), so one
-   broken neighbor never blocks other names; a file whose raw `name:` matches the
-   request but is broken/invalid (or unreadable where the name may live) →
-   `RunValidationError` naming the logical name and the file path ONLY — the parse
-   detail is never chained verbatim, and file contents or credential values are never
-   printed.
+   validate-everything pass). **Name extraction (E17)**: each discovered file is read
+   and parsed with `yaml.safe_load`; the file's name is the top-level `name` key of the
+   loaded mapping (`data.get("name")`), and is **UNDETERMINABLE** when the read raises
+   `OSError`, the parse raises `yaml.YAMLError`, or the loaded object is not a mapping.
+   The three resulting states are decidable and disjoint:
+   - name determinable **and equal** to the request → validate as `SyncConfig`; on
+     failure → `RunValidationError` naming the logical name and the file path ONLY,
+     the parse detail never chained verbatim (pydantic's `input_value` echo can leak
+     file contents, including inline secrets the redactor never collected);
+   - name determinable **and different** (including a mapping with no/non-string
+     `name`, which can never equal the request) → skipped silently (DEBUG at most);
+   - name **UNDETERMINABLE** → skipped with a WARNING naming the file path ONLY,
+     counted, and resolution continues — one broken neighbor never blocks other
+     names, and a bad-YAML file can never be "the matched one".
 
 **Engine options pinned for remote runs** (CLI defaults at `9edc1bc`): full extract
 (`full_extract=True`), concurrent side load (`concurrent_load=True`), rowcount
@@ -121,8 +131,9 @@ name from **one** server-configured directory:
   serving process at startup; missing or non-directory value → serve process exits with
   an error naming the variable before any deployment is served.
 - The directory path is fixed at serve start; its **contents** are re-resolved on every
-  run (`get_all_sync` re-globs `**/config.yml`), so add/edit/remove takes effect next
-  run without re-serving.
+  run (`resolve_sync_instance` re-walks `**/config.yml` per run via the D010 tolerant
+  per-file walk — NOT `get_all_sync`, which §1 step 4 forbids on this path), so
+  add/edit/remove takes effect next run without re-serving.
 
 ## 5. Canonical plan fingerprint (new derived value)
 
@@ -175,5 +186,6 @@ plan lifecycle: load → diff → write_plan → run.json dry-run ─▶ RunResu
 sync lifecycle: load → guardrail → diff → write_plan → [sync if diffs] → baseline →
                 run.json applied ─▶ RunResult(applied|no-change)
       │
-      ▼ flow COMPLETED, returns asdict(RunResult)
+      ▼ flow COMPLETED, returns the asdict-SHAPED seven-key dict (explicit
+        construction, never dataclasses.asdict — X15)
 ```

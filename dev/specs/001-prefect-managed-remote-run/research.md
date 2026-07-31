@@ -154,6 +154,38 @@ empty; `pgrep -fl "prefect|probe_flow"` empty.
 | Flow return value | The flow returns `dataclasses.asdict(RunResult)` | JSON-friendly for Prefect state/result surfaces; the typed `RunResult` contract is asserted at the execution surface (DBA-010) | Returning the frozen dataclass itself (works in-process but serializes less predictably) |
 | Secret redaction | `execution.py` collects candidate secret values (env `INFRAHUB_API_TOKEN`; values of `token`/`password`/`secret`/`api_key` keys in resolved adapter settings) and replaces occurrences in outgoing exception messages with `***` | Implements the failure contract's "sanitized" obligation mechanically; verifiable by DBA-008 canary scan | Regex-based heuristics (false negatives on unknown formats; value-based replacement is exact for the seeded canary) |
 
+### Round-2 notes on the rows above (2026-07-30; append-only — the original probe records are left as written, E20)
+
+These three rows record the mechanisms as first designed. Where a later finding
+sharpened a mechanism, the **binding** version now lives in the contracts; the row
+above is kept for the rationale and the alternatives it rejected, not as the
+implementation instruction.
+
+- **Log bridging** — superseded in mechanism by **E4** (inside D004): attaching the
+  handler is not sufficient, because a handler never defeats `Logger.isEnabledFor`
+  and the `infrahub_sync` hierarchy is level-`NOTSET` outside the CLI. The flow now
+  owns the source logger's **LEVEL as well as the handler**: capture
+  `logging.getLogger("infrahub_sync").level`, set `logging.INFO` before the surface
+  call, restore the captured level in the same `finally` that removes the handler.
+  Binding text: `contracts/prefect-flow.md` §2 steps 1–2 and §4; tasks T014/T016.
+  The rejected alternative (`PREFECT_LOGGING_EXTRA_LOGGERS`) is unchanged.
+- **Secret redaction** — superseded in scope by **E10** and **E5**. E10: the
+  candidate set is collected by env-variable **NAME pattern** — at minimum
+  `INFRAHUB_API_TOKEN`, plus the value of every variable whose name matches
+  `*_TOKEN`/`*_PASSWORD`/`*_SECRET`/`*_API_KEY` (DBR-006 routes adapter credentials
+  such as `NETBOX_TOKEN` through the runner environment, outside the resolved
+  settings) — in addition to the secret-valued settings keys the row names. E5:
+  redaction covers the **WHOLE cause chain** at the wrap point, not just the wrapper
+  message, because a traceback renders every `__cause__`/`__context__` message.
+  Binding text: `contracts/run-result-and-errors.md` §2; tasks T005/T010/T022.
+- **Flow return value** — superseded in mechanism by **X15**: `dataclasses.asdict`
+  deep-copies field values and the E14 `summary` mappingproxy is not deep-copyable
+  (`TypeError: cannot pickle 'mappingproxy' object`, root-probed). The flow returns
+  an **asdict-SHAPED** seven-key dict built by explicit construction instead. Binding
+  text: `contracts/prefect-flow.md` §2 step 4; `contracts/run-result-and-errors.md`
+  §1 point 5; tasks T014. The row's rationale (JSON-friendliness) and rejected
+  alternative (returning the frozen dataclass) are unaffected.
+
 ## Version facts (installed and verified in the probe venv)
 
 | Package | Version | Why it matters |

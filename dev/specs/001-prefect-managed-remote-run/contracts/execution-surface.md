@@ -78,26 +78,53 @@ def resolve_sync_instance(sync_name: str, *, directory: str) -> "SyncInstance":
     NEVER used to construct a filesystem path; traversal-shaped or command-like
     values therefore fail exactly like unknown names.
 
-    Per-file behavior (binding):
+    Name extraction (binding, E17 — the rules below are decidable only because
+    this mechanism is fixed): for each discovered ``config.yml``, read the file
+    and parse it with ``yaml.safe_load``. The file's name is
 
-    - A file that fails to read or parse and whose raw ``name:`` does NOT match
-      the request is skipped with a WARNING log naming the offending file (path
-      only, never contents), and resolution continues.
-    - A file whose raw ``name:`` matches the request but whose content is invalid
-      — or a file that is unreadable where the name may live — raises
-      RunValidationError naming the logical name and the file path ONLY. The
-      original parse detail is never chained verbatim (pydantic's
-      ``input_value=...`` echo can carry that file's contents, including inline
-      secrets the redactor never collected).
+    - **determinable** when the read and the parse both succeed AND the loaded
+      object is a mapping: the name is the value of the top-level ``name`` key
+      (``data.get("name")``). A mapping with no ``name`` key, or a ``name`` that
+      is not a string, yields a value that can never equal the requested string,
+      so such a file is *determinable-and-different*;
+    - **UNDETERMINABLE** when the read raises ``OSError``, the parse raises
+      ``yaml.YAMLError``, or the loaded object is not a mapping.
+
+    Per-file behavior (binding — total and disjoint over the three states above;
+    exactly one rule applies to every discovered file):
+
+    1. **Determinable AND equal to the request** — this is *the matched file*.
+       Validate its parsed data as ``SyncConfig`` and return the resulting
+       ``SyncInstance``. If validation fails, raise RunValidationError naming the
+       logical name and the file path ONLY; the original parse detail is never
+       chained verbatim (pydantic's ``input_value=...`` echo can carry that
+       file's contents, including inline secrets the redactor never collected).
+    2. **Determinable AND different from the request** — skipped silently (a
+       DEBUG line at most); this is the ordinary case for every other
+       configuration in the directory.
+    3. **UNDETERMINABLE** (unreadable file, YAML error, non-mapping document) —
+       skipped with a WARNING naming the file path ONLY (never contents, never
+       the exception's rendered detail), counted, and resolution CONTINUES. An
+       unreadable neighbor can therefore never block resolution of another name,
+       and a bad-YAML file can never be "the matched one" — it has no
+       determinable name to match with.
+
+    Terminal error when no file matched (binding): raise the ordinary unknown-name
+    RunValidationError naming the logical name. When the walk skipped N > 0
+    UNDETERMINABLE files, that message must additionally state that N file(s) in
+    the directory could not be read (the COUNT only — never names, paths beyond
+    the WARNING lines, or contents), so the operator can tell a typo from a broken
+    configuration.
 
     The CLI keeps calling `utils.get_instance` directly (caller-obligations
     table); CLI resolution behavior is unchanged.
 
     Raises:
         RunValidationError: no configuration with that logical name exists under
-            `directory`, or the matched config.yml is unreadable/invalid (message
-            names the logical name and may name the offending file path, but never
-            file contents or credential values).
+            `directory` (message names the logical name and, when applicable, the
+            count of unreadable files), or the matched config.yml failed
+            `SyncConfig` validation (message names the logical name and the file
+            path, never file contents or credential values).
     """
 
 
@@ -145,6 +172,41 @@ def execute_run(
        factory failures (`ValueError`, `ImportError`, ...) propagate with their
        original types. The CLI preserves today's prefixed abort by passing a wrapper
        factory (see "Failure semantics"); run_remote_request wraps for remote callers.
+
+       **Pinned call shape (binding — E23)**: `execute_run` calls the factory with
+       ALL SEVEN keyword arguments of `utils.get_potenda_from_instance`, always
+       explicitly, for BOTH operations:
+
+       ```python
+       ptd = potenda_factory(
+           sync_instance=sync_instance,
+           branch=branch,
+           show_progress=show_progress,
+           verbosity=verbosity,
+           run_id=run_id,
+           continue_on_error=continue_on_error,
+           concurrent_load=concurrent_load,
+       )
+       ```
+
+       Today's two commands pass DIFFERENT subsets (`diff` omits
+       `continue_on_error`, `cli.py:131-138`; `sync` omits `run_id`,
+       `cli.py:229-236`), and the omitted values default to exactly what the surface
+       now passes explicitly (`continue_on_error=False`, `run_id=None`) — so
+       `utils.get_potenda_from_instance` behaves identically and the DBA-009
+       population (which asserts nothing about factory kwargs) is unaffected. A
+       custom or fake factory does see the difference, hence the pin. The CLI's
+       wrapper factory adapts by forwarding `**kwargs` unchanged, so both CLI
+       commands and the remote path produce the same call.
+
+       Immediately after the factory returns, and BEFORE any RunFile is built:
+       set `ptd.force_full_extract = full_extract`, then reproduce today's guard
+       verbatim (`cli.py:143-145` / `241-243`, E22) —
+       `if ptd.run_dir is None: raise RuntimeError("get_potenda_from_instance did
+       not allocate a run_dir")`. It is load-bearing twice: the message is part of
+       today's observable behavior for a misbehaving factory, and it narrows
+       `Potenda.run_dir: Path | None` (`potenda/__init__.py:51`) so
+       `ptd.run_dir / "run.json"` type-checks under T039's ty gate.
     4. `operation="plan"`: reproduce the CLI diff lifecycle byte-for-byte in behavior —
        RunFile(mode="diff", status "running"), force_full_extract, load_both_sides,
        diff, write_plan, log the diff string (same logger semantics as today),
@@ -164,10 +226,14 @@ def execute_run(
        pattern, verbatim: `except Exception: run_file.status = "failed";
        run_file.save(); raise` — a broad mark-and-rethrow with a bare re-raise of
        the ORIGINAL exception (today's `cli.py:156-159` / `285-288`). This broad
-       except is the preserved existing pattern, documented as such at the site
-       with a targeted `# noqa: BLE001`; it is not new looseness (D009; plan
-       Constitution Check row IV). run.json can therefore never be left at
-       `status="running"` by a lifecycle failure.
+       except is the preserved existing pattern, documented as such by a comment
+       at the site; it is not new looseness (D009; plan Constitution Check
+       row IV). **No `# noqa: BLE001` is added** (binding): ruff's BLE001 does
+       not fire on a blind `except` whose handler re-raises — probed in this repo
+       with `uv run ruff check`, the pattern is clean with NO suppression — and
+       adding the directive makes ruff report `RUF100 Unused noqa directive` and
+       exit 1, which would fail T039's lint gate. run.json can therefore never be
+       left at `status="running"` by a lifecycle failure.
     7. On success, return RunResult derived per data-model.md §2 — single-source
        derivation (binding): `summary`, `changed`, and `status` ALL derive from the
        one in-memory materialized plan-row list (`ptd._diff_to_rows(diff)` or an
@@ -193,14 +259,26 @@ def run_remote_request(
     branch: str | None = None,
     *,
     config_directory: str,
+    # Private test seams (E18/X17) — mirroring execute_run's. NOT part of the remote
+    # contract: the Prefect flow NEVER sets them (it calls this function with request
+    # parameters only), no remote caller can reach them, and they carry no meaning in
+    # the deployment's parameter schema. They exist so tests that must drive the REAL
+    # sanitize-and-wrap boundary can inject a fake engine or shorten the lock wait
+    # instead of improvising a monkeypatch target (T011/T022/T023/T029).
+    _potenda_factory: PotendaFactory | None = None,  # forwarded as execute_run's potenda_factory
+    _lock_timeout: float = 60.0,  # forwarded as execute_run's _lock_timeout
 ) -> RunResult:
     """Composition used by the Prefect flow (and any programmatic remote-shaped caller).
 
     resolve_sync_instance(sync_name, directory=config_directory) then execute_run(...)
     with EVERY engine option left at its 9edc1bc CLI default EXCEPT
-    `show_progress=False` (progress display disabled on remote runs); the private
-    seams are never set. No parameter of this function accepts paths, CLI fragments,
-    credentials, or environment overrides.
+    `show_progress=False` (progress display disabled on remote runs) and except the
+    two private seams above, which are forwarded verbatim to `execute_run`
+    (`potenda_factory=_potenda_factory`, `_lock_timeout=_lock_timeout`) and default
+    to exactly the production values. `_serial_load_error` is never set (CLI-only).
+    No PUBLIC parameter of this function accepts paths, CLI fragments, credentials,
+    or environment overrides, and the private seams are sanctioned test seams only —
+    never set by the flow.
 
     THE sanitize-and-wrap boundary (D009): this function — and only this function —
     converts failures into the typed remote contract:
@@ -209,7 +287,16 @@ def run_remote_request(
       propagates unchanged (already sanitized at raise).
     - `filelock.Timeout` → RunExecutionError naming the sync name and the timeout.
     - Factory `ValueError` → RunExecutionError whose message preserves today's CLI
-      wording ("Failed to initialize the Sync Instance: ...").
+      wording ("Failed to initialize the Sync Instance: ..."). **Missing-credential
+      case (D012 option A, binding)**: when the wrapped cause is an adapter
+      missing-credential refusal, THIS wrap message additionally names the
+      runner-environment variables the operator must set — for the infrahub
+      adapter `INFRAHUB_ADDRESS` and `INFRAHUB_API_TOKEN`, by NAME only, never a
+      value. The naming lives here, at the remote boundary, precisely so the
+      adapter modules stay untouched: `infrahub_sync/adapters/infrahub.py` is NOT
+      modified by this delivery, and DBR-009's CLI byte-identity therefore holds
+      absolutely (the adapter's own message still flows unchanged through the
+      CLI's prefixed abort).
     - Factory/adapter `ImportError` → RunExecutionError naming the adapter import
       failure.
     - Every other exception escaping execute_run → RunExecutionError with a
@@ -221,8 +308,15 @@ def run_remote_request(
     with its redacted text inlined — so that NO traceback rendering of the raised
     error contains an unredacted original message. The broad catch this boundary
     requires is a translation, not suppression: caught broadly, ALWAYS re-raised
-    typed, never swallowed, with a targeted `# noqa: BLE001` (D009; plan
-    Constitution Check row IV).
+    typed, never swallowed, and documented as such by a comment at the site
+    (D009; plan Constitution Check row IV). **No `# noqa: BLE001` is added here
+    either** (binding): BLE001 does not fire on
+    `except Exception as exc: raise RunExecutionError(msg) from exc` — probed in
+    this repo with `uv run ruff check`, clean with NO suppression — and adding the
+    directive makes ruff report `RUF100 Unused noqa directive` and exit 1,
+    failing T039's lint gate. A suppression directive is never added
+    speculatively at either broad-except site; what ruff reports for the code as
+    written is the arbiter.
     """
 ```
 
@@ -232,7 +326,7 @@ def run_remote_request(
 |---|---|---|
 | `cli.py::diff_cmd` | resolves instance via its existing `get_instance` path (name **or** config_file — CLI-only flexibility), applies `adapter_path` merging, then `execute_run(instance, operation="plan", confirm_writes=False, branch=..., show_progress=..., verbosity=..., run_id=..., concurrent_load=..., full_extract=..., potenda_factory=<CLI wrapper factory — see Failure semantics>)` | Exit codes, log lines, run.json contents identical; `--full-extract`, `--show-progress`, `--run-id`, `--concurrent-load` pass through; factory `ValueError` → today's prefixed abort at the site; every lifecycle failure → today's uncaught original-type traceback |
 | `cli.py::sync_cmd` (serial branch only: `--no-parallel`, or `--parallel` with explicit `order:`) | same resolution, then `execute_run(instance, operation="sync", confirm_writes=True, print_diff=<--diff>, allow_rowcount_drop=..., continue_on_error=..., potenda_factory=<CLI wrapper factory>, _serial_load_error=<unprefixed abort — see Failure semantics>, ...)` — the explicit human CLI invocation IS the confirmation | `--parallel ignored` warning and the parallel `sync_in_tiers` branch stay in cli.py untouched; factory → prefixed abort; serial-load `ValueError` → unprefixed abort; all other lifecycle failures → original-type traceback |
-| `orchestration/flow.py` | `run_remote_request(sync_name, operation, confirm_writes, branch, config_directory=os.environ["INFRAHUB_SYNC_CONFIG_DIRECTORY"])` | Engine defaults pinned; `show_progress=False`; failures surface ONLY as sanitized `RunValidationError` / `RunExecutionError` |
+| `orchestration/flow.py` | `run_remote_request(sync_name, operation, confirm_writes, branch, config_directory=os.environ["INFRAHUB_SYNC_CONFIG_DIRECTORY"])` — request parameters plus the config directory ONLY; the `_potenda_factory` / `_lock_timeout` private seams are never set by the flow | Engine defaults pinned; `show_progress=False`; failures surface ONLY as sanitized `RunValidationError` / `RunExecutionError` |
 
 ### Failure semantics (binding — D009; DBR-009: exit codes and output identical to the current CLI at `9edc1bc`)
 
@@ -260,7 +354,10 @@ not reconstruction:
           print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}")
   ```
 
-  The resulting `typer.Exit` propagates out of `execute_run` untouched (no run.json
+  `print_error_and_abort` raises `typer.Abort` (`cli.py:72-74`) — click's `Abort`,
+  rendered as `Aborted.` with **exit code 1**, NOT `typer.Exit` (whose default
+  code is 0, which would hide failures from CI — E19). The resulting `typer.Abort`
+  propagates out of `execute_run` untouched (no run.json
   exists yet at factory time — the RunFile is created only after the engine
   allocates `run_dir`, and step 6's broad except has not been entered), so wording,
   exit code, and control flow are byte-identical to `cli.py:139-140` / `237-238`.
@@ -270,7 +367,8 @@ not reconstruction:
   step-5 narrow `except ValueError` around `load_both_sides` marks run.json failed,
   saves, and invokes the CLI-supplied `_serial_load_error(exc)`
   (`lambda exc: print_error_and_abort(str(exc))`) — the unprefixed abort fires at
-  the site exactly as `cli.py:263-268` today; the `typer.Exit` then passes through
+  the site exactly as `cli.py:263-268` today; the `typer.Abort` (a `RuntimeError`
+  subclass, so the broad except does catch it — exit code 1, `Aborted.`) then passes through
   the preserved outer broad except (re-mark failed, bare re-raise), reproducing
   today's `cli.py:285-288` control flow. Remote callers leave `_serial_load_error`
   unset and the original `ValueError` re-raises (after run.json is marked failed)
@@ -282,7 +380,8 @@ not reconstruction:
   sanitized only in `run_remote_request`.
 - **CLI mapping tests per stage** (tasks T025/T026/T027): one test per stage
   asserting today's exact wording and traceback types — factory `ValueError` →
-  prefixed abort wording + exit code; serial-load `ValueError` (sync) → unprefixed
+  prefixed abort wording + **exit code 1 and the `Aborted.` output** (`typer.Abort`,
+  not `typer.Exit` — E19); serial-load `ValueError` (sync) → unprefixed
   abort; a diff-path lifecycle failure (including a load `ValueError`) → uncaught
   traceback of the ORIGINAL type with run.json `failed`; factory `ImportError` →
   uncaught `ImportError` traceback; lock contention → uncaught `filelock.Timeout`

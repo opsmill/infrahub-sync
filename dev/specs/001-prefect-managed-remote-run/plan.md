@@ -72,7 +72,7 @@ Phase 1 design (both evaluations below reflect the final design).*
 | I | Read-Only / Dry-Run by Default | **PASS** | Remote `operation` defaults to `plan` (non-mutating, == `diff` lifecycle). `sync` requires the explicit `confirm_writes=true` gate enforced inside the surface **before adapter construction** (`RunValidationError` otherwise); the CLI's own mutating command supplies confirmation by explicit human invocation, exactly as today. No new implicit mutation. |
 | II | Sync Idempotency & Safety | **PASS** | The surface reuses the existing `Potenda` load → guardrail → diff → write_plan → sync pipeline unchanged; the qualified demonstration's third leg (post-sync plan reports no changes) is an explicit acceptance scenario (US2/SC-003). Failures write `run.json` `status=failed` exactly as today; lock contention is a bounded `RunExecutionError`, not a hang. |
 | III | Adapter Symmetry & Pattern Consistency | **PASS (N/A-new-adapter)** | No new adapter. All operations flow through `potenda`; the flow calls the same surface as the CLI. The example consumes the existing `examples/custom_adapter` fixture. |
-| IV | Type Safety & Explicit Contracts | **PASS (with two documented broad-except sites, D009)** | `execution.py` is fully typed (`Literal` operation/status, frozen `RunResult` with a read-only `summary` mapping, typed factory protocol); contracts in `contracts/` are concrete typed definitions; no `ty` overrides; specific exception classes (`RunValidationError`, `RunExecutionError`). Error-handling design (D009, honest statement — not "declared boundaries only"): `execute_run` preserves the `9edc1bc` CLI failure behavior verbatim, including the CLI's own broad `except Exception:` mark-`run.json`-failed + bare re-raise pattern (`cli.py:156-159`/`285-288` today) — a *preserved existing pattern* documented at the site with a targeted `# noqa: BLE001`, required so lifecycle failures never leave `run.json` at `status="running"`; the two narrow `ValueError` handlers stay where today's CLI has them (factory → prefixed abort via the CLI's wrapper factory; serial-load → unprefixed abort via the CLI-only seam). Sanitize-and-wrap into the typed remote errors happens ONLY in `run_remote_request`, whose boundary translation catches broadly and ALWAYS re-raises typed and sanitized (targeted `# noqa: BLE001`). See contracts/execution-surface.md "Failure semantics". One caveat: the flow module deliberately omits `from __future__ import annotations` (research F3) with a comment. |
+| IV | Type Safety & Explicit Contracts | **PASS (with two documented broad-except sites, D009)** | `execution.py` is fully typed (`Literal` operation/status, frozen `RunResult` with a read-only `summary` mapping, typed factory protocol); contracts in `contracts/` are concrete typed definitions; no `ty` overrides; specific exception classes (`RunValidationError`, `RunExecutionError`). Error-handling design (D009, honest statement — not "declared boundaries only"): `execute_run` preserves the `9edc1bc` CLI failure behavior verbatim, including the CLI's own broad `except Exception:` mark-`run.json`-failed + bare re-raise pattern (`cli.py:156-159`/`285-288` today) — a *preserved existing pattern* documented by a comment at the site, required so lifecycle failures never leave `run.json` at `status="running"`; the two narrow `ValueError` handlers stay where today's CLI has them (factory → prefixed abort via the CLI's wrapper factory; serial-load → unprefixed abort via the CLI-only seam). Sanitize-and-wrap into the typed remote errors happens ONLY in `run_remote_request`, whose boundary translation catches broadly and ALWAYS re-raises typed and sanitized, likewise documented by a comment at the site. **Neither site carries a `# noqa: BLE001`**: ruff's BLE001 fires at neither pattern — probed in this repo with `uv run ruff check`, both a blind `except` that re-raises and `except Exception as exc: raise RunExecutionError(msg) from exc` are clean with NO suppression — and adding the directive makes ruff report `RUF100 Unused noqa directive` and exit 1, which would fail T039's lint gate. The ratchet argument is therefore stronger than a suppression: the rule never applies to a handler that always re-raises. See contracts/execution-surface.md "Failure semantics". One caveat: the flow module deliberately omits `from __future__ import annotations` (research F3) with a comment. |
 | V | Test Discipline | **PASS** | Planned: parametrized negative tests for `sync_name` resolution and `confirm_writes` (SC-004 negative-test set), RunResult schema/invariant tests, fingerprint unit tests, base-install-without-prefect test (SC-006), canary-redaction test (DBA-008), flow tests skip-if-no-prefect, live end-to-end marked `integration`. Existing targeted tests (DBA-009 population) must pass unmodified. |
 | VI | Security, Secrets & Input Boundaries | **PASS** | Credentials only from runner env (DBR-006; the infrahub adapter already reads `INFRAHUB_ADDRESS`/`INFRAHUB_API_TOKEN`); `sync_name` is an opaque name matched by exact equality against discovered `config.yml` `name` fields — never used to build a path (same glob/match rule as the CLI lookup, via the D010 tolerant per-file walk); remote parameters carry no paths/CLI fragments/credentials/env overrides; exception messages pass value-based secret redaction; example credentials are obviously fake placeholders. |
 | VII | Simplicity & Maintainability | **PASS** | The new abstraction has three real callers (CLI diff, CLI serial sync, flow) — satisfies the two-caller rule. New dependency is brief-mandated and optional; companion pins are defect repairs, each justified by a recorded probe (D006). No engine rewrite; parallel branch untouched; generated example files regenerated via `generate` (R-2), never hand-edited. |
@@ -165,10 +165,16 @@ structural decisions, each traceable to a requirement:
 1. **Execution surface** (`contracts/execution-surface.md`, DBR-007/008/015):
    - `resolve_sync_instance(sync_name, *, directory)` — exact-name lookup using the
      same recursive `**/config.yml` glob and `name` match as the CLI lookup, but as a
-     tolerant per-file walk (D010): an unrelated broken config is skipped with a
-     WARNING naming the file; a matched-but-invalid (or unreadable) config →
-     `RunValidationError` naming the logical name and file path only, parse detail
-     never chained verbatim; no match → `RunValidationError`. The CLI keeps calling
+     tolerant per-file walk (D010) whose name-extraction mechanism is fixed so the
+     rules are decidable (E17): `yaml.safe_load` + the top-level `name` key; a file
+     whose name is determinable and equal to the request is validated as `SyncConfig`
+     (failure → `RunValidationError` naming the logical name and file path only, parse
+     detail never chained verbatim); determinable-and-different → skipped silently;
+     UNDETERMINABLE (unreadable, YAML error, non-mapping) → skipped with a WARNING
+     naming the path only, counted, resolution continues — so a broken neighbor never
+     blocks another name and a bad-YAML file can never be the matched one; no match →
+     `RunValidationError` naming the logical name and, when applicable, the COUNT of
+     unreadable files. The CLI keeps calling
      `utils.get_instance` unchanged. The requested value is never used to build a
      path, so traversal-shaped values fail the same way unknown names do (SC-004).
    - `execute_run(...)` — owns validation order (operation → confirm_writes →
@@ -192,7 +198,8 @@ structural decisions, each traceable to a requirement:
    `confirm_writes: bool = False`, `branch: str | None = None`. Body: bridge
    `infrahub_sync` logger → run logger (attach/finally-remove), read
    `INFRAHUB_SYNC_CONFIG_DIRECTORY`, `resolve_sync_instance`, `run_remote_request`,
-   log the result summary line, return `asdict(RunResult)`. Serve entrypoint validates
+   log the result summary line, return an asdict-SHAPED seven-key dict built by
+   explicit construction (never `dataclasses.asdict` — X15). Serve entrypoint validates
    the env var at startup and exits with an error naming it otherwise (spec
    clarification #2).
 3. **RunResult + failure contract** (`contracts/run-result-and-errors.md`, DBR-015):
@@ -204,10 +211,11 @@ structural decisions, each traceable to a requirement:
    `uv sync --extra dev`); commit 2 = R-2 (regenerate `examples/netbox_to_infrahub`);
    feature work only after both.
 
-## Decision-ID map (D001–D011 → artifact locations)
+## Decision-ID map (D001–D013 → artifact locations)
 
 All decisions are PROVISIONAL (CHECKPOINT) unless ratified; this table lets the gate
-packet and the artifacts be cross-checked ID-by-ID (F5 remediation, 2026-07-30).
+packet and the artifacts be cross-checked ID-by-ID (F5 remediation, 2026-07-30;
+D012/D013 added in round-2 remediation, 2026-07-30).
 
 | ID | Decision (one line) | Where it lives |
 |---|---|---|
@@ -222,6 +230,8 @@ packet and the artifacts be cross-checked ID-by-ID (F5 remediation, 2026-07-30).
 | D009 | Sanitize-and-wrap boundary lives in `run_remote_request` only; `execute_run` preserves `9edc1bc` CLI failure behavior verbatim | contracts/execution-surface.md "Failure semantics"; this plan Constitution row IV; data-model §3; tasks T007/T025/T026/T027 |
 | D010 | Tolerant per-file configuration resolution for the remote surface (CLI `get_instance` untouched) | contracts/execution-surface.md `resolve_sync_instance`; data-model §1 step 4; tasks T006/T011 |
 | D011 | T035 docs-site reference page is governance-mandated scope beyond the brief's deliverable list | tasks T035; critiques/collation-r1.md |
+| D012 | Missing-credential env-var naming (`INFRAHUB_ADDRESS`/`INFRAHUB_API_TOKEN`) lands in `run_remote_request`'s sanitized wrap message; `infrahub_sync/adapters/infrahub.py` is NOT touched, keeping DBR-009 byte-identity absolute (option A) | contracts/execution-surface.md failure-semantics wrap list; contracts/run-result-and-errors.md §2; tasks T008/T011/T025; critiques/fidelity-r2.md F8 |
+| D013 | T033a's shipped-example diagnosability change is a recorded gate item grounded in DBA-011 + DBR-012/DBA-004 (not the brief's untriggered fixture-repair allowance); five-device outcome unchanged | tasks T033a; critiques/fidelity-r2.md F9 |
 
 ## Complexity Tracking
 
