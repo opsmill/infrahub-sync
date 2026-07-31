@@ -29,6 +29,7 @@ import pytest
 pytest.importorskip("prefect")
 
 from prefect.client.orchestration import get_client
+from prefect.exceptions import ParameterTypeError
 from prefect.testing.utilities import prefect_test_harness
 
 from infrahub_sync.cache.parquet_io import write_plan
@@ -71,6 +72,21 @@ ENV_PATTERN_CANARY = "ZZ-FLOW-ENV-NETBOX-TOKEN-0002"
 SOURCE_TOKEN_CANARY = "ZZ-FLOW-SETTINGS-SOURCE-TOKEN-0003"  # noqa: S105 - a canary, not a credential
 DEST_PASSWORD_CANARY = "ZZ-FLOW-SETTINGS-DEST-PASSWORD-0004"  # noqa: S105 - a canary, not a credential
 CANARIES = (ENV_TOKEN_CANARY, ENV_PATTERN_CANARY, SOURCE_TOKEN_CANARY, DEST_PASSWORD_CANARY)
+
+# Three DISTINCT non-zero counts, so each field position of the contractual
+# summary line is individually observable: with `update` and `delete` both zero
+# (or both equal), swapping them leaves the emitted line byte-identical.
+FIXTURE_SUMMARY = {"create": 5, "update": 3, "delete": 1}
+EXPECTED_SUMMARY_FIELD = "summary=create:5,update:3,delete:1"
+
+# The shipped request body the example README posts to demonstrate the refusal.
+INVALID_OPERATION_REQUEST = (
+    Path(__file__).resolve().parents[2]
+    / "examples"
+    / "prefect_remote_run"
+    / "requests"
+    / "create-invalid-operation-flow-run.json"
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -141,7 +157,7 @@ def _result(**overrides: Any) -> RunResult:  # noqa: ANN401 - heterogeneous RunR
         "run_id": RUN_ID,
         "status": "planned",
         "changed": True,
-        "summary": {"create": 5, "update": 0, "delete": 0},
+        "summary": dict(FIXTURE_SUMMARY),
         "artifact_path": ARTIFACT_PATH,
     }
     payload.update(overrides)
@@ -208,6 +224,39 @@ def test_flow_operation_annotation_resolves_to_the_plan_sync_literal() -> None:
     """Non-deferred annotations (research F3): the Literal is a real object, not a string."""
     annotation = inspect.signature(infrahub_sync_run.fn).parameters["operation"].annotation
     assert annotation == Literal["plan", "sync"]
+
+
+def test_flow_accepts_the_two_contracted_operations_at_parameter_validation() -> None:
+    """Positive control for the refusal below: both Literal members validate."""
+    for operation in ("plan", "sync"):
+        validated = infrahub_sync_run.validate_parameters({"sync_name": SYNC_NAME, "operation": operation})
+        assert validated["operation"] == operation
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [pytest.param("apply", id="unsupported-string"), pytest.param(123, id="wrong-type"), pytest.param(None, id="none")],
+)
+def test_flow_refuses_an_invalid_operation_at_parameter_validation(operation: object) -> None:
+    """Prefect's own validation refuses the request BEFORE the flow body runs.
+
+    Exercises the real machinery — `Flow.validate_parameters` — rather than the
+    annotation object, so the documented 409-shaped refusal is verified rather than
+    asserted about indirectly.
+    """
+    with pytest.raises(ParameterTypeError):
+        infrahub_sync_run.validate_parameters({"sync_name": SYNC_NAME, "operation": operation})
+
+
+def test_the_shipped_invalid_operation_request_body_is_refused() -> None:
+    """Runs the example REST body the README's refusal walkthrough posts.
+
+    The parameters are READ from the shipped file rather than restated here, so the
+    documented request and this refusal cannot drift apart.
+    """
+    request = json.loads(INVALID_OPERATION_REQUEST.read_text(encoding="utf-8"))
+    with pytest.raises(ParameterTypeError):
+        infrahub_sync_run.validate_parameters(request["parameters"])
 
 
 def test_flow_and_deployment_names_are_the_contracted_lookup_path() -> None:
@@ -346,7 +395,7 @@ def test_flow_run_returns_the_asdict_shaped_seven_key_dict(
     assert set(out) == {field.name for field in dataclasses.fields(RunResult)}
     assert len(out) == 7
     assert type(out["summary"]) is dict
-    assert out["summary"] == {"create": 5, "update": 0, "delete": 0}
+    assert out["summary"] == FIXTURE_SUMMARY
     assert out["status"] == "planned"
     assert fake.calls == [
         {
@@ -359,6 +408,33 @@ def test_flow_run_returns_the_asdict_shaped_seven_key_dict(
     ]
     # The bridge is gone and the captured level is restored once the body returns.
     assert not any(isinstance(handler, RunLoggerBridge) for handler in source_logger.handlers)
+
+
+@pytest.mark.usefixtures("prefect_harness")
+@pytest.mark.parametrize("branch", [None, "feature-x"])
+def test_flow_forwards_the_branch_parameter_to_the_remote_surface(
+    monkeypatch: pytest.MonkeyPatch,
+    source_logger: logging.Logger,  # noqa: ARG001 - restores the bridged logger's handlers and level
+    tmp_path: Path,
+    branch: str | None,
+) -> None:
+    """A non-default `branch` must reach the surface: dropping it writes to `main`."""
+    fake = _FakeRemoteRequest(result=_result())
+    monkeypatch.setattr("infrahub_sync.orchestration.flow.run_remote_request", fake)
+    monkeypatch.setenv(CONFIG_DIR_ENV, str(tmp_path))
+
+    out = infrahub_sync_run(SYNC_NAME, "plan", branch=branch)
+
+    assert out["status"] == "planned"
+    assert fake.calls == [
+        {
+            "sync_name": SYNC_NAME,
+            "operation": "plan",
+            "confirm_writes": False,
+            "branch": branch,
+            "config_directory": str(tmp_path),
+        }
+    ]
 
 
 @pytest.mark.usefixtures("prefect_harness")
@@ -393,10 +469,12 @@ def test_flow_makes_info_effective_regardless_of_ambient_logging_configuration(
         root.setLevel(previous_root_level)
 
     assert f"{CHILD_LOGGER_NAME} | bridged INFO line" in run_logger.rendered
-    # The contractual summary line is the supported remote observation surface.
-    assert any(
-        line.startswith(f"run {RUN_ID} finished: status=planned changed=True summary=create:5,update:0,delete:0")
-        for line in run_logger.rendered
+    # The contractual summary line is the supported remote observation surface, and
+    # a remote consumer parses it by field position — so it is asserted verbatim,
+    # with three distinct counts, rather than by prefix alone.
+    assert (
+        f"run {RUN_ID} finished: status=planned changed=True {EXPECTED_SUMMARY_FIELD} artifact={ARTIFACT_PATH}"
+        in run_logger.rendered
     )
     assert source_logger.level == logging.NOTSET
 
@@ -729,7 +807,13 @@ def test_no_canary_reaches_prefect_visible_state_on_a_failing_run(
     assert not any("finished: status=" in line for line in run_logger.rendered)
 
     rendered_chain = "".join(traceback.format_exception(type(error), error, error.__traceback__))
-    assert "RuntimeError" in rendered_chain  # the inner link IS present, in sanitized form
+    # Both directions of the "whole chain" property. Asserting only that no canary
+    # leaks would also hold for a walk that discarded the deeper links; asserting
+    # only that "RuntimeError" appears is satisfied by the outermost rebuilt link,
+    # since every rebuilt link IS a RuntimeError. So: chain depth, plus the inner
+    # link's own type name and redacted text.
+    assert rendered_chain.count("direct cause") == 2
+    assert f"RuntimeError: RuntimeError: upstream auth rejected token {REDACTED}" in rendered_chain
     _assert_canary_free(
         {
             "flow parameters": repr(flow_run.parameters),

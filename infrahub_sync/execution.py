@@ -14,14 +14,13 @@ from __future__ import annotations
 import logging
 import os
 import re
-from collections.abc import Callable  # runtime use: the PotendaFactory alias below
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from timeit import default_timer as timer
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import pydantic
 import yaml
@@ -33,7 +32,7 @@ from infrahub_sync.cache.sidecars import RunFile
 from infrahub_sync.utils import get_potenda_from_instance
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
     from contextlib import AbstractContextManager
     from typing import NoReturn
 
@@ -45,10 +44,33 @@ Operation = Literal["plan", "sync"]
 Status = Literal["planned", "applied", "no-change"]
 ActionKey = Literal["create", "update", "delete"]
 
-# Factory signature identical to utils.get_potenda_from_instance — injected so the
-# CLI can pass its own thin wrapper over the module global (which keeps existing
-# patches on `infrahub_sync.cli.get_potenda_from_instance` effective).
-PotendaFactory = Callable[..., "Potenda"]
+
+class PotendaFactory(Protocol):
+    """The engine-factory call shape, injected wherever an engine is built.
+
+    Spelled as a `Protocol` rather than `Callable[..., Potenda]` so the pinned
+    seven-keyword call shape is part of the type: `Callable[..., ...]` erases the
+    parameter names, and a rename in `utils.get_potenda_from_instance` then
+    survives type checking and fails at run time inside the remote boundary
+    instead. Keyword-only, because every caller passes all seven by keyword.
+
+    Injection exists so the CLI can pass its own thin wrapper over the module
+    global (which keeps existing patches on
+    `infrahub_sync.cli.get_potenda_from_instance` effective).
+    """
+
+    def __call__(
+        self,
+        *,
+        sync_instance: SyncInstance,
+        branch: str | None = ...,
+        show_progress: bool | None = ...,
+        verbosity: int = ...,
+        run_id: str | None = ...,
+        continue_on_error: bool = ...,
+        concurrent_load: bool = ...,
+    ) -> Potenda: ...
+
 
 OPERATIONS: tuple[Operation, ...] = ("plan", "sync")
 ACTION_KEYS: tuple[ActionKey, ...] = ("create", "update", "delete")

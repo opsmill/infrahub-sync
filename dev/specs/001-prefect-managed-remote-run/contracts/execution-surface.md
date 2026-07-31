@@ -29,11 +29,25 @@ Operation = Literal["plan", "sync"]
 Status = Literal["planned", "applied", "no-change"]
 ActionKey = Literal["create", "update", "delete"]
 
-# Factory signature identical to utils.get_potenda_from_instance — injected so the
+# Factory call shape identical to utils.get_potenda_from_instance — injected so the
 # CLI can pass its own thin wrapper over the module-global (keeps existing patches on
 # `infrahub_sync.cli.get_potenda_from_instance` effective, DBA-009 — see
-# "Failure semantics" / D009 below).
-PotendaFactory = Callable[..., "Potenda"]
+# "Failure semantics" / D009 below). A Protocol rather than `Callable[..., Potenda]`,
+# which erases the parameter names: the pinned seven-keyword call shape is part of
+# the type, so a rename in the real factory is a type error rather than a runtime
+# TypeError inside the remote boundary.
+class PotendaFactory(Protocol):
+    def __call__(
+        self,
+        *,
+        sync_instance: SyncInstance,
+        branch: str | None = ...,
+        show_progress: bool | None = ...,
+        verbosity: int = ...,
+        run_id: str | None = ...,
+        continue_on_error: bool = ...,
+        concurrent_load: bool = ...,
+    ) -> Potenda: ...
 
 
 class RunValidationError(Exception):

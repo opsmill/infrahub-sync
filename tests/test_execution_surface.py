@@ -11,6 +11,7 @@ Part 3 — the confirmed serial-sync lifecycle and its idempotent second run
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import logging
 import os
 import subprocess  # noqa: S404 — patched, never invoked; the spy proves no subprocess starts
@@ -26,6 +27,7 @@ from infrahub_sync.cache.locks import pipeline_lock
 from infrahub_sync.cache.parquet_io import write_plan
 from infrahub_sync.cache.sidecars import RunFile
 from infrahub_sync.execution import (
+    REDACTED,
     RunExecutionError,
     RunResult,
     RunValidationError,
@@ -35,6 +37,7 @@ from infrahub_sync.execution import (
     resolve_sync_instance,
     run_remote_request,
 )
+from infrahub_sync.utils import get_potenda_from_instance
 
 SYNC_NAME = "canary-example"
 RUN_ID = "20260731T1200-abcdef12"
@@ -47,6 +50,11 @@ SOURCE_SETTING_CANARY = "ZZ-SETTINGS-SOURCE-CANARY-0003"
 DEST_SETTING_CANARY = "ZZ-SETTINGS-DEST-CANARY-0004"
 FILE_CONTENT_CANARY = "ZZ-FILE-CONTENT-CANARY-0005"
 URL_USERINFO_CANARY = "ZZ-URL-USERINFO-CANARY-0006"
+# One secret value that is a strict PREFIX of another, so redaction order is
+# observable: replacing the short one first leaves the rest of the long one behind.
+OVERLAP_PREFIX_CANARY = "ZZ-OVERLAP-CANARY-0007"
+OVERLAP_TAIL = "-EXTENDED-0008"
+OVERLAP_FULL_CANARY = f"{OVERLAP_PREFIX_CANARY}{OVERLAP_TAIL}"
 
 PWNED_MARKER = Path("/tmp/infrahub-sync-pwned-canary")  # noqa: S108 - never created; asserted absent
 
@@ -402,7 +410,13 @@ def test_validation_error_redacts_env_secret_values(tmp_path: Path) -> None:
 
 @pytest.mark.usefixtures("seeded_secrets")
 def test_execution_error_redacts_the_whole_cause_chain(config_dir: str, cache_root: Path) -> None:
-    """No traceback rendering of the wrapped error may show an unredacted message."""
+    """No traceback rendering of the wrapped error may show an unredacted message.
+
+    Both directions of the "whole chain" property are asserted: no link LEAKS a
+    canary, and every link is still PRESENT in sanitized form. Asserting only the
+    leak direction would be satisfied by a walk that discards the deeper links
+    entirely, which loses the diagnostic text an operator needs.
+    """
     inner = ConnectionError(f"upstream rejected token {ENV_PATTERN_CANARY}")
     outer = RuntimeError(f"engine blew up using {ENV_TOKEN_CANARY} / {SOURCE_SETTING_CANARY}")
     outer.__cause__ = inner
@@ -418,6 +432,12 @@ def test_execution_error_redacts_the_whole_cause_chain(config_dir: str, cache_ro
     assert "***" in str(excinfo.value)
     assert "***" in rendered
     assert SYNC_NAME in str(excinfo.value)
+    # Two rebuilt links behind the raised error — the outer fault and its cause —
+    # so the rendering chains RunExecutionError <- outer <- inner.
+    assert rendered.count("direct cause") == 2
+    assert f"RuntimeError: engine blew up using {REDACTED} / {REDACTED}" in rendered
+    # The INNER link's own type name and redacted text survive the walk.
+    assert f"RuntimeError: ConnectionError: upstream rejected token {REDACTED}" in rendered
 
 
 # --------------------------------------------------------------------------- #
@@ -578,6 +598,36 @@ def test_url_userinfo_is_redacted_from_a_wrapped_execution_failure(
     assert URL_USERINFO_CANARY not in str(excinfo.value)
     assert URL_USERINFO_CANARY not in _rendered_traceback(excinfo.value)
     assert "***" in str(excinfo.value)
+
+
+def test_overlapping_secret_values_are_collected_longest_first() -> None:
+    """The sort key exists so an overlapping pair redacts completely."""
+    secrets = collect_secret_values(
+        _instance(source_settings={"token": OVERLAP_PREFIX_CANARY, "password": OVERLAP_FULL_CANARY}),
+        environ={},
+    )
+    assert secrets.index(OVERLAP_FULL_CANARY) < secrets.index(OVERLAP_PREFIX_CANARY)
+
+
+def test_overlapping_secret_values_leave_no_fragment_in_a_wrapped_failure(
+    config_dir: str,
+    cache_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Redacting the shorter secret first would ship `***-EXTENDED-0008` to Prefect."""
+    monkeypatch.setenv("NETBOX_TOKEN", OVERLAP_PREFIX_CANARY)
+    monkeypatch.setenv("INFRAHUB_API_TOKEN", OVERLAP_FULL_CANARY)
+    factory = _SpyFactory(cache_root=cache_root, error=RuntimeError(f"upstream rejected {OVERLAP_FULL_CANARY}"))
+
+    with pytest.raises(RunExecutionError) as excinfo:
+        run_remote_request(SYNC_NAME, config_directory=config_dir, _potenda_factory=factory)
+
+    message = str(excinfo.value)
+    rendered = _rendered_traceback(excinfo.value)
+    for surface in (message, rendered):
+        assert OVERLAP_PREFIX_CANARY not in surface
+        assert OVERLAP_TAIL not in surface
+    assert f"upstream rejected {REDACTED}" in message
 
 
 def test_redact_leaves_a_message_untouched_when_nothing_was_collected() -> None:
@@ -1057,13 +1107,44 @@ def test_branch_reaches_the_factory_from_run_remote_request(
     assert call["verbosity"] == logging.INFO
 
 
-def test_successful_plan_writes_the_diff_lifecycle(config_dir: str, cache_root: Path) -> None:
+def test_factory_is_called_with_the_pinned_kwargs_of_get_potenda_from_instance(
+    config_dir: str,
+    cache_root: Path,
+) -> None:
+    """The recorded call must BIND against the real factory's signature.
+
+    `PotendaFactory` pins the call shape for a type checker, and every test double
+    is a `**kwargs` sink — so nothing else notices when a parameter of
+    `utils.get_potenda_from_instance` is renamed. That rename would reach
+    production as a runtime `TypeError` neither wrapper factory catches.
+    """
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root)
+
+    execute_run(instance, operation="plan", potenda_factory=factory)
+
+    recorded = factory.calls[0]
+    signature = inspect.signature(get_potenda_from_instance)
+    assert set(recorded) == set(signature.parameters)
+    # Raises TypeError on any drift the name comparison above would not catch.
+    signature.bind(**recorded)
+
+
+def test_successful_plan_writes_the_diff_lifecycle(
+    config_dir: str,
+    cache_root: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
     rows = [_plan_row("create", "core01"), _plan_row("create", "core02"), _plan_row("update", "edge01")]
     factory = _SpyFactory(cache_root=cache_root, rows=rows)
 
-    result = execute_run(instance, operation="plan", potenda_factory=factory)
+    with caplog.at_level(logging.INFO, logger="infrahub_sync.execution"):
+        result = execute_run(instance, operation="plan", potenda_factory=factory)
 
+    # DBR-009 log-line parity: `infrahub-sync diff` renders the diff itself, so the
+    # engine's own rendering must reach the log at INFO.
+    assert "fake-diff(3 rows)" in caplog.text
     run_dir = cache_root / RUN_ID
     assert result == RunResult(
         sync_name=SYNC_NAME,
@@ -1192,19 +1273,30 @@ def test_confirmed_sync_summary_counts_every_action(config_dir: str, cache_root:
     assert dict(result.summary) == {"create": 2, "update": 1, "delete": 1}
 
 
+@pytest.mark.parametrize("print_diff", [True, False])
 def test_confirmed_sync_logs_the_timing_line_when_the_diff_has_changes(
     config_dir: str,
     cache_root: Path,
     caplog: pytest.LogCaptureFixture,
+    *,
+    print_diff: bool,
 ) -> None:
+    """`print_diff` gates the diff rendering only — the timing line is unconditional."""
     instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
     factory = _SpyFactory(cache_root=cache_root, rows=_fixture_creates())
 
     with caplog.at_level(logging.INFO, logger="infrahub_sync.execution"):
-        execute_run(instance, operation="sync", confirm_writes=True, potenda_factory=factory)
+        execute_run(
+            instance,
+            operation="sync",
+            confirm_writes=True,
+            print_diff=print_diff,
+            potenda_factory=factory,
+        )
 
     assert TIMING_LOG_PREFIX in caplog.text
     assert NO_DIFF_LOG not in caplog.text
+    assert ("fake-diff(5 rows)" in caplog.text) is print_diff
 
 
 def test_sync_over_an_unchanged_destination_skips_the_sync_and_the_timing_log(
@@ -1308,3 +1400,7 @@ def test_confirmed_sync_through_the_remote_composition_returns_applied(config_di
     assert Path(result.artifact_path).name == result.run_id
     assert factory.calls[0]["show_progress"] is False
     assert factory.engines[0].synced is True
+    # The remote path's safety defaults, asserted on the engine the run actually
+    # used: mass-deletion protection stays armed, and the extract stays full.
+    assert factory.engines[0].guardrail_allow_drop is False
+    assert factory.engines[0].force_full_extract is True

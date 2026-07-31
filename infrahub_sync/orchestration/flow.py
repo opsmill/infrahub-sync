@@ -14,9 +14,14 @@ The flow calls the shared execution surface IN-PROCESS; it never spawns the CLI.
 # run-time parameter validation (`Flow.validate_parameters` ->
 # `ValidatedFunction.model_rebuild`) fails with
 # `PydanticUndefinedAnnotation: name 'Literal' is not defined` and the flow run
-# ends FAILED before the body runs. Observed on prefect 3.5.0; the mechanism is
-# version-generic, so the omission is kept at 3.8.1, where the parameter-contract
-# tests in tests/orchestration/test_flow.py are what confirm it.
+# ends FAILED before the body runs. Observed on prefect 3.5.0. Re-measured on
+# 3.8.1 by adding the import back: the parameter refusal still works there, so the
+# failure is version-specific rather than version-generic. The omission is kept
+# because it costs nothing and the trap returns with the resolution behaviour of
+# any given prefect/pydantic pair. What pins it is
+# tests/orchestration/test_flow.py::test_flow_operation_annotation_resolves_to_the_plan_sync_literal
+# (re-adding the import fails it); the refusal itself is covered separately by
+# ::test_flow_refuses_an_invalid_operation_at_parameter_validation.
 
 import dataclasses
 import logging
