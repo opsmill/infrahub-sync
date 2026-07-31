@@ -17,8 +17,21 @@ procedures see [`dev/guides/`](../guides/README.md).
 - [Incremental sync and cache](incremental-and-cache.md) — cursors, tiers, plans, and
   row-count guardrails, and what an adapter implements to participate.
 
+## Running a sync from something other than the CLI
+
+- [The shared execution surface](execution-surface.md) — the typed entry point to one run:
+  `RunResult`, the failure classes, the pipeline lock, and the plan fingerprint.
+- [Prefect orchestration](orchestration-prefect.md) — the packaged flow and serve
+  entrypoint, the log bridge, the remote API surface, and Prefect's traps.
+
+## Repository workflow
+
+- [Quality gates](quality-gates.md) — what `invoke lint` and `invoke format` actually run,
+  the inherited pylint baseline, and how to measure a no-regression claim.
+
 ## Related
 
-- [Adapter guidelines](../guidelines/README.md) — rules an adapter must follow.
-- [Adapter guides](../guides/README.md) — adding and testing an adapter.
+- [Guidelines](../guidelines/README.md) — the rules that apply to this code.
+- [Guides](../guides/README.md) — adding and testing an adapter.
+- [Decision records](../adr/README.md) — why the architecture is shaped the way it is.
 - [Constitution](../constitution.md) — project principles these documents serve.

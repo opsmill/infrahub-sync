@@ -28,7 +28,14 @@ uv run invoke format
 uv run invoke lint
 ```
 
-`invoke lint` runs ruff → pylint → yamllint → ty.
+`invoke lint` runs rumdl → ruff → pylint → yamllint → ty, and **short-circuits**: no leg
+passes `warn=True`, so the first non-zero exit aborts the chain and a Markdown nit hides
+every Python finding behind it. It also does not exit 0 on a clean checkout — the inherited
+pylint baseline is recorded in
+[`dev/knowledge/quality-gates.md`](dev/knowledge/quality-gates.md). Read that page before
+treating either aggregate as a gate; it also explains why `invoke format` must not be run
+over `dev/specs/**` (`rumdl fmt` loses text in this repository's Markdown) and which task
+formats Python only.
 
 The `prefect` extra is not optional for development: without it `ty` cannot resolve
 `infrahub_sync/orchestration/`'s imports and `tests/orchestration/test_flow.py` skips
@@ -98,7 +105,9 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 
 - Prefer explicit types on new or changed code; public functions and classes get concise docstrings.
 - Ruff: formatted and lint-clean. Honor `pyproject.toml`.
-- Pylint: fix actionable issues in touched code; some warnings are expected.
+- Pylint: fix actionable issues in touched code. It does not pass on a clean checkout; the
+  inherited baseline and how to compare against it are in
+  [`dev/knowledge/quality-gates.md`](dev/knowledge/quality-gates.md).
 - ty: included in `uv run invoke lint`; do not increase the error count.
 - Raise specific exceptions; avoid broad `except Exception:`.
 
@@ -197,3 +206,18 @@ step-by-step procedure. Supporting developer reference lives under `dev/`:
 - [Adapter guides](dev/guides/README.md) — adding and testing an adapter, step by step.
 
 Core rule unchanged: provide read-only `list` / `diff` pathways and validate them before enabling `sync`.
+
+## Beyond Adapters
+
+`dev/` is not adapter-only. When the work is not an adapter, start here:
+
+- [The shared execution surface](dev/knowledge/execution-surface.md) — the typed entry point
+  to one run, used by the CLI and by the packaged Prefect flow.
+- [Prefect orchestration](dev/knowledge/orchestration-prefect.md) — the optional
+  orchestration integration and its import boundary.
+- [Quality gates](dev/knowledge/quality-gates.md) — what the lint and format aggregates
+  really do, and the inherited baseline.
+- [Testing](dev/guidelines/testing.md) — repository-wide test rules.
+- [Secret redaction](dev/guidelines/secret-redaction.md) — required reading before adding any
+  failure path that crosses a process boundary.
+- [Decision records](dev/adr/README.md) — why the architecture is shaped the way it is.

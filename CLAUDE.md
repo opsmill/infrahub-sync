@@ -3,7 +3,8 @@
 @AGENTS.md
 
 <!-- SPECKIT START -->
-For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan:
-`dev/specs/001-prefect-managed-remote-run/plan.md`
+No spec is currently active. Completed specs are archived under
+`dev/specs/archive/`; their durable output lives in `dev/knowledge/`,
+`dev/guidelines/`, `dev/guides/`, and `dev/adr/`. When a spec is active, read its
+`plan.md` for technologies, project structure, and shell commands.
 <!-- SPECKIT END -->

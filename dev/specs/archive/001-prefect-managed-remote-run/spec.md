@@ -4,7 +4,7 @@
 
 **Created**: 2026-07-30
 
-**Status**: Draft
+**Status**: Extracted
 
 **Input**: Delivery brief DB-001 v2 (`batch-developer-preview`), primary card `LOCAL-DP-001` — "Prefect-managed remote Infrahub Sync run". The brief is the sole product and scope authority for this specification.
 
