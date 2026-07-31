@@ -1706,3 +1706,409 @@ report the same 25-hour uptime. **Final destination state: ZERO `InfraDevice` ob
 the next walkthrough. Prefect state stayed inside a scratchpad `PREFECT_HOME` with
 `PREFECT_LOCAL_STORAGE_PATH` set alongside it, so the developer's `~/.prefect` was
 untouched.
+
+---
+
+## Phase 8 — governance gates, scope audit, and delivery evidence (T038–T042)
+
+Run 2026-07-31 on the final tree at `25dc955`, in the `uv sync --extra dev --extra prefect`
+environment (`Resolved 180 packages`, `Audited 171 packages` — already in sync, no
+dependency change made by this chunk). No feature code was written in this chunk: it
+verifies and records. The lab was read only — no container touched, no destination write.
+
+### T038 — scope audit (DBR-014)
+
+Final diff shape:
+
+```text
+$ git diff 9edc1bc --shortstat
+ 58 files changed, 12519 insertions(+), 451 deletions(-)
+
+$ git rev-list --count 9edc1bc..HEAD
+23
+
+$ git diff 9edc1bc --name-status -- infrahub_sync/
+A       infrahub_sync/cache/fingerprint.py
+M       infrahub_sync/cli.py
+A       infrahub_sync/execution.py
+A       infrahub_sync/orchestration/__init__.py
+A       infrahub_sync/orchestration/flow.py
+A       infrahub_sync/orchestration/serve.py
+```
+
+Six files under `infrahub_sync/`: four new modules, one new cache helper, and the CLI
+delegation edit. Every backlog item checked by name against that diff:
+
+| Backlog item | Claim | Result |
+|---|---|---|
+| B-001 — custom HTTP service / Sync-shaped REST resource model | not shipped | **CONFIRMED absent.** `grep -rniE 'fastapi\|uvicorn\|flask\|starlette\|APIRouter\|@app\.(get\|post\|put\|delete)'` over `infrahub_sync/` and `pyproject.toml` → no match. The remote API is Prefect's own deployment/flow-run REST surface (DBR-011) |
+| B-002 — saved-plan browse / approve / apply-by-run-ID remote workflow | not shipped | **CONFIRMED absent.** `grep -rniE 'apply_by_run_id\|apply-by-run\|approve\|approval\|browse\|list_plans\|saved_plan\|plan_id'` over `orchestration/` + `execution.py` → no match. The flow signature at `orchestration/flow.py:85` takes EXACTLY four parameters — `sync_name`, `operation`, `confirm_writes`, `branch` — with no run-ID, plan-ID, or `apply` parameter. The pre-existing `apply` CLI command is untouched and unreachable from the flow |
+| B-003 — per-stage Prefect tasks | not shipped | **CONFIRMED absent.** `grep -rnE '@task\|prefect\.task'` over `infrahub_sync/` → no match. The only prefect symbols imported anywhere in the package are two, both in `orchestration/flow.py`: `from prefect import flow` (line 26) and `from prefect.logging import get_run_logger` (line 27). One flow, zero tasks |
+| B-004 — work pools / workers / retries / crash recovery / PostgreSQL / Redis-as-broker / object storage / Kubernetes | not shipped | **CONFIRMED absent.** `grep -rniE 'work_pool\|worker\|retries\|retry_delay\|postgres\|psycopg\|kubernetes\|k8s\|s3\|boto3\|minio'` over `orchestration/` + `execution.py` returns exactly ONE hit, and it is a negative assertion in a docstring: `orchestration/serve.py:3` — "A locally served deployment — no work pool and no separate worker process." Confirmatory, not an implementation. **Auditor's note honoured:** the base `redis>=4.3,<9` declaration is D005 option D — the client diffsync's store already required, now declared directly because `utils.py` imports `RedisStore` unconditionally and the `[redis]` extra's `redis<5.0` cap is gone. It is NOT a Redis backing service for Prefect; Prefect's state lives in the embedded SQLite `prefect.db` (T018 evidence) |
+| B-005 — schedules / overlap policies / event triggers / notifications | not shipped | **CONFIRMED absent.** `grep -rniE 'schedule\|cron\|interval=\|trigger\|notification\|automation\|webhook'` over `orchestration/` + `execution.py` → no match. `serve.py` serves the deployment with no schedule argument |
+| B-006 — production auth / audit / HA / backup / upgrade guarantees | not shipped | **CONFIRMED absent.** `grep -rniE 'oauth\|authent\|rbac\|high.avail\|failover\|backup\|upgrade.guarantee\|audit_log\|audit-log'` over `orchestration/` + `execution.py` → no match. The shipped posture is the opposite: a MANDATORY trusted-development-environment caveat in both the README and the reference page |
+| B-007 — custom operator UI, configuration registration / versioning | not shipped | **CONFIRMED absent.** `grep -rniE 'jinja\|template\|html\|render_template\|register_config\|config_version\|versioned'` over `orchestration/` + `execution.py` → no match. Observation is Prefect's own UI and API; configurations are discovered from `INFRAHUB_SYNC_CONFIG_DIRECTORY` at call time with no registry and no version field |
+
+Two further audit assertions:
+
+```text
+prefect absent from base dependencies (parsed from pyproject.toml, not grepped):
+  base dependencies = infrahub-sdk[all], structlog, diffsync>=2.1,<3.0, redis>=4.3,<9,
+                      netutils, tqdm, pyarrow, fsspec, filelock
+  "prefect" in base dependencies?  → False
+  optional-dependencies groups     → ['prefect', 'dev']
+  extra 'prefect'                  → ['prefect==3.8.1']          ← single pin, optional
+
+parallel CLI sync branch untouched:
+  $ git diff 9edc1bc --stat -- infrahub_sync/potenda/     → (empty)
+  $ git diff 9edc1bc -- infrahub_sync/ | grep -E '^[+-].*sync_in_tiers'  → (no match)
+  sync_in_tiers still defined at potenda/__init__.py:449 and still called from
+  cli.py:256 with parallel=True — neither the definition nor the call site is in the diff.
+```
+
+**T038 verdict: PASS.** No backlog item B-001–B-007 is implemented; prefect is an optional
+extra only; the parallel `sync_in_tiers` branch is byte-unchanged.
+
+### T039 — required workflow on the final tree
+
+Leg 1, the Python formatters alone (NOT `uv run invoke format`, which runs `rumdl fmt` and
+corrupts Markdown per D014 — `rumdl fmt` was never run in this chunk):
+
+```text
+$ uv run invoke linter.format
+ - [INFRAHUB-SYNC] Check code with ruff
+82 files left unchanged
+All checks passed!
+ - [INFRAHUB-SYNC] All formatters have been executed!
+exit=0
+$ git status --porcelain     → (empty)
+```
+
+No Python-formatter diffs. Leg 2, Markdown:
+
+```text
+$ uv run rumdl check .
+Success: No issues found in 73 files (42ms)
+exit=0
+```
+
+Clean — which is what makes the pylint assertion below meaningful, since `invoke lint` runs
+rumdl first with no `warn=True` and any Markdown issue would abort the chain before ruff and
+pylint ran at all.
+
+Leg 3, the lint chain:
+
+```text
+$ uv run invoke lint
+ - [docs] Lint docs with rumdl      → Success: No issues found in 73 files
+                                      82 files already formatted
+ - [INFRAHUB-SYNC] Check code with ruff     → (no findings)
+ - [INFRAHUB-SYNC] Check code with pylint   → 54 diagnostics
+Your code has been rated at 9.68/10 (previous run: 9.68/10, +0.00)
+exit=30
+```
+
+**Exit 30 is the expected inherited state, not a regression** (D014's companion correction
+to the brief's R-4 claim of exit 0). The gate is no regression against the inherited
+baseline, and this chunk proved that DIRECTLY rather than relying on the stale proof
+recorded in T039's own text.
+
+That stale proof matters and is corrected here. T039 says the inherited set is provable
+because "`git diff main..HEAD -- infrahub_sync/` is empty" — true when Phase 1 measured it,
+**false for the final tree**, which adds four modules and edits `cli.py`. So the baseline
+was re-measured from scratch, at commit `9edc1bc`, in the SAME dev+prefect venv, by
+extracting the old package into a scratch directory (no branch switch, no `git stash`, no
+worktree — the working tree was never disturbed):
+
+```text
+$ git archive 9edc1bc infrahub_sync/ pyproject.toml | tar -x -C <scratch>/base
+$ cd <scratch>/base && <repo>/.venv/bin/pylint infrahub_sync/
+Your code has been rated at 9.60/10
+exit=30
+BASELINE TOTAL = 56 diagnostics
+
+FINAL TREE      = 54 diagnostics, rating 9.68/10, exit 30
+```
+
+Exact set difference over normalized `file CODE` pairs with counts:
+
+```text
+ONLY IN BASELINE (removed by this run):
+  1 infrahub_sync/cli.py R0912   (too-many-branches)
+  1 infrahub_sync/cli.py R0915   (too-many-statements)
+
+ONLY IN FINAL TREE (new — required to be empty):
+  (empty)
+```
+
+**Zero new pylint diagnostics attributable to this run, and two fewer than baseline** — the
+two `try/except` blocks the T025/T026 refactor lifted out of the CLI command bodies. Rating
+improved 9.60 → 9.68. Every remaining diagnostic is identical in file and code to the
+baseline: 20 × `C0415` in `potenda/__init__.py`, 7 × `C0413` + 4 × `W0613` + `E0213` +
+`W0707` + `C0415` + `C0412` in `__init__.py`, 4 × `C0415` + `R1720` + `R0917` + `R0915` in
+`utils.py`, 3 × `R0917` + 3 × `C0415` in `cli.py`, 2 × `C0413` in `cache/parquet_io.py`,
+`R0917` in `potenda/__init__.py`, `R1705` + `R0912` in `plugin_loader.py`, `C0415` in
+`dependency_graph.py`.
+
+This also corrects the brief's baseline *count*. The brief records the inherited baseline as
+"29 × `C0415` + 1 × `E0213`, rating 9.60/10" — 30 diagnostics. The same commit in the
+dev+prefect environment yields **56**. The rating matches exactly (9.60/10), confirming it is
+the same commit; the count differs because the richer environment resolves imports (pyarrow,
+redis, prefect) that a base-only `uv sync` leaves unresolvable, so pylint can analyse
+`cache/parquet_io.py`, `plugin_loader.py`, and more of `utils.py`. **Environment difference,
+not regression** — and the binding no-regression comparison above is environment-matched on
+both sides.
+
+Because pylint's non-zero exit propagates and stops the chain, the remaining legs were
+asserted by direct invocation:
+
+```text
+$ uv run invoke linter.lint-yaml
+ - [INFRAHUB-SYNC] Format yaml with yamllint
+exit=0
+```
+
+Leg 4, types:
+
+```text
+$ uv run ty check .
+Found 4 diagnostics
+exit=0
+```
+
+All four are `warning[unused-ignore-comment]`; **zero `error` diagnostics**, which is why
+`ty check` still exits 0:
+
+| Location | Inherited? | Note |
+|---|---|---|
+| `tests/adapters/test_nautobot_incremental.py:59:50` | inherited | pre-existing |
+| `tests/adapters/test_nautobot_incremental.py:101:50` | inherited | pre-existing |
+| `tests/adapters/test_nautobot_incremental.py:122:50` | inherited | pre-existing |
+| `infrahub_sync/adapters/prometheus.py:10:41` | **expected, new in this environment** | installing prefect pulls in `prometheus-client`, which resolves the optional import the `# ty: ignore[unresolved-import]` suppresses. The comment remains NECESSARY in a base/no-prefect install, so **the adapter file was NOT edited** — out of scope for this run, recorded rather than fixed |
+
+The observed absolute count is **4** (3 inherited + 1 prometheus), not the 5 T039's text
+anticipated; T039 states the binding assertion is the SET and that the task records the
+absolute numbers it observes, so this is the recorded value. `grep -n 'tool.ty.overrides'
+pyproject.toml` → no match: no overrides block was added. The four new modules carry no
+`# ty: ignore` directive at all, so there is no new directive needing a TODO.
+
+Ruff-clean and E16 BLE001 configuration, verified as implemented rather than assumed —
+`uv run ruff check` reporting nothing is the arbiter, and it reports nothing:
+
+```text
+$ grep -nE 'except Exception' infrahub_sync/execution.py infrahub_sync/orchestration/*.py
+execution.py:445:        except Exception:                       ← inside execute_run (def at 363)
+execution.py:536:    except Exception as exc:  # noqa: BLE001 - boundary translation, always re-raised typed
+                                                                ← inside run_remote_request (def at 480)
+```
+
+Exactly the gate-satisfying configuration T039 specifies: the targeted `# noqa: BLE001`
+**present** on `run_remote_request`'s line, and **absent** at `execute_run`'s step-6 site
+(blind `except` + bare `raise`, which does not fire BLE001 — a directive there would report
+`RUF100 Unused noqa directive` and fail this very gate). Both D009 sites carry an explanatory
+comment; `execute_run`'s records that the broad except is the verbatim pre-existing CLI
+pattern (`cli.py:156-159 / 285-288`) preserved so a lifecycle failure can never leave
+`run.json` at `status="running"`.
+
+**T039 verdict: PASS** — formatters clean, rumdl clean, yamllint clean, ruff clean, ty exit 0
+with the expected set, and pylint at the inherited baseline with zero new diagnostics.
+
+### T040 — full suite
+
+```text
+$ uv run pytest -q
+263 passed, 4 skipped, 3 warnings in 29.98s
+exit=0
+```
+
+No regression versus the 111-passed / 2-skipped inherited reference: all inherited tests
+still pass, and the population grew by this run's new tests. Three warnings, all
+pre-existing and none a failure: two `UserWarning`s about `local_id` shadowing a parent
+attribute in test-local models, and — third — the **R-5 disclosure, directly visible in this
+run's own output**:
+
+```text
+tests/test_potenda_parallel.py:70: PytestUnknownMarkWarning: Unknown pytest.mark.timeout -
+  is this a typo?
+    @pytest.mark.timeout(5)
+```
+
+`pytest-timeout` is absent, so `@pytest.mark.timeout(5)` is a silent no-op. Pre-existing,
+deliberately NOT fixed by this run, and reported rather than hidden.
+
+**T040 verdict: PASS.**
+
+### T041 — CLI sanity, all three commands
+
+Leg (a):
+
+```text
+$ uv run infrahub-sync --help
+Usage: infrahub-sync [OPTIONS] COMMAND [ARGS]...
+  Commands: list, diff, sync, apply, generate
+exit=0
+$ git status --porcelain     → (empty)   ← clean, as required
+```
+
+Leg (b):
+
+```text
+$ uv run infrahub-sync list --directory examples/
+INFO | infrahub_sync.cli | from-netbox | netbox >> infrahub | examples/netbox_to_infrahub
+… 14 configurations listed …
+INFO | infrahub_sync.cli | custom-example | mockdb >> infrahub | examples/custom_adapter
+exit=0
+$ git status --porcelain     → (empty)   ← clean, as required
+```
+
+Discovery is unbroken and unchanged at 14 configurations: the new
+`examples/prefect_remote_run/` ships no `config.yml` (only README, `schemas/`, `requests/`),
+so it is correctly absent from the list rather than breaking the walk.
+
+Leg (c) — the D014 leg, which **does not leave the tree clean and is not expected to**:
+
+```text
+$ uv run infrahub-sync generate --name from-netbox --directory examples/
+INFO | infrahub_sync.cli | Rendered template diffsync_models.j2  to examples/netbox_to_infrahub/netbox/sync_models.py
+INFO | infrahub_sync.cli | Rendered template diffsync_adapter.j2 to examples/netbox_to_infrahub/netbox/sync_adapter.py
+INFO | infrahub_sync.cli | Rendered template diffsync_models.j2  to examples/netbox_to_infrahub/infrahub/sync_models.py
+INFO | infrahub_sync.cli | Rendered template diffsync_adapter.j2 to examples/netbox_to_infrahub/infrahub/sync_adapter.py
+exit=0
+
+$ git status --porcelain
+ M examples/netbox_to_infrahub/infrahub/sync_adapter.py
+ M examples/netbox_to_infrahub/infrahub/sync_models.py
+ M examples/netbox_to_infrahub/netbox/sync_adapter.py
+ M examples/netbox_to_infrahub/netbox/sync_models.py
+
+$ git diff --stat -- examples/netbox_to_infrahub/
+ .../infrahub/sync_adapter.py |  22 +--
+ .../infrahub/sync_models.py  | 220 ++++++-------
+ .../netbox/sync_adapter.py   |  22 +--
+ .../netbox/sync_models.py    | 220 ++++++-------
+ 4 files changed, 242 insertions(+), 242 deletions(-)
+```
+
+**242 changed lines across 4 files — matching D014's predicted ~242 exactly.** Content loss
+was checked structurally rather than by eyeballing the diff. A first attempt sorted whole
+lines, which cannot see through member reordering *inside* an `_attributes` tuple (one of
+the two churn levels D014 names) and produced a false positive; the decisive check parses
+both revisions with `ast` and compares each class's fields **order-insensitively**:
+
+```text
+netbox/sync_models.py    : 20 classes — ALL structurally IDENTICAL (order-insensitive)
+infrahub/sync_models.py  : 20 classes — ALL structurally IDENTICAL (order-insensitive)
+netbox/sync_adapter.py   :  1 class   — ALL structurally IDENTICAL
+infrahub/sync_adapter.py :  1 class   — ALL structurally IDENTICAL
+VERDICT: pure ordering churn, ZERO content loss
+```
+
+20 models and 20 classes before and after, with matching attribute multisets per class.
+Churn restored, NOT committed:
+
+```text
+$ git checkout -- examples/netbox_to_infrahub/
+$ git status --porcelain     → (empty)   ← tree restored clean
+```
+
+Stated plainly, per the brief's completion condition and D014: this is a **pre-existing
+baseline failure reported rather than hidden**. It is INHERITED, not introduced here —
+`git diff main..HEAD -- infrahub_sync/generator/` is empty, so the behavior comes from
+`main`. Cause, measured and not re-derived: `generate` renders from the live Infrahub schema,
+and `generator/templates/diffsync_adapter.j2:26` and `diffsync_models.j2:29` both iterate
+`schema.items()` unsorted, so emitted order tracks API response order. A fixed point exists
+(three consecutive runs byte-identical) but it MOVES — the committed T002 output at `e04f262`
+differs from today's stable output by 484 lines. Option B, committing the current fixed
+point, is viable but was **declined** under D014 in favour of option C, because a gate that
+passes today and silently starts failing later for someone who changed nothing hides itself,
+whereas C never pretends the defect is fixed. No known correctness impact: diffsync matches
+attributes by name, and this feature's canonical plan fingerprint sorts plan rows explicitly
+(D001), so it is order-insensitive. The fix — sorting in the generator, then regenerating all
+checked-in examples — is deliberately deferred to a separate PR, tracked as
+`bug-generate-output-is-not-deterministic-across-runs.md` in the planning repo's
+`proposed-issues/`.
+
+**T041 verdict: PASS with the D014 expected state** — (a) and (b) clean as required, (c)
+churned exactly as predicted, verified content-lossless, and restored.
+
+### T042 — disclosed deviations
+
+Four ratified deviations, recorded here as this run's honest output rather than omissions.
+
+**D015 (RATIFIED) — the one DBR-009 byte-identity deviation.** The only difference in the
+CLI's observable output across the refactor is the rendered **logger name** on the lifecycle
+lines that moved into the shared surface:
+
+```diff
+-INFO | infrahub_sync.cli       | Cached run test-run at <CACHE>/from-netbox/test-run
++INFO | infrahub_sync.execution | Cached run test-run at <CACHE>/from-netbox/test-run
+```
+
+Cause is structural: `_setup_logging`'s formatter is `"%(levelname)s | %(name)s |
+%(message)s"`, so the record's origin logger name is rendered, and the lifecycle calls now
+execute in `execution.py`, which logs via `getLogger(__name__)` per the binding convention.
+Message text, level, ordering, exit codes, `run.json` contents, artifacts are all unchanged,
+and the CLI-vs-remote canonical plan fingerprints are **identical** (`669cdb37…f32c2780`,
+T031). Accepted and disclosed; the two alternatives both touch ratified ground (renaming the
+logger contradicts the logging convention and the live T019/T021/T024 evidence; a
+caller-supplied logger seam is a contract change).
+
+**D014 (RATIFIED) — `generate` non-idempotence.** Full evidence under T041 above.
+
+**Corrected inherited baseline — `invoke lint` exits 30, not 0.** This contradicts the
+brief's R-4 claim of exit 0. Independently re-measured at `9edc1bc` in the same environment:
+exit 30, 56 diagnostics, rating 9.60/10. The final tree is exit 30, 54 diagnostics, 9.68/10 —
+zero new. Detail and the count correction under T039 above.
+
+**R-5 — `pytest-timeout` absent**, so `@pytest.mark.timeout(5)` at
+`tests/test_potenda_parallel.py:70` is a silent no-op. Pre-existing, deliberately not fixed;
+visible in T040's own warning output above.
+
+Three issues filed to the planning repo's `proposed-issues/`, all present on disk:
+
+```text
+bug-generate-output-is-not-deterministic-across-runs.md
+bug-invoke-format-corrupts-markdown-and-invoke-lint-masks-pylint.md
+housekeeping-stale-dependency-caps-hold-back-current-releases.md
+```
+
+The dependency-caps issue also notes that `uv.lock` pins the **yanked** `diffsync==2.2.2`
+(`uv.lock:676-677`), inherited from `main`.
+
+### T042 — final gate table
+
+| Gate | Command | Inherited baseline (same env, `9edc1bc`) | Final tree (`25dc955`) | Verdict |
+|---|---|---|---|---|
+| Python formatters | `uv run invoke linter.format` | no diffs | 82 files unchanged, exit 0, tree clean | PASS |
+| Markdown | `uv run rumdl check .` | clean | clean, 73 files, exit 0 | PASS |
+| Lint chain | `uv run invoke lint` | exit 30, 56 diagnostics, 9.60/10 | exit 30, **54** diagnostics, 9.68/10, **zero new / two removed** | PASS (no regression) |
+| Ruff | (first leg of the chain) | clean | clean, no `RUF100` | PASS |
+| YAML | `uv run invoke linter.lint-yaml` | clean | exit 0 | PASS |
+| Types | `uv run ty check .` | 3 diagnostics, exit 0 | **4** diagnostics, exit 0, zero errors, no overrides | PASS (expected +1, prometheus) |
+| Tests | `uv run pytest -q` | 111 passed, 2 skipped | **263 passed, 4 skipped**, exit 0 | PASS |
+| CLI (a) | `uv run infrahub-sync --help` | — | exit 0, tree clean | PASS |
+| CLI (b) | `uv run infrahub-sync list --directory examples/` | 14 configs | 14 configs, exit 0, tree clean | PASS |
+| CLI (c) | `uv run infrahub-sync generate --name from-netbox --directory examples/` | churns | 242 lines / 4 files, content-lossless, restored | PASS per D014 |
+
+### T042 — live-environment ceiling
+
+**None.** Every live verification in this run executed in full against the lab — T018, T019,
+T021, T024, T030, T031, T037 — so no criterion needed substitute local evidence. No entry is
+required under the spec's informed default for DBA-002–005, DBA-008, DBA-009's paired
+comparison, or DBA-011.
+
+### Phase 8 environment discipline
+
+```text
+No infrahub-* container stopped, restarted, modified, or exec'd into.
+No prefect server or serve process started in this chunk (none needed).
+Destination state, read-only verification at the end of this chunk:
+  InfraDevice count in destination = 0        ← unchanged; nothing written
+No secret value printed: credentials were probed for PRESENCE and LENGTH only
+  (INFRAHUB_ADDRESS: SET, length 21; INFRAHUB_API_TOKEN: SET, length 36).
+No `git stash` and no `--amend` used at any point in this chunk. The pylint baseline
+  was measured via `git archive` into a scratch directory, leaving the working tree
+  untouched, precisely to avoid the stash/checkout pattern two earlier chunks had to
+  disclose.
+Final tree state: clean.
+```
