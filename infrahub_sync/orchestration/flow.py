@@ -78,7 +78,17 @@ class RunLoggerBridge(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         """Re-log the record through the run logger, preserving level and origin name."""
-        self._run_logger.log(record.levelno, "%s | %s", record.name, record.getMessage())
+        try:
+            self._run_logger.log(record.levelno, "%s | %s", record.name, record.getMessage())
+        except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            # `logging.Handler.emit` must never propagate: `Handler.handle` does not
+            # shield it, so anything raised here escapes at the unrelated logging
+            # call site. A single bad `%`-format call in any `infrahub_sync.*` logger
+            # — including a user-written custom adapter — would otherwise fail a run
+            # that has already written to the destination. `handleError` is the
+            # stdlib contract for exactly this, and it is what today's plain CLI
+            # StreamHandler already does with the same bad call.
+            self.handleError(record)
 
 
 @flow(name=FLOW_NAME)

@@ -87,8 +87,10 @@ def resolve_sync_instance(sync_name: str, *, directory: str) -> "SyncInstance":
       (``data.get("name")``). A mapping with no ``name`` key, or a ``name`` that
       is not a string, yields a value that can never equal the requested string,
       so such a file is *determinable-and-different*;
-    - **UNDETERMINABLE** when the read raises ``OSError``, the parse raises
-      ``yaml.YAMLError``, or the loaded object is not a mapping.
+    - **UNDETERMINABLE** when the read raises ``OSError`` or ``UnicodeDecodeError``
+      (a non-UTF-8 file: ``read_text(encoding="utf-8")`` raises it, and because it
+      is a ``ValueError`` neither of the other two clauses catches it), the parse
+      raises ``yaml.YAMLError``, or the loaded object is not a mapping.
 
     Per-file behavior (binding — total and disjoint over the three states above;
     exactly one rule applies to every discovered file):
@@ -304,15 +306,29 @@ def run_remote_request(
     converts failures into the typed remote contract:
 
     - RunValidationError (from resolve_sync_instance or execute_run step 1)
-      propagates unchanged (already sanitized at raise).
+      propagates unchanged (already sanitized at raise). The `resolve_sync_instance`
+      call itself runs INSIDE the boundary's `try`, so anything it raises other
+      than `RunValidationError` is wrapped and sanitized here rather than escaping
+      raw (binding — otherwise the tolerant per-file walk's whole purpose is
+      bypassed by the one exception it did not anticipate).
     - `filelock.Timeout` → RunExecutionError naming the sync name and the timeout.
     - Factory `ValueError` → RunExecutionError whose message preserves today's CLI
-      wording ("Failed to initialize the Sync Instance: ..."). **Missing-credential
+      wording ("Failed to initialize the Sync Instance: ..."). **Stage
+      discrimination (binding)**: the wording applies to FACTORY-stage `ValueError`s
+      only. `potenda` wraps every LOAD-stage failure into `ValueError` too
+      (`potenda/__init__.py:234-250`), and `RunResult.__post_init__` raises it for an
+      invariant violation, so this function passes its own wrapper factory
+      (mirroring `cli._cli_potenda_factory`) that marks factory-stage failures; a
+      load-stage `ValueError` or an invariant violation falls through to the
+      stage-naming clause below instead of being reported as a credential problem.
+      **Missing-credential
       case (D012 option A, binding)**: when the wrapped cause is an adapter
       missing-credential refusal, THIS wrap message additionally names the
       runner-environment variables the operator must set — for the infrahub
       adapter `INFRAHUB_ADDRESS` and `INFRAHUB_API_TOKEN`, by NAME only, never a
-      value. The naming lives here, at the remote boundary, precisely so the
+      value, attributed to the FAILING adapter via the
+      `Error initializing <Name>Adapter:` prefix and omitted entirely for an
+      adapter with no known variables. The naming lives here, at the remote boundary, precisely so the
       adapter modules stay untouched: `infrahub_sync/adapters/infrahub.py` is NOT
       modified by this delivery, and DBR-009's CLI byte-identity therefore holds
       absolutely (the adapter's own message still flows unchanged through the

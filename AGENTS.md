@@ -15,7 +15,7 @@
 
 ```bash
 pyenv local 3.12.x || use system Python 3.10–3.13
-uv sync --extra dev
+uv sync --extra dev --extra prefect
 ```
 
 ## Required Development Workflow
@@ -23,12 +23,18 @@ uv sync --extra dev
 Run in order before committing:
 
 ```bash
-uv sync --extra dev
+uv sync --extra dev --extra prefect
 uv run invoke format
 uv run invoke lint
 ```
 
 `invoke lint` runs ruff → pylint → yamllint → ty.
+
+The `prefect` extra is not optional for development: without it `ty` cannot resolve
+`infrahub_sync/orchestration/`'s imports and `tests/orchestration/test_flow.py` skips
+itself whole, so both gates would pass without ever checking that code. CI installs it
+for the same reason, alongside one base-install job that keeps the Prefect-free
+guarantee honest.
 
 **CLI sanity after changes:**
 

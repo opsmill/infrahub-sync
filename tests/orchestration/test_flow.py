@@ -259,6 +259,60 @@ def test_bridge_forwards_every_record_at_the_effective_level(source_logger: logg
     assert [level for level, _msg, _args in run_logger.calls] == [level for _name, level in emitted_at_effective_level]
 
 
+def test_bridge_swallows_a_bad_format_record_and_keeps_forwarding(
+    source_logger: logging.Logger,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`logging.Handler.emit` must never propagate — `Handler.handle` does not shield it.
+
+    A `%`-format mismatch in any `infrahub_sync.*` log call would otherwise raise at
+    that call site. `propagate` is disabled because pytest's own capture handler
+    deliberately re-raises bad records, which would mask what this test measures.
+    """
+    monkeypatch.setattr(source_logger, "propagate", False)
+    run_logger = _StubRunLogger()
+    source_logger.addHandler(RunLoggerBridge(run_logger))
+    source_logger.setLevel(BRIDGED_LEVEL)
+    child = logging.getLogger(CHILD_LOGGER_NAME)
+
+    child.info("Sync: Completed in %s sec", 1.5, "one argument too many")
+    child.info("Sync run %s at %s", RUN_ID, ARTIFACT_PATH)
+
+    assert run_logger.rendered == [f"{CHILD_LOGGER_NAME} | Sync run {RUN_ID} at {ARTIFACT_PATH}"]
+    # `handleError` reported it the way the CLI's StreamHandler already does.
+    assert "--- Logging error ---" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("prefect_harness")
+def test_a_bad_format_record_does_not_fail_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+    source_logger: logging.Logger,
+    tmp_path: Path,
+) -> None:
+    """The lifecycle logs AFTER writing to the destination: a bad record must not fail it."""
+    monkeypatch.setattr(source_logger, "propagate", False)
+    run_logger = _StubRunLogger()
+    monkeypatch.setattr("infrahub_sync.orchestration.flow.get_run_logger", lambda: run_logger)
+    monkeypatch.setenv(CONFIG_DIR_ENV, str(tmp_path))
+
+    def _log_badly_then_return(*_args: object, **_kwargs: object) -> RunResult:
+
+        logging.getLogger(CHILD_LOGGER_NAME).info(  # noqa: PLE1205
+            "Sync: Completed in %s sec",
+            1.5,
+            "one argument too many",
+        )
+        return _result(operation="sync", status="applied")
+
+    monkeypatch.setattr("infrahub_sync.orchestration.flow.run_remote_request", _log_badly_then_return)
+
+    out = infrahub_sync_run(SYNC_NAME, "sync", confirm_writes=True)
+
+    assert out["status"] == "applied"
+    assert any("finished: status=applied" in line for line in run_logger.rendered)
+
+
 def test_bridge_ignores_records_from_outside_the_infrahub_sync_hierarchy(
     source_logger: logging.Logger,
 ) -> None:

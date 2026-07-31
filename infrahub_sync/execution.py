@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from collections.abc import Callable  # runtime use: the PotendaFactory alias below
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -53,20 +54,69 @@ OPERATIONS: tuple[Operation, ...] = ("plan", "sync")
 ACTION_KEYS: tuple[ActionKey, ...] = ("create", "update", "delete")
 
 REDACTED = "***"
-# Value-based secret collection. Names matched exactly, plus every environment
-# variable whose NAME ends with one of the suffixes — adapter credentials such as
-# NETBOX_TOKEN reach the runner through the environment, outside the resolved
-# configuration's settings.
-SECRET_ENV_NAMES = ("INFRAHUB_API_TOKEN",)
-SECRET_ENV_NAME_SUFFIXES = ("_TOKEN", "_PASSWORD", "_SECRET", "_API_KEY")
-SECRET_SETTING_KEYS = ("token", "password", "secret", "api_key")
+# Shortest collected value that is redacted. A short value — the `1` of a
+# `SKIP_TOKEN=1` feature flag, say — would turn redaction into a substring
+# shredder over every message ("within 6***.0 seconds"), and no real credential
+# is that short, so short values are dropped rather than applied.
+MIN_SECRET_LENGTH = 6
 
-# Runner-environment variables named in the missing-credential wrap message for
-# the infrahub adapter. Named here, at the remote boundary, so
-# `infrahub_sync/adapters/infrahub.py` stays untouched and the CLI's own wording
-# is unchanged.
+# Value-based secret collection, environment half. A variable's NAME is
+# credential-shaped when it CONTAINS one of the substrings, ENDS WITH one of the
+# suffixes, or equals one of the exact names. Substring matching is what catches
+# the bare `TOKEN`/`PASSWORD` names the genericrestapi adapter reads by default
+# (adapters/genericrestapi.py:72,90) and `AWS_SECRET_ACCESS_KEY`; the two
+# suffixes carry the names — `*_KEY`, `*_AUTH` — whose bare substrings would
+# match unrelated variables (`KEYCHAIN`, `SSH_AUTH_SOCK`). Adapter credentials
+# such as NETBOX_TOKEN reach the runner through the environment, outside the
+# resolved configuration's settings.
+SECRET_ENV_NAMES = ("INFRAHUB_API_TOKEN", "KEY", "AUTH")
+SECRET_ENV_NAME_SUBSTRINGS = ("TOKEN", "PASSWORD", "PASSWD", "SECRET", "CREDENTIAL", "APIKEY")
+SECRET_ENV_NAME_SUFFIXES = ("_KEY", "_AUTH")
+
+# Settings half. Every `settings` mapping of the resolved configuration — source,
+# destination, AND store — is walked RECURSIVELY, and a key is credential-shaped
+# when its name CONTAINS one of these substrings: `api_key`, ipfabric's `auth`, a
+# nested `headers.authorization`, and `store.settings.password` all match. Values
+# are `str()`-ed, so a non-string credential is collected too.
+SECRET_SETTING_KEY_SUBSTRINGS = ("token", "password", "secret", "key", "auth", "credential")
+# A `<something>_env_vars` key names environment variables the adapter reads
+# INSTEAD of an inline value (adapters/genericrestapi.py:59-92,
+# adapters/peeringmanager.py:31-34). The names are not secrets; the values they
+# point at are, when the key itself is credential-shaped.
+ENV_VAR_LIST_SUFFIX = "_env_vars"
+# Userinfo of a URL-shaped value: `scheme://user:password@host/...` hides a
+# credential in plain sight, typically next to an already-redacted sibling token.
+_URL_USERINFO = re.compile(r"://(?P<userinfo>[^/\s@]+)@")
+
+# Runner-environment variables each adapter reads its credentials from, keyed by
+# the adapter's normalized name. Named here, at the remote boundary, so the
+# adapter modules stay untouched and the CLI's own wording is unchanged. An
+# adapter absent from this map gets NO hint: naming the wrong system's variables
+# is worse than naming none.
 INFRAHUB_CREDENTIAL_ENV_VARS = ("INFRAHUB_ADDRESS", "INFRAHUB_API_TOKEN")
-_MISSING_CREDENTIAL_MARKERS = ("must be specified", "must be set", "no token", "missing credential")
+ADAPTER_CREDENTIAL_ENV_VARS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "infrahub": INFRAHUB_CREDENTIAL_ENV_VARS,
+        "netbox": ("NETBOX_ADDRESS", "NETBOX_TOKEN"),
+        "nautobot": ("NAUTOBOT_ADDRESS", "NAUTOBOT_TOKEN"),
+        "prometheus": ("PROM_URL", "PROM_TOKEN"),
+        "ipfabricsync": ("IPF_URL", "IPF_TOKEN"),
+        "aci": ("CISCO_APIC_URL", "CISCO_APIC_USERNAME", "CISCO_APIC_PASSWORD"),
+        "peeringmanager": ("PEERING_MANAGER_ADDRESS", "PEERING_MANAGER_TOKEN"),
+    }
+)
+_MISSING_CREDENTIAL_MARKERS = (
+    "must be specified",
+    "must be set",
+    "no token",
+    "missing credential",
+    "requires a valid api token",
+    "requires both username and password",
+)
+# `utils.get_potenda_from_instance` wraps EVERY adapter construction failure with
+# this prefix (utils.py:219,233), and it is the only place the FAILING adapter is
+# named — the adapter's own message never names itself.
+_ADAPTER_INIT_PREFIX = re.compile(r"^Error initializing (?P<adapter>.+?)Adapter:\s*(?P<detail>.*)$", re.DOTALL)
 
 
 class RunValidationError(Exception):
@@ -77,9 +127,87 @@ class RunExecutionError(Exception):
     """Adapter or engine failure after validation passed."""
 
 
+class _FactoryValueError(Exception):
+    """Internal marker: the ENGINE FACTORY raised `ValueError`, not a later stage.
+
+    `potenda` wraps every LOAD-stage failure into `ValueError` as well
+    (`potenda/__init__.py:234-250`), and `RunResult.__post_init__` raises it for an
+    invariant violation, so the exception type alone cannot tell the stages apart.
+    `run_remote_request`'s own wrapper factory (mirroring `cli._cli_potenda_factory`)
+    raises this marker with the original `ValueError` as its `__cause__`, so only
+    factory-stage failures get the "Failed to initialize the Sync Instance" wording.
+    """
+
+
 # --------------------------------------------------------------------------- #
 # Secret redaction
 # --------------------------------------------------------------------------- #
+
+
+def _is_secret_env_name(name: str) -> bool:
+    """Return whether an environment variable's NAME is credential-shaped."""
+    upper = name.upper()
+    return (
+        upper in SECRET_ENV_NAMES
+        or upper.endswith(SECRET_ENV_NAME_SUFFIXES)
+        or any(part in upper for part in SECRET_ENV_NAME_SUBSTRINGS)
+    )
+
+
+def _add_secret(value: object, values: set[str]) -> None:
+    """Add one candidate value, `str()`-ing non-strings and dropping short ones."""
+    text = value if isinstance(value, str) else str(value)
+    if len(text) >= MIN_SECRET_LENGTH:
+        values.add(text)
+
+
+def _add_url_userinfo(text: str, values: set[str]) -> None:
+    """Add the userinfo of every URL-shaped value (`http://admin:pw@host/api`)."""
+    for match in _URL_USERINFO.finditer(text):
+        userinfo = match.group("userinfo")
+        _add_secret(userinfo, values)
+        _, separator, password = userinfo.partition(":")
+        if separator:
+            _add_secret(password, values)
+
+
+def _collect_from_settings(
+    node: Any,
+    values: set[str],
+    *,
+    secret_context: bool,
+    environ: Mapping[str, str],
+) -> None:
+    """Walk one `settings` subtree, collecting every credential-shaped value.
+
+    `secret_context` is inherited: once a credential-shaped key is entered, every
+    value beneath it counts (a `credentials:` block of plain-named entries, say).
+    """
+    if isinstance(node, dict):
+        for key, value in node.items():
+            lowered = str(key).lower()
+            is_secret_key = secret_context or any(part in lowered for part in SECRET_SETTING_KEY_SUBSTRINGS)
+            if lowered.endswith(ENV_VAR_LIST_SUFFIX):
+                # The list holds NAMES, never values: collect what they point at,
+                # and never the names themselves (`ADDRESS` as a redaction target
+                # would shred unrelated messages).
+                if is_secret_key and isinstance(value, (list, tuple)):
+                    for env_name in value:
+                        _add_secret(environ.get(str(env_name)) or "", values)
+                continue
+            _collect_from_settings(value, values, secret_context=is_secret_key, environ=environ)
+        return
+    if isinstance(node, (list, tuple, set)):
+        for item in node:
+            _collect_from_settings(item, values, secret_context=secret_context, environ=environ)
+        return
+    if node is None or isinstance(node, bool):
+        # `str(None)`/`str(False)` are ordinary words, never credentials.
+        return
+    if secret_context:
+        _add_secret(node, values)
+    if isinstance(node, str):
+        _add_url_userinfo(node, values)
 
 
 def collect_secret_values(
@@ -89,23 +217,30 @@ def collect_secret_values(
 ) -> tuple[str, ...]:
     """Collect the secret VALUES that must never appear in a surface message.
 
-    Sources: the runner environment (names in :data:`SECRET_ENV_NAMES` plus any
-    name ending with a :data:`SECRET_ENV_NAME_SUFFIXES` suffix) and the resolved
-    configuration's source/destination settings (keys in
-    :data:`SECRET_SETTING_KEYS`). Longest values first so overlapping secrets
-    redact completely.
+    Sources:
+
+    - the runner environment — every variable whose NAME is credential-shaped
+      (:func:`_is_secret_env_name`);
+    - the resolved configuration's `source`, `destination`, AND `store` settings,
+      walked recursively: the value of every key whose name contains one of
+      :data:`SECRET_SETTING_KEY_SUBSTRINGS` (nested `headers`/`params` included,
+      non-string values `str()`-ed), the userinfo of every URL-shaped value, and
+      the environment values named by the configuration's own `*_env_vars` lists.
+
+    Values shorter than :data:`MIN_SECRET_LENGTH` are dropped. Longest values
+    first, so overlapping secrets redact completely.
     """
     env = os.environ if environ is None else environ
     values: set[str] = set()
     for name, value in env.items():
-        upper = name.upper()
-        if (upper in SECRET_ENV_NAMES or upper.endswith(SECRET_ENV_NAME_SUFFIXES)) and value:
-            values.add(value)
+        if value and _is_secret_env_name(name):
+            _add_secret(value, values)
     if sync_instance is not None:
-        for adapter in (sync_instance.source, sync_instance.destination):
-            for key, value in (adapter.settings or {}).items():
-                if key.lower() in SECRET_SETTING_KEYS and isinstance(value, str) and value:
-                    values.add(value)
+        settings_blocks = [sync_instance.source.settings, sync_instance.destination.settings]
+        if sync_instance.store is not None:
+            settings_blocks.append(sync_instance.store.settings)
+        for settings in settings_blocks:
+            _collect_from_settings(settings or {}, values, secret_context=False, environ=env)
     return tuple(sorted(values, key=lambda value: (-len(value), value)))
 
 
@@ -201,12 +336,14 @@ def _load_config_name(config_file: Path) -> tuple[bool, Any]:
     """Return `(determinable, name)` for one discovered `config.yml`.
 
     The name is the top-level `name` key of the parsed mapping. It is
-    UNDETERMINABLE when the read raises `OSError`, the parse raises
-    `yaml.YAMLError`, or the loaded document is not a mapping.
+    UNDETERMINABLE when the read raises `OSError` or `UnicodeDecodeError` (a
+    non-UTF-8 file — `read_text(encoding="utf-8")` raises it, and it is a
+    `ValueError`, so neither of the other two clauses would catch it), the parse
+    raises `yaml.YAMLError`, or the loaded document is not a mapping.
     """
     try:
         data = yaml.safe_load(config_file.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
         return False, None
     if not isinstance(data, dict):
         return False, None
@@ -465,16 +602,30 @@ def execute_run(
 # --------------------------------------------------------------------------- #
 
 
-def _missing_credential_hint(sync_instance: SyncInstance, detail: str) -> str:
-    """Return the env-var naming suffix for an adapter missing-credential refusal."""
-    lowered = detail.lower()
-    names_infrahub = any(
-        "infrahub" in adapter.name.lower() for adapter in (sync_instance.source, sync_instance.destination)
-    )
-    if names_infrahub and any(marker in lowered for marker in _MISSING_CREDENTIAL_MARKERS):
-        joined = " and ".join(INFRAHUB_CREDENTIAL_ENV_VARS)
-        return f" Set the runner-environment variables {joined}."
-    return ""
+def _missing_credential_hint(detail: str) -> str:
+    """Return the env-var naming suffix for an adapter missing-credential refusal.
+
+    Attribution comes from the `Error initializing <Name>Adapter:` prefix
+    `utils.get_potenda_from_instance` always emits, so the variables named are the
+    FAILING adapter's — not those of whichever system the configuration happens to
+    mention (Infrahub is almost always one side, which made every adapter's missing
+    `url` read as an Infrahub credential problem). Returns `""` — no hint at all —
+    when the message carries no such prefix, when the named adapter is absent from
+    :data:`ADAPTER_CREDENTIAL_ENV_VARS`, or when the detail is not a
+    missing-credential refusal.
+    """
+    match = _ADAPTER_INIT_PREFIX.match(detail)
+    if match is None:
+        return ""
+    adapter_key = re.sub(r"[^a-z0-9]", "", match.group("adapter").lower())
+    env_vars = ADAPTER_CREDENTIAL_ENV_VARS.get(adapter_key)
+    if not env_vars:
+        return ""
+    lowered = match.group("detail").lower()
+    if not any(marker in lowered for marker in _MISSING_CREDENTIAL_MARKERS):
+        return ""
+    joined = " and ".join(env_vars) if len(env_vars) < 3 else ", ".join(env_vars[:-1]) + f", and {env_vars[-1]}"
+    return f" Set the runner-environment variables {joined}."
 
 
 def run_remote_request(
@@ -500,21 +651,39 @@ def run_remote_request(
     This is THE sanitize-and-wrap boundary: `RunValidationError` passes through
     unchanged (already sanitized at raise) and every other failure becomes a
     `RunExecutionError` whose message — and whose whole cause chain — is redacted.
+    Configuration resolution runs INSIDE that boundary, so a failure the tolerant
+    per-file walk does not turn into a `RunValidationError` cannot bypass it.
 
     Raises:
         RunValidationError: request or configuration refusal.
         RunExecutionError: any adapter or engine failure, sanitized.
     """
-    sync_instance = resolve_sync_instance(sync_name, directory=config_directory)
-    secrets = collect_secret_values(sync_instance)
+
+    def factory(**kwargs: Any) -> Potenda:
+        """Mark factory-stage `ValueError`s so only they are labeled "initialize".
+
+        Mirrors `cli._cli_potenda_factory`: the CLI keeps its prefixed abort at the
+        construction site, and this keeps the equivalent wording tied to the same
+        stage. The module global is resolved at call time so patches on
+        `infrahub_sync.execution.get_potenda_from_instance` still intercept it.
+        """
+        inner: PotendaFactory = _potenda_factory if _potenda_factory is not None else get_potenda_from_instance
+        try:
+            return inner(**kwargs)
+        except ValueError as exc:
+            raise _FactoryValueError(str(exc)) from exc
+
+    secrets = collect_secret_values()
     try:
+        sync_instance = resolve_sync_instance(sync_name, directory=config_directory)
+        secrets = collect_secret_values(sync_instance)
         return execute_run(
             sync_instance,
             operation=operation,
             confirm_writes=confirm_writes,
             branch=branch,
             show_progress=False,
-            potenda_factory=_potenda_factory,
+            potenda_factory=factory,
             _lock_timeout=_lock_timeout,
         )
     except RunValidationError:
@@ -526,10 +695,14 @@ def run_remote_request(
             secrets,
         )
         raise RunExecutionError(msg) from sanitize_exception_chain(exc, secrets)
-    except ValueError as exc:
+    except _FactoryValueError as exc:
+        # Factory stage only. A load-stage `ValueError` (potenda wraps every load
+        # failure into one) and a `RunResult` invariant violation fall through to
+        # the stage-naming clause below instead of being mislabeled a credential
+        # problem.
         detail = redact(str(exc), secrets)
-        msg = f"Failed to initialize the Sync Instance: {detail}{_missing_credential_hint(sync_instance, detail)}"
-        raise RunExecutionError(msg) from sanitize_exception_chain(exc, secrets)
+        msg = f"Failed to initialize the Sync Instance: {detail}{_missing_credential_hint(detail)}"
+        raise RunExecutionError(msg) from sanitize_exception_chain(exc.__cause__ or exc, secrets)
     except ImportError as exc:
         msg = redact(f"Failed to import an adapter for sync {sync_name!r}: {exc}", secrets)
         raise RunExecutionError(msg) from sanitize_exception_chain(exc, secrets)

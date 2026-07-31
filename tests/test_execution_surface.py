@@ -21,6 +21,7 @@ from typing import Any, NoReturn
 import pytest
 from filelock import Timeout
 
+from infrahub_sync import SyncAdapter, SyncInstance, SyncStore
 from infrahub_sync.cache.locks import pipeline_lock
 from infrahub_sync.cache.parquet_io import write_plan
 from infrahub_sync.cache.sidecars import RunFile
@@ -28,7 +29,9 @@ from infrahub_sync.execution import (
     RunExecutionError,
     RunResult,
     RunValidationError,
+    collect_secret_values,
     execute_run,
+    redact,
     resolve_sync_instance,
     run_remote_request,
 )
@@ -43,6 +46,7 @@ ENV_PATTERN_CANARY = "ZZ-ENV-NETBOX-TOKEN-CANARY-0002"
 SOURCE_SETTING_CANARY = "ZZ-SETTINGS-SOURCE-CANARY-0003"
 DEST_SETTING_CANARY = "ZZ-SETTINGS-DEST-CANARY-0004"
 FILE_CONTENT_CANARY = "ZZ-FILE-CONTENT-CANARY-0005"
+URL_USERINFO_CANARY = "ZZ-URL-USERINFO-CANARY-0006"
 
 PWNED_MARKER = Path("/tmp/infrahub-sync-pwned-canary")  # noqa: S108 - never created; asserted absent
 
@@ -127,19 +131,31 @@ class _FakeDiff:
 class _FakePotenda:
     """The engine surface `execute_run` actually touches — nothing more."""
 
-    def __init__(self, *, run_dir: Path, rows: list[dict[str, Any]], factory_kwargs: dict[str, object]) -> None:
+    def __init__(
+        self,
+        *,
+        run_dir: Path,
+        rows: list[dict[str, Any]],
+        factory_kwargs: dict[str, object],
+        load_error: BaseException | None = None,
+    ) -> None:
         self.run_dir = run_dir
         self.run_id = run_dir.name
         self.top_level = ["InfraDevice"]
         self.force_full_extract = False
         self.factory_kwargs = factory_kwargs
         self.rows = rows
+        self.load_error = load_error
         self.loaded = False
         self.synced = False
         self.baseline_persisted = False
         self.guardrail_allow_drop: bool | None = None
 
     def load_both_sides(self) -> None:
+        if self.load_error is not None:
+            # The LOAD stage, distinct from the factory stage: potenda wraps every
+            # load failure into `ValueError` too.
+            raise self.load_error
         self.loaded = True
 
     def diff(self) -> _FakeDiff:
@@ -170,11 +186,13 @@ class _SpyFactory:
         cache_root: Path,
         rows: list[dict[str, Any]] | None = None,
         error: BaseException | None = None,
+        load_error: BaseException | None = None,
     ) -> None:
         self.calls: list[dict[str, object]] = []
         self.cache_root = cache_root
         self.rows = rows if rows is not None else []
         self.error = error
+        self.load_error = load_error
         self.engine: _FakePotenda | None = None
 
     def __call__(self, **kwargs: object) -> Any:  # noqa: ANN401 — a fake engine, not a real Potenda
@@ -183,7 +201,12 @@ class _SpyFactory:
             raise self.error
         run_dir = self.cache_root / RUN_ID
         run_dir.mkdir(parents=True, exist_ok=True)
-        self.engine = _FakePotenda(run_dir=run_dir, rows=list(self.rows), factory_kwargs=kwargs)
+        self.engine = _FakePotenda(
+            run_dir=run_dir,
+            rows=list(self.rows),
+            factory_kwargs=kwargs,
+            load_error=self.load_error,
+        )
         return self.engine
 
 
@@ -398,6 +421,172 @@ def test_execution_error_redacts_the_whole_cause_chain(config_dir: str, cache_ro
 
 
 # --------------------------------------------------------------------------- #
+# Part 1 — the secret-value collection set
+# --------------------------------------------------------------------------- #
+
+
+def _instance(
+    *,
+    source_settings: dict[str, Any] | None = None,
+    destination_settings: dict[str, Any] | None = None,
+    store: SyncStore | None = None,
+) -> SyncInstance:
+    """A resolved instance carrying arbitrary adapter/store settings."""
+    return SyncInstance(
+        name=SYNC_NAME,
+        source=SyncAdapter(name="netbox", settings=source_settings or {}),
+        destination=SyncAdapter(name="infrahub", settings=destination_settings or {}),
+        store=store,
+        directory="/nonexistent",
+    )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "environ", "expected"),
+    [
+        pytest.param(
+            {"source_settings": {"url": f"http://admin:{URL_USERINFO_CANARY}@netbox.local/api"}},
+            {},
+            URL_USERINFO_CANARY,
+            id="password-inside-a-url",
+        ),
+        pytest.param({}, {"TOKEN": URL_USERINFO_CANARY}, URL_USERINFO_CANARY, id="bare-TOKEN-env-name"),
+        pytest.param({}, {"PASSWORD": URL_USERINFO_CANARY}, URL_USERINFO_CANARY, id="bare-PASSWORD-env-name"),
+        pytest.param(
+            {},
+            {"AWS_SECRET_ACCESS_KEY": URL_USERINFO_CANARY},
+            URL_USERINFO_CANARY,
+            id="aws-secret-access-key",
+        ),
+        pytest.param(
+            {"source_settings": {"auth": URL_USERINFO_CANARY}},
+            {},
+            URL_USERINFO_CANARY,
+            id="ipfabric-auth-key",
+        ),
+        pytest.param(
+            {"source_settings": {"token": 12345678901234}},
+            {},
+            "12345678901234",
+            id="non-string-value",
+        ),
+        pytest.param(
+            {"source_settings": {"headers": {"Authorization": f"Bearer {URL_USERINFO_CANARY}"}}},
+            {},
+            f"Bearer {URL_USERINFO_CANARY}",
+            id="nested-headers",
+        ),
+        pytest.param(
+            {"source_settings": {"params": {"api_key": URL_USERINFO_CANARY}}},
+            {},
+            URL_USERINFO_CANARY,
+            id="nested-params",
+        ),
+        pytest.param(
+            {"store": SyncStore(type="redis", settings={"password": URL_USERINFO_CANARY})},
+            {},
+            URL_USERINFO_CANARY,
+            id="store-settings-password",
+        ),
+        pytest.param(
+            {"source_settings": {"token_env_vars": ["MY_ADAPTER_PASSPHRASE"]}},
+            {"MY_ADAPTER_PASSPHRASE": URL_USERINFO_CANARY},
+            URL_USERINFO_CANARY,
+            id="config-named-env-var-list",
+        ),
+    ],
+)
+def test_collected_secret_values_cover_realistic_credential_placements(
+    kwargs: dict[str, Any],
+    environ: dict[str, str],
+    expected: str,
+) -> None:
+    assert expected in collect_secret_values(_instance(**kwargs), environ=environ)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "environ", "unwanted"),
+    [
+        pytest.param({}, {"SKIP_TOKEN": "2"}, "2", id="value-too-short-to-redact"),
+        pytest.param({}, {"LC_ALL": "en_US.UTF-8"}, "en_US.UTF-8", id="unrelated-env-name"),
+        pytest.param({}, {"SSH_AUTH_SOCK": "/private/tmp/socket"}, "/private/tmp/socket", id="auth-mid-name-env"),
+        pytest.param(
+            {"source_settings": {"url_env_vars": ["NETBOX_ADDRESS"]}},
+            {"NETBOX_ADDRESS": "http://netbox.local"},
+            "NETBOX_ADDRESS",
+            id="non-secret-env-var-list-names",
+        ),
+        pytest.param(
+            {"source_settings": {"url": "http://netbox.local/api"}},
+            {},
+            "http://netbox.local/api",
+            id="url-without-userinfo",
+        ),
+        pytest.param({"source_settings": {"password": None}}, {}, "None", id="none-value"),
+        pytest.param({"source_settings": {"verify_ssl": False}}, {}, "False", id="bool-value"),
+    ],
+)
+def test_collected_secret_values_exclude_values_that_would_shred_messages(
+    kwargs: dict[str, Any],
+    environ: dict[str, str],
+    unwanted: str,
+) -> None:
+    assert unwanted not in collect_secret_values(_instance(**kwargs), environ=environ)
+
+
+def test_a_short_secret_value_does_not_shred_unrelated_message_text(
+    config_dir: str,
+    cache_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L2: `SKIP_TOKEN=2` must not turn the lock message into "within 0.*** seconds"."""
+    monkeypatch.setenv("SKIP_TOKEN", "2")
+    factory = _SpyFactory(cache_root=cache_root)
+
+    with pipeline_lock(SYNC_NAME, timeout=5), pytest.raises(RunExecutionError) as excinfo:
+        run_remote_request(
+            SYNC_NAME,
+            config_directory=config_dir,
+            _potenda_factory=factory,
+            _lock_timeout=0.2,
+        )
+
+    assert "within 0.2 seconds" in str(excinfo.value)
+
+
+def test_url_userinfo_is_redacted_from_a_wrapped_execution_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A password in `settings.url` is redacted like a sibling `token` value is."""
+    root = tmp_path / "configs" / "userinfo"
+    root.mkdir(parents=True)
+    endpoint = f"http://admin:{URL_USERINFO_CANARY}@localhost:9999/api"
+    (root / "config.yml").write_text(
+        _valid_config().replace("url: http://localhost:9999", f"url: {endpoint}"),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "cache"))
+    factory = _SpyFactory(
+        cache_root=tmp_path / "cache" / SYNC_NAME,
+        error=RuntimeError(f"connection to {endpoint} refused"),
+    )
+
+    with pytest.raises(RunExecutionError) as excinfo:
+        run_remote_request(SYNC_NAME, config_directory=str(tmp_path / "configs"), _potenda_factory=factory)
+
+    assert URL_USERINFO_CANARY not in str(excinfo.value)
+    assert URL_USERINFO_CANARY not in _rendered_traceback(excinfo.value)
+    assert "***" in str(excinfo.value)
+
+
+def test_redact_leaves_a_message_untouched_when_nothing_was_collected() -> None:
+    assert redact("within 60.0 seconds", collect_secret_values(_instance(), environ={"SKIP_TOKEN": "1"})) == (
+        "within 60.0 seconds"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Part 2 — sync_name refusals (SC-004)
 # --------------------------------------------------------------------------- #
 
@@ -530,6 +719,82 @@ def test_broken_neighbour_does_not_block_another_name(
     assert warnings == [f"Skipping sync configuration {broken_file}: it could not be read"]
 
 
+def _write_non_utf8_neighbour(root: Path) -> Path:
+    """Write a latin-1 `config.yml` — `read_text(encoding="utf-8")` cannot decode it."""
+    broken = root / "a-not-utf8"
+    broken.mkdir(parents=True)
+    broken_file = broken / "config.yml"
+    broken_file.write_bytes(f"name: caf\xe9\nsecret: {FILE_CONTENT_CANARY}\n".encode("latin-1"))
+    return broken_file
+
+
+def test_non_utf8_neighbour_is_skipped_with_a_path_only_warning(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """`UnicodeDecodeError` is a `ValueError`, so it is caught by name in the walk.
+
+    Without it in the per-file catch, a single non-UTF-8 file made every OTHER
+    name in the directory unresolvable.
+    """
+    root = tmp_path / "configs"
+    broken_file = _write_non_utf8_neighbour(root)
+    good = root / "b-good"
+    good.mkdir()
+    (good / "config.yml").write_text(_valid_config(), encoding="utf-8")
+
+    with caplog.at_level(logging.DEBUG, logger="infrahub_sync.execution"):
+        instance = resolve_sync_instance(SYNC_NAME, directory=str(root))
+
+    assert instance.name == SYNC_NAME
+    assert instance.directory == str(good)
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == [f"Skipping sync configuration {broken_file}: it could not be read"]
+    assert FILE_CONTENT_CANARY not in caplog.text
+
+
+def test_non_utf8_neighbour_does_not_break_a_remote_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reviewer's reproduction: a latin-1 neighbour raised a raw `UnicodeDecodeError`."""
+    root = tmp_path / "configs"
+    _write_non_utf8_neighbour(root)
+    good = root / "b-good"
+    good.mkdir()
+    (good / "config.yml").write_text(_valid_config(), encoding="utf-8")
+    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "cache"))
+    factory = _SpyFactory(cache_root=tmp_path / "cache" / SYNC_NAME, rows=[_plan_row("create", "dev01")])
+
+    result = run_remote_request(SYNC_NAME, config_directory=str(root), _potenda_factory=factory)
+
+    assert result.status == "planned"
+    assert len(factory.calls) == 1
+
+
+@pytest.mark.usefixtures("seeded_secrets")
+def test_a_resolution_failure_that_is_not_a_refusal_is_wrapped_and_sanitized(
+    config_dir: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`resolve_sync_instance` runs INSIDE the sanitize-and-wrap boundary."""
+
+    fault = UnicodeDecodeError("utf-8", b"\xe9", 0, 1, f"invalid start byte near {ENV_TOKEN_CANARY}")
+
+    def boom(*_args: object, **_kwargs: object) -> NoReturn:
+        raise fault
+
+    monkeypatch.setattr("infrahub_sync.execution.resolve_sync_instance", boom)
+
+    with pytest.raises(RunExecutionError) as excinfo:
+        run_remote_request(SYNC_NAME, config_directory=config_dir)
+
+    message = str(excinfo.value)
+    assert "UnicodeDecodeError" in message
+    assert ENV_TOKEN_CANARY not in message
+    assert ENV_TOKEN_CANARY not in _rendered_traceback(excinfo.value)
+
+
 # --------------------------------------------------------------------------- #
 # Part 2 — refusals before adapter construction
 # --------------------------------------------------------------------------- #
@@ -621,6 +886,131 @@ def test_remote_missing_credential_names_the_environment_variables(config_dir: s
     assert "INFRAHUB_API_TOKEN" in message
     assert ENV_TOKEN_CANARY not in message
     assert ENV_TOKEN_CANARY not in _rendered_traceback(excinfo.value)
+
+
+def test_factory_stage_value_error_keeps_the_initialization_wording(config_dir: str, cache_root: Path) -> None:
+    """Only the FACTORY stage gets today's CLI "Failed to initialize" wording."""
+    factory = _SpyFactory(
+        cache_root=cache_root,
+        error=ValueError("Error initializing MockdbAdapter: settings are incomplete"),
+    )
+    with pytest.raises(RunExecutionError) as excinfo:
+        run_remote_request(SYNC_NAME, config_directory=config_dir, _potenda_factory=factory)
+
+    message = str(excinfo.value)
+    assert message.startswith("Failed to initialize the Sync Instance: ")
+    assert "Error initializing MockdbAdapter" in message
+    # `mockdb` is not a known adapter, so no environment variables are named.
+    assert "Set the runner-environment variables" not in message
+
+
+def test_load_stage_value_error_is_labeled_by_stage_not_by_initialization(
+    config_dir: str,
+    cache_root: Path,
+) -> None:
+    """`potenda` wraps every load failure into `ValueError` — the spec's named fault.
+
+    Reporting it as an initialization failure told an operator with an unreachable
+    destination to check their credentials.
+    """
+    factory = _SpyFactory(
+        cache_root=cache_root,
+        load_error=ValueError("An error occurred while loading Infrahub: destination is unreachable"),
+    )
+    with pytest.raises(RunExecutionError) as excinfo:
+        run_remote_request(SYNC_NAME, config_directory=config_dir, _potenda_factory=factory)
+
+    message = str(excinfo.value)
+    assert "Failed to initialize the Sync Instance" not in message
+    assert f"Sync {SYNC_NAME!r} failed during operation=plan" in message
+    assert "ValueError: An error occurred while loading Infrahub: destination is unreachable" in message
+    assert "Set the runner-environment variables" not in message
+    assert len(factory.calls) == 1
+
+
+def test_a_result_invariant_violation_is_not_reported_as_a_credential_problem(
+    config_dir: str,
+    cache_root: Path,
+) -> None:
+    """`RunResult.__post_init__` raises `ValueError` for an internal invariant bug.
+
+    Injected here as the invariant message the dataclass itself would raise, so an
+    internal bug reads as one instead of as a missing credential.
+    """
+    factory = _SpyFactory(
+        cache_root=cache_root,
+        load_error=ValueError("summary must carry exactly the keys ('create', 'update', 'delete')"),
+    )
+    with pytest.raises(RunExecutionError) as excinfo:
+        run_remote_request(SYNC_NAME, config_directory=config_dir, _potenda_factory=factory)
+
+    message = str(excinfo.value)
+    assert "Failed to initialize the Sync Instance" not in message
+    assert "summary must carry exactly the keys" in message
+
+
+@pytest.mark.parametrize(
+    ("adapter_error", "expected_env_vars"),
+    [
+        pytest.param(
+            "Error initializing PrometheusAdapter: Prometheus 'url' must be specified!",
+            ("PROM_URL", "PROM_TOKEN"),
+            id="prometheus-url",
+        ),
+        pytest.param(
+            "Error initializing NetboxAdapter: Both url and token must be specified!",
+            ("NETBOX_ADDRESS", "NETBOX_TOKEN"),
+            id="netbox-url-and-token",
+        ),
+        pytest.param(
+            "Error initializing IpfabricsyncAdapter: Both url and auth must be specified!",
+            ("IPF_URL", "IPF_TOKEN"),
+            id="ipfabric-url-and-auth",
+        ),
+        pytest.param(
+            "Error initializing PeeringmanagerAdapter: Authentication method 'token' requires a valid API token!",
+            ("PEERING_MANAGER_ADDRESS", "PEERING_MANAGER_TOKEN"),
+            id="generic-rest-api-wording",
+        ),
+    ],
+)
+def test_missing_credential_hint_names_the_failing_adapters_variables(
+    adapter_error: str,
+    expected_env_vars: tuple[str, ...],
+    config_dir: str,
+    cache_root: Path,
+) -> None:
+    """Attribution follows the FAILING adapter, not whichever side mentions Infrahub."""
+    factory = _SpyFactory(cache_root=cache_root, error=ValueError(adapter_error))
+    with pytest.raises(RunExecutionError) as excinfo:
+        run_remote_request(SYNC_NAME, config_directory=config_dir, _potenda_factory=factory)
+
+    message = str(excinfo.value)
+    for env_var in expected_env_vars:
+        assert env_var in message
+    # The configuration's destination IS infrahub, which is exactly what used to
+    # make every adapter's missing input read as an Infrahub credential problem.
+    assert "INFRAHUB_ADDRESS" not in message
+
+
+@pytest.mark.parametrize(
+    "adapter_error",
+    [
+        pytest.param("Error initializing MockdbAdapter: url must be specified!", id="unknown-adapter"),
+        pytest.param("Failed to build the engine: url must be specified!", id="no-adapter-prefix"),
+        pytest.param("Error initializing NetboxAdapter: the API returned 500", id="not-a-credential-refusal"),
+    ],
+)
+def test_missing_credential_hint_stays_silent_when_it_cannot_attribute(
+    adapter_error: str,
+    config_dir: str,
+    cache_root: Path,
+) -> None:
+    factory = _SpyFactory(cache_root=cache_root, error=ValueError(adapter_error))
+    with pytest.raises(RunExecutionError) as excinfo:
+        run_remote_request(SYNC_NAME, config_directory=config_dir, _potenda_factory=factory)
+
+    assert "Set the runner-environment variables" not in str(excinfo.value)
 
 
 def test_remote_import_error_is_wrapped(config_dir: str, cache_root: Path) -> None:

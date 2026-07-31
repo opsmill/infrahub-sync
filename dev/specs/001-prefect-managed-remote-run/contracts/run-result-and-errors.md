@@ -82,7 +82,11 @@ class RunExecutionError(Exception):
         `INFRAHUB_API_TOKEN`, by NAME only, never a value. D012 option A: the
         naming is added at the remote wrap boundary, NOT in
         `infrahub_sync/adapters/infrahub.py`, which this delivery leaves
-        untouched so DBR-009's CLI byte-identity stays absolute)
+        untouched so DBR-009's CLI byte-identity stays absolute. Attribution is
+        per FAILING adapter, read from the `Error initializing <Name>Adapter:`
+        prefix `utils.get_potenda_from_instance` always emits, and an adapter
+        with no known variables gets no naming at all — a hint that names the
+        wrong system's variables is worse than none)
       - unreachable source/destination systems
       - a nonexistent Infrahub branch (surfaces from the adapter/engine phase)
       - pipeline-lock contention (existing 60 s acquisition timeout elapsed — bounded,
@@ -109,13 +113,36 @@ Shared obligations (both classes):
   text inlined into the wrapper message. Binding property: a full traceback
   rendering of the raised error (`traceback.format_exception(...)`) must contain
   **no unredacted original message** anywhere in the chain. Secret values are
-  collected from: the runner-environment credential variables — at minimum
-  `INFRAHUB_API_TOKEN`, plus the value of every environment variable whose NAME
-  matches the patterns `*_TOKEN`, `*_PASSWORD`, `*_SECRET`, `*_API_KEY` (E10:
-  DBR-006 routes adapter credentials such as `NETBOX_TOKEN` into the runner
-  environment, outside the resolved-settings source) — and the values of
-  secret-valued keys (`token`, `password`, `secret`, `api_key`) in the resolved
-  configuration's source/destination settings.
+  collected from two sources, deliberately wider than the key names an adapter
+  happens to document, because a value missed here reaches a remote caller verbatim:
+
+  1. **The runner environment** (E10: DBR-006 routes adapter credentials such as
+     `NETBOX_TOKEN` into the runner environment, outside the resolved-settings
+     source). A variable's NAME qualifies when it *contains* `TOKEN`, `PASSWORD`,
+     `PASSWD`, `SECRET`, `CREDENTIAL`, or `APIKEY` — substring matching, so the bare
+     `TOKEN` / `PASSWORD` names the shipped `genericrestapi` adapter reads by default
+     (`adapters/genericrestapi.py:72,90`) and `AWS_SECRET_ACCESS_KEY` both qualify —
+     or *ends with* `_KEY` / `_AUTH`, or equals `KEY` / `AUTH` / `INFRAHUB_API_TOKEN`.
+     `KEY` and `AUTH` are matched at a name boundary rather than as substrings so
+     unrelated variables (`KEYCHAIN`, `SSH_AUTH_SOCK`) are not collected.
+  2. **The resolved configuration's settings** — `source`, `destination`, AND
+     `store` — walked **recursively**, not just at the top level. A key qualifies
+     when its name *contains* `token`, `password`, `secret`, `key`, `auth`, or
+     `credential`, which covers `api_key`, ipfabric's `auth`, a nested
+     `headers.authorization` or `params.api_key`, and `store.settings.password`;
+     the qualifying context is inherited by everything nested beneath it. Values are
+     `str()`-ed, so a non-string credential is collected too. Additionally, the
+     **userinfo of every URL-shaped value** is collected (`settings.url =
+     "http://admin:pw@host/api"` hides a credential next to an already-redacted
+     sibling `token`), and every `*_env_vars` list whose key itself qualifies
+     (`token_env_vars`, `password_env_vars` — `adapters/genericrestapi.py:59-92`,
+     `adapters/peeringmanager.py:31-34`) contributes the VALUES of the environment
+     variables it names, never the names themselves.
+
+  Collected values shorter than **6 characters** are dropped. A short value — the
+  `1` of a `SKIP_TOKEN=1` feature flag — would turn redaction into a substring
+  shredder over unrelated text (observed: `within 6***.0 seconds`), and no real
+  credential is that short, so dropping it cannot hide one.
   The same obligation covers forwarded log records (verified by DBA-008's canary scan:
   seeded canary values appear nowhere in flow parameters, results, Prefect-visible
   logs, or example request bodies).

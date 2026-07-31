@@ -90,7 +90,7 @@ a credential, or an environment override.
 | `sync_name` | `str` | required | Logical name of a configuration in `INFRAHUB_SYNC_CONFIG_DIRECTORY`, matched by exact string equality. |
 | `operation` | `"plan"` or `"sync"` | `"plan"` | `plan` is read-only and maps to the CLI `diff` lifecycle; `sync` writes. |
 | `confirm_writes` | `bool` | `false` | Must be `true` for `operation="sync"`. Has no effect on a plan. |
-| `branch` | `str` or `null` | `null` | Infrahub branch, forwarded exactly as the CLI `--branch` option. When omitted, the configuration's own branch setting applies, else the server default. |
+| `branch` | `str` or `null` | `null` | Infrahub branch, forwarded exactly as the CLI `--branch` option. Used only when the configuration's own `settings.branch` is unset — a configured branch takes precedence over this parameter. With neither set, `main` is used. |
 
 Credentials and endpoints stay in the runner's environment. They are never accepted as
 parameters and never appear in a returned result.
