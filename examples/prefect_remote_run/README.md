@@ -53,8 +53,12 @@ Use the local path (this is deliberate; please do not "correct" it to the PyPI f
 
 ```bash
 # from the repository root
-uv sync --extra prefect
+uv sync --extra dev --extra prefect
 ```
+
+Keep `--extra dev` in that command. `uv sync --extra prefect` alone *removes* the
+development tooling (pytest, ruff, invoke, ty), because `uv sync` makes the environment
+match exactly the extras you name.
 
 Or, with plain pip in a virtual environment of your own:
 
@@ -116,17 +120,52 @@ curl -s -H "X-INFRAHUB-KEY: $INFRAHUB_API_TOKEN" -H "Content-Type: application/j
 
 ## 3. Configure the runner
 
-The flow reads its configuration directory and its credentials from the **environment of
-the serving process**. Remote callers cannot supply either: flow parameters carry no
-paths and no secrets.
+This example uses **three terminals**, and environment variables do not travel between
+them. Two of the commands below run forever (the server and the serve process), so you
+cannot reuse their terminal for anything else. Export what each terminal needs, in that
+terminal, before running its command:
+
+| Terminal | What runs there | Must have exported |
+|---|---|---|
+| **A** | `prefect server start` (blocks) | `PREFECT_API_URL` |
+| **B** | `python -m infrahub_sync.orchestration.serve` (blocks) | **all four** — the API URL, the config directory, and **both Infrahub credentials**; see the block below |
+| **C** | the `curl` calls | `PREFECT_API_URL` |
+
+**Terminal B is the one that needs the Infrahub credentials.** The flow executes inside
+the serve process and inherits *its* environment, so credentials missing there produce a
+run that reaches `FAILED` with:
+
+```text
+RunExecutionError: Failed to initialize the Sync Instance: Error initializing
+InfrahubAdapter: Both url and token must be specified! Set the runner-environment
+variables INFRAHUB_ADDRESS and INFRAHUB_API_TOKEN.
+```
+
+That is the single most common way to get stuck here. Exporting the credentials in
+Terminal C does nothing — remote callers cannot supply them, by design: flow parameters
+carry no paths and no secrets.
+
+This is the full block for **Terminal B**:
 
 ```bash
-# from the repository root
+# from the repository root, in Terminal B
 export PREFECT_API_URL="http://127.0.0.1:4200/api"
 export INFRAHUB_SYNC_CONFIG_DIRECTORY="$PWD/examples/custom_adapter"
 export INFRAHUB_ADDRESS="<your-infrahub-address>"
 export INFRAHUB_API_TOKEN="<your-api-token>"
+
+# verify all four are set, without printing the token
+printenv PREFECT_API_URL >/dev/null || echo "MISSING PREFECT_API_URL"
+printenv INFRAHUB_SYNC_CONFIG_DIRECTORY >/dev/null || echo "MISSING config directory"
+printenv INFRAHUB_ADDRESS >/dev/null || echo "MISSING INFRAHUB_ADDRESS"
+printenv INFRAHUB_API_TOKEN >/dev/null || echo "MISSING the API token"
 ```
+
+Each line prints nothing when the variable is set and a `MISSING …` line when it is not.
+Check that block before starting serve — a missing credential does not surface until a
+run fails, one step later.
+
+Terminals A and C need only `export PREFECT_API_URL="http://127.0.0.1:4200/api"`.
 
 `INFRAHUB_SYNC_CONFIG_DIRECTORY` is the allow-list for remote runs: point it only at a
 directory containing the sync configurations you intend to expose remotely. Scoping it
@@ -139,31 +178,59 @@ never in a file, a flow parameter, or a request body.
 
 ## 4. Start the Prefect server
 
-Terminal A:
+**Terminal A** — this command does not return. It runs the server in the foreground until
+you `Ctrl-C` it, so this terminal is occupied from here on:
 
 ```bash
-# from the repository root
+# from the repository root, in Terminal A
 export PREFECT_API_URL="http://127.0.0.1:4200/api"
 uv run prefect server start
 ```
 
-It prints a banner ending with `Check out the dashboard at http://127.0.0.1:4200`. Wait
-for it to answer:
+It prints a banner ending with `Check out the dashboard at http://127.0.0.1:4200`.
+
+To check that it is answering, open **Terminal C** — a fresh terminal has none of your
+exports, so set the API URL there first:
 
 ```bash
+# in Terminal C
+export PREFECT_API_URL="http://127.0.0.1:4200/api"
 curl -s "$PREFECT_API_URL/health"      # true
 ```
 
+If `curl` prints nothing at all rather than `true`, `PREFECT_API_URL` is empty in this
+terminal: `curl -s` is silent about a malformed URL, so an unset variable looks like a
+dead server. Guard every command in this terminal with the variable check shown in step 6.
+
 ## 5. Serve the flow
 
-Terminal B, **from the repository root** — this is the working-directory requirement
+**Terminal B**, **from the repository root** — this is the working-directory requirement
 from the prerequisites, and it is the one step where getting it wrong produces a
-plausible-looking wrong answer (an empty plan) rather than an error:
+plausible-looking wrong answer (an empty plan) rather than an error. This command also
+does not return; it serves until interrupted.
+
+Export step 3's **full** Terminal B block here first — all four variables, including both
+Infrahub credentials. Repeating it so this step is self-contained:
 
 ```bash
-# from the repository root, with the step 3 environment exported
+# from the repository root, in Terminal B
+export PREFECT_API_URL="http://127.0.0.1:4200/api"
+export INFRAHUB_SYNC_CONFIG_DIRECTORY="$PWD/examples/custom_adapter"
+export INFRAHUB_ADDRESS="<your-infrahub-address>"
+export INFRAHUB_API_TOKEN="<your-api-token>"
+
+printenv PREFECT_API_URL >/dev/null || echo "MISSING PREFECT_API_URL"
+printenv INFRAHUB_SYNC_CONFIG_DIRECTORY >/dev/null || echo "MISSING config directory"
+printenv INFRAHUB_ADDRESS >/dev/null || echo "MISSING INFRAHUB_ADDRESS"
+printenv INFRAHUB_API_TOKEN >/dev/null || echo "MISSING the API token"
+
 uv run python -m infrahub_sync.orchestration.serve
 ```
+
+Omitting the two credentials here is the failure described in step 3: the serve process
+starts happily, the deployment registers, and the first run fails on adapter
+initialization. The serve process does not validate them at startup — only
+`INFRAHUB_SYNC_CONFIG_DIRECTORY` is checked that early.
 
 Expected:
 
@@ -175,9 +242,14 @@ The process serves until you interrupt it. If `INFRAHUB_SYNC_CONFIG_DIRECTORY` i
 or is not a directory, it refuses to start with a single error line naming the variable,
 before registering anything.
 
-Confirm the deployment is ready (Terminal C, from here on):
+Confirm the deployment is ready in **Terminal C** — the third terminal, which needs its
+own `PREFECT_API_URL` and nothing else:
 
 ```bash
+# in Terminal C
+export PREFECT_API_URL="http://127.0.0.1:4200/api"
+printenv PREFECT_API_URL >/dev/null || echo "set PREFECT_API_URL first"
+
 curl -s "$PREFECT_API_URL/deployments/name/infrahub-sync/run" \
   | jq '{id, name, status, enforce_parameter_schema,
          operations: .parameter_openapi_schema.properties.operation.enum}'
@@ -200,8 +272,15 @@ Expected:
 The request bodies live in [`requests/`](requests/README.md), which lists every
 endpoint used here.
 
+All of these run in **Terminal C**. The guard on the first line turns an unset
+`PREFECT_API_URL` into a named error instead of a silent empty result:
+
 ```bash
+# in Terminal C
+printenv PREFECT_API_URL >/dev/null || echo "set PREFECT_API_URL first"
+
 DEP_ID=$(curl -s "$PREFECT_API_URL/deployments/name/infrahub-sync/run" | jq -r .id)
+[ "$DEP_ID" != "null" ] && [ -n "$DEP_ID" ] || { echo "no deployment — is Terminal B serving?"; }
 
 RUN_ID=$(curl -s -X POST "$PREFECT_API_URL/deployments/$DEP_ID/create_flow_run" \
   -H "Content-Type: application/json" \
@@ -337,6 +416,17 @@ What was left on disk:
   delete; the next run creates a fresh one.
 - **Infrahub objects** — the five devices created in step 7 stay until you delete them.
   Use the reset recipe in step 2.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Run reaches `FAILED` with `Error initializing InfrahubAdapter: Both url and token must be specified!` | `INFRAHUB_ADDRESS` / `INFRAHUB_API_TOKEN` were not exported in **Terminal B**. Runs inherit the serve process's environment; exporting them in Terminal C has no effect. | `Ctrl-C` the serve process, export step 3's full Terminal B block, restart it. The server in Terminal A can keep running. |
+| `curl` prints nothing where `true` or JSON was expected | `PREFECT_API_URL` is unset in this terminal — `curl -s` is silent about a malformed URL, so it looks like a dead server. | `export PREFECT_API_URL="http://127.0.0.1:4200/api"`, and use the `printenv PREFECT_API_URL` guard shown in step 6. |
+| `COMPLETED` run, but `summary=create:0,update:0,delete:0` | Either the destination already holds the five devices, or the serve process was not started from the repository root, so the fixture's `./`-relative paths resolved to nothing. | Check the destination count (step 2). Look for `MockDB database file not found` in the run log — that confirms the working directory. Restart serve from the repository root. |
+| Serve process exits immediately naming `INFRAHUB_SYNC_CONFIG_DIRECTORY` | The variable is unset or is not a directory. This is the one thing serve validates at startup. | Export it to an existing directory holding the sync configurations you want exposed. |
+| `prefect server start` exits with "address already in use" | Something already listens on 4200. | `lsof -nP -iTCP:4200 -sTCP:LISTEN` to find it. Stop it, or point `PREFECT_API_URL` at the existing server and skip step 4. |
+| `HTTP 409` from `create_flow_run` | The `operation` value is not `plan` or `sync`. This is the parameter schema rejecting the request — no flow run is created. | Expected behaviour; see the invalid-operation example in step 7. |
 
 ## Reference
 
