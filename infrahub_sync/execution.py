@@ -17,6 +17,7 @@ import re
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from timeit import default_timer as timer
 from types import MappingProxyType
@@ -97,10 +98,30 @@ SECRET_ENV_NAME_SUFFIXES = ("_KEY", "_AUTH")
 
 # Settings half. Every `settings` mapping of the resolved configuration — source,
 # destination, AND store — is walked RECURSIVELY, and a key is credential-shaped
-# when its name CONTAINS one of these substrings: `api_key`, ipfabric's `auth`, a
-# nested `headers.authorization`, and `store.settings.password` all match. Values
-# are `str()`-ed, so a non-string credential is collected too.
-SECRET_SETTING_KEY_SUBSTRINGS = ("token", "password", "secret", "key", "auth", "credential")
+# when its name CONTAINS one of the substrings, ENDS WITH one of the suffixes, or
+# EQUALS one of the exact names — the same three boundary rules the environment
+# half above uses, for the same reason. `key` and `auth` are matched at a name
+# boundary rather than as bare substrings because the bare forms sweep in the
+# shipped non-secret keys `response_key_pattern` and `auth_method`
+# (adapters/genericrestapi.py:71,190) whose ordinary values (`objects`, `api-key`,
+# `x-auth-token`) then shred the operator diagnostics this boundary exists to keep
+# readable — `Authentication method '***' requires a valid API token!`. The
+# boundary rules still cover every credential-shaped key the adapters read:
+# `api_key` and `secret_key` by suffix, ipfabric's bare `auth` by exact name, a
+# nested `headers.authorization`, `store.settings.password`, and every `token`
+# variant by substring. Values are coerced by :func:`_coerce_secret_text`, so a
+# non-string credential is collected too.
+SECRET_SETTING_KEY_SUBSTRINGS = (
+    "token",
+    "password",
+    "passwd",
+    "secret",
+    "credential",
+    "apikey",
+    "authorization",
+)
+SECRET_SETTING_KEY_SUFFIXES = ("_key", "_auth")
+SECRET_SETTING_KEY_NAMES = ("key", "auth")
 # A `<something>_env_vars` key names environment variables the adapter reads
 # INSTEAD of an inline value (adapters/genericrestapi.py:59-92,
 # adapters/peeringmanager.py:31-34). The names are not secrets; the values they
@@ -109,6 +130,13 @@ ENV_VAR_LIST_SUFFIX = "_env_vars"
 # Userinfo of a URL-shaped value: `scheme://user:password@host/...` hides a
 # credential in plain sight, typically next to an already-redacted sibling token.
 _URL_USERINFO = re.compile(r"://(?P<userinfo>[^/\s@]+)@")
+# Depth ceiling for the recursive settings walk. `yaml.safe_load` builds
+# self-referential structures from aliases (`token: &A\n  nested: *A`) and
+# arbitrarily deep nesting from ordinary input, and an unbounded walk turns either
+# into a `RecursionError` that fails EVERY run of that configuration with no hint
+# that the config's own shape is the cause. No real adapter settings tree comes
+# close to this depth; hitting it means the walk stops descending, never raises.
+MAX_SETTINGS_DEPTH = 64
 
 # Runner-environment variables each adapter reads its credentials from, keyed by
 # the adapter's normalized name. Named here, at the remote boundary, so the
@@ -176,10 +204,38 @@ def _is_secret_env_name(name: str) -> bool:
     )
 
 
+def _is_secret_setting_key(name: str) -> bool:
+    """Return whether a `settings` key's NAME is credential-shaped (lower-cased in)."""
+    return (
+        name in SECRET_SETTING_KEY_NAMES
+        or name.endswith(SECRET_SETTING_KEY_SUFFIXES)
+        or any(part in name for part in SECRET_SETTING_KEY_SUBSTRINGS)
+    )
+
+
+def _coerce_secret_text(value: object) -> str | None:
+    """Return `value` as text, or `None` when it is not a coercible scalar.
+
+    Coercion is restricted to the scalar types a credential can actually be, so a
+    hostile or merely unusual `__str__` on some object reachable from `settings`
+    cannot raise out of the public :func:`collect_secret_values` and fail a run
+    that was otherwise fine. `settings` is `yaml.safe_load` output in every real
+    configuration, whose scalars are exactly `str`/`int`/`float` (`bool` and `None`
+    are filtered earlier as ordinary words, and `Decimal` is accepted for a
+    programmatically constructed `SyncInstance`).
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, Decimal)):
+        return str(value)
+    logger.debug("Skipping a %s settings value during secret collection: not a coercible scalar", type(value).__name__)
+    return None
+
+
 def _add_secret(value: object, values: set[str]) -> None:
-    """Add one candidate value, `str()`-ing non-strings and dropping short ones."""
-    text = value if isinstance(value, str) else str(value)
-    if len(text) >= MIN_SECRET_LENGTH:
+    """Add one candidate value, coercing scalars and dropping short ones."""
+    text = _coerce_secret_text(value)
+    if text is not None and len(text) >= MIN_SECRET_LENGTH:
         values.add(text)
 
 
@@ -193,36 +249,42 @@ def _add_url_userinfo(text: str, values: set[str]) -> None:
             _add_secret(password, values)
 
 
-def _collect_from_settings(
-    node: Any,
-    values: set[str],
-    *,
-    secret_context: bool,
-    environ: Mapping[str, str],
-) -> None:
-    """Walk one `settings` subtree, collecting every credential-shaped value.
+def _add_named_env_values(names: Any, values: set[str], environ: Mapping[str, str]) -> None:
+    """Collect the environment VALUES a `*_env_vars` list names, never the names.
 
-    `secret_context` is inherited: once a credential-shaped key is entered, every
-    value beneath it counts (a `credentials:` block of plain-named entries, say).
+    A name as a redaction target (`ADDRESS`) would shred unrelated messages.
     """
-    if isinstance(node, dict):
-        for key, value in node.items():
-            lowered = str(key).lower()
-            is_secret_key = secret_context or any(part in lowered for part in SECRET_SETTING_KEY_SUBSTRINGS)
-            if lowered.endswith(ENV_VAR_LIST_SUFFIX):
-                # The list holds NAMES, never values: collect what they point at,
-                # and never the names themselves (`ADDRESS` as a redaction target
-                # would shred unrelated messages).
-                if is_secret_key and isinstance(value, (list, tuple)):
-                    for env_name in value:
-                        _add_secret(environ.get(str(env_name)) or "", values)
-                continue
-            _collect_from_settings(value, values, secret_context=is_secret_key, environ=environ)
+    if not isinstance(names, (list, tuple)):
         return
-    if isinstance(node, (list, tuple, set)):
-        for item in node:
-            _collect_from_settings(item, values, secret_context=secret_context, environ=environ)
-        return
+    for env_name in names:
+        name = _coerce_secret_text(env_name)
+        if name is not None:
+            _add_secret(environ.get(name) or "", values)
+
+
+def _may_descend(node: Any, *, secret_context: bool, seen: set[tuple[int, bool]], depth: int) -> bool:
+    """Return whether this container may be walked, recording it as visited if so.
+
+    Two independent bounds, both of which stop descending rather than raising.
+    `seen` holds `(id(container), secret_context)` pairs: keying on the context as
+    well as the identity keeps an alias shared between a plain and a
+    credential-shaped key collected under BOTH contexts while still terminating on a
+    self-referential structure, and bounds the walk at twice the container count.
+    The depth cap backs it for an acyclic but absurdly deep tree.
+    """
+    if depth >= MAX_SETTINGS_DEPTH:
+        logger.debug("Stopped secret collection below depth %d: the settings tree nests deeper", MAX_SETTINGS_DEPTH)
+        return False
+    marker = (id(node), secret_context)
+    if marker in seen:
+        logger.debug("Stopped secret collection at an already-walked settings container (alias or cycle)")
+        return False
+    seen.add(marker)
+    return True
+
+
+def _collect_from_leaf(node: Any, values: set[str], *, secret_context: bool) -> None:
+    """Collect one non-container settings value."""
     if node is None or isinstance(node, bool):
         # `str(None)`/`str(False)` are ordinary words, never credentials.
         return
@@ -230,6 +292,56 @@ def _collect_from_settings(
         _add_secret(node, values)
     if isinstance(node, str):
         _add_url_userinfo(node, values)
+
+
+def _collect_from_settings(
+    node: Any,
+    values: set[str],
+    *,
+    secret_context: bool,
+    environ: Mapping[str, str],
+    seen: set[tuple[int, bool]],
+    depth: int = 0,
+) -> None:
+    """Walk one `settings` subtree, collecting every credential-shaped value.
+
+    `secret_context` is inherited: once a credential-shaped key is entered, every
+    value beneath it counts (a `credentials:` block of plain-named entries, say).
+    Descent through containers is bounded by :func:`_may_descend`.
+    """
+    if isinstance(node, (dict, list, tuple, set)) and not _may_descend(
+        node, secret_context=secret_context, seen=seen, depth=depth
+    ):
+        return
+    child_depth = depth + 1
+    if isinstance(node, dict):
+        for key, value in node.items():
+            lowered = str(key).lower()
+            is_secret_key = secret_context or _is_secret_setting_key(lowered)
+            if lowered.endswith(ENV_VAR_LIST_SUFFIX):
+                if is_secret_key:
+                    _add_named_env_values(value, values, environ)
+                continue
+            _collect_from_settings(
+                value,
+                values,
+                secret_context=is_secret_key,
+                environ=environ,
+                seen=seen,
+                depth=child_depth,
+            )
+    elif isinstance(node, (list, tuple, set)):
+        for item in node:
+            _collect_from_settings(
+                item,
+                values,
+                secret_context=secret_context,
+                environ=environ,
+                seen=seen,
+                depth=child_depth,
+            )
+    else:
+        _collect_from_leaf(node, values, secret_context=secret_context)
 
 
 def collect_secret_values(
@@ -241,13 +353,23 @@ def collect_secret_values(
 
     Sources:
 
-    - the runner environment — every variable whose NAME is credential-shaped
-      (:func:`_is_secret_env_name`);
+    - the runner environment — the value of every variable whose NAME is
+      credential-shaped (:func:`_is_secret_env_name`), PLUS the userinfo of every
+      URL-shaped value regardless of its variable name;
     - the resolved configuration's `source`, `destination`, AND `store` settings,
-      walked recursively: the value of every key whose name contains one of
-      :data:`SECRET_SETTING_KEY_SUBSTRINGS` (nested `headers`/`params` included,
-      non-string values `str()`-ed), the userinfo of every URL-shaped value, and
+      walked recursively: the value of every key whose name is credential-shaped
+      (:func:`_is_secret_setting_key`; nested `headers`/`params` included,
+      non-string scalars coerced), the userinfo of every URL-shaped value, and
       the environment values named by the configuration's own `*_env_vars` lists.
+
+    The environment userinfo scan is deliberately name-blind: the runner-side
+    endpoint variables (`NETBOX_ADDRESS`, `PROM_URL`, `CISCO_APIC_URL`, …) are how
+    every adapter learns where to connect (`adapters/netbox.py:42`,
+    `adapters/prometheus.py:388`, `adapters/aci.py:208`), their names are not
+    credential-shaped, and a password embedded in one would otherwise reach a
+    remote caller verbatim in the first connection-refused message. Userinfo still
+    has to clear :data:`MIN_SECRET_LENGTH`, so a name-blind scan over-collects
+    almost nothing.
 
     Values shorter than :data:`MIN_SECRET_LENGTH` are dropped. Longest values
     first, so overlapping secrets redact completely.
@@ -255,14 +377,17 @@ def collect_secret_values(
     env = os.environ if environ is None else environ
     values: set[str] = set()
     for name, value in env.items():
-        if value and _is_secret_env_name(name):
+        if not value:
+            continue
+        if _is_secret_env_name(name):
             _add_secret(value, values)
+        _add_url_userinfo(value, values)
     if sync_instance is not None:
         settings_blocks = [sync_instance.source.settings, sync_instance.destination.settings]
         if sync_instance.store is not None:
             settings_blocks.append(sync_instance.store.settings)
         for settings in settings_blocks:
-            _collect_from_settings(settings or {}, values, secret_context=False, environ=env)
+            _collect_from_settings(settings or {}, values, secret_context=False, environ=env, seen=set())
     return tuple(sorted(values, key=lambda value: (-len(value), value)))
 
 
@@ -343,7 +468,17 @@ class RunResult:
         if self.status == "applied" and self.operation != "sync":
             msg = f"status='applied' requires operation='sync', got operation={self.operation!r}"
             raise ValueError(msg)
-        if self.run_id != Path(self.artifact_path).name:
+        artifact = Path(self.artifact_path)
+        if not artifact.is_absolute():
+            # The field crosses a process boundary — it is one of the seven returned
+            # fields and one of the five on the flow's contractual summary line — and
+            # a remote caller cannot recover the serving process's cwd, so a relative
+            # value is unusable rather than merely untidy. `cache.paths.cache_root_for`
+            # absolutizes at the single derivation point; this makes the contract
+            # ("absolute runner-local run directory") self-enforcing.
+            msg = f"artifact_path must be absolute, got {self.artifact_path!r}"
+            raise ValueError(msg)
+        if self.run_id != artifact.name:
             msg = f"run_id={self.run_id!r} must equal the final segment of artifact_path={self.artifact_path!r}"
             raise ValueError(msg)
         object.__setattr__(self, "summary", MappingProxyType(dict(self.summary)))
@@ -722,8 +857,14 @@ def run_remote_request(
         # failure into one) and a `RunResult` invariant violation fall through to
         # the stage-naming clause below instead of being mislabeled a credential
         # problem.
-        detail = redact(str(exc), secrets)
-        msg = f"Failed to initialize the Sync Instance: {detail}{_missing_credential_hint(detail)}"
+        # The hint is computed from the RAW detail and appended to the REDACTED one:
+        # it emits only environment-variable NAMES, never any detail text, while the
+        # `Error initializing <Name>Adapter:` prefix and the marker phrases it matches
+        # are themselves redaction targets — one collected substring away from
+        # silently dropping the hint the operator needs.
+        raw_detail = str(exc)
+        detail = redact(raw_detail, secrets)
+        msg = f"Failed to initialize the Sync Instance: {detail}{_missing_credential_hint(raw_detail)}"
         raise RunExecutionError(msg) from sanitize_exception_chain(exc.__cause__ or exc, secrets)
     except ImportError as exc:
         msg = redact(f"Failed to import an adapter for sync {sync_name!r}: {exc}", secrets)

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 import pytest
+import yaml
 from filelock import Timeout
 
 from infrahub_sync import SyncAdapter, SyncInstance, SyncStore
@@ -37,7 +38,7 @@ from infrahub_sync.execution import (
     resolve_sync_instance,
     run_remote_request,
 )
-from infrahub_sync.utils import get_potenda_from_instance
+from infrahub_sync.utils import get_all_sync, get_potenda_from_instance
 
 SYNC_NAME = "canary-example"
 RUN_ID = "20260731T1200-abcdef12"
@@ -50,6 +51,12 @@ SOURCE_SETTING_CANARY = "ZZ-SETTINGS-SOURCE-CANARY-0003"
 DEST_SETTING_CANARY = "ZZ-SETTINGS-DEST-CANARY-0004"
 FILE_CONTENT_CANARY = "ZZ-FILE-CONTENT-CANARY-0005"
 URL_USERINFO_CANARY = "ZZ-URL-USERINFO-CANARY-0006"
+# A password embedded in a runner ENDPOINT variable — the variable whose name
+# (`NETBOX_ADDRESS`) is deliberately not credential-shaped.
+ENV_URL_USERINFO_CANARY = "ZZ-ENV-URL-USERINFO-CANARY-0009"
+# Plainly named entries under one credential-shaped parent key.
+NESTED_USER_CANARY = "ZZ-NESTED-USER-CANARY-0010"
+NESTED_PASS_CANARY = "ZZ-NESTED-PASS-CANARY-0011"  # noqa: S105 — a canary, not a credential
 # One secret value that is a strict PREFIX of another, so redaction order is
 # observable: replacing the short one first leaves the rest of the long one behind.
 OVERLAP_PREFIX_CANARY = "ZZ-OVERLAP-CANARY-0007"
@@ -379,6 +386,10 @@ def test_run_result_accepts_consistent_combinations(overrides: dict[str, Any]) -
         pytest.param({"operation": "sync"}, id="planned-status-on-sync-operation"),
         pytest.param({"status": "applied"}, id="applied-status-on-plan-operation"),
         pytest.param({"run_id": "not-the-last-segment"}, id="run-id-artifact-path-mismatch"),
+        pytest.param(
+            {"artifact_path": f"relcache/{SYNC_NAME}/{RUN_ID}"},
+            id="relative-artifact-path",
+        ),
         pytest.param({"summary": {"create": 1}}, id="summary-missing-keys"),
         pytest.param(
             {"summary": {"create": 1, "update": 0, "delete": 0, "skip": 0}},
@@ -634,6 +645,251 @@ def test_redact_leaves_a_message_untouched_when_nothing_was_collected() -> None:
     assert redact("within 60.0 seconds", collect_secret_values(_instance(), environ={"SKIP_TOKEN": "1"})) == (
         "within 60.0 seconds"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Part 1 — H1: URL userinfo inside an ENVIRONMENT value
+# --------------------------------------------------------------------------- #
+
+
+def test_url_userinfo_is_collected_from_an_environment_endpoint_variable() -> None:
+    """The endpoint variables are the PRIMARY credential channel for every adapter.
+
+    `NETBOX_ADDRESS` / `PROM_URL` / `CISCO_APIC_URL` are how each adapter learns
+    where to connect (`adapters/netbox.py:42`, `adapters/prometheus.py:388`,
+    `adapters/aci.py:208`) and their names are not credential-shaped, so a password
+    embedded in one is only reachable through a name-blind userinfo scan.
+    """
+    secrets = collect_secret_values(
+        _instance(),
+        environ={"NETBOX_ADDRESS": f"http://admin:{ENV_URL_USERINFO_CANARY}@netbox.local/api"},
+    )
+    assert ENV_URL_USERINFO_CANARY in secrets
+
+
+def test_url_userinfo_from_an_environment_endpoint_is_redacted_from_a_wrapped_failure(
+    config_dir: str,
+    cache_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first connection failure echoes the endpoint verbatim — password included."""
+    endpoint = f"http://admin:{ENV_URL_USERINFO_CANARY}@netbox.local/api"
+    monkeypatch.setenv("NETBOX_ADDRESS", endpoint)
+    factory = _SpyFactory(cache_root=cache_root, error=RuntimeError(f"connection to {endpoint} refused"))
+
+    with pytest.raises(RunExecutionError) as excinfo:
+        run_remote_request(SYNC_NAME, config_directory=config_dir, _potenda_factory=factory)
+
+    message = str(excinfo.value)
+    rendered = _rendered_traceback(excinfo.value)
+    assert ENV_URL_USERINFO_CANARY not in message
+    assert ENV_URL_USERINFO_CANARY not in rendered
+    assert REDACTED in message
+    assert REDACTED in rendered
+    # The un-credentialed remainder of the endpoint survives, so the message still
+    # tells the operator which host was refused.
+    assert "netbox.local/api refused" in message
+
+
+# --------------------------------------------------------------------------- #
+# Part 1 — I2/I3: the collection set stays narrow enough to keep messages readable
+# --------------------------------------------------------------------------- #
+
+EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
+
+# Setting keys the shipped examples use that are NOT credentials. Their values are
+# ordinary configuration words; collecting one makes it a redaction target that
+# shreds the operator diagnostics this boundary exists to keep readable.
+NON_SECRET_EXAMPLE_SETTING_KEYS = frozenset(
+    {
+        "api_endpoint",
+        "auth_method",
+        "base_url",
+        "db_path",
+        "endpoint",
+        "mode",
+        "response_key_pattern",
+        "url",
+        "username",
+        "verify",
+    }
+)
+
+
+def _non_secret_setting_values(instance: SyncInstance) -> list[tuple[str, str]]:
+    """Every `(key, value)` string pair the instance holds under a non-credential key."""
+    found: list[tuple[str, str]] = []
+
+    def walk(node: Any) -> None:  # noqa: ANN401 — an arbitrary settings subtree
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if str(key).lower() in NON_SECRET_EXAMPLE_SETTING_KEYS and isinstance(value, str):
+                    found.append((str(key), value))
+                walk(value)
+        elif isinstance(node, (list, tuple)):
+            for item in node:
+                walk(item)
+
+    blocks = [instance.source.settings, instance.destination.settings]
+    if instance.store is not None:
+        blocks.append(instance.store.settings)
+    for block in blocks:
+        walk(block or {})
+    return found
+
+
+def test_shipped_examples_collect_no_ordinary_configuration_value() -> None:
+    """Bare `key`/`auth` substrings swept the shipped examples' own settings values.
+
+    Reproduced over `examples/`: `response_key_pattern: "objects"`,
+    `auth_method: "api-key"`, and `auth_method: "x-auth-token"` all became
+    redaction targets, and `auth_method: "basic"` escaped only by being under the
+    length floor — which was doing load-bearing work it was never designed for.
+    """
+    instances = get_all_sync(directory=str(EXAMPLES_DIR))
+    assert instances, "the shipped examples must be discoverable, or this test proves nothing"
+    for instance in instances:
+        secrets = collect_secret_values(instance, environ={})
+        for key, value in _non_secret_setting_values(instance):
+            assert value not in secrets, f"{instance.name}: {key}={value!r} was collected as a secret"
+
+
+@pytest.mark.parametrize(
+    ("example_name", "unwanted_value", "credential_key"),
+    [
+        pytest.param("from-device42", "objects", "password", id="device42-response-key-pattern"),
+        pytest.param("from-peeringdb", "api-key", "token", id="peeringdb-auth-method"),
+        pytest.param("from-librenms", "x-auth-token", "token", id="librenms-auth-method"),
+    ],
+)
+def test_a_shipped_example_stops_over_collecting_without_losing_its_credential(
+    example_name: str,
+    unwanted_value: str,
+    credential_key: str,
+) -> None:
+    """Narrowing must drop the ordinary value and keep the real one, per example."""
+    instance = next(i for i in get_all_sync(directory=str(EXAMPLES_DIR)) if i.name == example_name)
+    secrets = collect_secret_values(instance, environ={})
+    assert unwanted_value not in secrets
+    settings = instance.source.settings or {}
+    assert settings[credential_key] in secrets
+
+
+@pytest.mark.parametrize(
+    ("example_name", "operator_message"),
+    [
+        pytest.param(
+            "from-peeringdb",
+            "Authentication method 'api-key' requires a valid API token! "
+            "Set the runner-environment variables NETBOX_ADDRESS and NETBOX_TOKEN.",
+            id="missing-credential-diagnostic",
+        ),
+        pytest.param(
+            "from-device42",
+            "failed to extract 42 objects from the source: HTTP 500",
+            id="object-count-line",
+        ),
+    ],
+)
+def test_a_shipped_example_no_longer_shreds_an_operator_message(example_name: str, operator_message: str) -> None:
+    """Over-collection cost the diagnostic the one fact the operator needed."""
+    instance = next(i for i in get_all_sync(directory=str(EXAMPLES_DIR)) if i.name == example_name)
+    secrets = collect_secret_values(instance, environ={})
+    assert redact(operator_message, secrets) == operator_message
+
+
+def test_a_credential_shaped_key_makes_its_plainly_named_nested_values_secret() -> None:
+    """`secret_context` inheritance: a `credentials:` block of plain-named entries.
+
+    Deleting the `secret_context or` disjunct in `_collect_from_settings` leaves this
+    test failing — it is what the branch exists for.
+    """
+    secrets = collect_secret_values(
+        _instance(source_settings={"credentials": {"user": NESTED_USER_CANARY, "pass": NESTED_PASS_CANARY}}),
+        environ={},
+    )
+    assert NESTED_USER_CANARY in secrets
+    assert NESTED_PASS_CANARY in secrets
+
+
+def test_a_plainly_named_non_secret_list_is_not_swept_in_by_inheritance() -> None:
+    """Inheritance is the over-collection AMPLIFIER, so the matched key must be narrow.
+
+    A `keys:` list of resource names is one bare-substring match away from turning
+    every ordinary word it holds into a redaction target beneath it.
+    """
+    secrets = collect_secret_values(
+        _instance(source_settings={"keys": ["InfraDevice", "InfraInterface"], "api_key": SOURCE_SETTING_CANARY}),
+        environ={},
+    )
+    assert SOURCE_SETTING_CANARY in secrets
+    assert "InfraDevice" not in secrets
+    assert "InfraInterface" not in secrets
+
+
+# --------------------------------------------------------------------------- #
+# Part 1 — M-a/L3: the walk survives hostile settings shapes
+# --------------------------------------------------------------------------- #
+
+
+def test_a_self_referential_settings_alias_does_not_break_collection() -> None:
+    """`yaml.safe_load` builds cycles from aliases; the walk must not recurse forever."""
+    document = yaml.safe_load(f"token: &anchor\n  nested: *anchor\n  value: {SOURCE_SETTING_CANARY}\n")
+    assert document["token"]["nested"] is document["token"], "the fixture must actually be self-referential"
+    secrets = collect_secret_values(_instance(source_settings=document), environ={})
+    assert SOURCE_SETTING_CANARY in secrets
+
+
+def test_a_self_referential_settings_alias_does_not_fail_a_remote_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Before the cycle guard, an aliased `config.yml` failed EVERY run of it.
+
+    The failure was a `RunExecutionError` wrapping `RecursionError: maximum recursion
+    depth exceeded`, with nothing pointing at the configuration's own aliasing.
+    """
+    root = tmp_path / "configs" / "aliased"
+    root.mkdir(parents=True)
+    (root / "config.yml").write_text(
+        _valid_config().replace(
+            f"    token: {SOURCE_SETTING_CANARY}",
+            f"    token: &anchor\n      nested: *anchor\n      value: {SOURCE_SETTING_CANARY}",
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "cache"))
+    factory = _SpyFactory(cache_root=tmp_path / "cache" / SYNC_NAME, rows=[_plan_row("create", "dev-1")])
+
+    result = run_remote_request(SYNC_NAME, config_directory=str(tmp_path / "configs"), _potenda_factory=factory)
+
+    assert result.status == "planned"
+
+
+def test_a_settings_tree_deeper_than_the_cap_does_not_break_collection() -> None:
+    """A depth cap backs the cycle guard for an acyclic but absurdly deep tree."""
+    node: Any = SOURCE_SETTING_CANARY
+    for _ in range(4000):
+        node = {"nested": node}
+    secrets = collect_secret_values(_instance(source_settings={"token": node}), environ={})
+    # The canary sits far below the cap, so it is legitimately NOT collected — the
+    # binding property is that collection COMPLETES instead of raising RecursionError.
+    assert SOURCE_SETTING_CANARY not in secrets
+
+
+def test_a_settings_value_whose_str_raises_does_not_escape_collection() -> None:
+    """`collect_secret_values` is public: no settings object may raise out of it."""
+
+    class Hostile:
+        def __str__(self) -> str:
+            msg = "boom from __str__"
+            raise RuntimeError(msg)
+
+    secrets = collect_secret_values(
+        _instance(source_settings={"token": Hostile(), "password": SOURCE_SETTING_CANARY}),
+        environ={},
+    )
+    assert SOURCE_SETTING_CANARY in secrets
 
 
 # --------------------------------------------------------------------------- #
@@ -1061,6 +1317,32 @@ def test_missing_credential_hint_stays_silent_when_it_cannot_attribute(
         run_remote_request(SYNC_NAME, config_directory=config_dir, _potenda_factory=factory)
 
     assert "Set the runner-environment variables" not in str(excinfo.value)
+
+
+def test_the_missing_credential_hint_survives_a_collected_value_inside_the_prefix(
+    config_dir: str,
+    cache_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The hint must be computed from the RAW detail, not the redacted one.
+
+    The `Error initializing <Name>Adapter:` prefix and the marker phrases the
+    attribution matches on are themselves redaction targets — one collected
+    substring away from silently dropping the hint the operator needs.
+    """
+    monkeypatch.setenv("NETBOX_TOKEN", "initializing")
+    factory = _SpyFactory(
+        cache_root=cache_root,
+        error=ValueError("Error initializing NetboxAdapter: Both url and token must be specified!"),
+    )
+    with pytest.raises(RunExecutionError) as excinfo:
+        run_remote_request(SYNC_NAME, config_directory=config_dir, _potenda_factory=factory)
+
+    message = str(excinfo.value)
+    assert "Set the runner-environment variables NETBOX_ADDRESS and NETBOX_TOKEN." in message
+    # The DETAIL is still redacted — only the hint's own input is the raw text.
+    assert f"Error {REDACTED} NetboxAdapter" in message
+    assert "Error initializing" not in message
 
 
 def test_remote_import_error_is_wrapped(config_dir: str, cache_root: Path) -> None:

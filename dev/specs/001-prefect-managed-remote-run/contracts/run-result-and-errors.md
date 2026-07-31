@@ -39,6 +39,12 @@ Binding properties (all asserted by DBA-010's result-schema tests):
    - `changed ⇔ status != "no-change" ⇔ sum(summary.values()) > 0`
    - `status == "planned"` ⇒ `operation == "plan"`
    - `status == "applied"` ⇒ `operation == "sync"`
+   - `Path(artifact_path).is_absolute()` — the field crosses a process boundary and a
+     remote caller cannot recover the serving process's cwd, so the "absolute
+     runner-local run directory" wording is enforced here rather than assumed.
+     `cache.paths.cache_root_for` absolutizes a relative `INFRAHUB_SYNC_CACHE_DIR`
+     at the single derivation point (`absolute()`, not `resolve()`, so the final
+     segment the next invariant compares against is preserved).
    - `run_id == Path(artifact_path).name`
    - `set(summary) == {"create", "update", "delete"}`
 4. `summary` counts the run's plan rows per action — derived from the in-memory
@@ -86,7 +92,12 @@ class RunExecutionError(Exception):
         per FAILING adapter, read from the `Error initializing <Name>Adapter:`
         prefix `utils.get_potenda_from_instance` always emits, and an adapter
         with no known variables gets no naming at all — a hint that names the
-        wrong system's variables is worse than none)
+        wrong system's variables is worse than none. The hint is computed from the
+        RAW detail and appended to the REDACTED message: it emits only variable
+        NAMES, never detail text, while the `Error initializing <Name>Adapter:`
+        prefix and the marker phrases it matches on are themselves redaction
+        targets — computing it from the redacted detail is one collected substring
+        away from silently dropping the hint)
       - unreachable source/destination systems
       - a nonexistent Infrahub branch (surfaces from the adapter/engine phase)
       - pipeline-lock contention (existing 60 s acquisition timeout elapsed — bounded,
@@ -125,13 +136,37 @@ Shared obligations (both classes):
      or *ends with* `_KEY` / `_AUTH`, or equals `KEY` / `AUTH` / `INFRAHUB_API_TOKEN`.
      `KEY` and `AUTH` are matched at a name boundary rather than as substrings so
      unrelated variables (`KEYCHAIN`, `SSH_AUTH_SOCK`) are not collected.
+     Additionally, the **userinfo of every environment value** is collected
+     regardless of the variable's name: the runner-side endpoint variables
+     (`NETBOX_ADDRESS`, `PROM_URL`, `CISCO_APIC_URL`, …) are how every adapter learns
+     where to connect (`adapters/netbox.py:42`, `adapters/prometheus.py:388`,
+     `adapters/aci.py:208`), their names are NOT credential-shaped, and a password
+     embedded in one otherwise reaches a remote caller verbatim in the first
+     connection-refused message. Userinfo still has to clear the length floor below,
+     so the name-blind scan over-collects almost nothing.
   2. **The resolved configuration's settings** — `source`, `destination`, AND
      `store` — walked **recursively**, not just at the top level. A key qualifies
-     when its name *contains* `token`, `password`, `secret`, `key`, `auth`, or
-     `credential`, which covers `api_key`, ipfabric's `auth`, a nested
-     `headers.authorization` or `params.api_key`, and `store.settings.password`;
-     the qualifying context is inherited by everything nested beneath it. Values are
-     `str()`-ed, so a non-string credential is collected too. Additionally, the
+     when its name *contains* `token`, `password`, `passwd`, `secret`, `credential`,
+     `apikey`, or `authorization`, or *ends with* `_key` / `_auth`, or equals `key` /
+     `auth` — the same three boundary rules the environment half uses, for the same
+     reason. This covers `api_key` and `secret_key` by suffix, ipfabric's bare `auth`
+     by exact name, a nested `headers.authorization` or `params.api_key`, and
+     `store.settings.password`. `key` and `auth` are matched at a name boundary
+     rather than as bare substrings because the bare forms sweep in the shipped
+     non-secret keys `response_key_pattern` and `auth_method`
+     (`adapters/genericrestapi.py:71,190`) whose ordinary values (`objects`,
+     `api-key`, `x-auth-token`) then shred the very operator diagnostics this
+     boundary exists to keep readable — `Authentication method '***' requires a valid
+     API token!`. The qualifying context is inherited by everything nested beneath a
+     matched key (a `credentials:` block of plain-named entries), which is also what
+     makes narrow matching load-bearing: one over-broad match turns every ordinary
+     word below it into a redaction target. Values are coerced from `str`/`int`/
+     `float`/`Decimal`, so a non-string credential is collected too, while an object
+     with a raising `__str__` cannot escape the public collector. The walk is
+     cycle-guarded (on `(id(container), context)`) and depth-capped at 64:
+     `yaml.safe_load` builds self-referential structures from aliases
+     (`token: &A\n  nested: *A`), and an unbounded walk turns that into a
+     `RecursionError` failing EVERY run of that configuration. Additionally, the
      **userinfo of every URL-shaped value** is collected (`settings.url =
      "http://admin:pw@host/api"` hides a credential next to an already-redacted
      sibling `token`), and every `*_env_vars` list whose key itself qualifies

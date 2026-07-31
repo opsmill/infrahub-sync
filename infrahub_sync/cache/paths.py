@@ -31,6 +31,14 @@ def cache_root_for(sync_name: str) -> Path:
     location (e.g., an NFS mount used by a fleet of runners). The override is
     expanded (`~`) and rejected if it contains `..` traversal segments, so a
     misconfigured value can't silently redirect the cache outside its root.
+
+    This is the SINGLE derivation point for every cache path, so absolutizing a
+    relative override here is what makes the run directory — and therefore
+    `RunResult.artifact_path`, which crosses a process boundary to a caller that
+    cannot recover the serving process's cwd — absolute everywhere. `absolute()`
+    rather than `resolve()`: it prepends the cwd without resolving symlinks, so
+    the final path segment (the `run_id` a `RunResult` invariant compares against)
+    is preserved exactly.
     """
     _require_safe_segment(sync_name, "sync_name")
     base = os.environ.get("INFRAHUB_SYNC_CACHE_DIR")
@@ -39,7 +47,7 @@ def cache_root_for(sync_name: str) -> Path:
         if ".." in base_path.parts:
             msg = f"INFRAHUB_SYNC_CACHE_DIR must not contain '..' traversal segments (got {base!r})"
             raise ValueError(msg)
-        return base_path / sync_name
+        return base_path.absolute() / sync_name
     return Path.cwd() / ".infrahub-sync-cache" / sync_name
 
 

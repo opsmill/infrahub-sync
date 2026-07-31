@@ -95,6 +95,14 @@ a credential, or an environment override.
 Credentials and endpoints stay in the runner's environment. They are never accepted as
 parameters and never appear in a returned result.
 
+Failure messages are additionally redacted by value: every configured credential value
+found in a message — or anywhere in its cause chain — is replaced with `***`. Redaction
+has one deliberate limit: only collected values of **six characters or more** are
+replaced, because replacing a shorter one turns redaction into a substring shredder over
+ordinary message text (`within 6***.0 seconds`). A credential shorter than that — a
+lab-grade `CISCO_APIC_PASSWORD=admin` — is therefore not redacted from a failure message.
+Use credentials of realistic length on any runner whose logs are not private.
+
 ### The confirm-writes gate
 
 `operation="sync"` without `confirm_writes=true` fails before either adapter is loaded
