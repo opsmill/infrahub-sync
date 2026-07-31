@@ -50,6 +50,7 @@ BRIDGED_LEVEL = logging.INFO
 # change for consumers of this preview.
 SUMMARY_LINE_FORMAT = "run %s finished: status=%s changed=%s summary=create:%d,update:%d,delete:%d artifact=%s"
 
+
 class RunLogger(Protocol):
     """The run-logger surface this module uses.
 

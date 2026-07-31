@@ -680,3 +680,348 @@ $ git status --porcelain
 No lab container was stopped, restarted, modified, or exec'd into. Nothing was written to
 the destination. Prefect state stayed entirely inside the scratchpad `PREFECT_HOME`; the
 developer's `~/.prefect` was never read or written.
+
+---
+
+## Phase 4 (US2) live verification — T021
+
+**Trace**: DBA-005; SC-003; DBR-003, DBR-004; Constitution I/II.
+**Measured**: 2026-07-31T11:10Z → 2026-07-31T11:13Z (UTC), on branch
+`001-prefect-managed-remote-run-local-dp-001`.
+**Environment**: darwin (macOS 25.5.0), Python 3.12.2,
+`uv sync --extra dev --extra prefect` (`Resolved 180 packages`, `Audited 171 packages`).
+Infrahub 1.9.8 at `http://localhost:8000` with `InfraDevice(name, type)` on `main`.
+`INFRAHUB_ADDRESS` / `INFRAHUB_API_TOKEN` supplied from the session environment only —
+neither value appears in any file, parameter, request body, or log line below.
+`PREFECT_HOME` pointed at a fresh scratchpad directory
+(`…/scratchpad/prefect-home-t021`), so the developer's `~/.prefect` was never touched.
+
+**This is the first and only task in this delivery that WRITES to the destination** —
+that write is exactly what DBA-005 verifies. The two runs below were submitted strictly
+sequentially: the sync run was terminal (`COMPLETED` at 11:11:53.99Z) before the
+follow-up plan run was created (11:12:35Z), so no two destination-writing runs ever
+overlapped (spec edge case 5).
+
+### Preconditions
+
+Port 4200 free and no stray processes before starting anything:
+
+```text
+$ date -u +%Y-%m-%dT%H:%M:%SZ ; lsof -nP -iTCP:4200 -sTCP:LISTEN ; pgrep -fl "prefect|orchestration.serve"
+2026-07-31T11:10:44Z
+PORT4200_FREE
+NO_PREFECT_PROCS
+```
+
+**Destination at zero `InfraDevice` objects — verified, NOT reset.** Read-only GraphQL
+against `main` (token passed as a header from the environment, never printed):
+
+```text
+$ # POST $INFRAHUB_ADDRESS/graphql/main  {"query": "{ InfraDevice { count edges { node { name { value } type { value } } } } }"}
+2026-07-31T11:10:49Z
+HTTP 200
+{
+  "data": {
+    "InfraDevice": {
+      "count": 0,
+      "edges": []
+    }
+  }
+}
+```
+
+The destination was already empty, so **nothing was deleted** — the authorised
+disposable-destination reset was not needed and was not performed.
+
+Prefect state empty immediately after `prefect server start` against the fresh
+`PREFECT_HOME` (server healthy at 2026-07-31T11:11:11Z):
+
+```text
+--- deployments ---   []
+--- flow_runs count ---   0
+--- work pools ---   []
+```
+
+Serve process started **from the repository root** (the X1/E11 CWD hazard: the fixture's
+`./`-relative adapter spec and `db_path` resolve against the serving process's CWD), with
+the configuration directory scoped to the qualified fixture:
+
+```bash
+export INFRAHUB_SYNC_CONFIG_DIRECTORY="$PWD/examples/custom_adapter"
+uv run python -m infrahub_sync.orchestration.serve
+```
+
+Deployment READY at 2026-07-31T11:11:32Z from
+`GET /api/deployments/name/infrahub-sync/run`:
+
+```text
+{
+  "id": "466d904b-f014-4d46-ad43-01a8cf7179cd",
+  "name": "run",
+  "status": "READY",
+  "enforce_parameter_schema": true,
+  "work_pool_name": null
+}
+```
+
+### Step 1 — remote `operation=sync` with `confirm_writes=true`
+
+```bash
+curl -s -w "\nHTTP %{http_code}\n" -X POST "$PREFECT_API_URL/deployments/$DEP_ID/create_flow_run" \
+  -H "Content-Type: application/json" \
+  -d '{"parameters": {"sync_name": "custom-example", "operation": "sync", "confirm_writes": true}}'
+```
+
+Response at 2026-07-31T11:11:43Z — the flow-run id arrives **synchronously**:
+
+```text
+HTTP 201
+{
+  "id": "57e6cfeb-46e3-4b9b-a209-bd0b82b1b85c",
+  "name": "evasive-kelpie",
+  "state_type": "SCHEDULED",
+  "state_name": "Scheduled",
+  "parameters": {"sync_name": "custom-example", "operation": "sync", "confirm_writes": true},
+  "deployment_id": "466d904b-f014-4d46-ad43-01a8cf7179cd"
+}
+```
+
+**Sync flow-run id: `57e6cfeb-46e3-4b9b-a209-bd0b82b1b85c`** (`evasive-kelpie`).
+
+State transitions, from `GET /flow_run_states/?flow_run_id=$RUN_ID`:
+
+| Timestamp (UTC) | type | name |
+|---|---|---|
+| 2026-07-31T11:11:43.725375Z | SCHEDULED | Scheduled |
+| 2026-07-31T11:11:50.959597Z | PENDING | Pending |
+| 2026-07-31T11:11:50.972560Z | PENDING | Submitting |
+| 2026-07-31T11:11:52.179872Z | RUNNING | Running |
+| 2026-07-31T11:11:53.990084Z | COMPLETED | Completed |
+
+Flow-run record — `state_type: COMPLETED`, `state_message: null`, no worker and no work
+pool (the served process ran it in-process):
+
+```text
+{
+  "id": "57e6cfeb-46e3-4b9b-a209-bd0b82b1b85c",
+  "name": "evasive-kelpie",
+  "flow_version": "d4c26edc762e8aeb717cb8107873661c",
+  "state_type": "COMPLETED",
+  "state_name": "Completed",
+  "state_message": null,
+  "start_time": "2026-07-31T11:11:52.179872Z",
+  "end_time": "2026-07-31T11:11:53.990084Z",
+  "total_run_time": 1.810212,
+  "parameters": {"sync_name": "custom-example", "operation": "sync", "confirm_writes": true},
+  "work_pool_name": null,
+  "infrastructure_pid": null
+}
+```
+
+`POST /api/logs/filter` returned 17 records. Verbatim, `timestamp [level] name :: message`
+(level `20` = INFO, preserved by the bridge):
+
+```text
+2026-07-31T11:11:52.194282Z [20] prefect.flow_runs :: Beginning flow run 'evasive-kelpie' for flow 'infrahub-sync'
+2026-07-31T11:11:52.532300Z [20] prefect.flow_runs :: infrahub_sync | tier 0 (1): ['InfraDevice']
+2026-07-31T11:11:52.533721Z [20] prefect.flow_runs :: infrahub_sync.potenda | Potenda tier 0 (1): ['InfraDevice']
+2026-07-31T11:11:52.534788Z [20] prefect.flow_runs :: infrahub_sync.potenda | Load: Importing data from MockDB
+2026-07-31T11:11:52.535403Z [20] prefect.flow_runs :: infrahub_sync.potenda | Load: Importing data from Infrahub
+2026-07-31T11:11:52.711118Z [20] prefect.flow_runs :: infrahub_sync.cache.incremental | Incremental disabled: --full-extract requested
+2026-07-31T11:11:52.711808Z [20] prefect.flow_runs :: infrahub_sync.cache.incremental | Incremental disabled: --full-extract requested
+2026-07-31T11:11:52.733346Z [20] prefect.flow_runs :: infrahub_sync.adapters.infrahub | Infrahub: Loading all 0 InfraDevice
+2026-07-31T11:11:52.739127Z [20] prefect.flow_runs :: infrahub_sync.potenda | Diff: Comparing data from MockDB to Infrahub
+2026-07-31T11:11:52.740458Z [20] prefect.flow_runs :: infrahub_sync.potenda | diff: 5/5 models processed
+2026-07-31T11:11:52.742648Z [20] prefect.flow_runs :: infrahub_sync.execution |
+InfraDevice
+  InfraDevice: core01 MISSING in Infrahub
+  InfraDevice: core02 MISSING in Infrahub
+  InfraDevice: core03 MISSING in Infrahub
+  InfraDevice: edge01 MISSING in Infrahub
+  InfraDevice: edge02 MISSING in Infrahub
+2026-07-31T11:11:52.743369Z [20] prefect.flow_runs :: infrahub_sync.potenda | Sync: Importing data from MockDB to Infrahub based on Diff
+2026-07-31T11:11:53.982669Z [20] prefect.flow_runs :: infrahub_sync.potenda | sync: 5/5 models processed
+2026-07-31T11:11:53.983615Z [20] prefect.flow_runs :: infrahub_sync.execution | Sync: Completed in 1.240181874949485 sec
+2026-07-31T11:11:53.985119Z [20] prefect.flow_runs :: infrahub_sync.execution | Sync run 20260731T1111-3290d1b4 at /Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1111-3290d1b4
+2026-07-31T11:11:53.986137Z [20] prefect.flow_runs :: run 20260731T1111-3290d1b4 finished: status=applied changed=True summary=create:5,update:0,delete:0 artifact=/Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1111-3290d1b4
+2026-07-31T11:11:54.224198Z [20] prefect.flow_runs :: Finished in state Completed()
+```
+
+The serial-sync lifecycle is visible end to end: `Load` → the five-`MISSING` diff →
+`Sync: Importing data from MockDB to Infrahub based on Diff` → `sync: 5/5 models
+processed` → the timing line (`Sync: Completed in …`, emitted only because the diff had
+changes) → the cache line.
+
+**Summary line, verbatim** (contracts/prefect-flow.md §2 step 3 fixed key=value format;
+leading `%s` is `result.run_id` per X18):
+
+```text
+run 20260731T1111-3290d1b4 finished: status=applied changed=True summary=create:5,update:0,delete:0 artifact=/Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1111-3290d1b4
+```
+
+`status=applied`, `changed=True`, **`summary=create:5,update:0,delete:0`** — exactly the
+DBA-005 expectation. Runner-local run directory:
+
+```text
+$ ls -la .infrahub-sync-cache/custom-example/20260731T1111-3290d1b4
+drwxr-xr-x  3 blake  staff    96 Jul 31 07:11 A
+drwxr-xr-x  3 blake  staff    96 Jul 31 07:11 B
+-rw-r--r--  1 blake  staff  2691 Jul 31 07:11 plan.parquet
+-rw-------  1 blake  staff   157 Jul 31 07:11 run.json
+-rw-------  1 blake  staff    12 Jul 31 07:11 schema-sub-hash.txt
+
+$ jq . .infrahub-sync-cache/custom-example/20260731T1111-3290d1b4/run.json
+{
+  "finished_at": "2026-07-31T11:11:53.984856+00:00",
+  "mode": "sync",
+  "status": "applied",
+  "summary": {
+    "mode": "serial",
+    "resources": 1
+  }
+}
+```
+
+`mode: "sync"`, `status: "applied"`, `summary.mode: "serial"` — the serial-sync sidecar
+shape T020 pins in unit form, observed here on the real engine.
+
+### Step 2 — the destination observed directly, by name
+
+Read-only GraphQL against `main` at 2026-07-31T11:12:23Z, independent of Prefect and of
+the sync's own reporting:
+
+```text
+HTTP 200
+count = 5
+
+name    type              id
+core01  juniper mx204     18c75b6f-d370-b3dd-3049-c514cc4183d7
+core02  arista 7504       18c75b6f-f65f-5899-304f-c51c92c7d7f1
+core03  cisco asr9001     18c75b70-00ea-cab4-3048-c512dfb97231
+edge01  cisco nexus9000   18c75b70-038a-1574-304c-c517ce1592df
+edge02  cisco nexus9000   18c75b70-05cb-56a2-3045-c518258d60fe
+```
+
+**Exactly the five expected objects — `core01`, `core02`, `core03`, `edge01`, `edge02` —
+and nothing else** (`count: 5`), each carrying the `type` value mapped from the fixture's
+`device_type` field. The write is real and observable at the destination, not merely
+reported by the run.
+
+### Step 3 — follow-up `operation=plan` converges to no-change
+
+Created at 2026-07-31T11:12:35Z, **after** the sync run was terminal:
+
+```text
+HTTP 201
+{"id":"53b76035-96d3-4fa9-a34a-7591eb23beb0","name":"valiant-guillemot","state_type":"SCHEDULED","state_name":"Scheduled","parameters":{"sync_name":"custom-example","operation":"plan"}}
+```
+
+**Plan flow-run id: `53b76035-96d3-4fa9-a34a-7591eb23beb0`** (`valiant-guillemot`).
+
+| Timestamp (UTC) | type | name |
+|---|---|---|
+| 2026-07-31T11:12:35.715617Z | SCHEDULED | Scheduled |
+| 2026-07-31T11:12:39.820083Z | PENDING | Pending |
+| 2026-07-31T11:12:39.830946Z | PENDING | Submitting |
+| 2026-07-31T11:12:41.067748Z | RUNNING | Running |
+| 2026-07-31T11:12:41.780427Z | COMPLETED | Completed |
+
+`{"state_type":"COMPLETED","state_message":null,"total_run_time":0.712679}`. Logs:
+
+```text
+2026-07-31T11:12:41.080809Z [20] prefect.flow_runs :: Beginning flow run 'valiant-guillemot' for flow 'infrahub-sync'
+2026-07-31T11:12:41.417234Z [20] prefect.flow_runs :: infrahub_sync | tier 0 (1): ['InfraDevice']
+2026-07-31T11:12:41.419290Z [20] prefect.flow_runs :: infrahub_sync.potenda | Potenda tier 0 (1): ['InfraDevice']
+2026-07-31T11:12:41.421019Z [20] prefect.flow_runs :: infrahub_sync.potenda | Load: Importing data from MockDB
+2026-07-31T11:12:41.421815Z [20] prefect.flow_runs :: infrahub_sync.potenda | Load: Importing data from Infrahub
+2026-07-31T11:12:41.612675Z [20] prefect.flow_runs :: infrahub_sync.cache.incremental | Incremental disabled: --full-extract requested
+2026-07-31T11:12:41.613413Z [20] prefect.flow_runs :: infrahub_sync.cache.incremental | Incremental disabled: --full-extract requested
+2026-07-31T11:12:41.769787Z [20] prefect.flow_runs :: infrahub_sync.adapters.infrahub | Infrahub: Loading all 5 InfraDevice
+2026-07-31T11:12:41.772202Z [20] prefect.flow_runs :: infrahub_sync.potenda | Diff: Comparing data from MockDB to Infrahub
+2026-07-31T11:12:41.773112Z [20] prefect.flow_runs :: infrahub_sync.potenda | diff: 10/10 models processed
+2026-07-31T11:12:41.774800Z [20] prefect.flow_runs :: infrahub_sync.execution |
+(no diffs)
+2026-07-31T11:12:41.775928Z [20] prefect.flow_runs :: infrahub_sync.execution | Cached run 20260731T1112-40e8cdc2 at /Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1112-40e8cdc2
+2026-07-31T11:12:41.776595Z [20] prefect.flow_runs :: run 20260731T1112-40e8cdc2 finished: status=no-change changed=False summary=create:0,update:0,delete:0 artifact=/Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1112-40e8cdc2
+2026-07-31T11:12:42.119997Z [20] prefect.flow_runs :: Finished in state Completed()
+```
+
+**Summary line, verbatim:**
+
+```text
+run 20260731T1112-40e8cdc2 finished: status=no-change changed=False summary=create:0,update:0,delete:0 artifact=/Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1112-40e8cdc2
+```
+
+`status=no-change`, `changed=False`, **all-zero summary** — Constitution II idempotency.
+Two independent lines prove the convergence is real rather than a stalled read:
+`Infrahub: Loading all 5 InfraDevice` (the plan loaded the five objects the sync had just
+written — the same line read `all 0 InfraDevice` before the write) and `(no diffs)` where
+the pre-sync plan had printed five `MISSING` rows. The plan run's own sidecar keeps the
+diff shape:
+
+```text
+$ jq . .infrahub-sync-cache/custom-example/20260731T1112-40e8cdc2/run.json
+{
+  "finished_at": "2026-07-31T11:12:41.775315+00:00",
+  "mode": "diff",
+  "status": "dry-run",
+  "summary": {
+    "resources": 1
+  }
+}
+```
+
+### Secret hygiene
+
+The `INFRAHUB_API_TOKEN` value was grep-scanned (`grep -qF`) against the whole
+Prefect-visible surface — every log record (`POST /api/logs/filter`, limit 500) and every
+flow-run object incl. parameters and state messages (`POST /api/flow_runs/filter`):
+
+```text
+NO_TOKEN_VALUE in <all logs>
+NO_TOKEN_VALUE in <all flow runs>
+```
+
+No credential value appears anywhere in this section; both values were passed to `curl`
+as environment references and never echoed.
+
+### Outcome
+
+DBA-005 satisfied in full, live: a remote caller submitting `operation=sync` +
+`confirm_writes=true` through the REST API got a run that reached `COMPLETED` with
+`status=applied` and `summary=create:5,update:0,delete:0`; the five expected
+`InfraDevice` objects exist at the destination, confirmed by name through a direct
+read; and a follow-up remote plan reports `status=no-change`, `changed=false`, all-zero
+summary. DBR-004's write half is exercised — the confirmed remote write reached the
+destination through the same shared surface the CLI serial branch uses, with no CLI
+subprocess involved.
+
+No live-environment ceiling applies to T021: every leg DBA-005 requires ran against the
+real lab.
+
+### Teardown
+
+Both processes this task started were stopped at 2026-07-31T11:13:13Z (each reported
+exit 144, i.e. the SIGTERM sent below):
+
+```text
+$ pkill -f "infrahub_sync.orchestration.serve"    # serve
+$ pkill -f "prefect server start"                 # server
+$ lsof -nP -iTCP:4200 -sTCP:LISTEN
+PORT4200_FREE
+$ pgrep -fl "prefect|orchestration.serve"
+NO_PREFECT_PROCS
+```
+
+No lab container was stopped, restarted, modified, or exec'd into. Prefect state stayed
+entirely inside the scratchpad `PREFECT_HOME`.
+
+**Final destination state — the five devices REMAIN, deliberately**: they are the
+evidence for DBA-005 and were not cleaned up.
+
+```text
+{"count":5,"names":["core01","core02","core03","edge01","edge02"]}
+```
+
+A later task needing an empty destination must reset it first (the destination is
+disposable per the brief's R-3).

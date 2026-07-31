@@ -4,6 +4,8 @@ Part 1 — result schema, immutability, invariants, and secret redaction as rais
 by the remote composition (DBA-010, SC-008).
 Part 2 — validation refusals, tolerant configuration resolution, lock contention,
 and the plan lifecycle (DBA-006/007, SC-004).
+Part 3 — the confirmed serial-sync lifecycle and its idempotent second run
+(DBA-005's automated analog, DBA-010's sync-side result schema; SC-003, SC-008).
 """
 
 from __future__ import annotations
@@ -183,6 +185,42 @@ class _SpyFactory:
         run_dir.mkdir(parents=True, exist_ok=True)
         self.engine = _FakePotenda(run_dir=run_dir, rows=list(self.rows), factory_kwargs=kwargs)
         return self.engine
+
+
+class _ConvergingPotenda(_FakePotenda):
+    """A fake engine whose destination CONVERGES when it is synced.
+
+    `rows` is the shared pending-change list rather than a per-engine copy, and
+    `sync` drains it — so a second run built by the same factory sees an empty
+    diff. That is the fake analog of idempotent reconciliation: nothing about the
+    surface is special-cased, the destination simply no longer differs.
+    """
+
+    def sync(self, diff: _FakeDiff | None = None) -> None:
+        super().sync(diff)
+        self.rows.clear()
+
+
+class _ConvergingFactory:
+    """Builds `_ConvergingPotenda` engines over ONE shared destination state.
+
+    Each call gets its own run directory, as real run-id allocation does, so two
+    sequential runs leave two distinguishable `run.json` files.
+    """
+
+    def __init__(self, *, cache_root: Path, rows: list[dict[str, Any]]) -> None:
+        self.cache_root = cache_root
+        self.pending = list(rows)
+        self.calls: list[dict[str, object]] = []
+        self.engines: list[_ConvergingPotenda] = []
+
+    def __call__(self, **kwargs: object) -> Any:  # noqa: ANN401 — a fake engine, not a real Potenda
+        self.calls.append(kwargs)
+        run_dir = self.cache_root / f"20260731T120{len(self.calls)}-abcdef12"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        engine = _ConvergingPotenda(run_dir=run_dir, rows=self.pending, factory_kwargs=kwargs)
+        self.engines.append(engine)
+        return engine
 
 
 def _spy_reads(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
@@ -698,3 +736,185 @@ def test_lifecycle_failure_marks_run_json_failed_and_reraises(config_dir: str, c
         execute_run(instance, operation="plan", potenda_factory=patched)
 
     assert RunFile.load_or_default(cache_root / RUN_ID / "run.json").status == "failed"
+
+
+# --------------------------------------------------------------------------- #
+# Part 3 — the confirmed serial-sync lifecycle (DBA-005's automated analog)
+# --------------------------------------------------------------------------- #
+
+# The five devices of the qualified `custom_adapter` fixture, so the unit analog
+# and the live DBA-005 verification describe the same shape of change.
+FIXTURE_DEVICES = ("core01", "core02", "core03", "edge01", "edge02")
+TIMING_LOG_PREFIX = "Sync: Completed in"
+NO_DIFF_LOG = "No difference found. Nothing to sync"
+
+
+def _fixture_creates() -> list[dict[str, Any]]:
+    return [_plan_row("create", name) for name in FIXTURE_DEVICES]
+
+
+def test_confirmed_sync_applies_and_writes_the_serial_lifecycle(config_dir: str, cache_root: Path) -> None:
+    """`operation="sync"` + `confirm_writes=True` applies the plan and reports it."""
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root, rows=_fixture_creates())
+
+    result = execute_run(instance, operation="sync", confirm_writes=True, potenda_factory=factory)
+
+    run_dir = cache_root / RUN_ID
+    assert result == RunResult(
+        sync_name=SYNC_NAME,
+        operation="sync",
+        run_id=RUN_ID,
+        status="applied",
+        changed=True,
+        summary={"create": 5, "update": 0, "delete": 0},
+        artifact_path=str(run_dir),
+    )
+    assert (run_dir / "plan.parquet").exists()
+    run_file = RunFile.load_or_default(run_dir / "run.json")
+    assert run_file.mode == "sync"
+    assert run_file.status == "applied"
+    assert run_file.summary == {"resources": 1, "mode": "serial"}
+    assert run_file.finished_at is not None
+    engine = factory.engine
+    assert engine is not None
+    assert engine.force_full_extract is True
+    assert engine.loaded is True
+    assert engine.synced is True
+    assert engine.baseline_persisted is True
+    assert engine.guardrail_allow_drop is False
+
+
+def test_confirmed_sync_summary_counts_every_action(config_dir: str, cache_root: Path) -> None:
+    """The per-action summary is derived from the in-memory plan rows."""
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    rows = [
+        _plan_row("create", "core01"),
+        _plan_row("create", "core02"),
+        _plan_row("update", "edge01"),
+        _plan_row("delete", "edge02"),
+    ]
+    factory = _SpyFactory(cache_root=cache_root, rows=rows)
+
+    result = execute_run(instance, operation="sync", confirm_writes=True, potenda_factory=factory)
+
+    assert result.status == "applied"
+    assert dict(result.summary) == {"create": 2, "update": 1, "delete": 1}
+
+
+def test_confirmed_sync_logs_the_timing_line_when_the_diff_has_changes(
+    config_dir: str,
+    cache_root: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root, rows=_fixture_creates())
+
+    with caplog.at_level(logging.INFO, logger="infrahub_sync.execution"):
+        execute_run(instance, operation="sync", confirm_writes=True, potenda_factory=factory)
+
+    assert TIMING_LOG_PREFIX in caplog.text
+    assert NO_DIFF_LOG not in caplog.text
+
+
+def test_sync_over_an_unchanged_destination_skips_the_sync_and_the_timing_log(
+    config_dir: str,
+    cache_root: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No diffs: no engine `sync`, no timing line — but the baseline is still persisted."""
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root, rows=[])
+
+    with caplog.at_level(logging.INFO, logger="infrahub_sync.execution"):
+        result = execute_run(instance, operation="sync", confirm_writes=True, potenda_factory=factory)
+
+    assert result.status == "no-change"
+    assert result.changed is False
+    assert dict(result.summary) == {"create": 0, "update": 0, "delete": 0}
+    assert NO_DIFF_LOG in caplog.text
+    assert TIMING_LOG_PREFIX not in caplog.text
+    engine = factory.engine
+    assert engine is not None
+    assert engine.synced is False
+    assert engine.baseline_persisted is True
+
+
+def test_second_confirmed_sync_converges_to_no_change(
+    config_dir: str,
+    cache_root: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Idempotent reconciliation: apply, then re-run against the synchronized state."""
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _ConvergingFactory(cache_root=cache_root, rows=_fixture_creates())
+
+    # `caplog` captures for the whole test, so the two runs' records are separated
+    # explicitly — otherwise the first run's timing line would still be in
+    # `caplog.text` while the second run is being asserted about.
+    with caplog.at_level(logging.INFO, logger="infrahub_sync.execution"):
+        first = execute_run(instance, operation="sync", confirm_writes=True, potenda_factory=factory)
+        first_logs = caplog.text
+        caplog.clear()
+        second = execute_run(instance, operation="sync", confirm_writes=True, potenda_factory=factory)
+        second_logs = caplog.text
+
+    assert first.status == "applied"
+    assert first.changed is True
+    assert dict(first.summary) == {"create": 5, "update": 0, "delete": 0}
+    assert TIMING_LOG_PREFIX in first_logs
+
+    assert second.status == "no-change"
+    assert second.changed is False
+    assert dict(second.summary) == {"create": 0, "update": 0, "delete": 0}
+    assert second.run_id != first.run_id
+    assert NO_DIFF_LOG in second_logs
+    assert TIMING_LOG_PREFIX not in second_logs
+
+    assert factory.engines[0].synced is True
+    assert factory.engines[1].synced is False
+    # Both runs record mode="sync"/status="applied" in run.json: run.json reports
+    # that the sync lifecycle ran to completion, while RunResult.status reports
+    # whether the destination actually differed.
+    for engine in factory.engines:
+        run_file = RunFile.load_or_default(engine.run_dir / "run.json")
+        assert run_file.mode == "sync"
+        assert run_file.status == "applied"
+        assert run_file.summary == {"resources": 1, "mode": "serial"}
+
+
+def test_follow_up_plan_after_a_confirmed_sync_reports_no_change(config_dir: str, cache_root: Path) -> None:
+    """The DBA-005 convergence leg: a plan over the synchronized state is empty."""
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _ConvergingFactory(cache_root=cache_root, rows=_fixture_creates())
+
+    applied = execute_run(instance, operation="sync", confirm_writes=True, potenda_factory=factory)
+    planned = execute_run(instance, operation="plan", potenda_factory=factory)
+
+    assert applied.status == "applied"
+    assert planned.operation == "plan"
+    assert planned.status == "no-change"
+    assert planned.changed is False
+    assert dict(planned.summary) == {"create": 0, "update": 0, "delete": 0}
+    assert RunFile.load_or_default(factory.engines[1].run_dir / "run.json").mode == "diff"
+
+
+def test_confirmed_sync_through_the_remote_composition_returns_applied(config_dir: str, cache_root: Path) -> None:
+    """The remote path reaches the same applied result the CLI serial branch does."""
+    factory = _ConvergingFactory(cache_root=cache_root, rows=_fixture_creates())
+
+    result = run_remote_request(
+        SYNC_NAME,
+        "sync",
+        confirm_writes=True,
+        config_directory=config_dir,
+        _potenda_factory=factory,
+    )
+
+    assert result.operation == "sync"
+    assert result.status == "applied"
+    assert result.changed is True
+    assert dict(result.summary) == {"create": 5, "update": 0, "delete": 0}
+    assert Path(result.artifact_path).name == result.run_id
+    assert factory.calls[0]["show_progress"] is False
+    assert factory.engines[0].synced is True
