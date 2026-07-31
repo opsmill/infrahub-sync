@@ -262,4 +262,4 @@ lets the gate packet and the artifacts be cross-checked ID-by-ID (F5 remediation
 
 > Fill ONLY if Constitution Check has violations that must be justified.
 
-*(empty — no constitution violations)*
+None — no constitution violations requiring tracked complexity.

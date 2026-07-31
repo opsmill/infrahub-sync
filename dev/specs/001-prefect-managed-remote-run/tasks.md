@@ -258,8 +258,8 @@ T007/T008/T025/T026/T027; contracts/execution-surface.md "Failure semantics"),
 D010 (tolerant resolution — T006/T011), D011 (docs page governance scope — T035),
 D012 (missing-credential env-var naming at the remote wrap, adapters untouched —
 T008/T011/T025), D013 (T033a shipped-example diagnosability as a gate item — T033a).
-Spec clarifications: #1 (D001) → T004/T009; #2 (D002) → T015/T016/T018;
-#3 (D003) → T007/T008; #4 (D004) → T014/T016.
+Spec clarifications: #1 (D001) → T004/T009; #2 (D002) → T015/T016/T018; #3 (D003) →
+T007/T008; #4 (D004) → T014/T016.
 Enabling work: R-1 → T001; R-2 → T002, T041; R-3 → T019/T021/T024/T031/T037 fallback +
 T032; R-4 → T003, T039, T040; R-5 → T003, T040.
 
