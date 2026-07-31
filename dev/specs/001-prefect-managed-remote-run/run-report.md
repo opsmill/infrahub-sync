@@ -265,3 +265,418 @@ checked-in examples) is **deliberately deferred to a separate PR**, tracked as
 proposed-issues directory. T002 keeps its completed status and its commit `e04f262`;
 T041 records the ~242-line churn relative to whatever is committed and restores it with
 `git checkout -- examples/netbox_to_infrahub/` rather than committing it.
+
+## Phase 3 (US1) live verification — T018 + T019
+
+**Trace**: DBA-002 (T018); DBA-003 + DBA-004 (T019); DBR-001, DBR-002, DBR-003, DBR-011,
+DBR-012; SC-001, SC-002.
+**Measured**: 2026-07-31T10:55Z → 2026-07-31T11:00Z (UTC), on branch
+`001-prefect-managed-remote-run-local-dp-001`.
+**Environment**: darwin (macOS 25.5.0), Python 3.12, `uv sync --extra dev --extra prefect`
+(`Resolved 180 packages`, `Audited 171 packages`), `prefect 3.8.1` / `redis 8.1.0`
+confirmed by `uv run python -c "import prefect, redis; print(prefect.__version__, redis.__version__)"`.
+Infrahub 1.9.8 at `http://localhost:8000` with `InfraDevice(name, type)` on `main`.
+`INFRAHUB_ADDRESS` / `INFRAHUB_API_TOKEN` supplied from the session environment only —
+neither value appears in any file, parameter, request body, or log line below.
+`PREFECT_HOME` was pointed at a scratchpad directory
+(`…/scratchpad/prefect-home-t018`) so the developer's real `~/.prefect` was never touched.
+
+This section records only what was observed. Nothing was written to the destination in
+either task: both are read-only (`operation=plan`). T021's confirmed write is a later task.
+
+### Preconditions
+
+Port 4200 free before starting anything:
+
+```text
+$ date -u +%Y-%m-%dT%H:%M:%SZ ; lsof -nP -iTCP:4200 -sTCP:LISTEN
+2026-07-31T10:55:36Z
+PORT4200_FREE
+```
+
+Destination at zero `InfraDevice` objects, read-only GraphQL against `main`
+(token passed as a header from the environment, never printed):
+
+```text
+$ # POST $INFRAHUB_ADDRESS/graphql/main  {"query": "{ InfraDevice { count edges { node { name { value } } } } }"}
+200 {
+  "data": {
+    "InfraDevice": {
+      "count": 0,
+      "edges": []
+    }
+  }
+}
+```
+
+Prefect state was reset to empty before the run by pointing `PREFECT_HOME` at a **fresh**
+scratchpad directory (an earlier planning-probe home held an unrelated
+`probe-deployment`, so it was set aside rather than reused, to keep this evidence
+unambiguous). Immediately after `prefect server start` against the fresh home:
+
+```text
+--- deployments ---   []
+--- flow_runs count ---   0
+--- work pools ---   []
+```
+
+### T018 — DBA-002: default server + locally served deployment, no external database, no worker
+
+Documented commands, run verbatim from `quickstart.md` Scenario 1.
+
+Terminal A (server), started 2026-07-31T10:56:58Z, healthy 2026-07-31T10:57:04Z:
+
+```bash
+export PREFECT_HOME=".../scratchpad/prefect-home-t018"    # test isolation only
+export PREFECT_API_URL="http://127.0.0.1:4200/api"
+uv run prefect server start
+```
+
+```text
+ ___ ___ ___ ___ ___ ___ _____
+| _ \ _ \ __| __| __/ __|_   _|
+|  _/   / _|| _|| _| (__  | |
+|_| |_|_\___|_| |___\___| |_|
+
+Configure Prefect to communicate with the server with:
+
+    prefect config set PREFECT_API_URL=http://127.0.0.1:4200/api
+
+View the API reference documentation at http://127.0.0.1:4200/docs
+
+Check out the dashboard at http://127.0.0.1:4200
+
+$ curl -s $PREFECT_API_URL/health
+true
+```
+
+**No external database.** The server used its default embedded SQLite, created inside
+`PREFECT_HOME` by the start itself:
+
+```text
+$ uv run python -c "from prefect.settings import get_current_settings; \
+    print(get_current_settings().server.database.connection_url.get_secret_value())"
+sqlite+aiosqlite:////private/tmp/claude-501/.../scratchpad/prefect-home-t018/prefect.db
+sqlite: True
+inside scratchpad PREFECT_HOME: True
+
+$ ls -la "$PREFECT_HOME"
+-rw-r--r--  1 blake  wheel   737280 Jul 31 06:57 prefect.db
+-rw-r--r--  1 blake  wheel    32768 Jul 31 06:57 prefect.db-shm
+-rw-r--r--  1 blake  wheel  2587392 Jul 31 06:57 prefect.db-wal
+```
+
+No Postgres or other database process or container was started for Prefect. `docker ps`
+before and after showed the same eight `infrahub-*` lab containers, all `Up 23–24 hours`
+(`infrahub-database-1` is Infrahub's own database, pre-existing and untouched — no
+container was stopped, restarted, modified, or exec'd into at any point).
+
+Terminal B (served deployment), started 2026-07-31T10:57:12Z from the repository root:
+
+```bash
+# from the repository root — cwd=/Users/blake/repos/opsmill/infrahub-sync-dev-preview
+export PREFECT_API_URL="http://127.0.0.1:4200/api"
+export INFRAHUB_SYNC_CONFIG_DIRECTORY="$PWD/examples/custom_adapter"
+# INFRAHUB_ADDRESS / INFRAHUB_API_TOKEN already present in the session environment
+uv run python -m infrahub_sync.orchestration.serve
+```
+
+```text
+Your flow 'infrahub-sync' is being served and polling for scheduled runs!
+
+To trigger a run for this flow, use the following command:
+
+        $ prefect deployment run 'infrahub-sync/run'
+
+You can also run your flow via the Prefect UI: http://127.0.0.1:4200/deployments/deployment/44f5e3ac-8df4-4184-acf1-8fab42e8618a
+```
+
+`INFRAHUB_SYNC_CONFIG_DIRECTORY` was scoped to `examples/custom_adapter` per X6 — exactly
+the qualified `custom-example` configuration, not all fourteen example configs.
+
+Deployment record, 2026-07-31T10:57:40Z:
+
+```text
+$ curl -s -w "HTTP %{http_code}\n" "$PREFECT_API_URL/deployments/name/infrahub-sync/run"
+HTTP 200
+id: '44f5e3ac-8df4-4184-acf1-8fab42e8618a'
+name: 'run'
+flow_id: '94a4f54f-373f-452c-a6d0-700eec14d8dc'
+status: 'READY'
+enforce_parameter_schema: True
+work_pool_name: None
+work_queue_name: None
+paused: False
+entrypoint: 'infrahub_sync/orchestration/flow.py:infrahub_sync_run'
+path: '.'
+parameter_openapi_schema.properties:
+{
+  "sync_name":      {"position": 0, "title": "sync_name", "type": "string"},
+  "operation":      {"default": "plan", "enum": ["plan", "sync"], "position": 1, "title": "operation", "type": "string"},
+  "confirm_writes": {"default": false, "position": 2, "title": "confirm_writes", "type": "boolean"},
+  "branch":         {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null, "position": 3, "title": "branch"}
+}
+required: ['sync_name']
+```
+
+`status: "READY"` and `enforce_parameter_schema: true` as the contract requires
+(contracts/prefect-flow.md §5), the four-parameter contract intact (DBR-003), and
+`operation` carrying `enum: ["plan", "sync"]`. The deployment-name lookup path
+`/deployments/name/infrahub-sync/run` (deployment named `run`, X12) returned 200 —
+confirming the fastapi-0.141.x route behavior D006 was withdrawn over.
+
+**No worker service.** `work_pool_name` and `work_queue_name` are `None`,
+`POST /work_pools/filter` returned `[]`, and no worker process existed:
+
+```text
+$ pgrep -fl "prefect worker"
+no 'prefect worker' process
+
+$ ps -Ao pid,command | grep -iE "prefect|orchestration.serve"
+ 537 uv run prefect server start
+ 549 .../.venv/bin/python3 .../.venv/bin/prefect server start
+ 617 uv run python -m infrahub_sync.orchestration.serve
+ 621 .../.venv/bin/python3 -m infrahub_sync.orchestration.serve
+```
+
+Exactly two things were running: the server and the serve process. Nothing else.
+
+**Serve-start validation failure**, demonstrated twice at 2026-07-31T10:56:25Z — one
+error line naming the variable, non-zero exit, before any deployment is served (spec
+clarification #2), and no traceback:
+
+```text
+$ env -u INFRAHUB_SYNC_CONFIG_DIRECTORY uv run python -m infrahub_sync.orchestration.serve
+INFRAHUB_SYNC_CONFIG_DIRECTORY is not set: point it at the directory holding your sync configurations
+exit=1
+
+$ INFRAHUB_SYNC_CONFIG_DIRECTORY="$PWD/examples/custom_adapter/config.yml" \
+    uv run python -m infrahub_sync.orchestration.serve
+INFRAHUB_SYNC_CONFIG_DIRECTORY='/Users/blake/repos/opsmill/infrahub-sync-dev-preview/examples/custom_adapter/config.yml' is not an existing directory
+exit=1
+```
+
+Neither refusal registered a deployment (the deployment list was still `[]` afterward).
+
+**T018 result: PASS.** DBA-002 satisfied — the documented commands worked as written, with
+the default embedded SQLite database, the built-in UI, and no work pool, no worker, and no
+external database service.
+
+### T019 — DBA-003 + DBA-004: remote `operation=plan` run
+
+Documented REST calls from `quickstart.md` Scenario 1, Terminal C.
+
+```bash
+DEP_ID=$(curl -s "$PREFECT_API_URL/deployments/name/infrahub-sync/run" | jq -r .id)
+curl -s -w "HTTP %{http_code}\n" -X POST "$PREFECT_API_URL/deployments/$DEP_ID/create_flow_run" \
+  -H "Content-Type: application/json" \
+  -d '{"parameters": {"sync_name": "custom-example", "operation": "plan"}}'
+```
+
+Response at 2026-07-31T10:57:56Z — the flow-run id arrives **synchronously** (SC-001):
+
+```text
+DEP_ID=44f5e3ac-8df4-4184-acf1-8fab42e8618a
+HTTP 201
+{
+  "id": "6b1f21ba-f73d-4dc1-81c8-9b4d4f7658a9",
+  "name": "imaginary-pudu",
+  "state_type": "SCHEDULED",
+  "state_name": "Scheduled",
+  "parameters": {"sync_name": "custom-example", "operation": "plan"},
+  "deployment_id": "44f5e3ac-8df4-4184-acf1-8fab42e8618a"
+}
+```
+
+**Flow-run id: `6b1f21ba-f73d-4dc1-81c8-9b4d4f7658a9`** (`imaginary-pudu`).
+
+Observed state transitions, from `GET /flow_run_states/?flow_run_id=$RUN_ID`:
+
+| Timestamp (UTC) | type | name |
+|---|---|---|
+| 2026-07-31T10:57:56.387669Z | SCHEDULED | Scheduled |
+| 2026-07-31T10:58:02.606154Z | PENDING | Pending |
+| 2026-07-31T10:58:02.616371Z | PENDING | Submitting |
+| 2026-07-31T10:58:03.994858Z | RUNNING | Running |
+| 2026-07-31T10:58:04.606699Z | COMPLETED | Completed |
+
+Polling `GET /flow_runs/{id}` showed the same progression
+(`SCHEDULED` → `RUNNING` at 10:58:04Z → `COMPLETED` at 10:58:06Z). Flow-run record:
+
+```text
+$ curl -s "$PREFECT_API_URL/flow_runs/6b1f21ba-f73d-4dc1-81c8-9b4d4f7658a9"
+{
+  "id": "6b1f21ba-f73d-4dc1-81c8-9b4d4f7658a9",
+  "name": "imaginary-pudu",
+  "deployment_id": "44f5e3ac-8df4-4184-acf1-8fab42e8618a",
+  "flow_version": "712c349b4489879f385e32fa6f8be9e6",
+  "state_type": "COMPLETED",
+  "state_name": "Completed",
+  "state_message": null,
+  "start_time": "2026-07-31T10:58:03.994858Z",
+  "end_time": "2026-07-31T10:58:04.606699Z",
+  "total_run_time": 0.611841,
+  "parameters": {"sync_name": "custom-example", "operation": "plan"},
+  "work_pool_name": null,
+  "infrastructure_pid": null
+}
+```
+
+Total run time 0.61 s (the ~6 s from create to RUNNING is the serve process's scheduled-run
+poll interval, not execution).
+
+#### Log lines retrieved through the Prefect API (DBA-004)
+
+`POST /api/logs/filter` body
+`{"logs": {"flow_run_id": {"any_": ["6b1f21ba-f73d-4dc1-81c8-9b4d4f7658a9"]}}, "limit": 200, "sort": "TIMESTAMP_ASC"}`
+returned 14 records. Verbatim, `timestamp [level] name :: message` (level `20` = INFO,
+preserved by the bridge):
+
+```text
+2026-07-31T10:58:04.010097Z [20] prefect.flow_runs :: Beginning flow run 'imaginary-pudu' for flow 'infrahub-sync'
+2026-07-31T10:58:04.361186Z [20] prefect.flow_runs :: infrahub_sync | tier 0 (1): ['InfraDevice']
+2026-07-31T10:58:04.362687Z [20] prefect.flow_runs :: infrahub_sync.potenda | Potenda tier 0 (1): ['InfraDevice']
+2026-07-31T10:58:04.363877Z [20] prefect.flow_runs :: infrahub_sync.potenda | Load: Importing data from MockDB
+2026-07-31T10:58:04.364447Z [20] prefect.flow_runs :: infrahub_sync.potenda | Load: Importing data from Infrahub
+2026-07-31T10:58:04.552434Z [20] prefect.flow_runs :: infrahub_sync.cache.incremental | Incremental disabled: --full-extract requested
+2026-07-31T10:58:04.553251Z [20] prefect.flow_runs :: infrahub_sync.cache.incremental | Incremental disabled: --full-extract requested
+2026-07-31T10:58:04.596089Z [20] prefect.flow_runs :: infrahub_sync.adapters.infrahub | Infrahub: Loading all 0 InfraDevice
+2026-07-31T10:58:04.598205Z [20] prefect.flow_runs :: infrahub_sync.potenda | Diff: Comparing data from MockDB to Infrahub
+2026-07-31T10:58:04.599364Z [20] prefect.flow_runs :: infrahub_sync.potenda | diff: 5/5 models processed
+2026-07-31T10:58:04.600916Z [20] prefect.flow_runs :: infrahub_sync.execution |
+InfraDevice
+  InfraDevice: core01 MISSING in Infrahub
+  InfraDevice: core02 MISSING in Infrahub
+  InfraDevice: core03 MISSING in Infrahub
+  InfraDevice: edge01 MISSING in Infrahub
+  InfraDevice: edge02 MISSING in Infrahub
+2026-07-31T10:58:04.602074Z [20] prefect.flow_runs :: infrahub_sync.execution | Cached run 20260731T1058-07e1e25e at /Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1058-07e1e25e
+2026-07-31T10:58:04.602878Z [20] prefect.flow_runs :: run 20260731T1058-07e1e25e finished: status=planned changed=True summary=create:5,update:0,delete:0 artifact=/Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1058-07e1e25e
+2026-07-31T10:58:05.060643Z [20] prefect.flow_runs :: Finished in state Completed()
+```
+
+This is DBA-004 in full: the run lifecycle lines Prefect emits itself (`Beginning flow
+run …`, `Finished in state Completed()`) **and** eleven bridged `infrahub_sync` lifecycle
+lines, each carrying its origin logger name — `infrahub_sync`,
+`infrahub_sync.potenda`, `infrahub_sync.cache.incremental`,
+`infrahub_sync.adapters.infrahub`, `infrahub_sync.execution` — across the full
+load → diff → plan → cache sequence, at INFO. The engine was not modified to produce
+them: `RunLoggerBridge` forwards what `potenda` and the adapters already log, with the
+flow owning the `infrahub_sync` logger's level for the duration of the run (E4). No
+credential, token, or URL-with-secret appears in any line.
+
+The summary line, verbatim (contracts/prefect-flow.md §2 step 3 fixed key=value format,
+the supported remote observation surface; leading `%s` is `result.run_id` per X18):
+
+```text
+run 20260731T1058-07e1e25e finished: status=planned changed=True summary=create:5,update:0,delete:0 artifact=/Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1058-07e1e25e
+```
+
+**`summary=create:5,update:0,delete:0`** — five creates, zero updates, zero deletes.
+`artifact_path` = `/Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1058-07e1e25e`.
+
+**Five creates, not zero.** The X1/E11 CWD hazard did not trigger, because the serve
+process was started from the repository root: the `./`-relative adapter spec and
+`db_path` in `examples/custom_adapter/config.yml` resolved, `Load: Importing data from
+MockDB` and `diff: 5/5 models processed` appear in the log, and the plan names all five
+fixture devices individually. A zero-create "success" would have been treated as a
+failure to investigate, not a pass.
+
+#### Runner-local run directory
+
+```text
+$ ls -la .infrahub-sync-cache/custom-example/20260731T1058-07e1e25e
+drwxr-xr-x  3 blake  staff    96 Jul 31 06:58 A
+drwxr-xr-x  3 blake  staff    96 Jul 31 06:58 B
+-rw-r--r--  1 blake  staff  2691 Jul 31 06:58 plan.parquet
+-rw-------  1 blake  staff   135 Jul 31 06:58 run.json
+-rw-------  1 blake  staff    12 Jul 31 06:58 schema-sub-hash.txt
+
+$ jq . .infrahub-sync-cache/custom-example/20260731T1058-07e1e25e/run.json
+{
+  "finished_at": "2026-07-31T10:58:04.601639+00:00",
+  "mode": "diff",
+  "status": "dry-run",
+  "summary": {
+    "resources": 1
+  }
+}
+```
+
+`status: dry-run`, `mode: diff` — exactly as T019 requires. (`run.json`'s `summary` is the
+cache layer's own resource count, `1` for the single `InfraDevice` resource; the per-action
+create/update/delete counts are the `RunResult` summary carried on the flow's summary
+line.)
+
+`plan.parquet` — five rows, all `action=create`, one per fixture device:
+
+```text
+num_rows: 5
+columns: ['action', 'resource', 'source_id', 'dest_id', 'attribute', 'old_value', 'new_value', 'owner', 'skip_reason', 'conflict_class']
+{'action': 'create', 'resource': 'InfraDevice', 'source_id': 'core01', 'dest_id': '', 'attribute': '', 'old_value': '', 'new_value': '{"type": "juniper mx204"}',    'owner': '', 'skip_reason': '', 'conflict_class': ''}
+{'action': 'create', 'resource': 'InfraDevice', 'source_id': 'core02', 'dest_id': '', 'attribute': '', 'old_value': '', 'new_value': '{"type": "arista 7504"}',      'owner': '', 'skip_reason': '', 'conflict_class': ''}
+{'action': 'create', 'resource': 'InfraDevice', 'source_id': 'core03', 'dest_id': '', 'attribute': '', 'old_value': '', 'new_value': '{"type": "cisco asr9001"}',    'owner': '', 'skip_reason': '', 'conflict_class': ''}
+{'action': 'create', 'resource': 'InfraDevice', 'source_id': 'edge01', 'dest_id': '', 'attribute': '', 'old_value': '', 'new_value': '{"type": "cisco nexus9000"}',  'owner': '', 'skip_reason': '', 'conflict_class': ''}
+{'action': 'create', 'resource': 'InfraDevice', 'source_id': 'edge02', 'dest_id': '', 'attribute': '', 'old_value': '', 'new_value': '{"type": "cisco nexus9000"}',  'owner': '', 'skip_reason': '', 'conflict_class': ''}
+```
+
+#### Destination untouched
+
+Re-queried after the run completed:
+
+```text
+POST-RUN destination InfraDevice count: 0
+```
+
+The plan changed nothing at the destination, as a read-only `operation=plan` must not.
+
+#### Visible in the UI
+
+`GET http://127.0.0.1:4200/` returned `HTTP 200 (text/html; charset=utf-8)`. The flow-run
+page at `http://127.0.0.1:4200/runs/flow-run/6b1f21ba-f73d-4dc1-81c8-9b4d4f7658a9` was
+loaded in a browser and rendered, titled
+`Flow Run: imaginary-pudu • Prefect Server`, showing:
+
+- breadcrumb `Runs / imaginary-pudu`, state badge **Completed**, duration `1s`,
+  start `2026/07/31 06:58:03 AM` (local)
+- Flow `infrahub-sync` → `/flows/flow/94a4f54f-373f-452c-a6d0-700eec14d8dc`
+- Deployment `run` → `/deployments/deployment/44f5e3ac-8df4-4184-acf1-8fab42e8618a`
+- the Logs tab listing all 14 records at `INFO` under `prefect.flow_runs`, including every
+  bridged `infrahub_sync…` line and the summary line
+  `run 20260731T1058-07e1e25e finished: status=planned changed=True summary=create:5,update:0,delete:0 artifact=…`
+
+Equivalent API state listing (`POST /flow_runs/filter`, the UI's own backing call):
+
+```text
+imaginary-pudu 6b1f21ba-f73d-4dc1-81c8-9b4d4f7658a9 COMPLETED deployment=44f5e3ac-8df4-4184-acf1-8fab42e8618a
+```
+
+**T019 result: PASS.** DBA-003 satisfied — remote `operation=plan` returned a flow-run id
+synchronously (HTTP 201), reached COMPLETED, and produced a plan of exactly five
+`InfraDevice` creates with zero updates and zero deletes, backed by `run.json`
+(`status: dry-run`, `mode: diff`) and a five-row `plan.parquet`. DBA-004 satisfied — the
+run lifecycle and the bridged `infrahub_sync` lifecycle log lines are retrievable through
+`POST /api/logs/filter` with levels and origin logger names preserved, and are visible in
+the built-in UI.
+
+No live-environment ceiling applies to T018 or T019: everything both tasks require was
+exercised against the real lab.
+
+### Teardown
+
+Both processes this phase started were stopped at 2026-07-31T10:59:43Z:
+
+```text
+$ pkill -f "infrahub_sync.orchestration.serve"    # serve, pids 617/621
+$ pkill -f "prefect server start"                 # server, pids 537/549
+$ lsof -nP -iTCP:4200 -sTCP:LISTEN
+PORT 4200 FREE
+$ ps -Ao pid,command | grep -iE "prefect|orchestration.serve"
+none
+$ git status --porcelain
+(clean)
+```
+
+No lab container was stopped, restarted, modified, or exec'd into. Nothing was written to
+the destination. Prefect state stayed entirely inside the scratchpad `PREFECT_HOME`; the
+developer's `~/.prefect` was never read or written.
