@@ -15,7 +15,7 @@
 
 ```bash
 pyenv local 3.12.x || use system Python 3.10–3.13
-uv sync
+uv sync --extra dev
 ```
 
 ## Required Development Workflow
@@ -23,7 +23,7 @@ uv sync
 Run in order before committing:
 
 ```bash
-uv sync
+uv sync --extra dev
 uv run invoke format
 uv run invoke lint
 ```
