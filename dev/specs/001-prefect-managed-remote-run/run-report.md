@@ -1509,3 +1509,200 @@ Left as implemented (option 1's behavior) and surfaced as an open decision rathe
 silently accepted or silently "fixed". Everything else DBR-009 names is proven identical:
 `tests/test_cli_execution_mapping.py`'s nine per-stage tests pass UNMODIFIED against both
 `9edc1bc`'s `cli.py` and the refactored one, and the DBA-009 population passes unmodified.
+
+---
+
+## Phase 7 (US5) — example, docs, hygiene scan, and the clean-context walkthrough
+
+**Trace**: DBR-013; DBA-008 (example-corpus half), DBA-011; SC-005, SC-009; R-3 (schema
+YAML half). **Tasks**: T032, T033, T033a, T034, T035, T036, T037.
+**Measured**: 2026-07-31T12:12Z → 2026-07-31T12:27Z (UTC), branch
+`001-prefect-managed-remote-run-local-dp-001`, macOS 25.5.0, Python 3.12.2,
+`uv sync --extra dev --extra prefect` (prefect 3.8.1 / redis 8.1.0), Infrahub 1.9.8 at
+`http://localhost:8000`. `INFRAHUB_ADDRESS` / `INFRAHUB_API_TOKEN` came from the session
+environment only; no value appears in any file or transcript (scan below).
+
+### What shipped
+
+| Task | Artifact |
+|---|---|
+| T032 | `examples/prefect_remote_run/schemas/infra_device.yml` — loadable `InfraDevice(name, type)`, using `human_friendly_id` / `order_by` and NOT the deprecated `display_labels` / `default_filter` the lab warned about |
+| T033 | `examples/prefect_remote_run/requests/` — four request bodies (`create-plan-flow-run.json`, `create-sync-flow-run-confirmed.json`, `filter-flow-run-logs.json`, `create-invalid-operation-flow-run.json`) plus `requests/README.md` noting method + endpoint + expected response for all six interactions of contracts/prefect-flow.md §5, including "Read the result" |
+| T033a | `examples/custom_adapter/custom_adapter_src/custom_adapter.py` — narration moved from `print()` to `logging.getLogger("infrahub_sync.examples.custom_adapter")`, plus a WARNING when a configured `db_path` does not exist (naming the path, its absolute resolution, and the CWD it resolved against) |
+| T034 | `examples/prefect_remote_run/README.md` |
+| T035 | `docs/docs/reference/prefect-remote-run.mdx`, registered in `docs/sidebars.ts`; Prefect subsection of `docs/docs/orchestration.mdx` now leads with the packaged integration and demotes hand-wrapping the CLI |
+| T036 | `tests/test_example_hygiene.py` — 38 tests, no prefect dependency |
+| T037 | the walkthrough below |
+
+### T033a — the five-device outcome is unchanged, the narration is now bridgeable
+
+CLI `diff` at 2026-07-31T12:12:51Z, MockDB fixture unmodified, destination at zero:
+
+```text
+INFO | infrahub_sync.examples.custom_adapter | Loading 5 devices nodes
+INFO | infrahub_sync.examples.custom_adapter | MockDB: Loading 5/5 InfraDevice
+INFO | infrahub_sync.adapters.infrahub | Infrahub: Loading all 0 InfraDevice
+INFO | infrahub_sync.potenda | diff: 5/5 models processed
+INFO | infrahub_sync.execution | Cached run 20260731T1212-a325c16e at …/custom-example/20260731T1212-a325c16e
+```
+
+Five creates, as before the change; the adapter's own lifecycle lines now carry a logger
+name inside the `infrahub_sync` hierarchy, so the DBR-012 bridge forwards them (confirmed
+remotely in the T037 log below). The derived `examples/custom_adapter/mockdb/` adapter
+needed no change: it only subclasses the class resolved from
+`custom_adapter_src/custom_adapter.py`, and the run above exercises that resolution
+end-to-end. A regeneration was attempted and **reverted**: `infrahub-sync generate`
+re-rendered `sync_models.py` with unrelated churn, which is the pre-existing T002
+non-reproducibility recorded above, not a consequence of this change.
+
+Note the actual narration text is `Loading 5 devices nodes` (the line interpolates the
+mapping's resource name, `devices`) plus `MockDB: Loading 5/5 InfraDevice`, not the
+`Loading 5 InfraDevice nodes` that tasks.md T033a/T034 assumed. The README documents what
+the run really prints.
+
+### T036 — example hygiene scan (DBA-008 corpus half)
+
+`tests/test_example_hygiene.py`, 38 tests over every file in
+`examples/prefect_remote_run/` (README, `requests/`, `schemas/`): no seeded canary and no
+`ZZ-`-shaped canary; every credential-shaped assignment is a sentinel, a `$VAR` reference,
+or a documented variable NAME; every `Bearer` value is exactly `Bearer <your-api-token>`;
+no credentials embedded in a URL; no ≥24-character opaque literal on any line mentioning
+a credential; the README uses `<your-api-token>` and `<your-infrahub-address>` verbatim;
+no request body carries a credential field.
+
+The rules were mutation-probed before being trusted — synthetic violations are flagged and
+the example's real content is not:
+
+```text
+FLAGGED | real token assign      | ['assign:INFRAHUB_API_TOKEN="181a4c9e-…-deadbeef0000"', 'long:…']
+FLAGGED | real token unquoted    | ['assign:INFRAHUB_API_TOKEN=181a4c9eabcd…', 'long:…']
+FLAGGED | yaml token             | ['assign:token=s3cr3tvalue']
+FLAGGED | bearer real            | ['bearer:abc123realtoken']
+FLAGGED | url creds              | ['urlcreds']
+FLAGGED | canary                 | ['canary:ZZ-FLOW-ENV-INFRAHUB-TOKEN-0001', …]
+clean   | ok sentinel            | []
+clean   | ok env ref             | []
+clean   | ok bearer              | []
+clean   | ok prose               | []
+```
+
+Prefect independence proven rather than asserted — the file runs in a fresh interpreter
+and loads no prefect module:
+
+```text
+$ python -c "<pytest.main on tests/test_example_hygiene.py, then scan sys.modules>"
+38 passed in 0.03s
+exit 0 | prefect modules loaded: []
+```
+
+### T037 — clean-context walkthrough (DBA-011, SC-009)
+
+Performed by a **fresh agent session with no exposure to the implementation**, under a
+hard prohibition on reading anything outside `examples/prefect_remote_run/`. Full verbatim
+transcript: `…/scratchpad/t037-walkthrough.md` (406 lines). Scope: README steps 1–6 and 8;
+step 7 (the confirmed write) was deliberately excluded to keep the walkthrough read-only
+and leave the destination in its documented zero-object state.
+
+Attestation, in the walker's own words: *"I consulted only
+`examples/prefect_remote_run/README.md` and its linked files inside
+`examples/prefect_remote_run/`: `requests/README.md`, `requests/*.json`, and
+`schemas/infra_device.yml`. No other file in the repository was read, grepped, or
+opened."*
+
+| Step | Documented command | Result |
+|---|---|---|
+| 1 | `uv sync --extra prefect`; version check | PASS — `3.8.1` |
+| 2 | `uv run infrahubctl schema load examples/prefect_remote_run/schemas/infra_device.yml --branch main` | PASS — `1 schema processed in 6.701 seconds`, **no deprecation warning** (T032's key choice) |
+| 2 | destination verify | PASS — `{"data":{"InfraDevice":{"count":0}}}`, the documented starting state |
+| 3 | runner environment, port 4200 free | PASS — `PORT4200_FREE` before anything started |
+| 4 | `uv run prefect server start` | PASS — banner, then `GET /api/health` → `true` at 12:22:34Z |
+| 5 | `uv run python -m infrahub_sync.orchestration.serve` from the repository root | PASS — `Your flow 'infrahub-sync' is being served and polling for scheduled runs!`; deployment `89ec10ee-74af-4e82-8d7c-100c64fe2b13` `status: "READY"`, `enforce_parameter_schema: true`, `operations: ["plan","sync"]` |
+| 6 | create plan run from `requests/create-plan-flow-run.json` | PASS — flow-run id **`4457ef22-bb74-4b33-8ac4-d2acc373c46e`** returned synchronously at 12:23:18Z |
+| 6 | state polling | PASS — `SCHEDULED → PENDING → RUNNING → COMPLETED` |
+| 6 | read the result via `requests/filter-flow-run-logs.json` | PASS — see below |
+| 8 | stop serve, stop server, confirm port released | PASS |
+
+The run log retrieved by the documented `POST /api/logs/filter` call, matching the
+README's checkpoint block line for line and in order:
+
+```text
+infrahub_sync.potenda | Load: Importing data from MockDB
+infrahub_sync.examples.custom_adapter | Loading 5 devices nodes
+infrahub_sync.examples.custom_adapter | MockDB: Loading 5/5 InfraDevice
+infrahub_sync.adapters.infrahub | Infrahub: Loading all 0 InfraDevice
+infrahub_sync.potenda | diff: 5/5 models processed
+infrahub_sync.execution |
+InfraDevice
+  InfraDevice: core01 MISSING in Infrahub
+  InfraDevice: core02 MISSING in Infrahub
+  InfraDevice: core03 MISSING in Infrahub
+  InfraDevice: edge01 MISSING in Infrahub
+  InfraDevice: edge02 MISSING in Infrahub
+run 20260731T1223-efb89811 finished: status=planned changed=True summary=create:5,update:0,delete:0 artifact=/Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1223-efb89811
+Finished in state Completed()
+```
+
+**`summary=create:5,update:0,delete:0` — five creates, not zero.** The T033a bridged
+adapter narration is visible remotely, which is what X14 asked for. No live-environment
+ceiling applies to T037: the whole walkthrough ran against the real lab.
+
+#### Two README defects the walkthrough exposed, and the fixes
+
+Both were found by the walker and fixed in the README rather than worked around:
+
+1. **Missing state in the documented progression.** The README said the state goes
+   `SCHEDULED`, then `RUNNING`, then `COMPLETED`; the run really passes through `PENDING`
+   in between, so a reader watching for exactly three states could read `PENDING` as a
+   fault. Fixed: the expected progression now names `PENDING` and says it is normal.
+2. **An artifact-listing command that lists every historical run.** The README said
+   `ls .infrahub-sync-cache/custom-example/*/` to find "the run's artifact directory"; in a
+   used checkout that glob matched nine directories from earlier runs. Fixed: the command
+   is now `ls .infrahub-sync-cache/custom-example/<run-id>/`, with one sentence saying the
+   run id comes from the summary line.
+
+The walker also noted it could not independently confirm the step-5 claim about starting
+the serve process outside the repository root, since verifying it would mean deliberately
+breaking the setup. That claim is separately evidenced: it is X1/E11, recorded in
+contracts/prefect-flow.md §3 and re-stated in the T019 section above.
+
+#### Secret hygiene
+
+```text
+$ python -c "print(open('t037-walkthrough.md').read().count(os.environ['INFRAHUB_API_TOKEN']))"
+token-value occurrences in transcript: 0
+```
+
+Only variable NAMES appear in the transcript, the README, and the request corpus.
+
+### Gates after this chunk
+
+```text
+uv run invoke linter.format      → 82 files, formatted clean
+uv run ruff check .              → All checks passed!
+uv run invoke lint               → exit 30; 54 pylint diagnostics in infrahub_sync/ (baseline, unchanged; rating 9.68/10, +0.00)
+uv run yamllint infrahub_sync    → clean
+uv run ty check .                → Found 4 diagnostics (baseline, unchanged)
+uv run rumdl check .             → Success: No issues found in 73 files
+uv run pytest -q                 → 263 passed, 4 skipped (baseline 225 + 4; +38 from tests/test_example_hygiene.py)
+uv run infrahub-sync list --directory examples/  → 14 configurations, unchanged (the new example ships no config.yml)
+```
+
+`docs/` verification is limited to `rumdl check` over the new and revised MDX; no
+Docusaurus build was run.
+
+### Teardown
+
+```text
+2026-07-31T12:25:49Z
+$ lsof -nP -iTCP:4200 -sTCP:LISTEN          → PORT4200_FREE
+$ pgrep -fl "prefect|orchestration.serve"   → NO_PREFECT_PROCS
+$ docker ps --format '{{.Names}} {{.Status}}'
+infrahub-task-worker-1 Up 25 hours          # …and the other seven, all "Up 25 hours"
+```
+
+No `infrahub-*` container was stopped, restarted, modified, or exec'd into — all eight
+report the same 25-hour uptime. **Final destination state: ZERO `InfraDevice` objects**
+(`{"data":{"InfraDevice":{"count":0}}}` at 12:24:07Z), the documented starting state for
+the next walkthrough. Prefect state stayed inside a scratchpad `PREFECT_HOME` with
+`PREFECT_LOCAL_STORAGE_PATH` set alongside it, so the developer's `~/.prefect` was
+untouched.
