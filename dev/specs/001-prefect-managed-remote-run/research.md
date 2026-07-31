@@ -2,10 +2,20 @@
 
 **Status**: COMPLETE. Phase 0 initially STOPPED on a failed falsifying probe (the brief's
 `prefect==3.7.2` pin is unsatisfiable); the root orchestrator issued **D005** (pin
-`prefect==3.5.0`, PROVISIONAL/CHECKPOINT/BLOCKING), the spec was remediated, and the
+`prefect==3.5.0`, provisional pending the gate), the spec was remediated, and the
 remaining probes were re-run and passed against 3.5.0. All probe processes were started
 and stopped inside the session scratchpad; port 4200 was verified free before and after;
 the lab Infrahub at `localhost:8000` was never contacted.
+
+> **Gate outcome (2026-07-30, Blake Ellis)** — D005 was **ratified as option D**, an
+> override of the option B recorded below: the extra pins `prefect==3.8.1` and the BASE
+> dependency set changes (`diffsync[redis]>=2.1,<3.0` → `diffsync>=2.1,<3.0` +
+> `redis>=4.3,<9`). **D006 is SUPERSEDED / WITHDRAWN** — no companion pins. Everything
+> below the F1/F2/F3 headings and in the probe table is the **historical Phase 0 record
+> against 3.5.0** and is deliberately preserved unchanged (append-only convention, E20);
+> the binding values now live in "Gate-ratified resolution (D005 option D)" below, plus
+> `spec.md` §Constraints/§Assumptions, `plan.md` §Technical Context,
+> `contracts/prefect-flow.md` §1, and tasks T012/T012a.
 
 **Date**: 2026-07-30
 **Feature**: `dev/specs/001-prefect-managed-remote-run` (branch `001-prefect-managed-remote-run-local-dp-001`)
@@ -31,15 +41,24 @@ pinned to 3.7.2 fails for every user. Additional scoping: `pydocket` entered pre
 release is **3.5.0**. The base package cannot drop redis: `infrahub_sync/utils.py:11`
 imports `diffsync.store.redis.RedisStore` unconditionally.
 
-**Resolution — D005 (root orchestrator, PROVISIONAL, CHECKPOINT, BLOCKING; to be
-ratified or overridden at the Phase 4 gate)**: the optional extra pins `prefect==3.5.0`
-(repair path B). Path A (restructuring base deps to keep 3.7.2 by allowing redis ≥5)
-was rejected: it ships a redis major bump to every existing user inside a preview.
-Origin: brief-gap/instance against the brief's Dependencies section (its "Prefect 3.7.2
-— Available" satisfaction evidence was falsified at the install boundary; VAL-6 had
+**Resolution as recorded in Phase 0 — D005 repair path B (provisional)**: the optional
+extra pins `prefect==3.5.0`. Path A (restructuring base deps to keep 3.7.2 by allowing
+redis ≥5) was rejected: it ships a redis major bump to every existing user inside a
+preview. Origin: brief-gap/instance against the brief's Dependencies section (its "Prefect
+3.7.2 — Available" satisfaction evidence was falsified at the install boundary; VAL-6 had
 supplied prefect via a `uv run --with` overlay, unpinned, so it never exercised
-extra-vs-base resolution). Spec Constraints and Assumptions sections carry the D005
-marker.
+extra-vs-base resolution).
+
+**Resolution as RATIFIED at the gate (2026-07-30, Blake Ellis) — D005 option D, which
+SUPERSEDES path B above**: the extra pins `prefect==3.8.1` (current latest) and the base
+declares redis directly with a **permissive** floor — `diffsync>=2.1,<3.0` +
+`redis>=4.3,<9`. This is not path A: path A was read as "allow redis ≥5", which forces a
+major bump on existing users; `>=4.3,<9` forces nothing (an existing environment on redis
+4.6 stays valid) while permitting the redis 8.x that `pydocket` requires. The conflict
+chain above is unchanged and is exactly what makes the base change necessary; because
+diffsync has no 3.x release and no open PR raising its `<5.0` extra cap, this override is
+permanent rather than a wait-for-upstream stopgap. Spec Constraints and Assumptions carry
+the ratified D005 text. Full evidence: "Gate-ratified resolution (D005 option D)" below.
 
 ## Finding F2: prefect 3.5.0 needs two companion pins in the extra to work at all (→ D006)
 
@@ -62,6 +81,14 @@ repaired by companion constraints in the optional extra (no base-dependency chan
    evidence-backed ceiling `fastapi>=0.111,<0.121`.
 
 See decision record **D006** below.
+
+> **SUPERSEDED (2026-07-30, gate)**: both defects above are properties of prefect **3.5.0**
+> only, and both are verified fixed at the ratified `prefect==3.8.1` — the
+> `importlib_metadata` import now resolves through a stdlib alias in
+> `prefect/utilities/compat.py`, and the deployment-name route returns HTTP 200 under the
+> freshly-resolved fastapi 0.141.1 / starlette 1.3.1. F2 therefore no longer describes any
+> shipped constraint; it is kept as the record of why 3.5.0 alone was not viable. The extra
+> is exactly `prefect = ["prefect==3.8.1"]`.
 
 ## Finding F3: the packaged flow module must not use `from __future__ import annotations`
 
@@ -103,7 +130,9 @@ empty; `pgrep -fl "prefect|probe_flow"` empty.
 ### D005 (root orchestrator — recorded here for traceability)
 
 - **Decision**: The optional extra pins `prefect==3.5.0` instead of the brief's 3.7.2.
-- **Status**: PROVISIONAL (CHECKPOINT, BLOCKING — ratify/override at Phase 4 gate).
+- **Status**: **RATIFIED — but OVERRIDDEN to option D** (checkpoint gate, Blake Ellis,
+  2026-07-30). The recorded decision and options below are left exactly as written; the
+  gate did not pick any of A/B/C.
 - **Origin**: brief-gap/instance (brief Dependencies section; its "Prefect 3.7.2 —
   Available" evidence falsified by probe a₁/a₂; repair level: version substitution
   within the same major, no base-dependency change).
@@ -112,8 +141,20 @@ empty; `pgrep -fl "prefect|probe_flow"` empty.
 - **Options**: A — keep 3.7.2, restructure base deps to allow redis≥5 (rejected: redis
   major bump for every existing user inside a preview); B — pin 3.5.0 (chosen); C —
   return brief for intake (not needed given B).
+- **Gate note (2026-07-30, Blake Ellis)**: the human **overrode this record to option D**,
+  a fourth option produced by gate research and not present in the list above: pin
+  `prefect==3.8.1` (current latest) in the extra AND declare redis directly in the base
+  with a **permissive** floor — `diffsync>=2.1,<3.0` + `redis>=4.3,<9`, deliberately NOT
+  `redis>=5`. Option D differs from the rejected option A precisely in that floor: it
+  forces no upgrade on any existing installation and keeps a downstream `diffsync[redis]`
+  requirement resolvable (verified at redis 4.6.0; `redis>=5` makes it unsatisfiable),
+  while still admitting the redis 8.x `pydocket` needs. **D006 is superseded as a
+  consequence** — its companion pins repaired 3.5.0-only defects. Accepted risk: 3.8.1 was
+  released the same day, so it has zero field exposure; the human accepted this, mitigated
+  by direct behavioral probes rather than elapsed time. Evidence: "Gate-ratified resolution
+  (D005 option D)" below.
 
-### D006 — Optional-extra composition: companion pins repairing prefect 3.5.0 packaging defects — PROVISIONAL (CHECKPOINT)
+### D006 — Optional-extra composition: companion pins repairing prefect 3.5.0 packaging defects — SUPERSEDED / WITHDRAWN (gate, Blake Ellis, 2026-07-30)
 
 - **Question**: What exactly does the `prefect` optional extra declare, given that
   `prefect==3.5.0` alone is broken out of the box (probes a₄, a₅)?
@@ -140,6 +181,38 @@ empty; `pgrep -fl "prefect|probe_flow"` empty.
   probe); medium for the fastapi ceiling's tightness (deliberately conservative).
 - **Origin**: inherent (third-party packaging defects discovered by mandated probes);
   consequence of D005.
+- **Status / gate note (2026-07-30, Blake Ellis)**: **SUPERSEDED / WITHDRAWN.** The
+  question, evidence, options and decision above are left as written; they were correct for
+  `prefect==3.5.0`. With D005 ratified as option D (`prefect==3.8.1`), both defects are
+  verified fixed upstream (`importlib_metadata` resolves via the stdlib alias in
+  `prefect/utilities/compat.py`; the deployment-name route returns HTTP 200 under fastapi
+  0.141.1 / starlette 1.3.1), so **both companion pins are removed** and the extra is
+  exactly `prefect = ["prefect==3.8.1"]`. Nothing in this record is implementable any more.
+
+## Gate-ratified resolution (D005 option D) — 2026-07-30
+
+Root-verified at the checkpoint gate against the real patched `pyproject.toml`. This
+section, not F1/F2 or the 3.5.0 probe table, is the binding evidence for the shipped
+dependency declarations.
+
+**Declarations.** Base: `"diffsync[redis]>=2.1,<3.0"` → `"diffsync>=2.1,<3.0"` +
+`"redis>=4.3,<9"`. Extra: `prefect = ["prefect==3.8.1"]` (single pin).
+
+**Resolved set** (real patched pyproject): prefect 3.8.1, redis 8.1.0, fastapi 0.141.1,
+starlette 1.3.1, pydantic 2.13.4, diffsync 2.2.3, infrahub-sdk 1.22.2, pyarrow 21.0.0,
+typer 0.27.0, uvicorn 0.52.0, griffe 2.1.0, pydocket 0.23.1.
+
+| Question | Verified result |
+|---|---|
+| Why must the base change at all? | `diffsync[redis]` → `redis>=4.3,<5.0`; `prefect>=3.6` → `pydocket>=0.19.0` → `redis>=5`. Unsatisfiable together. diffsync has no 3.x and no open PR raising the cap → the override is permanent, not a stopgap. |
+| Is diffsync's `<5.0` cap real? | No — stale. Its redis store works on redis-py 4.6.0, 5.0, 6.4, 7.0, 8.1.0: **26/26 functional checks** against a redis 8.4.0 server, including `diff_from`/`diff_to`/`sync_from` between two Redis-backed adapters; the 4.6.0 control and 8.1.0 results are byte-identical. Store's API surface: `Redis()`, `from_url()`, `ping/get/set/exists/delete/scan_iter`. |
+| Why `>=4.3` and not `>=5`? | With `redis>=4.3,<9` a downstream consumer that requires `diffsync[redis]` still resolves (redis 4.6.0); with `redis>=5` that combination is unsatisfiable. The permissive floor is the point of option D. |
+| Why declare redis directly? | `infrahub_sync/utils.py:11` imports `diffsync.store.redis.RedisStore` unconditionally, so the client must exist in every install. Run-time use is opt-in: `utils.py:195-205` defaults to `LocalStore()` and builds `RedisStore` only when a config sets `store.type == "redis"`; no shipped example enables it. Import compatibility is therefore what matters for all users — and the repo suite has **zero** redis coverage, which is why T012a exists. |
+| Do prefect 3.8.1's load-bearing behaviors hold? | Yes. Served-deployment REST run creation → **COMPLETED**. Run-scoped stdlib-logging bridging retrievable via `POST /api/logs/filter` with **levels preserved**. Invalid `operation` → **HTTP 409**, no flow run created. |
+| Are D006's two defects gone? | Yes. `importlib_metadata` resolves through the stdlib alias in `prefect/utilities/compat.py`; the deployment-name route returns **HTTP 200** under fastapi 0.141.1. Both companion pins removed. |
+| Test-suite impact | **111 passed / 2 skipped** under the upgraded set — zero delta from baseline (same 113-test total, zero failures). |
+| `ty` impact | Installing prefect pulls `prometheus-client`, resolving the optional import that `infrahub_sync/adapters/prometheus.py:10`'s `# ty: ignore[unresolved-import]` suppresses → one EXPECTED `unused-ignore-comment` warning in the prefect-synced environment, while the comment stays NECESSARY without prefect. The adapter file is not edited (out of scope); T039 records the warning and names the cause. |
+| Residual risk (human-accepted) | prefect 3.8.1 was released the same day → zero field exposure. Mitigated by the direct behavioral probes above rather than by elapsed time. |
 
 ## Non-probe research decisions
 
@@ -186,7 +259,11 @@ implementation instruction.
   §1 point 5; tasks T014. The row's rationale (JSON-friendliness) and rejected
   alternative (returning the frozen dataclass) are unaffected.
 
-## Version facts (installed and verified in the probe venv)
+## Version facts (installed and verified in the Phase 0 probe venv — HISTORICAL)
+
+> **Superseded (2026-07-30, gate)**: this table records the 3.5.0-era probe venv. The
+> shipped versions are in "Gate-ratified resolution (D005 option D)" above — prefect 3.8.1,
+> redis 8.1.0, fastapi 0.141.1, no `importlib-metadata` or `fastapi` pin at all.
 
 | Package | Version | Why it matters |
 |---|---|---|

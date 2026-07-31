@@ -47,21 +47,21 @@ blocking theme against the working tree before disposition.
 **Question:** Where does the RunValidationError/RunExecutionError wrap-and-sanitize happen so DBR-009 (CLI behavior identical) and DBR-015 (typed sanitized remote failures) can both hold?
 **Evidence:** E1 + E2, root-confirmed: today's CLI has three distinct failure behaviors, two sharing `ValueError`; both load paths wrap into `ValueError` (`potenda/__init__.py:230-246`); today's CLI itself uses the broad-except mark-failed + bare re-raise pattern the contract's single `__cause__` mapping cannot reproduce.
 **Options:** A — `execute_run` keeps today's exact CLI pattern (narrow `ValueError` handling where today has it; broad `except Exception:` mark-`run.json`-failed + bare re-raise, explicitly documented as the preserved 9edc1bc pattern with a targeted `# noqa: BLE001`); the sanitize-and-wrap into `RunValidationError`/`RunExecutionError` lives only in `run_remote_request`, the remote-only composition. CLI failure behavior is byte-identical by construction. B — wrap inside `execute_run` with a stage-typed attribute and a CLI unmapping layer (more moving parts, must reproduce three behaviors from metadata).
-**Recommendation:** A. **Rationale:** identity by construction beats identity by reconstruction; the broad catch is the preserved existing pattern, honestly documented, not new looseness. **Confidence:** High. **Origin:** `inherent`. **Status:** PROVISIONAL (CHECKPOINT).
+**Recommendation:** A. **Rationale:** identity by construction beats identity by reconstruction; the broad catch is the preserved existing pattern, honestly documented, not new looseness. **Confidence:** High. **Origin:** `inherent`. **Status:** RATIFIED (D009, Blake Ellis, 2026-07-30) — recommendation A accepted as written.
 
 ### D010 — Tolerant per-file configuration resolution for the remote surface
 
 **Question:** How does `resolve_sync_instance` behave when files under `INFRAHUB_SYNC_CONFIG_DIRECTORY` are unreadable or invalid?
 **Evidence:** E6 + X2, root-confirmed: `utils.get_all_sync` eagerly validates every discovered `config.yml` before name matching (`utils.py:123-148`), so one broken neighbor blocks all names and pydantic's `input_value` echo can leak unresolvable-config contents the redactor never collected.
 **Options:** A — `resolve_sync_instance` performs its own tolerant walk (same glob, same exact-name match): unrelated broken files are skipped with a WARNING naming the file; a file whose raw `name:` matches the request (or is unreadable where the name may live) raises `RunValidationError` naming the logical name and file path only, parse detail never chained verbatim. CLI keeps calling `get_instance` unchanged. B — reuse `get_instance` as-is and document the eager behavior (contract's promised failure shape becomes undeliverable; blast radius stays).
-**Recommendation:** A. **Rationale:** the remote failure contract is otherwise unimplementable, and the blast radius contradicts DBR-005's one-directory boundary intent; CLI behavior untouched. **Confidence:** High. **Origin:** `inherent`. **Status:** PROVISIONAL (CHECKPOINT).
+**Recommendation:** A. **Rationale:** the remote failure contract is otherwise unimplementable, and the blast radius contradicts DBR-005's one-directory boundary intent; CLI behavior untouched. **Confidence:** High. **Origin:** `inherent`. **Status:** RATIFIED (D010, Blake Ellis, 2026-07-30) — recommendation A accepted as written.
 
 ### D011 — Docs-site reference page (T035) is governance-mandated scope the brief did not enumerate
 
 **Question:** Does the preview ship the Docusaurus reference page and orchestration.mdx revision (T035), given the brief's deliverable list names only "one example"?
 **Evidence:** F6: AGENTS.md Documentation policy ("Update `docs/` for any user-visible changes") is incorporated by the brief's constraint "The implementation follows the repository workflow"; a new optional extra + remote flow is user-visible. The run recorded the analogous smaller expansion (D007) as a decision; consistency requires this one be ratified too. X9 additionally shows the existing page teaches the pattern this feature obsoletes.
 **Options:** A — ship T035 (one reference page + sidebar entry + orchestration.mdx Prefect subsection revised to lead with the packaged integration). B — strike T035 and leave docs untouched (violates repo docs governance for a user-visible change). C — cross-link only (leaves obsolete DIY guidance primary).
-**Recommendation:** A. **Rationale:** repo governance requires it; the brief's constraints incorporate repo workflow; leaving contradictory docs live is worse than the modest scope addition. **Confidence:** High. **Origin:** `brief-gap` / `systemic` — no current brief-template slot states whether AGENTS.md's docs-governance obligation is in scope for a preview feature; planners must be prompted to declare it. **Status:** PROVISIONAL (CHECKPOINT).
+**Recommendation:** A. **Rationale:** repo governance requires it; the brief's constraints incorporate repo workflow; leaving contradictory docs live is worse than the modest scope addition. **Confidence:** High. **Origin:** `brief-gap` / `systemic` — no current brief-template slot states whether AGENTS.md's docs-governance obligation is in scope for a preview feature; planners must be prompted to declare it. **Status:** RATIFIED (D011, Blake Ellis, 2026-07-30) — recommendation A accepted as written.
 
 ## Round-1 verdict
 
@@ -70,3 +70,16 @@ blocking theme against the working tree before disposition.
 the decision). All 8 route to a single remediation agent (artifact-level only; no product code
 exists yet). Round 2 re-runs all three lenses: remediation touches engineering- and
 ergonomics-owned inputs, and D009–D011 move requirements/scope, which re-triggers fidelity.
+
+## Gate outcome (2026-07-30, Blake Ellis) — append-only note
+
+Response to the collated packet: `ACCEPT ALL EXCEPT D005`, then after further research
+`D005 CHOOSE D` with D006 superseded. Effect on this file's records: **D009, D010 and D011
+are RATIFIED exactly as recommended** (Status lines above updated in place; no
+Question/Evidence/Options/Recommendation text altered). The one packet item this file only
+routes rather than records — the "Prefect pin ratification" row in the blocking-theme table
+— resolved as follows: **D005 was OVERRIDDEN to option D** (extra = `prefect==3.8.1` alone;
+base `diffsync[redis]>=2.1,<3.0` → `diffsync>=2.1,<3.0` + `redis>=4.3,<9`, a permissive
+floor deliberately not `redis>=5`), and **D006 was SUPERSEDED / WITHDRAWN** (its two
+companion pins repaired prefect-3.5.0 defects that are fixed at 3.8.1). Full records and
+evidence: `research.md` D005/D006 records and "Gate-ratified resolution (D005 option D)".

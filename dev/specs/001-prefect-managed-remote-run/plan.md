@@ -4,7 +4,8 @@
 
 **Input**: Feature specification from `dev/specs/001-prefect-managed-remote-run/spec.md`
 (authoritative, carrying DBR-001–DBR-015 / DBA-001–DBA-011 verbatim from brief DB-001 v2,
-four PROVISIONAL clarifications, plus D005's version remediation).
+four clarifications, plus D005's dependency remediation — all RATIFIED at the Phase 4
+checkpoint gate by Blake Ellis on 2026-07-30).
 
 ## Summary
 
@@ -13,22 +14,37 @@ by three callers — the CLI `diff` lifecycle, the serial branch of CLI `sync
 --no-parallel`, and a new package-owned Prefect flow — so a developer can run and observe
 a real Infrahub Sync `plan` (== today's `diff` lifecycle) or explicitly confirmed `sync`
 remotely through a default self-hosted Prefect Server's REST API and UI. Prefect stays an
-optional extra pinned to **3.5.0** (D005; the brief's 3.7.2 is unsatisfiable next to
-`diffsync[redis]` — see `research.md` F1) with two companion pins repairing prefect
-3.5.0's own packaging defects (D006). The base install, import, and ordinary CLI never
-import Prefect. All four load-bearing Prefect behaviors (co-install, served-deployment
-REST runs, run-scoped log bridging, parameter rejection before the flow body) were
-verified by real probes against 3.5.0 (`research.md` probe table).
+optional extra pinned to **3.8.1** — the extra is exactly `prefect = ["prefect==3.8.1"]`
+(D005 option D, ratified 2026-07-30). The brief's 3.7.2 pin, and any prefect ≥ 3.6, is
+unsatisfiable while the base requests `diffsync[redis]` (that extra caps `redis<5.0`;
+`prefect>=3.6` → `pydocket` → `redis>=5` — see `research.md` F1), so the base declares
+`redis` directly with a permissive floor: `diffsync>=2.1,<3.0` + `redis>=4.3,<9`. No
+companion pins: D006's `importlib-metadata` and `fastapi` pins existed only to repair
+prefect 3.5.0 defects, both verified fixed at 3.8.1, and are withdrawn. The base install,
+import, and ordinary CLI never import Prefect. All four load-bearing Prefect behaviors
+(co-install, served-deployment REST runs, run-scoped log bridging, parameter rejection
+before the flow body) were verified by real probes — against 3.5.0 in Phase 0
+(`research.md` probe table) and re-verified directly against 3.8.1 at the gate
+(`research.md` "Gate-ratified resolution").
 
 ## Technical Context
 
 **Language/Version**: Python 3.10–3.13 (`requires-python >=3.10,<3.14`); repo currently
 developed on 3.12.
 
-**Primary Dependencies**: Base (unchanged): `infrahub-sdk[all]`, `diffsync[redis]`
-(redis <5.0), `pyarrow`, `filelock`, `typer` (via sdk), `structlog`, `tqdm`. New
-optional extra `prefect`: `prefect==3.5.0`, `importlib-metadata>=4.4`,
-`fastapi>=0.111,<0.121` (D005 + D006, probe-verified).
+**Primary Dependencies**: Base — one declaration changes (D005 option D):
+`diffsync[redis]>=2.1,<3.0` becomes `diffsync>=2.1,<3.0` plus a directly declared
+`redis>=4.3,<9`; `infrahub-sdk[all]`, `netutils`, `pyarrow`, `fsspec`, `filelock`,
+`typer` (via sdk), `structlog`, `tqdm` are untouched. `redis` must be declared directly
+because `infrahub_sync/utils.py:11` imports `diffsync.store.redis.RedisStore`
+unconditionally, so removing the `[redis]` extra without a direct declaration would break
+`import infrahub_sync.utils` for every user; the floor is permissive (`>=4.3`, not `>=5`)
+so a downstream consumer that still requires `diffsync[redis]` resolves (verified at
+redis 4.6.0 — with `redis>=5` that combination is unsatisfiable). New optional extra
+`prefect`: exactly `prefect = ["prefect==3.8.1"]` — no companion pins (D006 withdrawn).
+Gate-verified resolution of the patched set: prefect 3.8.1, redis 8.1.0, fastapi 0.141.1,
+starlette 1.3.1, pydantic 2.13.4, diffsync 2.2.3, infrahub-sdk 1.22.2, pyarrow 21.0.0,
+typer 0.27.0, uvicorn 0.52.0, griffe 2.1.0, pydocket 0.23.1.
 
 **Storage**: Existing per-sync cache layout under `.infrahub-sync-cache/<sync_name>/<run_id>/`
 (`run.json`, `plan.parquet`, side snapshots) — reused as-is; `artifact_path` in
@@ -38,7 +54,9 @@ under `PREFECT_HOME`.
 **Testing**: pytest (`uv sync --extra dev`; note R-1 — plain `uv sync` does not install
 dev tooling). Prefect-dependent tests are skipped when `prefect` is not importable and/or
 marked `integration` when they need a live server; baseline 110 passed / 3 skipped at
-`9edc1bc` must not regress (R-4).
+`9edc1bc` must not regress (R-4). Gate-verified: under the upgraded dependency set the
+inherited suite reports 111 passed / 2 skipped with zero failures — no regression against
+the baseline (same 113-test total).
 
 **Target Platform**: Local developer machines (macOS/Linux) running the CLI; a trusted
 development host running the Prefect server + served deployment (never public internet —
@@ -75,11 +93,12 @@ Phase 1 design (both evaluations below reflect the final design).*
 | IV | Type Safety & Explicit Contracts | **PASS (with two documented broad-except sites, D009)** | `execution.py` is fully typed (`Literal` operation/status, frozen `RunResult` with a read-only `summary` mapping, typed factory protocol); contracts in `contracts/` are concrete typed definitions; no `ty` overrides; specific exception classes (`RunValidationError`, `RunExecutionError`). Error-handling design (D009, honest statement — not "declared boundaries only"): `execute_run` preserves the `9edc1bc` CLI failure behavior verbatim, including the CLI's own broad `except Exception:` mark-`run.json`-failed + bare re-raise pattern (`cli.py:156-159`/`285-288` today) — a *preserved existing pattern* documented by a comment at the site, required so lifecycle failures never leave `run.json` at `status="running"`; the two narrow `ValueError` handlers stay where today's CLI has them (factory → prefixed abort via the CLI's wrapper factory; serial-load → unprefixed abort via the CLI-only seam). Sanitize-and-wrap into the typed remote errors happens ONLY in `run_remote_request`, whose boundary translation catches broadly and ALWAYS re-raises typed and sanitized, likewise documented by a comment at the site. **Suppression directives are mechanism-conditioned, not site-uniform** (E16; the rule: a `# noqa: BLE001` is added if and only if ruff reports BLE001 for the code as actually written, verified with `uv run ruff check` during implementation, never speculatively). Probed in this repo with `uv run ruff check --no-cache --select BLE`: a blind `except` + bare `raise` does NOT fire BLE001 (a directive there would make ruff report `RUF100 Unused noqa directive` and exit 1), and neither does `except Exception as exc: raise E(msg) from exc` — but `... from None` and `... from RuntimeError(str(exc))` both DO fire. Therefore: `execute_run` step 6 (blind `except` + bare `raise`) carries **NO** directive; `run_remote_request`'s sanitize-and-wrap **DOES** carry a targeted `# noqa: BLE001` on its `except Exception` line, because contracts/run-result-and-errors.md §2 (E5, binding) permits only the two firing mechanisms there — rebuilt sanitized cause, or `__suppress_context__` with redacted text inlined — while the one clean form (plain `from exc`) is the unredacted-cause leak E5 forbids. `invoke lint` exits 0 in exactly that configuration (T039). See contracts/execution-surface.md "BLE001 suppression rule". One caveat: the flow module deliberately omits `from __future__ import annotations` (research F3) with a comment. |
 | V | Test Discipline | **PASS** | Planned: parametrized negative tests for `sync_name` resolution and `confirm_writes` (SC-004 negative-test set), RunResult schema/invariant tests, fingerprint unit tests, base-install-without-prefect test (SC-006), canary-redaction test (DBA-008), flow tests skip-if-no-prefect, live end-to-end marked `integration`. Existing targeted tests (DBA-009 population) must pass unmodified. |
 | VI | Security, Secrets & Input Boundaries | **PASS** | Credentials only from runner env (DBR-006; the infrahub adapter already reads `INFRAHUB_ADDRESS`/`INFRAHUB_API_TOKEN`); `sync_name` is an opaque name matched by exact equality against discovered `config.yml` `name` fields — never used to build a path (same glob/match rule as the CLI lookup, via the D010 tolerant per-file walk); remote parameters carry no paths/CLI fragments/credentials/env overrides; exception messages pass value-based secret redaction; example credentials are obviously fake placeholders. |
-| VII | Simplicity & Maintainability | **PASS** | The new abstraction has three real callers (CLI diff, CLI serial sync, flow) — satisfies the two-caller rule. New dependency is brief-mandated and optional; companion pins are defect repairs, each justified by a recorded probe (D006). No engine rewrite; parallel branch untouched; generated example files regenerated via `generate` (R-2), never hand-edited. |
+| VII | Simplicity & Maintainability | **PASS** | The new abstraction has three real callers (CLI diff, CLI serial sync, flow) — satisfies the two-caller rule. New dependency is brief-mandated and optional, and the extra carries a single pin — `prefect==3.8.1` — with no companion pins to maintain (D005 option D; D006's two repair pins are withdrawn, their prefect-3.5.0 defects verified fixed at 3.8.1). The one base-declaration change (`diffsync[redis]` → `diffsync` + `redis>=4.3,<9`) is the minimum that makes the extra installable at all, keeps the redis client present for `utils.py`'s unconditional `RedisStore` import, and keeps downstream `diffsync[redis]` consumers resolvable. No engine rewrite; parallel branch untouched; generated example files regenerated via `generate` (R-2), never hand-edited. |
 
 **Gate result (pre-Phase-0 and post-Phase-1): PASS — no violations; Complexity Tracking
 is empty.** One deviation from the *brief* (not the constitution) is recorded: D005
-replaces the unsatisfiable 3.7.2 pin (BLOCKING checkpoint decision, root-issued).
+replaces the unsatisfiable 3.7.2 pin with `prefect==3.8.1` and declares `redis` directly
+in the base (option D — RATIFIED at the checkpoint gate by Blake Ellis, 2026-07-30).
 
 **Deviation note — logging (recorded as governance decision D008)**: new modules log
 via stdlib `logging.getLogger(__name__)`, not structlog, despite the constitution's
@@ -98,7 +117,8 @@ the constitution itself is not edited here.
 ```text
 dev/specs/001-prefect-managed-remote-run/
 ├── plan.md              # This file
-├── research.md          # Phase 0: probe table, F1–F3, D005/D006 records
+├── research.md          # Phase 0: probe table, F1–F3, D005 record (ratified option D)
+│                        #   and D006 record (superseded/withdrawn at the gate)
 ├── data-model.md        # Phase 1: entities, invariants, state transitions
 ├── quickstart.md        # Phase 1: runnable validation scenarios
 ├── contracts/
@@ -126,7 +146,10 @@ infrahub_sync/
 │   └── fingerprint.py          # NEW: compute_plan_fingerprint(run_dir) — canonical SHA-256
 └── utils.py                    # UNCHANGED (get_instance / get_potenda_from_instance reused)
 
-pyproject.toml                  # MODIFIED: [project.optional-dependencies] prefect = [...] (D005+D006)
+pyproject.toml                  # MODIFIED (D005 option D): base dependencies —
+                                #   "diffsync[redis]>=2.1,<3.0" → "diffsync>=2.1,<3.0" + "redis>=4.3,<9";
+                                #   [project.optional-dependencies] prefect = ["prefect==3.8.1"]
+uv.lock                         # MODIFIED: regenerated by `uv lock`, staged in the same commit (E9)
 
 AGENTS.md                       # MODIFIED (R-1, first commit): uv sync → uv sync --extra dev
 
@@ -213,9 +236,11 @@ structural decisions, each traceable to a requirement:
 
 ## Decision-ID map (D001–D013 → artifact locations)
 
-All decisions are PROVISIONAL (CHECKPOINT) unless ratified; this table lets the gate
-packet and the artifacts be cross-checked ID-by-ID (F5 remediation, 2026-07-30;
-D012/D013 added in round-2 remediation, 2026-07-30).
+**All of D001–D013 are RATIFIED (checkpoint gate, Blake Ellis, 2026-07-30)** — D005 was
+ratified as option D (an override of the recorded recommendation) and D006 is SUPERSEDED /
+WITHDRAWN as a consequence; every other decision was accepted as recommended. This table
+lets the gate packet and the artifacts be cross-checked ID-by-ID (F5 remediation,
+2026-07-30; D012/D013 added in round-2 remediation, 2026-07-30).
 
 | ID | Decision (one line) | Where it lives |
 |---|---|---|
@@ -223,8 +248,8 @@ D012/D013 added in round-2 remediation, 2026-07-30).
 | D002 | Config directory via required `INFRAHUB_SYNC_CONFIG_DIRECTORY`, validated at serve start | spec §Clarifications #2; contracts/prefect-flow.md §3; data-model §4; tasks T015/T016/T018 |
 | D003 | Remote runs pin `9edc1bc` engine defaults; pipeline lock owned by the surface, bounded contention failure | spec §Clarifications #3; contracts/execution-surface.md; data-model §1; tasks T007/T008 |
 | D004 | Run-scoped log bridge — flow owns the `infrahub_sync` handler AND logger level | spec §Clarifications #4; contracts/prefect-flow.md §4; tasks T014/T016 |
-| D005 | `prefect==3.5.0` replaces the brief's unsatisfiable 3.7.2 pin (BLOCKING at gate) | research.md F1; spec §Constraints/§Assumptions; this plan §Summary; contracts/prefect-flow.md §1; tasks T012; quickstart Setup |
-| D006 | Companion pins `importlib-metadata>=4.4`, `fastapi>=0.111,<0.121` inside the extra | research.md F2; contracts/prefect-flow.md §1; tasks T012 |
+| D005 | **RATIFIED as option D** (gate override of the recorded option B): the extra is exactly `prefect = ["prefect==3.8.1"]`, and the base replaces `diffsync[redis]>=2.1,<3.0` with `diffsync>=2.1,<3.0` + `redis>=4.3,<9` (permissive floor, deliberately not `redis>=5`) | research.md F1 + "Gate-ratified resolution"; spec §Constraints/§Assumptions; this plan §Summary/§Technical Context; contracts/prefect-flow.md §1; tasks T012/T012a/T039; quickstart Setup |
+| D006 | **SUPERSEDED / WITHDRAWN at the gate** — the companion pins `importlib-metadata>=4.4` and `fastapi>=0.111,<0.121` existed only to work around prefect 3.5.0 packaging defects; both defects are verified fixed at 3.8.1 (stdlib `importlib_metadata` alias in `prefect/utilities/compat.py`; HTTP 200 on the deployment-name route under fastapi 0.141.1), so the extra carries no companion pins | research.md F2 + D006 record (dated supersession note); contracts/prefect-flow.md §1; tasks T012 |
 | D007 | R-1's commit 1 includes the verbatim mirror `.github/copilot-instructions.md` | tasks.md decision record D007; tasks T001 |
 | D008 | New modules log via stdlib `logging`, not structlog (constitution PATCH queued outside this run) | this plan, "Deviation note — logging"; tasks header logging convention |
 | D009 | Sanitize-and-wrap boundary lives in `run_remote_request` only; `execute_run` preserves `9edc1bc` CLI failure behavior verbatim | contracts/execution-surface.md "Failure semantics"; this plan Constitution row IV; data-model §3; tasks T007/T025/T026/T027 |

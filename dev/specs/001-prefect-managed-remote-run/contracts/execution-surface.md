@@ -8,8 +8,8 @@ in a base install.
 Types below are the contract. Signatures are binding; bodies shown only where behavior
 is contractual. Failure semantics follow **D009** (sanitize-and-wrap only in
 `run_remote_request`; the CLI path preserves `9edc1bc` failure behavior verbatim) and
-configuration resolution follows **D010** (tolerant per-file walk) — both PROVISIONAL
-(CHECKPOINT), see `critiques/collation-r1.md`.
+configuration resolution follows **D010** (tolerant per-file walk) — both RATIFIED
+(checkpoint gate, Blake Ellis, 2026-07-30), records in `critiques/collation-r1.md`.
 
 ```python
 """Shared typed execution surface for the diff/plan and serial-sync lifecycles."""

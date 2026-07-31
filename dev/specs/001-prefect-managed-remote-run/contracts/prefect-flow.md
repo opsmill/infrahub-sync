@@ -1,24 +1,48 @@
 # Contract: Prefect Flow, Serve Entrypoint, and REST Interaction
 
 Owner: `infrahub_sync/orchestration/` — the ONLY package that imports `prefect`
-(DBR-010). Pinned to `prefect==3.5.0` per **D005**, with companion pins
-`importlib-metadata>=4.4` and `fastapi>=0.111,<0.121` per **D006** (see research.md
-F1/F2). All behaviors below were probe-verified against 3.5.0 (research.md probe table
-rows b, c₁, c₂, d₁).
+(DBR-010). Pinned to `prefect==3.8.1` per **D005 option D** (RATIFIED at the checkpoint
+gate, Blake Ellis, 2026-07-30); the extra carries **no companion pins** — D006 is
+superseded, its two prefect-3.5.0 packaging defects verified fixed at 3.8.1 (see
+research.md F1/F2 and "Gate-ratified resolution"). All behaviors below were probe-verified
+against 3.5.0 (research.md probe table rows b, c₁, c₂, d₁) and re-verified directly
+against 3.8.1 at the gate.
 
-## 1. Optional extra (`pyproject.toml`)
+## 1. Dependency declarations (`pyproject.toml`) — D005 option D
 
 ```toml
+[project]
+dependencies = [
+    # ...unchanged entries...
+    "diffsync>=2.1,<3.0",   # D005: was "diffsync[redis]>=2.1,<3.0" — the [redis] extra caps redis<5.0,
+                            #   which is unsatisfiable next to prefect>=3.6 → pydocket → redis>=5
+    "redis>=4.3,<9",        # D005: declared DIRECTLY because infrahub_sync/utils.py:11 imports
+                            #   diffsync.store.redis.RedisStore unconditionally; permissive floor on
+                            #   purpose (NOT redis>=5) so a downstream diffsync[redis] requirement
+                            #   still resolves (verified at redis 4.6.0)
+]
+
 [project.optional-dependencies]
 prefect = [
-    "prefect==3.5.0",            # D005: newest Prefect 3 resolvable next to diffsync[redis] (redis<5)
-    "importlib-metadata>=4.4",   # D006: prefect 3.5.0 imports it (workers/base.py) but no longer declares it
-    "fastapi>=0.111,<0.121",     # D006: prefect 3.5.0's fastapi<1.0 bound admits router-incompatible releases
+    "prefect==3.8.1",       # D005 option D: current latest; installable next to the base set above
 ]
 ```
 
-Base `dependencies` are unchanged. Install (preview-accurate form — the preview
-exists only on this branch and is not published to PyPI, matching T034's binding
+diffsync's declared `redis<5.0` cap is stale, not real: its redis store was verified
+functionally intact on redis-py 4.6.0, 5.0, 6.4, 7.0 and 8.1.0 (26/26 checks against a
+redis 8.4.0 server, including `diff_from`/`diff_to`/`sync_from` between two Redis-backed
+adapters; the 4.6.0 control and 8.1.0 results are byte-identical). The API surface the
+store uses is `Redis()`, `Redis.from_url()`, `ping/get/set/exists/delete/scan_iter`. The
+override is permanent — diffsync has no 3.x release and no open PR raising the cap.
+
+`RedisStore` is opt-in at run time (`utils.py:195-205` defaults to `LocalStore()` and
+constructs `RedisStore` only when a configuration sets `store.type == "redis"`; no shipped
+example enables it), but the import at `utils.py:11` is unconditional — so *import*
+compatibility with the installed redis client is what matters for every user, and that is
+what T012a verifies.
+
+Install (preview-accurate form — the preview exists
+only on this branch and is not published to PyPI, matching T034's binding
 install-source rule): from the repository checkout, `pip install -e '.[prefect]'`
 (or `uv pip install -e '.[prefect]'`). The PyPI form
 `pip install 'infrahub-sync[prefect]'` is the post-publication shape only and must
@@ -28,7 +52,9 @@ not appear in the example README.
 
 ```python
 # NO `from __future__ import annotations` in this module: deferred annotations break
-# prefect 3.5.0 run-time parameter validation (PydanticUndefinedAnnotation — research F3).
+# prefect's run-time parameter validation (PydanticUndefinedAnnotation — research F3,
+# observed on 3.5.0; the mechanism is version-generic and the omission is kept at 3.8.1,
+# where T016's parameter-contract assertions are what confirm it).
 # Module docstring notes that this module requires the optional `prefect` extra
 # (`pip install -e '.[prefect]'` from the repo checkout) so programmatic importers
 # hitting ImportError know the fix (X4).

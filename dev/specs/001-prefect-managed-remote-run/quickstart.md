@@ -32,8 +32,18 @@ semantics: [`data-model.md`](data-model.md).
 # R-1: plain `uv sync` does not install dev tooling
 uv sync --extra dev
 
-# dev/test environment for the optional integration (D005 + D006 pins come from the extra)
+# dev/test environment for the optional integration.
+# The extra is exactly `prefect = ["prefect==3.8.1"]` (D005 option D, ratified
+# 2026-07-30 — no companion pins). It only resolves because the base declares
+# `diffsync>=2.1,<3.0` + `redis>=4.3,<9` instead of `diffsync[redis]`, whose
+# `redis<5.0` cap collides with prefect's pydocket → `redis>=5`.
 uv sync --extra dev --extra prefect
+
+# expected: prefect 3.8.1, redis 8.1.0, fastapi 0.141.1, diffsync 2.2.3
+uv run python -c "import prefect, redis, diffsync; print(prefect.__version__, redis.__version__)"
+
+# the redis client must also be present WITHOUT the extra: `infrahub_sync/utils.py:11`
+# imports `diffsync.store.redis.RedisStore` unconditionally (see Scenario 0)
 ```
 
 ## Scenario 0 — Base install stays Prefect-free (DBA-001, SC-006)
@@ -45,8 +55,12 @@ uv venv /tmp/base-venv && uv pip install -p /tmp/base-venv/bin/python .
 /tmp/base-venv/bin/python - <<'EOF'
 import sys
 import infrahub_sync, infrahub_sync.cli, infrahub_sync.execution
+# the base install must still carry the redis client: utils.py:11 imports RedisStore
+# unconditionally, and the base declares `redis>=4.3,<9` directly (D005 option D)
+import infrahub_sync.utils, redis
+from diffsync.store.redis import RedisStore
 assert not any(m == "prefect" or m.startswith("prefect.") for m in sys.modules), "prefect leaked"
-print("OK: no prefect modules loaded")
+print("OK: no prefect modules loaded; redis client present", redis.__version__)
 EOF
 /tmp/base-venv/bin/infrahub-sync --help
 /tmp/base-venv/bin/infrahub-sync list --directory examples/

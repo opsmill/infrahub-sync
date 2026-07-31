@@ -95,3 +95,7 @@
 - Add comments or findings inline
 - Items are numbered sequentially for easy reference
 - Reviewer result: 32/32 items pass; 21 items required spec remediation, applied 2026-07-30. All remediations stay inside the brief's scope and the four PROVISIONAL clarifications (wording sharpened only). No brief defects found; no BLOCKED-ON items.
+
+---
+
+**Gate-ratification note (2026-07-30, checkpoint gate — Blake Ellis; append-only, original attestations left untouched)**: the reviewer result above refers to "the four PROVISIONAL clarifications" — all four (D001–D004), and every other decision through D013, are now RATIFIED (D005 as option D; D006 SUPERSEDED / WITHDRAWN). No safety attestation changes: the lock-contention wording this checklist sharpened (60-second bounded `RunExecutionError`) is unchanged, and the ratified dependency change (`prefect==3.8.1`; base `diffsync>=2.1,<3.0` + `redis>=4.3,<9`) touches no safety-gate behavior — `RedisStore` remains opt-in (`infrahub_sync/utils.py:195-205` defaults to `LocalStore()`; no shipped example enables it).

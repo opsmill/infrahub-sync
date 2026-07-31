@@ -46,7 +46,7 @@ would trade a one-line ergonomic gain for a permanent asterisk on the run's stro
 preservation claim.
 **Confidence:** High.
 **Origin:** `inherent`.
-**Status:** PROVISIONAL (CHECKPOINT).
+**Status:** RATIFIED (D012, Blake Ellis, 2026-07-30) — recommendation A accepted as written.
 
 ### D013 — T033a's example-fixture diagnosability is a recorded gate item grounded in DBA-011 + DBR-012/DBA-004
 
@@ -79,4 +79,14 @@ UNCHANGED. Because the example's user-visible narration mechanism does change, t
 ratifies it like D007 and D011 rather than it riding in as an inherited allowance.
 **Confidence:** High.
 **Origin:** `inherent`.
-**Status:** PROVISIONAL (CHECKPOINT).
+**Status:** RATIFIED (D013, Blake Ellis, 2026-07-30) — recommendation A accepted as written.
+
+## Gate outcome (2026-07-30, Blake Ellis) — append-only note
+
+Response to the collated packet: `ACCEPT ALL EXCEPT D005`, then after further research
+`D005 CHOOSE D` with D006 superseded. **D012 and D013 are RATIFIED exactly as recommended**
+(Status lines above updated in place; no Question/Evidence/Options/Recommendation/Rationale
+text altered). For the record, since D005 is cited in neighbouring artifacts: it was
+OVERRIDDEN to option D — extra = `prefect==3.8.1` alone, base `diffsync[redis]>=2.1,<3.0` →
+`diffsync>=2.1,<3.0` + `redis>=4.3,<9` (permissive floor, deliberately not `redis>=5`) — and
+D006 was SUPERSEDED / WITHDRAWN. Full records: `research.md`.
