@@ -95,7 +95,16 @@ def resolve_sync_instance(sync_name: str, *, directory: str) -> "SyncInstance":
 
     1. **Determinable AND equal to the request** — this is *the matched file*.
        Validate its parsed data as ``SyncConfig`` and return the resulting
-       ``SyncInstance``. If validation fails, raise RunValidationError naming the
+       ``SyncInstance``, constructed with
+       ``directory=str(<the matched config.yml>.parent)`` (binding — V3), matching
+       ``utils.get_all_sync`` (``utils.py:129``). It must be the matched file's own
+       parent directory, NOT the configured root passed in as ``directory``:
+       ``utils.import_adapter`` resolves the generated adapter at
+       ``<sync_instance.directory>/<adapter.name>/sync_adapter.py``
+       (``utils.py:74-77``), and the qualified demonstration depends on
+       ``examples/custom_adapter/mockdb/sync_adapter.py``. Passing the root instead
+       would make that path miss for any nested configuration and silently fall
+       through to the plugin loader. If validation fails, raise RunValidationError naming the
        logical name and the file path ONLY; the original parse detail is never
        chained verbatim (pydantic's ``input_value=...`` echo can carry that
        file's contents, including inline secrets the redactor never collected).
@@ -147,6 +156,7 @@ def execute_run(
     # Private seams — not part of the remote contract; run_remote_request never sets them.
     _lock_timeout: float = 60.0,  # sanctioned test seam for lock-contention tests (T011)
     _serial_load_error: "Callable[[ValueError], NoReturn] | None" = None,  # CLI-only (D009)
+    _lock_already_held: bool = False,  # CLI-only (T026) — see "Already-locked caller"
 ) -> RunResult:
     """Run one plan (== diff lifecycle) or serial sync against a resolved instance.
 
@@ -166,7 +176,17 @@ def execute_run(
        (`cache.locks.pipeline_lock(sync_instance.name, timeout=_lock_timeout)`;
        default 60 s, exactly today's). `filelock.Timeout` propagates UNCHANGED —
        today's CLI lets it traceback; the remote wrap into RunExecutionError happens
-       only in run_remote_request.
+       only in run_remote_request. **Already-locked caller (binding)**: when
+       `_lock_already_held=True`, `execute_run` does NOT acquire the lock and runs
+       steps 3–7 directly in the caller's already-held lock scope. This seam exists
+       for exactly one caller — CLI `sync_cmd`'s serial branch, which must keep
+       today's outer `with pipeline_lock(...)` because the parallel branch it shares
+       a command body with still needs it (see "Already-locked caller (CLI serial
+       sync)" below). A second same-process `FileLock` on the same path does not
+       re-enter: it blocks for the full timeout and then raises `filelock.Timeout`
+       (probed — E21), so without this seam the CLI serial path would self-deadlock.
+       `run_remote_request` never sets it, so the remote path always acquires the
+       lock itself and spec edge case 5 is unaffected.
     3. Inside the lock, build the engine via `potenda_factory` (adapter construction —
        the first point credentials are read) with NO surrounding catch of its own:
        factory failures (`ValueError`, `ImportError`, ...) propagate with their
@@ -228,11 +248,11 @@ def execute_run(
        the ORIGINAL exception (today's `cli.py:156-159` / `285-288`). This broad
        except is the preserved existing pattern, documented as such by a comment
        at the site; it is not new looseness (D009; plan Constitution Check
-       row IV). **No `# noqa: BLE001` is added** (binding): ruff's BLE001 does
-       not fire on a blind `except` whose handler re-raises — probed in this repo
-       with `uv run ruff check`, the pattern is clean with NO suppression — and
-       adding the directive makes ruff report `RUF100 Unused noqa directive` and
-       exit 1, which would fail T039's lint gate. run.json can therefore never be
+       row IV). Suppression directive at THIS site: **none** — see the
+       "BLE001 suppression rule" below; BLE001 does not fire on a blind `except`
+       whose handler re-raises the caught exception, and a directive here would
+       make ruff report `RUF100 Unused noqa directive` and exit 1, failing
+       T039's lint gate. run.json can therefore never be
        left at `status="running"` by a lifecycle failure.
     7. On success, return RunResult derived per data-model.md §2 — single-source
        derivation (binding): `summary`, `changed`, and `status` ALL derive from the
@@ -309,24 +329,98 @@ def run_remote_request(
     error contains an unredacted original message. The broad catch this boundary
     requires is a translation, not suppression: caught broadly, ALWAYS re-raised
     typed, never swallowed, and documented as such by a comment at the site
-    (D009; plan Constitution Check row IV). **No `# noqa: BLE001` is added here
-    either** (binding): BLE001 does not fire on
-    `except Exception as exc: raise RunExecutionError(msg) from exc` — probed in
-    this repo with `uv run ruff check`, clean with NO suppression — and adding the
-    directive makes ruff report `RUF100 Unused noqa directive` and exit 1,
-    failing T039's lint gate. A suppression directive is never added
-    speculatively at either broad-except site; what ruff reports for the code as
-    written is the arbiter.
+    (D009; plan Constitution Check row IV). Suppression directive at THIS site:
+    **a targeted `# noqa: BLE001` on the `except Exception` line IS required** —
+    see the "BLE001 suppression rule" below; both chain mechanisms
+    run-result-and-errors.md §2 (E5) permits here fire BLE001, and the one
+    BLE001-clean form (plain `from exc`) is the leak E5 forbids.
     """
 ```
+
+## BLE001 suppression rule (binding — E16; mechanism-conditioned, not site-uniform)
+
+**The invariant that decides it**: a `# noqa: BLE001` is added **if and only if ruff
+reports BLE001 for the code as actually written**. Verify with `uv run ruff check`
+during implementation; never add — or omit — the directive speculatively. The two
+broad-except sites in `execution.py` therefore resolve DIFFERENTLY, because their
+handlers differ, not because one site is privileged.
+
+Probe facts (this repo, `uv run ruff check --no-cache --select BLE`; `select = ["ALL"]`
+with no BLE ignore for `infrahub_sync/**`):
+
+| Handler as written | BLE001 |
+|---|---|
+| `except Exception: <mark run.json failed>; raise` (bare re-raise) | does NOT fire (adding `# noqa: BLE001` → `RUF100 Unused noqa directive`, ruff exit 1) |
+| `except Exception as exc: raise E(msg) from exc` | does NOT fire |
+| `except Exception as exc: raise E(msg) from None` | **FIRES** |
+| `except Exception as exc: raise E(msg) from RuntimeError(str(exc))` | **FIRES** |
+
+Consequences, binding at each site:
+
+- **`execute_run` step 6** (blind `except` + bare `raise`): **NO suppression
+  directive.** BLE001 does not fire on a handler that re-raises the caught
+  exception, and a directive would trip RUF100 and fail T039's lint gate.
+- **`run_remote_request`'s sanitize-and-wrap** (blind `except` + typed re-raise
+  with a sanitized/suppressed cause): **a targeted `# noqa: BLE001` on the
+  `except Exception` line IS required.** `contracts/run-result-and-errors.md` §2
+  (E5, binding) permits exactly two chain mechanisms at this wrap — the cause
+  rebuilt as a sanitized copy, or `__suppress_context__` with the redacted cause
+  text inlined into the wrapper message — and BOTH fire BLE001 (rows 3 and 4
+  above). The only BLE001-clean form, plain `from exc`, is precisely what E5
+  forbids: it renders the unredacted original message in a traceback. The
+  directive is therefore unavoidable here, and it carries a comment naming E5 as
+  the reason the clean form is unavailable.
+
+T039's gate is satisfiable exactly in that configuration: `uv run invoke lint`
+exits 0 **with** the `run_remote_request` directive present and **without** one at
+the step-6 site.
 
 ## Caller obligations
 
 | Caller | How it calls | Preserved behavior |
 |---|---|---|
 | `cli.py::diff_cmd` | resolves instance via its existing `get_instance` path (name **or** config_file — CLI-only flexibility), applies `adapter_path` merging, then `execute_run(instance, operation="plan", confirm_writes=False, branch=..., show_progress=..., verbosity=..., run_id=..., concurrent_load=..., full_extract=..., potenda_factory=<CLI wrapper factory — see Failure semantics>)` | Exit codes, log lines, run.json contents identical; `--full-extract`, `--show-progress`, `--run-id`, `--concurrent-load` pass through; factory `ValueError` → today's prefixed abort at the site; every lifecycle failure → today's uncaught original-type traceback |
-| `cli.py::sync_cmd` (serial branch only: `--no-parallel`, or `--parallel` with explicit `order:`) | same resolution, then `execute_run(instance, operation="sync", confirm_writes=True, print_diff=<--diff>, allow_rowcount_drop=..., continue_on_error=..., potenda_factory=<CLI wrapper factory>, _serial_load_error=<unprefixed abort — see Failure semantics>, ...)` — the explicit human CLI invocation IS the confirmation | `--parallel ignored` warning and the parallel `sync_in_tiers` branch stay in cli.py untouched; factory → prefixed abort; serial-load `ValueError` → unprefixed abort; all other lifecycle failures → original-type traceback |
+| `cli.py::sync_cmd` (serial branch only: `--no-parallel`, or `--parallel` with explicit `order:`) | same resolution, then — inside today's outer `with pipeline_lock(...)`, with the engine already constructed in the command body (see "Already-locked caller (CLI serial sync)") — `execute_run(instance, operation="sync", confirm_writes=True, print_diff=<--diff>, allow_rowcount_drop=..., continue_on_error=..., potenda_factory=<closure returning the already-constructed engine>, _serial_load_error=<unprefixed abort — see Failure semantics>, _lock_already_held=True, ...)` — the explicit human CLI invocation IS the confirmation | `--parallel ignored` warning and the parallel `sync_in_tiers` branch stay in cli.py untouched; factory → prefixed abort; serial-load `ValueError` → unprefixed abort; all other lifecycle failures → original-type traceback |
 | `orchestration/flow.py` | `run_remote_request(sync_name, operation, confirm_writes, branch, config_directory=os.environ["INFRAHUB_SYNC_CONFIG_DIRECTORY"])` — request parameters plus the config directory ONLY; the `_potenda_factory` / `_lock_timeout` private seams are never set by the flow | Engine defaults pinned; `show_progress=False`; failures surface ONLY as sanitized `RunValidationError` / `RunExecutionError` |
+
+### Already-locked caller (CLI serial sync) — binding structure
+
+`sync_cmd` today has ONE `with pipeline_lock(sync_instance.name):` block whose prologue
+(factory call, `force_full_extract`, `run_dir is None` guard, `RunFile(...).save()`) runs
+BEFORE the `if parallel and ptd.tiers:` branch (`cli.py:227-245`). The branch predicate
+reads `ptd.tiers`, so it is knowable only once the engine exists; `diff_cmd`'s pattern
+(delete the outer lock, let `execute_run` construct the engine) is therefore not
+available here, and constructing the engine on both sides of the branch is forbidden —
+`utils.get_potenda_from_instance` allocates a fresh `run_dir`/`run_id` whenever
+`run_id is None` (which `sync_cmd` always passes), and `SyncInstance.compute_order_and_tiers`
+re-emits its INFO `tier %d (%d): %s` lines, both of which would break byte-identity.
+
+The pinned structure (binding):
+
+- The engine is constructed **EXACTLY ONCE**, in the command body, inside today's outer
+  `with pipeline_lock(...)` — so `ptd.tiers` stays readable for the branch predicate and
+  the parallel branch keeps the lock it still needs.
+- Construction keeps today's narrow handler at the site: the command body calls the CLI
+  wrapper factory (prefixed abort on `ValueError`, `cli.py:237-238`), so factory failure
+  behavior is unchanged for both branches.
+- The serial branch then calls `execute_run` with
+  `potenda_factory=<closure that ignores its keyword arguments and RETURNS THE
+  ALREADY-CONSTRUCTED ENGINE>`. `execute_run` therefore performs no second construction
+  and allocates no second `run_dir`/`run_id`; step 3's pinned seven-kwarg call shape
+  (E23) is still made, the closure just discards it.
+- Because that engine already exists inside the caller's lock, `execute_run`'s own step-2
+  acquisition would self-deadlock in-process (a second same-process `FileLock` on the
+  same path blocks the full timeout, then raises `filelock.Timeout` — probed, E21). The
+  sanctioned avoidance is the CLI-only private seam `_lock_already_held=True`: the CLI
+  serial path keeps today's outer lock and `execute_run` skips acquisition for this
+  already-locked caller. No other caller sets it (`run_remote_request` never does).
+- The prologue statements after construction (`ptd.force_full_extract = full_extract`,
+  the `run_dir is None` guard, `RunFile(...).save()`) stay in the command body exactly as
+  today, because the parallel branch needs them; `execute_run` repeating them on the same
+  engine is idempotent (same attribute value, same guard, same `run.json` content at the
+  same path).
+- The `--parallel ignored` warning and the parallel `sync_in_tiers` branch remain in
+  `cli.py` untouched (spec Out of Scope).
 
 ### Failure semantics (binding — D009; DBR-009: exit codes and output identical to the current CLI at `9edc1bc`)
 

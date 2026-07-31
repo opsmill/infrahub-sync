@@ -88,8 +88,10 @@ Contractual body behavior, in order:
    **supported remote observation surface** for the run result (X7): its format is
    contractual (never a Python dict repr) and remote callers may parse it. Every
    substitution is pinned — **the leading `%s` is `result.run_id`** (X18), followed by
-   `status`, `changed`, the three `summary` counts, and `artifact_path`, so six of
-   `RunResult`'s seven fields appear on the line. Any format change is a breaking
+   `status`, `changed`, the three `summary` counts, and `artifact_path` — FIVE
+   distinct `RunResult` fields (`run_id`, `status`, `changed`, `summary`,
+   `artifact_path`); `sync_name` and `operation` do NOT appear on the line. Any
+   format change is a breaking
    change for consumers of this preview; a future API brief supersedes it via the
    owned contract's extend-not-fork rule (F11) rather than by silently reformatting.
 4. Return an **asdict-shaped dict** built by EXPLICIT seven-key construction
