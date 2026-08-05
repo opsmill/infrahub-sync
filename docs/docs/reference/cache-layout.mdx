@@ -32,7 +32,7 @@ Override the root with `INFRAHUB_SYNC_CACHE_DIR=/path/to/shared/cache`.
 executes — the operations, and the manifest that binds them to a run, a configuration and a
 set of source snapshots. It holds two files.
 
-It is **not** apply's only input. Verification re-reads the source snapshots under `A/` that
+It is **not** the only input to `apply`. Verification re-reads the source snapshots under `A/` that
 the manifest names, and the command also needs the sync configuration and access to the
 destination. Archiving `plan/` on its own therefore leaves a plan that refuses to apply: keep
 the whole run directory.
@@ -138,7 +138,7 @@ duckdb -c "SELECT action, resource, source_id, new_value FROM read_parquet('.inf
   compare `schema-sub-hash.txt`: that file guards incremental extraction, not apply.
   Separately from that gate, `apply` also refuses when the live destination endpoint or branch
   differs from the one recorded in the plan, unless `--allow-destination-change` is passed —
-  which is why the comparison sits outside the gate, whose checks are not overridable.
+  which is why the comparison sits outside the gate, whose checks cannot be overridden.
 - `--allow-rowcount-drop` (on `sync`) bypasses the rowcount guardrail when the operator knows the source has legitimately shrunk.
 - `--continue-on-error` (on `sync`) skips peer relationships missing identifier values rather than aborting; the engine logs each skip so you can review what was dropped.
 - `--no-concurrent-load` (on `diff` and `sync`) falls back to loading source then destination sequentially. The default (concurrent) is safe with all built-in adapters and roughly halves load wall-clock time on real APIs.
