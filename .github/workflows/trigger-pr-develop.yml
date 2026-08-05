@@ -9,6 +9,7 @@ on:
   pull_request:
     branches:
       - develop
+      - feature/v3-develop
 
 jobs:
   linter:
