@@ -1078,11 +1078,20 @@ def _option_help_line(option: str) -> str:
 
     Row-scoped rather than whole-output: "`--from-plan` carries a metavar" is a claim about
     its own row, and a whole-output search would be satisfied by any other option's metavar.
+    A Rich table row can span multiple terminal lines, so collect its continuation lines
+    rather than treating every physical line containing an option name as a new row.
     """
-    rows = _help_text("diff", wide=True).splitlines()
-    matching = [row for row in rows if row.lstrip("│ ").startswith(option)]
-    assert len(matching) == 1, f"expected exactly one help row for {option}, got {len(matching)}"
-    return _flat(matching[0].strip("│ "))
+    rows = _help_text("diff").splitlines()
+    option_prefix = f"│ {option}"
+    starts = [index for index, row in enumerate(rows) if row.startswith(option_prefix)]
+    assert len(starts) == 1, f"expected exactly one help row for {option}, got {len(starts)}"
+
+    logical_row: list[str] = []
+    for row in rows[starts[0] :]:
+        if logical_row and (not row.startswith("│") or row.startswith("│ --")):
+            break
+        logical_row.append(row.strip("│ "))
+    return _flat(" ".join(logical_row))
 
 
 def test_from_plan_is_documented_as_taking_a_run_identifier_and_not_as_a_flag() -> None:
