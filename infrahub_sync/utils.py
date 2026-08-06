@@ -4,7 +4,7 @@ import importlib.util
 import logging
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Any, Union, cast
 
 import yaml
 from diffsync.store.local import LocalStore
@@ -12,7 +12,11 @@ from diffsync.store.redis import RedisStore
 from infrahub_sdk import Config
 
 from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
+from infrahub_sync.cache.paths import run_dir as stored_run_dir
 from infrahub_sync.generator import render_template
+from infrahub_sync.plan.errors import PlanVerificationError
+from infrahub_sync.plan.reader import read_plan_artifact_bytes
+from infrahub_sync.plan.verify import destination_binding_failure
 from infrahub_sync.plugin_loader import PluginLoader, PluginLoadError
 from infrahub_sync.potenda import Potenda
 
@@ -21,7 +25,11 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
 
+    from diffsync import Adapter
     from infrahub_sdk.schema import GenericSchema, NodeSchema
+
+    from infrahub_sync.plan.models import ApplyRecord
+    from infrahub_sync.plan.reader import RawPlanArtifact
 
 
 def find_missing_schema_model(
@@ -239,19 +247,19 @@ def get_potenda_from_instance(
     top_level, tiers = sync_instance.compute_order_and_tiers()
 
     from infrahub_sync.cache.paths import generate_run_id
-    from infrahub_sync.cache.paths import run_dir as run_dir_for
 
     rid = run_id or generate_run_id()
-    rdir = run_dir_for(sync_instance.name, rid)
+    rdir = stored_run_dir(sync_instance.name, rid)
     rdir.mkdir(parents=True, exist_ok=True)
 
     # Compute (and persist) the schema sub-hash *before* constructing Potenda so
     # the engine receives fully-formed cache identity rather than being mutated
-    # into shape afterwards. `apply` uses it to refuse cached runs whose shape no
-    # longer matches the destination's live schema, and `should_use_incremental`
-    # compares it against the prior run. Uses the destination adapter's live
-    # schema (populated at __init__); falls back to `sync_instance._cached_schema`
-    # for test seams.
+    # into shape afterwards. Its **only** reader is incremental extraction:
+    # `should_use_incremental` compares it against the prior run's, and a run whose
+    # shape has changed re-extracts in full. `apply` does not read it — the plan
+    # artifact's own gate is what an apply is refused by. Uses the destination
+    # adapter's live schema (populated at __init__); falls back to
+    # `sync_instance._cached_schema` for test seams.
     subhash = ""
     try:
         from infrahub_sync.cache import compute_schema_subhash
@@ -279,6 +287,164 @@ def get_potenda_from_instance(
         continue_on_error=continue_on_error,
         concurrent_load=concurrent_load,
     )
+
+
+class _PlanApplySource:
+    """Stands in for the source adapter an apply never constructs.
+
+    Apply reads no source (FR-012), so `PlanApplier.open_existing` neither imports nor
+    instantiates one. `Potenda.__init__` assigns `top_level` and `continue_on_error` onto
+    its source, which a plain instance accepts; anything that would actually *use* the
+    source raises immediately, so a change that reintroduces source access on the apply
+    path fails loudly instead of quietly requiring the source's dependencies again.
+    """
+
+    def __getattr__(self, name: str) -> Any:
+        msg = f"apply constructs no source adapter, so nothing on the apply path may read source.{name}"
+        raise AttributeError(msg)
+
+
+def _destination_store(sync_instance: SyncInstance) -> LocalStore | RedisStore:
+    """The diffsync store the destination adapter uses, per the configuration's `store` block."""
+    if sync_instance.store and sync_instance.store.type == "redis":
+        if sync_instance.store.settings and isinstance(sync_instance.store.settings, dict):
+            return RedisStore(**sync_instance.store.settings, name=sync_instance.destination.name)
+        return RedisStore(name=sync_instance.destination.name)
+    return LocalStore()
+
+
+class PlanApplier:
+    """The apply command's assembly seam: a stored run opened for applying.
+
+    Apply executes a plan that already exists, against the destination it names, so this
+    seam constructs the **destination adapter only** — a host holding destination
+    credentials applies a reviewed plan without the source's dependencies, credentials or
+    reachability. It locates the stored run directory without creating anything (AD026)
+    and writes none of the run's sidecars: a stored run's files are the immutable
+    provenance of the plan under apply. `run.json` remains the CLI's to write (AD069).
+    """
+
+    def __init__(self, engine: Potenda, *, run_dir: Path, run_id: str) -> None:
+        self.engine = engine
+        self.run_dir = run_dir
+        self.run_id = run_id
+
+    @classmethod
+    def open_existing(
+        cls,
+        sync_instance: SyncInstance,
+        *,
+        run_id: str,
+        branch: str | None = None,
+        verbosity: int | None = None,
+    ) -> PlanApplier:
+        """Open the stored run `run_id` of `sync_instance` for applying.
+
+        Raises:
+            ImportError: the destination adapter could not be loaded.
+            ValueError: the destination adapter could not be initialized.
+        """
+        destination_class = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
+        if not destination_class:
+            msg = f"Could not load the destination adapter '{sync_instance.destination.name}'"
+            raise ImportError(msg)
+
+        dest_kwargs: dict[str, Any] = {
+            "config": sync_instance,
+            "target": "destination",
+            "adapter": sync_instance.destination,
+            "internal_storage_engine": _destination_store(sync_instance),
+        }
+        if "infrahub" in sync_instance.destination.name.lower():
+            dest_kwargs["branch"] = (sync_instance.destination.settings or {}).get("branch") or branch or "main"
+        try:
+            destination = destination_class(**dest_kwargs)
+        except (ValueError, TypeError) as exc:
+            msg = f"Error initializing {sync_instance.destination.name.title()}Adapter: {exc}"
+            raise ValueError(msg) from exc
+
+        top_level, tiers = sync_instance.compute_order_and_tiers()
+
+        # Located, never created: the run being applied already exists, and an apply that
+        # allocated directories could manufacture the very run whose absence it should report.
+        rdir = stored_run_dir(sync_instance.name, run_id)
+
+        engine = Potenda(
+            source=cast("Adapter", _PlanApplySource()),
+            destination=destination,
+            config=sync_instance,
+            top_level=top_level,
+            tiers=tiers,
+            verbosity=verbosity,
+            run_dir=rdir,
+            run_id=run_id,
+            cache_root=rdir.parent,
+        )
+        return cls(engine, run_dir=rdir, run_id=run_id)
+
+    def apply_plan(
+        self,
+        *,
+        config_version: str | None = None,
+        allow_destination_change: bool = False,
+        expected_checksum: str | None = None,
+    ) -> ApplyRecord:
+        """Apply the stored plan — the engine's contract, unchanged; writes no run file (AD069).
+
+        **This seam performs the apply's one read.** The artifact is read here and handed to
+        both the destination-binding precheck below and the engine, so the bytes the binding
+        was compared against, the bytes verified, and the bytes applied are the same bytes —
+        a plan swapped under the run between two reads cannot be applied by an apply that
+        checked the other copy (DBR-006).
+
+        The binding precheck compares the manifest's recorded destination against the live
+        adapter's and refuses on a mismatch; `allow_destination_change` turns that refusal into
+        a logged warning for a deliberate cross-environment apply. Plans without the recorded
+        field, and destinations that expose no binding, skip the check.
+
+        `expected_checksum` travels to the engine rather than being answered here, so the
+        operator's approval is decided against the artifact the apply loop consumes.
+
+        Raises:
+            PlanVerificationError: the plan was computed against a different destination
+                and `allow_destination_change` is false; nothing was written.
+        """
+        artifact = read_plan_artifact_bytes(self.run_dir)
+        self._require_recorded_destination(artifact=artifact, allow_destination_change=allow_destination_change)
+        return self.engine.apply_plan(
+            config_version=config_version, artifact=artifact, expected_checksum=expected_checksum
+        )
+
+    def _require_recorded_destination(self, *, artifact: RawPlanArtifact, allow_destination_change: bool) -> None:
+        """The apply-time destination-binding guard, on the seam that owns apply-specific assembly.
+
+        Here rather than inside `Potenda.apply_plan` because the check's subject is the
+        destination this seam constructed, and its refusal is the one pre-apply verdict an
+        operator may deliberately override. It answers about `artifact` — the same object the
+        engine verifies and applies — rather than a read of its own.
+        """
+        failure = destination_binding_failure(
+            run_id=self.run_id,
+            artifact=artifact,
+            live=getattr(self.engine.destination, "destination_binding", None),
+        )
+        if failure is None:
+            return
+        if allow_destination_change:
+            logger.warning(
+                "Applying run %s to a different destination than it was planned against: "
+                "recorded %s; live %s (--allow-destination-change).",
+                self.run_id,
+                failure.expected,
+                failure.found,
+            )
+            return
+        msg = (
+            f"The plan of run {self.run_id!r} is bound to a different destination than this "
+            f"apply would write to: expected {failure.expected}; found {failure.found}. "
+            f"Nothing was written."
+        )
+        raise PlanVerificationError(msg, next_action=failure.next_action)
 
 
 def get_infrahub_config(settings: dict[str, str | None], branch: str | None) -> Config:

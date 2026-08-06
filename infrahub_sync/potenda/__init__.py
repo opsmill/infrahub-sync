@@ -2,16 +2,79 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from diffsync.enum import DiffSyncFlags
+
+# The destination SDK's error base, imported for the apply path's exception boundary below and
+# for nothing else. It is the one module-level import here that is not cheap, and it is
+# unavoidable: the boundary has to *name* the library whose rejections are operational, and
+# every path that reaches `apply_plan` constructs an SDK-backed destination anyway.
+from infrahub_sdk.exceptions import (
+    AuthenticationError,
+    GraphQLError,
+    ServerNotResponsiveError,
+)
+from infrahub_sdk.exceptions import (
+    Error as InfrahubSDKError,
+)
 from tqdm import tqdm
 
 from infrahub_sync import IncrementalConfig
 
+# Imported at module level, unlike this module's other `infrahub_sync` imports: these four
+# pull nothing beyond pydantic and the standard library — the write-surface protocol pulls
+# nothing at all at runtime — while the artifact reader and the verifier reach
+# `cache/parquet_io` and therefore `pyarrow`, which this module defers on purpose so
+# importing the engine stays cheap.
+from infrahub_sync.plan.config_version import resolve_config_version, validate_config_version
+from infrahub_sync.plan.errors import (
+    ApplyRecordInvariantError,
+    OperationApplyFailedError,
+    PlanArtifactError,
+    PlanVerificationError,
+    SkippedDeleteOperation,
+)
+from infrahub_sync.plan.models import ApplyRecord
+from infrahub_sync.plan.write_surface import PlannedWriteDestination
+
+# Justified once here rather than per site. Nearly every `infrahub_sync`
+# import in this module is deliberately deferred into the function that needs it: the cache
+# layer and the plan reader, verifier and writer all reach `pyarrow`, which costs hundreds of
+# milliseconds to import and is not needed to construct an engine, list runs, or fail on a
+# configuration error. Hoisting them would trade that for tidiness in a module whose import
+# cost every CLI invocation pays. The four cheap plan imports that *are* at module level say
+# so where they sit; anything reaching pyarrow stays local to its caller.
+# pylint: disable=import-outside-toplevel
+
 logger = logging.getLogger(__name__)
 
+# The apply path's **operational** exception boundary. An exception from
+# the write surface is reported as `OperationApplyFailedError` — a designed destination refusal,
+# whose remedy is to repair the destination and re-plan — only if it is one of these:
+#
+#   * `PlanArtifactError` — the plan taxonomy the write surface raises deliberately: a peer that
+#     matches nothing or matches many, an unaccounted identity component, an unkeyed render.
+#   * `SkippedDeleteOperation` — the surface's defensive delete refusal. Unreachable on this
+#     loop's own path, which filters deletes before dispatch, and a designed limitation rather
+#     than a defect when some other caller provokes it.
+#   * `InfrahubSDKError` — the destination library's own base, and therefore its transport,
+#     authentication, GraphQL and object-validation rejections.
+#
+# Everything else — `TypeError`, `AttributeError`, `KeyError` after an SDK shape change, a bare
+# `AssertionError` — is a **defect**, and a defect wrapped in this taxonomy advises an operator
+# to repair a destination that is working while hiding the traceback that would diagnose it. So
+# it escapes unchanged, carrying the partial record. Deliberately narrow: an `httpx` error the
+# SDK failed to translate escapes as a defect rather than being wrapped on suspicion — the run
+# still records what was written, and mislabelling a defect as a refusal is the worse failure.
+OPERATIONAL_APPLY_FAILURES: tuple[type[Exception], ...] = (
+    PlanArtifactError,
+    SkippedDeleteOperation,
+    InfrahubSDKError,
+)
+
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from datetime import datetime
     from pathlib import Path
 
@@ -19,6 +82,47 @@ if TYPE_CHECKING:
     from diffsync.diff import Diff
 
     from infrahub_sync import SyncInstance
+    from infrahub_sync.plan.models import PlanManifest, VerificationFailure
+    from infrahub_sync.plan.reader import RawPlanArtifact
+
+
+def _plan_refusal(failures: Sequence[VerificationFailure], *, run_id: str) -> PlanVerificationError:
+    """Build the refusal for a non-empty set of pre-apply failures, naming every one of them.
+
+    One refusal for the whole gate rather than one per check, so an operator learns
+    everything that is wrong from a single attempt (AD036), and each entry carries its own
+    next action (AD059).
+    """
+    detail = "\n".join(
+        f"  - {failure.check}: expected {failure.expected}, found {failure.found}. {failure.next_action}"
+        for failure in failures
+    )
+    msg = (
+        f"The plan artifact of run {run_id!r} cannot be applied: {len(failures)} pre-apply check(s) "
+        f"failed and nothing was written to the destination.\n{detail}"
+    )
+    return PlanVerificationError(msg)
+
+
+def _operational_failure_summary(exc: Exception) -> str:
+    """Return stable operator context without rendering untrusted SDK/server text.
+
+    SDK exceptions can embed a complete GraphQL request or response body in
+    ``str(exc)``.  The exception remains chained for an explicitly requested
+    developer traceback, while normal CLI output receives only its category.
+    """
+    if isinstance(exc, AuthenticationError):
+        return "an authentication failure (AuthenticationError)"
+    if isinstance(exc, ServerNotResponsiveError):
+        return "a destination timeout (ServerNotResponsiveError)"
+    if isinstance(exc, GraphQLError):
+        return "a destination GraphQL rejection (GraphQLError)"
+    if isinstance(exc, InfrahubSDKError):
+        return f"a destination SDK failure ({type(exc).__name__})"
+    # PlanArtifactError and SkippedDeleteOperation are in-tree, purpose-built
+    # operator errors. Their detail identifies the affected peer or plan field
+    # and is not SDK/server response text.
+    return str(exc)
 
 
 class Potenda:
@@ -54,6 +158,13 @@ class Potenda:
         self._schema_subhash: str = schema_subhash
         self._counts: dict[str, int] = {}
         self._did_full_extract: bool = False
+        # Per-side extraction mode, recorded alongside the OR-accumulated
+        # `_did_full_extract` rather than in place of it. FR-015 derives deletes only
+        # when the *destination* side ran a full extract, and the OR-accumulated flag
+        # cannot answer for one side: it is deliberately true when either side ran
+        # full, which is what `persist_baseline_counts` needs and what a per-side
+        # question must not be answered with. Absent side means "did not load".
+        self._side_full_extract: dict[str, bool] = {}
         self._side_extract_ts: dict[str, datetime] = {}
         self._prev_run_resolved: bool = False
         self._prev_run_cached: Path | None = None
@@ -198,6 +309,10 @@ class Potenda:
         # first side's True (persist_baseline_counts resets the run-counter
         # only when no side ran the incremental path).
         self._did_full_extract = self._did_full_extract or (not use_inc)
+        # Per-side answer for FR-015. `should_use_incremental` already returns False
+        # when there is no prior run, so `not use_inc` is exactly "this side ran a
+        # full extract" for both arms of the branch below.
+        self._side_full_extract[side] = not use_inc
 
         if not use_inc or prev_run is None:
             adapter.load()
@@ -331,43 +446,323 @@ class Potenda:
         return rows
 
     def write_plan(self, diff: Any) -> None:
-        """Serialize the diffsync Diff into <run_dir>/plan.parquet."""
+        """Write both plan representations for a single-diff run.
+
+        `plan.parquet` is written exactly as before (V23) — it is retained for operators
+        to query, and the new artifact never replaces it. It is **not** what `apply`
+        reads: `apply_plan` loads `<run_dir>/plan/` and refuses a run that holds only the
+        parquet. The saved plan artifact is written alongside it, because this method is
+        the one call site common to every non-tier path that produces a plan: the `diff`
+        command, the serial `sync` command and `sync_in_tiers`' no-tiers branch — and on all
+        three it runs before any destination write, which is what FR-001 requires. The tier branch of
+        `sync_in_tiers` writes the artifact itself, from every tier's retained diff.
+        """
         if not self.run_dir:
             return
         from infrahub_sync.cache.parquet_io import write_plan
 
         write_plan(run_dir=self.run_dir, rows=self._diff_to_rows(diff))
+        self.write_plan_artifact([diff])
 
-    def apply_plan(self) -> None:
-        """Dispatch each row in plan.parquet to the destination adapter.
+    def write_plan_artifact(self, diffs: Sequence[Any]) -> PlanManifest | None:
+        """Derive and write `<run_dir>/plan/` for `diffs`, before any destination write.
 
-        The destination's `apply_cached_row(*, resource, action, source_id,
-        attribute, new_value)` method is expected to perform the actual
-        write. Adapters that don't implement it yet will raise
-        AttributeError; the operator is told to fall back to `sync`.
+        Composes the derivation (creates and updates from every diff handed in, then the
+        derived deletes, then the convergence-key warning) with the source-snapshot
+        binding and the configuration version, and hands the result to the artifact
+        writer. Returns the manifest that was written, or `None` when this run has no
+        cache identity to write into.
+
+        `diffs` is a sequence rather than a single diff because the tier path retains one
+        diff per tier and the artifact records the whole change set, once.
+
+        A derivation or write failure propagates: it fails the command on `diff` exactly
+        as on `sync` (FR-030, AD047).
         """
-        from infrahub_sync.cache.parquet_io import read_plan
+        if not self.run_dir or not self.run_id or self.config is None:
+            # No cache identity or no parsed configuration — the latter only happens in
+            # tests, which construct Potenda with `config=None`.
+            logger.debug("Plan artifact: skipped, this run has no run_dir/run_id/config")
+            return None
+
+        from functools import partial
+
+        from infrahub_sync.plan.checksum import source_snapshot_records
+        from infrahub_sync.plan.config_version import default_config_version
+        from infrahub_sync.plan.derive import (
+            derive_deletes,
+            operations_from_diff,
+            tier_of,
+            warn_missing_convergence_key,
+        )
+        from infrahub_sync.plan.models import SourceSnapshotRecord
+        from infrahub_sync.plan.writer import write_plan_artifact as write_artifact
+
+        resolve_tier = partial(tier_of, tiers=self.tiers, top_level=self.top_level)
+        operations = []
+        for diff in diffs:
+            operations.extend(
+                operations_from_diff(
+                    diff,
+                    config=self.config,
+                    tier_of=resolve_tier,
+                    source_adapter=self.source,
+                )
+            )
+
+        # FR-015: deletes are derived only where the destination side holds a complete
+        # picture, and the manifest records which of the two happened.
+        deletes_computed = self._side_full_extract.get("B", False)
+        operations.extend(
+            derive_deletes(
+                kinds=list(self.top_level),
+                source_adapter=self.source,
+                destination_adapter=self.destination,
+                config=self.config,
+                tier_of=resolve_tier,
+                destination_full_extract=deletes_computed,
+            )
+        )
+
+        warn_missing_convergence_key(destination=self.destination, operations=operations)
+
+        manifest = write_artifact(
+            run_dir=self.run_dir,
+            run_id=self.run_id,
+            config_version=default_config_version(self.config),
+            source_snapshot=[SourceSnapshotRecord(**record) for record in source_snapshot_records(self.run_dir)],
+            deletes_computed=deletes_computed,
+            operations=operations,
+            # The resolved destination identity, when the adapter captured one; `None`
+            # writes the manifest shape older plans carry.
+            destination_binding=getattr(self.destination, "destination_binding", None),
+        )
+        logger.info(
+            "Plan artifact: wrote %d operation(s) to %s (deletes computed: %s)",
+            manifest.operations_count,
+            self.run_dir / "plan",
+            deletes_computed,
+        )
+        return manifest
+
+    def _apply_config_version(self, supplied: str | None) -> str:
+        """The configuration version the apply compares the artifact's against (FR-011, AD013).
+
+        Recomputed by the default rule from the parsed configuration on the CLI path, or
+        taken **verbatim** — validated as non-empty printable ASCII, never parsed — when an
+        in-process caller supplies one. A caller with neither is asking for a comparison
+        that cannot be made, so it is refused here rather than silently skipped.
+        """
+        if self.config is not None:
+            return resolve_config_version(self.config, supplied)
+        if supplied is None:
+            msg = (
+                "Potenda.apply_plan needs a configuration version to compare the plan artifact "
+                "against: construct Potenda with a parsed configuration, or pass `config_version`."
+            )
+            raise ValueError(msg)
+        return validate_config_version(supplied)
+
+    def apply_plan(
+        self,
+        *,
+        config_version: str | None = None,
+        artifact: RawPlanArtifact | None = None,
+        expected_checksum: str | None = None,
+    ) -> ApplyRecord:
+        """Apply this run's saved plan artifact to the destination, and return what it did.
+
+        Neither side is loaded, nothing is re-compared and nothing is re-derived: the stored
+        operations are executed in **stored order**, exactly as recorded (FR-012, SC-001).
+
+        The step order is load-bearing: **read once, verify those bytes, then parse them.**
+        FR-019's `plan/`-directory verdict is settled first, on its own. The artifact is then
+        read from disk exactly once — or supplied by a caller that has already read it, so a
+        caller with its own pre-apply check answers it about these bytes rather than a second
+        read — and verification, the approval comparison, parsing and the loop below all
+        consume that one `RawPlanArtifact`, so the bytes verified and approved are the bytes
+        applied (DBR-006, DBA-004). Verification is one gate over those raw bytes, the write-surface check
+        included, and it **precedes** the parse: FR-009 requires the format-version gate to
+        report that the remaining checks were not evaluated, and a co-occurring tear to be
+        reported alongside every other failure, neither of which survives the parser's
+        single-condition refusal. The parse still precedes the loop, so an unrecognized
+        `action` is refused before any destination write (FR-017, AD055).
+
+        A recorded `delete` is **collected, never dispatched**: a delete-bearing plan ends
+        `applied` with the skipped identifiers, their count, and one `WARNING` naming that
+        count — pinned at that level because `--quiet` floors the package logger there
+        (FR-016, FR-017, AD055, AD089).
+
+        This method **writes no run file** (AD069). It returns the record; the CLI is the
+        single writer and merges `as_summary_keys()` into `run_file.summary` before saving.
+
+        Args:
+            config_version: The comparison value for the configuration-version check,
+                compared for equality and never parsed. `None` recomputes it from the
+                parsed configuration by the default rule (FR-011, AD013).
+            artifact: The plan artifact's bytes, when the caller has already read them.
+                `None` reads them here. Either way it is read once per apply.
+            expected_checksum: An approved plan checksum the artifact must hash to. The
+                **authoritative** answer to `--expected-checksum`, because it is given about
+                the bytes this call applies; a caller's earlier check is a fast path, not a
+                substitute. `None` asks for no approval comparison at all.
+
+        Returns:
+            The `ApplyRecord`: the ordered applied identifiers (whose final element is
+            FR-025's last-applied pointer), the skipped deletes in stored order, and their
+            count. A completed apply records `failed_operation` as `None`.
+
+        Raises:
+            ValueError: this run has no `run_dir`, or no configuration version can be formed.
+            PlanFormatV1Error: this run holds no `plan/` directory (FR-019).
+            PlanVerificationError: a pre-apply check failed, or the artifact does not hash to
+                `expected_checksum`; nothing was written.
+            PlanArtifactTornError: an operations record fails validation for a reason the
+                line count cannot see (FR-010).
+            UnsupportedOperationActionError: an operation's `action` is outside `ACTIONS`.
+            OperationApplyFailedError: an operation failed inside the operational boundary
+                (`OPERATIONAL_APPLY_FAILURES`), carrying the partial record.
+            ApplyRecordInvariantError: a completed apply's record does not account for every
+                operation in the plan (AD062). Carries the record it is complaining about.
+            BaseException: anything outside that boundary — an interrupt, or a defect such as
+                a `TypeError` from an SDK shape change — propagates **unchanged** with the
+                partial record attached as `apply_record`.
+        """
+        from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes, require_plan_directory
+        from infrahub_sync.plan.review import expected_checksum_refusal
+        from infrahub_sync.plan.verify import verify_plan
 
         if not self.run_dir:
             msg = "Potenda.apply_plan requires run_dir to be set."
             raise ValueError(msg)
-        if not hasattr(self.destination, "apply_cached_row"):
+        run_id = self.run_id or self.run_dir.name
+        comparison_version = self._apply_config_version(config_version)
+
+        # FR-019's verdict first, and on its own: a run that never reached the writer holds
+        # the pre-existing row format, which is a different condition with a different remedy
+        # from an artifact whose manifest the gate below cannot parse. The CLI already reaches
+        # this before it constructs anything (AD026); an in-process caller reaches it here.
+        require_plan_directory(self.run_dir)
+
+        # The one read — the caller's, when it has already read the artifact for a check of its
+        # own. Verification, the approval comparison, parsing and the loop below all consume this
+        # object, so the bytes verified and approved are the bytes applied and nothing re-reads
+        # the disk between the gate and the writes (DBR-006, DBA-004).
+        raw = read_plan_artifact_bytes(self.run_dir) if artifact is None else artifact
+        destination = self.destination
+        # FR-023's write-surface check joins the same pre-write gate as the five verification
+        # checks, so one attempt tells the operator everything that is wrong (AD036). The
+        # adapter's **name** goes in, not a boolean, because the failure it drives names the
+        # adapter (AD058). On what the protocol check does and does not verify, see
+        # `infrahub_sync.plan.write_surface`.
+        failures = verify_plan(
+            artifact=raw,
+            run_id=run_id,
+            config_version=comparison_version,
+            write_surface_missing_on=(
+                None if isinstance(destination, PlannedWriteDestination) else type(destination).__name__
+            ),
+        )
+        if failures:
+            raise _plan_refusal(failures, run_id=run_id)
+
+        # The operator's approval, decided about the bytes above and therefore the bytes applied.
+        # **After** the gate so FR-009's evaluate-all disclosure still reaches an operator whose
+        # artifact is torn as well as unapproved, and **before** the parse and the loop so a plan
+        # that is not the approved one is refused with nothing written. A caller's earlier check
+        # is a fast path that spares building a destination; this one is what decides.
+        if expected_checksum is not None:
+            refusal = expected_checksum_refusal(
+                artifact=raw, run_id=run_id, expected=expected_checksum, destination_contacted=True
+            )
+            if refusal is not None:
+                raise PlanVerificationError(refusal.reason, next_action=refusal.next_action)
+
+        # The gate evaluated the write-surface check, so an empty failure list proves the
+        # surface is present — the cast narrows for the type checker; it is not a second gate.
+        destination = cast("PlannedWriteDestination", destination)
+
+        # Parse after the gate and before the loop — the same bytes the gate verified.
+        # Everything the gate can see is already reported; what remains for the parser is
+        # per-record validity — an unrecognized `action` above all — which is still refused
+        # before the first destination write.
+        loaded = parse_plan_artifact(raw, run_id=run_id)
+
+        # One memo for the whole apply, discarded with it — the same lifetime as the run. The
+        # destination supplies it, so the engine builds a resolver for a destination it does
+        # not have to name (AD086).
+        peers = destination.new_peer_resolver()
+
+        applied: list[str] = []
+        skipped_deletes: list[str] = []
+        for operation in loaded.operations:
+            if operation.action == "delete":
+                skipped_deletes.append(operation.operation_id)
+                continue
+            try:
+                destination.apply_planned_operation(operation=operation, peers=peers)
+            except BaseException as exc:
+                # The partial record travels on the error so the CLI can merge what was
+                # written before it records `failed` (AD069). Re-raising bare would lose it.
+                partial = ApplyRecord(
+                    applied_operations=tuple(applied),
+                    skipped_delete_operations=tuple(skipped_deletes),
+                    # Named on the record because applying one operation is not one write: the
+                    # base upsert precedes the relationship flush, so this operation may have
+                    # changed the destination while belonging to neither recorded set.
+                    failed_operation=operation.operation_id,
+                )
+                if not isinstance(exc, OPERATIONAL_APPLY_FAILURES):
+                    # An interrupt or a defect: it propagates as itself, with its own
+                    # traceback, carrying the record so what was written stays readable from the
+                    # run (AD062). See `OPERATIONAL_APPLY_FAILURES` for the boundary.
+                    # The suppression is not masking a defect — no annotation can declare an
+                    # attribute on an exception type this module does not own.
+                    exc.apply_record = partial  # ty: ignore[unresolved-attribute]
+                    raise
+                msg = (
+                    f"Applying operation {operation.operation_id!r} of run {run_id!r} to the destination "
+                    f"failed with {_operational_failure_summary(exc)}. The {len(applied)} operation(s) applied before it stay written, and "
+                    f"this operation may itself have written part of its change before failing — "
+                    f"re-applying the plan converges it."
+                )
+                raise OperationApplyFailedError(msg, apply_record=partial) from exc
+            applied.append(operation.operation_id)
+
+        completed = ApplyRecord(
+            applied_operations=tuple(applied),
+            skipped_delete_operations=tuple(skipped_deletes),
+        )
+
+        # AFTER the loop and off the rejection path (AD069): a partial apply breaks both
+        # clauses by construction, so checking unconditionally would replace a clear
+        # destination-rejection message with an invariant error, and checking inside the
+        # loop would fail on the first iteration.
+        planned_ids = {operation.operation_id for operation in loaded.operations}
+        recorded_ids = set(applied) | set(skipped_deletes)
+        if recorded_ids != planned_ids or len(applied) + len(skipped_deletes) != loaded.manifest.operations_count:
             msg = (
-                f"Destination adapter {type(self.destination).__name__} does "
-                "not implement apply_cached_row. Use `infrahub-sync sync` "
-                "until the adapter is upgraded."
+                f"The apply of run {run_id!r} completed but its record does not account for the plan: "
+                f"{len(applied)} applied and {len(skipped_deletes)} delete(s) skipped against "
+                f"{loaded.manifest.operations_count} recorded operation(s); "
+                f"{sorted(planned_ids - recorded_ids)} are in neither set and "
+                f"{sorted(recorded_ids - planned_ids)} are in no plan."
             )
-            raise NotImplementedError(msg)
-        apply_cached_row = getattr(self.destination, "apply_cached_row")
-        table = read_plan(run_dir=self.run_dir)
-        for i in range(table.num_rows):
-            apply_cached_row(
-                resource=table.column("resource")[i].as_py(),
-                action=table.column("action")[i].as_py(),
-                source_id=table.column("source_id")[i].as_py(),
-                attribute=table.column("attribute")[i].as_py(),
-                new_value=table.column("new_value")[i].as_py(),
+            # The **real** record travels with it: every non-delete operation above was
+            # written before this check ran, so an empty one would misreport a fully applied
+            # run as having applied nothing.
+            raise ApplyRecordInvariantError(msg, apply_record=completed)
+
+        if skipped_deletes:
+            logger.warning(
+                "Apply of run %s: %d recorded delete operation(s) were not executed. Applying deletes "
+                "is out of scope for this release; their identifiers are recorded on the run under "
+                "'skipped_delete_operations'.",
+                run_id,
+                len(skipped_deletes),
             )
+
+        return completed
 
     def persist_cursors_for_run(self, *, side: str) -> None:
         """Walk the run_dir snapshot files for `side`, compute per-resource
@@ -450,10 +845,22 @@ class Potenda:
         """Run diff+sync one tier at a time.
 
         When `parallel=False`, falls back to the existing serial pathway.
-        When `parallel=True`, narrows the destination's top_level to each
-        tier in turn and runs them sequentially. Aggregates per-tier diff
-        rows into a single plan.parquet so `apply` and operators can
-        review the whole change set.
+        When `parallel=True`, computes **every** tier's diff first, writes the plan
+        artifact, and only then executes the retained diffs tier by tier. The two loops
+        are what makes FR-001's "the artifact exists before anything is written" true in
+        tier mode: interleaving diff and sync — as this branch used to — writes the first
+        tier before the second tier has even been compared, so no complete artifact can
+        precede the first write, and `sync --parallel` is the default.
+
+        The `top_level` narrowing stays in the **compute** loop, restored afterwards. It
+        governs diff computation, not execution: only the comparison differ reads it, while
+        the synchronizer walks the children of whatever `Diff` it is handed. Narrowing in the execution loop instead would compute
+        six identical full-destination diffs rather than six disjoint per-tier ones, and the
+        artifact would record every operation once per tier (AD039, PD-009).
+
+        Aggregates per-tier diff rows into a single plan.parquet, unchanged, so operators can
+        query the whole change set. `apply` reads the saved plan artifact instead, which this
+        branch writes from every tier's retained diff.
         """
         if not self.tiers:
             self.load_both_sides()
@@ -474,20 +881,35 @@ class Potenda:
         self.load_both_sides()
         self.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
         saved_top = self.destination.top_level
-        aggregated_rows: list[dict[str, str]] = []
-        any_writes = False
+
+        # Compute loop: every tier's diff, each computed against its own narrowed
+        # destination top_level, retained for the execution loop below.
+        retained: list[tuple[list[str], Any]] = []
         try:
             for idx, tier in enumerate(self.tiers):
                 tier_list = sorted(tier)
-                logger.info("Sync tier %d (%d): %s", idx, len(tier), tier_list)
+                logger.info("Diff tier %d (%d): %s", idx, len(tier), tier_list)
                 self.destination.top_level = tier_list  # ty: ignore[invalid-attribute-access]
-                diff = self.diff()
-                aggregated_rows.extend(self._diff_to_rows(diff))
-                if diff.has_diffs():
-                    self.sync(diff=diff)
-                    any_writes = True
+                retained.append((tier_list, self.diff()))
         finally:
             self.destination.top_level = saved_top  # ty: ignore[invalid-attribute-access]
+
+        aggregated_rows: list[dict[str, str]] = []
+        for _tier_list, diff in retained:
+            aggregated_rows.extend(self._diff_to_rows(diff))
+
+        # Before the first destination write, and after top_level is restored so the
+        # derived deletes cover every kind rather than the last tier's (FR-001, AD039).
+        self.write_plan_artifact([diff for _tier_list, diff in retained])
+
+        # Execution loop: replay the retained diffs in tier order. `top_level` is
+        # irrelevant here — the synchronizer walks the Diff it is handed.
+        any_writes = False
+        for idx, (tier_list, diff) in enumerate(retained):
+            logger.info("Sync tier %d (%d): %s", idx, len(tier_list), tier_list)
+            if diff.has_diffs():
+                self.sync(diff=diff)
+                any_writes = True
 
         if any_writes:
             # Same reasoning as the no-tiers branch — capture post-sync

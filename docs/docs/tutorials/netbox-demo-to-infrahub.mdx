@@ -238,7 +238,7 @@ Run a dry-run diff against the `netbox-import` branch before writing any data to
 uv run infrahub-sync diff --name from-netbox --directory sync-projects --branch netbox-import
 ```
 
-The `diff` command loads data from NetBox and Infrahub, compares both sides, and prints the planned changes. It also writes a cached plan under `.infrahub-sync-cache/from-netbox/<run-id>/plan.parquet`.
+The `diff` command loads data from NetBox and Infrahub, compares both sides, and prints the planned changes. It also saves a plan artifact under `.infrahub-sync-cache/from-netbox/<run-id>/plan/`, which you can review on its own with `infrahub-sync diff --name from-netbox --directory sync-projects --from-plan <run-id>`.
 
 Review the output before continuing. On a first run against an empty branch, most planned changes should be creates. Exact counts depend on the current public NetBox demo data.
 
@@ -251,6 +251,12 @@ uv run infrahub-sync sync --name from-netbox --directory sync-projects --branch 
 ```
 
 The `--diff` option prints the diff before applying the changes. The first sync can take a few minutes because it writes the imported objects and relationships into the `netbox-import` branch — `main` is untouched until you merge the resulting proposed change. Because this configuration omits `order:`, Infrahub Sync derives the write order from the mapping references.
+
+:::warning A second `diff` against this branch fails once interfaces exist
+
+Once the sync has written interfaces, running `diff` or `sync` against the same branch again fails while loading the destination. This is a known defect, and it is not specific to NetBox. See [`diff` fails after a sync that wrote interfaces](#diff-fails-after-a-sync-that-wrote-interfaces) for the error and how to get moving again.
+
+:::
 
 ## Verify the imported data
 
@@ -304,7 +310,7 @@ uv run invoke stop
 ERROR | infrahub_sync.cli | Failed to initialize the Sync Instance: Error initializing InfrahubAdapter: Both url and token must be specified!
 ```
 
-The NetBox and/or Infrahub adapter can't find credentials. `generate`, `diff`, `sync`, and `apply` all read them from the environment, not from `config.yml`, so make sure every variable is exported in the shell you're running the command from:
+The NetBox and/or Infrahub adapter can't find credentials. `generate`, `diff`, and `sync` read the source and destination credentials from the environment, not from `config.yml`. `apply` reads only the destination credentials because it uses the saved plan rather than loading the source. Export the variables needed for the command you are running:
 
 ```bash
 export NETBOX_URL="https://demo.netbox.dev"
@@ -322,6 +328,36 @@ ValueError: An error occurred while loading Netbox: ('Object 172.16.0.2/24__Alph
 ```
 
 Two source objects map to the same identifier — here, two IP addresses sharing an address and VRF. Delete one of the duplicates in NetBox (**IPAM > IP Addresses**, search the address from the message), then re-run the command.
+
+### `diff` fails after a sync that wrote interfaces
+
+```text
+ValueError: An error occurred while loading Infrahub: Cannot build unique_id for peer
+InterfaceLag[18c6…] (relationship InterfacePhysical.bundle, parent id=18c6…): missing
+identifier key(s) ['device']; required identifiers=['device', 'name'], present
+keys=['local_id', 'name', 'description', ...]
+```
+
+A first `diff` succeeds. Once a `sync` or `apply` has written an `InterfacePhysical` whose `bundle` points at an `InterfaceLag`, every later `diff` against that branch fails — while loading the **destination**, before any plan is produced. The message names `Infrahub`, not `Netbox`: the source is not involved. Deleting the interface objects at the destination restores normal behavior, and the cycle repeats.
+
+The cause is that the destination loader rebuilds each related peer's identifier from a cached copy of the peer node, and the copy it finds carries the peer's attributes but not its relationships. `InterfaceLag` is identified by `device` **and** `name`, so its identifier cannot be rebuilt and the load aborts.
+
+**`diff` has no `--continue-on-error` option** — the flag exists only on `sync`, so the advice in the error message does not apply when the failure came from `diff`. There are two ways forward, depending on whether you need a plan you can review before it is applied.
+
+**To keep the plan, review, and apply loop:** delete the interface objects at the destination, then re-run `diff`. Those objects are re-imported by the next sync.
+
+**If you do not need to review the plan first:** run `sync` with the flag, which loads, plans, and applies in one step.
+
+```bash
+uv run infrahub-sync sync --name from-netbox --directory sync-projects --branch netbox-import --continue-on-error
+```
+
+The unresolvable peer link is logged and skipped rather than aborting the run. The cost is that the affected interface's `bundle` peer is then absent from the extracted destination state, so the run carries an update for that object every time, even when nothing changed upstream. Read the warnings before relying on the result.
+
+Two things to be clear about:
+
+- **This is not a NetBox-specific defect, and it is not introduced by the saved-plan workflow.** It is present in the released destination adapter, and it affects any configuration in which a mapped kind references a peer kind whose `identifiers` include a relationship — the `nautobot`, `ipfabric`, `slurpit`, and `aci` example configurations all contain that shape. It is a recorded limitation of this release, assigned to later work.
+- **`--continue-on-error` is a `sync` option, and it only covers this loading failure.** It does not make a run tolerant of everything: a source record that references a peer the source itself cannot resolve still fails the whole run when the plan is derived, by design. Use it for this destination-loading case, not as a general "keep going" switch.
 
 ## Next steps
 

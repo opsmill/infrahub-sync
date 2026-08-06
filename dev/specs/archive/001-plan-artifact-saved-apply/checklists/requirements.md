@@ -1,0 +1,159 @@
+# Specification Quality Checklist: Saved plan artifact and apply-exactly-what-was-reviewed
+
+**Purpose**: Validate specification completeness and quality before proceeding to planning
+
+**Created**: 2026-07-26
+
+**Feature**: [spec.md](../spec.md)
+
+> **Superseded convention (AD084, 2026-07-27).** The dated evaluations below refer to
+> `[PROVISIONAL ADnnn]` markers. The delivery gate has since ratified every decision AD001–AD084, and
+> those markers are **removed**: what remains on requirement, criterion and Key-Entity text is a plain
+> `[ADnnn]` reference, which keeps each decision's revisit set without claiming the decision is pending.
+> Wherever an evaluation below names the provisional form or defers an item until the markers are
+> stripped, read the plain form and treat that condition as met. The evaluations themselves are left as
+> written, because they are dated records of what was true when they ran.
+
+## Content Quality
+
+- [X] No implementation details (languages, frameworks, APIs)
+- [x] Focused on user value and business needs
+- [x] Written for non-technical stakeholders
+- [x] All mandatory sections completed
+
+## Requirement Completeness
+
+- [x] No [NEEDS CLARIFICATION] markers remain
+- [x] Requirements are testable and unambiguous
+- [x] Success criteria are measurable
+- [x] Success criteria are technology-agnostic (no implementation details)
+- [x] All acceptance scenarios are defined
+- [x] Edge cases are identified
+- [x] Scope is clearly bounded
+- [x] Dependencies and assumptions identified
+
+## Feature Readiness
+
+- [x] All functional requirements have clear acceptance criteria
+- [x] User scenarios cover primary flows
+- [x] Feature meets measurable outcomes defined in Success Criteria
+- [X] No implementation details leak into specification
+
+## Notes
+
+- Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
+- **Content quality, named systems**: the spec names the Infrahub destination adapter, the
+  NetBox → Infrahub qualified path, and `examples/netbox_to_infrahub/config.yml`. These are
+  product-scope facts carried verbatim from the delivery brief — which systems the outcome must
+  work against — not implementation choices, so they are recorded rather than removed.
+- **Requirement completeness, traceability**: every brief requirement (DBR-001..DBR-020) and
+  acceptance criterion (DBA-001..DBA-013) is mapped in the spec's Requirements Traceability table.
+  No brief item is unmapped, and no functional requirement or success criterion was added that the
+  brief does not carry.
+- **Deliberate deferrals**: two design commitments were originally recorded under Open Design
+  Decisions rather than resolved — the plan artifact's concrete on-disk encoding, and which existing
+  commands carry review. The clarification session of 2026-07-26 answered both, plus three further
+  commitments it surfaced, and recorded all five as provisional decisions AD001–AD005.
+- **Two content-quality items regressed in the clarification session, for one reason.** "No
+  implementation details" and "No implementation details leak into specification" are now unchecked
+  because the Clarifications section names a concrete encoding, a checksum algorithm, and CLI flag
+  spellings. That is the deliberate output of clarification, not drift: five design commitments that
+  nine downstream outcomes consume are better stated than left to be chosen silently at
+  implementation time. The functional requirements themselves were kept behavior-level and point at
+  the decision IDs rather than restating them. Re-evaluate both items once AD001–AD005 are ratified
+  and the `[PROVISIONAL ...]` markers are stripped; if the decisions belong in the plan rather than
+  the spec, that is the moment to move them.
+- **`[PROVISIONAL ADnnn]` is not a `[NEEDS CLARIFICATION]` marker.** The former records an answered
+  decision awaiting ratification; the latter records an unanswered question. No marker of the latter
+  kind remains.
+
+### Independent verification 2026-07-26
+
+Both content-quality items remain unchecked, on a narrower basis than the previous pass recorded.
+
+- **The plan artifact format is not the problem.** The concrete encoding, the checksum rule, the
+  operation-identifier derivation and the CLI flag spelling are all product-level shared contract:
+  the brief assigns "Define the plan artifact's format, including per-operation identifiers and
+  checksums" to this outcome (DBR-008), its "Shared contracts this brief owns" section states the
+  format is owned here and consumed by nine later outcomes, and its Constraints delegate the review
+  carrier and flag spelling explicitly. Those passages stay.
+- **What still fails both items is internal detail inside normative requirement text.** Six
+  functional requirements carry `file:line` code anchors, Python module names, class names and method
+  names in their MUST clauses. That is implementation detail belonging to `plan.md`, not to a
+  specification "written for non-technical stakeholders":
+    1. **FR-005**, spec.md:505 — `` (`generator/__init__.py:28`) `` and the `list[Any]` type name.
+    2. **FR-008**, spec.md:524 — `` cache_root_for(<sync name>)/<run_id> `` and `` (`cache/paths.py:56-59`) ``.
+    3. **FR-009**, spec.md:538 and :541 — `` (`cache/sidecars.py:71`) ``, `` (`cli.py:336-340` …) `` and `` `cli.py:322` ``. The run-state vocabulary itself (`pending | running | dry-run | applied | failed`) is operator-observable and may stay; the anchors may not.
+    4. **FR-013**, spec.md:566-571 — `client.create(...)`, `save(allow_upsert=True)`, `InfrahubModel.update`, `client.get(id=self.local_id, ...)`, `local_id`, and the four anchors `` adapters/infrahub.py:611-612 ``, `:622`, `:510`, `:166-175`, plus `` infrahub_sync/__init__.py:232 ``. The behavioral content — planned creates and updates converge through the destination kind's human-friendly ID, cardinality-many relationships are a replace-set, an update payload is authoritative for the mapped fields it carries — is product-level and stays.
+    5. **FR-014**, spec.md:581-583 — `` (`dependency_graph.py:33-34`) ``, `` (`dependency_graph.py:81-98`) ``, `` (`infrahub_sync/__init__.py:132-133`) ``. The three qualification cases (self-reference, cycle-dropped optional edge, explicit `order:`) are product-level and stay.
+    6. **FR-023**, spec.md:651 — `` (`potenda/__init__.py:354-360`) ``.
+- Every one of those anchors was re-verified against the tree during this pass and is factually
+  correct, so relocation is a placement fix, not a correction.
+- The Clarifications, Assumptions and Dependencies sections also carry code anchors. Those are
+  decision records and recorded before-state facts rather than normative requirement text, and the
+  spec's Open Design Decisions section states that several decisions exist precisely to correct
+  statements this specification made about existing code, so they are left in place.
+- Note for the next pass: **"Written for non-technical stakeholders" is marked `[x]` above but sits
+  uneasily with the same six passages.** It was not unmarked here, because this pass's mandate covered
+  the two unchecked items; it should be re-evaluated once Phase 3 relocates them.
+
+### Final verification 2026-07-26
+
+Both content-quality items are now **satisfied** and marked `[X]`. Checklist stands at 16 / 16.
+
+- The relocation the previous pass required has been applied in full. A token scan over the whole
+  normative body — Functional Requirements, Key Entities and Success Criteria, `spec.md:614-1007` —
+  returns **no** `file:line` anchor, no module path, no class name and no method name. The complete
+  set of backticked tokens surviving in that range is: the `[PROVISIONAL ADnnn]` markers; the action
+  values `create` / `update` / `delete`; the run states `pending | running | dry-run | applied |
+  failed` with `status: applied` and `status: running`; the run modes `plan` and `sync`; and the two
+  configuration surfaces `order:` and `settings`. Every one of those is operator- or
+  config-observable vocabulary, which the previous pass explicitly ruled admissible.
+- Each of the six passages the previous pass itemised was re-checked individually. FR-005
+  (`spec.md:650-659`) keeps the order-bearing-collection rule and has dropped `list[Any]` and
+  `generator/__init__.py:28`. FR-008 (`:670-693`) has dropped `cache_root_for(...)` and
+  `cache/paths.py:56-59`; the same facts now sit in Dependencies (`:1099-1115`). FR-009 (`:694-720`)
+  keeps the run-state vocabulary and has dropped `cache/sidecars.py:71`, `cli.py:336-340` and
+  `cli.py:322`. FR-013 (`:740-759`) keeps every behavioral clause and has dropped `client.create`,
+  `save(allow_upsert=True)`, `InfrahubModel.update`, `local_id` and its five anchors. FR-014
+  (`:760-778`) keeps the three tier-qualification cases and has dropped all three anchors. FR-023
+  (`:842-846`) has dropped `potenda/__init__.py:354-360`.
+- Nothing was lost in the move. The relocated facts are still carried, in Clarifications
+  (`spec.md:41-366`), Assumptions (`:1043-1094`) and Dependencies (`:1096-1122`), which the previous
+  pass ruled the correct home for them.
+- **"Written for non-technical stakeholders" is re-confirmed `[X]`.** The previous pass flagged it as
+  sitting uneasily with the same six passages and asked for re-evaluation after relocation. Re-read
+  after relocation, the six requirements are behavior-level throughout and the unease is resolved.
+- Every code anchor still present in the specification — 40 distinct `file:line` references across
+  Clarifications, Assumptions and Dependencies — was re-verified line-by-line against the working
+  tree during this pass. All 40 are factually correct; none required correction.
+
+### Final verification round 2 2026-07-26
+
+Both content-quality items **re-confirmed `[X]`** after roughly 150 lines of new normative text
+(FR-027, FR-028, FR-029, SC-018, six Out-of-scope exclusions, and edits to FR-005, FR-009, FR-020
+and FR-024). Checklist stands at **16 / 16**.
+
+- The scan was re-run over the whole normative body, now `spec.md:616-1110` covering 29 functional
+  requirements, Key Entities and 18 success criteria. It returns **no** `file:line` anchor, no module
+  path, no class name and no method name. The surviving backticked-token set is unchanged from the
+  previous pass: the `[PROVISIONAL ADnnn]` markers, `create` / `update` / `delete`,
+  `pending | running | dry-run | applied | failed` with `status: applied` and `status: running`,
+  `plan` and `sync`, and `order:` and `settings`.
+- A whole-file scan confirms every remaining `file:line` anchor sits inside Clarifications
+  (`spec.md:27-368`) or the Assumptions-through-Dependencies block (`:1186-1266`) — the two homes the
+  first pass ruled correct. Nothing leaked back out.
+- The three new requirements were read specifically for this risk. FR-027 (`spec.md:879-909`)
+  describes manifest fields in product terms — "format version", "run identifier", "content digest",
+  "operation count" — and names no encoding, file, or symbol. FR-028 (`:911-940`) describes
+  obligation levels, absent-versus-empty, an ordered mapping of identity attribute name to value, and
+  payload authority, with no type names. FR-029 (`:942-952`) describes a reader by what it accepts,
+  returns and guarantees, and deliberately does **not** name a module, class, or function — which is
+  the right resolution given the requirement's whole subject is a code surface.
+- The six new Out-of-scope lines (`spec.md:1146`, `:1153`, `:1158`, `:1163`, `:1171`, `:1178`)
+  likewise carry no implementation detail; their only technical references are to AD001's
+  line-oriented encoding and to FR-027's format-version field, both of which are product-level
+  format contract this specification owns.
+- FR-024's new output-channel clause (`spec.md:857-860`) says "the run's **log stream**" and "the
+  standard-output channel FR-008 reserves", not a logger object or a library call — consistent with
+  the abstraction FR-008 already uses for the echo facility.

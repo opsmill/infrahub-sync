@@ -91,7 +91,9 @@ Infrahub Sync has no built-in scheduler. Use cron, CI, Prefect, or another workf
 
 By default, the `SKIP_UNMATCHED_DST` flag is enabled — Infrahub objects without a corresponding object in the source system are left alone. This is the safe default. Add Infrahub-only data (new schemas, design objects, intent data) without worrying that a sync run will delete it.
 
-To change this behavior — for example, removing Infrahub objects when they're deleted in the source system — adjust the `diffsync_flags` in the sync configuration. See [Sync instance configuration](./reference/config.mdx).
+To change this behavior for `sync` — for example, removing Infrahub objects when they're deleted in the source system — adjust the `diffsync_flags` in the sync configuration. See [Sync instance configuration](./reference/config.mdx).
+
+The saved-plan path behaves differently and the flags do not change it. A plan **records** a delete for every Infrahub object missing from the source, but `apply` never executes one: it applies the non-deletes, completes successfully, and reports how many deletes it skipped. Reviewing a plan against a destination holding Infrahub-only data will therefore show a non-zero delete count that no apply will act on. See [Deletes are recorded, never executed](./running-a-sync#deletes-are-recorded-never-executed).
 
 ### Decide on conflict policy early
 

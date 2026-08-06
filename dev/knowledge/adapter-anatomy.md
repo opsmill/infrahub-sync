@@ -47,9 +47,64 @@ The mixin defines the surface Potenda calls. Each method is one of three kinds �
 | `cursor_tier_for(model_name)` | Optional | Strongest incremental tier the source supports for this model. Defaults to `CursorTier.NONE` (always full extract). |
 | `list_changed_since(model_name, cursor)` | Conditional | Required only if `cursor_tier_for` returns a non-`NONE` tier. Yields records changed since the cursor, in the same shape `model_loader` produces. |
 | `list_existing_ids(model_name)` | Optional | Yields current `unique_id` strings for delete detection between incremental runs. |
+| `apply_planned_operation(*, operation, peers)` | Optional | Executes one operation from a **saved plan** and returns the destination node id. Only `infrahub-sync apply` calls it. Absent on an adapter, `apply` refuses before writing anything — see [The planned-write surface](#the-planned-write-surface). |
+| `new_peer_resolver()` | Conditional | Required only alongside `apply_planned_operation` — the engine builds the per-apply peer resolver through it. The two together are the planned-write surface; an adapter with only one of them is refused like an adapter with neither. |
 
 A read-only-capable adapter that only ever does full extracts needs just `model_loader`.
 Incremental support is additive — see [Incremental sync and cache](incremental-and-cache.md).
+
+## The planned-write surface
+
+`sync` compares both sides live and writes through the **model**'s `create` / `update`.
+`apply` is different: it replays a plan artifact saved by an earlier `diff` without loading
+either side, so it has no model instances to call. It dispatches to one method on the
+**adapter**:
+
+```python
+def apply_planned_operation(self, *, operation: PlannedOperation, peers: PeerResolver) -> str:
+    """Execute one planned operation convergently. Returns the destination node id."""
+```
+
+It is one of **two** members of that surface — `PlannedWriteDestination` in
+`infrahub_sync/plan/write_surface.py` — the other being `new_peer_resolver()`, which builds the
+per-apply peer resolver the method above is handed:
+
+```python
+def new_peer_resolver(self) -> PeerResolver:
+    """Build the peer resolver for one apply, bound to this adapter."""
+```
+
+The surface is **optional**, and not defining it is a supported position rather than a gap. An
+adapter that lacks either member makes `apply` fail its pre-write verification gate — before any
+write reaches the destination — with an error naming the adapter class and directing the operator
+to `sync` instead. The gate is an `isinstance` check against the protocol, so it verifies that
+both members are **present**, never that their signatures match: a wrong signature is not caught
+there and surfaces at the first operation instead. Every other command, plan review included, is unaffected. `infrahub` is the
+only adapter in this repository that implements it today.
+
+An implementation must execute the single recorded operation convergently (a re-apply must not
+duplicate), return the destination node id, resolve every relationship peer through the
+supplied `peers` resolver rather than through any loaded store, and **decline a `delete`** by
+raising `SkippedDeleteOperation` instead of executing it. That last obligation is defensive:
+the engine filters deletes out of its own apply loop and never dispatches one to the write
+surface, so the raise guards against a caller that is not the engine. Under the apply loop the
+rest of the plan is still applied and the run still ends `applied`, with the skipped
+identifiers recorded — but that accounting is the loop's, not your method's. Dispatched
+directly, your method raises and that is all that happens: nothing is recorded, and there is no
+run to complete.
+
+It must also **write only the fields the operation maps**. The payload is authoritative for those
+fields and for nothing else: an unmapped destination field must come out of the apply untouched.
+That rule is easy to break by accident on the relationship path, because an SDK that re-renders a
+whole node it considers existing emits `<rel>: null` for every optional cardinality-one
+relationship left uninitialized — so on the Infrahub adapter the cardinality-many replace-set is
+flushed by a **targeted relationship write** naming `id` plus only the fields being replaced,
+never by a whole-node update. If your destination client re-renders whole objects on write, check
+what it does with the fields you did not set.
+
+The full contract lives in
+[the destination write surface contract](../specs/archive/001-plan-artifact-saved-apply/contracts/destination-write-surface.md);
+`infrahub_sync/adapters/infrahub.py` is the reference implementation.
 
 ## The model contract (`DiffSyncModelMixin`)
 
