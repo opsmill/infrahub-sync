@@ -87,6 +87,24 @@ def test_userinfo_is_dropped_so_no_credential_can_reach_the_manifest() -> None:
     assert record.url == "http://host:8000"
 
 
+def test_query_and_fragment_are_never_persisted_but_a_query_still_distinguishes_endpoints() -> None:
+    """A binding must be safe to display while preserving query endpoint identity."""
+    first = DestinationBindingRecord(url="https://host:8000/api?tenant=blue#secret-fragment")
+    same = DestinationBindingRecord(url="https://host:8000/api?tenant=blue#another-fragment")
+    other = DestinationBindingRecord(url="https://host:8000/api?tenant=green")
+
+    assert "tenant=blue" not in first.url
+    assert "secret-fragment" not in first.url
+    assert first.url == same.url, "a fragment does not participate in HTTP endpoint identity"
+    assert first.url != other.url, "different query-bearing endpoints must not compare equal"
+    assert "query-sha256=" in first.url
+
+
+def test_bracketed_ipv6_endpoint_round_trips() -> None:
+    """urlsplit removes brackets, so normalization must restore them for a valid URL."""
+    assert DestinationBindingRecord(url="HTTP://[::1]:8000/").url == "http://[::1]:8000"
+
+
 def test_the_record_is_a_closed_field_set_with_no_token_field() -> None:
     """`url` and `branch` only: a token has no field to arrive through."""
     with pytest.raises(ValueError, match="token"):

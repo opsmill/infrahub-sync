@@ -494,7 +494,11 @@ def test_a_known_destination_failure_is_wrapped_with_the_operation_and_run_conte
     message = str(caught.value)
     assert str(records[1]["operation_id"]) in message, "the refusal names the operation that failed"
     assert RUN_ID in message, "…and the run it failed in"
-    assert str(rejection) in message, "…and the underlying cause"
+    if isinstance(rejection, (GraphQLError, AuthenticationError, ServerNotResponsiveError)):
+        assert type(rejection).__name__ in message, "…and the underlying SDK failure category"
+        assert str(rejection) not in message, "the raw SDK text must not reach normal operator output"
+    else:
+        assert str(rejection) in message, "the in-tree refusal must identify the affected plan object"
     assert caught.value.__cause__ is rejection, "…and chains it, so the library traceback survives"
     assert caught.value.apply_record.applied_operations == (str(records[0]["operation_id"]),)
     assert caught.value.apply_record.failed_operation == str(records[1]["operation_id"])

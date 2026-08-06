@@ -4,17 +4,15 @@ description: "Dependency-ordered task list for the saved plan artifact and apply
 
 # Tasks: Saved plan artifact and apply-exactly-what-was-reviewed
 
-**Feature**: `001-plan-artifact-saved-apply-infp-653` | **Date**: 2026-07-26
+**Feature**: `saved-plan-artifact-and-apply` | **Date**: 2026-07-26
 
 **Input**: [spec.md](./spec.md) (FR-001…FR-030, SC-001…SC-018, AD001–AD092),
 [plan.md](./plan.md) (phases A–G, V1–V43; this file adds phases H–J), [research.md](./research.md) (PD-001…PD-010),
 [data-model.md](./data-model.md), [quickstart.md](./quickstart.md), [contracts/](./contracts/).
 
 **Records kept outside this archive**: `opsmill-implement-report.md` and
-`planner-feedback-additions.md` are the run's own process records rather than design artifacts, so
-they are not archived here. Both live only on the tagged record branch
-`speckit-run/001-plan-artifact-saved-apply`, and every reference to them below names that branch's
-copy.
+`planner-feedback-additions.md` are implementation-process records rather than design artifacts,
+so they are not archived here.
 
 **Tests**: required. The specification states eighteen measurable success criteria, each of which
 names its evidence, so every criterion below has a task that produces it. Twelve criteria and two

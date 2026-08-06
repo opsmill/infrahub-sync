@@ -1,6 +1,6 @@
 # Phase 1 data model: Saved plan artifact
 
-**Feature**: `001-plan-artifact-saved-apply-infp-653` | **Date**: 2026-07-26
+**Feature**: `saved-plan-artifact-and-apply` | **Date**: 2026-07-26
 
 Entities, their fields, validation rules, and the one state machine this feature touches. The
 on-disk encoding of everything here is fixed in

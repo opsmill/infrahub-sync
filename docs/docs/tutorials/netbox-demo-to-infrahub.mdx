@@ -310,7 +310,7 @@ uv run invoke stop
 ERROR | infrahub_sync.cli | Failed to initialize the Sync Instance: Error initializing InfrahubAdapter: Both url and token must be specified!
 ```
 
-The NetBox and/or Infrahub adapter can't find credentials. `generate`, `diff`, `sync`, and `apply` all read them from the environment, not from `config.yml`, so make sure every variable is exported in the shell you're running the command from:
+The NetBox and/or Infrahub adapter can't find credentials. `generate`, `diff`, and `sync` read the source and destination credentials from the environment, not from `config.yml`. `apply` reads only the destination credentials because it uses the saved plan rather than loading the source. Export the variables needed for the command you are running:
 
 ```bash
 export NETBOX_URL="https://demo.netbox.dev"

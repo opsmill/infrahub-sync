@@ -287,8 +287,9 @@ carries are written immediately afterwards. An operation that fails between the 
 destination changed while appearing in neither `applied_operations` nor
 `skipped_delete_operations` — so the run names it under `failed_operation` and sets
 `may_have_partially_written: true`. Nothing is rolled back. Fix the underlying problem at the
-destination, re-run `diff`, and apply the new plan: re-applying an operation that already
-succeeded, in whole or in part, converges on the same object rather than duplicating it.
+destination, re-run `diff`, and apply the new plan. Re-applying a keyed operation that already
+succeeded, in whole or in part, converges on the same object; the relationship-keyed limitation
+below describes the cases where that guarantee is not established.
 
 #### Deletes are recorded, never executed
 

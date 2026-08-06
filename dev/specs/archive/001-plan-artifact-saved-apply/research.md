@@ -1,6 +1,6 @@
 # Phase 0 research: Saved plan artifact and apply-exactly-what-was-reviewed
 
-**Feature**: `001-plan-artifact-saved-apply-infp-653` | **Date**: 2026-07-26
+**Feature**: `saved-plan-artifact-and-apply` | **Date**: 2026-07-26
 
 The specification arrives with 36 provisional decisions (AD001–AD036) that settle the design
 questions a plan would normally research. This document therefore does **not** re-open any of them.

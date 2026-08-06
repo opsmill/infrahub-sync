@@ -1027,9 +1027,10 @@ class RecordingApplyDestination:
     `RuntimeError` is a defect and deliberately escapes unwrapped.
     """
 
-    def __init__(self, *, reject_at: int | None = None) -> None:
+    def __init__(self, *, reject_at: int | None = None, rejection: Exception | None = None) -> None:
         self.dispatched: list[str] = []
         self.reject_at = reject_at
+        self.rejection = rejection
 
     def new_peer_resolver(self) -> object:  # noqa: PLR6301
         """The per-apply resolver factory; nothing below this double's surface reads it."""
@@ -1038,6 +1039,8 @@ class RecordingApplyDestination:
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
         _ = peers
         if self.reject_at is not None and len(self.dispatched) == self.reject_at:
+            if self.rejection is not None:
+                raise self.rejection
             raise GraphQLError([{"message": "the destination rejected this object"}])
         self.dispatched.append(operation.operation_id)
         return f"node-{len(self.dispatched)}"
@@ -1157,7 +1160,7 @@ def test_a_mid_apply_rejection_surfaces_the_rejection_not_the_knowability_invari
         f"A rejection must surface as the rejection, got {outcome!r}."
     )
     assert isinstance(outcome, OperationApplyFailedError)
-    assert "the destination rejected this object" in str(outcome)
+    assert "destination GraphQL rejection" in str(outcome)
 
 
 # ---------------------------------------------------------------------------------------
@@ -1344,7 +1347,7 @@ LIVE_CALL_EDGES = (
     ),
     pytest.param(
         AuthenticationError("Authentication failed: 401 Unauthorized"),
-        "401",
+        "authentication",
         id="auth-401",
     ),
 )
@@ -1397,9 +1400,11 @@ def _assert_named_and_actionable(
     message = str(outcome)
     assert failing_operation_id in message, "The failure must name the operation that failed."
     assert APPLY_RUN_ID in message, "…and the run it failed in, which is what the operator re-plans."
-    assert str(injected) in message, (
-        f"…and the underlying cause, or the operator cannot tell a timeout from a rejection. Message was: {message!r}"
+    assert type(injected).__name__ in message, (
+        "The operator-facing error must identify the failure category without rendering the SDK's "
+        f"untrusted detail. Message was: {message!r}"
     )
+    assert str(injected) not in message, "The raw SDK message must stay out of normal operator output."
     assert outcome.next_action, "AD059: every taxonomy failure names the operator's next action."
     assert "Next action:" in message, "And it is carried in the rendered message, not only as an attribute."
     assert outcome.__cause__ is injected, (
@@ -1411,6 +1416,28 @@ def _assert_named_and_actionable(
         f"expected {applied_before}, got {outcome.apply_record.applied_operations}."
     )
     return outcome
+
+
+def test_a_graphql_query_and_variables_never_reach_the_operator_message(tmp_path: Path) -> None:
+    """SDK GraphQL errors include their query, so apply output must use a safe summary."""
+    directory = apply_run_dir(tmp_path)
+    operation = operation_record(kind=TAG_KIND, identity={"name": "tag-a"}, payload={"name": "tag-a"})
+    write_artifact(directory, [operation], run_id=APPLY_RUN_ID, source_snapshot=[])
+    secret = "SYNTHETIC_SECRET_CANARY"  # noqa: S105 - a deliberate redaction canary
+    rejection = GraphQLError(
+        [{"message": "the destination rejected this object"}],
+        query=f'mutation {{ create(api_token: "{secret}") }}',
+        variables={"api_token": secret},
+    )
+
+    with pytest.raises(OperationApplyFailedError) as caught:
+        engine_over(directory, RecordingApplyDestination(reject_at=0, rejection=rejection)).apply_plan(
+            config_version=CONFIG_VERSION
+        )
+
+    assert secret not in str(caught.value)
+    assert "GraphQLError" in str(caught.value)
+    assert caught.value.__cause__ is not None
 
 
 @pytest.mark.parametrize(("injected", "expected_fragment"), LIVE_CALL_EDGES)

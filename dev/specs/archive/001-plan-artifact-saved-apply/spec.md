@@ -1,13 +1,13 @@
 # Feature Specification: Saved plan artifact and apply-exactly-what-was-reviewed
 
-**Feature Branch**: `001-plan-artifact-saved-apply-infp-653`
+**Feature**: `saved-plan-artifact-and-apply`
 
 **Created**: 2026-07-26
 
 **Status**: Extracted
 
-**Input**: Delivery brief DB-001 (`db-001-plan-artifact-saved-apply.md`, brief_version 5, batch-v3),
-primary JPD card **INFP-653**. The brief is the sole scope authority for this specification.
+**Input**: Repository-local saved-plan requirements. This specification is the scope authority for
+the archived implementation record.
 
 ## Overview
 

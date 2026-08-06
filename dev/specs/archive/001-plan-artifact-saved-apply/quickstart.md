@@ -1,6 +1,6 @@
 # Quickstart: validating the saved plan artifact and apply path
 
-**Feature**: `001-plan-artifact-saved-apply-infp-653`
+**Feature**: `saved-plan-artifact-and-apply`
 
 How to prove this feature works, end to end. Two tracks: everything that runs on a laptop with no
 servers, and the **six** criteria and half-criteria that need a live Infrahub. Details of the format
@@ -221,8 +221,7 @@ identifier key(s) ['device']`. The defect is **pre-existing** — the predicate 
 byte-identical to `main` — lives on the destination-extract path shared with the live `sync` command,
 which AD070 puts off limits for this delivery, and is **not** on the apply path, since a saved-plan apply
 re-extracts nothing (FR-012). Recorded in plan.md's Risks and, for a later outcome to own, in
-`planner-feedback-additions.md` on the tagged record branch
-`speckit-run/001-plan-artifact-saved-apply` — a process record kept off this branch.
+`planner-feedback-additions.md` in the archived implementation record.
 
 | SC | What the test does |
 |---|---|

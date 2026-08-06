@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import PurePath
 from typing import Any, Literal, TypeAlias, get_args
 from urllib.parse import urlsplit, urlunsplit
@@ -269,12 +270,19 @@ def _normalized_destination_url(url: str) -> str:
     Scheme and host are lowercased and trailing path slashes dropped, so
     `HTTP://Infrahub:8000/` and `http://infrahub:8000` name the same destination and do
     not false-refuse an apply. Userinfo is dropped outright: the record must never carry
-    a credential, however the endpoint was spelled.
+    a credential, however the endpoint was spelled. Query text is represented
+    by a digest so query-bearing endpoints remain distinguishable without
+    persisting or displaying their raw values. Fragments never take part in an
+    HTTP request and are discarded.
     """
     parts = urlsplit(url.strip())
     host = (parts.hostname or "").lower()
-    netloc = host if parts.port is None else f"{host}:{parts.port}"
-    return urlunsplit((parts.scheme.lower(), netloc, parts.path.rstrip("/"), parts.query, parts.fragment))
+    # urlsplit().hostname removes IPv6 brackets, while urlunsplit() requires
+    # them to preserve a valid authority component.
+    formatted_host = f"[{host}]" if ":" in host else host
+    netloc = formatted_host if parts.port is None else f"{formatted_host}:{parts.port}"
+    safe_query = f"query-sha256={sha256(parts.query.encode()).hexdigest()}" if parts.query else ""
+    return urlunsplit((parts.scheme.lower(), netloc, parts.path.rstrip("/"), safe_query, ""))
 
 
 class DestinationBindingRecord(BaseModel):

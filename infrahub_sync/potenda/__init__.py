@@ -10,7 +10,14 @@ from diffsync.enum import DiffSyncFlags
 # for nothing else. It is the one module-level import here that is not cheap, and it is
 # unavoidable: the boundary has to *name* the library whose rejections are operational, and
 # every path that reaches `apply_plan` constructs an SDK-backed destination anyway.
-from infrahub_sdk.exceptions import Error as InfrahubSDKError
+from infrahub_sdk.exceptions import (
+    AuthenticationError,
+    GraphQLError,
+    ServerNotResponsiveError,
+)
+from infrahub_sdk.exceptions import (
+    Error as InfrahubSDKError,
+)
 from tqdm import tqdm
 
 from infrahub_sync import IncrementalConfig
@@ -95,6 +102,27 @@ def _plan_refusal(failures: Sequence[VerificationFailure], *, run_id: str) -> Pl
         f"failed and nothing was written to the destination.\n{detail}"
     )
     return PlanVerificationError(msg)
+
+
+def _operational_failure_summary(exc: Exception) -> str:
+    """Return stable operator context without rendering untrusted SDK/server text.
+
+    SDK exceptions can embed a complete GraphQL request or response body in
+    ``str(exc)``.  The exception remains chained for an explicitly requested
+    developer traceback, while normal CLI output receives only its category.
+    """
+    if isinstance(exc, AuthenticationError):
+        return "an authentication failure (AuthenticationError)"
+    if isinstance(exc, ServerNotResponsiveError):
+        return "a destination timeout (ServerNotResponsiveError)"
+    if isinstance(exc, GraphQLError):
+        return "a destination GraphQL rejection (GraphQLError)"
+    if isinstance(exc, InfrahubSDKError):
+        return f"a destination SDK failure ({type(exc).__name__})"
+    # PlanArtifactError and SkippedDeleteOperation are in-tree, purpose-built
+    # operator errors. Their detail identifies the affected peer or plan field
+    # and is not SDK/server response text.
+    return str(exc)
 
 
 class Potenda:
@@ -694,7 +722,7 @@ class Potenda:
                     raise
                 msg = (
                     f"Applying operation {operation.operation_id!r} of run {run_id!r} to the destination "
-                    f"failed: {exc}. The {len(applied)} operation(s) applied before it stay written, and "
+                    f"failed with {_operational_failure_summary(exc)}. The {len(applied)} operation(s) applied before it stay written, and "
                     f"this operation may itself have written part of its change before failing — "
                     f"re-applying the plan converges it."
                 )
