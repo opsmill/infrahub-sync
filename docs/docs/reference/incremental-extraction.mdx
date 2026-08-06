@@ -66,3 +66,18 @@ runs (default 10) to reconcile deletes. Set
 A future optimization will add an ID-only sweep
 (`adapter.list_existing_ids`) so deletes are caught on every warm
 run — the contract is in place but not yet wired into the engine.
+
+## Incremental loads and the saved plan
+
+The saved plan artifact derives its `delete` operations from the loaded
+destination store, so it can only enumerate them when the **destination**
+side ran a full extract. When the destination was loaded incrementally, no
+deletes are derived at all and the manifest records
+`delete_operations_computed: false` — which is not the same claim as "this
+plan has no deletes". Both depths of `infrahub-sync diff --from-plan
+<run-id>` disclose which of the two happened, so an incomplete plan is never
+read as a complete one.
+
+Recorded deletes are never executed in any case: `apply` applies the
+non-deletes, completes successfully, and reports how many deletes it
+skipped. See [Cache layout](./cache-layout#deletes-in-a-plan).

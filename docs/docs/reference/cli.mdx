@@ -58,9 +58,12 @@ $ infrahub-sync diff [OPTIONS]
 * `--branch TEXT`: Branch to use for the diff.
 * `--show-progress / --no-show-progress`: Show a progress bar (default: auto-detect terminal)
 * `--adapter-path TEXT`: Paths to look for adapters. Can be specified multiple times.
-* `--run-id TEXT`: Re-use a specific cache run id.
+* `--run-id TEXT`: Re-use a specific cache run id for the live comparison. To review a saved plan instead, pass --from-plan &lt;run-id&gt;.
 * `--concurrent-load / --no-concurrent-load`: Load source and destination concurrently. Disable when a custom adapter isn&#x27;t thread-safe.  [default: concurrent-load]
 * `--full-extract / --no-full-extract`: Re-extract every resource from scratch (default). Pass --no-full-extract to enable the cursor-driven incremental path on warm runs — see docs/reference/incremental-extraction.  [default: full-extract]
+* `--from-plan TEXT`: Review the saved plan artifact for this run id instead of comparing live systems. Constructs no adapter, extracts nothing, and takes no lock.
+* `--detail`: Expand the plan summary to one record per operation. Requires --from-plan.
+* `--kind TEXT`: Narrow --detail to a single destination kind. Requires --from-plan and --detail.
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync sync`
@@ -106,6 +109,8 @@ $ infrahub-sync apply [OPTIONS]
 * `--directory TEXT`: Base directory to search for sync configurations
 * `--run-id TEXT`: Cache run id produced by a previous `diff`.  [required]
 * `--branch TEXT`: Branch to use for the apply.
+* `--allow-destination-change / --no-allow-destination-change`: Apply even though the live destination endpoint or branch differs from the one the plan was computed against. Without it, a destination mismatch refuses before any write.  [default: no-allow-destination-change]
+* `--expected-checksum TEXT`: Apply only if the stored plan hashes to this checksum — the `plan checksum` line of the review output. A mismatch refuses before the destination is contacted.
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync generate`

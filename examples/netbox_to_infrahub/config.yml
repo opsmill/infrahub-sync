@@ -6,13 +6,16 @@
 #      kinds that can be written in parallel. Add `--parallel` to `sync` to
 #      enforce a hard barrier between tiers.
 #
-#   2. Parquet sidecar cache. Every `diff` writes per-resource snapshots and
-#      a `plan.parquet` under `.infrahub-sync-cache/from-netbox/<run_id>/`.
-#      The run_id is logged at INFO; pass it to `apply` to re-dispatch the
-#      cached plan without re-extracting the source.
+#   2. Sidecar cache and the saved plan artifact. Every `diff` writes
+#      per-resource snapshots, a `plan.parquet` for querying, and a `plan/`
+#      directory under `.infrahub-sync-cache/from-netbox/<run_id>/`. The
+#      `plan/` directory is what `apply` reads. The run_id is logged at INFO;
+#      pass it to `diff --from-plan` to review the plan, and to `apply` to
+#      apply it without re-extracting the source.
 #
 # Usage:
 #   uv run infrahub-sync diff --name from-netbox --directory sync-projects
+#   uv run infrahub-sync diff --name from-netbox --from-plan <run_id> --directory sync-projects
 #   uv run infrahub-sync apply --name from-netbox --run-id <run_id> --directory sync-projects
 #   uv run infrahub-sync sync --name from-netbox --directory sync-projects --parallel
 #

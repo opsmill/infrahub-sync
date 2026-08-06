@@ -11,9 +11,10 @@ from pathlib import Path, PurePath
 def _require_safe_segment(value: str, field: str) -> str:
     """Reject path segments that could escape the cache root.
 
-    `sync_name` comes from `config.yml` and `run_id` comes from `--run-id`
-    on the apply command; both are joined into a `Path`, so a value like
-    `..` or `/etc` would let an attacker (or a typo) write outside the
+    `sync_name` comes from `config.yml` and `run_id` from `--run-id` on
+    whichever command supplies one — `diff` and `sync` allocate into a run,
+    `apply` names an existing one. Both are joined into a `Path`, so a value
+    like `..` or `/etc` would let an attacker (or a typo) write outside the
     intended root.
     """
     p = PurePath(value)

@@ -72,7 +72,7 @@ Infrahub is populated from what is actually deployed in the network rather than 
 - **Pre-built adapter library** — adapters for Infrahub, NetBox, Nautobot, IP Fabric, Cisco ACI, LibreNMS, Observium, Peering Manager, Prometheus, and Slurp’it, plus a Generic REST API adapter for systems with HTTP/JSON APIs. Each adapter handles both communication and translation for its target system.
 - **Declarative YAML configuration** — a single file per sync project defines source, destination, sync order, and per-model schema mapping. Mappings support 14 filter operations (including `regex` and `is_ip_within`), per-field transforms, custom Jinja filters, and ordered cross-reference resolution.
 - **Sync engine** — built on the `diffsync` framework. Diffs and applies only deltas; three flags control what each run is allowed to change (creates, deletes, modifications).
-- **Typer-based CLI** — four commands: `list` (show available projects), `generate` (produce adapter code from the configuration), `diff` (preview changes), `sync` (apply changes).
+- **Typer-based CLI** — five commands: `list` (show available projects), `generate` (produce adapter code from the configuration), `diff` (preview changes), `sync` (apply changes), `apply` (write a previously reviewed saved plan to the destination without re-extracting the source).
 - **Custom adapter support** — for systems without a pre-built adapter, write a local custom adapter and load it from a filesystem path, a Python module path, or an installed entry point (`INFRAHUB_SYNC_ADAPTER_PATHS`).
 - **Custom CA certificate support** — connect to systems with self-signed or internal CA-issued TLS certificates.
 

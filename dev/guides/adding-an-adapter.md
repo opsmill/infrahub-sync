@@ -94,6 +94,85 @@ Write the `obj_to_diffsync` helper to walk `element.fields` — `static`, plain 
 If the adapter can be a destination, implement `create`, `update`, and `delete` on the model
 to mutate the target system. A source-only adapter can leave these deferring to the base.
 
+That covers `infrahub-sync sync`, the live compare-and-write path. Applying a **saved plan**
+(`infrahub-sync apply --run-id <id>`) goes through a separate surface — see Step 4b.
+
+### Step 4b: Implement the planned-write surface (optional, destination only)
+
+**Infrahub-only in v1.** Read this step as documentation of the Infrahub destination's write
+surface, not as a general extension point. Both members are typed with `PeerResolver`, which is
+the Infrahub adapter's concrete resolver class, so a non-Infrahub destination cannot conform to
+the protocol statically without importing the Infrahub adapter. Making the resolver type
+adapter-neutral is a tracked follow-up: raise it before writing a second implementation rather
+than working around the Infrahub import.
+
+`infrahub-sync apply` replays a plan artifact that a previous `diff` saved. It does not load
+either side and does not re-compare, so it cannot go through the model's `create` / `update`.
+It goes through a surface on the **adapter** instead — `PlannedWriteDestination` in
+`infrahub_sync/plan/write_surface.py`, which has **two** members:
+
+```python
+def new_peer_resolver(self) -> PeerResolver:
+    """Build the peer resolver for one apply, bound to this adapter."""
+
+def apply_planned_operation(self, *, operation: PlannedOperation, peers: PeerResolver) -> str:
+    """Execute one planned operation convergently. Returns the destination node id."""
+```
+
+Both are required: the engine builds the per-apply resolver through the factory rather than
+constructing one itself, so an adapter offering only the write method is not a planned-write
+destination and is refused with the rest.
+
+**Not implementing the surface is a supported position, not a break.** An adapter without it
+makes `apply` refuse in its pre-write verification gate — **before any write reaches the
+destination** — with an error naming the adapter class and directing the operator to `sync`:
+
+```text
+The destination adapter 'MysystemAdapter' cannot apply a saved plan. Use `infrahub-sync sync`
+for this destination, or apply against a destination whose adapter implements the
+planned-write surface.
+```
+
+Nothing else about the adapter degrades: `list`, `diff`, `sync` and plan *review*
+(`diff --from-plan <run-id>`) all work unchanged. Only `apply` is unavailable. `infrahub` is
+the only one of the nine adapters shipped in this repository that implements the surface
+today; the other eight refuse an `apply` exactly as described above.
+
+The gate is an `isinstance` check against the protocol, which verifies that both members are
+**present** and not that their signatures match. Get a signature wrong and the refusal will not
+catch it — the apply will fail at the first operation instead. Type-check your adapter
+(`uv run ty check .`) rather than relying on that gate.
+
+If you do implement it, the method must:
+
+- **Execute exactly one operation, convergently** — re-applying the same plan must not
+  duplicate the object. Take `operation.payload` and `operation.identity` as recorded; do not
+  recompute either, and do not read the destination to decide what to write.
+- **Return the destination node id** as a string. The engine feeds it back to the resolver so
+  later operations in the same plan can refer to this object.
+- **Touch no destination field the operation did not map.** The payload is authoritative for the
+  fields it carries and for nothing else. Watch the relationship path in particular: a client that
+  re-renders a whole object on write may send explicit nulls for the fields you never set — the
+  Infrahub SDK does exactly that for optional cardinality-one relationships on a node it considers
+  existing, which is why the cardinality-many replace-set there is flushed by a **targeted write**
+  naming the id plus only the fields being replaced, rather than a whole-node update.
+- **Resolve relationship peers through the supplied resolver**, never through a loaded store.
+  Call `peers.resolve(peer_kind=..., identity=..., referring_operation_id=...)` for each peer
+  in each `operation.relationships` entry; it returns one node id per identity, and
+  cardinality is your concern, not its.
+- **Decline a `delete` rather than executing one** — raise `SkippedDeleteOperation`
+  (`infrahub_sync.plan.errors`) and touch nothing. Applying deletes is out of scope for this
+  release. In practice your method will not see one: the engine recognizes a `delete` in its
+  own apply loop, records its identifier and never dispatches it to the write surface. Raise
+  it anyway — it is the defensive half of the contract, for any caller that is not the
+  engine. Either way the run applies every non-delete in the same plan and ends `applied`
+  with the skipped count recorded.
+
+The full contract — the convergent upsert sequence, the keyedness gate, relationship
+replace-set reconciliation and the error taxonomy — is in
+[the destination write surface contract](../specs/archive/001-plan-artifact-saved-apply/contracts/destination-write-surface.md).
+`infrahub_sync/adapters/infrahub.py` is the reference implementation.
+
 ### Step 5: Write the schema mapping and `config.yml`
 
 Create an example project directory with a `config.yml` that selects the adapter and maps
@@ -175,6 +254,7 @@ uv run infrahub-sync diff --name mysystem-example --directory examples/mysystem_
 
 - [ ] Adapter inherits `DiffSyncMixin` / `DiffSyncModelMixin`, mixin first, with a `type`.
 - [ ] `model_loader` filters and transforms through the model mixin; `obj_to_diffsync` sets `local_id`.
+- [ ] Decided whether the adapter implements the planned-write surface — **both** `new_peer_resolver` and `apply_planned_operation`; if it does not, confirmed that `apply` refuses cleanly and that `sync` is the documented path for it.
 - [ ] Optional SDK imported with `# ty: ignore[unresolved-import]`; credentials from env vars; no secrets logged or committed.
 - [ ] `uv run invoke format` and `uv run invoke lint` are clean; `uv run ty check .` exits 0.
 - [ ] `list` / `generate` / `diff` succeed for the example.

@@ -63,6 +63,32 @@ everything it references), so you normally omit it. Override it only when the co
 is wrong — for example to break a cycle. The `local_id` carried on each loaded record is the
 source primary key that reference resolution matches against.
 
+<!-- Extracted from dev/specs/archive/001-plan-artifact-saved-apply on 2026-07-28 -->
+
+### `identifiers` is not the convergence key
+
+`identifiers` is the **DiffSync natural key**: it decides which source object is "the same object" as
+which destination object during the comparison. It is not what makes a write converge. A convergent
+write against Infrahub is keyed on the **destination kind's `human_friendly_id`**, read from the
+destination schema — the upsert mutation carries `data["id"]` if known, else `data["hfid"]`.
+
+The two answer different questions and routinely give different answers, so read keying behaviour off
+the destination schema and never off `config.yml`. On `examples/netbox_to_infrahub/config.yml`, ten
+mapping entries carry a `reference` inside their `identifiers`, while the number of destination kinds
+whose *convergence key* crosses a relationship is five. Taking the configuration-side figure for the
+keying figure overstated a keying risk by a factor of two, and the error survived several rounds of
+review because both numbers are real counts of something.
+
+Two practical consequences:
+
+- A kind whose HFID crosses a relationship may not be able to render a client-side `hfid` at all, in
+  which case whether the write converges depends on a destination-side uniqueness constraint covering
+  the components as sent.
+- A kind that declares no HFID is unkeyed as a matter of schema, not as a defect.
+
+Both are handled on the apply path rather than at mapping time; see
+[Planned writes and apply](planned-write-and-apply.md).
+
 ## Filters
 
 Filters drop records before they enter the store. A record is kept only if it passes every
@@ -102,4 +128,6 @@ transforms:
 
 - [Adapter anatomy](adapter-anatomy.md) — how an adapter reads these entries at load time.
 - [Adding an adapter](../guides/adding-an-adapter.md) — writing a mapping for a new system.
+- [Planned writes and apply](planned-write-and-apply.md) — how identities and references are
+  resolved when a saved plan is applied.
 - User-facing configuration reference under `docs/docs/`.

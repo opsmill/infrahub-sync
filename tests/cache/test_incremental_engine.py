@@ -104,6 +104,40 @@ def test_uses_incremental_when_prior_run_matches(tmp_path: Path) -> None:
     assert names == {"leaf-existing", "leaf-new"}
 
 
+def test_side_full_extract_answers_per_side_on_a_mixed_run(tmp_path: Path) -> None:
+    """FR-015 needs a per-side answer; `_did_full_extract` keeps its OR-accumulated one."""
+    import json
+
+    from infrahub_sync.cache.parquet_io import write_resource_side
+
+    prev_run = tmp_path / "2026-05-17T10-00-00Z"
+    prev_run.mkdir(parents=True)
+    (prev_run / "run.json").write_text(json.dumps({"status": "applied"}))
+    (prev_run / "schema-sub-hash.txt").write_text("HASHFIXED")
+    (prev_run / "cursors.json").write_text(json.dumps({"B": {"InfraDevice": "TIMESTAMP:2026-05-17T10:00:00Z"}}))
+    write_resource_side(
+        run_dir=prev_run,
+        side="B",
+        resource="InfraDevice",
+        rows=[{"name": "leaf-existing", "description": "old"}],
+        source_ids=["leaf-existing"],
+        extract_ts=datetime(2026, 5, 17, 10, tzinfo=timezone.utc),
+    )
+
+    pot, src, dst = _make_potenda(tmp_path)
+    pot._schema_subhash = "HASHFIXED"
+
+    pot.force_full_extract = True
+    pot.load_one_side(side="A", adapter=src)
+    pot.force_full_extract = False
+    pot.load_one_side(side="B", adapter=dst)
+
+    assert pot._side_full_extract == {"A": True, "B": False}
+    assert pot._did_full_extract is True
+    assert any(call[0] == "full_load" for call in src.calls)
+    assert any(call[0] == "delta" for call in dst.calls)
+
+
 def test_cursor_persisted_after_load(tmp_path: Path) -> None:
     from infrahub_sync.cache.incremental import load_cursors
     from infrahub_sync.cache.parquet_io import write_resource_side

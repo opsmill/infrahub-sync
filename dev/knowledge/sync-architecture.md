@@ -48,6 +48,19 @@ for its destination role.
    destination in dependency order, calling the destination model's `create` / `update` /
    `delete`.
 
+<!-- Extracted from dev/specs/archive/001-plan-artifact-saved-apply on 2026-07-28 -->
+
+Between the diff and the first write, a run saves a **plan artifact** recording every
+operation it intends to perform. This holds on the `sync` path as well as the `diff` path:
+the tier branch computes and retains every tier's `Diff` first, writes the artifact, then
+applies the retained diffs tier by tier, so a plan always exists before anything is written.
+The narrowing of `top_level` to one tier governs *diff computation* rather than execution —
+it is read only by the comparison engine's differ — so it wraps each `diff()` call in the
+compute loop and is irrelevant in the execution loop. A saved artifact can be reviewed
+afterwards and applied on its own, without recomputing either side. See
+[The saved plan artifact](plan-artifact.md) and
+[Planned writes and apply](planned-write-and-apply.md).
+
 Potenda also owns the cross-cutting machinery — write order tiers, the incremental cursor
 state, the Parquet diff plan, and the row-count guardrail. See
 [Incremental sync and cache](incremental-and-cache.md). Adapters do not call Potenda;
@@ -74,3 +87,5 @@ the schema mapping (what to move). The model classes are generated. See
 - [Adapter anatomy](adapter-anatomy.md) — the classes and methods you implement.
 - [Adding an adapter](../guides/adding-an-adapter.md) — the end-to-end procedure.
 - [Writing an adapter](../guidelines/writing-an-adapter.md) — the rules to follow.
+- [The saved plan artifact](plan-artifact.md) — what a run records before it writes.
+- [Planned writes and apply](planned-write-and-apply.md) — the second write path.

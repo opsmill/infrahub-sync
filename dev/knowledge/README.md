@@ -17,8 +17,18 @@ procedures see [`dev/guides/`](../guides/README.md).
 - [Incremental sync and cache](incremental-and-cache.md) — cursors, tiers, plans, and
   row-count guardrails, and what an adapter implements to participate.
 
+## Plans and applying them
+
+- [The saved plan artifact](plan-artifact.md) — the manifest and operations a run records
+  before it writes: layout, canonical encoding, operation identifiers, the checksum, and how
+  a stored plan is read and verified.
+- [Planned writes and apply](planned-write-and-apply.md) — the second write path: the
+  destination write surface and what its type does and does not enforce, apply-time peer
+  resolution, replace-set flush semantics, and how deletes are recorded but not executed.
+
 ## Related
 
+- [Decision records](../adr/README.md) — the decisions behind these documents.
 - [Adapter guidelines](../guidelines/README.md) — rules an adapter must follow.
 - [Adapter guides](../guides/README.md) — adding and testing an adapter.
 - [Constitution](../constitution.md) — project principles these documents serve.

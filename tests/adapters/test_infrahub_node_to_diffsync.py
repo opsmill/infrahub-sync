@@ -144,12 +144,7 @@ def test_text_value_passes_through_unchanged() -> None:
 
 
 def test_list_value_passes_through_as_list() -> None:
-    """``kind: List`` must arrive as a real list.
-
-    Stringifying turns a list into its ``repr`` (e.g. ``"[]"`` / ``"['a']"``),
-    which then fails Pydantic validation against ``list[str]``-typed DiffSync
-    fields.
-    """
+    """``kind: List`` must arrive as a real list."""
     adapter = _make_adapter("Thing", ["tags"])
     node = FakeNode(node_id="1", kind="Thing", attrs={"tags": ["foo", "bar"]})
     data = _serialise(adapter, node)
@@ -238,12 +233,7 @@ def test_field_not_in_schema_mapping_is_skipped() -> None:
 
 
 def test_mixed_kinds_round_trip_together() -> None:
-    """End-to-end sanity: a node with one attribute of each kind survives intact.
-
-    This is what the real ``CertificateCertificate`` shape looks like:
-    serial (str), expiration (datetime as str), alternative_name (list),
-    key_size (str via Dropdown), and a None optional field.
-    """
+    """End-to-end sanity: a node with one attribute of each kind survives intact."""
     field_names = ["serial", "expiration", "sans", "key_size", "validation", "is_revoked"]
     adapter = _make_adapter("Cert", field_names)
     node = FakeNode(
@@ -323,13 +313,7 @@ class TypedCertModel(DiffSyncModelMixin, DiffSyncModel):
 
 
 def test_adapter_output_constructs_pydantic_diffsync_model() -> None:
-    """The output of ``infrahub_node_to_diffsync`` must be directly
-    consumable by ``DiffSyncModel(**data)``.
-
-    This is what ``InfrahubAdapter.load`` does at runtime. The other
-    tests in this module check dict shape; this one checks the contract
-    that matters downstream: Pydantic-typed model construction.
-    """
+    """The output of ``infrahub_node_to_diffsync`` must be directly consumable by ``DiffSyncModel(**data)``."""
     field_names = ["serial", "subject_dn", "expiration", "port", "enabled", "sans", "metadata", "validation"]
     adapter = _make_adapter("TypedCert", field_names)
     node = FakeNode(
@@ -371,12 +355,7 @@ def test_adapter_output_constructs_pydantic_diffsync_model() -> None:
 
 
 def test_adapter_output_constructs_model_with_empty_list() -> None:
-    """Empty-list and empty-dict edge cases must construct the model.
-
-    ``str([])`` and ``str({})`` produce ``"[]"`` / ``"{}"`` — distinct
-    Python literals that look list/dict-ish but fail Pydantic validation
-    against ``list[str]`` / ``dict[str, Any]`` fields.
-    """
+    """Empty-list and empty-dict edge cases must construct the model."""
     field_names = ["serial", "subject_dn", "expiration", "port", "enabled", "sans", "metadata"]
     adapter = _make_adapter("TypedCert", field_names)
     node = FakeNode(
