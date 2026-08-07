@@ -127,13 +127,17 @@ def test_diff_lifecycle_value_error_reraises_the_original_type(
     assert not any("Failed to initialize the Sync Instance" in msg for msg in _messages(cli_logs))
 
 
-def test_diff_factory_import_error_is_caught_nowhere(run_dir: Path) -> None:
-    """A factory `ImportError` surfaces as an uncaught `ImportError` traceback."""
+def test_diff_factory_import_error_is_reported_as_one_line(run_dir: Path, cli_logs: pytest.LogCaptureFixture) -> None:
+    """A factory `ImportError` is reported as a one-line CLI refusal."""
     with patch(FACTORY, side_effect=ImportError("Could not load the following adapter(s): source adapter 'nope'")):
         result = _invoke("diff")
 
     assert result.exit_code == 1
-    assert isinstance(result.exception, ImportError)
+    assert isinstance(result.exception, SystemExit)
+    assert (
+        "Failed to initialize the Sync Instance: Could not load the following adapter(s): source adapter 'nope'"
+        in _messages(cli_logs)
+    )
     assert not (run_dir / "run.json").exists()
 
 
