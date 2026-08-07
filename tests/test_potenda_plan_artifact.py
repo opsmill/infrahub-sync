@@ -37,6 +37,7 @@ from infrahub_sync.cache import incremental as incremental_module
 from infrahub_sync.cache.cursors import CursorTier
 from infrahub_sync.cache.paths import cache_root_for
 from infrahub_sync.cli import app
+from infrahub_sync.execution import execute_run
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.derive import (
     derive_deletes,
@@ -839,6 +840,32 @@ def test_delete_computation_record_distinguishes_full_from_incremental_extract(
     assert [operation.action for operation in incremental_plan.operations() if operation.action == "delete"] == []
     # The value AD055's skipped-delete count is derived from: nothing to skip.
     assert incremental_plan.summary().deletes_not_executed == 0
+
+
+def test_delete_only_saved_plan_drives_the_execution_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A destination-only object is a planned delete even when the legacy diff rows are empty."""
+    config = build_config(order=["BuiltinTag"])
+    run_id = "20260726T1150-de1e7e01"
+    potenda = build_potenda(
+        config=config,
+        source=_FakeAdapter("source"),
+        destination=destination_with_orphan(),
+        run_id=run_id,
+        top_level=["BuiltinTag"],
+    )
+    pin_extraction_decisions(monkeypatch, [False, False])
+
+    def factory(**_kwargs: object) -> Potenda:
+        return potenda
+
+    result = execute_run(config, operation="plan", potenda_factory=factory)
+    saved_summary = read_saved_plan(sync_name=config.name, run_id=run_id, config=config).summary()
+
+    assert saved_summary.total == 1
+    assert saved_summary.by_action == {"delete": 1}
+    assert result.status == "planned"
+    assert result.changed is True
+    assert dict(result.summary) == {"create": 0, "update": 0, "delete": 1}
 
 
 # =======================================================================================

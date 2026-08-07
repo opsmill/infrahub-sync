@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections.abc import Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -21,7 +22,7 @@ from decimal import Decimal
 from pathlib import Path
 from timeit import default_timer as timer
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import pydantic
 import yaml
@@ -33,7 +34,7 @@ from infrahub_sync.cache.sidecars import RunFile
 from infrahub_sync.utils import get_potenda_from_instance
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Sequence
     from contextlib import AbstractContextManager
     from typing import NoReturn
 
@@ -579,15 +580,34 @@ def _summarize_rows(rows: Iterable[Mapping[str, Any]]) -> dict[ActionKey, int]:
     return counts
 
 
-def _run_plan_lifecycle(*, ptd: Potenda, run_file: RunFile) -> list[dict[str, str]]:
-    """Reproduce the CLI `diff` lifecycle (cli.py:149-159) and return the plan rows."""
+def _summary_from_plan_write(write_result: object, rows: Iterable[Mapping[str, Any]]) -> dict[ActionKey, int]:
+    """Use saved-operation counts when supplied, with legacy row fallback for test engines."""
+    if not isinstance(write_result, Mapping):
+        return _summarize_rows(rows)
+    if set(write_result) != set(ACTION_KEYS):
+        msg = f"plan write summary must carry exactly the keys {ACTION_KEYS!r}, got {sorted(write_result)!r}"
+        raise ValueError(msg)
+    typed_result = cast("Mapping[str, object]", write_result)
+    summary: dict[ActionKey, int] = {}
+    for action in ACTION_KEYS:
+        value = typed_result[action]
+        if not isinstance(value, int) or value < 0:
+            msg = f"plan write summary value for {action!r} must be a non-negative integer, got {value!r}"
+            raise ValueError(msg)
+        summary[action] = value
+    return summary
+
+
+def _run_plan_lifecycle(*, ptd: Potenda, run_file: RunFile) -> dict[ActionKey, int]:
+    """Reproduce the CLI `diff` lifecycle and return authoritative operation counts."""
     ptd.load_both_sides()
     mydiff = ptd.diff()
-    ptd.write_plan(mydiff)
+    write_result = ptd.write_plan(mydiff)
     logger.info("\n%s", mydiff.str())
     run_file.status = "dry-run"
     run_file.summary = {"resources": len(ptd.top_level)}
-    return list(ptd._diff_to_rows(mydiff))
+    rows = list(ptd._diff_to_rows(mydiff))
+    return _summary_from_plan_write(write_result, rows)
 
 
 def _run_sync_lifecycle(
@@ -597,8 +617,8 @@ def _run_sync_lifecycle(
     print_diff: bool,
     allow_rowcount_drop: bool,
     serial_load_error: Callable[[ValueError], NoReturn] | None,
-) -> list[dict[str, str]]:
-    """Reproduce the CLI serial `sync` lifecycle (cli.py:263-284) and return the plan rows."""
+) -> dict[ActionKey, int]:
+    """Reproduce the CLI serial `sync` lifecycle and return authoritative operation counts."""
     try:
         ptd.load_both_sides()
     except ValueError as exc:
@@ -611,7 +631,7 @@ def _run_sync_lifecycle(
         raise
     ptd.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
     mydiff = ptd.diff()
-    ptd.write_plan(mydiff)
+    write_result = ptd.write_plan(mydiff)
     if mydiff.has_diffs():
         if print_diff:
             logger.info("\n%s", mydiff.str())
@@ -624,7 +644,8 @@ def _run_sync_lifecycle(
     ptd.persist_baseline_counts()
     run_file.summary = {"resources": len(ptd.top_level), "mode": "serial"}
     run_file.status = "applied"
-    return list(ptd._diff_to_rows(mydiff))
+    rows = list(ptd._diff_to_rows(mydiff))
+    return _summary_from_plan_write(write_result, rows)
 
 
 def _build_result(
@@ -632,10 +653,9 @@ def _build_result(
     sync_instance: SyncInstance,
     operation: Operation,
     ptd: Potenda,
-    rows: Iterable[Mapping[str, Any]],
+    summary: Mapping[ActionKey, int],
 ) -> RunResult:
-    """Derive the result from the in-memory plan rows — never by re-reading plan.parquet."""
-    summary = _summarize_rows(rows)
+    """Derive the result from the in-memory operation summary."""
     changed = sum(summary.values()) > 0
     if not changed:
         status: Status = "no-change"
@@ -727,9 +747,9 @@ def execute_run(
 
         try:
             if operation == "plan":
-                rows = _run_plan_lifecycle(ptd=ptd, run_file=run_file)
+                summary = _run_plan_lifecycle(ptd=ptd, run_file=run_file)
             else:
-                rows = _run_sync_lifecycle(
+                summary = _run_sync_lifecycle(
                     ptd=ptd,
                     run_file=run_file,
                     print_diff=print_diff,
@@ -751,7 +771,7 @@ def execute_run(
             logger.info("Cached run %s at %s", ptd.run_id, ptd.run_dir)
         else:
             logger.info("Sync run %s at %s", ptd.run_id, ptd.run_dir)
-        return _build_result(sync_instance=sync_instance, operation=operation, ptd=ptd, rows=rows)
+        return _build_result(sync_instance=sync_instance, operation=operation, ptd=ptd, summary=summary)
 
 
 # --------------------------------------------------------------------------- #

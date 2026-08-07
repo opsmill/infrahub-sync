@@ -22,6 +22,7 @@ from typer.testing import CliRunner
 from infrahub_sync.cache.guardrails import RowcountGuardrailError
 from infrahub_sync.cache.locks import pipeline_lock
 from infrahub_sync.cli import app
+from infrahub_sync.plan.errors import PlanGenerationExistsError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -125,6 +126,24 @@ def test_diff_lifecycle_value_error_reraises_the_original_type(
     assert _run_json(run_dir)["status"] == "failed"
     # The diff path has no narrow load handler — nothing is logged and no abort fires.
     assert not any("Failed to initialize the Sync Instance" in msg for msg in _messages(cli_logs))
+
+
+def test_diff_writer_generation_race_is_reported_as_one_line(run_dir: Path, cli_logs: pytest.LogCaptureFixture) -> None:
+    """A writer-stage immutability race keeps failed state and becomes a CLI refusal."""
+    fake_ptd = _fake_potenda(run_dir)
+    message = "A committed plan generation already exists for run 'test-run'."
+    refusal = PlanGenerationExistsError(message)
+    fake_ptd.write_plan.side_effect = refusal
+
+    with patch(FACTORY, return_value=fake_ptd):
+        result = _invoke("diff")
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert not isinstance(result.exception, PlanGenerationExistsError)
+    assert _messages(cli_logs) == [str(refusal)]
+    assert "Traceback" not in result.output
+    assert _run_json(run_dir)["status"] == "failed"
 
 
 def test_diff_factory_import_error_is_reported_as_one_line(run_dir: Path, cli_logs: pytest.LogCaptureFixture) -> None:

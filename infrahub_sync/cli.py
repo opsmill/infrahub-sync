@@ -22,6 +22,7 @@ from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
     OperationApplyFailedError,
     PlanArtifactError,
+    PlanGenerationExistsError,
     UnknownPlanKindError,
 )
 from infrahub_sync.plan.models import ApplyRecord
@@ -551,19 +552,25 @@ def diff_cmd(
         # The lifecycle delegates to the shared execution surface. The CLI keeps
         # the outer lock solely so the saved-plan immutability guard can be repeated
         # after a contending process releases it; tell the surface not to reacquire it.
-        execute_run(
-            sync_instance,
-            operation="plan",
-            confirm_writes=False,
-            branch=branch,
-            show_progress=show_progress,
-            verbosity=verbosity_level,
-            run_id=run_id,
-            concurrent_load=concurrent_load,
-            full_extract=full_extract,
-            potenda_factory=_cli_potenda_factory,
-            _lock_already_held=True,
-        )
+        try:
+            execute_run(
+                sync_instance,
+                operation="plan",
+                confirm_writes=False,
+                branch=branch,
+                show_progress=show_progress,
+                verbosity=verbosity_level,
+                run_id=run_id,
+                concurrent_load=concurrent_load,
+                full_extract=full_extract,
+                potenda_factory=_cli_potenda_factory,
+                _lock_already_held=True,
+            )
+        except PlanGenerationExistsError as exc:
+            # `execute_run` has already marked run.json failed. Keep the saved-plan
+            # command's narrow one-line refusal for the residual writer-stage race;
+            # every other derivation failure still escapes with its traceback.
+            print_error_and_abort(str(exc))
 
 
 @app.command(name="sync")

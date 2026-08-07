@@ -35,7 +35,7 @@ from infrahub_sync.plan.errors import (
     PlanVerificationError,
     SkippedDeleteOperation,
 )
-from infrahub_sync.plan.models import ApplyRecord
+from infrahub_sync.plan.models import ACTIONS, ApplyRecord
 from infrahub_sync.plan.write_surface import PlannedWriteDestination
 
 # Justified once here rather than per site. Nearly every `infrahub_sync`
@@ -445,7 +445,7 @@ class Potenda:
                 )
         return rows
 
-    def write_plan(self, diff: Any) -> None:
+    def write_plan(self, diff: Any) -> dict[str, int] | None:
         """Write both plan representations for a single-diff run.
 
         `plan.parquet` is written exactly as before (V23) — it is retained for operators
@@ -456,13 +456,19 @@ class Potenda:
         command, the serial `sync` command and `sync_in_tiers`' no-tiers branch — and on all
         three it runs before any destination write, which is what FR-001 requires. The tier branch of
         `sync_in_tiers` writes the artifact itself, from every tier's retained diff.
+
+        Returns the saved artifact's in-memory per-action counts, or `None` when no
+        saved artifact can be written. The shared execution surface uses those counts
+        instead of the narrower legacy parquet rows; legacy behavioral engines that
+        return nothing remain supported there.
         """
         if not self.run_dir:
-            return
+            return None
         from infrahub_sync.cache.parquet_io import write_plan
 
         write_plan(run_dir=self.run_dir, rows=self._diff_to_rows(diff))
-        self.write_plan_artifact([diff])
+        written = self._write_plan_artifact([diff])
+        return None if written is None else written[1]
 
     def write_plan_artifact(self, diffs: Sequence[Any]) -> PlanManifest | None:
         """Derive and write `<run_dir>/plan/` for `diffs`, before any destination write.
@@ -479,6 +485,11 @@ class Potenda:
         A derivation or write failure propagates: it fails the command on `diff` exactly
         as on `sync` (FR-030, AD047).
         """
+        written = self._write_plan_artifact(diffs)
+        return None if written is None else written[0]
+
+    def _write_plan_artifact(self, diffs: Sequence[Any]) -> tuple[PlanManifest, dict[str, int]] | None:
+        """Write the artifact once and retain its authoritative in-memory action counts."""
         if not self.run_dir or not self.run_id or self.config is None:
             # No cache identity or no parsed configuration — the latter only happens in
             # tests, which construct Potenda with `config=None`.
@@ -523,6 +534,9 @@ class Potenda:
                 destination_full_extract=deletes_computed,
             )
         )
+        action_counts: dict[str, int] = dict.fromkeys(ACTIONS, 0)
+        for operation in operations:
+            action_counts[operation.action] += 1
 
         warn_missing_convergence_key(destination=self.destination, operations=operations)
 
@@ -543,7 +557,7 @@ class Potenda:
             self.run_dir / "plan",
             deletes_computed,
         )
-        return manifest
+        return manifest, action_counts
 
     def _apply_config_version(self, supplied: str | None) -> str:
         """The configuration version the apply compares the artifact's against (FR-011, AD013).

@@ -63,14 +63,18 @@ absolutizes a relative cache directory at the single derivation point, using `ab
 rather than `resolve()` so the final path segment the `run_id` invariant compares against
 survives.
 
-`summary`, `changed` and `status` all derive from the one in-memory materialized plan-row
-list — the same rows handed to `write_plan` — never by re-reading `plan.parquet`.
+`summary`, `changed` and `status` derive from the authoritative saved operations that the
+real engine just derived in memory and handed to the artifact writer, never by re-reading
+`plan.parquet`. Behavioral test engines with the legacy no-return `write_plan` shape fall
+back to their in-memory materialized plan rows, which keeps the execution seam injectable
+without weakening production delete reporting.
 
-One fidelity boundary is worth knowing: the row materializer walks only the diff root's
-direct children, while `Diff.has_diffs()` is recursive. `has_diffs()` still gates whether a
-sync executes, but the result fields come from the rows, so a diff with changes only in
-nested children reports `status="no-change"` even though a sync ran. A unit test pins that
-behaviour so it is a known boundary rather than a surprise.
+One test-seam fidelity boundary is worth knowing: a legacy behavioral engine that returns
+no saved-operation counts falls back to the row materializer, which walks only the diff
+root's direct children, while `Diff.has_diffs()` is recursive. Such a fake can therefore
+execute a sync for nested-only changes but report `status="no-change"`; a unit test pins that
+fallback behavior. The real saved-plan engine instead refuses unwalked nested elements
+during plan derivation, before it can return a misleading result.
 
 ## Failure model
 
