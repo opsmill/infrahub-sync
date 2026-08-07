@@ -58,6 +58,7 @@ const sidebars: SidebarsConfig = {
         'reference/schema-mapping',
         'reference/cli',
         'reference/incremental-extraction',
+        'reference/prefect-remote-run',
       ],
     },
     {

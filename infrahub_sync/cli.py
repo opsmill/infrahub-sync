@@ -5,7 +5,6 @@ import textwrap
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from enum import Enum
-from timeit import default_timer as timer
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 import typer
@@ -14,6 +13,7 @@ from infrahub_sdk.exceptions import ServerNotResponsiveError
 
 from infrahub_sync.cache.locks import pipeline_lock
 from infrahub_sync.cache.sidecars import RunFile
+from infrahub_sync.execution import execute_run
 
 # Imported at module level rather than deferred: `infrahub_sync.utils` below already pulls
 # the engine, which pulls this package, so deferring these would buy no import time and only
@@ -22,7 +22,6 @@ from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
     OperationApplyFailedError,
     PlanArtifactError,
-    PlanGenerationExistsError,
     UnknownPlanKindError,
 )
 from infrahub_sync.plan.models import ApplyRecord
@@ -53,6 +52,7 @@ if TYPE_CHECKING:
     from infrahub_sync import SyncInstance
     from infrahub_sync.plan.models import PlannedOperation, PlanSummary, RelationshipReference
     from infrahub_sync.plan.review import SavedPlan
+    from infrahub_sync.potenda import Potenda
 
 VERBOSITY_MAP = {"quiet": logging.WARNING, "default": logging.INFO, "verbose": logging.DEBUG}
 
@@ -432,6 +432,20 @@ def _require_a_free_run_id(*, sync_name: str, run_id: str | None) -> None:
         print_error_and_abort(str(exc))
 
 
+def _cli_potenda_factory(**kwargs: Any) -> Potenda:
+    """Build the engine, keeping the CLI's prefixed abort at the construction site.
+
+    `execute_run` deliberately does not catch factory failures, so this wrapper is
+    where the CLI's own adapter construction error handling lives. The module global is resolved
+    at call time so patches on `infrahub_sync.cli.get_potenda_from_instance` still
+    intercept construction.
+    """
+    try:
+        return get_potenda_from_instance(**kwargs)
+    except (ImportError, ValueError) as exc:
+        print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}")
+
+
 @app.command(name="list")
 def list_projects(
     directory: str = typer.Option(default=None, help="Base directory to search for sync configurations"),
@@ -534,50 +548,22 @@ def diff_cmd(
         # would otherwise have its snapshots rewritten before the writer refused it. One `stat`.
         _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id)
 
-        try:
-            ptd = get_potenda_from_instance(
-                sync_instance=sync_instance,
-                branch=branch,
-                show_progress=show_progress,
-                verbosity=verbosity_level,
-                run_id=run_id,
-                concurrent_load=concurrent_load,
-            )
-        except (ImportError, ValueError) as exc:
-            # `ImportError` too: an adapter that cannot be loaded — a missing optional dependency,
-            # most often — has a remedy, and escaped as a traceback while an adapter that could not
-            # be *initialized* was one line.
-            print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}")
-
-        ptd.force_full_extract = full_extract
-        if ptd.run_dir is None:  # get_potenda_from_instance always allocates one
-            msg = "get_potenda_from_instance did not allocate a run_dir"
-            raise RuntimeError(msg)
-        run_file = RunFile(path=ptd.run_dir / "run.json", status="running", mode="diff")
-        run_file.save()
-
-        try:
-            ptd.load_both_sides()
-            mydiff = ptd.diff()
-            ptd.write_plan(mydiff)
-            logger.info("\n%s", mydiff.str())
-            run_file.status = "dry-run"
-            run_file.summary = {"resources": len(ptd.top_level)}
-        except PlanGenerationExistsError as exc:
-            # The residual race the guard above cannot close — the writer's own refusal — reported
-            # as the one line the guard would have given it rather than as a stack trace. Narrow on
-            # purpose: the derivation failures are raised for their traceback (AD047).
-            run_file.status = "failed"
-            run_file.save()
-            print_error_and_abort(str(exc))
-        except Exception:
-            run_file.status = "failed"
-            run_file.save()
-            raise
-
-        run_file.finished_at = datetime.now(timezone.utc).isoformat()
-        run_file.save()
-        logger.info("Cached run %s at %s", ptd.run_id, ptd.run_dir)
+        # The lifecycle delegates to the shared execution surface. The CLI keeps
+        # the outer lock solely so the saved-plan immutability guard can be repeated
+        # after a contending process releases it; tell the surface not to reacquire it.
+        execute_run(
+            sync_instance,
+            operation="plan",
+            confirm_writes=False,
+            branch=branch,
+            show_progress=show_progress,
+            verbosity=verbosity_level,
+            run_id=run_id,
+            concurrent_load=concurrent_load,
+            full_extract=full_extract,
+            potenda_factory=_cli_potenda_factory,
+            _lock_already_held=True,
+        )
 
 
 @app.command(name="sync")
@@ -641,18 +627,21 @@ def sync_cmd(
 
     verbosity_level = ctx.obj.get("verbosity", logging.INFO) if ctx.obj else logging.INFO
 
+    # The lock stays here: the parallel branch below needs it, and the branch predicate
+    # reads `ptd.tiers`, so the engine must exist before the branch is taken. It is
+    # therefore built EXACTLY ONCE, here — a second construction would allocate a second
+    # run_dir/run_id and re-emit the tier log lines. The serial branch hands this engine
+    # to `execute_run` through a closure and passes `_lock_already_held=True` so the
+    # surface does not try to re-acquire the lock this block already holds.
     with pipeline_lock(sync_instance.name):
-        try:
-            ptd = get_potenda_from_instance(
-                sync_instance=sync_instance,
-                branch=branch,
-                show_progress=show_progress,
-                verbosity=verbosity_level,
-                continue_on_error=continue_on_error,
-                concurrent_load=concurrent_load,
-            )
-        except (ImportError, ValueError) as exc:
-            print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}")
+        ptd = _cli_potenda_factory(
+            sync_instance=sync_instance,
+            branch=branch,
+            show_progress=show_progress,
+            verbosity=verbosity_level,
+            continue_on_error=continue_on_error,
+            concurrent_load=concurrent_load,
+        )
 
         ptd.force_full_extract = full_extract
         if ptd.run_dir is None:  # get_potenda_from_instance always allocates one
@@ -677,26 +666,25 @@ def sync_cmd(
                     print_error_and_abort(str(exc))
                 run_file.summary = {"resources": len(ptd.top_level), "mode": "parallel"}
             else:
-                try:
-                    ptd.load_both_sides()
-                except ValueError as exc:
-                    run_file.status = "failed"
-                    run_file.save()
-                    print_error_and_abort(str(exc))
-                ptd.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
-                mydiff = ptd.diff()
-                ptd.write_plan(mydiff)
-                if mydiff.has_diffs():
-                    if diff:
-                        logger.info("\n%s", mydiff.str())
-                    start_synctime = timer()
-                    ptd.sync(diff=mydiff)
-                    end_synctime = timer()
-                    logger.info("Sync: Completed in %s sec", end_synctime - start_synctime)
-                else:
-                    logger.info("No difference found. Nothing to sync")
-                ptd.persist_baseline_counts()
-                run_file.summary = {"resources": len(ptd.top_level), "mode": "serial"}
+                execute_run(
+                    sync_instance,
+                    operation="sync",
+                    confirm_writes=True,  # the explicit human CLI invocation IS the confirmation
+                    branch=branch,
+                    show_progress=show_progress,
+                    verbosity=verbosity_level,
+                    concurrent_load=concurrent_load,
+                    full_extract=full_extract,
+                    allow_rowcount_drop=allow_rowcount_drop,
+                    continue_on_error=continue_on_error,
+                    print_diff=diff,
+                    potenda_factory=lambda **_kwargs: ptd,
+                    _serial_load_error=lambda exc: print_error_and_abort(str(exc)),
+                    _lock_already_held=True,
+                )
+                # `execute_run` owns the rest of the serial run: it finalizes the same
+                # run.json and emits the closing log line.
+                return
 
             run_file.status = "applied"
         except Exception:

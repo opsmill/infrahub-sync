@@ -26,9 +26,21 @@ procedures see [`dev/guides/`](../guides/README.md).
   destination write surface and what its type does and does not enforce, apply-time peer
   resolution, replace-set flush semantics, and how deletes are recorded but not executed.
 
+## Running a sync from something other than the CLI
+
+- [The shared execution surface](execution-surface.md) — the typed entry point to one run:
+  `RunResult`, the failure classes, the pipeline lock, and the plan fingerprint.
+- [Prefect orchestration](orchestration-prefect.md) — the packaged flow and serve
+  entrypoint, the log bridge, the remote API surface, and Prefect's traps.
+
+## Repository workflow
+
+- [Quality gates](quality-gates.md) — what `invoke lint` and `invoke format` actually run,
+  the inherited pylint baseline, and how to measure a no-regression claim.
+
 ## Related
 
-- [Decision records](../adr/README.md) — the decisions behind these documents.
-- [Adapter guidelines](../guidelines/README.md) — rules an adapter must follow.
+- [Adapter guidelines](../guidelines/README.md) — rules that apply to this code.
 - [Adapter guides](../guides/README.md) — adding and testing an adapter.
+- [Decision records](../adr/README.md) — why the architecture is shaped the way it is.
 - [Constitution](../constitution.md) — project principles these documents serve.

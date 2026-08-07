@@ -1,0 +1,35 @@
+---
+# yaml-language-server: $schema=https://schema.infrahub.app/infrahub/schema/latest.json
+#
+# Destination schema for the Prefect remote-run example.
+#
+# Defines the single node the example's source fixture maps onto:
+# InfraDevice with the two attributes `name` and `type`, matching the
+# `schema_mapping` in examples/custom_adapter/config.yml.
+#
+# Load it with (see ../README.md for the full walkthrough):
+#   uv run infrahubctl schema load examples/prefect_remote_run/schemas/infra_device.yml --branch main
+version: "1.0"
+
+nodes:
+  - name: Device
+    namespace: Infra
+    label: Device
+    description: Minimal device node used by the Prefect remote-run example.
+    icon: mdi:server
+    include_in_menu: true
+    # `human_friendly_id` and `order_by` on purpose: the older
+    # `display_labels` / `default_filter` keys are deprecated and make
+    # Infrahub emit a deprecation warning when the schema is loaded.
+    human_friendly_id:
+      - name__value
+    order_by:
+      - name__value
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+        order_weight: 1000
+      - name: type
+        kind: Text
+        order_weight: 2000
