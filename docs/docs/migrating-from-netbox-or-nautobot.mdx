@@ -27,7 +27,13 @@ Infrahub uses a custom schema that you define. Before migrating data, decide on 
 
 The Infrahub schema does not have to mirror the source system one-to-one. Migration is an opportunity to model the data the way you need going forward, not the way the previous tool happened to model it.
 
-For a concrete starting point, see the example sync projects at `examples/netbox_to_infrahub/` and `examples/nautobot_to_infrahub/` in the [Infrahub Sync repository](https://github.com/opsmill/infrahub-sync). Each references an Infrahub demo schema you can use as a reference when defining your own. Replace its model and field names with the equivalents in your Infrahub schema.
+For a concrete NetBox starting point, follow the
+[NetBox demo tutorial](./tutorials/netbox-demo-to-infrahub.mdx). It provisions a
+fresh Infrahub instance, loads the matching schema-library revision, creates a
+current NetBox demo token, installs the adapter dependency, and generates the
+`from-netbox` sync code. Use `examples/nautobot_to_infrahub/` as a configuration
+reference for Nautobot, and replace its model and field names with the equivalents
+in your Infrahub schema.
 
 ## Phase 2 — Build the sync project
 
@@ -35,7 +41,12 @@ A sync project is a directory containing a `config.yml` that defines the source 
 
 ### Start from the example
 
-The Infrahub Sync repository includes working examples at `examples/netbox_to_infrahub/` and `examples/nautobot_to_infrahub/`. Copy the directory matching your source system as the starting point. The examples use the Infrahub demo schema — update model and field names to match the schema you chose in Phase 1.
+The Infrahub Sync repository includes configuration examples at
+`examples/netbox_to_infrahub/` and `examples/nautobot_to_infrahub/`. Copy the
+directory matching your source system as the starting point. For NetBox, use the
+[demo tutorial](./tutorials/netbox-demo-to-infrahub.mdx) to provision the schema
+and source credentials that the example expects. Update model and field names to
+match the schema you chose in Phase 1.
 
 ### Define sync order
 
@@ -61,6 +72,25 @@ Run `infrahub-sync diff` to verify what the sync will do before applying changes
 ```shell
 infrahub-sync diff --name <project> --directory <dir>
 ```
+
+:::warning Current NetBox saved-plan limits
+
+The current `from-netbox` mapping and schema-library revision cannot apply saved
+`IpamPrefix` or `IpamIPAddress` operations: their plan identities omit the
+`ip_namespace` component required by the destination human-friendly ID. Apply
+refuses the first affected operation and records any earlier writes in
+`run.json`.
+
+`LocationRack` is also not convergent when different sites contain racks with
+the same name. The configuration identifies a rack by `name` and `site`, while
+the current schema-library revision keys it by `name` alone.
+
+Use the bounded live test in
+`tests/integration/test_saved_plan_apply_integration.py` to exercise the saved-plan
+workflow without those unsupported relationships. Treat the public NetBox demo
+as changing external data: its tokens and named fixture devices can change.
+
+:::
 
 The diff prints the proposed changes to the terminal without modifying Infrahub. Review it model by model:
 

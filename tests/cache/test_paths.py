@@ -24,6 +24,29 @@ def test_cache_root_honors_env(tmp_path, monkeypatch) -> None:
     assert root == tmp_path / "custom" / "from-netbox"
 
 
+def test_cache_root_absolutizes_a_relative_env_override(tmp_path, monkeypatch) -> None:
+    """`RunResult.artifact_path` is contractually absolute and crosses a process boundary.
+
+    A remote caller cannot recover the serving process's cwd, so a relative
+    `INFRAHUB_SYNC_CACHE_DIR` must be absolutized here — the single derivation point
+    for every cache path.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", "relcache")
+    root = cache_root_for("from-netbox")
+    assert root.is_absolute()
+    assert root == tmp_path.absolute() / "relcache" / "from-netbox"
+
+
+def test_run_dir_is_absolute_under_a_relative_env_override(tmp_path, monkeypatch) -> None:
+    """The absolutized root keeps the final segment, so the run_id invariant holds."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", "relcache")
+    rd = run_dir("from-netbox", "20260512T1530-abc12345")
+    assert rd.is_absolute()
+    assert rd.name == "20260512T1530-abc12345"
+
+
 def test_generate_run_id_format() -> None:
     rid = generate_run_id()
     # ISO-ish: 20260512T1530-<8 hex>

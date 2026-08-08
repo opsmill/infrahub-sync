@@ -15,7 +15,7 @@
 
 ```bash
 pyenv local 3.12.x || use system Python 3.10–3.13
-uv sync
+uv sync --extra dev --extra prefect
 ```
 
 ## Required Development Workflow
@@ -23,12 +23,25 @@ uv sync
 Run in order before committing:
 
 ```bash
-uv sync
+uv sync --extra dev --extra prefect
 uv run invoke format
 uv run invoke lint
 ```
 
-`invoke lint` runs ruff → pylint → yamllint → ty.
+`invoke lint` runs rumdl → ruff → pylint → yamllint → ty, and **short-circuits**: no leg
+passes `warn=True`, so the first non-zero exit aborts the chain and a Markdown nit hides
+every Python finding behind it. It also does not exit 0 on a clean checkout — the inherited
+pylint baseline is recorded in
+[`dev/knowledge/quality-gates.md`](dev/knowledge/quality-gates.md). Read that page before
+treating either aggregate as a gate; it also explains why `rumdl fmt` loses text in this
+repository's Markdown — `dev/specs/**` is excluded from rumdl for that reason — and which
+task formats Python only.
+
+The `prefect` extra is not optional for development: without it `ty` cannot resolve
+`infrahub_sync/orchestration/`'s imports and `tests/orchestration/test_flow.py` skips
+itself whole, so both gates would pass without ever checking that code. CI installs it
+for the same reason, alongside one base-install job that keeps the Prefect-free
+guarantee honest.
 
 **CLI sanity after changes:**
 
@@ -37,6 +50,14 @@ uv run infrahub-sync --help
 uv run infrahub-sync list --directory examples/
 uv run infrahub-sync generate --name from-netbox --directory examples/
 ```
+
+The `from-netbox` generation check is integration-backed. Before running it,
+follow the [NetBox demo tutorial](docs/docs/tutorials/netbox-demo-to-infrahub.mdx)
+through **Generate the sync code**. That setup uses a fresh Infrahub instance,
+loads the matching schema library, creates a current `nbt_...` NetBox demo
+token, and installs `pynetbox`. The public demo data changes over time; the
+bounded live acceptance test records its current data preconditions in
+`tests/integration/test_saved_plan_apply_integration.py`.
 
 **Docs** (only if user-facing changes — see [Documentation](#documentation)):
 
@@ -92,7 +113,9 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 
 - Prefer explicit types on new or changed code; public functions and classes get concise docstrings.
 - Ruff: formatted and lint-clean. Honor `pyproject.toml`.
-- Pylint: fix actionable issues in touched code; some warnings are expected.
+- Pylint: fix actionable issues in touched code. It does not pass on a clean checkout; the
+  inherited baseline and how to compare against it are in
+  [`dev/knowledge/quality-gates.md`](dev/knowledge/quality-gates.md).
 - ty: included in `uv run invoke lint`; do not increase the error count.
 - Raise specific exceptions; avoid broad `except Exception:`.
 
@@ -191,3 +214,18 @@ step-by-step procedure. Supporting developer reference lives under `dev/`:
 - [Adapter guides](dev/guides/README.md) — adding and testing an adapter, step by step.
 
 Core rule unchanged: provide read-only `list` / `diff` pathways and validate them before enabling `sync`.
+
+## Beyond Adapters
+
+`dev/` is not adapter-only. When the work is not an adapter, start here:
+
+- [The shared execution surface](dev/knowledge/execution-surface.md) — the typed entry point
+  to one run, used by the CLI and by the packaged Prefect flow.
+- [Prefect orchestration](dev/knowledge/orchestration-prefect.md) — the optional
+  orchestration integration and its import boundary.
+- [Quality gates](dev/knowledge/quality-gates.md) — what the lint and format aggregates
+  really do, and the inherited baseline.
+- [Testing](dev/guidelines/testing.md) — repository-wide test rules.
+- [Secret redaction](dev/guidelines/secret-redaction.md) — required reading before adding any
+  failure path that crosses a process boundary.
+- [Decision records](dev/adr/README.md) — why the architecture is shaped the way it is.

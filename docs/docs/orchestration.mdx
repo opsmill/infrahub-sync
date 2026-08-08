@@ -34,15 +34,17 @@ Define the sync as a scheduled workflow in your CI system. CI provides run histo
 
 ### Prefect
 
-Prefect is a Python-based workflow orchestrator. Wrap a sync run in a Prefect flow to get retry policies, dependency management, observability through the Prefect UI, and the ability to compose syncs with other Python tasks.
+Infrahub Sync ships an optional Prefect integration as a developer preview. Install the `prefect` extra and one served deployment exposes a plan or a sync over Prefect's own REST API, with the sync's own log output forwarded into the flow-run log — no wrapper code to write and maintain. See the [Prefect remote run reference](./reference/prefect-remote-run.mdx) for the parameters, result fields, and status mapping, and `examples/prefect_remote_run/README.md` in the repository for a runnable walkthrough.
 
 **When this works well:**
 
 - You already use Prefect for other infrastructure or data workflows.
-- Syncs need to be composed with other tasks — for example, run a sync, then trigger downstream automation.
+- A sync needs to be triggered on demand from another system, over an API rather than a shell.
 - You want centralized observability across many sync projects.
 
-**Trade-offs:** Prefect itself has to be operated. If you don't already run it, this adds operational surface area.
+**Trade-offs:** Prefect itself has to be operated. If you don't already run it, this adds operational surface area. The packaged integration is a preview: it covers running and observing one plan or sync, not scheduling or retry policy.
+
+If you need behaviors the preview does not cover — schedules, retry policies, work pools and workers, or composing several sync runs into a larger flow — wrap the CLI in a flow of your own instead. A Prefect flow that shells out to `infrahub-sync sync` gives you the full Prefect feature set, at the cost of owning the wrapper.
 
 ### Dagster, Airflow, and other workflow engines
 
