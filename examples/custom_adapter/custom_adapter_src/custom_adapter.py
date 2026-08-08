@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,11 @@ This adapter simulates connecting to a mock database containing Cars and People.
 It demonstrates the key patterns for creating adapters in infrahub-sync.
 """
 
+# Log under the `infrahub_sync` hierarchy so this adapter's narration reaches the
+# same places the engine's own lifecycle logs go: the CLI output, and the Prefect
+# flow-run log when the run is invoked remotely.
+logger = logging.getLogger("infrahub_sync.examples.custom_adapter")
+
 
 class MockDBClient:
     """Client for interacting with a mock database stored as a JSON file."""
@@ -40,14 +46,29 @@ class MockDBClient:
         # Default to a sample database with a few entries
         self.data = {}
 
-        # If a filepath is provided, try to load the data from it
-        if filepath and Path(filepath).exists():
-            try:
-                with Path(filepath).open(encoding="utf-8") as f:
-                    self.data = json.load(f)
-                print(f"DEBUG: Loaded mock database from {filepath}")
-            except (FileNotFoundError, json.JSONDecodeError) as e:
-                print(f"DEBUG: Failed to load mock database from {filepath}: {e}")
+        if not filepath:
+            return
+
+        # A configured db_path that does not exist would otherwise leave this
+        # client silently empty, and the run would report a successful plan with
+        # zero changes. Say so instead: the path is relative to the working
+        # directory of the process running the sync.
+        if not Path(filepath).exists():
+            logger.warning(
+                "MockDB database file not found: %s (resolved to %s from working directory %s) - "
+                "no records will be loaded",
+                filepath,
+                Path(filepath).absolute(),
+                Path.cwd(),
+            )
+            return
+
+        try:
+            with Path(filepath).open(encoding="utf-8") as f:
+                self.data = json.load(f)
+            logger.debug("Loaded mock database from %s", filepath)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.warning("Failed to load mock database from %s: %s", filepath, e)
 
     def get_all_nodes(self, model: str) -> list[dict[str, Any]]:
         """Get all nodes of a specific model from the mock database.
@@ -58,9 +79,9 @@ class MockDBClient:
         Returns:
             A list of dictionaries representing the nodes.
         """
-        print(f"DEBUG: Getting all {model} nodes from mock database")
+        logger.debug("Getting all %s nodes from mock database", model)
         nodes = self.data.get("nodes", {}).get(model, [])
-        print(f"Loading {len(nodes)} {model} nodes")
+        logger.info("Loading %s %s nodes", len(nodes), model)
         return nodes
 
 
@@ -87,8 +108,10 @@ class MockdbAdapter(DiffSyncMixin, Adapter):
         db_path = self.settings.get("db_path", "")
         self.client = MockDBClient(filepath=db_path or None)
 
-        print(f"DEBUG: Initialized {self.__class__.__name__} adapter with target: {target}")
-        print(f"DEBUG: Settings: {self.settings}")
+        logger.debug("Initialized %s adapter with target: %s", self.__class__.__name__, target)
+        # Adapter settings can hold credentials in a real adapter - log only the
+        # setting NAMES, never their values.
+        logger.debug("Settings provided: %s", sorted(self.settings))
 
     def model_loader(self, model_name: str, model: MockdbModel) -> None:
         """
@@ -101,14 +124,14 @@ class MockdbAdapter(DiffSyncMixin, Adapter):
             model_name: The name of the model to load data for.
             model: The model class to instantiate.
         """
-        print(f"DEBUG: Loading {model_name} data via model_loader...")
+        logger.debug("Loading %s data via model_loader...", model_name)
 
         # Find the corresponding schema mapping for this model
         for element in self.config.schema_mapping:
             if element.name == model_name:
                 # Get the resource name from the mapping
                 resource_name = element.mapping
-                print(f"DEBUG: Found mapping for {model_name}: {resource_name}")
+                logger.debug("Found mapping for %s: %s", model_name, resource_name)
 
                 # Get all nodes of this type from the mock database
                 nodes = self.client.get_all_nodes(resource_name)
@@ -118,17 +141,17 @@ class MockdbAdapter(DiffSyncMixin, Adapter):
                 if self.config.source.name.title() == self.type.title():
                     # Filter and transform the records
                     filtered_objs = model.filter_records(records=nodes, schema_mapping=element)
-                    print(f"DEBUG: {self.type}: Loading {len(filtered_objs)}/{total} {model_name}")
+                    logger.info("%s: Loading %s/%s %s", self.type, len(filtered_objs), total, model_name)
                     transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
                 else:
                     # No filtering needed
-                    print(f"{self.type}: Loading all {total} {model_name}")
+                    logger.info("%s: Loading all %s %s", self.type, total, model_name)
                     transformed_objs = nodes
 
                 # Add each object to the adapter
                 for obj in transformed_objs:
                     data = self.obj_to_diffsync(obj=obj, mapping=element, model=model)
-                    print(f"DEBUG: Adding {data.get('name', data.get('local_id'))} to adapter")
+                    logger.debug("Adding %s to adapter", data.get("name", data.get("local_id")))
                     self.add(model(**data))
 
                 # We found and processed the mapping, so we're done

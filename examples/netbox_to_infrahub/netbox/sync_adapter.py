@@ -4,22 +4,25 @@ from infrahub_sync.plugin_loader import PluginLoader
 
 from .sync_models import (
     BuiltinTag,
-    ChoiceCircuitType,
-    ChoiceDeviceType,
-    CoreStandardGroup,
-    InfraCircuit,
-    InfraDevice,
-    InfraInterfaceL2L3,
-    InfraIPAddress,
-    InfraPrefix,
-    InfraProviderNetwork,
-    InfraRack,
-    InfraRouteTarget,
-    InfraVLAN,
-    InfraVRF,
-    LocationGeneric,
-    OrganizationGeneric,
-    RoleGeneric,
+    DcimCircuit,
+    DcimDevice,
+    DcimDeviceType,
+    DcimPlatform,
+    InterfaceLag,
+    InterfacePhysical,
+    InterfaceVirtual,
+    IpamAggregate,
+    IpamIPAddress,
+    IpamPrefix,
+    IpamRouteTarget,
+    IpamVLAN,
+    IpamVLANGroup,
+    IpamVRF,
+    LocationRack,
+    LocationSite,
+    OrganizationManufacturer,
+    OrganizationProvider,
+    OrganizationRIR,
 )
 
 # Load adapter class dynamically at runtime
@@ -33,20 +36,23 @@ _AdapterBaseClass = PluginLoader().resolve("netbox")
 #  All modifications will be lost the next time you reexecute this command
 # -------------------------------------------------------
 class NetboxSync(_AdapterBaseClass):
-    CoreStandardGroup = CoreStandardGroup
     BuiltinTag = BuiltinTag
-    ChoiceCircuitType = ChoiceCircuitType
-    ChoiceDeviceType = ChoiceDeviceType
-    InfraCircuit = InfraCircuit
-    InfraDevice = InfraDevice
-    InfraIPAddress = InfraIPAddress
-    InfraInterfaceL2L3 = InfraInterfaceL2L3
-    InfraPrefix = InfraPrefix
-    InfraProviderNetwork = InfraProviderNetwork
-    InfraRack = InfraRack
-    InfraRouteTarget = InfraRouteTarget
-    InfraVLAN = InfraVLAN
-    InfraVRF = InfraVRF
-    LocationGeneric = LocationGeneric
-    OrganizationGeneric = OrganizationGeneric
-    RoleGeneric = RoleGeneric
+    DcimDeviceType = DcimDeviceType
+    DcimPlatform = DcimPlatform
+    DcimDevice = DcimDevice
+    InterfacePhysical = InterfacePhysical
+    InterfaceVirtual = InterfaceVirtual
+    IpamPrefix = IpamPrefix
+    IpamIPAddress = IpamIPAddress
+    OrganizationManufacturer = OrganizationManufacturer
+    OrganizationProvider = OrganizationProvider
+    IpamAggregate = IpamAggregate
+    OrganizationRIR = OrganizationRIR
+    DcimCircuit = DcimCircuit
+    InterfaceLag = InterfaceLag
+    LocationSite = LocationSite
+    LocationRack = LocationRack
+    IpamVLAN = IpamVLAN
+    IpamVLANGroup = IpamVLANGroup
+    IpamVRF = IpamVRF
+    IpamRouteTarget = IpamRouteTarget

@@ -1,6 +1,10 @@
 ---
 # from-netbox — demonstrates the two newest features of infrahub-sync:
 #
+# Setup and current limitations:
+#   - README.md
+#   - docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+#
 #   1. Auto-tiered write order. The `order:` list has been removed; the engine
 #      derives tiers from `schema_mapping[].fields[].reference` and groups
 #      kinds that can be written in parallel. Add `--parallel` to `sync` to

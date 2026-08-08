@@ -78,8 +78,13 @@ jobs:
       - name: "Set up Python ${{ matrix.python-version }}"
         run: uv python install ${{ matrix.python-version }}
 
+      # The `prefect` extra is required by the ty gate: with Prefect absent, ty
+      # reports `unresolved-import` for every `prefect` import in
+      # `infrahub_sync/orchestration/` and `tests/orchestration/` (measured: 13
+      # diagnostics instead of 4), so the type gate would fail on code it cannot
+      # see. Ruff needs no extra, but it runs in this same job.
       - name: "Install dependencies"
-        run: uv sync --frozen --extra dev
+        run: uv sync --frozen --extra dev --extra prefect
 
       - name: "Linting: ruff check"
         run: "uv run ruff check ."

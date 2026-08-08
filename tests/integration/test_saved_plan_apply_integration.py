@@ -198,7 +198,7 @@ DROPPED_FIELDS: Mapping[str, tuple[str, ...]] = {
 # Same species of documented departure as `DROPPED_FIELDS`, and asserted the same way: a filter
 # that stops matching leaves the plan with no relationship-bearing operation, which is a loud
 # setup error in `live_plan` naming the device.
-BOUNDING_DEVICE = "dmi01-akron-rtr01"
+BOUNDING_DEVICE = "cisco1"
 BOUNDING_SITE = "dm-akron"
 ADDED_FILTERS: Mapping[str, tuple[dict[str, Any], ...]] = {
     "LocationRack": ({"field": "site.slug", "operation": "==", "value": BOUNDING_SITE},),

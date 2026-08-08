@@ -1,0 +1,6 @@
+{
+  "parameters": {
+    "sync_name": "custom-example",
+    "operation": "apply"
+  }
+}

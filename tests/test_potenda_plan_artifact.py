@@ -37,6 +37,7 @@ from infrahub_sync.cache import incremental as incremental_module
 from infrahub_sync.cache.cursors import CursorTier
 from infrahub_sync.cache.paths import cache_root_for
 from infrahub_sync.cli import app
+from infrahub_sync.execution import execute_run
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.derive import (
     derive_deletes,
@@ -841,6 +842,60 @@ def test_delete_computation_record_distinguishes_full_from_incremental_extract(
     assert incremental_plan.summary().deletes_not_executed == 0
 
 
+def test_delete_only_saved_plan_drives_the_execution_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A destination-only object is a planned delete even when the legacy diff rows are empty."""
+    config = build_config(order=["BuiltinTag"])
+    run_id = "20260726T1150-de1e7e01"
+    potenda = build_potenda(
+        config=config,
+        source=_FakeAdapter("source"),
+        destination=destination_with_orphan(),
+        run_id=run_id,
+        top_level=["BuiltinTag"],
+    )
+    pin_extraction_decisions(monkeypatch, [False, False])
+
+    def factory(**_kwargs: object) -> Potenda:
+        return potenda
+
+    result = execute_run(config, operation="plan", potenda_factory=factory)
+    saved_summary = read_saved_plan(sync_name=config.name, run_id=run_id, config=config).summary()
+
+    assert saved_summary.total == 1
+    assert saved_summary.by_action == {"delete": 1}
+    assert result.status == "planned"
+    assert result.changed is True
+    assert dict(result.summary) == {"create": 0, "update": 0, "delete": 1}
+
+
+def test_delete_only_serial_sync_reports_the_live_no_change_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A derived delete is saved, but default serial sync neither executes nor reports it."""
+    config = build_config(order=["BuiltinTag"])
+    run_id = "20260726T1151-de1e7e02"
+    destination = destination_with_orphan()
+    potenda = build_potenda(
+        config=config,
+        source=_FakeAdapter("source"),
+        destination=destination,
+        run_id=run_id,
+        top_level=["BuiltinTag"],
+    )
+    pin_extraction_decisions(monkeypatch, [False, False])
+
+    def factory(**_kwargs: object) -> Potenda:
+        return potenda
+
+    result = execute_run(config, operation="sync", confirm_writes=True, potenda_factory=factory)
+    saved_summary = read_saved_plan(sync_name=config.name, run_id=run_id, config=config).summary()
+
+    assert saved_summary.total == 1
+    assert saved_summary.by_action == {"delete": 1}
+    assert destination.sync_calls == []
+    assert result.status == "no-change"
+    assert result.changed is False
+    assert dict(result.summary) == {"create": 0, "update": 0, "delete": 0}
+
+
 # =======================================================================================
 # Tier assignment, with computed tiers and with an explicit order
 # =======================================================================================
@@ -1131,6 +1186,29 @@ class _RecordingPotenda(Potenda):
     def sync(self, diff=None):
         self.events.append(("sync", () if diff is None else tuple(sorted(diff.children))))
         return super().sync(diff=diff)
+
+
+def test_write_plan_calls_the_public_artifact_writer_hook(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A subclass sees the single-diff plan write through the public hook."""
+    config = build_config(order=["BuiltinTag"])
+    pin_extraction_decisions(monkeypatch, [False, False])
+    potenda = build_potenda(
+        config=config,
+        source=_FakeAdapter("source"),
+        destination=destination_with_orphan(),
+        run_id="20260726T1450-f0f0f0f0",
+        top_level=["BuiltinTag"],
+        cls=_RecordingPotenda,
+    )
+    potenda.load_both_sides()
+
+    counts = potenda.write_plan(potenda.diff())
+
+    assert potenda.events == [  # ty: ignore[unresolved-attribute]
+        ("diff", ("BuiltinTag",)),
+        ("write_plan_artifact", 1),
+    ]
+    assert counts == {"create": 0, "update": 0, "delete": 1}
 
 
 def test_the_tier_branch_computes_every_diff_and_writes_the_artifact_before_the_first_write(

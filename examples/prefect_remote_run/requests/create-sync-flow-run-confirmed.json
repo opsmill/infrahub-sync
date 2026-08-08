@@ -1,0 +1,7 @@
+{
+  "parameters": {
+    "sync_name": "custom-example",
+    "operation": "sync",
+    "confirm_writes": true
+  }
+}
