@@ -21,7 +21,12 @@ from infrahub_sync.execution import (
 # Imported at module level rather than deferred: `infrahub_sync.utils` below already pulls
 # the engine, which pulls this package, so deferring these would buy no import time and only
 # hide where the command's behavior comes from.
-from infrahub_sync.plan.errors import PlanArtifactError, PlanGenerationExistsError, UnknownPlanKindError
+from infrahub_sync.plan.errors import (
+    PlanArtifactError,
+    PlanGenerationExistsError,
+    UnknownPlanKindError,
+    UnsafeRunIdentifierError,
+)
 from infrahub_sync.utils import (
     PlanApplier,
     find_missing_schema_model,
@@ -522,7 +527,7 @@ def diff_cmd(
             full_extract=full_extract,
             potenda_factory=_cli_potenda_factory,
         )
-    except (PlanGenerationExistsError, PlanArtifactError, RunConcurrencyError) as exc:
+    except (PlanGenerationExistsError, UnsafeRunIdentifierError, RunConcurrencyError) as exc:
         # The core marks run.json failed. Keep the saved-plan command's narrow
         # one-line refusal for the residual writer-stage race.
         print_error_and_abort(str(exc))
