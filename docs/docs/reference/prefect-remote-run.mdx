@@ -161,12 +161,13 @@ originating logger name preserved.
 
 ## What the preview does not include
 
-No API façade of our own, no reviewed-plan workflow, no per-stage tasks, no work pools or
-workers, no triggers, and no production deployment profile. Concurrency guarantees are
-limited to the per-configuration lock the sync engine already applies on a single runner
-host: a second run of the same configuration waits for that lock and fails if it times
-out, rather than hanging. Beyond it, the preview promises no queuing, ordering, or
-overlap policy.
+No API façade of our own, no remote reviewed-plan or apply workflow, no per-stage tasks,
+no work pools or workers, no triggers, and no production deployment profile. Saved-plan
+review and apply remain available through the CLI. Concurrency guarantees are limited to
+the per-configuration lock the sync engine already applies on a single runner host: a
+second run of the same configuration waits for that lock and fails if it times out,
+rather than hanging. Beyond it, the preview promises no queuing, ordering, or overlap
+policy.
 
 ## Related
 
