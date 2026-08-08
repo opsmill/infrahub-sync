@@ -44,7 +44,10 @@ records = production_product_projection(
 
 Database-driver and object-client packages remain deployment choices rather than base
 Infrahub Sync dependencies. Both profiles implement the same `ProductProjection`
-operations and are covered by the same behavioral contract tests.
+operations and are covered by the same behavioral contract tests. The production-profile
+tests use a PostgreSQL-paramstyle local DB-API emulator and a deterministic
+S3-compatible client; they prove the injected provider contract, not live PostgreSQL,
+driver, S3 service, authentication, or network integration.
 
 ## Record and identity contract
 
@@ -69,17 +72,21 @@ known without changing the Sync record's identity.
 
 ## Artifact publication and lookup
 
-Artifact keys contain their SHA-256 digest and never change. Publication writes artifact
-data first and its manifest last. The filesystem profile commits both using an atomic
-directory rename. The S3-compatible profile copies staged data to its immutable key and
-uses a create-only manifest put as the commit point. A failure before that manifest is
-visible leaves no complete artifact reference on the run, and a run cannot be finished
-while an attached artifact is missing, expired, or fails integrity validation.
+Artifact keys contain their SHA-256 digest and never change. Publication first reserves a
+non-readable relational reference for the run-owned artifact identity. It then writes
+artifact data and its manifest, and finally marks that exact reference published in a
+second relational transaction. The filesystem profile commits data and manifest using an
+atomic directory rename. The S3-compatible profile copies staged data to its immutable key
+and uses a create-only manifest put as the object-store commit point. A crash before the
+final relational mark leaves durable pending evidence rather than exposing the artifact.
+The pending identity rejects another publication before a second provider write, and the
+run cannot be finished while any pending publication exists.
 
 Lookups return `LookupResult` rather than treating absence as an empty record. Reasons
 include `run-not-found`, `artifact-reference-not-found`, `manifest-unavailable`,
-`data-unavailable`, `artifact-expired`, and integrity failures. An unavailable artifact
-does not prevent the remaining product record from being read.
+`artifact-publication-incomplete`, `data-unavailable`, `artifact-expired`, and integrity
+failures. Normal run lookup includes only published references. An unavailable or pending
+artifact does not prevent the remaining product record from being read.
 
 The MVP does not delete product records or artifacts automatically. Prefect retention is
 independent.

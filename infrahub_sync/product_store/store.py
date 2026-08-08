@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS product_runs (
 CREATE TABLE IF NOT EXISTS artifact_refs (
     run_id TEXT NOT NULL, artifact_id TEXT NOT NULL, kind TEXT NOT NULL, media_type TEXT NOT NULL,
     digest TEXT NOT NULL, size INTEGER NOT NULL, object_key TEXT NOT NULL UNIQUE,
-    manifest_key TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, expires_at TEXT,
+    manifest_key TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, expires_at TEXT, published INTEGER NOT NULL,
     PRIMARY KEY (run_id, artifact_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id)
 );
 CREATE TABLE IF NOT EXISTS prefect_executions (
@@ -53,6 +53,8 @@ class ArtifactUnavailableError(RuntimeError):
 
 
 class _Cursor(Protocol):
+    rowcount: int
+
     def execute(self, operation: str, parameters: Sequence[Any] = ()) -> _Cursor: ...
 
     def fetchone(self) -> Sequence[Any] | None: ...
@@ -79,7 +81,15 @@ class _RunStore(Protocol):
 
     def lookup(self, run_id: str) -> LookupResult[ProductRun]: ...
 
-    def attach_artifact(self, reference: ArtifactReference) -> None: ...
+    def reserve_artifact(self, reference: ArtifactReference) -> None: ...
+
+    def mark_artifact_published(self, reference: ArtifactReference) -> None: ...
+
+    def lookup_artifact_reference(
+        self, run_id: str, artifact_id: str
+    ) -> LookupResult[tuple[ArtifactReference, bool]]: ...
+
+    def has_pending_artifacts(self, run_id: str) -> bool: ...
 
     def add_prefect_execution(self, run_id: str, link: PrefectExecutionLink) -> None: ...
 
@@ -177,7 +187,7 @@ class _RelationalRunStore:
                 if row is None:
                     return LookupResult(value=None, reason="run-not-found")
                 cursor.execute(
-                    self._sql("SELECT * FROM artifact_refs WHERE run_id = ? ORDER BY artifact_id"),
+                    self._sql("SELECT * FROM artifact_refs WHERE run_id = ? AND published = 1 ORDER BY artifact_id"),
                     (run_id,),
                 )
                 references = cursor.fetchall()
@@ -192,12 +202,12 @@ class _RelationalRunStore:
             connection.close()
         return LookupResult(value=_run_from_rows(row, references, links))
 
-    def attach_artifact(self, reference: ArtifactReference) -> None:
+    def reserve_artifact(self, reference: ArtifactReference) -> None:
         connection = self._connect()
         try:
             cursor = connection.cursor()
             try:
-                self._insert_reference(cursor, reference)
+                self._insert_reference(cursor, reference, published=False)
                 connection.commit()
             except Exception as exc:
                 connection.rollback()
@@ -209,6 +219,68 @@ class _RelationalRunStore:
                 cursor.close()
         finally:
             connection.close()
+
+    def mark_artifact_published(self, reference: ArtifactReference) -> None:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql(
+                        "UPDATE artifact_refs SET published = 1 WHERE run_id = ? AND artifact_id = ? "
+                        "AND digest = ? AND object_key = ? AND manifest_key = ? AND published = 0"
+                    ),
+                    (
+                        reference.run_id,
+                        reference.artifact_id,
+                        reference.digest,
+                        reference.object_key,
+                        reference.manifest_key,
+                    ),
+                )
+                _require_publication_marked(cursor, reference)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def lookup_artifact_reference(self, run_id: str, artifact_id: str) -> LookupResult[tuple[ArtifactReference, bool]]:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql("SELECT * FROM artifact_refs WHERE run_id = ? AND artifact_id = ?"),
+                    (run_id, artifact_id),
+                )
+                row = cursor.fetchone()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        if row is None:
+            return LookupResult(value=None, reason="artifact-reference-not-found")
+        return LookupResult(value=(_reference_from_row(row), bool(row[10])))
+
+    def has_pending_artifacts(self, run_id: str) -> bool:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql("SELECT COUNT(*) FROM artifact_refs WHERE run_id = ? AND published = 0"),
+                    (run_id,),
+                )
+                row = cursor.fetchone()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return row is not None and int(row[0]) > 0
 
     def add_prefect_execution(self, run_id: str, link: PrefectExecutionLink) -> None:
         connection = self._connect()
@@ -246,9 +318,9 @@ class _RelationalRunStore:
         finally:
             connection.close()
 
-    def _insert_reference(self, cursor: _Cursor, reference: ArtifactReference) -> None:
+    def _insert_reference(self, cursor: _Cursor, reference: ArtifactReference, *, published: bool) -> None:
         cursor.execute(
-            self._sql("INSERT INTO artifact_refs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
+            self._sql("INSERT INTO artifact_refs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
             (
                 reference.run_id,
                 reference.artifact_id,
@@ -260,6 +332,7 @@ class _RelationalRunStore:
                 reference.manifest_key,
                 reference.created_at.isoformat(),
                 _iso(reference.expires_at),
+                int(published),
             ),
         )
 
@@ -461,7 +534,7 @@ class ProductProjection:
         data: bytes,
         secrets: Sequence[str] = (),
     ) -> ArtifactReference:
-        """Publish redacted bytes and a manifest, then attach the immutable reference."""
+        """Reserve the immutable reference, publish bytes and manifest, then expose it."""
         if not self.lookup_run(run_id).available:
             msg = f"Cannot publish an artifact for unavailable Sync run ID {run_id!r}"
             raise ArtifactUnavailableError(msg)
@@ -482,8 +555,9 @@ class ProductProjection:
             manifest_key=f"{base}/manifest.json",
             created_at=datetime.now(timezone.utc),
         )
+        self._records.reserve_artifact(reference)
         self._artifacts.publish(reference, sanitized)
-        self._records.attach_artifact(reference)
+        self._records.mark_artifact_published(reference)
         return reference
 
     def lookup_artifact(self, run_id: str, artifact_id: str) -> LookupResult[bytes]:
@@ -491,9 +565,12 @@ class ProductProjection:
         run = self.lookup_run(run_id)
         if run.value is None:
             return LookupResult(value=None, reason=run.reason)
-        reference = next((item for item in run.value.artifact_refs if item.artifact_id == artifact_id), None)
-        if reference is None:
-            return LookupResult(value=None, reason="artifact-reference-not-found")
+        stored = self._records.lookup_artifact_reference(run_id, artifact_id)
+        if stored.value is None:
+            return LookupResult(value=None, reason=stored.reason)
+        reference, published = stored.value
+        if not published:
+            return LookupResult(value=None, reason="artifact-publication-incomplete")
         return self._artifacts.lookup(reference)
 
     def finish_run(
@@ -510,6 +587,9 @@ class ProductProjection:
         run = self.lookup_run(run_id)
         if run.value is None:
             msg = f"Sync run ID {run_id!r} is unavailable"
+            raise ArtifactUnavailableError(msg)
+        if self._records.has_pending_artifacts(run_id):
+            msg = f"Sync run ID {run_id!r} has an incomplete artifact publication"
             raise ArtifactUnavailableError(msg)
         for reference in run.value.artifact_refs:
             result = self._artifacts.lookup(reference)
@@ -573,21 +653,7 @@ def _run_from_rows(
             "outcome": row[8],
             "summary": json.loads(row[9]),
             "results": json.loads(row[10]),
-            "artifact_refs": [
-                {
-                    "run_id": item[0],
-                    "artifact_id": item[1],
-                    "kind": item[2],
-                    "media_type": item[3],
-                    "digest": item[4],
-                    "size": item[5],
-                    "object_key": item[6],
-                    "manifest_key": item[7],
-                    "created_at": item[8],
-                    "expires_at": item[9],
-                }
-                for item in references
-            ],
+            "artifact_refs": [_reference_from_row(item).model_dump() for item in references],
             "prefect_executions": [
                 {
                     "flow_run_id": item[1],
@@ -603,8 +669,31 @@ def _run_from_rows(
     )
 
 
+def _reference_from_row(row: Sequence[Any]) -> ArtifactReference:
+    return ArtifactReference.model_validate(
+        {
+            "run_id": row[0],
+            "artifact_id": row[1],
+            "kind": row[2],
+            "media_type": row[3],
+            "digest": row[4],
+            "size": row[5],
+            "object_key": row[6],
+            "manifest_key": row[7],
+            "created_at": row[8],
+            "expires_at": row[9],
+        }
+    )
+
+
 def _is_unique_violation(exc: BaseException) -> bool:
     return isinstance(exc, sqlite3.IntegrityError) or getattr(exc, "sqlstate", None) == "23505"
+
+
+def _require_publication_marked(cursor: _Cursor, reference: ArtifactReference) -> None:
+    if cursor.rowcount != 1:
+        msg = f"Artifact {reference.artifact_id!r} on run {reference.run_id!r} has no matching pending publication"
+        raise ArtifactUnavailableError(msg)
 
 
 def _redact_value(value: Any, secrets: Sequence[str]) -> Any:

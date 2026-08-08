@@ -48,6 +48,10 @@ class _CursorAdapter:
         self._cursor.execute(operation.replace("%s", "?"), parameters)
         return self
 
+    @property
+    def rowcount(self) -> int:
+        return self._cursor.rowcount
+
     def fetchone(self):
         return self._cursor.fetchone()
 
@@ -106,6 +110,31 @@ class _FailingS3Store(S3ArtifactStore):
     def _publication_checkpoint(self) -> None:  # noqa: PLR6301 - overrides the provider fault seam.
         msg = "injected interruption"
         raise OSError(msg)
+
+
+class _FailingMarkSQLiteStore(SQLiteRunStore):
+    def mark_artifact_published(self, reference: ArtifactReference) -> None:  # noqa: ARG002, PLR6301
+        msg = "injected mark failure"
+        raise OSError(msg)
+
+
+class _FailingMarkPostgreSQLStore(PostgreSQLRunStore):
+    def mark_artifact_published(self, reference: ArtifactReference) -> None:  # noqa: ARG002, PLR6301
+        msg = "injected mark failure"
+        raise OSError(msg)
+
+
+class _CountingArtifactStore:
+    def __init__(self, store: FileArtifactStore | S3ArtifactStore) -> None:
+        self._store = store
+        self.publish_calls = 0
+
+    def publish(self, reference: ArtifactReference, data: bytes) -> None:
+        self.publish_calls += 1
+        self._store.publish(reference, data)
+
+    def lookup(self, reference: ArtifactReference) -> product_store.LookupResult[bytes]:
+        return self._store.lookup(reference)
 
 
 def _connect(path: Path):
@@ -291,11 +320,91 @@ def test_interrupted_publication_exposes_neither_artifact_nor_completed_record(p
     assert record is not None
     assert record.artifact_refs == ()
     assert record.outcome is None
-    assert projection.lookup_artifact("run-001", "plan").reason == "artifact-reference-not-found"
+    assert projection.lookup_artifact("run-001", "plan").reason == "artifact-publication-incomplete"
+    with pytest.raises(ArtifactUnavailableError, match="incomplete artifact publication"):
+        projection.finish_run("run-001", phase="planned", outcome="succeeded", summary={}, results={})
     if profile == "production":
         assert not [key for (_, key) in fake_s3.objects if key.endswith("manifest.json")]
     else:
         assert not list((tmp_path / "objects").rglob("manifest.json"))
+
+    if profile == "local":
+        restarted = ProductProjection(
+            SQLiteRunStore(tmp_path / "records.sqlite3"), FileArtifactStore(tmp_path / "objects")
+        )
+    else:
+        restarted = ProductProjection(
+            PostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3")),
+            S3ArtifactStore(fake_s3, bucket="artifacts"),
+        )
+    assert restarted.lookup_artifact("run-001", "plan").reason == "artifact-publication-incomplete"
+
+
+@pytest.mark.parametrize("profile", ["local", "production"])
+def test_manifest_complete_but_relational_mark_failed_remains_pending(profile: str, tmp_path: Path) -> None:
+    fake_s3 = _FakeS3()
+    if profile == "local":
+        records = _FailingMarkSQLiteStore(tmp_path / "records.sqlite3")
+        artifacts = FileArtifactStore(tmp_path / "objects")
+    else:
+        records = _FailingMarkPostgreSQLStore(_connect(tmp_path / "postgres-emulator.sqlite3"))
+        artifacts = S3ArtifactStore(fake_s3, bucket="artifacts")
+    projection = ProductProjection(records, artifacts)
+    projection.create_run(_run())
+
+    with pytest.raises(OSError, match="injected mark failure"):
+        projection.publish_artifact(
+            "run-001", artifact_id="plan", kind="plan", media_type="application/json", data=b"{}"
+        )
+
+    run = projection.lookup_run("run-001").value
+    assert run is not None
+    assert run.artifact_refs == ()
+    assert projection.lookup_artifact("run-001", "plan").reason == "artifact-publication-incomplete"
+    if profile == "local":
+        assert len(list((tmp_path / "objects").rglob("manifest.json"))) == 1
+        restarted = ProductProjection(
+            SQLiteRunStore(tmp_path / "records.sqlite3"), FileArtifactStore(tmp_path / "objects")
+        )
+    else:
+        assert len([key for (_, key) in fake_s3.objects if key.endswith("manifest.json")]) == 1
+        restarted = ProductProjection(
+            PostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3")),
+            S3ArtifactStore(fake_s3, bucket="artifacts"),
+        )
+    assert restarted.lookup_artifact("run-001", "plan").reason == "artifact-publication-incomplete"
+    with pytest.raises(ArtifactUnavailableError, match="incomplete artifact publication"):
+        restarted.finish_run("run-001", phase="planned", outcome="succeeded", summary={}, results={})
+
+
+@pytest.mark.parametrize("profile", ["local", "production"])
+def test_duplicate_artifact_identity_is_rejected_before_a_second_provider_write(profile: str, tmp_path: Path) -> None:
+    fake_s3 = _FakeS3()
+    if profile == "local":
+        records = SQLiteRunStore(tmp_path / "records.sqlite3")
+        counting = _CountingArtifactStore(FileArtifactStore(tmp_path / "objects"))
+    else:
+        records = PostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3"))
+        counting = _CountingArtifactStore(S3ArtifactStore(fake_s3, bucket="artifacts"))
+    projection = ProductProjection(records, counting)
+    projection.create_run(_run())
+    projection.publish_artifact(
+        "run-001", artifact_id="plan", kind="plan", media_type="application/json", data=b"first"
+    )
+
+    with pytest.raises(DuplicateArtifactError):
+        projection.publish_artifact(
+            "run-001", artifact_id="plan", kind="plan", media_type="application/json", data=b"different"
+        )
+
+    assert counting.publish_calls == 1
+    run = projection.lookup_run("run-001").value
+    assert run is not None
+    assert len(run.artifact_refs) == 1
+    if profile == "local":
+        assert len(list((tmp_path / "objects").rglob("manifest.json"))) == 1
+    else:
+        assert len([key for (_, key) in fake_s3.objects if key.endswith("manifest.json")]) == 1
 
 
 @pytest.mark.parametrize("profile", ["local", "production"])
@@ -341,7 +450,8 @@ def test_expired_reference_is_explicit_and_run_remains_readable(provider: Produc
         expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
     )
     provider.create_run(_run())
-    provider._records.attach_artifact(expired)
+    provider._records.reserve_artifact(expired)
+    provider._records.mark_artifact_published(expired)
 
     assert provider.lookup_artifact("run-001", "expired-plan").reason == "artifact-expired"
     assert provider.lookup_run("run-001").available
@@ -421,6 +531,40 @@ def test_secret_canary_is_absent_from_raw_provider_contents(profile: str, tmp_pa
     else:
         persisted += b"".join(fake_s3.objects.values())
     assert secret.encode() not in persisted
+
+
+@pytest.mark.parametrize("profile", ["local", "production"])
+def test_pending_publication_persists_no_secret_canary(profile: str, tmp_path: Path) -> None:
+    secret = "pending-provider-canary-649"  # noqa: S105 - deliberate persistence-boundary canary.
+    fake_s3 = _FakeS3()
+    if profile == "local":
+        database = tmp_path / "local.sqlite3"
+        projection = ProductProjection(_FailingMarkSQLiteStore(database), FileArtifactStore(tmp_path / "objects"))
+    else:
+        database = tmp_path / "postgres-emulator.sqlite3"
+        projection = ProductProjection(
+            _FailingMarkPostgreSQLStore(_connect(database)),
+            S3ArtifactStore(fake_s3, bucket="artifacts"),
+        )
+    projection.create_run(_run())
+
+    with pytest.raises(OSError, match="injected mark failure"):
+        projection.publish_artifact(
+            "run-001",
+            artifact_id="result",
+            kind=f"result:{secret}",
+            media_type=f"text/{secret}",
+            data=f"artifact contains {secret}".encode(),
+            secrets=(secret,),
+        )
+
+    persisted = database.read_bytes()
+    if profile == "local":
+        persisted += b"".join(path.read_bytes() for path in (tmp_path / "objects").rglob("*") if path.is_file())
+    else:
+        persisted += b"".join(fake_s3.objects.values())
+    assert secret.encode() not in persisted
+    assert projection.lookup_artifact("run-001", "result").reason == "artifact-publication-incomplete"
 
 
 def test_local_profile_survives_restart_and_does_not_depend_on_cwd(tmp_path: Path) -> None:
