@@ -561,7 +561,10 @@ import sys
 
 
 class _BreakExecutionImport:
+    \"\"\"Meta-path finder that breaks one first-party import and nothing else.\"\"\"
+
     def find_spec(self, name, path=None, target=None):
+        \"\"\"Raise for `infrahub_sync.execution`; defer every other name to the next finder.\"\"\"
         if name == "infrahub_sync.execution":
             raise ImportError("simulated first-party breakage", name=name)
         return None
