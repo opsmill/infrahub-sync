@@ -16,11 +16,11 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from filelock import Timeout
 from typer.testing import CliRunner
 
 from infrahub_sync.cache.guardrails import RowcountGuardrailError
 from infrahub_sync.cache.locks import pipeline_lock
+from infrahub_sync.cache.sidecars import RunFile
 from infrahub_sync.cli import app
 from infrahub_sync.plan.errors import PlanGenerationExistsError
 
@@ -160,24 +160,42 @@ def test_diff_factory_import_error_is_reported_as_one_line(run_dir: Path, cli_lo
     assert not (run_dir / "run.json").exists()
 
 
-def test_diff_lock_contention_surfaces_filelock_timeout(run_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A held pipeline lock surfaces as an uncaught `filelock.Timeout`, engine unbuilt."""
+def test_cli_refusal_redacts_environment_credentials(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch, cli_logs: pytest.LogCaptureFixture
+) -> None:
+    """The CLI boundary never writes a credential-shaped environment value to its error logger."""
+    sentinel = "db004-secret-sentinel"
+    monkeypatch.setenv("DB004_TOKEN", sentinel)
+    with patch(FACTORY, side_effect=ValueError(f"adapter rejected {sentinel}")):
+        result = _invoke("diff")
+
+    assert result.exit_code == 1
+    messages = _messages(cli_logs)
+    assert sentinel not in "\n".join(messages)
+    assert any("***" in message for message in messages)
+    assert not (run_dir / "run.json").exists()
+
+
+def test_diff_lock_contention_identifies_the_active_sync_run(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch, cli_logs: pytest.LogCaptureFixture
+) -> None:
+    """A held lock is a bounded CLI refusal naming the active Sync run."""
 
     def short_lock(sync_name: str, *, timeout: float = 60.0) -> Any:  # noqa: ANN401, ARG001 - drop-in for the real one
         return pipeline_lock(sync_name, timeout=0.05)
 
-    # Shortened wherever the lock is taken, so this test is a valid oracle for both
-    # the pre-refactor command body and the surface that now owns the acquisition.
+    # The shared surface is now the sole lock owner.
     monkeypatch.setattr("infrahub_sync.execution.pipeline_lock", short_lock)
-    monkeypatch.setattr("infrahub_sync.cli.pipeline_lock", short_lock)
     factory = MagicMock(return_value=_fake_potenda(run_dir))
+    RunFile(path=run_dir / "run.json", status="running", mode="sync").save()
     with pipeline_lock(SYNC_NAME), patch(FACTORY, factory):
         result = _invoke("diff")
 
     assert result.exit_code == 1
-    assert isinstance(result.exception, Timeout)
+    assert isinstance(result.exception, SystemExit)
+    assert any("active Sync run 'test-run'" in message for message in _messages(cli_logs))
     factory.assert_not_called()
-    assert not (run_dir / "run.json").exists()
+    assert _run_json(run_dir)["status"] == "running"
 
 
 # --------------------------------------------------------------------------- #

@@ -1007,7 +1007,7 @@ def test_the_review_path_never_takes_the_pipeline_lock(tmp_path: Path) -> None:
         taken.append(sync_name)
         return pipeline_lock(sync_name, **kwargs)
 
-    with patch("infrahub_sync.cli.pipeline_lock", _record):
+    with patch("infrahub_sync.execution.pipeline_lock", _record):
         result = _review("--from-plan", RUN_ID)
 
     assert result.exit_code == 0, result.output
@@ -2134,7 +2134,7 @@ def test_a_generation_committed_while_the_diff_waited_for_the_lock_is_left_intac
     committed: dict[Path, bytes] = {}
 
     @contextmanager
-    def _commit_while_waiting(name: str) -> Iterator[None]:
+    def _commit_while_waiting(name: str, **_kwargs: object) -> Iterator[None]:
         with pipeline_lock(name):
             directory = _appliable_run(tmp_path)
             committed.update(
@@ -2145,7 +2145,7 @@ def test_a_generation_committed_while_the_diff_waited_for_the_lock_is_left_intac
 
     with (
         caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"),
-        patch("infrahub_sync.cli.pipeline_lock", _commit_while_waiting),
+        patch("infrahub_sync.execution.pipeline_lock", _commit_while_waiting),
     ):
         result = _diff_into(RUN_ID)
 

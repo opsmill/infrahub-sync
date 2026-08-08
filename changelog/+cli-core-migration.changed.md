@@ -1,0 +1,1 @@
+Existing `diff`, `sync`, saved-plan review, and `apply` commands now share the same execution core. Their command names, options, output, and destination behavior are unchanged; a conflicting same-sync CLI run now fails promptly and identifies the active Sync run, with credential-shaped values redacted from the reported error.
