@@ -459,9 +459,10 @@ class Potenda:
         `sync_in_tiers` writes the artifact itself, from every tier's retained diff.
 
         Returns the saved artifact's in-memory per-action counts, or `None` when no
-        saved artifact can be written. The shared execution surface uses those counts
-        instead of the narrower legacy parquet rows; legacy behavioral engines that
-        return nothing remain supported there.
+        saved artifact can be written. For `operation="plan"`, the shared execution
+        surface uses those counts instead of the narrower legacy parquet rows; legacy
+        behavioral engines that return nothing retain the row fallback. Serial-sync
+        results instead report their live diffsync rows.
         """
         if not self.run_dir:
             return None
