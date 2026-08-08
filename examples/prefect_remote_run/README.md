@@ -33,7 +33,8 @@ read any package source to follow it.
    and the run still "succeeds", with an empty plan instead of five creates.
 4. **A reachable Infrahub instance** with the `InfraDevice` node (attributes `name` and
    `type`) in its schema. [`schemas/infra_device.yml`](schemas/infra_device.yml) is that
-   schema; loading it is a step below.
+   schema. Load it in step 2 only when the kind does not already exist; if a compatible
+   `InfraDevice` is already present, skip the schema load.
 5. **An empty destination: zero `InfraDevice` objects.** The demonstration's expected
    output is five creates, which only happens if the destination starts empty. Verify
    and reset below.
@@ -76,7 +77,12 @@ uv run python -c "import prefect; print(prefect.__version__)"    # 3.8.1
 Installing the extra changes nothing about ordinary CLI use: `infrahub-sync` never
 imports or contacts Prefect on its own.
 
-## 2. Load the destination schema
+## 2. Ensure the destination schema is available
+
+If your destination already defines a compatible `InfraDevice` node with `name` and
+`type` attributes, skip the schema-load command and continue with the count check. Use
+the bundled schema only when the kind is absent. Schema loading is not a merge: loading
+this file over an existing kind with a different definition can fail.
 
 ```bash
 # from the repository root
@@ -88,7 +94,7 @@ uv run infrahubctl schema load examples/prefect_remote_run/schemas/infra_device.
 
 Replace the two placeholders with your own values (for a local Infrahub the address is
 typically `http://localhost:8000`). If your shell already exports them, skip the two
-`export` lines. Loading the same schema twice is harmless.
+`export` lines.
 
 ### Verify the destination is empty
 
@@ -310,8 +316,9 @@ sed "s/<flow-run-id>/$RUN_ID/" examples/prefect_remote_run/requests/filter-flow-
   | jq -r '.[] | .message'
 ```
 
-**Checkpoint — this is what a correct run looks like.** The log contains the source
-adapter's own narration and the summary line:
+**Checkpoint — this representative excerpt shows what a correct run looks like.** The
+full log also contains lifecycle, tier, and plan-artifact messages that are elided here.
+The excerpt includes the source adapter's narration and the summary line:
 
 ```text
 infrahub_sync.potenda | Load: Importing data from MockDB
@@ -339,16 +346,18 @@ second case the log also carries
 The same lifecycle is visible in the UI at
 `http://127.0.0.1:4200/runs/flow-run/<flow-run-id>`, under the run's Logs tab.
 
-`artifact=` points at the run's artifact directory (`run.json`, `plan.parquet`, and the
-plan cache) **on the machine running the serve process** — these files are local to the
-runner and are not retrievable through the Prefect API.
+`artifact=` points at the run's artifact directory (`run.json`, `schema-sub-hash.txt`,
+`plan.parquet`, `plan/`, and the per-resource cache directories) **on the machine running
+the serve process**. The `plan/` directory holds the manifest and operation records that
+`apply` reads. These files are local to the runner and are not retrievable through the
+Prefect API.
 
 The run directory is named after the run id on the summary line — one directory per run,
 so take the id from the log rather than assuming the directory list holds only this run:
 
 ```bash
 # on the runner host, from the repository root
-ls .infrahub-sync-cache/custom-example/<run-id>/     # run.json, plan.parquet, A/, B/
+ls .infrahub-sync-cache/custom-example/<run-id>/     # run.json, schema-sub-hash.txt, plan.parquet, plan/, A/, B/
 ```
 
 ## 7. Run a confirmed sync

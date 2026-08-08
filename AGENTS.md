@@ -51,6 +51,14 @@ uv run infrahub-sync list --directory examples/
 uv run infrahub-sync generate --name from-netbox --directory examples/
 ```
 
+The `from-netbox` generation check is integration-backed. Before running it,
+follow the [NetBox demo tutorial](docs/docs/tutorials/netbox-demo-to-infrahub.mdx)
+through **Generate the sync code**. That setup uses a fresh Infrahub instance,
+loads the matching schema library, creates a current `nbt_...` NetBox demo
+token, and installs `pynetbox`. The public demo data changes over time; the
+bounded live acceptance test records its current data preconditions in
+`tests/integration/test_saved_plan_apply_integration.py`.
+
 **Docs** (only if user-facing changes — see [Documentation](#documentation)):
 
 ```bash
