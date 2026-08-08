@@ -1,0 +1,118 @@
+---
+title: Durable product records
+sidebar_position: 6
+---
+
+Infrahub Sync provides one storage contract for compact product records and immutable
+artifacts. It is independent of Prefect: a standalone run has no Prefect links, and a
+managed run can retain any number of purpose-labelled execution links after Prefect no
+longer has the corresponding flow-run detail.
+
+This is a Python provider surface. The CLI, public run API, and managed execution paths do
+not use it yet; their shared integration is a separate compatibility step.
+
+## Provider profiles
+
+The local profile requires an explicit cache directory and creates a SQLite database plus
+an artifact directory beneath it:
+
+```python
+from pathlib import Path
+
+from infrahub_sync.product_store import local_product_projection
+
+records = local_product_projection(Path("/var/lib/infrahub-sync/product-cache"))
+```
+
+The path must be absolute after `~` expansion. Relative paths are rejected, and the profile
+never falls back to the process working directory.
+
+The production profile combines a PostgreSQL DB-API connection factory with an
+S3-compatible client implementing the small `S3Client` protocol (`put`, `get`, `copy`, and
+`delete`):
+
+```python
+from infrahub_sync.product_store import production_product_projection
+
+records = production_product_projection(
+    connect=postgres_connection_factory,
+    s3_client=object_client,
+    bucket="sync-product-artifacts",
+    prefix="production",
+)
+```
+
+Database-driver and object-client packages remain deployment choices rather than base
+Infrahub Sync dependencies. Both profiles implement the same `ProductProjection`
+operations and are covered by the same behavioral contract tests.
+
+## Record and identity contract
+
+`ProductRun` owns the stable Sync `run_id`, requested operation, immutable configuration
+reference, actor and audit links, product phase and outcome, timings, summary and results,
+artifact references, and Prefect correlations. Relational child tables store artifact
+references and Prefect execution links separately from the compact run row.
+
+Each `PrefectExecutionLink` records:
+
+- a distinct `flow_run_id`;
+- an optional `deployment_id`;
+- its purpose or stage;
+- its attempt number;
+- optional last-observed state and timestamp.
+
+Duplicate Sync run IDs and duplicate flow-run IDs within one record are rejected. A
+confirmed sync creates its own record. A reviewed-plan apply instead advances the original
+planning record and attaches its result artifacts to the same `run_id`; it does not create
+a second Sync identity. `add_prefect_execution` appends stage and retry links as they become
+known without changing the Sync record's identity.
+
+## Artifact publication and lookup
+
+Artifact keys contain their SHA-256 digest and never change. Publication writes artifact
+data first and its manifest last. The filesystem profile commits both using an atomic
+directory rename. The S3-compatible profile copies staged data to its immutable key and
+uses a create-only manifest put as the commit point. A failure before that manifest is
+visible leaves no complete artifact reference on the run, and a run cannot be finished
+while an attached artifact is missing, expired, or fails integrity validation.
+
+Lookups return `LookupResult` rather than treating absence as an empty record. Reasons
+include `run-not-found`, `artifact-reference-not-found`, `manifest-unavailable`,
+`data-unavailable`, `artifact-expired`, and integrity failures. An unavailable artifact
+does not prevent the remaining product record from being read.
+
+The MVP does not delete product records or artifacts automatically. Prefect retention is
+independent.
+
+## Secret boundary
+
+Pass the credential values collected by `collect_secret_values` to `create_run`,
+`add_prefect_execution`, `publish_artifact`, and `finish_run`. Values are redacted from
+nested record data and raw artifact bytes before either provider is called. Do not put
+secrets into identifiers; credentials should continue to come from environment variables
+or a secret manager.
+
+## Reproducible sizing evidence
+
+The sizing test repeats VAL-8's fixed-density 88k retained-artifact shape and the smaller
+10k workload from the same source. Decimal bytes reproduce the published Parquet sizes:
+two payload stores, two hash indexes, and one plan. The separate 12.61 MB raw JSONL
+current-side wire measurement is not a retained artifact in this fixture.
+
+Run:
+
+```bash
+uv run pytest -q -s tests/product_store/test_sizing.py
+```
+
+Observed on macOS with Python 3.13.3 on 2026-08-08:
+
+| Fixture | Records (baseline/current) | Artifact payload | Manifests | Relational store | Total files | Total logical bytes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| VAL-8 88k | 88,117 / 87,868 | 23,015,700 B | 2,732 B | 36,864 B | 11 | 23,055,296 B |
+| Representative 10k | 10,051 / 10,023 | 2,722,700 B | 2,877 B | 36,864 B | 11 | 2,762,441 B |
+
+The five artifact payloads account for ten object files (data plus manifest) and the
+SQLite run/reference/link schema accounts for one database file. Filesystem allocation,
+database page size, and production object-store metadata can change physical billing; the
+payload and manifest byte counts are the portable sizing inputs.
