@@ -5,7 +5,14 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SerializerFunctionWrapHandler, model_serializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 from infrahub_sync.execution import collect_secret_values, redact
 
@@ -17,8 +24,13 @@ def _redact_data(value: Any, secrets: Sequence[str]) -> Any:
     """Return a copy of JSON-like data with collected credential values redacted."""
     if isinstance(value, str):
         return redact(value, secrets)
+    if isinstance(value, BaseModel):
+        return _redact_data(value.model_dump(), secrets)
     if isinstance(value, Mapping):
-        return {key: _redact_data(item, secrets) for key, item in value.items()}
+        return {
+            redact(key, secrets) if isinstance(key, str) else key: _redact_data(item, secrets)
+            for key, item in value.items()
+        }
     if isinstance(value, (list, tuple)):
         return [_redact_data(item, secrets) for item in value]
     return value
@@ -113,18 +125,22 @@ class RunResult(BaseModel):
     counts: ActionCounts
     domain_summary: dict[str, int]
     artifacts: tuple[ArtifactReference, ...]
-    _secret_values: tuple[str, ...] = PrivateAttr(default=())
+
+    @model_validator(mode="before")
+    @classmethod
+    def _redact_current_values(cls, data: Any) -> Any:
+        """Remove current process credentials before public attributes are built."""
+        return _redact_data(data, collect_secret_values())
 
     def _with_secret_values(self, values: Sequence[str]) -> RunResult:
-        """Attach boundary-only redaction values without adding a public field."""
-        self._secret_values = tuple(values)
-        return self
+        """Return a result whose public fields contain no boundary credentials."""
+        secrets = tuple(dict.fromkeys((*values, *collect_secret_values())))
+        return type(self).model_validate(_redact_data(self.model_dump(), secrets))
 
     @model_serializer(mode="wrap")
     def _serialize_redacted(self, handler: SerializerFunctionWrapHandler) -> Any:
         """Redact credential values from every serialized result field."""
-        secrets = tuple(dict.fromkeys((*self._secret_values, *collect_secret_values())))
-        return _redact_data(handler(self), secrets)
+        return _redact_data(handler(self), collect_secret_values())
 
 
 class RunError(Exception):
@@ -139,17 +155,18 @@ class RunError(Exception):
         run_id: str | None,
         secrets: Sequence[str] = (),
     ) -> None:
+        current_secrets = tuple(dict.fromkeys((*secrets, *collect_secret_values())))
         self.api_version = API_VERSION
-        self.run_id = None if run_id is None else redact(run_id, secrets)
+        self.run_id = None if run_id is None else redact(run_id, current_secrets)
         self.operation = operation
         self.stage = stage
         self.outcome = "failed"
-        self.message = redact(message, secrets)
+        self.message = redact(message, current_secrets)
         super().__init__(self.message)
 
     def model_dump(self) -> dict[str, str | None]:
-        """Serialize the structured, already-redacted public error."""
-        return {
+        """Serialize the structured public error with current redaction values."""
+        data = {
             "api_version": self.api_version,
             "run_id": self.run_id,
             "operation": self.operation,
@@ -157,6 +174,7 @@ class RunError(Exception):
             "outcome": self.outcome,
             "message": self.message,
         }
+        return _redact_data(data, collect_secret_values())
 
 
 class RunValidationError(RunError):

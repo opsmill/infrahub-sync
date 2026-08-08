@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import traceback
 from pathlib import Path
@@ -14,10 +15,12 @@ import infrahub_sync.api.v1 as api
 import infrahub_sync.api.v1._operations as operations  # noqa: PLC2701 - tests exercise internal composition seams
 from infrahub_sync import SyncInstance
 from infrahub_sync.cache.paths import run_dir
+from infrahub_sync.cache.sidecars import RunFile
 from infrahub_sync.execution import RunResult as CoreRunResult
 from infrahub_sync.plan.config_version import resolve_config_version
+from infrahub_sync.plan.errors import OperationApplyFailedError, PlanVerificationError
 from infrahub_sync.plan.models import ApplyRecord
-from infrahub_sync.plan.review import read_saved_plan
+from infrahub_sync.plan.review import SavedPlan, read_saved_plan
 from infrahub_sync.potenda import Potenda
 from infrahub_sync.utils import PlanApplier
 from tests.plan.artifact_fixtures import operation_record, tamper_with_operations, tamperable_operation, write_artifact
@@ -154,6 +157,65 @@ def test_result_and_lifecycle_readers_preserve_future_values(monkeypatch: pytest
         "future-outcome",
         {"future_field": "preserved"},
     )
+
+
+def test_result_redacts_direct_fields_mapping_keys_extras_and_late_mutations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("API_TOKEN", TOKEN)
+    result = api.RunResult.model_validate(
+        {
+            "run_id": f"run-{TOKEN}",
+            "operation": "verify",
+            "phase": "future-phase",
+            "outcome": "future-outcome",
+            "counts": {},
+            "domain_summary": {f"kind-{TOKEN}": 1},
+            "artifacts": [{"kind": "plan", "path": f"/var/{TOKEN}/plan"}],
+            "future_field": {f"key-{TOKEN}": [f"value-{TOKEN}"]},
+        }
+    )
+
+    assert result.run_id == "run-***"
+    assert result.domain_summary == {"kind-***": 1}
+    assert result.artifacts[0].path == "/var/***/plan"
+    assert result.model_extra == {"future_field": {"key-***": ["value-***"]}}
+    assert TOKEN not in str(result.__dict__)
+
+    late_secret = "LATE-PUBLIC-API-SECRET-67890"  # noqa: S105 - a late redaction canary
+    result.domain_summary[late_secret] = 2
+    assert result.model_extra is not None
+    result.model_extra["late"] = {late_secret: [late_secret]}
+    monkeypatch.setenv("LATE_API_TOKEN", late_secret)
+
+    assert late_secret not in str(result.model_dump())
+    assert late_secret not in result.model_dump_json()
+    assert TOKEN not in str(result.model_dump())
+    assert TOKEN not in result.model_dump_json()
+
+
+def test_boundary_secrets_are_removed_from_returned_result_attributes(
+    instance: SyncInstance,
+    cache_directory: Path,  # noqa: ARG001 - activates the cache fixture
+) -> None:
+    directory, _checksum = _saved_run(instance)
+    saved = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, config=instance)
+    saved.manifest.run_id = f"run-{TOKEN}"
+    saved._operations[0].kind = f"kind-{TOKEN}"
+
+    result = operations._result(
+        saved=saved,
+        operation="plan",
+        outcome="planned",
+        run_directory=directory / TOKEN,
+        secrets=(TOKEN,),
+    )
+
+    assert result.run_id == "run-***"
+    assert result.domain_summary == {"kind-***": 1}
+    assert all(TOKEN not in artifact.path for artifact in result.artifacts)
+    assert TOKEN not in str(result.__dict__)
+    assert TOKEN not in result.model_dump_json()
 
 
 def test_plan_uses_shared_core_and_returns_saved_plan_summary(
@@ -443,14 +505,190 @@ def test_confirmed_sync_composes_plan_verify_apply_in_order(
     ]
 
 
+def _replace_sync_plan(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    saved: SavedPlan,
+    directory: Path,
+) -> None:
+    """Make a composed sync begin with one completed plan sidecar."""
+    monkeypatch.setattr(operations, "generate_run_id", lambda: RUN_ID)
+
+    def fake_plan(*_args: object, **_kwargs: object) -> tuple[Any, Path]:
+        RunFile(
+            path=directory / "run.json",
+            status="dry-run",
+            mode="diff",
+            summary={"resources": 1},
+            finished_at="2026-08-08T12:00:00+00:00",
+        ).save()
+        return saved, directory
+
+    monkeypatch.setattr(operations, "_plan_instance", fake_plan)
+
+
+def _read_run_sidecar(directory: Path) -> dict[str, Any]:
+    return cast("dict[str, Any]", json.loads((directory / "run.json").read_text(encoding="utf-8")))
+
+
+def test_sync_verification_refusal_persists_one_failed_sync_sidecar(
+    config_directory: Path,
+    instance: SyncInstance,
+    cache_directory: Path,  # noqa: ARG001 - activates the cache fixture
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory, _checksum = _saved_run(instance)
+    saved = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, config=instance)
+    _replace_sync_plan(monkeypatch, saved=saved, directory=directory)
+
+    def refuse_verify(*_args: object, **_kwargs: object) -> NoReturn:
+        msg = "reviewed plan is stale"
+        raise PlanVerificationError(msg)
+
+    monkeypatch.setattr(operations, "_verify_instance", refuse_verify)
+
+    with pytest.raises(api.RunValidationError) as caught:
+        api.sync(
+            api.SyncRequest(
+                sync_name=SYNC_NAME,
+                config_directory=str(config_directory),
+                confirm_writes=True,
+            )
+        )
+
+    recorded = _read_run_sidecar(directory)
+    assert (caught.value.operation, caught.value.stage) == ("sync", "verify")
+    assert recorded["mode"] == "sync"
+    assert recorded["status"] == "failed"
+    assert recorded["summary"] == {"resources": 1}
+    assert recorded["finished_at"] != "2026-08-08T12:00:00+00:00"
+
+
+def test_sync_partial_apply_failure_persists_record_and_failed_state(
+    config_directory: Path,
+    instance: SyncInstance,
+    cache_directory: Path,  # noqa: ARG001 - activates the cache fixture
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory, _checksum = _saved_run(instance)
+    saved = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, config=instance)
+    operation_id = saved.operations()[0].operation_id
+    _replace_sync_plan(monkeypatch, saved=saved, directory=directory)
+    monkeypatch.setattr(operations, "_verify_instance", lambda *_args, **_kwargs: (saved, directory))
+
+    class RejectingApplier:
+        @staticmethod
+        def apply_plan(**_kwargs: object) -> NoReturn:
+            partial = ApplyRecord(applied_operations=("already-applied",), failed_operation=operation_id)
+            msg = "destination refused the operation"
+            raise OperationApplyFailedError(msg, apply_record=partial)
+
+    monkeypatch.setattr(operations.PlanApplier, "open_existing", lambda *_args, **_kwargs: RejectingApplier())
+
+    with pytest.raises(api.RunExecutionError):
+        api.sync(
+            api.SyncRequest(
+                sync_name=SYNC_NAME,
+                config_directory=str(config_directory),
+                confirm_writes=True,
+            )
+        )
+
+    recorded = _read_run_sidecar(directory)
+    assert (recorded["mode"], recorded["status"]) == ("sync", "failed")
+    assert recorded["summary"]["resources"] == 1
+    assert recorded["summary"]["applied_operations"] == ["already-applied"]
+    assert recorded["summary"]["failed_operation"] == operation_id
+    assert recorded["summary"]["may_have_partially_written"] is True
+    assert recorded["finished_at"] is not None
+
+
+def test_sync_apply_interrupt_persists_carried_partial_record(
+    instance: SyncInstance,
+    cache_directory: Path,  # noqa: ARG001 - activates the cache fixture
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory, checksum = _saved_run(instance)
+    RunFile(path=directory / "run.json", status="running", mode="sync").save()
+    interruption = KeyboardInterrupt("operator interrupted apply")
+    interruption.apply_record = ApplyRecord(  # ty: ignore[unresolved-attribute]
+        applied_operations=("already-applied",),
+        failed_operation="interrupted-operation",
+    )
+
+    class InterruptingApplier:
+        @staticmethod
+        def apply_plan(**_kwargs: object) -> NoReturn:
+            raise interruption
+
+    monkeypatch.setattr(operations.PlanApplier, "open_existing", lambda *_args, **_kwargs: InterruptingApplier())
+
+    with pytest.raises(KeyboardInterrupt):
+        operations._apply_instance(
+            instance,
+            run_directory=directory,
+            run_id=RUN_ID,
+            branch=None,
+            expected_checksum=checksum,
+            operation="sync",
+            secrets=(),
+        )
+
+    recorded = _read_run_sidecar(directory)
+    assert (recorded["mode"], recorded["status"]) == ("sync", "failed")
+    assert recorded["summary"]["applied_operations"] == ["already-applied"]
+    assert recorded["summary"]["failed_operation"] == "interrupted-operation"
+    assert recorded["finished_at"] is not None
+
+
+def test_sync_success_persists_applied_state_and_completion_time(
+    config_directory: Path,
+    instance: SyncInstance,
+    cache_directory: Path,  # noqa: ARG001 - activates the cache fixture
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory, _checksum = _saved_run(instance)
+    saved = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, config=instance)
+    operation_id = saved.operations()[0].operation_id
+    _replace_sync_plan(monkeypatch, saved=saved, directory=directory)
+    monkeypatch.setattr(operations, "_verify_instance", lambda *_args, **_kwargs: (saved, directory))
+
+    class SuccessfulApplier:
+        @staticmethod
+        def apply_plan(**_kwargs: object) -> ApplyRecord:
+            return ApplyRecord(applied_operations=(operation_id,))
+
+    monkeypatch.setattr(operations.PlanApplier, "open_existing", lambda *_args, **_kwargs: SuccessfulApplier())
+
+    result = api.sync(
+        api.SyncRequest(
+            sync_name=SYNC_NAME,
+            config_directory=str(config_directory),
+            confirm_writes=True,
+        )
+    )
+
+    recorded = _read_run_sidecar(directory)
+    assert result.outcome == "applied"
+    assert (recorded["mode"], recorded["status"]) == ("sync", "applied")
+    assert recorded["summary"]["resources"] == 1
+    assert recorded["summary"]["applied_operations"] == [operation_id]
+    assert recorded["finished_at"] is not None
+
+
 def test_public_error_redacts_message_serialization_and_full_traceback(
     config_directory: Path,
     cache_directory: Path,  # noqa: ARG001 - activates the cache fixture
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fail_with_secret(*_args: object, **_kwargs: object) -> NoReturn:
-        msg = f"adapter rejected credential {TOKEN}"
-        raise ValueError(msg)
+        inner_message = f"inner adapter rejected credential {TOKEN}"
+        outer_message = f"outer adapter rejected credential {TOKEN}"
+        inner = ValueError(inner_message)
+        outer = RuntimeError(outer_message)
+        outer.__cause__ = inner
+        outer.__context__ = inner
+        raise outer
 
     monkeypatch.setattr(operations, "execute_run", fail_with_secret)
     monkeypatch.setattr(operations, "generate_run_id", lambda: RUN_ID)
@@ -460,9 +698,21 @@ def test_public_error_redacts_message_serialization_and_full_traceback(
 
     rendered = "".join(traceback.format_exception(caught.value))
     assert TOKEN not in str(caught.value)
+    assert TOKEN not in str(caught.value.__dict__)
     assert TOKEN not in str(caught.value.model_dump())
     assert TOKEN not in rendered
     assert "***" in rendered
+
+    seen: set[int] = set()
+    pending: list[BaseException] = [caught.value]
+    while pending:
+        error = pending.pop()
+        if id(error) in seen:
+            continue
+        seen.add(id(error))
+        assert TOKEN not in repr(error)
+        pending.extend(link for link in (error.__cause__, error.__context__) if link is not None)
+    assert caught.value.__context__ is None
 
 
 def test_public_error_and_failure_log_redact_a_credential_bearing_run_id(
@@ -486,3 +736,4 @@ def test_public_error_and_failure_log_redact_a_credential_bearing_run_id(
     assert caught.value.run_id == "../***"
     assert TOKEN not in str(caught.value.model_dump())
     assert TOKEN not in rendered_log
+    assert all(TOKEN not in str(record.__dict__) for record in caplog.records)

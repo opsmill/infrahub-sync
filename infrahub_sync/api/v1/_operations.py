@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, Literal
 
 from infrahub_sync.cache.locks import pipeline_lock
 from infrahub_sync.cache.paths import generate_run_id
@@ -40,12 +40,11 @@ from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, 
 from infrahub_sync.utils import PlanApplier
 
 from ._models import (
-    ActionCounts,
     ApplyRequest,
-    ArtifactReference,
     LifecycleEvent,
     Operation,
     PlanRequest,
+    RunError,
     RunExecutionError,
     RunResult,
     RunValidationError,
@@ -89,8 +88,8 @@ def _translate_error(
     stage: str,
     run_id: str | None,
     secrets: Sequence[str],
-) -> NoReturn:
-    """Raise one typed, secret-safe public error with a sanitized cause chain."""
+) -> RunError:
+    """Build one typed, secret-safe public error with a sanitized cause chain."""
     safe_run_id = None if run_id is None else redact(run_id, secrets)
     execution_failure = isinstance(exc, (OperationApplyFailedError, ApplyRecordInvariantError))
     error_type = (
@@ -107,7 +106,9 @@ def _translate_error(
     )
     if safe_run_id is not None:
         _log_lifecycle(run_id=safe_run_id, operation=operation, stage=stage, outcome="failed", secrets=secrets)
-    raise public from sanitize_exception_chain(exc, secrets)
+    public.__cause__ = sanitize_exception_chain(exc, secrets)
+    public.__suppress_context__ = True
+    return public
 
 
 def _load_instance(sync_name: str, config_directory: str) -> tuple[SyncInstance, tuple[str, ...]]:
@@ -127,23 +128,41 @@ def _result(
     """Build the common public result from the authoritative saved plan."""
     summary = saved.summary()
     plan_directory = run_directory / PLAN_DIR_NAME
-    return RunResult(
-        run_id=saved.manifest.run_id,
-        operation=operation,
-        phase="completed",
-        outcome=outcome,
-        counts=ActionCounts(
-            create=summary.by_action.get("create", 0),
-            update=summary.by_action.get("update", 0),
-            delete=summary.by_action.get("delete", 0),
+    redacted = {
+        "run_id": saved.manifest.run_id,
+        "operation": operation,
+        "phase": "completed",
+        "outcome": outcome,
+        "counts": {
+            "create": summary.by_action.get("create", 0),
+            "update": summary.by_action.get("update", 0),
+            "delete": summary.by_action.get("delete", 0),
+        },
+        "domain_summary": dict(summary.by_kind),
+        "artifacts": (
+            {"kind": "run-directory", "path": str(run_directory)},
+            {"kind": "plan-manifest", "path": str(plan_directory / MANIFEST_FILE_NAME)},
+            {"kind": "plan-operations", "path": str(plan_directory / OPERATIONS_FILE_NAME)},
         ),
-        domain_summary=dict(summary.by_kind),
-        artifacts=(
-            ArtifactReference(kind="run-directory", path=str(run_directory)),
-            ArtifactReference(kind="plan-manifest", path=str(plan_directory / MANIFEST_FILE_NAME)),
-            ArtifactReference(kind="plan-operations", path=str(plan_directory / OPERATIONS_FILE_NAME)),
-        ),
-    )._with_secret_values(secrets)
+    }
+    return RunResult.model_validate(redacted)._with_secret_values(secrets)
+
+
+def _transition_run_sidecar(
+    run_directory: Path,
+    *,
+    operation: Literal["apply", "sync"],
+    status: Literal["running", "applied", "failed"],
+    record: ApplyRecord | None = None,
+) -> None:
+    """Persist one apply-capable run transition without replacing prior summary data."""
+    run_file = RunFile.load_or_default(run_directory / "run.json")
+    run_file.mode = operation
+    run_file.status = status
+    if record is not None:
+        run_file.summary.update(record.as_summary_keys())
+    run_file.finished_at = None if status == "running" else datetime.now(timezone.utc).isoformat()
+    run_file.save()
 
 
 def _plan_instance(
@@ -212,32 +231,40 @@ def _apply_instance(
 ) -> ApplyRecord:
     """Apply the reviewed artifact, including its immediate mandatory verification."""
     _log_lifecycle(run_id=run_id, operation=operation, stage="apply", outcome="running", secrets=secrets)
-    artifact = read_plan_artifact_bytes(run_directory)
-    refusal = expected_checksum_refusal(
-        artifact=artifact,
-        run_id=run_id,
-        expected=expected_checksum,
-    )
-    if refusal is not None:
-        raise PlanVerificationError(refusal.reason, next_action=refusal.next_action)
-
     with pipeline_lock(instance.name):
-        applier = PlanApplier.open_existing(instance, run_id=run_id, branch=branch)
-        run_file = RunFile(path=applier.run_dir / "run.json", status="running", mode="apply")
-        run_file.save()
+        sidecar_operation: Literal["apply", "sync"] = "sync" if operation == "sync" else "apply"
+        _transition_run_sidecar(run_directory, operation=sidecar_operation, status="running")
         try:
+            artifact = read_plan_artifact_bytes(run_directory)
+            refusal = expected_checksum_refusal(
+                artifact=artifact,
+                run_id=run_id,
+                expected=expected_checksum,
+            )
+            if refusal is not None:
+                # The surrounding lifecycle records this designed refusal as a failed apply.
+                raise PlanVerificationError(  # noqa: TRY301
+                    refusal.reason,
+                    next_action=refusal.next_action,
+                )
+            applier = PlanApplier.open_existing(instance, run_id=run_id, branch=branch)
             record = applier.apply_plan(expected_checksum=expected_checksum)
         except BaseException as exc:
             carried = getattr(exc, "apply_record", None)
             partial = carried if isinstance(carried, ApplyRecord) else ApplyRecord()
-            run_file.summary.update(partial.as_summary_keys())
-            run_file.status = "failed"
-            run_file.save()
+            _transition_run_sidecar(
+                run_directory,
+                operation=sidecar_operation,
+                status="failed",
+                record=partial,
+            )
             raise
-        run_file.summary.update(record.as_summary_keys())
-        run_file.status = "applied"
-        run_file.finished_at = datetime.now(timezone.utc).isoformat()
-        run_file.save()
+        _transition_run_sidecar(
+            run_directory,
+            operation=sidecar_operation,
+            status="applied",
+            record=record,
+        )
     _log_lifecycle(run_id=run_id, operation=operation, stage="apply", outcome="applied", secrets=secrets)
     return record
 
@@ -267,7 +294,8 @@ def plan(request: PlanRequest) -> RunResult:
         )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         # Public boundary: every adapter/engine failure is re-raised typed with a sanitized cause.
-        _translate_error(exc, operation="plan", stage=stage, run_id=run_id, secrets=secrets)
+        error = _translate_error(exc, operation="plan", stage=stage, run_id=run_id, secrets=secrets)
+    raise error from error.__cause__
 
 
 def verify(request: VerifyRequest) -> RunResult:
@@ -292,7 +320,8 @@ def verify(request: VerifyRequest) -> RunResult:
         )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         # Public boundary: every adapter/engine failure is re-raised typed with a sanitized cause.
-        _translate_error(exc, operation="verify", stage=stage, run_id=request.run_id, secrets=secrets)
+        error = _translate_error(exc, operation="verify", stage=stage, run_id=request.run_id, secrets=secrets)
+    raise error from error.__cause__
 
 
 def apply(request: ApplyRequest) -> RunResult:
@@ -324,7 +353,8 @@ def apply(request: ApplyRequest) -> RunResult:
         )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         # Public boundary: every adapter/engine failure is re-raised typed with a sanitized cause.
-        _translate_error(exc, operation="apply", stage=stage, run_id=request.run_id, secrets=secrets)
+        error = _translate_error(exc, operation="apply", stage=stage, run_id=request.run_id, secrets=secrets)
+    raise error from error.__cause__
 
 
 def sync(request: SyncRequest) -> RunResult:
@@ -336,6 +366,7 @@ def sync(request: SyncRequest) -> RunResult:
     run_id = generate_run_id()
     stage = "configuration"
     secrets = collect_secret_values()
+    run_directory: Path | None = None
     try:
         instance, secrets = _load_instance(request.sync_name, request.config_directory)
         stage = "plan"
@@ -346,6 +377,7 @@ def sync(request: SyncRequest) -> RunResult:
             operation="sync",
             secrets=secrets,
         )
+        _transition_run_sidecar(run_directory, operation="sync", status="running")
         stage = "verify"
         saved, run_directory = _verify_instance(instance, run_id=run_id, operation="sync", secrets=secrets)
         stage = "apply"
@@ -369,4 +401,7 @@ def sync(request: SyncRequest) -> RunResult:
         )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         # Public boundary: every adapter/engine failure is re-raised typed with a sanitized cause.
-        _translate_error(exc, operation="sync", stage=stage, run_id=run_id, secrets=secrets)
+        if run_directory is not None and stage == "verify":
+            _transition_run_sidecar(run_directory, operation="sync", status="failed")
+        error = _translate_error(exc, operation="sync", stage=stage, run_id=run_id, secrets=secrets)
+    raise error from error.__cause__
