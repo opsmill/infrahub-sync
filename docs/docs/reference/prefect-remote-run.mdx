@@ -170,7 +170,7 @@ originating logger name preserved.
 | Prefect state | `status` | `run.json` `status` | Meaning |
 |---|---|---|---|
 | `COMPLETED` | `planned` | `dry-run` | Plan with changes; nothing was written |
-| `COMPLETED` | `no-change` | `dry-run` (plan) or `applied` (sync) | Destination already matches the source |
+| `COMPLETED` | `no-change` | `dry-run` (plan) or `applied` (sync) | The run materialized no plan rows — normally because the destination already matches the source, but see the `changed` warning above for the nested-difference case in which a sync writes and still reports `no-change` |
 | `COMPLETED` | `applied` | `applied` | Sync that wrote the changes |
 | `FAILED` | no result returned | `failed`, or no run directory when the refusal precedes execution | Validation refusal or execution failure; the sanitized cause is the Prefect state message |
 
