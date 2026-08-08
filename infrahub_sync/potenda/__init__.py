@@ -859,7 +859,7 @@ class Potenda:
         for resource, current in self._counts.items():
             guard.check(resource, current=current)
 
-    def sync_in_tiers(self, *, parallel: bool = False, allow_rowcount_drop: bool = False) -> None:
+    def sync_in_tiers(self, *, parallel: bool = False, allow_rowcount_drop: bool = False) -> dict[str, int]:
         """Run diff+sync one tier at a time.
 
         When `parallel=False`, falls back to the existing serial pathway.
@@ -894,7 +894,8 @@ class Potenda:
             self.persist_baseline_counts()
             self.persist_cursors_for_run(side="A")
             self.persist_cursors_for_run(side="B")
-            return
+            rows = self._diff_to_rows(diff)
+            return {action: sum(row["action"] == action for row in rows) for action in ACTIONS}
 
         self.load_both_sides()
         self.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
@@ -941,3 +942,4 @@ class Potenda:
         self.persist_cursors_for_run(side="A")
         self.persist_cursors_for_run(side="B")
         _ = parallel  # reserved for diffsync v3 thread fan-out; see backport doc
+        return {action: sum(row["action"] == action for row in aggregated_rows) for action in ACTIONS}

@@ -1,12 +1,15 @@
-"""Shared typed execution surface for the diff/plan and serial-sync lifecycles.
+"""Shared typed execution surface for plan, sync, verify, and apply lifecycles.
 
-Exactly three callers use this module: the CLI ``diff`` command, the serial
-branch of the CLI ``sync`` command, and the packaged Prefect flow. It imports no
-Prefect symbol and stays importable in a base install.
+Four entry paths use this module: the CLI ``diff``, ``sync``, and ``apply``
+commands, plus the packaged Prefect flow. The CLI ``diff`` path selects either
+plan generation or saved-plan verification, and ``sync`` selects serial or
+tier-parallel execution. This module imports no Prefect symbol and stays
+importable in a base install.
 
-Failure semantics: :func:`execute_run` raises ORIGINAL exception types and never
-wraps them; :func:`run_remote_request` is the one sanitize-and-wrap boundary that
-converts failures into :class:`RunValidationError` / :class:`RunExecutionError`.
+Failure semantics: :func:`execute_run` preserves lifecycle exception types,
+apart from its typed concurrency refusal; :func:`run_remote_request` is the one
+sanitize-and-wrap boundary that converts failures into
+:class:`RunValidationError` / :class:`RunExecutionError`.
 """
 # pylint: disable=too-many-lines
 
@@ -16,7 +19,7 @@ import logging
 import os
 import re
 from collections.abc import Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -693,16 +696,17 @@ def _run_parallel_sync_lifecycle(
     ptd: Potenda,
     run_file: RunFile,
     allow_rowcount_drop: bool,
-) -> None:
-    """Run the established tier-parallel lifecycle and finalize its run sidecar."""
+) -> dict[ActionKey, int]:
+    """Run the established tier-parallel lifecycle and return its plan counts."""
     try:
-        ptd.sync_in_tiers(parallel=True, allow_rowcount_drop=allow_rowcount_drop)
+        summary = ptd.sync_in_tiers(parallel=True, allow_rowcount_drop=allow_rowcount_drop)
     except ValueError:
         run_file.status = "failed"
         run_file.save()
         raise
     run_file.summary = {"resources": len(ptd.top_level), "mode": "parallel"}
     run_file.status = "applied"
+    return {action: summary[action] for action in ACTION_KEYS}
 
 
 def _require_a_free_run_id(*, sync_name: str, run_id: str | None) -> None:
@@ -732,15 +736,22 @@ def _active_run_id(sync_name: str) -> str | None:
 
 @contextmanager
 def _run_lock(sync_name: str, *, timeout: float) -> Iterator[None]:
-    """Acquire the core-owned lock and identify a bounded conflicting run on refusal."""
+    """Acquire the core-owned lock, reporting its holder before a bounded wait."""
+    lock_stack = ExitStack()
     try:
-        with pipeline_lock(sync_name, timeout=timeout):
-            yield
-    except Timeout as exc:
+        lock_stack.enter_context(pipeline_lock(sync_name, timeout=0))
+    except Timeout:
         holder = _active_run_id(sync_name)
         detail = f"active Sync run {holder!r}" if holder is not None else "another active Sync run"
-        msg = f"Sync {sync_name!r} could not acquire its pipeline lock within {timeout} seconds; {detail} holds it."
-        raise RunConcurrencyError(msg) from exc
+        logger.warning("Sync %r is already held by %s; waiting up to %s seconds", sync_name, detail, timeout)
+        try:
+            lock_stack.enter_context(pipeline_lock(sync_name, timeout=timeout))
+        except Timeout as exc:
+            lock_stack.close()
+            msg = f"Sync {sync_name!r} could not acquire its pipeline lock within {timeout} seconds; {detail} holds it."
+            raise RunConcurrencyError(msg) from exc
+    with lock_stack:
+        yield
 
 
 def _require_applicable_plan(*, sync_name: str, run_id: str) -> Path:
@@ -775,10 +786,10 @@ def _run_apply_lifecycle(
     verbosity: int,
     allow_destination_change: bool,
     expected_checksum: str | None,
-    plan_applier_factory: Callable[..., PlanApplier] | None,
+    _plan_applier_factory: Callable[..., PlanApplier] | None,
 ) -> RunResult:
     """Apply one saved plan while the shared core owns its sidecar transitions."""
-    factory = plan_applier_factory if plan_applier_factory is not None else PlanApplier.open_existing
+    factory = _plan_applier_factory if _plan_applier_factory is not None else PlanApplier.open_existing
     applier = factory(sync_instance, run_id=run_id, branch=branch, verbosity=verbosity)
     run_file = RunFile(path=applier.run_dir / "run.json", status="running", mode="apply")
     run_file.save()
@@ -878,8 +889,8 @@ def execute_run(
     parallel: bool = False,
     allow_destination_change: bool = False,
     expected_checksum: str | None = None,
-    plan_applier_factory: Callable[..., PlanApplier] | None = None,
     # Private seams — not part of the remote contract; run_remote_request never sets them.
+    _plan_applier_factory: Callable[..., PlanApplier] | None = None,
     _lock_timeout: float = 60.0,
     _serial_load_error: Callable[[ValueError], NoReturn] | None = None,
 ) -> RunResult | SavedPlan:  # pylint: disable=too-many-branches
@@ -919,7 +930,7 @@ def execute_run(
                 verbosity=verbosity,
                 allow_destination_change=allow_destination_change,
                 expected_checksum=expected_checksum,
-                plan_applier_factory=plan_applier_factory,
+                _plan_applier_factory=_plan_applier_factory,
             )
 
     if operation == "plan":
@@ -956,8 +967,11 @@ def execute_run(
             if operation == "plan":
                 summary = _run_plan_lifecycle(ptd=ptd, run_file=run_file)
             elif parallel and ptd.tiers:
-                _run_parallel_sync_lifecycle(ptd=ptd, run_file=run_file, allow_rowcount_drop=allow_rowcount_drop)
-                summary = _summarize_rows(())
+                summary = _run_parallel_sync_lifecycle(
+                    ptd=ptd,
+                    run_file=run_file,
+                    allow_rowcount_drop=allow_rowcount_drop,
+                )
             else:
                 if parallel and not ptd.tiers:
                     logger.warning(

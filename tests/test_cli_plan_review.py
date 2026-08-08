@@ -24,6 +24,7 @@ import stat
 import subprocess  # noqa: S404 — an exited producer is the point: FR-007 measures reading after it is gone
 import sys
 import time
+import traceback
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1402,10 +1403,13 @@ class DefectiveDestination(RecordingDestination):
     `client.schema.get` returns something other than a `NodeSchemaAPI`.
     """
 
+    def __init__(self, message: str = "a code defect, not a destination refusal") -> None:
+        super().__init__()
+        self.message = message
+
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
         if self.writes:
-            msg = "a code defect, not a destination refusal"
-            raise AssertionError(msg)
+            raise AssertionError(self.message)
         return super().apply_planned_operation(operation=operation, peers=peers)
 
 
@@ -2052,11 +2056,20 @@ def test_an_interrupt_mid_apply_records_failed_and_the_partial_applied_set(tmp_p
 def test_a_code_defect_escapes_the_command_unchanged_while_the_run_records_what_was_written(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """On the CLI path: the defect keeps its traceback, the run keeps the record."""
-    _appliable_run(tmp_path)
-    destination = DefectiveDestination()
+    """The defect shape and partial record survive, but its config secret cannot render."""
+    sentinel = "db004-apply-config-secret-sentinel"
+    sync_instance = get_instance(name=SYNC_NAME, directory=str(EXAMPLES_DIR))
+    assert sync_instance is not None
+    sync_instance = sync_instance.model_copy(deep=True)
+    assert sync_instance.destination.settings is not None
+    sync_instance.destination.settings["api_token"] = sentinel
+    _appliable_run(tmp_path, config_version=default_config_version(sync_instance))
+    destination = DefectiveDestination(f"a code defect, not a destination refusal: {sentinel}")
 
-    with caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"):
+    with (
+        patch("infrahub_sync.cli.get_instance", return_value=sync_instance),
+        caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"),
+    ):
         result = _run_apply(destination)
 
     assert result.exit_code != 0
@@ -2067,6 +2080,21 @@ def test_a_code_defect_escapes_the_command_unchanged_while_the_run_records_what_
     assert "defect rather than a destination refusal" in reported, (
         "the operator has to be told the destination is not the thing to repair"
     )
+    assert "***" in reported
+    assert sentinel not in reported
+    assert sentinel not in result.output
+    assert result.exception is not None
+    rendered = "".join(traceback.format_exception(result.exception))
+    assert sentinel not in rendered
+    raised_chain: list[BaseException] = [result.exception]
+    index = 0
+    while index < len(raised_chain):
+        error = raised_chain[index]
+        for linked in (error.__cause__, error.__context__):
+            if linked is not None and linked not in raised_chain:
+                raised_chain.append(linked)
+        index += 1
+    assert all(sentinel not in str(error) for error in raised_chain)
     assert OperationApplyFailedError.next_action not in reported, "and must not be given the refusal's remedy"
 
     first_id = str(APPLY_PLAN[0]["operation_id"])

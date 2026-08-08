@@ -29,6 +29,7 @@ def _make_fake_potenda(tiers: list | None, run_dir: Path) -> MagicMock:
     fake_diff.has_diffs.return_value = False
     fake_diff.str.return_value = ""
     ptd.diff.return_value = fake_diff
+    ptd.sync_in_tiers.return_value = {"create": 0, "update": 0, "delete": 0}
     return ptd
 
 

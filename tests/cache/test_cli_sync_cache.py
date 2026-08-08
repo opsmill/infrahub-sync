@@ -21,6 +21,7 @@ def _make_fake_potenda(tmp_path: Path, tiers) -> MagicMock:
     ptd.run_dir = tmp_path
     ptd.top_level = ["BuiltinTag"]
     ptd.diff.return_value = MagicMock(has_diffs=MagicMock(return_value=False), str=MagicMock(return_value=""))
+    ptd.sync_in_tiers.return_value = {"create": 0, "update": 0, "delete": 0}
     return ptd
 
 

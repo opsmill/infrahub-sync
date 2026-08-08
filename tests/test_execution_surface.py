@@ -16,7 +16,9 @@ import logging
 import os
 import subprocess  # noqa: S404 — patched, never invoked; the spy proves no subprocess starts
 import traceback
+from contextlib import contextmanager
 from pathlib import Path
+from timeit import default_timer as timer
 from typing import Any, NoReturn
 
 import pytest
@@ -29,6 +31,7 @@ from infrahub_sync.cache.parquet_io import write_plan
 from infrahub_sync.cache.sidecars import RunFile
 from infrahub_sync.execution import (
     REDACTED,
+    RunConcurrencyError,
     RunExecutionError,
     RunResult,
     RunValidationError,
@@ -158,6 +161,7 @@ class _FakePotenda:
         self.run_dir = run_dir
         self.run_id = run_dir.name
         self.top_level = ["InfraDevice"]
+        self.tiers: list[set[str]] | None = None
         self.force_full_extract = False
         self.factory_kwargs = factory_kwargs
         self.rows = rows
@@ -195,6 +199,13 @@ class _FakePotenda:
 
     def persist_baseline_counts(self) -> None:
         self.baseline_persisted = True
+
+    def sync_in_tiers(self, *, parallel: bool, allow_rowcount_drop: bool) -> dict[str, int]:
+        assert parallel is True
+        self.guardrail_allow_drop = allow_rowcount_drop
+        self.synced = bool(self.rows)
+        self.baseline_persisted = True
+        return {action: sum(row["action"] == action for row in self.rows) for action in ("create", "update", "delete")}
 
 
 class _SpyFactory:
@@ -1133,11 +1144,11 @@ def test_unconfirmed_sync_is_refused_through_the_remote_composition(config_dir: 
     assert factory.calls == []
 
 
-def test_unknown_operation_is_refused(config_dir: str, cache_root: Path) -> None:
+def test_unconfirmed_apply_is_refused(config_dir: str, cache_root: Path) -> None:
     instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
     factory = _SpyFactory(cache_root=cache_root)
     with pytest.raises(RunValidationError):
-        execute_run(instance, operation="apply", potenda_factory=factory)  # ty: ignore[invalid-argument-type]
+        execute_run(instance, operation="apply", potenda_factory=factory)
     assert factory.calls == []
 
 
@@ -1146,12 +1157,56 @@ def test_unknown_operation_is_refused(config_dir: str, cache_root: Path) -> None
 # --------------------------------------------------------------------------- #
 
 
-def test_execute_run_lets_lock_timeout_propagate_unchanged(config_dir: str, cache_root: Path) -> None:
+def test_execute_run_reports_holder_and_raises_a_bounded_typed_refusal(
+    config_dir: str,
+    cache_root: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
     factory = _SpyFactory(cache_root=cache_root)
-    with pipeline_lock(SYNC_NAME, timeout=5), pytest.raises(Timeout):
-        execute_run(instance, operation="plan", potenda_factory=factory, _lock_timeout=0.2)
+    holder = "20260808T1200-holder01"
+    RunFile(path=cache_root / holder / "run.json", status="running", mode="sync").save()
+    started = timer()
+    with (
+        pipeline_lock(SYNC_NAME, timeout=5),
+        caplog.at_level(logging.WARNING, logger="infrahub_sync.execution"),
+        pytest.raises(RunConcurrencyError) as excinfo,
+    ):
+        execute_run(instance, operation="plan", potenda_factory=factory, _lock_timeout=0.05)
+    elapsed = timer() - started
+
+    assert elapsed < 1.0
+    assert holder in caplog.text
+    assert "waiting up to 0.05 seconds" in caplog.text
+    assert holder in str(excinfo.value)
+    assert "within 0.05 seconds" in str(excinfo.value)
     assert factory.calls == []
+
+
+def test_execute_run_logs_the_active_holder_before_starting_its_bounded_wait(
+    config_dir: str,
+    cache_root: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    holder = "20260808T1201-holder02"
+    RunFile(path=cache_root / holder / "run.json", status="running", mode="sync").save()
+    timeouts: list[float] = []
+
+    @contextmanager
+    def contended_lock(_sync_name: str, *, timeout: float) -> Any:  # noqa: ANN401
+        timeouts.append(timeout)
+        if timeout != 0:
+            assert holder in caplog.text
+        raise Timeout(str(cache_root / ".lock"))
+        yield  # pragma: no cover - keeps this a context manager
+
+    monkeypatch.setattr("infrahub_sync.execution.pipeline_lock", contended_lock)
+    with caplog.at_level(logging.WARNING, logger="infrahub_sync.execution"), pytest.raises(RunConcurrencyError):
+        execute_run(instance, operation="plan", _lock_timeout=0.25)
+
+    assert timeouts == [0, 0.25]
 
 
 def test_run_remote_request_wraps_lock_timeout(config_dir: str, cache_root: Path) -> None:
@@ -1648,6 +1703,34 @@ def test_confirmed_sync_summary_counts_every_action(config_dir: str, cache_root:
 
     assert result.status == "applied"
     assert dict(result.summary) == {"create": 2, "update": 1, "delete": 1}
+
+
+def test_confirmed_parallel_sync_returns_its_aggregated_plan_counts(config_dir: str, cache_root: Path) -> None:
+    """A tier-parallel write reports the materialized plan instead of no-change."""
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    rows = [_plan_row("create", "core01"), _plan_row("update", "edge01"), _plan_row("delete", "edge02")]
+    factory = _SpyFactory(cache_root=cache_root, rows=rows)
+
+    def parallel_factory(**kwargs: object) -> Any:  # noqa: ANN401
+        engine = factory(**kwargs)
+        engine.tiers = [{"InfraDevice"}]
+        return engine
+
+    result = execute_run(
+        instance,
+        operation="sync",
+        confirm_writes=True,
+        parallel=True,
+        potenda_factory=parallel_factory,
+    )
+
+    assert result.status == "applied"
+    assert result.changed is True
+    assert dict(result.summary) == {"create": 1, "update": 1, "delete": 1}
+    assert RunFile.load_or_default(cache_root / RUN_ID / "run.json").summary == {
+        "resources": 1,
+        "mode": "parallel",
+    }
 
 
 def test_confirmed_sync_rejects_a_malformed_writer_summary_before_writing(

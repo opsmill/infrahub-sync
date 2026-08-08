@@ -10,7 +10,13 @@ import typer
 from infrahub_sdk import InfrahubClientSync
 from infrahub_sdk.exceptions import ServerNotResponsiveError
 
-from infrahub_sync.execution import RunConcurrencyError, collect_secret_values, execute_run, redact
+from infrahub_sync.execution import (
+    RunConcurrencyError,
+    collect_secret_values,
+    execute_run,
+    redact,
+    sanitize_exception_chain,
+)
 
 # Imported at module level rather than deferred: `infrahub_sync.utils` below already pulls
 # the engine, which pulls this package, so deferring these would buy no import time and only
@@ -642,6 +648,7 @@ def apply_cmd(
         print_error_and_abort("Failed to load sync instance.")
 
     verbosity_level = ctx.obj.get("verbosity", logging.INFO) if ctx.obj else logging.INFO
+    unexpected_error: Exception | None = None
     try:
         result = execute_run(
             sync_instance,
@@ -652,13 +659,15 @@ def apply_cmd(
             verbosity=verbosity_level,
             allow_destination_change=allow_destination_change,
             expected_checksum=expected_checksum,
-            plan_applier_factory=_cli_plan_applier_factory,
+            _plan_applier_factory=_cli_plan_applier_factory,
         )
     except (ImportError, ValueError) as exc:
         print_error_and_abort(f"Failed to initialize the destination for the apply: {exc}")
     except (PlanArtifactError, RunConcurrencyError) as exc:
         print_error_and_abort(str(exc))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        secrets = collect_secret_values(sync_instance)
+        sanitized_message = redact(str(exc), secrets)
         logger.error(  # noqa: TRY400
             "Apply of run %s failed with an unexpected error, which is a defect rather than a "
             "destination refusal: %s: %s. The traceback below is the diagnosis; the run records "
@@ -666,9 +675,16 @@ def apply_cmd(
             "change. Do not re-plan on the assumption the destination is at fault.",
             run_id,
             type(exc).__name__,
-            exc,
+            sanitized_message,
         )
-        raise
+        try:
+            unexpected_error = type(exc)(sanitized_message)
+        except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            unexpected_error = RuntimeError(f"{type(exc).__name__}: {sanitized_message}")
+        unexpected_error.__cause__ = sanitize_exception_chain(exc, secrets)
+        unexpected_error.__suppress_context__ = True
+    if unexpected_error is not None:
+        raise unexpected_error
     summary = cast("Any", result).summary
     skipped = summary["delete"]
     applied = summary["create"] + summary["update"]
