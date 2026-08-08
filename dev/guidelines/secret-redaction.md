@@ -21,7 +21,7 @@ An adapter's own exception text is fine locally — the CLI operator already has
 credentials. Rewriting adapter messages to be remote-safe changes CLI behaviour and spreads
 the obligation across every module. Keep it in one function, at the boundary, and leave the
 adapters alone. See
-[ADR 1](../adr/0001-translate-run-failures-only-at-the-remote-boundary.md).
+[ADR 5](../adr/0005-translate-run-failures-only-at-the-remote-boundary.md).
 
 ## Redact the whole cause chain
 

@@ -1,7 +1,7 @@
 # Implementation report — DONE (all 9 chunks, 44/44 tasks)
 
 - **Feature:** Prefect-managed remote Infrahub Sync run (DB-001 / LOCAL-DP-001)
-- **Spec dir:** `dev/specs/001-prefect-managed-remote-run`
+- **Spec dir:** `dev/specs/archive/001-prefect-managed-remote-run`
 - **Branch:** `001-prefect-managed-remote-run-local-dp-001`
 - **Base commit (implementation start):** `a65f568`
 - **Head commit:** `f643e2a`
@@ -216,4 +216,4 @@ Three issues were filed upstream instead of being fixed here: generator non-dete
 6. Ran a second review-and-remediation pass over `141ad14..2bb58f7` rather than declaring the
    review complete on the strength of a green suite. That pass found the credential leak.
 
-STATUS: DONE | SPEC_DIR: /Users/blake/repos/opsmill/infrahub-sync-dev-preview/dev/specs/001-prefect-managed-remote-run
+STATUS: DONE | SPEC_DIR: dev/specs/archive/001-prefect-managed-remote-run

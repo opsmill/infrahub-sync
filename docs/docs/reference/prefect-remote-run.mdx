@@ -124,7 +124,7 @@ A successful run returns exactly these fields:
 | `operation` | `"plan"` or `"sync"` | Requested operation |
 | `run_id` | `str` | Sync cache run identifier, `YYYYMMDDTHHMM-<8 hex>` |
 | `status` | `"planned"`, `"applied"`, or `"no-change"` | Terminal outcome |
-| `changed` | `bool` | Whether the plan contained destination changes |
+| `changed` | `bool` | Whether the run materialized any plan rows |
 | `summary` | `dict` | Per-action counts; `create`, `update`, and `delete` are always all present |
 | `artifact_path` | `str` | Absolute path of the run directory **on the runner host** |
 
@@ -133,6 +133,21 @@ counts sum to more than zero. `status="planned"` occurs only for a plan and
 `status="applied"` only for a sync. `artifact_path` holds the ordinary sync artifacts
 (`run.json`, `plan.parquet`); those files are local to the runner and are not retrievable
 through Prefect.
+
+:::warning `changed` is not "the destination was written"
+
+`changed` reports what the run **materialized as plan rows**, not whether the destination
+was written. The two can disagree in one case: the engine gates a sync on a recursive
+difference check, while the plan materializes only the diff root's direct children. A
+difference that exists solely in nested child elements therefore lets the sync run — and
+write — while materializing zero rows, so the result comes back
+`status="no-change"`, `changed=false`, and an all-zero `summary`.
+
+Do not read `changed=false` as "the destination was not touched". For a definitive
+account of what a run did, read the artifacts under `artifact_path` on the runner host.
+This is a known limit of the preview.
+
+:::
 
 ### Reading the result remotely
 

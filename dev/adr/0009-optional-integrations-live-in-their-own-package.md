@@ -1,4 +1,4 @@
-# 5. Optional integrations live in their own package and are proven absent in CI
+# 9. Optional integrations live in their own package and are proven absent in CI
 
 **Status**: Accepted
 **Date**: 2026-07-31

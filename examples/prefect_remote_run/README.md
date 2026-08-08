@@ -278,21 +278,25 @@ Expected:
 The request bodies live in [`requests/`](requests/README.md), which lists every
 endpoint used here.
 
-All of these run in **Terminal C**. The guard on the first line turns an unset
-`PREFECT_API_URL` into a named error instead of a silent empty result:
+All of these run in **Terminal C**. The guards turn an unset `PREFECT_API_URL` or a
+deployment that is not being served into a named error, and skip the request rather
+than posting to `/deployments//create_flow_run` and leaving you to debug a 404:
 
 ```bash
 # in Terminal C
 printenv PREFECT_API_URL >/dev/null || echo "set PREFECT_API_URL first"
 
 DEP_ID=$(curl -s "$PREFECT_API_URL/deployments/name/infrahub-sync/run" | jq -r .id)
-[ "$DEP_ID" != "null" ] && [ -n "$DEP_ID" ] || { echo "no deployment — is Terminal B serving?"; }
 
-RUN_ID=$(curl -s -X POST "$PREFECT_API_URL/deployments/$DEP_ID/create_flow_run" \
-  -H "Content-Type: application/json" \
-  -d @examples/prefect_remote_run/requests/create-plan-flow-run.json | jq -r .id)
+if [ -z "$DEP_ID" ] || [ "$DEP_ID" = "null" ]; then
+  echo "no deployment — is Terminal B serving?"
+else
+  RUN_ID=$(curl -s -X POST "$PREFECT_API_URL/deployments/$DEP_ID/create_flow_run" \
+    -H "Content-Type: application/json" \
+    -d @examples/prefect_remote_run/requests/create-plan-flow-run.json | jq -r .id)
 
-echo "flow run: $RUN_ID"
+  echo "flow run: $RUN_ID"
+fi
 ```
 
 The flow-run id comes back synchronously. Watch it reach a terminal state (a few

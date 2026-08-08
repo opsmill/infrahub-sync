@@ -1,4 +1,4 @@
-# 3. A canonical plan fingerprint is the equivalence oracle between run paths
+# 7. A canonical plan fingerprint is the equivalence oracle between run paths
 
 **Status**: Accepted
 **Date**: 2026-07-31

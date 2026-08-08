@@ -374,7 +374,7 @@ container was stopped, restarted, modified, or exec'd into at any point).
 Terminal B (served deployment), started 2026-07-31T10:57:12Z from the repository root:
 
 ```bash
-# from the repository root — cwd=/Users/blake/repos/opsmill/infrahub-sync-dev-preview
+# from the repository root — cwd=<repo-root>
 export PREFECT_API_URL="http://127.0.0.1:4200/api"
 export INFRAHUB_SYNC_CONFIG_DIRECTORY="$PWD/examples/custom_adapter"
 # INFRAHUB_ADDRESS / INFRAHUB_API_TOKEN already present in the session environment
@@ -452,7 +452,7 @@ exit=1
 
 $ INFRAHUB_SYNC_CONFIG_DIRECTORY="$PWD/examples/custom_adapter/config.yml" \
     uv run python -m infrahub_sync.orchestration.serve
-INFRAHUB_SYNC_CONFIG_DIRECTORY='/Users/blake/repos/opsmill/infrahub-sync-dev-preview/examples/custom_adapter/config.yml' is not an existing directory
+INFRAHUB_SYNC_CONFIG_DIRECTORY='<repo-root>/examples/custom_adapter/config.yml' is not an existing directory
 exit=1
 ```
 
@@ -550,8 +550,8 @@ InfraDevice
   InfraDevice: core03 MISSING in Infrahub
   InfraDevice: edge01 MISSING in Infrahub
   InfraDevice: edge02 MISSING in Infrahub
-2026-07-31T10:58:04.602074Z [20] prefect.flow_runs :: infrahub_sync.execution | Cached run 20260731T1058-07e1e25e at /Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1058-07e1e25e
-2026-07-31T10:58:04.602878Z [20] prefect.flow_runs :: run 20260731T1058-07e1e25e finished: status=planned changed=True summary=create:5,update:0,delete:0 artifact=/Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1058-07e1e25e
+2026-07-31T10:58:04.602074Z [20] prefect.flow_runs :: infrahub_sync.execution | Cached run 20260731T1058-07e1e25e at <repo-root>/.infrahub-sync-cache/custom-example/20260731T1058-07e1e25e
+2026-07-31T10:58:04.602878Z [20] prefect.flow_runs :: run 20260731T1058-07e1e25e finished: status=planned changed=True summary=create:5,update:0,delete:0 artifact=<repo-root>/.infrahub-sync-cache/custom-example/20260731T1058-07e1e25e
 2026-07-31T10:58:05.060643Z [20] prefect.flow_runs :: Finished in state Completed()
 ```
 
@@ -569,11 +569,11 @@ The summary line, verbatim (contracts/prefect-flow.md §2 step 3 fixed key=value
 the supported remote observation surface; leading `%s` is `result.run_id` per X18):
 
 ```text
-run 20260731T1058-07e1e25e finished: status=planned changed=True summary=create:5,update:0,delete:0 artifact=/Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1058-07e1e25e
+run 20260731T1058-07e1e25e finished: status=planned changed=True summary=create:5,update:0,delete:0 artifact=<repo-root>/.infrahub-sync-cache/custom-example/20260731T1058-07e1e25e
 ```
 
 **`summary=create:5,update:0,delete:0`** — five creates, zero updates, zero deletes.
-`artifact_path` = `/Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1058-07e1e25e`.
+`artifact_path` = `<repo-root>/.infrahub-sync-cache/custom-example/20260731T1058-07e1e25e`.
 
 **Five creates, not zero.** The X1/E11 CWD hazard did not trigger, because the serve
 process was started from the repository root: the `./`-relative adapter spec and
@@ -842,8 +842,8 @@ InfraDevice
 2026-07-31T11:11:52.743369Z [20] prefect.flow_runs :: infrahub_sync.potenda | Sync: Importing data from MockDB to Infrahub based on Diff
 2026-07-31T11:11:53.982669Z [20] prefect.flow_runs :: infrahub_sync.potenda | sync: 5/5 models processed
 2026-07-31T11:11:53.983615Z [20] prefect.flow_runs :: infrahub_sync.execution | Sync: Completed in 1.240181874949485 sec
-2026-07-31T11:11:53.985119Z [20] prefect.flow_runs :: infrahub_sync.execution | Sync run 20260731T1111-3290d1b4 at /Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1111-3290d1b4
-2026-07-31T11:11:53.986137Z [20] prefect.flow_runs :: run 20260731T1111-3290d1b4 finished: status=applied changed=True summary=create:5,update:0,delete:0 artifact=/Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1111-3290d1b4
+2026-07-31T11:11:53.985119Z [20] prefect.flow_runs :: infrahub_sync.execution | Sync run 20260731T1111-3290d1b4 at <repo-root>/.infrahub-sync-cache/custom-example/20260731T1111-3290d1b4
+2026-07-31T11:11:53.986137Z [20] prefect.flow_runs :: run 20260731T1111-3290d1b4 finished: status=applied changed=True summary=create:5,update:0,delete:0 artifact=<repo-root>/.infrahub-sync-cache/custom-example/20260731T1111-3290d1b4
 2026-07-31T11:11:54.224198Z [20] prefect.flow_runs :: Finished in state Completed()
 ```
 
@@ -856,7 +856,7 @@ changes) → the cache line.
 leading `%s` is `result.run_id` per X18):
 
 ```text
-run 20260731T1111-3290d1b4 finished: status=applied changed=True summary=create:5,update:0,delete:0 artifact=/Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1111-3290d1b4
+run 20260731T1111-3290d1b4 finished: status=applied changed=True summary=create:5,update:0,delete:0 artifact=<repo-root>/.infrahub-sync-cache/custom-example/20260731T1111-3290d1b4
 ```
 
 `status=applied`, `changed=True`, **`summary=create:5,update:0,delete:0`** — exactly the
@@ -941,15 +941,15 @@ HTTP 201
 2026-07-31T11:12:41.773112Z [20] prefect.flow_runs :: infrahub_sync.potenda | diff: 10/10 models processed
 2026-07-31T11:12:41.774800Z [20] prefect.flow_runs :: infrahub_sync.execution |
 (no diffs)
-2026-07-31T11:12:41.775928Z [20] prefect.flow_runs :: infrahub_sync.execution | Cached run 20260731T1112-40e8cdc2 at /Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1112-40e8cdc2
-2026-07-31T11:12:41.776595Z [20] prefect.flow_runs :: run 20260731T1112-40e8cdc2 finished: status=no-change changed=False summary=create:0,update:0,delete:0 artifact=/Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1112-40e8cdc2
+2026-07-31T11:12:41.775928Z [20] prefect.flow_runs :: infrahub_sync.execution | Cached run 20260731T1112-40e8cdc2 at <repo-root>/.infrahub-sync-cache/custom-example/20260731T1112-40e8cdc2
+2026-07-31T11:12:41.776595Z [20] prefect.flow_runs :: run 20260731T1112-40e8cdc2 finished: status=no-change changed=False summary=create:0,update:0,delete:0 artifact=<repo-root>/.infrahub-sync-cache/custom-example/20260731T1112-40e8cdc2
 2026-07-31T11:12:42.119997Z [20] prefect.flow_runs :: Finished in state Completed()
 ```
 
 **Summary line, verbatim:**
 
 ```text
-run 20260731T1112-40e8cdc2 finished: status=no-change changed=False summary=create:0,update:0,delete:0 artifact=/Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1112-40e8cdc2
+run 20260731T1112-40e8cdc2 finished: status=no-change changed=False summary=create:0,update:0,delete:0 artifact=<repo-root>/.infrahub-sync-cache/custom-example/20260731T1112-40e8cdc2
 ```
 
 `status=no-change`, `changed=False`, **all-zero summary** — Constitution II idempotency.
@@ -1290,7 +1290,7 @@ persists a run's result (including a failed run's exception) to
 ```text
 $ PREFECT_HOME=/tmp/ph-probe uv run python -c "…get_current_settings()…"
 home: /tmp/ph-probe
-local_storage_path: /Users/blake/.prefect/storage      # ← did NOT follow PREFECT_HOME
+local_storage_path: ~/.prefect/storage      # ← did NOT follow PREFECT_HOME
 $ PREFECT_HOME=/tmp/ph-probe PREFECT_LOCAL_STORAGE_PATH=/tmp/ph-probe/storage uv run python -c "…"
 local_storage_path: /tmp/ph-probe/storage
 ```
@@ -1311,7 +1311,7 @@ is the seven-key `RunResult` dict; a failed run's is the already-sanitized
 ## Phase 6 (US4) live verification — T030, T031
 
 Environment: macOS 25.5.0, Python 3.12.2, Infrahub 1.9.8 at `http://localhost:8000`,
-Prefect 3.8.1, repository root `/Users/blake/repos/opsmill/infrahub-sync-dev-preview`,
+Prefect 3.8.1, repository root `<repo-root>`,
 branch `001-prefect-managed-remote-run-local-dp-001`. Credential values are never printed
 anywhere below; only variable NAMES appear.
 
@@ -1638,7 +1638,7 @@ InfraDevice
   InfraDevice: core03 MISSING in Infrahub
   InfraDevice: edge01 MISSING in Infrahub
   InfraDevice: edge02 MISSING in Infrahub
-run 20260731T1223-efb89811 finished: status=planned changed=True summary=create:5,update:0,delete:0 artifact=/Users/blake/repos/opsmill/infrahub-sync-dev-preview/.infrahub-sync-cache/custom-example/20260731T1223-efb89811
+run 20260731T1223-efb89811 finished: status=planned changed=True summary=create:5,update:0,delete:0 artifact=<repo-root>/.infrahub-sync-cache/custom-example/20260731T1223-efb89811
 Finished in state Completed()
 ```
 

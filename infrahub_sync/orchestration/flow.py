@@ -26,7 +26,7 @@ The flow calls the shared execution surface IN-PROCESS; it never spawns the CLI.
 import dataclasses
 import logging
 import os
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from prefect import flow
 from prefect.logging import get_run_logger
@@ -102,7 +102,7 @@ def infrahub_sync_run(
     operation: Literal["plan", "sync"] = "plan",
     confirm_writes: bool = False,
     branch: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Run one Infrahub Sync plan or explicitly confirmed sync via the shared surface.
 
     EXACTLY these four parameters; none accepts paths, CLI fragments,

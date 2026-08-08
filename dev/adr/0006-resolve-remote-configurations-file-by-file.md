@@ -1,4 +1,4 @@
-# 2. Resolve remote configurations file by file
+# 6. Resolve remote configurations file by file
 
 **Status**: Accepted
 **Date**: 2026-07-31

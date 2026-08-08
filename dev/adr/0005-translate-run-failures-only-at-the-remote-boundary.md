@@ -1,4 +1,4 @@
-# 1. Translate run failures only at the remote boundary
+# 5. Translate run failures only at the remote boundary
 
 **Status**: Accepted
 **Date**: 2026-07-31

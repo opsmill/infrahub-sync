@@ -5,7 +5,7 @@
 `52953bf`, base `9edc1bc`. While this retrospective was being written the summary phase
 landed one docs-only commit, `f643e2a` (`sessions/session-2026-07-31-1055.md`); no finding
 below depends on it.
-**Report path**: `dev/specs/001-prefect-managed-remote-run/retrospective.md`
+**Report path**: `dev/specs/archive/001-prefect-managed-remote-run/retrospective.md`
 **Status of this report**: **report saved only.** No disposition action below has been
 executed. Nothing was committed, pushed, stashed, amended, or filed.
 

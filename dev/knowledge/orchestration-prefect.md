@@ -8,7 +8,7 @@
 or one confirmed sync, and a serve entrypoint that exposes it as a locally served
 deployment. It is the only package in the repository that imports `prefect`, it is installed
 by the optional `prefect` extra, and nothing in the base package imports it — see
-[ADR 5](../adr/0005-optional-integrations-live-in-their-own-package.md).
+[ADR 9](../adr/0009-optional-integrations-live-in-their-own-package.md).
 
 The flow calls [the shared execution surface](execution-surface.md) in-process. It never
 spawns the CLI.
@@ -151,7 +151,7 @@ Recorded because each cost real measurement time.
 - **`dataclasses.asdict()` cannot copy a `MappingProxyType` field**, as above.
 - **Pinning the version is not optional here.** The extra pins `prefect==3.8.1` exactly,
   because the base dependency set and Prefect's transitive `redis` requirement interact —
-  see [ADR 4](../adr/0004-declare-redis-directly-instead-of-the-diffsync-extra.md).
+  see [ADR 8](../adr/0008-declare-redis-directly-instead-of-the-diffsync-extra.md).
 
 ## See also
 

@@ -434,7 +434,17 @@ def sanitize_exception_chain(exc: BaseException, secrets: Sequence[str]) -> Exce
 
 @dataclass(frozen=True, slots=True)
 class RunResult:
-    """Immutable success result — exactly these seven fields."""
+    """Immutable success result — exactly these seven fields.
+
+    `changed` and `summary` describe the MATERIALIZED PLAN ROWS, not whether the
+    destination was written. `Potenda._diff_to_rows` walks only the diff root's
+    direct children while `Diff.has_diffs()` — which gates the sync — is
+    recursive, so a difference confined to nested child elements runs the sync
+    and materializes zero rows. Such a run reports `status="no-change"` and
+    `changed=False` even though it may have written. Pinned by
+    `tests/test_execution_cli_parity.py::test_nested_only_diff_reports_no_change_even_though_the_sync_ran`
+    and documented for remote callers in `docs/docs/reference/prefect-remote-run.mdx`.
+    """
 
     sync_name: str
     operation: Operation
@@ -491,9 +501,10 @@ class RunResult:
 
 
 def _load_config_name(config_file: Path) -> tuple[bool, Any]:
-    """Return `(determinable, name)` for one discovered `config.yml`.
+    """Return `(determinable, document)` for one discovered `config.yml`.
 
-    The name is the top-level `name` key of the parsed mapping. It is
+    The document is the whole parsed mapping; the caller reads its top-level
+    `name` key. It is
     UNDETERMINABLE when the read raises `OSError` or `UnicodeDecodeError` (a
     non-UTF-8 file — `read_text(encoding="utf-8")` raises it, and it is a
     `ValueError`, so neither of the other two clauses would catch it), the parse

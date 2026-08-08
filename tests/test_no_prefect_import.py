@@ -14,6 +14,8 @@ import subprocess  # noqa: S404 - fixed argv probe, the point of the test
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_ROOT = REPO_ROOT / "infrahub_sync"
 EXAMPLES_DIR = REPO_ROOT / "examples"
@@ -49,15 +51,36 @@ def _module_paths() -> list[Path]:
     ]
 
 
-def _imported_names(path: Path) -> set[str]:
-    """Return every module name `path` imports, dotted form, from static analysis."""
+def _imported_names(path: Path, *, root: Path = REPO_ROOT) -> set[str]:
+    """Return every module name `path` imports, dotted form, from static analysis.
+
+    RELATIVE imports are resolved against `path`'s own package, so
+    `from .orchestration import flow` yields the same
+    `infrahub_sync.orchestration.flow` an absolute import would. Skipping them
+    would leave the boundary test blind to the most natural in-package form —
+    and the package already uses relative imports in `adapters/`.
+
+    `root` is the directory the dotted path is measured from; tests override it.
+    """
+    parts = path.relative_to(root).with_suffix("").parts
+    # `path`'s package: for `pkg/mod.py` and for `pkg/__init__.py` alike this is
+    # `pkg`, because a relative import in either resolves against `pkg`.
+    package = parts[:-1]
     names: set[str] = set()
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if isinstance(node, ast.Import):
             names.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
-            names.add(node.module)
-            names.update(f"{node.module}.{alias.name}" for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                # One leading dot is `package` itself; each extra dot climbs one level.
+                base = package[: max(len(package) - (node.level - 1), 0)]
+                prefix = ".".join([*base, node.module] if node.module else base)
+            else:
+                prefix = node.module or ""
+            if not prefix:
+                continue
+            names.add(prefix)
+            names.update(f"{prefix}.{alias.name}" for alias in node.names)
     return names
 
 
@@ -93,3 +116,30 @@ def test_no_base_package_module_imports_the_orchestration_package() -> None:
         for path in _module_paths()
     }
     assert not {path: names for path, names in offenders.items() if names}
+
+
+@pytest.mark.parametrize(
+    ("module_path", "source"),
+    [
+        ("infrahub_sync/probe.py", "from .orchestration import flow\n"),
+        ("infrahub_sync/probe.py", "from . import orchestration\n"),
+        ("infrahub_sync/adapters/probe.py", "from ..orchestration import flow\n"),
+        ("infrahub_sync/adapters/__init__.py", "from ..orchestration import flow\n"),
+    ],
+)
+def test_the_scan_resolves_relative_imports_of_the_orchestration_package(
+    tmp_path: Path, module_path: str, source: str
+) -> None:
+    """The boundary is only enforced if the scan sees the in-package import forms.
+
+    Each of these reaches `infrahub_sync.orchestration` exactly as the absolute
+    import does. A scan that skipped `ImportFrom` nodes carrying a level would
+    report no name at all and pass the boundary test on a real violation.
+    """
+    probe = tmp_path / module_path
+    probe.parent.mkdir(parents=True, exist_ok=True)
+    probe.write_text(source, encoding="utf-8")
+
+    names = _imported_names(probe, root=tmp_path)
+
+    assert [name for name in names if name.startswith("infrahub_sync.orchestration")]

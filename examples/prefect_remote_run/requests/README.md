@@ -18,7 +18,7 @@ The JSON files in this directory are request **bodies** — pass them with
 |---|---|---|---|
 | 1 | `GET /api/deployments/name/infrahub-sync/run` | none | `200` with `id`, `status: "READY"`, `enforce_parameter_schema: true`, and `parameter_openapi_schema.properties.operation.enum == ["plan", "sync"]` |
 | 2 | `POST /api/deployments/<deployment-id>/create_flow_run` | [`create-plan-flow-run.json`](create-plan-flow-run.json) | `201` with the flow-run `id` returned **synchronously**, `state_type: "SCHEDULED"` |
-| 3 | `GET /api/flow_runs/<flow-run-id>` | none | `state.type` progresses `SCHEDULED` → `RUNNING` → `COMPLETED` (or `FAILED`, with the sanitized cause in `state.message`) |
+| 3 | `GET /api/flow_runs/<flow-run-id>` | none | `state.type` progresses `SCHEDULED` → `PENDING` → `RUNNING` → `COMPLETED` (or `FAILED`, with the sanitized cause in `state.message`) |
 | 4 | `POST /api/logs/filter` | [`filter-flow-run-logs.json`](filter-flow-run-logs.json) | array of log records for the run, including the bridged `infrahub_sync` lifecycle lines and the run summary line |
 | 5 | `POST /api/deployments/<deployment-id>/create_flow_run` | [`create-sync-flow-run-confirmed.json`](create-sync-flow-run-confirmed.json) | `201`; the run writes to the destination because `confirm_writes` is `true` |
 | 6 | `POST /api/deployments/<deployment-id>/create_flow_run` | [`create-invalid-operation-flow-run.json`](create-invalid-operation-flow-run.json) | `409` with `'apply' is not one of ['plan', 'sync']` — **no flow run is created** |

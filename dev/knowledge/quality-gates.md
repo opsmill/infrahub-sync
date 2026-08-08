@@ -32,8 +32,13 @@ that leg directly.
 
 `rumdl fmt .` misparses some wrapped lines in this repository's Markdown as ATX headings,
 drops text, and cascades a heading demotion through the rest of the file.
-`dev/specs/**` is **not** in the `[tool.rumdl] exclude` list in `pyproject.toml`, so those
-files are in scope for the formatter.
+
+`dev/specs/**` — the archived spec artifacts, a historical record — is in the
+`[tool.rumdl] exclude` list in `pyproject.toml` for exactly this reason, so `invoke format`
+cannot rewrite it. That exclusion covers `rumdl check` too: the archive is not linted, and
+is not expected to be. **Every other tracked Markdown file is still in scope for the
+formatter**, and the corruption is a property of the tool, not of `dev/specs`. Prefer
+`invoke linter.format` when you only mean to format Python.
 
 Use `rumdl check .` and fix violations by hand. When you only want the Python formatters, run
 `invoke linter.format` — which is the *formatter* aggregate (`ruff format` + `ruff check
@@ -110,7 +115,7 @@ import in `infrahub_sync/orchestration/`.
 
 Tests run in **two** legs — one with the `prefect` extra, one without, where the base leg
 first asserts Prefect is genuinely not importable. See
-[ADR 5](../adr/0005-optional-integrations-live-in-their-own-package.md).
+[ADR 9](../adr/0009-optional-integrations-live-in-their-own-package.md).
 
 Installing the extra has one visible side effect on the type gate: it pulls transitive
 packages that resolve imports the base install cannot, so a `# ty: ignore[unresolved-import]`

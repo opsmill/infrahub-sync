@@ -39,7 +39,7 @@ Infrahub Sync ships an optional Prefect integration as a developer preview. Inst
 **When this works well:**
 
 - You already use Prefect for other infrastructure or data workflows.
-- Syncs need to be composed with other tasks — for example, run a sync, then trigger downstream automation.
+- A sync needs to be triggered on demand from another system, over an API rather than a shell.
 - You want centralized observability across many sync projects.
 
 **Trade-offs:** Prefect itself has to be operated. If you don't already run it, this adds operational surface area. The packaged integration is a preview: it covers running and observing one plan or sync, not scheduling or retry policy.

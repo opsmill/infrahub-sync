@@ -12,7 +12,7 @@ functions and get the same result object.
 
 The module is deliberately import-light. It imports no Prefect symbol and nothing from
 `infrahub_sync.orchestration`, so it stays importable in a base install — see
-[ADR 5](../adr/0005-optional-integrations-live-in-their-own-package.md). It is its own module
+[ADR 9](../adr/0009-optional-integrations-live-in-their-own-package.md). It is its own module
 rather than an addition to `utils.py`, which is already broad and would blur the seam.
 
 ## The three callers
@@ -96,7 +96,7 @@ Two exception types make up the remote contract:
 Both are raised in one place only. `execute_run` re-raises original exception types;
 `run_remote_request` is the sole sanitize-and-wrap boundary. That split is what keeps CLI
 failure behaviour identical, and it is the subject of
-[ADR 1](../adr/0001-translate-run-failures-only-at-the-remote-boundary.md). Message
+[ADR 5](../adr/0005-translate-run-failures-only-at-the-remote-boundary.md). Message
 sanitization rules are in
 [Secret redaction](../guidelines/secret-redaction.md).
 
@@ -131,7 +131,7 @@ bare `Callable`: a rename in the factory becomes a type error instead of a runti
 digest over the canonicalized plan rows, excluding timestamps, run identifiers and paths by
 construction. It is how "the remote path produced the same plan as the CLI" is tested. The
 algorithm and its compatibility rules are in
-[ADR 3](../adr/0003-canonical-plan-fingerprint-as-equivalence-oracle.md).
+[ADR 7](../adr/0007-canonical-plan-fingerprint-as-equivalence-oracle.md).
 
 ## See also
 

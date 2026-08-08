@@ -27,7 +27,14 @@ try:
         FLOW_NAME,
         infrahub_sync_run,
     )
-except ImportError:
+except ImportError as exc:
+    # The `try` covers the WHOLE import graph of `flow`, which reaches
+    # `infrahub_sync.execution` and everything under it. Only a genuinely missing
+    # `prefect` may be reported as the missing extra: a first-party module with a
+    # broken import would otherwise be reported as "prefect is not installed",
+    # and `from None` would delete the traceback naming the real cause.
+    if exc.name is None or exc.name.split(".", maxsplit=1)[0] != "prefect":
+        raise
     # The optional extra is missing: exactly one actionable line naming it,
     # never a traceback. `from None` keeps the ImportError out of the output.
     # `sys.stderr.write` rather than `print()` (which the package's AST test

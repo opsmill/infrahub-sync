@@ -49,7 +49,7 @@ Static import-graph checks are collection-safe and can stay in-process.
 **Pair an "optional dependency" claim with a CI leg where it is genuinely absent**, and have
 that leg *assert the absence* before running the suite — otherwise it silently becomes a
 second full-extra run the day the lockfile changes. See
-[ADR 5](../adr/0005-optional-integrations-live-in-their-own-package.md).
+[ADR 9](../adr/0009-optional-integrations-live-in-their-own-package.md).
 
 ## Never reimplement a contract algorithm in a test
 

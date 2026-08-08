@@ -1,8 +1,8 @@
 # Implementation Plan: Prefect-Managed Remote Infrahub Sync Run (Developer Preview)
 
-**Branch**: `001-prefect-managed-remote-run-local-dp-001` | **Date**: 2026-07-30 | **Spec**: `dev/specs/001-prefect-managed-remote-run/spec.md`
+**Branch**: `001-prefect-managed-remote-run-local-dp-001` | **Date**: 2026-07-30 | **Spec**: `dev/specs/archive/001-prefect-managed-remote-run/spec.md`
 
-**Input**: Feature specification from `dev/specs/001-prefect-managed-remote-run/spec.md`
+**Input**: Feature specification from `dev/specs/archive/001-prefect-managed-remote-run/spec.md`
 (authoritative, carrying DBR-001–DBR-015 / DBA-001–DBA-011 verbatim from brief DB-001 v2,
 four clarifications, plus D005's dependency remediation — all RATIFIED at the Phase 4
 checkpoint gate by Blake Ellis on 2026-07-30).

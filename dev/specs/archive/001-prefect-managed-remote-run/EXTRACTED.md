@@ -5,11 +5,11 @@
 
 ## ADRs Created
 
-- `dev/adr/0001-translate-run-failures-only-at-the-remote-boundary.md` (from `critiques/collation-r1.md` D009, `contracts/execution-surface.md`)
-- `dev/adr/0002-resolve-remote-configurations-file-by-file.md` (from `critiques/collation-r1.md` D010, `contracts/execution-surface.md`)
-- `dev/adr/0003-canonical-plan-fingerprint-as-equivalence-oracle.md` (from `spec.md` D001, `contracts/run-result-and-errors.md`)
-- `dev/adr/0004-declare-redis-directly-instead-of-the-diffsync-extra.md` (from `research.md` D005 / F1 / F2 / "Gate-ratified resolution")
-- `dev/adr/0005-optional-integrations-live-in-their-own-package.md` (from `research.md` non-probe decisions, `contracts/prefect-flow.md` §6)
+- `dev/adr/0005-translate-run-failures-only-at-the-remote-boundary.md` (from `critiques/collation-r1.md` D009, `contracts/execution-surface.md`)
+- `dev/adr/0006-resolve-remote-configurations-file-by-file.md` (from `critiques/collation-r1.md` D010, `contracts/execution-surface.md`)
+- `dev/adr/0007-canonical-plan-fingerprint-as-equivalence-oracle.md` (from `spec.md` D001, `contracts/run-result-and-errors.md`)
+- `dev/adr/0008-declare-redis-directly-instead-of-the-diffsync-extra.md` (from `research.md` D005 / F1 / F2 / "Gate-ratified resolution")
+- `dev/adr/0009-optional-integrations-live-in-their-own-package.md` (from `research.md` non-probe decisions, `contracts/prefect-flow.md` §6)
 
 ## Knowledge Created
 
@@ -50,7 +50,7 @@
   `sessions/`, `checklists/`, `critiques/` (except the D009/D010 records) — execution
   artifacts.
 - The prefect 3.5.0 packaging saga (D006's `importlib-metadata` and `fastapi` companion pins)
-  — superseded upstream at 3.8.1; kept only as the rejected alternative in ADR 4.
+  — superseded upstream at 3.8.1; kept only as the rejected alternative in ADR 8.
 - Retrospective findings R5, R6, R7, R11, R12, R13 (process half), R15 — properties of the
   delivery harness, dispositioned to issues in the planning repository, not repository
   documentation. R13's engineering lesson is extracted into the redaction and testing

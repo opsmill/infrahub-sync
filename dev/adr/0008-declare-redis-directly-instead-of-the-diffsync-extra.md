@@ -1,4 +1,4 @@
-# 4. Declare redis directly instead of using the diffsync `[redis]` extra
+# 8. Declare redis directly instead of using the diffsync `[redis]` extra
 
 **Status**: Accepted
 **Date**: 2026-07-31

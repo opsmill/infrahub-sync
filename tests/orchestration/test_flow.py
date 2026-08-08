@@ -19,6 +19,8 @@ import inspect
 import json
 import logging
 import os
+import subprocess  # noqa: S404 - fixed argv probe, the point of the test
+import sys
 import traceback
 from contextlib import ExitStack
 from pathlib import Path
@@ -549,6 +551,50 @@ def test_serve_reports_the_missing_extra_without_a_traceback() -> None:
     assert "prefect is not installed" in serve.MISSING_EXTRA_MESSAGE
     assert ".[prefect]" in serve.MISSING_EXTRA_MESSAGE
     assert os.linesep not in serve.MISSING_EXTRA_MESSAGE
+
+
+# The guard's `try` spans the whole import graph of `flow`, so a broken FIRST-PARTY
+# module reaches the same handler as a missing `prefect`. Run in a child interpreter:
+# the breakage has to be observed at import time, before `serve` is in `sys.modules`.
+_FIRST_PARTY_BREAKAGE_PROBE = """
+import sys
+
+
+class _BreakExecutionImport:
+    def find_spec(self, name, path=None, target=None):
+        if name == "infrahub_sync.execution":
+            raise ImportError("simulated first-party breakage", name=name)
+        return None
+
+
+sys.meta_path.insert(0, _BreakExecutionImport())
+try:
+    import infrahub_sync.orchestration.serve  # noqa: F401
+except SystemExit:
+    print("SWALLOWED-AS-MISSING-EXTRA")
+except ImportError as exc:
+    print("RERAISED", exc.name)
+"""
+
+
+def test_serve_reraises_a_first_party_import_failure_instead_of_blaming_the_extra() -> None:
+    """A broken `infrahub_sync` module must not be reported as a missing `prefect`.
+
+    Without the guard's name check the developer is sent to install an extra that
+    is already installed, and `from None` deletes the traceback that would have
+    named the real module.
+    """
+    completed = subprocess.run(  # noqa: S603 - fixed argv, this interpreter, no shell
+        [sys.executable, "-c", _FIRST_PARTY_BREAKAGE_PROBE],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(Path(__file__).resolve().parents[2]),
+    )
+
+    assert "RERAISED infrahub_sync.execution" in completed.stdout, completed.stdout + completed.stderr
+    assert "SWALLOWED-AS-MISSING-EXTRA" not in completed.stdout
+    assert serve.MISSING_EXTRA_MESSAGE not in completed.stdout + completed.stderr
 
 
 # --------------------------------------------------------------------------- #

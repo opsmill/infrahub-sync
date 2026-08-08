@@ -33,9 +33,9 @@ passes `warn=True`, so the first non-zero exit aborts the chain and a Markdown n
 every Python finding behind it. It also does not exit 0 on a clean checkout — the inherited
 pylint baseline is recorded in
 [`dev/knowledge/quality-gates.md`](dev/knowledge/quality-gates.md). Read that page before
-treating either aggregate as a gate; it also explains why `invoke format` must not be run
-over `dev/specs/**` (`rumdl fmt` loses text in this repository's Markdown) and which task
-formats Python only.
+treating either aggregate as a gate; it also explains why `rumdl fmt` loses text in this
+repository's Markdown — `dev/specs/**` is excluded from rumdl for that reason — and which
+task formats Python only.
 
 The `prefect` extra is not optional for development: without it `ty` cannot resolve
 `infrahub_sync/orchestration/`'s imports and `tests/orchestration/test_flow.py` skips
