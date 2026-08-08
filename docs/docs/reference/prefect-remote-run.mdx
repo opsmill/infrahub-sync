@@ -47,11 +47,11 @@ Making the extra installable changed two base dependency declarations:
   `redis<5.0`, which cannot be satisfied next to Prefect's own dependency chain, where
   `pydocket` requires `redis>=5`.
 - `redis>=4.3,<9` is now declared directly, because `infrahub_sync/utils.py` imports
-  diffsync's `RedisStore` unconditionally and therefore needs a redis client in every
+  `RedisStore` from DiffSync unconditionally and therefore needs a Redis client in every
   installation; the floor stays permissive on purpose so anything else requiring
   `diffsync[redis]` still resolves.
 
-If you are upgrading an existing installation: the redis client is now a **direct**
+If you are upgrading an existing installation: the Redis client is now a **direct**
 dependency of `infrahub-sync` with a wider allowed range than before. Redis itself is
 still only contacted when a sync configuration opts into the Redis store.
 
@@ -98,8 +98,8 @@ parameters and never appear in a returned result.
 Failure messages are additionally redacted by value: every configured credential value
 found in a message — or anywhere in its cause chain — is replaced with `***`. Redaction
 has one deliberate limit: only collected values of **six characters or more** are
-replaced, because replacing a shorter one turns redaction into a substring shredder over
-ordinary message text (`within 6***.0 seconds`). A credential shorter than that — a
+replaced, because replacing a shorter value can corrupt ordinary message text
+(`within 6***.0 seconds`). A credential shorter than that — a
 lab-grade `CISCO_APIC_PASSWORD=admin` — is therefore not redacted from a failure message.
 Use credentials of realistic length on any runner whose logs are not private.
 
