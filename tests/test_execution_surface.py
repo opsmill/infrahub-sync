@@ -153,6 +153,7 @@ class _FakePotenda:
         rows: list[dict[str, Any]],
         factory_kwargs: dict[str, object],
         load_error: BaseException | None = None,
+        write_result: object = None,
     ) -> None:
         self.run_dir = run_dir
         self.run_id = run_dir.name
@@ -161,8 +162,10 @@ class _FakePotenda:
         self.factory_kwargs = factory_kwargs
         self.rows = rows
         self.load_error = load_error
+        self.write_result = write_result
         self.loaded = False
         self.synced = False
+        self.diff_rows_materialized = 0
         self.baseline_persisted = False
         self.guardrail_allow_drop: bool | None = None
 
@@ -176,11 +179,13 @@ class _FakePotenda:
     def diff(self) -> _FakeDiff:
         return _FakeDiff(list(self.rows))
 
-    def _diff_to_rows(self, diff: _FakeDiff) -> list[dict[str, Any]]:  # noqa: PLR6301 — mirrors Potenda's API
+    def _diff_to_rows(self, diff: _FakeDiff) -> list[dict[str, Any]]:
+        self.diff_rows_materialized += 1
         return list(diff.rows)
 
-    def write_plan(self, diff: _FakeDiff) -> None:
-        write_plan(run_dir=self.run_dir, rows=self._diff_to_rows(diff))
+    def write_plan(self, diff: _FakeDiff) -> object:
+        write_plan(run_dir=self.run_dir, rows=list(diff.rows))
+        return self.write_result
 
     def check_rowcount_guardrail(self, *, allow_drop: bool) -> None:
         self.guardrail_allow_drop = allow_drop
@@ -202,12 +207,14 @@ class _SpyFactory:
         rows: list[dict[str, Any]] | None = None,
         error: BaseException | None = None,
         load_error: BaseException | None = None,
+        write_result: object = None,
     ) -> None:
         self.calls: list[dict[str, object]] = []
         self.cache_root = cache_root
         self.rows = rows if rows is not None else []
         self.error = error
         self.load_error = load_error
+        self.write_result = write_result
         self.engine: _FakePotenda | None = None
 
     def __call__(self, **kwargs: object) -> Any:  # noqa: ANN401 — a fake engine, not a real Potenda
@@ -221,6 +228,7 @@ class _SpyFactory:
             rows=list(self.rows),
             factory_kwargs=kwargs,
             load_error=self.load_error,
+            write_result=self.write_result,
         )
         return self.engine
 
@@ -1461,6 +1469,93 @@ def test_empty_plan_reports_no_change(config_dir: str, cache_root: Path) -> None
     assert RunFile.load_or_default(cache_root / RUN_ID / "run.json").status == "dry-run"
 
 
+def test_plan_uses_a_valid_writer_summary_without_materializing_fallback_rows(
+    config_dir: str,
+    cache_root: Path,
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(
+        cache_root=cache_root,
+        rows=[_plan_row("create", "legacy-row")],
+        write_result={"create": 0, "update": 2, "delete": 1},
+    )
+
+    result = execute_run(instance, operation="plan", potenda_factory=factory)
+
+    assert dict(result.summary) == {"create": 0, "update": 2, "delete": 1}
+    assert factory.engine is not None
+    assert factory.engine.diff_rows_materialized == 0
+
+
+@pytest.mark.parametrize(
+    "write_result",
+    [
+        pytest.param(None, id="none"),
+        pytest.param("legacy-writer", id="non-mapping"),
+    ],
+)
+def test_plan_legacy_writer_summary_falls_back_to_diff_rows(
+    config_dir: str,
+    cache_root: Path,
+    write_result: object,
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(
+        cache_root=cache_root,
+        rows=[_plan_row("create", "core01"), _plan_row("update", "edge01")],
+        write_result=write_result,
+    )
+
+    result = execute_run(instance, operation="plan", potenda_factory=factory)
+
+    assert dict(result.summary) == {"create": 1, "update": 1, "delete": 0}
+    assert factory.engine is not None
+    assert factory.engine.diff_rows_materialized == 1
+
+
+@pytest.mark.parametrize(
+    ("write_result", "message"),
+    [
+        pytest.param({"create": 1, "update": 0}, "exactly the keys", id="missing-key"),
+        pytest.param(
+            {"create": 1, "update": 0, "delete": 0, "skip": 0},
+            "exactly the keys",
+            id="extra-key",
+        ),
+        pytest.param(
+            {"create": True, "update": 0, "delete": 0},
+            "non-negative integer",
+            id="boolean",
+        ),
+        pytest.param(
+            {"create": -1, "update": 0, "delete": 0},
+            "non-negative integer",
+            id="negative",
+        ),
+        pytest.param(
+            {"create": 1.0, "update": 0, "delete": 0},
+            "non-negative integer",
+            id="non-integer",
+        ),
+    ],
+)
+def test_plan_rejects_a_malformed_writer_summary(
+    config_dir: str,
+    cache_root: Path,
+    write_result: object,
+    message: str,
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root, write_result=write_result)
+
+    with pytest.raises(ValueError, match=message):
+        execute_run(instance, operation="plan", potenda_factory=factory)
+
+    assert factory.engine is not None
+    assert factory.engine.diff_rows_materialized == 0
+    assert RunFile.load_or_default(cache_root / RUN_ID / "run.json").status == "failed"
+
+
 def test_plan_through_the_remote_composition_returns_a_result(config_dir: str, cache_root: Path) -> None:
     factory = _SpyFactory(cache_root=cache_root, rows=[_plan_row("create", "core01")])
     result = run_remote_request(SYNC_NAME, config_directory=config_dir, _potenda_factory=factory)
@@ -1553,6 +1648,26 @@ def test_confirmed_sync_summary_counts_every_action(config_dir: str, cache_root:
 
     assert result.status == "applied"
     assert dict(result.summary) == {"create": 2, "update": 1, "delete": 1}
+
+
+def test_confirmed_sync_rejects_a_malformed_writer_summary_before_writing(
+    config_dir: str,
+    cache_root: Path,
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(
+        cache_root=cache_root,
+        rows=[_plan_row("create", "core01")],
+        write_result={"create": True, "update": 0, "delete": 0},
+    )
+
+    with pytest.raises(ValueError, match="non-negative integer"):
+        execute_run(instance, operation="sync", confirm_writes=True, potenda_factory=factory)
+
+    assert factory.engine is not None
+    assert factory.engine.synced is False
+    assert factory.engine.diff_rows_materialized == 0
+    assert RunFile.load_or_default(cache_root / RUN_ID / "run.json").status == "failed"
 
 
 @pytest.mark.parametrize("print_diff", [True, False])

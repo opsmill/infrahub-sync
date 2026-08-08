@@ -580,22 +580,31 @@ def _summarize_rows(rows: Iterable[Mapping[str, Any]]) -> dict[ActionKey, int]:
     return counts
 
 
-def _summary_from_plan_write(write_result: object, rows: Iterable[Mapping[str, Any]]) -> dict[ActionKey, int]:
-    """Use saved-operation counts when supplied, with legacy row fallback for test engines."""
+def _validated_plan_write_summary(write_result: object) -> dict[ActionKey, int] | None:
+    """Validate supplied saved-operation counts; return `None` for a legacy writer."""
     if not isinstance(write_result, Mapping):
-        return _summarize_rows(rows)
+        return None
     if set(write_result) != set(ACTION_KEYS):
-        msg = f"plan write summary must carry exactly the keys {ACTION_KEYS!r}, got {sorted(write_result)!r}"
+        msg = f"plan write summary must carry exactly the keys {ACTION_KEYS!r}, got {sorted(write_result, key=str)!r}"
         raise ValueError(msg)
     typed_result = cast("Mapping[str, object]", write_result)
     summary: dict[ActionKey, int] = {}
     for action in ACTION_KEYS:
         value = typed_result[action]
-        if not isinstance(value, int) or value < 0:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             msg = f"plan write summary value for {action!r} must be a non-negative integer, got {value!r}"
             raise ValueError(msg)
         summary[action] = value
     return summary
+
+
+def _summary_from_plan_write(
+    write_result: object,
+    fallback_rows: Callable[[], Iterable[Mapping[str, Any]]],
+) -> dict[ActionKey, int]:
+    """Use saved-operation counts when supplied, with legacy row fallback for test engines."""
+    summary = _validated_plan_write_summary(write_result)
+    return _summarize_rows(fallback_rows()) if summary is None else summary
 
 
 def _run_plan_lifecycle(*, ptd: Potenda, run_file: RunFile) -> dict[ActionKey, int]:
@@ -606,8 +615,7 @@ def _run_plan_lifecycle(*, ptd: Potenda, run_file: RunFile) -> dict[ActionKey, i
     logger.info("\n%s", mydiff.str())
     run_file.status = "dry-run"
     run_file.summary = {"resources": len(ptd.top_level)}
-    rows = list(ptd._diff_to_rows(mydiff))
-    return _summary_from_plan_write(write_result, rows)
+    return _summary_from_plan_write(write_result, lambda: ptd._diff_to_rows(mydiff))
 
 
 def _run_sync_lifecycle(
@@ -618,7 +626,7 @@ def _run_sync_lifecycle(
     allow_rowcount_drop: bool,
     serial_load_error: Callable[[ValueError], NoReturn] | None,
 ) -> dict[ActionKey, int]:
-    """Reproduce the CLI serial `sync` lifecycle and return authoritative operation counts."""
+    """Reproduce the CLI serial `sync` lifecycle and return its live diff-row counts."""
     try:
         ptd.load_both_sides()
     except ValueError as exc:
@@ -632,6 +640,7 @@ def _run_sync_lifecycle(
     ptd.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
     mydiff = ptd.diff()
     write_result = ptd.write_plan(mydiff)
+    _validated_plan_write_summary(write_result)
     if mydiff.has_diffs():
         if print_diff:
             logger.info("\n%s", mydiff.str())
@@ -644,8 +653,7 @@ def _run_sync_lifecycle(
     ptd.persist_baseline_counts()
     run_file.summary = {"resources": len(ptd.top_level), "mode": "serial"}
     run_file.status = "applied"
-    rows = list(ptd._diff_to_rows(mydiff))
-    return _summary_from_plan_write(write_result, rows)
+    return _summarize_rows(ptd._diff_to_rows(mydiff))
 
 
 def _build_result(

@@ -63,11 +63,17 @@ absolutizes a relative cache directory at the single derivation point, using `ab
 rather than `resolve()` so the final path segment the `run_id` invariant compares against
 survives.
 
-`summary`, `changed` and `status` derive from the authoritative saved operations that the
-real engine just derived in memory and handed to the artifact writer, never by re-reading
-`plan.parquet`. Behavioral test engines with the legacy no-return `write_plan` shape fall
-back to their in-memory materialized plan rows, which keeps the execution seam injectable
-without weakening production delete reporting.
+For `operation="plan"`, `summary`, `changed` and `status` derive from the authoritative
+saved operations that the real engine just derived in memory and handed to the artifact
+writer, never by re-reading `plan.parquet`. For `operation="sync"`, those result fields
+instead derive from the in-memory diffsync rows that describe the live serial-sync
+lifecycle. A derived delete saved for review but excluded from the live diff by the default
+flags therefore does not make a sync result claim that a destination write occurred.
+
+Behavioral test engines with the legacy no-return `write_plan` shape fall back to their
+in-memory materialized plan rows for plan results, which keeps the execution seam injectable
+without weakening production delete reporting. A valid authoritative writer summary avoids
+materializing those fallback rows.
 
 One test-seam fidelity boundary is worth knowing: a legacy behavioral engine that returns
 no saved-operation counts falls back to the row materializer, which walks only the diff

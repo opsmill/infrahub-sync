@@ -157,6 +157,7 @@ class Potenda:
         self.cache_root: Path | None = cache_root
         self._schema_subhash: str = schema_subhash
         self._counts: dict[str, int] = {}
+        self._last_plan_action_counts: dict[str, int] | None = None
         self._did_full_extract: bool = False
         # Per-side extraction mode, recorded alongside the OR-accumulated
         # `_did_full_extract` rather than in place of it. FR-015 derives deletes only
@@ -467,8 +468,9 @@ class Potenda:
         from infrahub_sync.cache.parquet_io import write_plan
 
         write_plan(run_dir=self.run_dir, rows=self._diff_to_rows(diff))
-        written = self._write_plan_artifact([diff])
-        return None if written is None else written[1]
+        self._last_plan_action_counts = None
+        self.write_plan_artifact([diff])
+        return self._last_plan_action_counts
 
     def write_plan_artifact(self, diffs: Sequence[Any]) -> PlanManifest | None:
         """Derive and write `<run_dir>/plan/` for `diffs`, before any destination write.
@@ -557,6 +559,7 @@ class Potenda:
             self.run_dir / "plan",
             deletes_computed,
         )
+        self._last_plan_action_counts = action_counts
         return manifest, action_counts
 
     def _apply_config_version(self, supplied: str | None) -> str:
