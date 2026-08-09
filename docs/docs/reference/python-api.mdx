@@ -155,7 +155,7 @@ except RunError as exc:
 
 Result serialization and public error messages redact collected credential-bearing values.
 The sanitized exception cause chain prevents those values from reappearing in a rendered
-traceback. Credentials remain process configuration; do not put them in request fields.
+stack trace. Credentials remain process configuration; do not put them in request fields.
 
 ## Lifecycle logs
 
