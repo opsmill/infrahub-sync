@@ -669,7 +669,7 @@ def apply_cmd(
             _plan_applier_factory=_cli_plan_applier_factory,
         )
     except (PlanArtifactError, RunConcurrencyError) as exc:
-        print_error_and_abort(str(exc))
+        print_error_and_abort(str(exc), sync_instance)
     except typer.Abort:
         # A construction-only factory refusal already rendered its one-line message.
         raise
@@ -685,16 +685,13 @@ def apply_cmd(
             type(exc).__name__,
             sanitized_message,
         )
-        try:
-            unexpected_error = type(exc)(sanitized_message)
-        except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-            unexpected_error = RuntimeError(f"{type(exc).__name__}: {sanitized_message}")
+        unexpected_error = RuntimeError(f"{type(exc).__name__}: {sanitized_message}")
         unexpected_error.__cause__ = sanitize_exception_chain(exc, secrets)
         unexpected_error.__suppress_context__ = True
         unexpected_traceback = exc.__traceback__
     if unexpected_error is not None:
         raise unexpected_error.with_traceback(unexpected_traceback)
-    summary = cast("Any", result).summary
+    summary = result.summary
     skipped = summary["delete"]
     applied = summary["create"] + summary["update"]
     if skipped:

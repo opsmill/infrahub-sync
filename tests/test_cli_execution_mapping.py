@@ -202,10 +202,10 @@ def test_factory_refusal_redacts_resolved_configuration_credentials(
     assert not (run_dir / "run.json").exists()
 
 
-def test_diff_lock_contention_identifies_the_active_sync_run(
+def test_diff_lock_contention_reports_the_latest_running_sidecar_as_advisory(
     run_dir: Path, monkeypatch: pytest.MonkeyPatch, cli_logs: pytest.LogCaptureFixture
 ) -> None:
-    """A held lock is a bounded CLI refusal naming the active Sync run."""
+    """A held lock is a bounded CLI refusal with advisory sidecar context."""
 
     def short_lock(sync_name: str, *, timeout: float = 60.0) -> Any:  # noqa: ANN401, ARG001 - drop-in for the real one
         return pipeline_lock(sync_name, timeout=0.05)
@@ -219,7 +219,10 @@ def test_diff_lock_contention_identifies_the_active_sync_run(
 
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
-    assert any("active Sync run 'test-run'" in message for message in _messages(cli_logs))
+    messages = " ".join(_messages(cli_logs))
+    assert "latest run sidecar still marked running is 'test-run'" in messages
+    assert "may be stale" in messages
+    assert "holds it" not in messages
     factory.assert_not_called()
     assert _run_json(run_dir)["status"] == "running"
 

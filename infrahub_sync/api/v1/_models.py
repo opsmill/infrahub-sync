@@ -16,7 +16,7 @@ from pydantic import (
 
 from infrahub_sync.execution import collect_secret_values, redact
 
-API_VERSION = "1"
+API_VERSION: Literal["1"] = "1"
 Operation = Literal["plan", "sync", "verify", "apply"]
 
 

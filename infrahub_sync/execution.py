@@ -719,8 +719,8 @@ def _require_a_free_run_id(*, sync_name: str, run_id: str | None) -> None:
     require_uncommitted_plan(directory, run_id=run_id)
 
 
-def _active_run_id(sync_name: str) -> str | None:
-    """Return the newest run marked running, without trusting lock-file contents."""
+def _latest_running_run_id(sync_name: str) -> str | None:
+    """Return the newest run still marked running, which may be stale."""
     root = cache_root_for(sync_name)
     try:
         candidates = sorted((path for path in root.iterdir() if path.is_dir()), reverse=True)
@@ -738,21 +738,32 @@ def _active_run_id(sync_name: str) -> str | None:
 
 @contextmanager
 def _run_lock(sync_name: str, *, timeout: float) -> Iterator[None]:
-    """Acquire the core-owned lock, reporting its holder before a bounded wait."""
+    """Acquire the core-owned lock and report advisory sidecar context while waiting."""
     lock_stack = ExitStack()
     try:
         lock_stack.enter_context(pipeline_lock(sync_name, timeout=0))
     except Timeout:
-        holder = _active_run_id(sync_name)
-        detail = f"active Sync run {holder!r}" if holder is not None else "another active Sync run"
-        logger.warning("Sync %r is already held by %s; waiting up to %s seconds", sync_name, detail, timeout)
+        latest_running = _latest_running_run_id(sync_name)
+        detail = (
+            f"the latest run sidecar still marked running is {latest_running!r} (it may be stale)"
+            if latest_running is not None
+            else "no run sidecar currently identifies the lock owner"
+        )
+        logger.warning("Sync %r is locked; %s; waiting up to %s seconds", sync_name, detail, timeout)
         try:
             lock_stack.enter_context(pipeline_lock(sync_name, timeout=timeout))
         except Timeout as exc:
             lock_stack.close()
-            msg = f"Sync {sync_name!r} could not acquire its pipeline lock within {timeout} seconds; {detail} holds it."
+            msg = f"Sync {sync_name!r} could not acquire its pipeline lock within {timeout} seconds; {detail}."
             raise RunConcurrencyError(msg) from exc
     with lock_stack:
+        yield
+
+
+@contextmanager
+def bounded_run_lock(sync_name: str, *, timeout: float = 60.0) -> Iterator[None]:
+    """Expose the shared bounded run lock to in-process product compositions."""
+    with _run_lock(sync_name, timeout=timeout):
         yield
 
 
@@ -770,7 +781,7 @@ def _require_expected_checksum(*, run_directory: Path, run_id: str, expected: st
     artifact = read_plan_artifact_bytes(run_directory)
     refusal = expected_checksum_refusal(artifact=artifact, run_id=run_id, expected=expected)
     if refusal is not None:
-        raise PlanVerificationError(refusal.text, next_action=refusal.next_action)
+        raise PlanVerificationError(refusal.reason, next_action=refusal.next_action)
 
 
 def _apply_summary(counts: Mapping[str, int]) -> dict[ActionKey, int]:
@@ -784,9 +795,10 @@ def _save_run_transition(
     mode: Literal["diff", "sync", "apply"],
     status: Literal["running", "applied", "failed"],
     record: ApplyRecord | None = None,
+    run_file: RunFile | None = None,
 ) -> None:
     """Persist one core-owned transition without discarding earlier summary data."""
-    run_file = RunFile.load_or_default(run_directory / "run.json")
+    run_file = run_file or RunFile.load_or_default(run_directory / "run.json")
     run_file.mode = mode
     run_file.status = status
     if record is not None:
@@ -800,18 +812,29 @@ def _save_failed_run(
     *,
     mode: Literal["diff", "sync", "apply"],
     record: ApplyRecord | None = None,
+    run_file: RunFile | None = None,
 ) -> None:
-    """Persist a terminal core-owned failure, retrying one transient sidecar error."""
-    first_error: Exception | None = None
+    """Best-effort a terminal failure without replacing the lifecycle exception."""
+    final_error: BaseException | None = None
     for _attempt in range(2):
         try:
-            _save_run_transition(run_directory, mode=mode, status="failed", record=record)
-        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-            first_error = exc
+            _save_run_transition(
+                run_directory,
+                mode=mode,
+                status="failed",
+                record=record,
+                run_file=run_file,
+            )
+        except BaseException as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            final_error = exc
+            continue
         else:
             return
-    assert first_error is not None
-    raise first_error
+    error_type = type(final_error).__name__ if final_error is not None else "unknown error"
+    logger.warning(
+        "Unable to persist failed run state after two attempts (%s)",
+        error_type,
+    )
 
 
 def _read_verified_plan(*, sync_instance: SyncInstance, run_id: str) -> SavedPlan:
@@ -855,28 +878,29 @@ def _run_apply_lifecycle(
             _save_failed_run(run_directory, mode="sync")
         raise
 
-    _save_run_transition(run_directory, mode=sidecar_mode, status="running")
+    run_file = RunFile.load_or_default(run_directory / "run.json")
+    _save_run_transition(run_directory, mode=sidecar_mode, status="running", run_file=run_file)
     try:
         record = applier.apply_plan(
             allow_destination_change=allow_destination_change,
             expected_checksum=expected_checksum,
         )
     except (OperationApplyFailedError, ApplyRecordInvariantError) as exc:
-        _save_failed_run(run_directory, mode=sidecar_mode, record=exc.apply_record)
+        _save_failed_run(run_directory, mode=sidecar_mode, record=exc.apply_record, run_file=run_file)
         raise
     except PlanArtifactError:
-        _save_failed_run(run_directory, mode=sidecar_mode, record=ApplyRecord())
+        _save_failed_run(run_directory, mode=sidecar_mode, record=ApplyRecord(), run_file=run_file)
         raise
     except BaseException as exc:
         carried = getattr(exc, "apply_record", None)
         partial = carried if isinstance(carried, ApplyRecord) else ApplyRecord()
-        _save_failed_run(run_directory, mode=sidecar_mode, record=partial)
+        _save_failed_run(run_directory, mode=sidecar_mode, record=partial, run_file=run_file)
         raise
 
     try:
-        _save_run_transition(run_directory, mode=sidecar_mode, status="applied", record=record)
+        _save_run_transition(run_directory, mode=sidecar_mode, status="applied", record=record, run_file=run_file)
     except BaseException:
-        _save_failed_run(run_directory, mode=sidecar_mode, record=record)
+        _save_failed_run(run_directory, mode=sidecar_mode, record=record, run_file=run_file)
         raise
     return _build_result(
         sync_instance=sync_instance,
@@ -990,6 +1014,16 @@ def execute_run(sync_instance: SyncInstance, *, operation: Literal["verify"], **
 
 @overload
 def execute_run(
+    sync_instance: SyncInstance,
+    *,
+    operation: Literal["plan"],
+    _return_saved_plan: Literal[True],
+    **kwargs: Any,
+) -> SavedPlan: ...
+
+
+@overload
+def execute_run(
     sync_instance: SyncInstance, *, operation: Literal["plan", "sync", "apply"], **kwargs: Any
 ) -> RunResult: ...
 
@@ -1035,7 +1069,7 @@ def execute_run(
 
     Raises:
         RunConcurrencyError: the same synchronization remains locked after the
-            bounded wait, naming its active holder when one is recorded.
+            bounded wait, with advisory context from the latest running sidecar.
         RunValidationError: an unsupported operation, a missing saved-plan id,
             or an unconfirmed write (all refused before an adapter is built).
     """
@@ -1133,7 +1167,7 @@ def execute_run(
             # run.json failed, then bare re-raise of the ORIGINAL exception, so a
             # lifecycle failure can never leave run.json at status="running".
             # This broad except is that existing pattern, not new looseness.
-            _save_failed_run(ptd.run_dir, mode=run_mode)
+            _save_failed_run(ptd.run_dir, mode=run_mode, run_file=run_file)
             raise
         if operation == "plan":
             logger.info("Cached run %s at %s", ptd.run_id, ptd.run_dir)
@@ -1239,12 +1273,8 @@ def run_remote_request(
         )
     except RunValidationError:
         raise
-    except Timeout as exc:
-        msg = redact(
-            f"Sync {sync_name!r} could not acquire its pipeline lock within {_lock_timeout} seconds — "
-            "another run is in progress",
-            secrets,
-        )
+    except RunConcurrencyError as exc:
+        msg = redact(str(exc), secrets)
         raise RunExecutionError(msg) from sanitize_exception_chain(exc, secrets)
     except _FactoryValueError as exc:
         # Factory stage only. A load-stage `ValueError` (potenda wraps every load

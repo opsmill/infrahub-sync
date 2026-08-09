@@ -35,6 +35,11 @@ print(result.domain_summary)
 A plan does not write to the destination. Store the returned `run_id`, then review the
 manifest and operations under the returned artifact references before applying it.
 
+The plan artifact is committed before the API reads it back to build `RunResult`. If that
+readback fails, `plan` raises `RunExecutionError` and marks the run failed, but it does not
+rewrite the immutable plan. Use the error's `run_id` to inspect or verify the committed
+artifact before deciding whether to apply it or create a fresh plan.
+
 ## Verify a saved plan
 
 `verify` is independent and read-only. It reads the stored plan and checks its format, run
@@ -156,6 +161,12 @@ except RunError as exc:
 Result serialization and public error messages redact collected credential-bearing values.
 The sanitized exception cause chain prevents those values from reappearing in a rendered
 stack trace. Credentials remain process configuration; do not put them in request fields.
+
+Write-capable operations use one bounded lock per synchronization. A confirmed `sync` that
+cannot acquire the lock within 60 seconds raises `RunExecutionError` with `stage="lock"`.
+Any run identifier mentioned in that message comes from the latest sidecar still marked
+running; it is diagnostic context and may be stale, not proof that the named run owns the
+lock.
 
 ## Lifecycle logs
 

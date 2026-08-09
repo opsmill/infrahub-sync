@@ -205,6 +205,13 @@ class Potenda:
         if self.flags == DiffSyncFlags.NONE:
             self.flags = DiffSyncFlags.SKIP_UNMATCHED_DST
 
+    @property
+    def last_applied_plan_action_counts(self) -> dict[str, int] | None:
+        """Return a copy of the most recent applied plan's action counts."""
+        if self._last_applied_plan_action_counts is None:
+            return None
+        return dict(self._last_applied_plan_action_counts)
+
     def _print_callback(self, stage: str, elements_processed: int, total_models: int):
         """Callback for DiffSync progress tracking."""
         if self.show_progress:

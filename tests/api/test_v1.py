@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 import pytest
-from filelock import Timeout
 from pydantic import ValidationError
 
 import infrahub_sync.api.v1 as api
@@ -715,8 +714,9 @@ def test_confirmed_sync_composes_plan_verify_apply_in_order(
     lock_held = False
 
     @contextmanager
-    def recording_lock(_sync_name: str) -> Iterator[None]:
+    def recording_lock(_sync_name: str, *, timeout: float) -> Iterator[None]:
         nonlocal lock_entries, lock_held
+        assert timeout == pytest.approx(60.0)
         lock_entries += 1
         lock_held = True
         try:
@@ -744,7 +744,7 @@ def test_confirmed_sync_composes_plan_verify_apply_in_order(
 
     monkeypatch.setattr(operations, "generate_run_id", lambda: RUN_ID)
     monkeypatch.setattr(operations, "execute_run", fake_execute)
-    monkeypatch.setattr(operations, "pipeline_lock", recording_lock)
+    monkeypatch.setattr(operations, "bounded_run_lock", recording_lock)
     caplog.set_level(logging.INFO, logger=operations.__name__)
 
     result = api.sync(
@@ -784,11 +784,12 @@ def test_confirmed_sync_lock_timeout_creates_no_running_sidecar(
 ) -> None:
     monkeypatch.setattr(operations, "generate_run_id", lambda: RUN_ID)
 
-    def locked_out(_sync_name: str) -> NoReturn:
-        lock_path = "pipeline.lock"
-        raise Timeout(lock_path)
+    def locked_out(_sync_name: str, *, timeout: float) -> NoReturn:
+        assert timeout == pytest.approx(60.0)
+        msg = "bounded lock refused; latest running sidecar may be stale"
+        raise execution.RunConcurrencyError(msg)
 
-    monkeypatch.setattr(operations, "pipeline_lock", locked_out)
+    monkeypatch.setattr(operations, "bounded_run_lock", locked_out)
 
     with pytest.raises(api.RunExecutionError) as caught:
         api.sync(
@@ -799,7 +800,8 @@ def test_confirmed_sync_lock_timeout_creates_no_running_sidecar(
             )
         )
 
-    assert caught.value.stage == "plan"
+    assert caught.value.stage == "lock"
+    assert "may be stale" in str(caught.value)
     assert not (run_dir(instance.name, RUN_ID) / "run.json").exists()
 
 

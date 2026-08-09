@@ -1157,7 +1157,7 @@ def test_unconfirmed_apply_is_refused(config_dir: str, cache_root: Path) -> None
 # --------------------------------------------------------------------------- #
 
 
-def test_execute_run_reports_holder_and_raises_a_bounded_typed_refusal(
+def test_execute_run_reports_advisory_sidecar_and_raises_a_bounded_typed_refusal(
     config_dir: str,
     cache_root: Path,
     caplog: pytest.LogCaptureFixture,
@@ -1179,11 +1179,13 @@ def test_execute_run_reports_holder_and_raises_a_bounded_typed_refusal(
     assert holder in caplog.text
     assert "waiting up to 0.05 seconds" in caplog.text
     assert holder in str(excinfo.value)
+    assert "may be stale" in str(excinfo.value)
+    assert "holds it" not in str(excinfo.value)
     assert "within 0.05 seconds" in str(excinfo.value)
     assert factory.calls == []
 
 
-def test_execute_run_logs_the_active_holder_before_starting_its_bounded_wait(
+def test_execute_run_logs_the_latest_running_sidecar_before_starting_its_bounded_wait(
     config_dir: str,
     cache_root: Path,
     caplog: pytest.LogCaptureFixture,
@@ -1669,6 +1671,74 @@ def test_lifecycle_failure_marks_run_json_failed_and_reraises(
 
     assert RunFile.load_or_default(cache_root / RUN_ID / "run.json").status == "failed"
     assert saved_statuses == ["running", "failed"]
+
+
+def test_failure_sidecar_save_errors_never_replace_the_lifecycle_exception(
+    config_dir: str,
+    cache_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root)
+    real_save = RunFile.save
+
+    def fail_only_failure_saves(run_file: RunFile) -> None:
+        if run_file.status == "failed":
+            msg = "failure sidecar storage unavailable"
+            raise OSError(msg)
+        real_save(run_file)
+
+    monkeypatch.setattr(RunFile, "save", fail_only_failure_saves)
+
+    original_error = RuntimeError("original extraction failure")
+
+    def exploding_load() -> None:
+        raise original_error
+
+    original_call = factory.__call__
+
+    def patched(**kwargs: object) -> Any:  # noqa: ANN401 - a fake engine, not a real Potenda
+        engine = original_call(**kwargs)
+        engine.load_both_sides = exploding_load
+        return engine
+
+    with (
+        caplog.at_level(logging.WARNING, logger="infrahub_sync.execution"),
+        pytest.raises(RuntimeError, match="original extraction failure") as caught,
+    ):
+        execute_run(instance, operation="plan", potenda_factory=patched)
+    assert caught.value is original_error
+    assert "Unable to persist failed run state after two attempts (OSError)" in caplog.text
+    assert "failure sidecar storage unavailable" not in caplog.text
+
+
+def test_failed_transition_uses_the_in_memory_summary_when_disk_is_corrupt(
+    config_dir: str,
+    cache_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root, rows=[_plan_row("create", "core01")])
+
+    def corrupt_then_refuse(**_kwargs: object) -> NoReturn:
+        (cache_root / RUN_ID / "run.json").write_text("not-json", encoding="utf-8")
+        msg = "saved plan could not be reconstructed"
+        raise OSError(msg)
+
+    monkeypatch.setattr(execution, "read_saved_plan", corrupt_then_refuse)
+
+    with pytest.raises(OSError, match="could not be reconstructed"):
+        execute_run(
+            instance,
+            operation="plan",
+            potenda_factory=factory,
+            _return_saved_plan=True,
+        )
+
+    run_file = RunFile.load_or_default(cache_root / RUN_ID / "run.json")
+    assert run_file.status == "failed"
+    assert run_file.summary == {"resources": 1}
 
 
 def test_public_plan_result_construction_failure_is_terminal(

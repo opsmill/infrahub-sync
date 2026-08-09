@@ -1797,6 +1797,7 @@ def test_a_missing_run_refuses_naming_the_runs_that_exist_and_creates_no_directo
     assert "'20260101T0000-deadbeef'" in message
     assert RUN_ID in message
     assert "Next action:" in message
+    assert message.count("Next action:") == 1
     assert _tree(_cache_root(tmp_path)) == before
 
 
@@ -2064,7 +2065,7 @@ def test_an_interrupt_mid_apply_records_failed_and_the_partial_applied_set(tmp_p
     assert recorded["summary"]["skipped_delete_count"] == 0
 
 
-def test_a_code_defect_escapes_the_command_unchanged_while_the_run_records_what_was_written(
+def test_a_code_defect_escapes_as_a_sanitized_wrapper_while_the_run_records_what_was_written(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The defect shape and partial record survive, but its config secret cannot render."""
@@ -2084,9 +2085,8 @@ def test_a_code_defect_escapes_the_command_unchanged_while_the_run_records_what_
         result = _run_apply(destination)
 
     assert result.exit_code != 0
-    assert isinstance(result.exception, AssertionError), (
-        f"the defect must escape as itself, not as a taxonomy refusal; got {result.exception!r}"
-    )
+    assert isinstance(result.exception, RuntimeError)
+    assert "AssertionError" in str(result.exception)
     reported = _operator_errors(caplog)
     assert "defect rather than a destination refusal" in reported, (
         "the operator has to be told the destination is not the thing to repair"
@@ -2095,6 +2095,8 @@ def test_a_code_defect_escapes_the_command_unchanged_while_the_run_records_what_
     assert sentinel not in reported
     assert sentinel not in result.output
     assert result.exception is not None
+    assert isinstance(result.exception.__cause__, RuntimeError)
+    assert "AssertionError" in str(result.exception.__cause__)
     rendered = "".join(traceback.format_exception(result.exception))
     assert sentinel not in rendered
     assert "apply_planned_operation" in rendered
@@ -2129,7 +2131,8 @@ def test_a_mid_apply_value_error_is_reported_as_a_defect_with_its_partial_write(
         result = _run_apply(destination)
 
     assert result.exit_code != 0
-    assert isinstance(result.exception, ValueError)
+    assert isinstance(result.exception, RuntimeError)
+    assert "ValueError" in str(result.exception)
     assert destination.writes == [str(APPLY_PLAN[0]["operation_id"])]
     reported = _operator_errors(caplog)
     assert "defect rather than a destination refusal" in reported
@@ -2201,6 +2204,32 @@ def test_apply_factory_refusal_redacts_resolved_configuration_credentials(
     assert sentinel not in reported
     assert "***" in reported
     assert "defect rather than a destination refusal" not in reported
+
+
+def test_apply_plan_refusal_redacts_resolved_configuration_credentials(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Designed apply refusals use the resolved instance's redaction values."""
+    sentinel = "db004-apply-refusal-config-secret"
+    sync_instance = get_instance(name=SYNC_NAME, directory=str(EXAMPLES_DIR))
+    assert sync_instance is not None
+    sync_instance = sync_instance.model_copy(deep=True)
+    assert sync_instance.destination.settings is not None
+    sync_instance.destination.settings["api_token"] = sentinel
+    _appliable_run(tmp_path, config_version=default_config_version(sync_instance))
+    refusal = PlanVerificationError(f"plan refused credential {sentinel}")
+
+    with (
+        patch("infrahub_sync.cli.get_instance", return_value=sync_instance),
+        patch("infrahub_sync.cli.execute_run", side_effect=refusal),
+        caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"),
+    ):
+        result = _apply(RUN_ID)
+
+    assert result.exit_code == 1
+    reported = _operator_errors(caplog)
+    assert sentinel not in reported
+    assert "***" in reported
 
 
 # ======================================================================================
@@ -2450,6 +2479,7 @@ def test_an_apply_naming_another_generations_checksum_refuses_before_the_destina
     assert approved in message
     assert _stored_checksum(tmp_path) in message
     assert "Next action:" in message
+    assert message.count("Next action:") == 1
     assert not (_cache_root(tmp_path) / RUN_ID / "run.json").exists()
 
 

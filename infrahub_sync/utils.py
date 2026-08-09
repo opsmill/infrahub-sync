@@ -332,7 +332,7 @@ class PlanApplier:
     @property
     def applied_plan_action_counts(self) -> dict[str, int]:
         """Return counts parsed from the in-memory artifact just applied."""
-        counts = self.engine._last_applied_plan_action_counts
+        counts = self.engine.last_applied_plan_action_counts
         if counts is None:
             msg = "PlanApplier completed without retaining action counts from the applied artifact."
             raise RuntimeError(msg)

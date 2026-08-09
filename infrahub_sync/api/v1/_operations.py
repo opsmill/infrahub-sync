@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from infrahub_sync.cache.locks import pipeline_lock
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.execution import (
     RunValidationError as CoreRunValidationError,
 )
 from infrahub_sync.execution import (
+    bounded_run_lock,
     collect_secret_values,
     execute_run,
     redact,
@@ -318,8 +318,9 @@ def sync(request: SyncRequest) -> RunResult:
     run_directory: Path | None = None
     try:
         instance, secrets = _load_instance(request.sync_name, request.config_directory)
-        stage = "plan"
-        with pipeline_lock(instance.name):
+        stage = "lock"
+        with bounded_run_lock(instance.name, timeout=60.0):
+            stage = "plan"
             saved, run_directory = _plan_instance(
                 instance,
                 branch=request.branch,
