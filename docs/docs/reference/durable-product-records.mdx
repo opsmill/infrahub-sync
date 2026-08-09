@@ -96,7 +96,7 @@ changing the pending reservation or writing to the artifact provider; correct th
 input and retry the original publication. Once published, the artifact remains immutable
 and any further publication with that identity is rejected as already published.
 
-Lookups return `LookupResult` rather than treating absence as an empty record. Reasons
+A lookup returns `LookupResult` rather than treating absence as an empty record. Reasons
 include `run-not-found`, `artifact-reference-not-found`, `manifest-unavailable`,
 `artifact-publication-incomplete`, `data-unavailable`, `artifact-expired`, and integrity
 failures. Normal run lookup includes only published references. An unavailable or pending
