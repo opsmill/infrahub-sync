@@ -35,8 +35,8 @@ print(result.domain_summary)
 A plan does not write to the destination. Store the returned `run_id`, then review the
 manifest and operations under the returned artifact references before applying it.
 
-The plan artifact is committed before the API reads it back to build `RunResult`. If that
-readback fails, `plan` raises `RunExecutionError` and marks the run failed, but it does not
+The plan artifact is committed before the API reads it back to build `RunResult`. If the API
+cannot read it back, `plan` raises `RunExecutionError` and marks the run failed, but it does not
 rewrite the immutable plan. Use the error's `run_id` to inspect or verify the committed
 artifact before deciding whether to apply it or create a fresh plan.
 
