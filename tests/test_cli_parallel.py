@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 from typer.testing import CliRunner
 
 from infrahub_sync.cli import app
+from infrahub_sync.utils import get_instance
 
 if TYPE_CHECKING:
     import pytest
@@ -66,6 +67,39 @@ def test_parallel_is_the_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         )
     assert result.exit_code == 0, result.output
     fake_ptd.sync_in_tiers.assert_called_once_with(parallel=True, allow_rowcount_drop=False)
+
+
+def test_parallel_load_refusal_redacts_resolved_configuration_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Tier-parallel load refusals cannot leak inline credentials through their error text."""
+    sentinel = "db004-parallel-load-config-secret"
+    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path))
+    run_dir = tmp_path / "from-netbox" / "test-run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    sync_instance = get_instance(name="from-netbox", directory=str(EXAMPLES_DIR))
+    assert sync_instance is not None
+    sync_instance = sync_instance.model_copy(deep=True)
+    assert sync_instance.destination.settings is not None
+    sync_instance.destination.settings["api_token"] = sentinel
+    fake_ptd = _make_fake_potenda(tiers=[{"BuiltinTag"}], run_dir=run_dir)
+    fake_ptd.sync_in_tiers.side_effect = ValueError(f"tier load rejected {sentinel}")
+    runner = CliRunner()
+    caplog.set_level(logging.INFO, logger="infrahub_sync.cli")
+
+    with (
+        patch("infrahub_sync.cli.get_instance", return_value=sync_instance),
+        patch("infrahub_sync.cli.get_potenda_from_instance", return_value=fake_ptd),
+    ):
+        result = runner.invoke(
+            app,
+            ["sync", "--parallel", "--name", "from-netbox", "--directory", str(EXAMPLES_DIR)],
+        )
+
+    assert result.exit_code == 1
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert sentinel not in messages
+    assert "***" in messages
 
 
 def test_no_parallel_runs_serial(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

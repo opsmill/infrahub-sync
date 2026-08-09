@@ -259,6 +259,32 @@ def test_sync_serial_load_value_error_aborts_without_a_prefix(
     assert _run_json(run_dir)["status"] == "failed"
 
 
+def test_sync_serial_load_refusal_redacts_resolved_configuration_credentials(
+    run_dir: Path, cli_logs: pytest.LogCaptureFixture
+) -> None:
+    """Serial-load refusals cannot leak inline credentials through their error text."""
+    sentinel = "db004-serial-load-config-secret"
+    sync_instance = get_instance(name=SYNC_NAME, directory=str(EXAMPLES_DIR))
+    assert sync_instance is not None
+    sync_instance = sync_instance.model_copy(deep=True)
+    assert sync_instance.destination.settings is not None
+    sync_instance.destination.settings["api_token"] = sentinel
+    fake_ptd = _fake_potenda(run_dir)
+    fake_ptd.load_both_sides.side_effect = ValueError(f"destination load rejected {sentinel}")
+
+    with (
+        patch("infrahub_sync.cli.get_instance", return_value=sync_instance),
+        patch(FACTORY, return_value=fake_ptd),
+    ):
+        result = _invoke("sync", "--no-parallel")
+
+    assert result.exit_code == 1
+    messages = "\n".join(_messages(cli_logs))
+    assert sentinel not in messages
+    assert "***" in messages
+    assert _run_json(run_dir)["status"] == "failed"
+
+
 def test_sync_serial_guardrail_failure_reraises_the_original_type(
     run_dir: Path, cli_logs: pytest.LogCaptureFixture
 ) -> None:

@@ -615,8 +615,8 @@ def sync_cmd(
             print_diff=diff,
             parallel=parallel,
             potenda_factory=_cli_potenda_factory,
-            _serial_load_error=lambda exc: print_error_and_abort(str(exc)),
-            _parallel_sync_error=lambda exc: print_error_and_abort(str(exc)),
+            _serial_load_error=lambda exc: print_error_and_abort(str(exc), sync_instance),
+            _parallel_sync_error=lambda exc: print_error_and_abort(str(exc), sync_instance),
         )
     except RunConcurrencyError as exc:
         print_error_and_abort(str(exc))
