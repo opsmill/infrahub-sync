@@ -58,6 +58,14 @@ class PrefectExecutionLink(BaseModel):
     last_observed_state: str | None = None
     last_observed_at: datetime | None = None
 
+    @field_validator("last_observed_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
+            msg = "Prefect execution timestamps must include a timezone"
+            raise ValueError(msg)
+        return value
+
 
 class ProductRun(BaseModel):
     """One compact Sync-owned product record.

@@ -49,6 +49,11 @@ tests use a PostgreSQL-paramstyle local DB-API emulator and a deterministic
 S3-compatible client; they prove the injected provider contract, not live PostgreSQL,
 driver, S3 service, authentication, or network integration.
 
+Use `local_product_projection` or `production_product_projection` to construct a supported
+profile. The record-store and artifact-store protocols accepted by `ProductProjection`
+are internal implementation seams, not a public custom-provider compatibility contract.
+`S3Client` remains the documented deployment adapter required by the production factory.
+
 Constructing the supported production projection runs idempotent
 `CREATE TABLE IF NOT EXISTS` statements for the product-record schema.
 The PostgreSQL connection role must have the DDL privileges required to create those
@@ -80,6 +85,11 @@ Mutations against a missing Sync run raise `RunNotFoundError`. Read operations c
 to return `LookupResult` with `reason="run-not-found"`, so absence remains a normal,
 non-exceptional lookup result.
 
+`create_run` accepts an unfinished `ProductRun`, including initial actor, audit, summary,
+results, phase, and Prefect-link metadata. It rejects records that already have a finish
+timestamp, outcome, or artifact reference; those completion fields must be added through
+the publication and finish operations so their integrity checks cannot be bypassed.
+
 ## Artifact publication and lookup
 
 Artifact keys contain their SHA-256 digest and never change. Publication first reserves a
@@ -99,7 +109,9 @@ To recover from an interrupted publication, retry `publish_artifact` with the sa
 artifact IDs, content, kind, and media type. Matching is performed after secret redaction.
 If data and manifest are already complete, the retry verifies them and performs only the
 missing relational mark. If the manifest is absent, the retry resumes object publication
-and then marks the reference published when needed. This exact-match repair also covers a
+and then marks the reference published when needed. On S3-compatible storage, that resume
+re-uploads the already-redacted data to its same content-addressed object key before the
+create-only manifest commit. This exact-match repair also covers a
 relational row already marked published whose manifest is missing. Different content or
 metadata is rejected without changing the pending reservation or writing to the artifact
 provider; correct the caller input and retry the original publication. Once published, the

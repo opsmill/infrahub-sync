@@ -6,9 +6,10 @@ import json
 import os
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import suppress
 from datetime import datetime, timezone
 from hashlib import sha256
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from tempfile import mkdtemp
 from typing import Any, Protocol, cast
 
@@ -42,8 +43,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS prefect_executions_run_position
 # Stable SQLite extended result codes. Python 3.10's sqlite3 module does not expose
 # their symbolic names even when an exception provides ``sqlite_errorcode``.
 _SQLITE_UNIQUE_CONSTRAINT_CODES = frozenset({1555, 2067})
+_POSTGRESQL_SCHEMA_CONFLICT_CODES = frozenset({"23505", "42P07", "42710"})
 _PREFECT_POSITION_ATTEMPTS = 3
+_SCHEMA_INITIALIZATION_ATTEMPTS = 2
 _JSON_MAPPING_ADAPTER = TypeAdapter(dict[str, Any])
+
+_INSERT_PRODUCT_RUN = """INSERT INTO product_runs (run_id, operation, configuration_reference, actor, audit_links,
+started_at, finished_at, phase, outcome, summary, results) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+_SELECT_PRODUCT_RUN = """SELECT run_id, operation, configuration_reference, actor, audit_links, started_at,
+finished_at, phase, outcome, summary, results FROM product_runs WHERE run_id = ?"""
+_SELECT_RUN_ARTIFACT_REFERENCES = """SELECT run_id, artifact_id, kind, media_type, digest, size, object_key,
+manifest_key, created_at, expires_at, published FROM artifact_refs WHERE run_id = ? AND published = 1 ORDER BY artifact_id"""
+_SELECT_ARTIFACT_REFERENCE = """SELECT run_id, artifact_id, kind, media_type, digest, size, object_key,
+manifest_key, created_at, expires_at, published FROM artifact_refs WHERE run_id = ? AND artifact_id = ?"""
+_INSERT_ARTIFACT_REFERENCE = """INSERT INTO artifact_refs (run_id, artifact_id, kind, media_type, digest, size,
+object_key, manifest_key, created_at, expires_at, published) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+_SELECT_PREFECT_EXECUTIONS = """SELECT run_id, flow_run_id, deployment_id, purpose, attempt, last_observed_state,
+last_observed_at, position FROM prefect_executions WHERE run_id = ? ORDER BY position"""
+_INSERT_PREFECT_EXECUTION = """INSERT INTO prefect_executions (run_id, flow_run_id, deployment_id, purpose, attempt,
+last_observed_state, last_observed_at, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"""
 
 
 class DuplicateRunError(ValueError):
@@ -124,69 +142,81 @@ class _RunStore(Protocol):
 class _RelationalRunStore:
     """Small SQL implementation shared by the SQLite and PostgreSQL profiles."""
 
-    def __init__(self, connect: Callable[[], DBAPIConnection], *, placeholder: str) -> None:
+    def __init__(
+        self,
+        connect: Callable[[], DBAPIConnection],
+        *,
+        placeholder: str,
+        schema_conflict_codes: frozenset[str] = frozenset(),
+    ) -> None:
         self._connect = connect
         self._placeholder = placeholder
+        self._schema_conflict_codes = schema_conflict_codes
         self._initialize()
 
     def _sql(self, statement: str) -> str:
+        """Translate placeholders in module-owned SQL without string literals containing ``?``."""
         return statement.replace("?", self._placeholder)
 
     def _initialize(self) -> None:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
+        for attempt in range(_SCHEMA_INITIALIZATION_ATTEMPTS):
+            connection = self._connect()
             try:
-                for statement in _SCHEMA.split(";"):
-                    if statement.strip():
-                        cursor.execute(statement)
-                connection.commit()
+                cursor = connection.cursor()
+                try:
+                    for statement in _SCHEMA.split(";"):
+                        if statement.strip():
+                            cursor.execute(statement)
+                    connection.commit()
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    # Synchronous DB-API drivers do not share a common error base;
+                    # retry only documented PostgreSQL duplicate-catalog SQLSTATEs.
+                    connection.rollback()
+                    if _sqlstate(exc) not in self._schema_conflict_codes:
+                        raise
+                    if attempt + 1 == _SCHEMA_INITIALIZATION_ATTEMPTS:
+                        raise
+                else:
+                    return
+                finally:
+                    cursor.close()
             finally:
-                cursor.close()
-        finally:
-            connection.close()
+                connection.close()
 
     def create(self, run: ProductRun) -> None:
         connection = self._connect()
         try:
             cursor = connection.cursor()
             try:
-                cursor.execute(
-                    self._sql("INSERT INTO product_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
-                    (
-                        run.run_id,
-                        run.operation,
-                        run.configuration_reference,
-                        run.actor,
-                        _json(run.audit_links),
-                        run.started_at.isoformat(),
-                        _iso(run.finished_at),
-                        run.phase,
-                        run.outcome,
-                        _json(run.summary),
-                        _json(run.results),
-                    ),
-                )
-                for position, link in enumerate(run.prefect_executions):
+                try:
                     cursor.execute(
-                        self._sql("INSERT INTO prefect_executions VALUES (?, ?, ?, ?, ?, ?, ?, ?)"),
+                        self._sql(_INSERT_PRODUCT_RUN),
                         (
                             run.run_id,
-                            link.flow_run_id,
-                            link.deployment_id,
-                            link.purpose,
-                            link.attempt,
-                            link.last_observed_state,
-                            _iso(link.last_observed_at),
-                            position,
+                            run.operation,
+                            run.configuration_reference,
+                            run.actor,
+                            _json(run.audit_links),
+                            run.started_at.isoformat(),
+                            _iso(run.finished_at),
+                            run.phase,
+                            run.outcome,
+                            _json(run.summary),
+                            _json(run.results),
                         ),
                     )
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    # Synchronous DB-API drivers do not share an integrity-error
+                    # base class; inspect uniqueness only for the stable run ID.
+                    if _is_unique_violation(exc):
+                        msg = f"Sync run ID {run.run_id!r} already exists"
+                        raise DuplicateRunError(msg) from exc
+                    raise
+                for position, link in enumerate(run.prefect_executions):
+                    self._insert_prefect_execution(cursor, run.run_id, link, position)
                 connection.commit()
-            except Exception as exc:
+            except Exception:
                 connection.rollback()
-                if _is_unique_violation(exc):
-                    msg = f"Sync run ID {run.run_id!r} already exists"
-                    raise DuplicateRunError(msg) from exc
                 raise
             finally:
                 cursor.close()
@@ -198,17 +228,20 @@ class _RelationalRunStore:
         try:
             cursor = connection.cursor()
             try:
-                cursor.execute(self._sql("SELECT * FROM product_runs WHERE run_id = ?"), (run_id,))
+                cursor.execute(
+                    self._sql(_SELECT_PRODUCT_RUN),
+                    (run_id,),
+                )
                 row = cursor.fetchone()
                 if row is None:
                     return LookupResult(value=None, reason="run-not-found")
                 cursor.execute(
-                    self._sql("SELECT * FROM artifact_refs WHERE run_id = ? AND published = 1 ORDER BY artifact_id"),
+                    self._sql(_SELECT_RUN_ARTIFACT_REFERENCES),
                     (run_id,),
                 )
                 references = cursor.fetchall()
                 cursor.execute(
-                    self._sql("SELECT * FROM prefect_executions WHERE run_id = ? ORDER BY position"),
+                    self._sql(_SELECT_PREFECT_EXECUTIONS),
                     (run_id,),
                 )
                 links = cursor.fetchall()
@@ -286,7 +319,7 @@ class _RelationalRunStore:
             cursor = connection.cursor()
             try:
                 cursor.execute(
-                    self._sql("SELECT * FROM artifact_refs WHERE run_id = ? AND artifact_id = ?"),
+                    self._sql(_SELECT_ARTIFACT_REFERENCE),
                     (run_id, artifact_id),
                 )
                 row = cursor.fetchone()
@@ -354,7 +387,7 @@ class _RelationalRunStore:
         self, cursor: _Cursor, run_id: str, link: PrefectExecutionLink, position: int
     ) -> None:
         cursor.execute(
-            self._sql("INSERT INTO prefect_executions VALUES (?, ?, ?, ?, ?, ?, ?, ?)"),
+            self._sql(_INSERT_PREFECT_EXECUTION),
             (
                 run_id,
                 link.flow_run_id,
@@ -384,7 +417,7 @@ class _RelationalRunStore:
 
     def _insert_reference(self, cursor: _Cursor, reference: ArtifactReference, *, published: bool) -> None:
         cursor.execute(
-            self._sql("INSERT INTO artifact_refs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
+            self._sql(_INSERT_ARTIFACT_REFERENCE),
             (
                 reference.run_id,
                 reference.artifact_id,
@@ -421,7 +454,11 @@ class _RelationalRunStore:
                     ),
                     (phase, outcome, finished_at.isoformat(), _json(summary), _json(results), run_id),
                 )
+                _require_run_finished(cursor, run_id)
                 connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
             finally:
                 cursor.close()
         finally:
@@ -446,7 +483,11 @@ class PostgreSQLRunStore(_RelationalRunStore):
     """PostgreSQL DB-API provider; the caller supplies its connection factory."""
 
     def __init__(self, connect: Callable[[], DBAPIConnection]) -> None:
-        super().__init__(connect, placeholder="%s")
+        super().__init__(
+            connect,
+            placeholder="%s",
+            schema_conflict_codes=_POSTGRESQL_SCHEMA_CONFLICT_CODES,
+        )
 
 
 class _ArtifactStore(Protocol):
@@ -474,6 +515,7 @@ class FileArtifactStore:
         """Private fault-injection seam after data and before manifest publication."""
 
     def publish(self, reference: ArtifactReference, data: bytes) -> None:
+        _validate_file_artifact_layout(reference)
         final_dir = self._path(reference.manifest_key).parent
         if final_dir.exists():
             manifest = final_dir / "manifest.json"
@@ -495,7 +537,8 @@ class FileArtifactStore:
                 _fsync_directory(final_dir)
                 _fsync_directory(final_dir.parent)
             except BaseException:
-                _remove_private_publication(temporary)
+                with suppress(BaseException):
+                    _remove_private_publication(temporary)
                 raise
             return
         final_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -509,7 +552,8 @@ class FileArtifactStore:
             temporary.replace(final_dir)
             _fsync_directory(final_dir.parent)
         except BaseException:
-            _remove_private_publication(temporary)
+            with suppress(BaseException):
+                _remove_private_publication(temporary)
             raise
 
     def lookup(self, reference: ArtifactReference) -> LookupResult[bytes]:
@@ -575,7 +619,11 @@ class S3ArtifactStore:
                 data=_manifest_bytes(reference),
                 if_absent=True,
             )
-        finally:
+        except BaseException:
+            with suppress(BaseException):
+                self._client.delete(bucket=self._bucket, key=temporary_key)
+            raise
+        with suppress(BaseException):
             self._client.delete(bucket=self._bucket, key=temporary_key)
 
     def lookup(self, reference: ArtifactReference) -> LookupResult[bytes]:
@@ -598,7 +646,7 @@ class ProductProjection:
         self._artifacts = artifacts
 
     def create_run(self, run: ProductRun, *, secrets: Sequence[str] = ()) -> None:
-        """Create one stable run record, rejecting duplicate Sync identity."""
+        """Create an unfinished run with metadata/links; reject completion fields/artifacts."""
         if run.finished_at is not None or run.outcome is not None or run.artifact_refs:
             msg = "a new product record must be unfinished and have no artifact references"
             raise ValueError(msg)
@@ -709,8 +757,14 @@ class ProductProjection:
             if not result.available:
                 msg = f"Artifact {reference.artifact_id!r} is unavailable: {result.reason}"
                 raise ArtifactUnavailableError(msg)
-        sanitized_summary = _normalize_mapping(_redact_value(summary, secrets))
-        sanitized_results = _normalize_mapping(_redact_value(results, secrets))
+        sanitized_summary = cast(
+            "Mapping[str, Any]",
+            _redact_value(_normalize_mapping(summary), secrets),
+        )
+        sanitized_results = cast(
+            "Mapping[str, Any]",
+            _redact_value(_normalize_mapping(results), secrets),
+        )
         self._records.finish(
             run_id,
             phase=redact(phase, secrets),
@@ -818,10 +872,25 @@ def _is_unique_violation(exc: BaseException) -> bool:
     return getattr(diagnostic, "sqlstate", None) == "23505"
 
 
+def _sqlstate(exc: BaseException) -> str | None:
+    direct = getattr(exc, "sqlstate", None) or getattr(exc, "pgcode", None)
+    if isinstance(direct, str):
+        return direct
+    diagnostic = getattr(exc, "diag", None)
+    value = getattr(diagnostic, "sqlstate", None)
+    return value if isinstance(value, str) else None
+
+
 def _require_publication_marked(cursor: _Cursor, reference: ArtifactReference) -> None:
     if cursor.rowcount != 1:
         msg = f"Artifact {reference.artifact_id!r} on run {reference.run_id!r} has no matching pending publication"
         raise ArtifactUnavailableError(msg)
+
+
+def _require_run_finished(cursor: _Cursor, run_id: str) -> None:
+    if cursor.rowcount != 1:
+        msg = f"Cannot finish unavailable Sync run ID {run_id!r}"
+        raise RunNotFoundError(msg)
 
 
 def _redact_value(value: Any, secrets: Sequence[str]) -> Any:
@@ -877,6 +946,20 @@ def _expired(reference: ArtifactReference) -> bool:
 
 def _matches_reference(reference: ArtifactReference, data: bytes) -> bool:
     return sha256(data).hexdigest() == reference.digest and len(data) == reference.size
+
+
+def _validate_file_artifact_layout(reference: ArtifactReference) -> None:
+    object_key = PurePosixPath(reference.object_key)
+    manifest_key = PurePosixPath(reference.manifest_key)
+    if (
+        object_key.is_absolute()
+        or manifest_key.is_absolute()
+        or object_key.parent != manifest_key.parent
+        or object_key.name != "data"
+        or manifest_key.name != "manifest.json"
+    ):
+        msg = "filesystem artifact keys must be relative sibling paths ending in 'data' and 'manifest.json'"
+        raise ValueError(msg)
 
 
 def _normalize_mapping(value: Any) -> Mapping[str, Any]:
