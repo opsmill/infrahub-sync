@@ -16,13 +16,14 @@ from pydantic import ValidationError
 
 import infrahub_sync.api.v1 as api
 import infrahub_sync.api.v1._operations as operations  # noqa: PLC2701 - tests exercise internal composition seams
-from infrahub_sync import SyncInstance
+from infrahub_sync import SyncInstance, execution
 from infrahub_sync.cache.paths import run_dir
 from infrahub_sync.cache.sidecars import RunFile
 from infrahub_sync.execution import RunResult as CoreRunResult
 from infrahub_sync.plan.config_version import resolve_config_version
-from infrahub_sync.plan.errors import OperationApplyFailedError, PlanVerificationError
-from infrahub_sync.plan.models import ApplyRecord
+from infrahub_sync.plan.errors import OperationApplyFailedError
+from infrahub_sync.plan.models import ApplyRecord, VerificationFailure
+from infrahub_sync.plan.reader import read_plan_artifact_bytes
 from infrahub_sync.plan.review import SavedPlan, read_saved_plan
 from infrahub_sync.potenda import Potenda
 from infrahub_sync.utils import PlanApplier
@@ -30,7 +31,6 @@ from tests.plan.artifact_fixtures import operation_record, tamper_with_operation
 
 if TYPE_CHECKING:
     from infrahub_sync.plan.models import PlannedOperation
-    from infrahub_sync.plan.reader import RawPlanArtifact
 
 SYNC_NAME = "api-example"
 RUN_ID = "20260808T1200-a1b2c3d4"
@@ -275,7 +275,7 @@ def test_plan_uses_shared_core_and_returns_saved_plan_summary(
 ) -> None:
     calls: list[dict[str, Any]] = []
 
-    def fake_execute(sync_instance: SyncInstance, **kwargs: Any) -> CoreRunResult:  # noqa: ANN401
+    def fake_execute(sync_instance: SyncInstance, **kwargs: Any) -> SavedPlan:  # noqa: ANN401
         calls.append(kwargs)
         requested_run_id = cast("str", kwargs["run_id"])
         directory = run_dir(sync_instance.name, requested_run_id)
@@ -288,15 +288,7 @@ def test_plan_uses_shared_core_and_returns_saved_plan_summary(
             run_id=requested_run_id,
             config_version=resolve_config_version(sync_instance),
         )
-        return CoreRunResult(
-            sync_name=sync_instance.name,
-            operation="plan",
-            run_id=requested_run_id,
-            status="planned",
-            changed=True,
-            summary={"create": 1, "update": 0, "delete": 1},
-            artifact_path=str(directory),
-        )
+        return read_saved_plan(sync_name=sync_instance.name, run_id=requested_run_id, config=sync_instance)
 
     monkeypatch.setattr(operations, "execute_run", fake_execute)
     monkeypatch.setattr(operations, "generate_run_id", lambda: RUN_ID)
@@ -313,6 +305,7 @@ def test_plan_uses_shared_core_and_returns_saved_plan_summary(
             "print_diff": False,
             "_lock_already_held": False,
             "_run_file_mode": None,
+            "_return_saved_plan": True,
         }
     ]
     assert result.operation == "plan"
@@ -330,6 +323,73 @@ def test_plan_uses_shared_core_and_returns_saved_plan_summary(
     ]
 
 
+def test_verify_and_apply_delegate_sidecar_ownership_to_the_shared_core(
+    config_directory: Path,
+    instance: SyncInstance,
+    cache_directory: Path,  # noqa: ARG001 - activates the cache fixture
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory, checksum = _saved_run(instance)
+    saved = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, config=instance)
+    RunFile(
+        path=directory / "run.json",
+        status="dry-run",
+        mode="diff",
+        summary={"resources": 1},
+        finished_at="2026-08-08T12:00:00+00:00",
+    ).save()
+    before = _read_run_sidecar(directory)
+    calls: list[dict[str, Any]] = []
+
+    def fake_execute(sync_instance: SyncInstance, **kwargs: Any) -> CoreRunResult | SavedPlan:  # noqa: ANN401
+        calls.append(kwargs)
+        if kwargs["operation"] == "verify":
+            return saved
+        return CoreRunResult(
+            sync_name=sync_instance.name,
+            operation="apply",
+            run_id=RUN_ID,
+            status="applied",
+            changed=True,
+            summary={"create": 1, "update": 0, "delete": 0},
+            artifact_path=str(directory),
+        )
+
+    monkeypatch.setattr(operations, "execute_run", fake_execute)
+
+    api.verify(api.VerifyRequest(sync_name=SYNC_NAME, config_directory=str(config_directory), run_id=RUN_ID))
+    api.apply(
+        api.ApplyRequest(
+            sync_name=SYNC_NAME,
+            config_directory=str(config_directory),
+            run_id=RUN_ID,
+            expected_checksum=checksum,
+        )
+    )
+
+    assert calls == [
+        {
+            "operation": "verify",
+            "run_id": RUN_ID,
+            "_lock_already_held": False,
+            "_run_file_mode": None,
+            "_require_verified": True,
+        },
+        {
+            "operation": "apply",
+            "confirm_writes": True,
+            "run_id": RUN_ID,
+            "branch": None,
+            "expected_checksum": checksum,
+            "_lock_already_held": False,
+            "_run_file_mode": None,
+        },
+    ]
+    assert _read_run_sidecar(directory) == before
+    assert not hasattr(operations, "RunFile")
+    assert not hasattr(operations, "PlanApplier")
+
+
 def test_verify_is_independent_read_only_and_emits_structured_fields(
     config_directory: Path,
     instance: SyncInstance,
@@ -343,7 +403,7 @@ def test_verify_is_independent_read_only_and_emits_structured_fields(
         msg = "independent verification constructed an adapter"
         raise AssertionError(msg)
 
-    monkeypatch.setattr(operations.PlanApplier, "open_existing", adapters_are_forbidden)
+    monkeypatch.setattr(execution.PlanApplier, "open_existing", adapters_are_forbidden)
     caplog.set_level(logging.INFO, logger=operations.__name__)
 
     result = api.verify(api.VerifyRequest(sync_name=SYNC_NAME, config_directory=str(config_directory), run_id=RUN_ID))
@@ -399,6 +459,19 @@ class _ApplyOnlySource:
     """Mutable placeholder for the source that reviewed-plan apply never reads."""
 
 
+def _apply_engine(instance: SyncInstance, directory: Path) -> Potenda:
+    """Build the minimal engine surface needed by a successful fake applier."""
+    return Potenda(
+        source=cast("Any", _ApplyOnlySource()),
+        destination=cast("Any", _RecordingDestination([])),
+        config=instance,
+        top_level=[],
+        run_dir=directory,
+        run_id=RUN_ID,
+        cache_root=directory.parent,
+    )
+
+
 def test_apply_reverifies_immediately_before_the_first_destination_write(
     config_directory: Path,
     instance: SyncInstance,
@@ -419,14 +492,14 @@ def test_apply_reverifies_immediately_before_the_first_destination_write(
         cache_root=directory.parent,
     )
     applier = PlanApplier(engine, run_dir=directory, run_id=RUN_ID)
-    real_verify = operations.verify_plan
+    real_verify = execution.verify_plan
 
     def recording_verify(**kwargs: Any) -> Any:  # noqa: ANN401
         timeline.append("verify")
         return real_verify(**kwargs)
 
     monkeypatch.setattr("infrahub_sync.plan.verify.verify_plan", recording_verify)
-    monkeypatch.setattr(operations.PlanApplier, "open_existing", lambda *_args, **_kwargs: applier)
+    monkeypatch.setattr(execution.PlanApplier, "open_existing", lambda *_args, **_kwargs: applier)
     caplog.set_level(logging.INFO, logger=operations.__name__)
 
     result = api.apply(
@@ -471,7 +544,7 @@ def test_apply_refuses_an_unreviewed_checksum_before_destination_construction(
         msg = "checksum mismatch constructed the destination"
         raise AssertionError(msg)
 
-    monkeypatch.setattr(operations.PlanApplier, "open_existing", adapters_are_forbidden)
+    monkeypatch.setattr(execution.PlanApplier, "open_existing", adapters_are_forbidden)
 
     with pytest.raises(api.RunValidationError) as caught:
         api.apply(
@@ -508,7 +581,7 @@ def test_apply_destination_construction_refusal_preserves_a_healthy_sidecar(
         msg = "destination credentials are missing"
         raise ValueError(msg)
 
-    monkeypatch.setattr(operations.PlanApplier, "open_existing", refuse_destination)
+    monkeypatch.setattr(execution.PlanApplier, "open_existing", refuse_destination)
 
     with pytest.raises(api.RunExecutionError):
         api.apply(
@@ -532,9 +605,23 @@ def test_apply_result_counts_come_from_the_exact_artifact_passed_to_apply(
     directory, checksum = _saved_run(instance)
 
     class ReplacingApplier:
+        engine = Potenda(
+            source=cast("Any", _ApplyOnlySource()),
+            destination=cast("Any", _RecordingDestination([])),
+            config=instance,
+            top_level=[],
+            run_dir=directory,
+            run_id=RUN_ID,
+            cache_root=directory.parent,
+        )
+
+        @property
+        def applied_plan_action_counts(self) -> dict[str, int]:
+            return {"create": 1, "update": 0, "delete": 0}
+
         @staticmethod
-        def apply_plan(**kwargs: object) -> ApplyRecord:
-            approved_artifact = cast("RawPlanArtifact", kwargs["artifact"])
+        def apply_plan(**_kwargs: object) -> ApplyRecord:
+            approved_artifact = read_plan_artifact_bytes(directory)
             assert approved_artifact.operations_bytes is not None
             write_artifact(
                 directory,
@@ -547,7 +634,7 @@ def test_apply_result_counts_come_from_the_exact_artifact_passed_to_apply(
             )
             return ApplyRecord(applied_operations=("approved-operation",))
 
-    monkeypatch.setattr(operations.PlanApplier, "open_existing", lambda *_args, **_kwargs: ReplacingApplier())
+    monkeypatch.setattr(execution.PlanApplier, "open_existing", lambda *_args, **_kwargs: ReplacingApplier())
 
     result = api.apply(
         api.ApplyRequest(
@@ -584,6 +671,35 @@ def test_sync_requires_confirmation_before_loading_configuration(
     }
 
 
+@pytest.mark.parametrize("operation", ["plan", "sync"])
+def test_configuration_refusal_does_not_overwrite_a_healthy_sidecar(
+    operation: str,
+    instance: SyncInstance,
+    cache_directory: Path,  # noqa: ARG001 - activates the cache fixture
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory, _checksum = _saved_run(instance)
+    RunFile(
+        path=directory / "run.json",
+        status="dry-run",
+        mode="diff",
+        summary={"resources": 1},
+        finished_at="2026-08-08T12:00:00+00:00",
+    ).save()
+    before = _read_run_sidecar(directory)
+    monkeypatch.setattr(operations, "generate_run_id", lambda: RUN_ID)
+
+    def invoke() -> object:
+        if operation == "plan":
+            return api.plan(api.PlanRequest(sync_name=SYNC_NAME, config_directory="missing"))
+        return api.sync(api.SyncRequest(sync_name=SYNC_NAME, config_directory="missing", confirm_writes=True))
+
+    with pytest.raises(api.RunValidationError):
+        invoke()
+
+    assert _read_run_sidecar(directory) == before
+
+
 def test_confirmed_sync_composes_plan_verify_apply_in_order(
     config_directory: Path,
     instance: SyncInstance,
@@ -594,6 +710,7 @@ def test_confirmed_sync_composes_plan_verify_apply_in_order(
     directory, _checksum = _saved_run(instance)
     saved = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, config=instance)
     timeline: list[str] = []
+    calls: list[dict[str, Any]] = []
     lock_entries = 0
     lock_held = False
 
@@ -607,30 +724,26 @@ def test_confirmed_sync_composes_plan_verify_apply_in_order(
         finally:
             lock_held = False
 
-    def fake_plan(*_args: object, **_kwargs: object) -> tuple[Any, Path]:
+    def fake_execute(sync_instance: SyncInstance, **kwargs: Any) -> CoreRunResult | SavedPlan:  # noqa: ANN401
         assert lock_held is True
-        assert _kwargs["lock_already_held"] is True
-        timeline.append("plan")
-        operations._log_lifecycle(run_id=RUN_ID, operation="sync", stage="plan", outcome="planned")
-        return saved, directory
-
-    def fake_verify(*_args: object, **_kwargs: object) -> tuple[Any, Path]:
-        assert lock_held is True
-        timeline.append("verify")
-        operations._log_lifecycle(run_id=RUN_ID, operation="sync", stage="verify", outcome="verified")
-        return saved, directory
-
-    def fake_apply(*_args: object, **_kwargs: object) -> tuple[ApplyRecord, SavedPlan]:
-        assert lock_held is True
-        assert _kwargs["lock_already_held"] is True
-        timeline.append("apply")
-        operations._log_lifecycle(run_id=RUN_ID, operation="sync", stage="apply", outcome="applied")
-        return ApplyRecord(applied_operations=(saved.operations()[0].operation_id,)), saved
+        assert kwargs["_lock_already_held"] is True
+        operation = cast("str", kwargs["operation"])
+        timeline.append(operation)
+        calls.append(kwargs)
+        if operation in {"plan", "verify"}:
+            return saved
+        return CoreRunResult(
+            sync_name=sync_instance.name,
+            operation=cast("Any", operation),
+            run_id=RUN_ID,
+            status="planned" if operation == "plan" else "applied",
+            changed=True,
+            summary={"create": 1, "update": 0, "delete": 0},
+            artifact_path=str(directory),
+        )
 
     monkeypatch.setattr(operations, "generate_run_id", lambda: RUN_ID)
-    monkeypatch.setattr(operations, "_plan_instance", fake_plan)
-    monkeypatch.setattr(operations, "_verify_instance", fake_verify)
-    monkeypatch.setattr(operations, "_apply_instance", fake_apply)
+    monkeypatch.setattr(operations, "execute_run", fake_execute)
     monkeypatch.setattr(operations, "pipeline_lock", recording_lock)
     caplog.set_level(logging.INFO, logger=operations.__name__)
 
@@ -643,6 +756,8 @@ def test_confirmed_sync_composes_plan_verify_apply_in_order(
     )
 
     assert timeline == ["plan", "verify", "apply"]
+    assert [call["_run_file_mode"] for call in calls] == ["sync", "sync", "sync"]
+    assert calls[1]["_require_verified"] is True
     assert lock_entries == 1
     assert lock_held is False
     assert result.operation == "sync"
@@ -651,8 +766,11 @@ def test_confirmed_sync_composes_plan_verify_apply_in_order(
         api.LifecycleEvent.model_validate(record.__dict__) for record in caplog.records if hasattr(record, "run_id")
     ]
     assert [(event.operation, event.stage, event.outcome) for event in events] == [
+        ("sync", "plan", "running"),
         ("sync", "plan", "planned"),
+        ("sync", "verify", "running"),
         ("sync", "verify", "verified"),
+        ("sync", "apply", "running"),
         ("sync", "apply", "applied"),
         ("sync", "completed", "applied"),
     ]
@@ -698,7 +816,7 @@ def _replace_sync_plan(
         RunFile(
             path=directory / "run.json",
             status="dry-run",
-            mode="diff",
+            mode="sync",
             summary={"resources": 1},
             finished_at="2026-08-08T12:00:00+00:00",
         ).save()
@@ -721,11 +839,19 @@ def test_sync_verification_refusal_persists_one_failed_sync_sidecar(
     saved = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, config=instance)
     _replace_sync_plan(monkeypatch, saved=saved, directory=directory)
 
-    def refuse_verify(*_args: object, **_kwargs: object) -> NoReturn:
-        msg = "reviewed plan is stale"
-        raise PlanVerificationError(msg)
-
-    monkeypatch.setattr(operations, "_verify_instance", refuse_verify)
+    monkeypatch.setattr(
+        execution,
+        "verify_plan",
+        lambda **_kwargs: [
+            VerificationFailure(
+                check="plan_checksum",
+                run_id=RUN_ID,
+                expected="reviewed",
+                found="stale",
+                next_action="re-plan",
+            )
+        ],
+    )
 
     with pytest.raises(api.RunValidationError) as caught:
         api.sync(
@@ -763,7 +889,7 @@ def test_sync_partial_apply_failure_persists_record_and_failed_state(
             msg = "destination refused the operation"
             raise OperationApplyFailedError(msg, apply_record=partial)
 
-    monkeypatch.setattr(operations.PlanApplier, "open_existing", lambda *_args, **_kwargs: RejectingApplier())
+    monkeypatch.setattr(execution.PlanApplier, "open_existing", lambda *_args, **_kwargs: RejectingApplier())
 
     with pytest.raises(api.RunExecutionError):
         api.sync(
@@ -781,6 +907,89 @@ def test_sync_partial_apply_failure_persists_record_and_failed_state(
     assert recorded["summary"]["failed_operation"] == operation_id
     assert recorded["summary"]["may_have_partially_written"] is True
     assert recorded["finished_at"] is not None
+
+
+def test_apply_failure_persists_one_core_owned_terminal_sidecar(
+    config_directory: Path,
+    instance: SyncInstance,
+    cache_directory: Path,  # noqa: ARG001 - activates the cache fixture
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory, checksum = _saved_run(instance)
+    operation_id = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, config=instance).operations()[0].operation_id
+
+    class RejectingApplier:
+        @staticmethod
+        def apply_plan(**_kwargs: object) -> NoReturn:
+            partial = ApplyRecord(applied_operations=("already-applied",), failed_operation=operation_id)
+            msg = "destination refused the operation"
+            raise OperationApplyFailedError(msg, apply_record=partial)
+
+    transitions: list[str] = []
+    real_transition = execution._save_run_transition
+
+    def recording_transition(*args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+        transitions.append(cast("str", kwargs["status"]))
+        real_transition(*args, **kwargs)
+
+    monkeypatch.setattr(execution.PlanApplier, "open_existing", lambda *_args, **_kwargs: RejectingApplier())
+    monkeypatch.setattr(execution, "_save_run_transition", recording_transition)
+
+    with pytest.raises(api.RunExecutionError):
+        api.apply(
+            api.ApplyRequest(
+                sync_name=SYNC_NAME,
+                config_directory=str(config_directory),
+                run_id=RUN_ID,
+                expected_checksum=checksum,
+            )
+        )
+
+    recorded = _read_run_sidecar(directory)
+    assert (recorded["mode"], recorded["status"]) == ("apply", "failed")
+    assert recorded["summary"]["applied_operations"] == ["already-applied"]
+    assert recorded["summary"]["failed_operation"] == operation_id
+    assert transitions == ["running", "failed"]
+
+
+def test_sync_destination_construction_failure_is_terminal_after_plan_start(
+    config_directory: Path,
+    instance: SyncInstance,
+    cache_directory: Path,  # noqa: ARG001 - activates the cache fixture
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory, _checksum = _saved_run(instance)
+    saved = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, config=instance)
+    _replace_sync_plan(monkeypatch, saved=saved, directory=directory)
+    monkeypatch.setattr(operations, "_verify_instance", lambda *_args, **_kwargs: (saved, directory))
+
+    def refuse_destination(*_args: object, **_kwargs: object) -> NoReturn:
+        msg = "destination credentials are missing"
+        raise ValueError(msg)
+
+    transitions: list[str] = []
+    real_transition = execution._save_run_transition
+
+    def recording_transition(*args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+        transitions.append(cast("str", kwargs["status"]))
+        real_transition(*args, **kwargs)
+
+    monkeypatch.setattr(execution.PlanApplier, "open_existing", refuse_destination)
+    monkeypatch.setattr(execution, "_save_run_transition", recording_transition)
+
+    with pytest.raises(api.RunExecutionError):
+        api.sync(
+            api.SyncRequest(
+                sync_name=SYNC_NAME,
+                config_directory=str(config_directory),
+                confirm_writes=True,
+            )
+        )
+
+    recorded = _read_run_sidecar(directory)
+    assert (recorded["mode"], recorded["status"]) == ("sync", "failed")
+    assert recorded["finished_at"] is not None
+    assert transitions == ["failed"]
 
 
 def test_sync_apply_interrupt_persists_carried_partial_record(
@@ -801,17 +1010,17 @@ def test_sync_apply_interrupt_persists_carried_partial_record(
         def apply_plan(**_kwargs: object) -> NoReturn:
             raise interruption
 
-    monkeypatch.setattr(operations.PlanApplier, "open_existing", lambda *_args, **_kwargs: InterruptingApplier())
+    monkeypatch.setattr(execution.PlanApplier, "open_existing", lambda *_args, **_kwargs: InterruptingApplier())
 
     with pytest.raises(KeyboardInterrupt):
         operations._apply_instance(
             instance,
-            run_directory=directory,
             run_id=RUN_ID,
             branch=None,
             expected_checksum=checksum,
             operation="sync",
             secrets=(),
+            saved=read_saved_plan(sync_name=instance.name, run_id=RUN_ID, config=instance),
         )
 
     recorded = _read_run_sidecar(directory)
@@ -834,11 +1043,17 @@ def test_sync_success_persists_applied_state_and_completion_time(
     monkeypatch.setattr(operations, "_verify_instance", lambda *_args, **_kwargs: (saved, directory))
 
     class SuccessfulApplier:
+        engine = _apply_engine(instance, directory)
+
+        @property
+        def applied_plan_action_counts(self) -> dict[str, int]:
+            return {"create": 1, "update": 0, "delete": 0}
+
         @staticmethod
         def apply_plan(**_kwargs: object) -> ApplyRecord:
             return ApplyRecord(applied_operations=(operation_id,))
 
-    monkeypatch.setattr(operations.PlanApplier, "open_existing", lambda *_args, **_kwargs: SuccessfulApplier())
+    monkeypatch.setattr(execution.PlanApplier, "open_existing", lambda *_args, **_kwargs: SuccessfulApplier())
 
     result = api.sync(
         api.SyncRequest(
@@ -868,12 +1083,18 @@ def test_sync_terminal_sidecar_failure_is_typed_and_recovers_failed_state(
     monkeypatch.setattr(operations, "_verify_instance", lambda *_args, **_kwargs: (saved, directory))
 
     class SuccessfulApplier:
+        engine = _apply_engine(instance, directory)
+
+        @property
+        def applied_plan_action_counts(self) -> dict[str, int]:
+            return {"create": 1, "update": 0, "delete": 0}
+
         @staticmethod
         def apply_plan(**_kwargs: object) -> ApplyRecord:
             return ApplyRecord(applied_operations=(saved.operations()[0].operation_id,))
 
-    monkeypatch.setattr(operations.PlanApplier, "open_existing", lambda *_args, **_kwargs: SuccessfulApplier())
-    real_transition = operations._transition_run_sidecar
+    monkeypatch.setattr(execution.PlanApplier, "open_existing", lambda *_args, **_kwargs: SuccessfulApplier())
+    real_transition = execution._save_run_transition
     failed_once = False
 
     def flaky_transition(*args: Any, **kwargs: Any) -> None:  # noqa: ANN401
@@ -884,7 +1105,7 @@ def test_sync_terminal_sidecar_failure_is_typed_and_recovers_failed_state(
             raise OSError(msg)
         real_transition(*args, **kwargs)
 
-    monkeypatch.setattr(operations, "_transition_run_sidecar", flaky_transition)
+    monkeypatch.setattr(execution, "_save_run_transition", flaky_transition)
 
     with pytest.raises(api.RunExecutionError) as caught:
         api.sync(

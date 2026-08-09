@@ -25,7 +25,7 @@ import pytest
 import yaml
 from filelock import Timeout
 
-from infrahub_sync import SyncAdapter, SyncInstance, SyncStore
+from infrahub_sync import SyncAdapter, SyncInstance, SyncStore, execution
 from infrahub_sync.cache.locks import pipeline_lock
 from infrahub_sync.cache.parquet_io import write_plan
 from infrahub_sync.cache.sidecars import RunFile
@@ -1636,10 +1636,22 @@ def test_plan_through_the_remote_composition_returns_a_result(config_dir: str, c
     assert Path(result.artifact_path).name == result.run_id
 
 
-def test_lifecycle_failure_marks_run_json_failed_and_reraises(config_dir: str, cache_root: Path) -> None:
+def test_lifecycle_failure_marks_run_json_failed_and_reraises(
+    config_dir: str,
+    cache_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The preserved CLI pattern: run.json is never left at status='running'."""
     instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
     factory = _SpyFactory(cache_root=cache_root)
+    saved_statuses: list[str] = []
+    real_save = RunFile.save
+
+    def recording_save(run_file: RunFile) -> None:
+        saved_statuses.append(run_file.status)
+        real_save(run_file)
+
+    monkeypatch.setattr(RunFile, "save", recording_save)
 
     def exploding_load() -> None:
         msg = "diff engine unavailable"
@@ -1656,6 +1668,33 @@ def test_lifecycle_failure_marks_run_json_failed_and_reraises(config_dir: str, c
         execute_run(instance, operation="plan", potenda_factory=patched)
 
     assert RunFile.load_or_default(cache_root / RUN_ID / "run.json").status == "failed"
+    assert saved_statuses == ["running", "failed"]
+
+
+def test_public_plan_result_construction_failure_is_terminal(
+    config_dir: str,
+    cache_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root, rows=[_plan_row("create", "core01")])
+
+    def refuse_saved_plan(**_kwargs: object) -> NoReturn:
+        msg = "saved plan could not be reconstructed"
+        raise OSError(msg)
+
+    monkeypatch.setattr(execution, "read_saved_plan", refuse_saved_plan)
+
+    with pytest.raises(OSError, match="could not be reconstructed"):
+        execute_run(
+            instance,
+            operation="plan",
+            potenda_factory=factory,
+            _return_saved_plan=True,
+        )
+
+    run_file = RunFile.load_or_default(cache_root / RUN_ID / "run.json")
+    assert (run_file.mode, run_file.status) == ("diff", "failed")
 
 
 def test_composed_sync_plan_failure_records_sync_mode(config_dir: str, cache_root: Path) -> None:
@@ -1683,6 +1722,33 @@ def test_composed_sync_plan_failure_records_sync_mode(config_dir: str, cache_roo
 
     run_file = RunFile.load_or_default(cache_root / RUN_ID / "run.json")
     assert (run_file.mode, run_file.status) == ("sync", "failed")
+
+
+def test_composed_operation_skips_nested_core_lock(
+    config_dir: str,
+    cache_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root, rows=[_plan_row("create", "core01")])
+
+    @contextmanager
+    def nested_lock_is_forbidden(*_args: object, **_kwargs: object) -> Any:  # noqa: ANN401
+        pytest.fail("a composed operation reacquired the already-held pipeline lock")
+        yield
+
+    monkeypatch.setattr(execution, "_run_lock", nested_lock_is_forbidden)
+
+    result = execute_run(
+        instance,
+        operation="plan",
+        potenda_factory=factory,
+        _lock_already_held=True,
+        _run_file_mode="sync",
+    )
+
+    assert result.status == "planned"
+    assert RunFile.load_or_default(cache_root / RUN_ID / "run.json").mode == "sync"
 
 
 # --------------------------------------------------------------------------- #

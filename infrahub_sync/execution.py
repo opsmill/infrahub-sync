@@ -19,7 +19,7 @@ import logging
 import os
 import re
 from collections.abc import Mapping
-from contextlib import ExitStack, contextmanager, nullcontext
+from contextlib import AbstractContextManager, ExitStack, contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -36,6 +36,7 @@ from infrahub_sync import SyncConfig, SyncInstance
 from infrahub_sync.cache.locks import pipeline_lock
 from infrahub_sync.cache.paths import cache_root_for
 from infrahub_sync.cache.sidecars import RunFile
+from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
     OperationApplyFailedError,
@@ -50,11 +51,12 @@ from infrahub_sync.plan.review import (
     require_stored_run,
     resolve_run_directory,
 )
+from infrahub_sync.plan.verify import verify_plan
 from infrahub_sync.plan.writer import require_uncommitted_plan
 from infrahub_sync.utils import PlanApplier, get_potenda_from_instance
 
 if TYPE_CHECKING:
-    from collections.abc import AbstractContextManager, Callable, Iterable, Iterator, Sequence
+    from collections.abc import Callable, Iterable, Iterator, Sequence
     from typing import NoReturn
 
     from infrahub_sync.plan.review import SavedPlan
@@ -666,8 +668,6 @@ def _run_sync_lifecycle(
     try:
         ptd.load_both_sides()
     except ValueError as exc:
-        run_file.status = "failed"
-        run_file.save()
         if serial_load_error is not None:
             # CLI-only seam: the unprefixed abort fires at the site, exactly as
             # cli.py:265-268 does today.
@@ -703,8 +703,6 @@ def _run_parallel_sync_lifecycle(
     try:
         summary = ptd.sync_in_tiers(parallel=True, allow_rowcount_drop=allow_rowcount_drop)
     except ValueError as exc:
-        run_file.status = "failed"
-        run_file.save()
         if parallel_sync_error is not None:
             parallel_sync_error(exc)
         raise
@@ -780,6 +778,62 @@ def _apply_summary(counts: Mapping[str, int]) -> dict[ActionKey, int]:
     return {action: counts.get(action, 0) for action in ACTION_KEYS}
 
 
+def _save_run_transition(
+    run_directory: Path,
+    *,
+    mode: Literal["diff", "sync", "apply"],
+    status: Literal["running", "applied", "failed"],
+    record: ApplyRecord | None = None,
+) -> None:
+    """Persist one core-owned transition without discarding earlier summary data."""
+    run_file = RunFile.load_or_default(run_directory / "run.json")
+    run_file.mode = mode
+    run_file.status = status
+    if record is not None:
+        run_file.summary.update(record.as_summary_keys())
+    run_file.finished_at = None if status == "running" else datetime.now(timezone.utc).isoformat()
+    run_file.save()
+
+
+def _save_failed_run(
+    run_directory: Path,
+    *,
+    mode: Literal["diff", "sync", "apply"],
+    record: ApplyRecord | None = None,
+) -> None:
+    """Persist a terminal core-owned failure, retrying one transient sidecar error."""
+    first_error: Exception | None = None
+    for _attempt in range(2):
+        try:
+            _save_run_transition(run_directory, mode=mode, status="failed", record=record)
+        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            first_error = exc
+        else:
+            return
+    assert first_error is not None
+    raise first_error
+
+
+def _read_verified_plan(*, sync_instance: SyncInstance, run_id: str) -> SavedPlan:
+    """Read and independently verify one saved plan without constructing adapters."""
+    saved = read_saved_plan(sync_name=sync_instance.name, run_id=run_id, config=sync_instance)
+    run_directory = resolve_run_directory(sync_instance.name, run_id)
+    failures = verify_plan(
+        artifact=read_plan_artifact_bytes(run_directory),
+        run_id=run_id,
+        config_version=resolve_config_version(sync_instance),
+    )
+    if failures:
+        checks = ", ".join(failure.check for failure in failures)
+        detail = "; ".join(
+            f"{failure.check}: expected {failure.expected}; found {failure.found}" for failure in failures
+        )
+        next_actions = tuple(dict.fromkeys(failure.next_action for failure in failures))
+        msg = f"Saved plan {run_id!r} failed verification checks: {checks}. {detail}"
+        raise PlanVerificationError(msg, next_action=" ".join(next_actions))
+    return saved
+
+
 def _run_apply_lifecycle(
     *,
     sync_instance: SyncInstance,
@@ -789,39 +843,41 @@ def _run_apply_lifecycle(
     allow_destination_change: bool,
     expected_checksum: str | None,
     _plan_applier_factory: Callable[..., PlanApplier] | None,
+    run_directory: Path,
+    sidecar_mode: Literal["sync", "apply"],
 ) -> RunResult:
     """Apply one saved plan while the shared core owns its sidecar transitions."""
     factory = _plan_applier_factory if _plan_applier_factory is not None else PlanApplier.open_existing
-    applier = factory(sync_instance, run_id=run_id, branch=branch, verbosity=verbosity)
-    run_file = RunFile(path=applier.run_dir / "run.json", status="running", mode="apply")
-    run_file.save()
+    try:
+        applier = factory(sync_instance, run_id=run_id, branch=branch, verbosity=verbosity)
+    except BaseException:
+        if sidecar_mode == "sync":
+            _save_failed_run(run_directory, mode="sync")
+        raise
+
+    _save_run_transition(run_directory, mode=sidecar_mode, status="running")
     try:
         record = applier.apply_plan(
             allow_destination_change=allow_destination_change,
             expected_checksum=expected_checksum,
         )
     except (OperationApplyFailedError, ApplyRecordInvariantError) as exc:
-        run_file.summary.update(exc.apply_record.as_summary_keys())
-        run_file.status = "failed"
-        run_file.save()
+        _save_failed_run(run_directory, mode=sidecar_mode, record=exc.apply_record)
         raise
     except PlanArtifactError:
-        run_file.summary.update(ApplyRecord().as_summary_keys())
-        run_file.status = "failed"
-        run_file.save()
+        _save_failed_run(run_directory, mode=sidecar_mode, record=ApplyRecord())
         raise
     except BaseException as exc:
         carried = getattr(exc, "apply_record", None)
         partial = carried if isinstance(carried, ApplyRecord) else ApplyRecord()
-        run_file.summary.update(partial.as_summary_keys())
-        run_file.status = "failed"
-        run_file.save()
+        _save_failed_run(run_directory, mode=sidecar_mode, record=partial)
         raise
 
-    run_file.summary.update(record.as_summary_keys())
-    run_file.status = "applied"
-    run_file.finished_at = datetime.now(timezone.utc).isoformat()
-    run_file.save()
+    try:
+        _save_run_transition(run_directory, mode=sidecar_mode, status="applied", record=record)
+    except BaseException:
+        _save_failed_run(run_directory, mode=sidecar_mode, record=record)
+        raise
     return _build_result(
         sync_instance=sync_instance,
         operation="apply",
@@ -854,6 +910,76 @@ def _build_result(
         summary=summary,
         artifact_path=str(ptd.run_dir),
     )
+
+
+def _execute_verify_operation(
+    *,
+    sync_instance: SyncInstance,
+    run_id: str,
+    require_verified: bool,
+    run_file_mode: Literal["diff", "sync"] | None,
+) -> SavedPlan:
+    """Run one read-only verification, terminalizing only a composed run failure."""
+    try:
+        if require_verified:
+            return _read_verified_plan(sync_instance=sync_instance, run_id=run_id)
+        return read_saved_plan(sync_name=sync_instance.name, run_id=run_id, config=sync_instance)
+    except BaseException:
+        if run_file_mode is not None:
+            _save_failed_run(resolve_run_directory(sync_instance.name, run_id), mode=run_file_mode)
+        raise
+
+
+def _execute_apply_operation(
+    *,
+    sync_instance: SyncInstance,
+    run_id: str,
+    branch: str | None,
+    verbosity: int,
+    allow_destination_change: bool,
+    expected_checksum: str | None,
+    plan_applier_factory: Callable[..., PlanApplier] | None,
+    lock_timeout: float,
+    lock_already_held: bool,
+    run_file_mode: Literal["diff", "sync"] | None,
+) -> RunResult:
+    """Apply one reviewed plan with core-owned lock and sidecar transitions."""
+    run_directory = _require_applicable_plan(sync_name=sync_instance.name, run_id=run_id)
+    sidecar_mode: Literal["sync", "apply"] = "sync" if run_file_mode == "sync" else "apply"
+    try:
+        _require_expected_checksum(run_directory=run_directory, run_id=run_id, expected=expected_checksum)
+    except BaseException:
+        if sidecar_mode == "sync":
+            _save_failed_run(run_directory, mode="sync")
+        raise
+    apply_lock: AbstractContextManager[None] = (
+        nullcontext() if lock_already_held else _run_lock(sync_instance.name, timeout=lock_timeout)
+    )
+    with apply_lock:
+        return _run_apply_lifecycle(
+            sync_instance=sync_instance,
+            run_id=run_id,
+            branch=branch,
+            verbosity=verbosity,
+            allow_destination_change=allow_destination_change,
+            expected_checksum=expected_checksum,
+            _plan_applier_factory=plan_applier_factory,
+            run_directory=run_directory,
+            sidecar_mode=sidecar_mode,
+        )
+
+
+def _validate_operation_request(*, operation: Operation, confirm_writes: bool, run_id: str | None) -> None:
+    """Refuse invalid operation inputs before any adapter or run state is constructed."""
+    if operation not in OPERATIONS:
+        msg = f"Unsupported operation {operation!r} — expected one of {OPERATIONS!r}"
+        raise RunValidationError(msg)
+    if operation in ("sync", "apply") and not confirm_writes:
+        msg = f"confirm_writes=true is required to run operation={operation}"
+        raise RunValidationError(msg)
+    if operation in ("verify", "apply") and run_id is None:
+        msg = f"run_id is required to run operation={operation}"
+        raise RunValidationError(msg)
 
 
 # Pylint applies this check to the implementation's first line, below the overloads.
@@ -898,6 +1024,8 @@ def execute_run(
     _parallel_sync_error: Callable[[ValueError], NoReturn] | None = None,
     _lock_already_held: bool = False,
     _run_file_mode: Literal["diff", "sync"] | None = None,
+    _require_verified: bool = False,
+    _return_saved_plan: bool = False,
 ) -> RunResult | SavedPlan:
     """Run one product operation against a resolved instance.
 
@@ -911,37 +1039,31 @@ def execute_run(
         RunValidationError: an unsupported operation, a missing saved-plan id,
             or an unconfirmed write (all refused before an adapter is built).
     """
-    if operation not in OPERATIONS:
-        msg = f"Unsupported operation {operation!r} — expected one of {OPERATIONS!r}"
-        raise RunValidationError(msg)
-    if operation in ("sync", "apply") and not confirm_writes:
-        msg = f"confirm_writes=true is required to run operation={operation}"
-        raise RunValidationError(msg)
-    if operation in ("verify", "apply") and run_id is None:
-        msg = f"run_id is required to run operation={operation}"
-        raise RunValidationError(msg)
+    _validate_operation_request(operation=operation, confirm_writes=confirm_writes, run_id=run_id)
 
     if operation == "verify":
         assert run_id is not None  # narrowed above; verification never allocates a run.
-        return read_saved_plan(sync_name=sync_instance.name, run_id=run_id, config=sync_instance)
+        return _execute_verify_operation(
+            sync_instance=sync_instance,
+            run_id=run_id,
+            require_verified=_require_verified,
+            run_file_mode=_run_file_mode,
+        )
 
     if operation == "apply":
         assert run_id is not None  # narrowed above; keeps the saved-plan boundary explicit.
-        run_directory = _require_applicable_plan(sync_name=sync_instance.name, run_id=run_id)
-        _require_expected_checksum(run_directory=run_directory, run_id=run_id, expected=expected_checksum)
-        apply_lock: AbstractContextManager[None] = (
-            nullcontext() if _lock_already_held else _run_lock(sync_instance.name, timeout=_lock_timeout)
+        return _execute_apply_operation(
+            sync_instance=sync_instance,
+            run_id=run_id,
+            branch=branch,
+            verbosity=verbosity,
+            allow_destination_change=allow_destination_change,
+            expected_checksum=expected_checksum,
+            plan_applier_factory=_plan_applier_factory,
+            lock_timeout=_lock_timeout,
+            lock_already_held=_lock_already_held,
+            run_file_mode=_run_file_mode,
         )
-        with apply_lock:
-            return _run_apply_lifecycle(
-                sync_instance=sync_instance,
-                run_id=run_id,
-                branch=branch,
-                verbosity=verbosity,
-                allow_destination_change=allow_destination_change,
-                expected_checksum=expected_checksum,
-                _plan_applier_factory=_plan_applier_factory,
-            )
 
     if operation == "plan":
         _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id)
@@ -969,10 +1091,11 @@ def execute_run(
         if ptd.run_dir is None:  # get_potenda_from_instance always allocates one
             msg = "get_potenda_from_instance did not allocate a run_dir"
             raise RuntimeError(msg)
+        run_mode: Literal["diff", "sync"] = _run_file_mode or ("diff" if operation == "plan" else "sync")
         run_file = RunFile(
             path=ptd.run_dir / "run.json",
             status="running",
-            mode=_run_file_mode or ("diff" if operation == "plan" else "sync"),
+            mode=run_mode,
         )
         run_file.save()
 
@@ -999,14 +1122,21 @@ def execute_run(
                     allow_rowcount_drop=allow_rowcount_drop,
                     serial_load_error=_serial_load_error,
                 )
-        except Exception:
+        except BaseException:
             # Preserved CLI pattern (cli.py:156-159 / 285-288), verbatim: mark
             # run.json failed, then bare re-raise of the ORIGINAL exception, so a
             # lifecycle failure can never leave run.json at status="running".
             # This broad except is that existing pattern, not new looseness.
-            run_file.status = "failed"
-            run_file.save()
+            _save_failed_run(ptd.run_dir, mode=run_mode)
             raise
+
+        saved_plan: SavedPlan | None = None
+        if operation == "plan" and _return_saved_plan:
+            try:
+                saved_plan = read_saved_plan(sync_name=sync_instance.name, run_id=str(ptd.run_id), config=sync_instance)
+            except BaseException:
+                _save_failed_run(ptd.run_dir, mode=run_mode)
+                raise
 
         run_file.finished_at = datetime.now(timezone.utc).isoformat()
         run_file.save()
@@ -1014,6 +1144,8 @@ def execute_run(
             logger.info("Cached run %s at %s", ptd.run_id, ptd.run_dir)
         else:
             logger.info("Sync run %s at %s", ptd.run_id, ptd.run_dir)
+        if saved_plan is not None:
+            return saved_plan
         return _build_result(sync_instance=sync_instance, operation=operation, ptd=ptd, summary=summary)
 
 
