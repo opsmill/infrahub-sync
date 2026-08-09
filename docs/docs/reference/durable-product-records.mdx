@@ -49,6 +49,12 @@ tests use a PostgreSQL-paramstyle local DB-API emulator and a deterministic
 S3-compatible client; they prove the injected provider contract, not live PostgreSQL,
 driver, S3 service, authentication, or network integration.
 
+Constructing `PostgreSQLRunStore` directly, or constructing the production projection,
+runs idempotent `CREATE TABLE IF NOT EXISTS` statements for the product-record schema.
+The PostgreSQL connection role must have the DDL privileges required to create those
+tables in its configured schema, in addition to the privileges required to read and write
+their rows.
+
 ## Record and identity contract
 
 `ProductRun` owns the stable Sync `run_id`, requested operation, immutable configuration
@@ -88,8 +94,10 @@ include `run-not-found`, `artifact-reference-not-found`, `manifest-unavailable`,
 failures. Normal run lookup includes only published references. An unavailable or pending
 artifact does not prevent the remaining product record from being read.
 
-The MVP does not delete product records or artifacts automatically. Prefect retention is
-independent.
+`artifact-expired` is a forward-compatible read behavior for references that already
+contain an expiry timestamp. The public publication operation does not set expiry, and the
+MVP does not expire or delete product records or artifacts automatically. Prefect
+retention is independent.
 
 ## Secret boundary
 

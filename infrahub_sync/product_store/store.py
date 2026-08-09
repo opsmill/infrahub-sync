@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS prefect_executions (
 );
 """
 
+# Stable SQLite extended result codes. Python 3.10's sqlite3 module does not expose
+# their symbolic names even when an exception provides ``sqlite_errorcode``.
+_SQLITE_UNIQUE_CONSTRAINT_CODES = frozenset({1555, 2067})
+
 
 class DuplicateRunError(ValueError):
     """The requested stable Sync run ID already exists."""
@@ -399,8 +403,9 @@ class FileArtifactStore:
         root.mkdir(parents=True, exist_ok=True)
 
     def _path(self, key: str) -> Path:
-        path = self.root.joinpath(*key.split("/"))
-        if self.root.absolute() not in path.absolute().parents:
+        root = self.root.resolve()
+        path = self.root.joinpath(*key.split("/")).resolve()
+        if not path.is_relative_to(root):
             msg = f"artifact key escapes its configured root: {key!r}"
             raise ValueError(msg)
         return path
@@ -687,7 +692,16 @@ def _reference_from_row(row: Sequence[Any]) -> ArtifactReference:
 
 
 def _is_unique_violation(exc: BaseException) -> bool:
-    return isinstance(exc, sqlite3.IntegrityError) or getattr(exc, "sqlstate", None) == "23505"
+    if isinstance(exc, sqlite3.IntegrityError):
+        error_code = getattr(exc, "sqlite_errorcode", None)
+        if error_code is not None:
+            return error_code in _SQLITE_UNIQUE_CONSTRAINT_CODES
+        return str(exc).startswith(("UNIQUE constraint failed", "PRIMARY KEY constraint failed"))
+
+    if getattr(exc, "sqlstate", None) == "23505" or getattr(exc, "pgcode", None) == "23505":
+        return True
+    diagnostic = getattr(exc, "diag", None)
+    return getattr(diagnostic, "sqlstate", None) == "23505"
 
 
 def _require_publication_marked(cursor: _Cursor, reference: ArtifactReference) -> None:

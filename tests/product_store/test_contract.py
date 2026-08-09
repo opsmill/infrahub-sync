@@ -5,6 +5,7 @@ import subprocess  # noqa: S404 - fixed local interpreter probes restart durabil
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -21,6 +22,7 @@ from infrahub_sync.product_store import (
     ProductRun,
     local_product_projection,
 )
+from infrahub_sync.product_store import store as product_store_store
 from infrahub_sync.product_store.store import FileArtifactStore, PostgreSQLRunStore, S3ArtifactStore, SQLiteRunStore
 
 EXPECTED_PUBLIC_NAMES = {
@@ -78,6 +80,20 @@ class _ConnectionAdapter:
 
     def close(self) -> None:
         self._connection.close()
+
+
+class _FakeDriverError(Exception):
+    def __init__(
+        self,
+        *,
+        sqlstate: str | None = None,
+        pgcode: str | None = None,
+        diagnostic_sqlstate: str | None = None,
+    ) -> None:
+        super().__init__("fake database error")
+        self.sqlstate = sqlstate
+        self.pgcode = pgcode
+        self.diag = SimpleNamespace(sqlstate=diagnostic_sqlstate)
 
 
 class _FakeS3:
@@ -158,6 +174,51 @@ def test_public_surface_is_exactly_the_supported_contract() -> None:
     assert set(product_store.__all__) == EXPECTED_PUBLIC_NAMES
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        _FakeDriverError(sqlstate="23505"),
+        _FakeDriverError(pgcode="23505"),
+        _FakeDriverError(diagnostic_sqlstate="23505"),
+    ],
+)
+def test_postgresql_unique_violation_exposure_is_recognized(error: BaseException) -> None:
+    assert product_store_store._is_unique_violation(error)
+
+
+@pytest.mark.parametrize("sqlstate", ["23502", "23503"])
+def test_postgresql_non_unique_integrity_errors_are_not_duplicates(sqlstate: str) -> None:
+    assert not product_store_store._is_unique_violation(
+        _FakeDriverError(sqlstate=sqlstate, pgcode=sqlstate, diagnostic_sqlstate=sqlstate)
+    )
+
+
+@pytest.mark.parametrize(
+    "duplicate_parameters",
+    [
+        ("primary", "other-unique", "present"),
+        ("other-primary", "unique", "present"),
+    ],
+)
+def test_sqlite_primary_key_and_unique_constraint_codes_are_duplicates(
+    duplicate_parameters: tuple[str, str, str],
+) -> None:
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.execute(
+            "CREATE TABLE example (primary_value TEXT PRIMARY KEY, unique_value TEXT UNIQUE, required TEXT NOT NULL)"
+        )
+        connection.execute("INSERT INTO example VALUES (?, ?, ?)", ("primary", "unique", "present"))
+
+        with pytest.raises(sqlite3.IntegrityError) as exc_info:
+            connection.execute("INSERT INTO example VALUES (?, ?, ?)", duplicate_parameters)
+
+        assert product_store_store._is_unique_violation(exc_info.value)
+        assert getattr(exc_info.value, "sqlite_errorcode", None) in {1555, 2067}
+    finally:
+        connection.close()
+
+
 @pytest.fixture(params=("local", "production"))
 def provider(request, tmp_path: Path) -> ProductProjection:
     if request.param == "local":
@@ -182,6 +243,16 @@ def test_zero_link_standalone_round_trip(provider: ProductProjection) -> None:
     assert result.value == expected
     assert result.value is not None
     assert result.value.prefect_executions == ()
+
+
+def test_sqlite_foreign_key_failure_passes_through_as_integrity_error(tmp_path: Path) -> None:
+    store = SQLiteRunStore(tmp_path / "records.sqlite3")
+
+    with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY constraint failed"):
+        store.add_prefect_execution(
+            "missing-run",
+            PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1),
+        )
 
 
 def test_every_prefect_link_field_and_multiple_attempts_round_trip(provider: ProductProjection) -> None:
@@ -455,6 +526,41 @@ def test_expired_reference_is_explicit_and_run_remains_readable(provider: Produc
 
     assert provider.lookup_artifact("run-001", "expired-plan").reason == "artifact-expired"
     assert provider.lookup_run("run-001").available
+
+
+@pytest.mark.parametrize(
+    ("created_at", "expires_at"),
+    [
+        (datetime(2026, 8, 8), None),  # noqa: DTZ001 - deliberate naive-value validation case.
+        (
+            datetime(2026, 8, 8, tzinfo=timezone.utc),
+            datetime(2026, 8, 9),  # noqa: DTZ001 - deliberate naive-value validation case.
+        ),
+    ],
+)
+def test_artifact_reference_timestamps_require_timezones(created_at: datetime, expires_at: datetime | None) -> None:
+    digest = "a" * 64
+
+    with pytest.raises(ValidationError, match="artifact-reference timestamps must include a timezone"):
+        ArtifactReference(
+            artifact_id="plan",
+            run_id="run-001",
+            kind="plan",
+            media_type="application/json",
+            digest=digest,
+            size=2,
+            object_key=f"runs/run-001/artifacts/plan/{digest}/data",
+            manifest_key=f"runs/run-001/artifacts/plan/{digest}/manifest.json",
+            created_at=created_at,
+            expires_at=expires_at,
+        )
+
+
+def test_filesystem_path_guard_rejects_resolved_parent_escape(tmp_path: Path) -> None:
+    store = FileArtifactStore(tmp_path / "objects")
+
+    with pytest.raises(ValueError, match="escapes its configured root"):
+        store._path("valid/../../../outside/data")
 
 
 def test_redaction_precedes_every_relational_and_artifact_write(provider: ProductProjection) -> None:

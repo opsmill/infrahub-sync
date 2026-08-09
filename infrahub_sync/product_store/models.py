@@ -29,6 +29,14 @@ class ArtifactReference(BaseModel):
     created_at: datetime
     expires_at: datetime | None = None
 
+    @field_validator("created_at", "expires_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
+            msg = "artifact-reference timestamps must include a timezone"
+            raise ValueError(msg)
+        return value
+
     @model_validator(mode="after")
     def _require_immutable_keys(self) -> ArtifactReference:
         marker = f"/{self.digest}/"
