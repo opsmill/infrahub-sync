@@ -108,6 +108,11 @@ synced = sync(
 )
 ```
 
+The API applies only the operations materialized in the saved plan. An inherited engine
+limitation means a difference that exists solely in nested child elements can be detected
+without producing a saved operation row; in that case API `sync` reports `no-change` and
+does not write that nested-only difference.
+
 ## Result contract
 
 All four functions return `RunResult` on success.

@@ -20,6 +20,17 @@ API_VERSION = "1"
 Operation = Literal["plan", "sync", "verify", "apply"]
 
 
+def _secret_length(value: str) -> int:
+    """Return the replacement-order length of one collected secret."""
+    return len(value)
+
+
+def _merged_secrets(values: Sequence[str]) -> tuple[str, ...]:
+    """Merge current boundary secrets in longest-first replacement order."""
+    merged: dict[str, None] = dict.fromkeys((*values, *collect_secret_values()))
+    return tuple(sorted(merged, key=_secret_length, reverse=True))
+
+
 def _redact_data(value: Any, secrets: Sequence[str]) -> Any:
     """Return a copy of JSON-like data with collected credential values redacted."""
     if isinstance(value, str):
@@ -27,12 +38,21 @@ def _redact_data(value: Any, secrets: Sequence[str]) -> Any:
     if isinstance(value, BaseModel):
         return _redact_data(value.model_dump(), secrets)
     if isinstance(value, Mapping):
-        return {
-            redact(key, secrets) if isinstance(key, str) else key: _redact_data(item, secrets)
-            for key, item in value.items()
-        }
+        redacted: dict[Any, Any] = {}
+        for key, item in value.items():
+            safe_key = redact(key, secrets) if isinstance(key, str) else key
+            candidate = safe_key
+            suffix = 2
+            while candidate in redacted:
+                candidate = f"{safe_key} [{suffix}]"
+                suffix += 1
+            redacted[candidate] = _redact_data(item, secrets)
+        return redacted
     if isinstance(value, (list, tuple)):
         return [_redact_data(item, secrets) for item in value]
+    if isinstance(value, (set, frozenset)):
+        redacted_items = (_redact_data(item, secrets) for item in value)
+        return frozenset(redacted_items) if isinstance(value, frozenset) else set(redacted_items)
     return value
 
 
@@ -134,7 +154,7 @@ class RunResult(BaseModel):
 
     def _with_secret_values(self, values: Sequence[str]) -> RunResult:
         """Return a result whose public fields contain no boundary credentials."""
-        secrets = tuple(dict.fromkeys((*values, *collect_secret_values())))
+        secrets = _merged_secrets(values)
         return type(self).model_validate(_redact_data(self.model_dump(), secrets))
 
     @model_serializer(mode="wrap")
@@ -155,7 +175,7 @@ class RunError(Exception):
         run_id: str | None,
         secrets: Sequence[str] = (),
     ) -> None:
-        current_secrets = tuple(dict.fromkeys((*secrets, *collect_secret_values())))
+        current_secrets = _merged_secrets(secrets)
         self.api_version = API_VERSION
         self.run_id = None if run_id is None else redact(run_id, current_secrets)
         self.operation = operation

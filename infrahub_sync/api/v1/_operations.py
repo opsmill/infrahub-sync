@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -28,7 +29,7 @@ from infrahub_sync.plan.errors import (
     PlanVerificationError,
 )
 from infrahub_sync.plan.models import ApplyRecord
-from infrahub_sync.plan.reader import read_plan_artifact_bytes
+from infrahub_sync.plan.reader import RawPlanArtifact, parse_plan_artifact, read_plan_artifact_bytes
 from infrahub_sync.plan.review import (
     SavedPlan,
     expected_checksum_refusal,
@@ -165,6 +166,25 @@ def _transition_run_sidecar(
     run_file.save()
 
 
+def _ensure_failed_run_sidecar(
+    run_directory: Path,
+    *,
+    operation: Literal["apply", "sync"],
+    record: ApplyRecord | None = None,
+) -> None:
+    """Persist a terminal failure, retrying one transient sidecar transition error."""
+    first_error: Exception | None = None
+    for _attempt in range(2):
+        try:
+            _transition_run_sidecar(run_directory, operation=operation, status="failed", record=record)
+        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            first_error = exc
+        else:
+            return
+    assert first_error is not None
+    raise first_error
+
+
 def _plan_instance(
     instance: SyncInstance,
     *,
@@ -172,6 +192,7 @@ def _plan_instance(
     run_id: str,
     operation: Operation,
     secrets: Sequence[str],
+    lock_already_held: bool = False,
 ) -> tuple[SavedPlan, Path]:
     """Create and retrieve one saved plan through the shared execution core."""
     _log_lifecycle(run_id=run_id, operation=operation, stage="plan", outcome="running", secrets=secrets)
@@ -182,6 +203,8 @@ def _plan_instance(
         run_id=run_id,
         show_progress=False,
         print_diff=False,
+        _lock_already_held=lock_already_held,
+        _run_file_mode="sync" if operation == "sync" else None,
     )
     run_directory = Path(core_result.artifact_path)
     saved = read_saved_plan(sync_name=instance.name, run_id=core_result.run_id, config=instance)
@@ -228,45 +251,53 @@ def _apply_instance(
     expected_checksum: str,
     operation: Operation,
     secrets: Sequence[str],
-) -> ApplyRecord:
+    lock_already_held: bool = False,
+) -> tuple[ApplyRecord, SavedPlan]:
     """Apply the reviewed artifact, including its immediate mandatory verification."""
     _log_lifecycle(run_id=run_id, operation=operation, stage="apply", outcome="running", secrets=secrets)
-    with pipeline_lock(instance.name):
+    lock_scope = nullcontext() if lock_already_held else pipeline_lock(instance.name)
+    with lock_scope:
         sidecar_operation: Literal["apply", "sync"] = "sync" if operation == "sync" else "apply"
+        artifact: RawPlanArtifact = read_plan_artifact_bytes(run_directory)
+        refusal = expected_checksum_refusal(
+            artifact=artifact,
+            run_id=run_id,
+            expected=expected_checksum,
+        )
+        if refusal is not None:
+            raise PlanVerificationError(
+                refusal.reason,
+                next_action=refusal.next_action,
+            )
+        loaded = parse_plan_artifact(artifact, run_id=run_id)
+        saved = SavedPlan(
+            manifest=loaded.manifest,
+            operations=loaded.operations,
+            checksum_ok=True,
+            verification_notes=(),
+            declared_kinds=(entry.name for entry in instance.schema_mapping),
+        )
+        applier = PlanApplier.open_existing(instance, run_id=run_id, branch=branch)
         _transition_run_sidecar(run_directory, operation=sidecar_operation, status="running")
         try:
-            artifact = read_plan_artifact_bytes(run_directory)
-            refusal = expected_checksum_refusal(
-                artifact=artifact,
-                run_id=run_id,
-                expected=expected_checksum,
-            )
-            if refusal is not None:
-                # The surrounding lifecycle records this designed refusal as a failed apply.
-                raise PlanVerificationError(  # noqa: TRY301
-                    refusal.reason,
-                    next_action=refusal.next_action,
-                )
-            applier = PlanApplier.open_existing(instance, run_id=run_id, branch=branch)
-            record = applier.apply_plan(expected_checksum=expected_checksum)
-        except BaseException as exc:
-            carried = getattr(exc, "apply_record", None)
-            partial = carried if isinstance(carried, ApplyRecord) else ApplyRecord()
+            record = applier.apply_plan(expected_checksum=expected_checksum, artifact=artifact)
             _transition_run_sidecar(
                 run_directory,
                 operation=sidecar_operation,
-                status="failed",
+                status="applied",
+                record=record,
+            )
+        except BaseException as exc:
+            carried = getattr(exc, "apply_record", None)
+            partial = carried if isinstance(carried, ApplyRecord) else ApplyRecord()
+            _ensure_failed_run_sidecar(
+                run_directory,
+                operation=sidecar_operation,
                 record=partial,
             )
             raise
-        _transition_run_sidecar(
-            run_directory,
-            operation=sidecar_operation,
-            status="applied",
-            record=record,
-        )
     _log_lifecycle(run_id=run_id, operation=operation, stage="apply", outcome="applied", secrets=secrets)
-    return record
+    return record, saved
 
 
 def plan(request: PlanRequest) -> RunResult:
@@ -331,10 +362,9 @@ def apply(request: ApplyRequest) -> RunResult:
     try:
         instance, secrets = _load_instance(request.sync_name, request.config_directory)
         stage = "read-plan"
-        saved = read_saved_plan(sync_name=instance.name, run_id=request.run_id, config=instance)
         run_directory = require_stored_run(instance.name, request.run_id)
         stage = "apply"
-        _apply_instance(
+        _record, saved = _apply_instance(
             instance,
             run_directory=run_directory,
             run_id=request.run_id,
@@ -370,26 +400,34 @@ def sync(request: SyncRequest) -> RunResult:
     try:
         instance, secrets = _load_instance(request.sync_name, request.config_directory)
         stage = "plan"
-        saved, run_directory = _plan_instance(
-            instance,
-            branch=request.branch,
-            run_id=run_id,
-            operation="sync",
-            secrets=secrets,
-        )
-        _transition_run_sidecar(run_directory, operation="sync", status="running")
-        stage = "verify"
-        saved, run_directory = _verify_instance(instance, run_id=run_id, operation="sync", secrets=secrets)
-        stage = "apply"
-        _apply_instance(
-            instance,
-            run_directory=run_directory,
-            run_id=run_id,
-            branch=request.branch,
-            expected_checksum=saved.manifest.plan_checksum,
-            operation="sync",
-            secrets=secrets,
-        )
+        with pipeline_lock(instance.name):
+            try:
+                saved, run_directory = _plan_instance(
+                    instance,
+                    branch=request.branch,
+                    run_id=run_id,
+                    operation="sync",
+                    secrets=secrets,
+                    lock_already_held=True,
+                )
+                _transition_run_sidecar(run_directory, operation="sync", status="running")
+                stage = "verify"
+                saved, run_directory = _verify_instance(instance, run_id=run_id, operation="sync", secrets=secrets)
+                stage = "apply"
+                _record, saved = _apply_instance(
+                    instance,
+                    run_directory=run_directory,
+                    run_id=run_id,
+                    branch=request.branch,
+                    expected_checksum=saved.manifest.plan_checksum,
+                    operation="sync",
+                    secrets=secrets,
+                    lock_already_held=True,
+                )
+            except Exception:
+                if run_directory is not None:
+                    _ensure_failed_run_sidecar(run_directory, operation="sync")
+                raise
         outcome = "no-change" if saved.summary().total == 0 else "applied"
         _log_lifecycle(run_id=run_id, operation="sync", stage="completed", outcome=outcome, secrets=secrets)
         return _result(
@@ -401,7 +439,5 @@ def sync(request: SyncRequest) -> RunResult:
         )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         # Public boundary: every adapter/engine failure is re-raised typed with a sanitized cause.
-        if run_directory is not None and stage == "verify":
-            _transition_run_sidecar(run_directory, operation="sync", status="failed")
         error = _translate_error(exc, operation="sync", stage=stage, run_id=run_id, secrets=secrets)
     raise error from error.__cause__

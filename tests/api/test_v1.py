@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import traceback
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 import pytest
+from filelock import Timeout
 from pydantic import ValidationError
 
 import infrahub_sync.api.v1 as api
@@ -27,10 +30,12 @@ from tests.plan.artifact_fixtures import operation_record, tamper_with_operation
 
 if TYPE_CHECKING:
     from infrahub_sync.plan.models import PlannedOperation
+    from infrahub_sync.plan.reader import RawPlanArtifact
 
 SYNC_NAME = "api-example"
 RUN_ID = "20260808T1200-a1b2c3d4"
 TOKEN = "PUBLIC-API-SECRET-CANARY-12345"  # noqa: S105 - a redaction canary
+SECOND_TOKEN = "SECOND-PUBLIC-API-SECRET-67890"  # noqa: S105 - a redaction canary
 
 EXPECTED_ALL = [
     "ActionCounts",
@@ -194,6 +199,49 @@ def test_result_redacts_direct_fields_mapping_keys_extras_and_late_mutations(
     assert TOKEN not in result.model_dump_json()
 
 
+def test_result_redacts_sets_and_preserves_colliding_mapping_entries(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_TOKEN", TOKEN)
+    monkeypatch.setenv("SECOND_API_TOKEN", SECOND_TOKEN)
+    result = api.RunResult.model_validate(
+        {
+            "run_id": RUN_ID,
+            "operation": "verify",
+            "phase": "completed",
+            "outcome": "verified",
+            "counts": {},
+            "domain_summary": {},
+            "artifacts": [],
+            "future_set": {TOKEN, SECOND_TOKEN},
+            "future_frozenset": frozenset({TOKEN, SECOND_TOKEN}),
+            "future_mapping": {TOKEN: "first", SECOND_TOKEN: "second"},
+        }
+    )
+
+    dumped = result.model_dump()
+    assert TOKEN not in str(dumped)
+    assert SECOND_TOKEN not in str(dumped)
+    assert dumped["future_set"] == {"***"}
+    assert dumped["future_frozenset"] == frozenset({"***"})
+    assert len(dumped["future_mapping"]) == 2
+    assert set(dumped["future_mapping"].values()) == {"first", "second"}
+
+
+def test_boundary_secret_merging_replaces_longest_values_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    short_secret = "OVERLAP-SECRET"  # noqa: S105 - a redaction canary
+    long_secret = f"{short_secret}-LONGER"
+    monkeypatch.setenv("LATE_API_TOKEN", long_secret)
+
+    error = api.RunExecutionError(
+        f"credential={long_secret}",
+        operation="sync",
+        stage="apply",
+        run_id=RUN_ID,
+        secrets=(short_secret,),
+    )
+
+    assert str(error) == "credential=***"
+
+
 def test_boundary_secrets_are_removed_from_returned_result_attributes(
     instance: SyncInstance,
     cache_directory: Path,  # noqa: ARG001 - activates the cache fixture
@@ -263,6 +311,8 @@ def test_plan_uses_shared_core_and_returns_saved_plan_summary(
             "run_id": RUN_ID,
             "show_progress": False,
             "print_diff": False,
+            "_lock_already_held": False,
+            "_run_file_mode": None,
         }
     ]
     assert result.operation == "plan"
@@ -407,7 +457,15 @@ def test_apply_refuses_an_unreviewed_checksum_before_destination_construction(
     cache_directory: Path,  # noqa: ARG001 - activates the cache fixture
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _directory, _checksum = _saved_run(instance)
+    directory, _checksum = _saved_run(instance)
+    RunFile(
+        path=directory / "run.json",
+        status="dry-run",
+        mode="diff",
+        summary={"resources": 1},
+        finished_at="2026-08-08T12:00:00+00:00",
+    ).save()
+    before = _read_run_sidecar(directory)
 
     def adapters_are_forbidden(*_args: object, **_kwargs: object) -> NoReturn:
         msg = "checksum mismatch constructed the destination"
@@ -427,6 +485,81 @@ def test_apply_refuses_an_unreviewed_checksum_before_destination_construction(
 
     assert caught.value.stage == "apply"
     assert "is not the plan this apply approved" in str(caught.value)
+    assert _read_run_sidecar(directory) == before
+
+
+def test_apply_destination_construction_refusal_preserves_a_healthy_sidecar(
+    config_directory: Path,
+    instance: SyncInstance,
+    cache_directory: Path,  # noqa: ARG001 - activates the cache fixture
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory, checksum = _saved_run(instance)
+    RunFile(
+        path=directory / "run.json",
+        status="dry-run",
+        mode="diff",
+        summary={"resources": 1},
+        finished_at="2026-08-08T12:00:00+00:00",
+    ).save()
+    before = _read_run_sidecar(directory)
+
+    def refuse_destination(*_args: object, **_kwargs: object) -> NoReturn:
+        msg = "destination credentials are missing"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(operations.PlanApplier, "open_existing", refuse_destination)
+
+    with pytest.raises(api.RunExecutionError):
+        api.apply(
+            api.ApplyRequest(
+                sync_name=SYNC_NAME,
+                config_directory=str(config_directory),
+                run_id=RUN_ID,
+                expected_checksum=checksum,
+            )
+        )
+
+    assert _read_run_sidecar(directory) == before
+
+
+def test_apply_result_counts_come_from_the_exact_artifact_passed_to_apply(
+    config_directory: Path,
+    instance: SyncInstance,
+    cache_directory: Path,  # noqa: ARG001 - activates the cache fixture
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory, checksum = _saved_run(instance)
+
+    class ReplacingApplier:
+        @staticmethod
+        def apply_plan(**kwargs: object) -> ApplyRecord:
+            approved_artifact = cast("RawPlanArtifact", kwargs["artifact"])
+            assert approved_artifact.operations_bytes is not None
+            write_artifact(
+                directory,
+                [
+                    operation_record(kind="BuiltinLocation", identity={"name": "one"}),
+                    operation_record(kind="BuiltinLocation", identity={"name": "two"}),
+                ],
+                run_id=RUN_ID,
+                config_version=resolve_config_version(instance),
+            )
+            return ApplyRecord(applied_operations=("approved-operation",))
+
+    monkeypatch.setattr(operations.PlanApplier, "open_existing", lambda *_args, **_kwargs: ReplacingApplier())
+
+    result = api.apply(
+        api.ApplyRequest(
+            sync_name=SYNC_NAME,
+            config_directory=str(config_directory),
+            run_id=RUN_ID,
+            expected_checksum=checksum,
+        )
+    )
+
+    assert result.counts == api.ActionCounts(create=1)
+    assert result.domain_summary == {"BuiltinTag": 1}
 
 
 def test_sync_requires_confirmation_before_loading_configuration(
@@ -461,26 +594,44 @@ def test_confirmed_sync_composes_plan_verify_apply_in_order(
     directory, _checksum = _saved_run(instance)
     saved = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, config=instance)
     timeline: list[str] = []
+    lock_entries = 0
+    lock_held = False
+
+    @contextmanager
+    def recording_lock(_sync_name: str) -> Iterator[None]:
+        nonlocal lock_entries, lock_held
+        lock_entries += 1
+        lock_held = True
+        try:
+            yield
+        finally:
+            lock_held = False
 
     def fake_plan(*_args: object, **_kwargs: object) -> tuple[Any, Path]:
+        assert lock_held is True
+        assert _kwargs["lock_already_held"] is True
         timeline.append("plan")
         operations._log_lifecycle(run_id=RUN_ID, operation="sync", stage="plan", outcome="planned")
         return saved, directory
 
     def fake_verify(*_args: object, **_kwargs: object) -> tuple[Any, Path]:
+        assert lock_held is True
         timeline.append("verify")
         operations._log_lifecycle(run_id=RUN_ID, operation="sync", stage="verify", outcome="verified")
         return saved, directory
 
-    def fake_apply(*_args: object, **_kwargs: object) -> ApplyRecord:
+    def fake_apply(*_args: object, **_kwargs: object) -> tuple[ApplyRecord, SavedPlan]:
+        assert lock_held is True
+        assert _kwargs["lock_already_held"] is True
         timeline.append("apply")
         operations._log_lifecycle(run_id=RUN_ID, operation="sync", stage="apply", outcome="applied")
-        return ApplyRecord(applied_operations=(saved.operations()[0].operation_id,))
+        return ApplyRecord(applied_operations=(saved.operations()[0].operation_id,)), saved
 
     monkeypatch.setattr(operations, "generate_run_id", lambda: RUN_ID)
     monkeypatch.setattr(operations, "_plan_instance", fake_plan)
     monkeypatch.setattr(operations, "_verify_instance", fake_verify)
     monkeypatch.setattr(operations, "_apply_instance", fake_apply)
+    monkeypatch.setattr(operations, "pipeline_lock", recording_lock)
     caplog.set_level(logging.INFO, logger=operations.__name__)
 
     result = api.sync(
@@ -492,6 +643,8 @@ def test_confirmed_sync_composes_plan_verify_apply_in_order(
     )
 
     assert timeline == ["plan", "verify", "apply"]
+    assert lock_entries == 1
+    assert lock_held is False
     assert result.operation == "sync"
     assert result.outcome == "applied"
     events = [
@@ -503,6 +656,33 @@ def test_confirmed_sync_composes_plan_verify_apply_in_order(
         ("sync", "apply", "applied"),
         ("sync", "completed", "applied"),
     ]
+
+
+def test_confirmed_sync_lock_timeout_creates_no_running_sidecar(
+    config_directory: Path,
+    instance: SyncInstance,
+    cache_directory: Path,  # noqa: ARG001 - activates the cache fixture
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(operations, "generate_run_id", lambda: RUN_ID)
+
+    def locked_out(_sync_name: str) -> NoReturn:
+        lock_path = "pipeline.lock"
+        raise Timeout(lock_path)
+
+    monkeypatch.setattr(operations, "pipeline_lock", locked_out)
+
+    with pytest.raises(api.RunExecutionError) as caught:
+        api.sync(
+            api.SyncRequest(
+                sync_name=SYNC_NAME,
+                config_directory=str(config_directory),
+                confirm_writes=True,
+            )
+        )
+
+    assert caught.value.stage == "plan"
+    assert not (run_dir(instance.name, RUN_ID) / "run.json").exists()
 
 
 def _replace_sync_plan(
@@ -674,6 +854,50 @@ def test_sync_success_persists_applied_state_and_completion_time(
     assert recorded["summary"]["resources"] == 1
     assert recorded["summary"]["applied_operations"] == [operation_id]
     assert recorded["finished_at"] is not None
+
+
+def test_sync_terminal_sidecar_failure_is_typed_and_recovers_failed_state(
+    config_directory: Path,
+    instance: SyncInstance,
+    cache_directory: Path,  # noqa: ARG001 - activates the cache fixture
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory, _checksum = _saved_run(instance)
+    saved = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, config=instance)
+    _replace_sync_plan(monkeypatch, saved=saved, directory=directory)
+    monkeypatch.setattr(operations, "_verify_instance", lambda *_args, **_kwargs: (saved, directory))
+
+    class SuccessfulApplier:
+        @staticmethod
+        def apply_plan(**_kwargs: object) -> ApplyRecord:
+            return ApplyRecord(applied_operations=(saved.operations()[0].operation_id,))
+
+    monkeypatch.setattr(operations.PlanApplier, "open_existing", lambda *_args, **_kwargs: SuccessfulApplier())
+    real_transition = operations._transition_run_sidecar
+    failed_once = False
+
+    def flaky_transition(*args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+        nonlocal failed_once
+        if kwargs["status"] == "applied" and not failed_once:
+            failed_once = True
+            msg = f"could not save terminal state with {TOKEN}"
+            raise OSError(msg)
+        real_transition(*args, **kwargs)
+
+    monkeypatch.setattr(operations, "_transition_run_sidecar", flaky_transition)
+
+    with pytest.raises(api.RunExecutionError) as caught:
+        api.sync(
+            api.SyncRequest(
+                sync_name=SYNC_NAME,
+                config_directory=str(config_directory),
+                confirm_writes=True,
+            )
+        )
+
+    assert failed_once is True
+    assert TOKEN not in str(caught.value)
+    assert _read_run_sidecar(directory)["status"] == "failed"
 
 
 def test_public_error_redacts_message_serialization_and_full_traceback(

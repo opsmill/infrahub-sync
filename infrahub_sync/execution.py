@@ -19,7 +19,7 @@ import logging
 import os
 import re
 from collections.abc import Mapping
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -54,7 +54,7 @@ from infrahub_sync.plan.writer import require_uncommitted_plan
 from infrahub_sync.utils import PlanApplier, get_potenda_from_instance
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Sequence
+    from collections.abc import AbstractContextManager, Callable, Iterable, Iterator, Sequence
     from typing import NoReturn
 
     from infrahub_sync.plan.review import SavedPlan
@@ -642,12 +642,13 @@ def _summary_from_plan_write(
     return _summarize_rows(fallback_rows()) if summary is None else summary
 
 
-def _run_plan_lifecycle(*, ptd: Potenda, run_file: RunFile) -> dict[ActionKey, int]:
+def _run_plan_lifecycle(*, ptd: Potenda, run_file: RunFile, print_diff: bool) -> dict[ActionKey, int]:
     """Reproduce the CLI `diff` lifecycle and return authoritative operation counts."""
     ptd.load_both_sides()
     mydiff = ptd.diff()
     write_result = ptd.write_plan(mydiff)
-    logger.info("\n%s", mydiff.str())
+    if print_diff:
+        logger.info("\n%s", mydiff.str())
     run_file.status = "dry-run"
     run_file.summary = {"resources": len(ptd.top_level)}
     return _summary_from_plan_write(write_result, lambda: ptd._diff_to_rows(mydiff))
@@ -895,6 +896,8 @@ def execute_run(
     _lock_timeout: float = 60.0,
     _serial_load_error: Callable[[ValueError], NoReturn] | None = None,
     _parallel_sync_error: Callable[[ValueError], NoReturn] | None = None,
+    _lock_already_held: bool = False,
+    _run_file_mode: Literal["diff", "sync"] | None = None,
 ) -> RunResult | SavedPlan:
     """Run one product operation against a resolved instance.
 
@@ -926,7 +929,10 @@ def execute_run(
         assert run_id is not None  # narrowed above; keeps the saved-plan boundary explicit.
         run_directory = _require_applicable_plan(sync_name=sync_instance.name, run_id=run_id)
         _require_expected_checksum(run_directory=run_directory, run_id=run_id, expected=expected_checksum)
-        with _run_lock(sync_instance.name, timeout=_lock_timeout):
+        apply_lock: AbstractContextManager[None] = (
+            nullcontext() if _lock_already_held else _run_lock(sync_instance.name, timeout=_lock_timeout)
+        )
+        with apply_lock:
             return _run_apply_lifecycle(
                 sync_instance=sync_instance,
                 run_id=run_id,
@@ -940,7 +946,10 @@ def execute_run(
     if operation == "plan":
         _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id)
 
-    with _run_lock(sync_instance.name, timeout=_lock_timeout):
+    run_lock: AbstractContextManager[None] = (
+        nullcontext() if _lock_already_held else _run_lock(sync_instance.name, timeout=_lock_timeout)
+    )
+    with run_lock:
         if operation == "plan":
             # A plan may have been committed while this command waited for the lock.
             _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id)
@@ -963,13 +972,13 @@ def execute_run(
         run_file = RunFile(
             path=ptd.run_dir / "run.json",
             status="running",
-            mode="diff" if operation == "plan" else "sync",
+            mode=_run_file_mode or ("diff" if operation == "plan" else "sync"),
         )
         run_file.save()
 
         try:
             if operation == "plan":
-                summary = _run_plan_lifecycle(ptd=ptd, run_file=run_file)
+                summary = _run_plan_lifecycle(ptd=ptd, run_file=run_file, print_diff=print_diff)
             elif parallel and ptd.tiers:
                 summary = _run_parallel_sync_lifecycle(
                     ptd=ptd,

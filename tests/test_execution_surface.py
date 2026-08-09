@@ -1568,6 +1568,23 @@ def test_plan_legacy_writer_summary_falls_back_to_diff_rows(
     assert factory.engine.diff_rows_materialized == 1
 
 
+@pytest.mark.parametrize("print_diff", [True, False])
+def test_plan_honors_diff_log_suppression(
+    config_dir: str,
+    cache_root: Path,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    print_diff: bool,
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root, rows=[_plan_row("create", "core01")])
+
+    with caplog.at_level(logging.INFO, logger="infrahub_sync.execution"):
+        execute_run(instance, operation="plan", print_diff=print_diff, potenda_factory=factory)
+
+    assert ("fake-diff(1 rows)" in caplog.text) is print_diff
+
+
 @pytest.mark.parametrize(
     ("write_result", "message"),
     [
@@ -1639,6 +1656,33 @@ def test_lifecycle_failure_marks_run_json_failed_and_reraises(config_dir: str, c
         execute_run(instance, operation="plan", potenda_factory=patched)
 
     assert RunFile.load_or_default(cache_root / RUN_ID / "run.json").status == "failed"
+
+
+def test_composed_sync_plan_failure_records_sync_mode(config_dir: str, cache_root: Path) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root)
+
+    def exploding_load() -> None:
+        msg = "source extraction failed"
+        raise RuntimeError(msg)
+
+    original_call = factory.__call__
+
+    def patched(**kwargs: object) -> Any:  # noqa: ANN401 - a fake engine, not a real Potenda
+        engine = original_call(**kwargs)
+        engine.load_both_sides = exploding_load
+        return engine
+
+    with pytest.raises(RuntimeError, match="source extraction failed"):
+        execute_run(
+            instance,
+            operation="plan",
+            potenda_factory=patched,
+            _run_file_mode="sync",
+        )
+
+    run_file = RunFile.load_or_default(cache_root / RUN_ID / "run.json")
+    assert (run_file.mode, run_file.status) == ("sync", "failed")
 
 
 # --------------------------------------------------------------------------- #
