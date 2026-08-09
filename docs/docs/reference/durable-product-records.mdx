@@ -85,8 +85,16 @@ second relational transaction. The filesystem profile commits data and manifest 
 atomic directory rename. The S3-compatible profile copies staged data to its immutable key
 and uses a create-only manifest put as the object-store commit point. A crash before the
 final relational mark leaves durable pending evidence rather than exposing the artifact.
-The pending identity rejects another publication before a second provider write, and the
-run cannot be finished while any pending publication exists.
+The run cannot be finished while any pending publication exists.
+
+To recover from an interrupted publication, retry `publish_artifact` with the same run and
+artifact IDs, content, kind, and media type. Matching is performed after secret redaction.
+If data and manifest are already complete, the retry verifies them and performs only the
+missing relational mark. If the manifest is absent, the retry resumes object publication
+and then marks the reference published. Different content or metadata is rejected without
+changing the pending reservation or writing to the artifact provider; correct the caller
+input and retry the original publication. Once published, the artifact remains immutable
+and any further publication with that identity is rejected as already published.
 
 Lookups return `LookupResult` rather than treating absence as an empty record. Reasons
 include `run-not-found`, `artifact-reference-not-found`, `manifest-unavailable`,

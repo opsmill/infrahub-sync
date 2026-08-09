@@ -45,7 +45,7 @@ class DuplicateRunError(ValueError):
 
 
 class DuplicateArtifactError(ValueError):
-    """The artifact ID or immutable object key is already published."""
+    """The artifact ID or immutable object key is already reserved or published."""
 
 
 class DuplicatePrefectExecutionError(ValueError):
@@ -216,7 +216,10 @@ class _RelationalRunStore:
             except Exception as exc:
                 connection.rollback()
                 if _is_unique_violation(exc):
-                    msg = f"Artifact {reference.artifact_id!r} is already attached to run {reference.run_id!r}"
+                    msg = (
+                        f"Artifact {reference.artifact_id!r} already has a pending or published reservation "
+                        f"on run {reference.run_id!r}"
+                    )
                     raise DuplicateArtifactError(msg) from exc
                 raise
             finally:
@@ -560,7 +563,28 @@ class ProductProjection:
             manifest_key=f"{base}/manifest.json",
             created_at=datetime.now(timezone.utc),
         )
-        self._records.reserve_artifact(reference)
+        stored = self._records.lookup_artifact_reference(run_id, artifact_id)
+        if stored.value is None:
+            self._records.reserve_artifact(reference)
+        else:
+            existing, published = stored.value
+            if published:
+                msg = f"Artifact {artifact_id!r} is already published on run {run_id!r}"
+                raise DuplicateArtifactError(msg)
+            if not _same_publication(existing, reference):
+                msg = (
+                    f"Artifact {artifact_id!r} has a pending publication with different content or metadata; "
+                    "retry rejected"
+                )
+                raise DuplicateArtifactError(msg)
+            reference = existing
+            publication = self._artifacts.lookup(reference)
+            if publication.available:
+                self._records.mark_artifact_published(reference)
+                return reference
+            if publication.reason != "manifest-unavailable":
+                msg = f"Artifact {artifact_id!r} has a pending publication that cannot be resumed: {publication.reason}"
+                raise ArtifactUnavailableError(msg)
         self._artifacts.publish(reference, sanitized)
         self._records.mark_artifact_published(reference)
         return reference
@@ -689,6 +713,10 @@ def _reference_from_row(row: Sequence[Any]) -> ArtifactReference:
             "expires_at": row[9],
         }
     )
+
+
+def _same_publication(existing: ArtifactReference, requested: ArtifactReference) -> bool:
+    return existing.model_dump(exclude={"created_at"}) == requested.model_dump(exclude={"created_at"})
 
 
 def _is_unique_violation(exc: BaseException) -> bool:

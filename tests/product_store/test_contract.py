@@ -342,7 +342,7 @@ def test_published_artifact_is_immutable_and_resolves_only_through_its_run(provi
     assert provider.lookup_artifact("run-001", "saved-plan").value == b'{"planned":true}'
     assert provider.lookup_artifact("run-missing", "saved-plan").reason == "run-not-found"
     assert provider.lookup_artifact("run-001", "not-attached").reason == "artifact-reference-not-found"
-    with pytest.raises(DuplicateArtifactError):
+    with pytest.raises(DuplicateArtifactError, match="already published"):
         provider.publish_artifact(
             "run-001",
             artifact_id="saved-plan",
@@ -371,7 +371,7 @@ def test_reviewed_apply_extends_plan_record_without_a_second_run_id(provider: Pr
 
 
 @pytest.mark.parametrize("profile", ["local", "production"])
-def test_interrupted_publication_exposes_neither_artifact_nor_completed_record(profile: str, tmp_path: Path) -> None:
+def test_interrupted_publication_can_resume_and_finish_the_run(profile: str, tmp_path: Path) -> None:
     fake_s3 = _FakeS3()
     if profile == "local":
         records = SQLiteRunStore(tmp_path / "records.sqlite3")
@@ -410,9 +410,21 @@ def test_interrupted_publication_exposes_neither_artifact_nor_completed_record(p
         )
     assert restarted.lookup_artifact("run-001", "plan").reason == "artifact-publication-incomplete"
 
+    reference = restarted.publish_artifact(
+        "run-001", artifact_id="plan", kind="plan", media_type="application/json", data=b"{}"
+    )
+    assert restarted.lookup_artifact("run-001", "plan").value == b"{}"
+    restarted.finish_run("run-001", phase="planned", outcome="succeeded", summary={}, results={})
+    completed = restarted.lookup_run("run-001").value
+    assert completed is not None
+    assert completed.outcome == "succeeded"
+    assert completed.artifact_refs == (reference,)
+
 
 @pytest.mark.parametrize("profile", ["local", "production"])
-def test_manifest_complete_but_relational_mark_failed_remains_pending(profile: str, tmp_path: Path) -> None:
+def test_manifest_complete_but_relational_mark_failed_resumes_without_republication(
+    profile: str, tmp_path: Path
+) -> None:
     fake_s3 = _FakeS3()
     if profile == "local":
         records = _FailingMarkSQLiteStore(tmp_path / "records.sqlite3")
@@ -434,18 +446,79 @@ def test_manifest_complete_but_relational_mark_failed_remains_pending(profile: s
     assert projection.lookup_artifact("run-001", "plan").reason == "artifact-publication-incomplete"
     if profile == "local":
         assert len(list((tmp_path / "objects").rglob("manifest.json"))) == 1
-        restarted = ProductProjection(
-            SQLiteRunStore(tmp_path / "records.sqlite3"), FileArtifactStore(tmp_path / "objects")
-        )
+        counting = _CountingArtifactStore(FileArtifactStore(tmp_path / "objects"))
+        restarted = ProductProjection(SQLiteRunStore(tmp_path / "records.sqlite3"), counting)
     else:
         assert len([key for (_, key) in fake_s3.objects if key.endswith("manifest.json")]) == 1
+        counting = _CountingArtifactStore(S3ArtifactStore(fake_s3, bucket="artifacts"))
         restarted = ProductProjection(
             PostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3")),
-            S3ArtifactStore(fake_s3, bucket="artifacts"),
+            counting,
         )
     assert restarted.lookup_artifact("run-001", "plan").reason == "artifact-publication-incomplete"
-    with pytest.raises(ArtifactUnavailableError, match="incomplete artifact publication"):
-        restarted.finish_run("run-001", phase="planned", outcome="succeeded", summary={}, results={})
+
+    reference = restarted.publish_artifact(
+        "run-001", artifact_id="plan", kind="plan", media_type="application/json", data=b"{}"
+    )
+    assert counting.publish_calls == 0
+    assert restarted.lookup_artifact("run-001", "plan").value == b"{}"
+    restarted.finish_run("run-001", phase="planned", outcome="succeeded", summary={}, results={})
+    completed = restarted.lookup_run("run-001").value
+    assert completed is not None
+    assert completed.outcome == "succeeded"
+    assert completed.artifact_refs == (reference,)
+    if profile == "local":
+        assert len(list((tmp_path / "objects").rglob("manifest.json"))) == 1
+    else:
+        assert len([key for (_, key) in fake_s3.objects if key.endswith("manifest.json")]) == 1
+
+
+@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize(
+    "retry",
+    [
+        {"kind": "different"},
+        {"media_type": "text/plain"},
+        {"data": b"different"},
+    ],
+    ids=["kind", "media-type", "content"],
+)
+def test_mismatched_pending_publication_retry_is_rejected_without_overwrite(
+    profile: str, retry: dict[str, str | bytes], tmp_path: Path
+) -> None:
+    fake_s3 = _FakeS3()
+    if profile == "local":
+        records = SQLiteRunStore(tmp_path / "records.sqlite3")
+        artifacts = _FailingFileStore(tmp_path / "objects")
+    else:
+        records = PostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3"))
+        artifacts = _FailingS3Store(fake_s3, bucket="artifacts")
+    projection = ProductProjection(records, artifacts)
+    projection.create_run(_run())
+
+    with pytest.raises(OSError, match="injected interruption"):
+        projection.publish_artifact(
+            "run-001", artifact_id="plan", kind="plan", media_type="application/json", data=b"{}"
+        )
+
+    if profile == "local":
+        counting = _CountingArtifactStore(FileArtifactStore(tmp_path / "objects"))
+    else:
+        counting = _CountingArtifactStore(S3ArtifactStore(fake_s3, bucket="artifacts"))
+    restarted = ProductProjection(records, counting)
+    kind = retry.get("kind", "plan")
+    media_type = retry.get("media_type", "application/json")
+    data = retry.get("data", b"{}")
+    assert isinstance(kind, str)
+    assert isinstance(media_type, str)
+    assert isinstance(data, bytes)
+    with pytest.raises(DuplicateArtifactError, match="pending publication with different content or metadata"):
+        restarted.publish_artifact("run-001", artifact_id="plan", kind=kind, media_type=media_type, data=data)
+
+    assert counting.publish_calls == 0
+    assert restarted.lookup_artifact("run-001", "plan").reason == "artifact-publication-incomplete"
+    restarted.publish_artifact("run-001", artifact_id="plan", kind="plan", media_type="application/json", data=b"{}")
+    assert restarted.lookup_artifact("run-001", "plan").value == b"{}"
 
 
 @pytest.mark.parametrize("profile", ["local", "production"])
@@ -671,6 +744,30 @@ def test_pending_publication_persists_no_secret_canary(profile: str, tmp_path: P
         persisted += b"".join(fake_s3.objects.values())
     assert secret.encode() not in persisted
     assert projection.lookup_artifact("run-001", "result").reason == "artifact-publication-incomplete"
+
+    if profile == "local":
+        resumed = ProductProjection(SQLiteRunStore(database), FileArtifactStore(tmp_path / "objects"))
+    else:
+        resumed = ProductProjection(
+            PostgreSQLRunStore(_connect(database)),
+            S3ArtifactStore(fake_s3, bucket="artifacts"),
+        )
+    resumed.publish_artifact(
+        "run-001",
+        artifact_id="result",
+        kind=f"result:{secret}",
+        media_type=f"text/{secret}",
+        data=f"artifact contains {secret}".encode(),
+        secrets=(secret,),
+    )
+    assert resumed.lookup_artifact("run-001", "result").value == b"artifact contains ***"
+
+    persisted = database.read_bytes()
+    if profile == "local":
+        persisted += b"".join(path.read_bytes() for path in (tmp_path / "objects").rglob("*") if path.is_file())
+    else:
+        persisted += b"".join(fake_s3.objects.values())
+    assert secret.encode() not in persisted
 
 
 def test_local_profile_survives_restart_and_does_not_depend_on_cwd(tmp_path: Path) -> None:
