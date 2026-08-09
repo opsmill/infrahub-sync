@@ -485,9 +485,18 @@ class FileArtifactStore:
                 msg = f"Artifact {reference.artifact_id!r} has an incomplete publication with different data"
                 raise DuplicateArtifactError(msg)
             self._publication_checkpoint()
-            _write_fsynced(manifest, _manifest_bytes(reference))
-            _fsync_directory(final_dir)
-            _fsync_directory(final_dir.parent)
+            temporary = Path(mkdtemp(prefix=".manifest-repair-", dir=final_dir))
+            try:
+                staged_manifest = temporary / "manifest.json"
+                _write_fsynced(staged_manifest, _manifest_bytes(reference))
+                _fsync_directory(temporary)
+                staged_manifest.replace(manifest)
+                temporary.rmdir()
+                _fsync_directory(final_dir)
+                _fsync_directory(final_dir.parent)
+            except BaseException:
+                _remove_private_publication(temporary)
+                raise
             return
         final_dir.parent.mkdir(parents=True, exist_ok=True)
         temporary = Path(mkdtemp(prefix=f".{reference.artifact_id}-", dir=final_dir.parent))

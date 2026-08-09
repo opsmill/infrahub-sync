@@ -597,6 +597,47 @@ def test_published_row_with_missing_manifest_accepts_only_an_exact_repair(profil
     assert projection.lookup_artifact("run-001", "plan").value == b"original"
 
 
+def test_interrupted_manifest_repair_remains_retryable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    projection = ProductProjection(
+        SQLiteRunStore(tmp_path / "records.sqlite3"),
+        FileArtifactStore(tmp_path / "objects"),
+    )
+    projection.create_run(_run())
+    reference = projection.publish_artifact(
+        "run-001", artifact_id="plan", kind="plan", media_type="application/json", data=b"original"
+    )
+    manifest = tmp_path / "objects" / reference.manifest_key
+    manifest.unlink()
+    original_write = product_store_store._write_fsynced
+    interrupted = False
+
+    def interrupt_staged_manifest(path: Path, data: bytes) -> None:
+        nonlocal interrupted
+        if path.parent.name.startswith(".manifest-repair-") and not interrupted:
+            interrupted = True
+            path.write_bytes(data[:8])
+            msg = "injected staged-manifest interruption"
+            raise OSError(msg)
+        original_write(path, data)
+
+    monkeypatch.setattr(product_store_store, "_write_fsynced", interrupt_staged_manifest)
+    with pytest.raises(OSError, match="staged-manifest interruption"):
+        projection.publish_artifact(
+            "run-001", artifact_id="plan", kind="plan", media_type="application/json", data=b"original"
+        )
+
+    assert interrupted
+    assert projection.lookup_artifact("run-001", "plan").reason == "manifest-unavailable"
+    assert not list(manifest.parent.glob(".manifest-repair-*"))
+
+    monkeypatch.setattr(product_store_store, "_write_fsynced", original_write)
+    repaired = projection.publish_artifact(
+        "run-001", artifact_id="plan", kind="plan", media_type="application/json", data=b"original"
+    )
+    assert repaired == reference
+    assert projection.lookup_artifact("run-001", "plan").value == b"original"
+
+
 def test_filesystem_publication_fsyncs_private_directory_before_atomic_rename(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
