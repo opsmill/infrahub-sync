@@ -108,3 +108,25 @@ def test_parallel_flag_warns_when_order_explicit(
     fake_ptd.diff.assert_called_once()
     msgs = [r.getMessage() for r in caplog.records]
     assert any("--parallel ignored" in m for m in msgs), msgs
+
+
+def test_parallel_ignored_for_explicit_order_does_not_flatten_a_later_serial_value_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only real tier-parallel ValueErrors take the CLI's one-line refusal path."""
+    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path))
+    run_dir = tmp_path / "from-netbox" / "test-run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    fake_ptd = _make_fake_potenda(tiers=None, run_dir=run_dir)
+    fake_ptd.diff.side_effect = ValueError("serial-path defect after --parallel was ignored")
+    runner = CliRunner()
+
+    with patch("infrahub_sync.cli.get_potenda_from_instance", return_value=fake_ptd):
+        result = runner.invoke(
+            app,
+            ["sync", "--parallel", "--name", "from-netbox", "--directory", str(EXAMPLES_DIR)],
+        )
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, ValueError)
+    assert str(result.exception) == "serial-path defect after --parallel was ignored"

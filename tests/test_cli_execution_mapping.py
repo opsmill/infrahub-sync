@@ -23,6 +23,7 @@ from infrahub_sync.cache.locks import pipeline_lock
 from infrahub_sync.cache.sidecars import RunFile
 from infrahub_sync.cli import app
 from infrahub_sync.plan.errors import PlanGenerationExistsError
+from infrahub_sync.utils import get_instance
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -173,6 +174,31 @@ def test_cli_refusal_redacts_environment_credentials(
     messages = _messages(cli_logs)
     assert sentinel not in "\n".join(messages)
     assert any("***" in message for message in messages)
+    assert not (run_dir / "run.json").exists()
+
+
+@pytest.mark.parametrize(("command", "extra"), [("diff", ()), ("sync", ("--no-parallel",))])
+def test_factory_refusal_redacts_resolved_configuration_credentials(
+    command: str, extra: tuple[str, ...], run_dir: Path, cli_logs: pytest.LogCaptureFixture
+) -> None:
+    """Diff and sync factory messages redact inline credentials as well as environment ones."""
+    sentinel = "db004-factory-config-secret"
+    sync_instance = get_instance(name=SYNC_NAME, directory=str(EXAMPLES_DIR))
+    assert sync_instance is not None
+    sync_instance = sync_instance.model_copy(deep=True)
+    assert sync_instance.destination.settings is not None
+    sync_instance.destination.settings["api_token"] = sentinel
+
+    with (
+        patch("infrahub_sync.cli.get_instance", return_value=sync_instance),
+        patch(FACTORY, side_effect=ValueError(f"adapter rejected {sentinel}")),
+    ):
+        result = _invoke(command, *extra)
+
+    assert result.exit_code == 1
+    messages = "\n".join(_messages(cli_logs))
+    assert sentinel not in messages
+    assert "***" in messages
     assert not (run_dir / "run.json").exists()
 
 

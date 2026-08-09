@@ -329,6 +329,15 @@ class PlanApplier:
         self.run_dir = run_dir
         self.run_id = run_id
 
+    @property
+    def applied_plan_action_counts(self) -> dict[str, int]:
+        """Return counts parsed from the in-memory artifact just applied."""
+        counts = self.engine._last_applied_plan_action_counts
+        if counts is None:
+            msg = "PlanApplier completed without retaining action counts from the applied artifact."
+            raise RuntimeError(msg)
+        return counts
+
     @classmethod
     def open_existing(
         cls,

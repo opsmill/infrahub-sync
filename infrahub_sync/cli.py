@@ -90,8 +90,9 @@ def main(
         typer.echo(ctx.get_help())
 
 
-def print_error_and_abort(message: str) -> NoReturn:
-    logger.error("%s", redact(message, collect_secret_values()))
+def print_error_and_abort(message: str, sync_instance: SyncInstance | None = None) -> NoReturn:
+    """Log one operator-facing refusal after redacting resolved credentials."""
+    logger.error("%s", redact(message, collect_secret_values(sync_instance)))
     raise typer.Abort
 
 
@@ -415,12 +416,17 @@ def _cli_potenda_factory(**kwargs: Any) -> Potenda:
     try:
         return get_potenda_from_instance(**kwargs)
     except (ImportError, ValueError) as exc:
-        print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}")
+        sync_instance = cast("SyncInstance", kwargs["sync_instance"])
+        print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}", sync_instance)
 
 
 def _cli_plan_applier_factory(*args: Any, **kwargs: Any) -> PlanApplier:
-    """Keep the existing CLI patch seam while the core owns apply lifecycle work."""
-    return PlanApplier.open_existing(*args, **kwargs)
+    """Construct an applier while retaining the CLI's construction-only refusal."""
+    sync_instance = cast("SyncInstance", args[0] if args else kwargs["sync_instance"])
+    try:
+        return PlanApplier.open_existing(*args, **kwargs)
+    except (ImportError, ValueError) as exc:
+        print_error_and_abort(f"Failed to initialize the destination for the apply: {exc}", sync_instance)
 
 
 @app.command(name="list")
@@ -610,15 +616,10 @@ def sync_cmd(
             parallel=parallel,
             potenda_factory=_cli_potenda_factory,
             _serial_load_error=lambda exc: print_error_and_abort(str(exc)),
+            _parallel_sync_error=lambda exc: print_error_and_abort(str(exc)),
         )
     except RunConcurrencyError as exc:
         print_error_and_abort(str(exc))
-    except ValueError as exc:
-        # Tier-parallel sync historically presents its load failure as a one-line
-        # refusal; serial load failures still take the callback above.
-        if parallel:
-            print_error_and_abort(str(exc))
-        raise
 
 
 @app.command(name="apply")
@@ -654,6 +655,7 @@ def apply_cmd(
 
     verbosity_level = ctx.obj.get("verbosity", logging.INFO) if ctx.obj else logging.INFO
     unexpected_error: Exception | None = None
+    unexpected_traceback = None
     try:
         result = execute_run(
             sync_instance,
@@ -666,10 +668,11 @@ def apply_cmd(
             expected_checksum=expected_checksum,
             _plan_applier_factory=_cli_plan_applier_factory,
         )
-    except (ImportError, ValueError) as exc:
-        print_error_and_abort(f"Failed to initialize the destination for the apply: {exc}")
     except (PlanArtifactError, RunConcurrencyError) as exc:
         print_error_and_abort(str(exc))
+    except typer.Abort:
+        # A construction-only factory refusal already rendered its one-line message.
+        raise
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         secrets = collect_secret_values(sync_instance)
         sanitized_message = redact(str(exc), secrets)
@@ -688,8 +691,9 @@ def apply_cmd(
             unexpected_error = RuntimeError(f"{type(exc).__name__}: {sanitized_message}")
         unexpected_error.__cause__ = sanitize_exception_chain(exc, secrets)
         unexpected_error.__suppress_context__ = True
+        unexpected_traceback = exc.__traceback__
     if unexpected_error is not None:
-        raise unexpected_error
+        raise unexpected_error.with_traceback(unexpected_traceback)
     summary = cast("Any", result).summary
     skipped = summary["delete"]
     applied = summary["create"] + summary["update"]

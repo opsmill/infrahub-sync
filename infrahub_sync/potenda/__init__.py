@@ -158,6 +158,7 @@ class Potenda:
         self._schema_subhash: str = schema_subhash
         self._counts: dict[str, int] = {}
         self._last_plan_action_counts: dict[str, int] | None = None
+        self._last_applied_plan_action_counts: dict[str, int] | None = None
         self._did_full_extract: bool = False
         # Per-side extraction mode, recorded alongside the OR-accumulated
         # `_did_full_extract` rather than in place of it. FR-015 derives deletes only
@@ -705,6 +706,9 @@ class Potenda:
         # per-record validity — an unrecognized `action` above all — which is still refused
         # before the first destination write.
         loaded = parse_plan_artifact(raw, run_id=run_id)
+        self._last_applied_plan_action_counts = {
+            action: sum(operation.action == action for operation in loaded.operations) for action in ACTIONS
+        }
 
         # One memo for the whole apply, discarded with it — the same lifetime as the run. The
         # destination supplies it, so the engine builds a resolver for a destination it does

@@ -696,13 +696,16 @@ def _run_parallel_sync_lifecycle(
     ptd: Potenda,
     run_file: RunFile,
     allow_rowcount_drop: bool,
+    parallel_sync_error: Callable[[ValueError], NoReturn] | None,
 ) -> dict[ActionKey, int]:
     """Run the established tier-parallel lifecycle and return its plan counts."""
     try:
         summary = ptd.sync_in_tiers(parallel=True, allow_rowcount_drop=allow_rowcount_drop)
-    except ValueError:
+    except ValueError as exc:
         run_file.status = "failed"
         run_file.save()
+        if parallel_sync_error is not None:
+            parallel_sync_error(exc)
         raise
     run_file.summary = {"resources": len(ptd.top_level), "mode": "parallel"}
     run_file.status = "applied"
@@ -771,10 +774,8 @@ def _require_expected_checksum(*, run_directory: Path, run_id: str, expected: st
         raise PlanVerificationError(refusal.text, next_action=refusal.next_action)
 
 
-def _apply_summary(record: ApplyRecord, plan: SavedPlan) -> dict[ActionKey, int]:
-    """Return saved-plan action counts for the typed result of an apply."""
-    del record
-    counts = plan.summary().by_action
+def _apply_summary(counts: Mapping[str, int]) -> dict[ActionKey, int]:
+    """Return action counts parsed from the exact artifact consumed by apply."""
     return {action: counts.get(action, 0) for action in ACTION_KEYS}
 
 
@@ -820,12 +821,11 @@ def _run_apply_lifecycle(
     run_file.status = "applied"
     run_file.finished_at = datetime.now(timezone.utc).isoformat()
     run_file.save()
-    plan = read_saved_plan(sync_name=sync_instance.name, run_id=run_id, config=sync_instance)
     return _build_result(
         sync_instance=sync_instance,
         operation="apply",
         ptd=applier.engine,
-        summary=_apply_summary(record, plan),
+        summary=_apply_summary(applier.applied_plan_action_counts),
     )
 
 
@@ -855,6 +855,7 @@ def _build_result(
     )
 
 
+# Pylint applies this check to the implementation's first line, below the overloads.
 # pylint: disable=too-many-branches
 @overload
 def execute_run(sync_instance: SyncInstance, *, operation: Literal["verify"], **kwargs: Any) -> SavedPlan: ...
@@ -893,7 +894,8 @@ def execute_run(
     _plan_applier_factory: Callable[..., PlanApplier] | None = None,
     _lock_timeout: float = 60.0,
     _serial_load_error: Callable[[ValueError], NoReturn] | None = None,
-) -> RunResult | SavedPlan:  # pylint: disable=too-many-branches
+    _parallel_sync_error: Callable[[ValueError], NoReturn] | None = None,
+) -> RunResult | SavedPlan:
     """Run one product operation against a resolved instance.
 
     The core owns all write-capable locks and all run-sidecar transitions.  The
@@ -901,6 +903,8 @@ def execute_run(
     existing command-specific failure shapes stay at that boundary.
 
     Raises:
+        RunConcurrencyError: the same synchronization remains locked after the
+            bounded wait, naming its active holder when one is recorded.
         RunValidationError: an unsupported operation, a missing saved-plan id,
             or an unconfirmed write (all refused before an adapter is built).
     """
@@ -971,6 +975,7 @@ def execute_run(
                     ptd=ptd,
                     run_file=run_file,
                     allow_rowcount_drop=allow_rowcount_drop,
+                    parallel_sync_error=_parallel_sync_error,
                 )
             else:
                 if parallel and not ptd.tiers:
@@ -1003,6 +1008,7 @@ def execute_run(
         return _build_result(sync_instance=sync_instance, operation=operation, ptd=ptd, summary=summary)
 
 
+# pylint: enable=too-many-branches
 # --------------------------------------------------------------------------- #
 # Remote composition — THE sanitize-and-wrap boundary
 # --------------------------------------------------------------------------- #
