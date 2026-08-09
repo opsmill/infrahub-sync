@@ -96,6 +96,10 @@ class _FakeDriverError(Exception):
         self.diag = SimpleNamespace(sqlstate=diagnostic_sqlstate)
 
 
+class _FakeSQLiteIntegrityError(sqlite3.IntegrityError):
+    sqlite_errorcode: int
+
+
 class _FakeS3:
     def __init__(self) -> None:
         self.objects: dict[tuple[str, str], bytes] = {}
@@ -200,7 +204,7 @@ def test_postgresql_non_unique_integrity_errors_are_not_duplicates(sqlstate: str
         ("other-primary", "unique", "present"),
     ],
 )
-def test_sqlite_primary_key_and_unique_constraint_codes_are_duplicates(
+def test_sqlite_primary_key_and_unique_constraint_failures_are_duplicates(
     duplicate_parameters: tuple[str, str, str],
 ) -> None:
     connection = sqlite3.connect(":memory:")
@@ -214,9 +218,16 @@ def test_sqlite_primary_key_and_unique_constraint_codes_are_duplicates(
             connection.execute("INSERT INTO example VALUES (?, ?, ?)", duplicate_parameters)
 
         assert product_store_store._is_unique_violation(exc_info.value)
-        assert getattr(exc_info.value, "sqlite_errorcode", None) in {1555, 2067}
     finally:
         connection.close()
+
+
+@pytest.mark.parametrize("error_code", [1555, 2067])
+def test_sqlite_unique_constraint_codes_are_duplicates(error_code: int) -> None:
+    error = _FakeSQLiteIntegrityError("synthetic SQLite integrity error")
+    error.sqlite_errorcode = error_code
+
+    assert product_store_store._is_unique_violation(error)
 
 
 @pytest.fixture(params=("local", "production"))
