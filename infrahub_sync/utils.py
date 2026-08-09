@@ -397,16 +397,14 @@ class PlanApplier:
         config_version: str | None = None,
         allow_destination_change: bool = False,
         expected_checksum: str | None = None,
-        artifact: RawPlanArtifact | None = None,
     ) -> ApplyRecord:
         """Apply the stored plan — the engine's contract, unchanged; writes no run file (AD069).
 
-        By default, this seam performs the apply's one read. A caller already holding the
-        pipeline lock may instead supply that read as ``artifact``. In either case, the same
-        object reaches the destination-binding precheck and the engine, so the bytes the
-        binding was compared against, the bytes verified, and the bytes applied are the same
-        bytes — a plan swapped under the run between two reads cannot be applied by an apply
-        that checked the other copy (DBR-006).
+        This seam performs the apply's one read. The same object reaches the
+        destination-binding precheck and the engine, so the bytes the binding was compared
+        against, the bytes verified, and the bytes applied are the same bytes — a plan swapped
+        under the run between two reads cannot be applied by an apply that checked the other
+        copy (DBR-006).
 
         The binding precheck compares the manifest's recorded destination against the live
         adapter's and refuses on a mismatch; `allow_destination_change` turns that refusal into
@@ -420,7 +418,7 @@ class PlanApplier:
             PlanVerificationError: the plan was computed against a different destination
                 and `allow_destination_change` is false; nothing was written.
         """
-        artifact = read_plan_artifact_bytes(self.run_dir) if artifact is None else artifact
+        artifact = read_plan_artifact_bytes(self.run_dir)
         self._require_recorded_destination(artifact=artifact, allow_destination_change=allow_destination_change)
         return self.engine.apply_plan(
             config_version=config_version, artifact=artifact, expected_checksum=expected_checksum

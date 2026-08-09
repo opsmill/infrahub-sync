@@ -307,18 +307,6 @@ def test_a_matching_destination_applies_without_ceremony(tmp_path: Path) -> None
     )
 
 
-def test_a_supplied_artifact_is_used_without_a_second_read(tmp_path: Path) -> None:
-    _artifact(tmp_path, destination_binding=BINDING_OVERRIDE)
-    directory = tmp_path / RUN_ID
-    supplied = read_plan_artifact_bytes(directory)
-    applier, engine = _applier(tmp_path, _BoundDestination(RECORDED_URL))
-    manifest_path(directory).unlink()
-
-    applier.apply_plan(artifact=supplied)
-
-    assert engine.artifacts == [supplied]
-
-
 def test_a_plan_without_the_field_applies_against_any_destination(tmp_path: Path) -> None:
     """The absent-field skip, on the seam itself (older-format plans)."""
     _artifact(tmp_path)

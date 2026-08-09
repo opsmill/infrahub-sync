@@ -1099,6 +1099,7 @@ def execute_run(
         )
         run_file.save()
 
+        saved_plan: SavedPlan | None = None
         try:
             if operation == "plan":
                 summary = _run_plan_lifecycle(ptd=ptd, run_file=run_file, print_diff=print_diff)
@@ -1122,6 +1123,11 @@ def execute_run(
                     allow_rowcount_drop=allow_rowcount_drop,
                     serial_load_error=_serial_load_error,
                 )
+            if operation == "plan" and _return_saved_plan:
+                saved_plan = read_saved_plan(sync_name=sync_instance.name, run_id=str(ptd.run_id), config=sync_instance)
+
+            run_file.finished_at = datetime.now(timezone.utc).isoformat()
+            run_file.save()
         except BaseException:
             # Preserved CLI pattern (cli.py:156-159 / 285-288), verbatim: mark
             # run.json failed, then bare re-raise of the ORIGINAL exception, so a
@@ -1129,17 +1135,6 @@ def execute_run(
             # This broad except is that existing pattern, not new looseness.
             _save_failed_run(ptd.run_dir, mode=run_mode)
             raise
-
-        saved_plan: SavedPlan | None = None
-        if operation == "plan" and _return_saved_plan:
-            try:
-                saved_plan = read_saved_plan(sync_name=sync_instance.name, run_id=str(ptd.run_id), config=sync_instance)
-            except BaseException:
-                _save_failed_run(ptd.run_dir, mode=run_mode)
-                raise
-
-        run_file.finished_at = datetime.now(timezone.utc).isoformat()
-        run_file.save()
         if operation == "plan":
             logger.info("Cached run %s at %s", ptd.run_id, ptd.run_dir)
         else:

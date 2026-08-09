@@ -19,7 +19,7 @@ import traceback
 from contextlib import contextmanager
 from pathlib import Path
 from timeit import default_timer as timer
-from typing import Any, NoReturn
+from typing import Any, Literal, NoReturn
 
 import pytest
 import yaml
@@ -1695,6 +1695,51 @@ def test_public_plan_result_construction_failure_is_terminal(
 
     run_file = RunFile.load_or_default(cache_root / RUN_ID / "run.json")
     assert (run_file.mode, run_file.status) == ("diff", "failed")
+
+
+@pytest.mark.parametrize(
+    ("run_file_mode", "expected_mode"),
+    [
+        pytest.param(None, "diff", id="public-plan"),
+        pytest.param("sync", "sync", id="composed-sync-plan-stage"),
+    ],
+)
+def test_plan_final_sidecar_save_failure_is_terminal(
+    config_dir: str,
+    cache_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    run_file_mode: Literal["sync"] | None,
+    expected_mode: Literal["diff", "sync"],
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root, rows=[_plan_row("create", "core01")])
+    attempted_statuses: list[str] = []
+    failed_final_save = False
+    real_save = RunFile.save
+
+    def fail_final_save_once(run_file: RunFile) -> None:
+        nonlocal failed_final_save
+        attempted_statuses.append(run_file.status)
+        if run_file.finished_at is not None and not failed_final_save:
+            failed_final_save = True
+            msg = "final run sidecar save failed"
+            raise OSError(msg)
+        real_save(run_file)
+
+    monkeypatch.setattr(RunFile, "save", fail_final_save_once)
+
+    with pytest.raises(OSError, match="final run sidecar save failed"):
+        execute_run(
+            instance,
+            operation="plan",
+            potenda_factory=factory,
+            _run_file_mode=run_file_mode,
+        )
+
+    run_file = RunFile.load_or_default(cache_root / RUN_ID / "run.json")
+    assert (run_file.mode, run_file.status) == (expected_mode, "failed")
+    assert run_file.finished_at is not None
+    assert attempted_statuses == ["running", "dry-run", "failed"]
 
 
 def test_composed_sync_plan_failure_records_sync_mode(config_dir: str, cache_root: Path) -> None:
