@@ -4,6 +4,7 @@ import sqlite3
 import subprocess  # noqa: S404 - fixed local interpreter probes restart durability.
 import sys
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -20,6 +21,7 @@ from infrahub_sync.product_store import (
     PrefectExecutionLink,
     ProductProjection,
     ProductRun,
+    RunNotFoundError,
     local_product_projection,
 )
 from infrahub_sync.product_store import store as product_store_store
@@ -36,6 +38,7 @@ EXPECTED_PUBLIC_NAMES = {
     "PrefectExecutionLink",
     "ProductProjection",
     "ProductRun",
+    "RunNotFoundError",
     "S3Client",
     "local_product_projection",
     "production_product_projection",
@@ -155,6 +158,34 @@ class _CountingArtifactStore:
 
     def lookup(self, reference: ArtifactReference) -> product_store.LookupResult[bytes]:
         return self._store.lookup(reference)
+
+
+class _PositionConflictOnceSQLiteStore(SQLiteRunStore):
+    def __init__(self, database: Path) -> None:
+        self.insert_calls = 0
+        super().__init__(database)
+
+    def _insert_prefect_execution(self, cursor, run_id, link, position):
+        self.insert_calls += 1
+        if self.insert_calls == 1:
+            error = _FakeSQLiteIntegrityError("synthetic position race")
+            error.sqlite_errorcode = 2067
+            raise error
+        return super()._insert_prefect_execution(cursor, run_id, link, position)
+
+
+class _NoHydratingLookupSQLiteStore(SQLiteRunStore):
+    def lookup(self, run_id: str):  # noqa: PLR6301 - override is the assertion seam.
+        msg = f"unexpected hydration for {run_id}"
+        raise AssertionError(msg)
+
+
+class _ManifestRaceS3(_FakeS3):
+    def put(self, *, bucket: str, key: str, data: bytes, if_absent: bool = False) -> None:
+        if if_absent:
+            self.objects[bucket, key] = b"winner"
+            raise DuplicateArtifactError(key)
+        super().put(bucket=bucket, key=key, data=data, if_absent=if_absent)
 
 
 def _connect(path: Path):
@@ -311,6 +342,54 @@ def test_duplicate_prefect_execution_is_rejected_when_appended(provider: Product
 
     with pytest.raises(DuplicatePrefectExecutionError, match="already linked"):
         provider.add_prefect_execution("run-001", link)
+
+
+def test_prefect_position_conflict_retries_without_misreporting_a_duplicate(tmp_path: Path) -> None:
+    records = _PositionConflictOnceSQLiteStore(tmp_path / "records.sqlite3")
+    projection = ProductProjection(records, FileArtifactStore(tmp_path / "objects"))
+    projection.create_run(_run())
+
+    projection.add_prefect_execution(
+        "run-001",
+        PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1),
+    )
+
+    assert records.insert_calls == 2
+    loaded = projection.lookup_run("run-001").value
+    assert loaded is not None
+    assert [link.flow_run_id for link in loaded.prefect_executions] == ["flow-001"]
+
+
+def test_mutator_existence_checks_do_not_hydrate_the_run(tmp_path: Path) -> None:
+    records = _NoHydratingLookupSQLiteStore(tmp_path / "records.sqlite3")
+    projection = ProductProjection(records, FileArtifactStore(tmp_path / "objects"))
+    records.create(_run())
+
+    projection.add_prefect_execution(
+        "run-001",
+        PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1),
+    )
+    projection.publish_artifact("run-001", artifact_id="plan", kind="plan", media_type="application/json", data=b"{}")
+
+
+def test_missing_run_prefect_mutator_raises_specific_public_error(provider: ProductProjection) -> None:
+    with pytest.raises(RunNotFoundError, match="unavailable Sync run ID"):
+        provider.add_prefect_execution(
+            "missing-run",
+            PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1),
+        )
+
+
+def test_missing_run_artifact_mutator_raises_specific_public_error(provider: ProductProjection) -> None:
+    with pytest.raises(RunNotFoundError, match="unavailable Sync run ID"):
+        provider.publish_artifact(
+            "missing-run", artifact_id="plan", kind="plan", media_type="application/json", data=b"{}"
+        )
+
+
+def test_missing_run_finish_mutator_raises_specific_public_error(provider: ProductProjection) -> None:
+    with pytest.raises(RunNotFoundError, match="is unavailable"):
+        provider.finish_run("missing-run", phase="planned", outcome="succeeded", summary={}, results={})
 
 
 def test_duplicate_flow_run_id_is_rejected_before_a_provider_write() -> None:
@@ -485,6 +564,86 @@ def test_manifest_complete_but_relational_mark_failed_resumes_without_republicat
 
 
 @pytest.mark.parametrize("profile", ["local", "production"])
+def test_published_row_with_missing_manifest_accepts_only_an_exact_repair(profile: str, tmp_path: Path) -> None:
+    fake_s3 = _FakeS3()
+    if profile == "local":
+        projection = ProductProjection(
+            SQLiteRunStore(tmp_path / "records.sqlite3"),
+            FileArtifactStore(tmp_path / "objects"),
+        )
+    else:
+        projection = ProductProjection(
+            PostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3")),
+            S3ArtifactStore(fake_s3, bucket="artifacts"),
+        )
+    projection.create_run(_run())
+    reference = projection.publish_artifact(
+        "run-001", artifact_id="plan", kind="plan", media_type="application/json", data=b"original"
+    )
+    if profile == "local":
+        (tmp_path / "objects" / reference.manifest_key).unlink()
+    else:
+        fake_s3.delete(bucket="artifacts", key=reference.manifest_key)
+
+    with pytest.raises(DuplicateArtifactError, match="published record with different content or metadata"):
+        projection.publish_artifact(
+            "run-001", artifact_id="plan", kind="plan", media_type="application/json", data=b"different"
+        )
+
+    repaired = projection.publish_artifact(
+        "run-001", artifact_id="plan", kind="plan", media_type="application/json", data=b"original"
+    )
+    assert repaired == reference
+    assert projection.lookup_artifact("run-001", "plan").value == b"original"
+
+
+def test_filesystem_publication_fsyncs_private_directory_before_atomic_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[Path] = []
+    original = product_store_store._fsync_directory
+
+    def capture(path: Path) -> None:
+        calls.append(path)
+        original(path)
+
+    monkeypatch.setattr(product_store_store, "_fsync_directory", capture)
+    projection = ProductProjection(
+        SQLiteRunStore(tmp_path / "records.sqlite3"),
+        FileArtifactStore(tmp_path / "objects"),
+    )
+    projection.create_run(_run())
+
+    projection.publish_artifact("run-001", artifact_id="plan", kind="plan", media_type="application/json", data=b"{}")
+
+    assert calls[0].name.startswith(".plan-")
+    assert calls[1] == calls[0].parent
+
+
+def test_s3_conditional_manifest_conflict_is_a_duplicate_artifact_error() -> None:
+    fake_s3 = _ManifestRaceS3()
+    store = S3ArtifactStore(fake_s3, bucket="artifacts")
+    data = b"{}"
+    digest = sha256(data).hexdigest()
+    reference = ArtifactReference(
+        artifact_id="plan",
+        run_id="run-001",
+        kind="plan",
+        media_type="application/json",
+        digest=digest,
+        size=len(data),
+        object_key=f"runs/run-001/artifacts/plan/{digest}/data",
+        manifest_key=f"runs/run-001/artifacts/plan/{digest}/manifest.json",
+        created_at=datetime.now(timezone.utc),
+    )
+
+    with pytest.raises(DuplicateArtifactError):
+        store.publish(reference, data)
+
+    assert fake_s3.get(bucket="artifacts", key=reference.manifest_key) == b"winner"
+
+
+@pytest.mark.parametrize("profile", ["local", "production"])
 @pytest.mark.parametrize(
     "retry",
     [
@@ -647,6 +806,25 @@ def test_filesystem_path_guard_rejects_resolved_parent_escape(tmp_path: Path) ->
         store._path("valid/../../../outside/data")
 
 
+@pytest.mark.parametrize("manifest", [b"[]", b"42", b"null", b'"manifest"'])
+def test_non_mapping_manifest_is_reported_as_invalid(manifest: bytes) -> None:
+    data = b"{}"
+    digest = sha256(data).hexdigest()
+    reference = ArtifactReference(
+        artifact_id="plan",
+        run_id="run-001",
+        kind="plan",
+        media_type="application/json",
+        digest=digest,
+        size=len(data),
+        object_key=f"runs/run-001/artifacts/plan/{digest}/data",
+        manifest_key=f"runs/run-001/artifacts/plan/{digest}/manifest.json",
+        created_at=datetime.now(timezone.utc),
+    )
+
+    assert product_store_store._validate_publication(reference, manifest, data).reason == "manifest-invalid"
+
+
 def test_redaction_precedes_every_relational_and_artifact_write(provider: ProductProjection) -> None:
     secret = "canary-secret-649"  # noqa: S105 - deliberate persistence-boundary canary.
     record = _run().model_copy(
@@ -682,6 +860,67 @@ def test_redaction_precedes_every_relational_and_artifact_write(provider: Produc
     assert artifact is not None
     assert secret.encode() not in artifact
     assert b"***" in artifact
+
+
+@pytest.mark.parametrize("mutation", ["create", "finish"])
+def test_redaction_key_collision_is_rejected_before_a_relational_write(
+    mutation: str, provider: ProductProjection
+) -> None:
+    secret = "secret-key-649"  # noqa: S105 - deliberate redaction collision.
+    collision = {secret: "one", "***": "two"}
+
+    if mutation == "create":
+        with pytest.raises(ValueError, match="collapse multiple mapping keys"):
+            provider.create_run(_run().model_copy(update={"summary": collision}), secrets=(secret,))
+        assert provider.lookup_run("run-001").reason == "run-not-found"
+    else:
+        provider.create_run(_run())
+        with pytest.raises(ValueError, match="collapse multiple mapping keys"):
+            provider.finish_run(
+                "run-001",
+                phase="planned",
+                outcome="succeeded",
+                summary=collision,
+                results={},
+                secrets=(secret,),
+            )
+        unchanged = provider.lookup_run("run-001").value
+        assert unchanged is not None
+        assert unchanged.outcome is None
+
+
+def test_finish_run_uses_the_create_run_json_normalization_boundary(provider: ProductProjection) -> None:
+    provider.create_run(_run().model_copy(update={"summary": {"payload": b"created"}}))
+
+    provider.finish_run(
+        "run-001",
+        phase="planned",
+        outcome="succeeded",
+        summary={"payload": b"finished"},
+        results={"payload": b"result"},
+    )
+
+    loaded = provider.lookup_run("run-001").value
+    assert loaded is not None
+    assert loaded.summary == {"payload": "finished"}
+    assert loaded.results == {"payload": "result"}
+
+
+def test_finish_run_rejects_non_utf8_bytes_before_updating_the_record(provider: ProductProjection) -> None:
+    provider.create_run(_run())
+
+    with pytest.raises(UnicodeDecodeError):
+        provider.finish_run(
+            "run-001",
+            phase="planned",
+            outcome="succeeded",
+            summary={"payload": b"\xff"},
+            results={},
+        )
+
+    unchanged = provider.lookup_run("run-001").value
+    assert unchanged is not None
+    assert unchanged.outcome is None
 
 
 @pytest.mark.parametrize("profile", ["local", "production"])

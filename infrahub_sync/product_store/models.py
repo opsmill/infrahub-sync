@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime  # noqa: TC003 - pydantic resolves this annotation at runtime.
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-Operation = Literal["plan", "sync"]
+from infrahub_sync.execution import Operation  # noqa: TC001 - Pydantic resolves this annotation at runtime.
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 

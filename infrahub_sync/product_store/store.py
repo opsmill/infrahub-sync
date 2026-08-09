@@ -12,7 +12,9 @@ from pathlib import Path
 from tempfile import mkdtemp
 from typing import Any, Protocol, cast
 
-from infrahub_sync.execution import redact
+from pydantic import TypeAdapter
+
+from infrahub_sync.execution import REDACTED, redact
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store.models import ArtifactReference, LookupResult, PrefectExecutionLink, ProductRun
 
@@ -33,11 +35,15 @@ CREATE TABLE IF NOT EXISTS prefect_executions (
     attempt INTEGER NOT NULL, last_observed_state TEXT, last_observed_at TEXT, position INTEGER NOT NULL,
     PRIMARY KEY (run_id, flow_run_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS prefect_executions_run_position
+    ON prefect_executions (run_id, position);
 """
 
 # Stable SQLite extended result codes. Python 3.10's sqlite3 module does not expose
 # their symbolic names even when an exception provides ``sqlite_errorcode``.
 _SQLITE_UNIQUE_CONSTRAINT_CODES = frozenset({1555, 2067})
+_PREFECT_POSITION_ATTEMPTS = 3
+_JSON_MAPPING_ADAPTER = TypeAdapter(dict[str, Any])
 
 
 class DuplicateRunError(ValueError):
@@ -54,6 +60,10 @@ class DuplicatePrefectExecutionError(ValueError):
 
 class ArtifactUnavailableError(RuntimeError):
     """A referenced artifact is not available as a complete, valid publication."""
+
+
+class RunNotFoundError(ValueError):
+    """A requested mutation targets a Sync run ID that does not exist."""
 
 
 class _Cursor(Protocol):
@@ -84,6 +94,8 @@ class _RunStore(Protocol):
     def create(self, run: ProductRun) -> None: ...
 
     def lookup(self, run_id: str) -> LookupResult[ProductRun]: ...
+
+    def exists(self, run_id: str) -> bool: ...
 
     def reserve_artifact(self, reference: ArtifactReference) -> None: ...
 
@@ -206,6 +218,19 @@ class _RelationalRunStore:
             connection.close()
         return LookupResult(value=_run_from_rows(row, references, links))
 
+    def exists(self, run_id: str) -> bool:
+        """Return run existence without hydrating child records."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql("SELECT 1 FROM product_runs WHERE run_id = ?"), (run_id,))
+                return cursor.fetchone() is not None
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
     def reserve_artifact(self, reference: ArtifactReference) -> None:
         connection = self._connect()
         try:
@@ -290,36 +315,68 @@ class _RelationalRunStore:
         return row is not None and int(row[0]) > 0
 
     def add_prefect_execution(self, run_id: str, link: PrefectExecutionLink) -> None:
+        last_conflict: BaseException | None = None
+        for attempt in range(_PREFECT_POSITION_ATTEMPTS):
+            connection = self._connect()
+            try:
+                cursor = connection.cursor()
+                try:
+                    cursor.execute(
+                        self._sql("SELECT COALESCE(MAX(position) + 1, 0) FROM prefect_executions WHERE run_id = ?"),
+                        (run_id,),
+                    )
+                    position_row = cursor.fetchone()
+                    position = int(position_row[0]) if position_row is not None else 0
+                    self._insert_prefect_execution(cursor, run_id, link, position)
+                    connection.commit()
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    # DB-API drivers do not share an integrity-error base class;
+                    # inspect only documented SQLite/PostgreSQL uniqueness markers.
+                    connection.rollback()
+                    if not _is_unique_violation(exc):
+                        raise
+                    last_conflict = exc
+                else:
+                    return
+                finally:
+                    cursor.close()
+            finally:
+                connection.close()
+
+            if self._prefect_execution_exists(run_id, link.flow_run_id):
+                msg = f"Prefect flow-run ID {link.flow_run_id!r} is already linked to Sync run {run_id!r}"
+                raise DuplicatePrefectExecutionError(msg) from last_conflict
+            if attempt + 1 == _PREFECT_POSITION_ATTEMPTS:
+                msg = f"Could not allocate a Prefect execution position for Sync run {run_id!r}"
+                raise RuntimeError(msg) from last_conflict
+
+    def _insert_prefect_execution(
+        self, cursor: _Cursor, run_id: str, link: PrefectExecutionLink, position: int
+    ) -> None:
+        cursor.execute(
+            self._sql("INSERT INTO prefect_executions VALUES (?, ?, ?, ?, ?, ?, ?, ?)"),
+            (
+                run_id,
+                link.flow_run_id,
+                link.deployment_id,
+                link.purpose,
+                link.attempt,
+                link.last_observed_state,
+                _iso(link.last_observed_at),
+                position,
+            ),
+        )
+
+    def _prefect_execution_exists(self, run_id: str, flow_run_id: str) -> bool:
         connection = self._connect()
         try:
             cursor = connection.cursor()
             try:
                 cursor.execute(
-                    self._sql("SELECT COUNT(*) FROM prefect_executions WHERE run_id = ?"),
-                    (run_id,),
+                    self._sql("SELECT 1 FROM prefect_executions WHERE run_id = ? AND flow_run_id = ?"),
+                    (run_id, flow_run_id),
                 )
-                count_row = cursor.fetchone()
-                position = int(count_row[0]) if count_row is not None else 0
-                cursor.execute(
-                    self._sql("INSERT INTO prefect_executions VALUES (?, ?, ?, ?, ?, ?, ?, ?)"),
-                    (
-                        run_id,
-                        link.flow_run_id,
-                        link.deployment_id,
-                        link.purpose,
-                        link.attempt,
-                        link.last_observed_state,
-                        _iso(link.last_observed_at),
-                        position,
-                    ),
-                )
-                connection.commit()
-            except Exception as exc:
-                connection.rollback()
-                if _is_unique_violation(exc):
-                    msg = f"Prefect flow-run ID {link.flow_run_id!r} is already linked to Sync run {run_id!r}"
-                    raise DuplicatePrefectExecutionError(msg) from exc
-                raise
+                return cursor.fetchone() is not None
             finally:
                 cursor.close()
         finally:
@@ -419,8 +476,19 @@ class FileArtifactStore:
     def publish(self, reference: ArtifactReference, data: bytes) -> None:
         final_dir = self._path(reference.manifest_key).parent
         if final_dir.exists():
-            msg = f"Artifact {reference.artifact_id!r} is already published"
-            raise DuplicateArtifactError(msg)
+            manifest = final_dir / "manifest.json"
+            if manifest.exists():
+                msg = f"Artifact {reference.artifact_id!r} is already published"
+                raise DuplicateArtifactError(msg)
+            existing_data = final_dir / "data"
+            if not existing_data.is_file() or not _matches_reference(reference, existing_data.read_bytes()):
+                msg = f"Artifact {reference.artifact_id!r} has an incomplete publication with different data"
+                raise DuplicateArtifactError(msg)
+            self._publication_checkpoint()
+            _write_fsynced(manifest, _manifest_bytes(reference))
+            _fsync_directory(final_dir)
+            _fsync_directory(final_dir.parent)
+            return
         final_dir.parent.mkdir(parents=True, exist_ok=True)
         temporary = Path(mkdtemp(prefix=f".{reference.artifact_id}-", dir=final_dir.parent))
         try:
@@ -428,6 +496,7 @@ class FileArtifactStore:
             _write_fsynced(data_path, data)
             self._publication_checkpoint()
             _write_fsynced(temporary / "manifest.json", _manifest_bytes(reference))
+            _fsync_directory(temporary)
             temporary.replace(final_dir)
             _fsync_directory(final_dir.parent)
         except BaseException:
@@ -451,7 +520,13 @@ class FileArtifactStore:
 class S3Client(Protocol):
     """Minimal operations required from an S3-compatible object client."""
 
-    def put(self, *, bucket: str, key: str, data: bytes, if_absent: bool = False) -> None: ...
+    def put(self, *, bucket: str, key: str, data: bytes, if_absent: bool = False) -> None:
+        """Write one object.
+
+        When ``if_absent`` is true, the write must be atomic and create-only.
+        Implementations must raise :class:`DuplicateArtifactError` if the key
+        already exists instead of replacing it.
+        """
 
     def get(self, *, bucket: str, key: str) -> bytes | None: ...
 
@@ -526,9 +601,9 @@ class ProductProjection:
 
     def add_prefect_execution(self, run_id: str, link: PrefectExecutionLink, *, secrets: Sequence[str] = ()) -> None:
         """Append one purpose-labelled execution without changing Sync identity."""
-        if not self.lookup_run(run_id).available:
+        if not self._records.exists(run_id):
             msg = f"Cannot link a Prefect execution to unavailable Sync run ID {run_id!r}"
-            raise ArtifactUnavailableError(msg)
+            raise RunNotFoundError(msg)
         sanitized = PrefectExecutionLink.model_validate(_redact_value(link.model_dump(mode="json"), secrets))
         self._records.add_prefect_execution(run_id, sanitized)
 
@@ -543,9 +618,9 @@ class ProductProjection:
         secrets: Sequence[str] = (),
     ) -> ArtifactReference:
         """Reserve the immutable reference, publish bytes and manifest, then expose it."""
-        if not self.lookup_run(run_id).available:
+        if not self._records.exists(run_id):
             msg = f"Cannot publish an artifact for unavailable Sync run ID {run_id!r}"
-            raise ArtifactUnavailableError(msg)
+            raise RunNotFoundError(msg)
         sanitized = _redact_bytes(data, secrets)
         artifact_id = redact(artifact_id, secrets)
         kind = redact(kind, secrets)
@@ -564,36 +639,36 @@ class ProductProjection:
             created_at=datetime.now(timezone.utc),
         )
         stored = self._records.lookup_artifact_reference(run_id, artifact_id)
+        already_marked = False
         if stored.value is None:
             self._records.reserve_artifact(reference)
         else:
             existing, published = stored.value
-            if published:
-                msg = f"Artifact {artifact_id!r} is already published on run {run_id!r}"
-                raise DuplicateArtifactError(msg)
             if not _same_publication(existing, reference):
-                msg = (
-                    f"Artifact {artifact_id!r} has a pending publication with different content or metadata; "
-                    "retry rejected"
-                )
+                state = "published record" if published else "pending publication"
+                msg = f"Artifact {artifact_id!r} has a {state} with different content or metadata; retry rejected"
                 raise DuplicateArtifactError(msg)
             reference = existing
+            already_marked = published
             publication = self._artifacts.lookup(reference)
             if publication.available:
+                if published:
+                    msg = f"Artifact {artifact_id!r} is already published on run {run_id!r}"
+                    raise DuplicateArtifactError(msg)
                 self._records.mark_artifact_published(reference)
                 return reference
             if publication.reason != "manifest-unavailable":
-                msg = f"Artifact {artifact_id!r} has a pending publication that cannot be resumed: {publication.reason}"
+                msg = f"Artifact {artifact_id!r} has an incomplete publication that cannot be resumed: {publication.reason}"
                 raise ArtifactUnavailableError(msg)
         self._artifacts.publish(reference, sanitized)
-        self._records.mark_artifact_published(reference)
+        if not already_marked:
+            self._records.mark_artifact_published(reference)
         return reference
 
     def lookup_artifact(self, run_id: str, artifact_id: str) -> LookupResult[bytes]:
         """Resolve only a run-owned immutable reference, with explicit unavailability."""
-        run = self.lookup_run(run_id)
-        if run.value is None:
-            return LookupResult(value=None, reason=run.reason)
+        if not self._records.exists(run_id):
+            return LookupResult(value=None, reason="run-not-found")
         stored = self._records.lookup_artifact_reference(run_id, artifact_id)
         if stored.value is None:
             return LookupResult(value=None, reason=stored.reason)
@@ -616,7 +691,7 @@ class ProductProjection:
         run = self.lookup_run(run_id)
         if run.value is None:
             msg = f"Sync run ID {run_id!r} is unavailable"
-            raise ArtifactUnavailableError(msg)
+            raise RunNotFoundError(msg)
         if self._records.has_pending_artifacts(run_id):
             msg = f"Sync run ID {run_id!r} has an incomplete artifact publication"
             raise ArtifactUnavailableError(msg)
@@ -625,13 +700,15 @@ class ProductProjection:
             if not result.available:
                 msg = f"Artifact {reference.artifact_id!r} is unavailable: {result.reason}"
                 raise ArtifactUnavailableError(msg)
+        sanitized_summary = _normalize_mapping(_redact_value(summary, secrets))
+        sanitized_results = _normalize_mapping(_redact_value(results, secrets))
         self._records.finish(
             run_id,
             phase=redact(phase, secrets),
             outcome=redact(outcome, secrets),
             finished_at=datetime.now(timezone.utc),
-            summary=cast("Mapping[str, Any]", _redact_value(summary, secrets)),
-            results=cast("Mapping[str, Any]", _redact_value(results, secrets)),
+            summary=sanitized_summary,
+            results=sanitized_results,
         )
 
 
@@ -742,7 +819,14 @@ def _redact_value(value: Any, secrets: Sequence[str]) -> Any:
     if isinstance(value, str):
         return redact(value, secrets)
     if isinstance(value, Mapping):
-        return {redact(str(key), secrets): _redact_value(item, secrets) for key, item in value.items()}
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            sanitized_key = redact(str(key), secrets)
+            if sanitized_key in sanitized:
+                msg = f"Redaction would collapse multiple mapping keys into {sanitized_key!r}"
+                raise ValueError(msg)
+            sanitized[sanitized_key] = _redact_value(item, secrets)
+        return sanitized
     if isinstance(value, (list, tuple)):
         return [_redact_value(item, secrets) for item in value]
     return value
@@ -755,7 +839,7 @@ def _redacted_run(run: ProductRun, secrets: Sequence[str]) -> ProductRun:
 def _redact_bytes(data: bytes, secrets: Sequence[str]) -> bytes:
     for secret in secrets:
         if secret:
-            data = data.replace(secret.encode(), b"***")
+            data = data.replace(secret.encode(), REDACTED.encode())
     return data
 
 
@@ -766,10 +850,12 @@ def _manifest_bytes(reference: ArtifactReference) -> bytes:
 def _validate_publication(reference: ArtifactReference, manifest: bytes, data: bytes) -> LookupResult[bytes]:
     try:
         stored = json.loads(manifest)
+        if not isinstance(stored, Mapping):
+            return LookupResult(value=None, reason="manifest-invalid")
         parsed = ArtifactReference.model_validate(
             {key: value for key, value in stored.items() if key != "format_version"}
         )
-    except (json.JSONDecodeError, ValueError):
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
         return LookupResult(value=None, reason="manifest-invalid")
     if parsed != reference or sha256(data).hexdigest() != reference.digest or len(data) != reference.size:
         return LookupResult(value=None, reason="artifact-integrity-failed")
@@ -778,6 +864,15 @@ def _validate_publication(reference: ArtifactReference, manifest: bytes, data: b
 
 def _expired(reference: ArtifactReference) -> bool:
     return reference.expires_at is not None and reference.expires_at <= datetime.now(timezone.utc)
+
+
+def _matches_reference(reference: ArtifactReference, data: bytes) -> bool:
+    return sha256(data).hexdigest() == reference.digest and len(data) == reference.size
+
+
+def _normalize_mapping(value: Any) -> Mapping[str, Any]:
+    validated = _JSON_MAPPING_ADAPTER.validate_python(value)
+    return _JSON_MAPPING_ADAPTER.dump_python(validated, mode="json")
 
 
 def _write_fsynced(path: Path, data: bytes) -> None:

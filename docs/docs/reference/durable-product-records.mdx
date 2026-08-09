@@ -49,8 +49,8 @@ tests use a PostgreSQL-paramstyle local DB-API emulator and a deterministic
 S3-compatible client; they prove the injected provider contract, not live PostgreSQL,
 driver, S3 service, authentication, or network integration.
 
-Constructing `PostgreSQLRunStore` directly, or constructing the production projection,
-runs idempotent `CREATE TABLE IF NOT EXISTS` statements for the product-record schema.
+Constructing the supported production projection runs idempotent
+`CREATE TABLE IF NOT EXISTS` statements for the product-record schema.
 The PostgreSQL connection role must have the DDL privileges required to create those
 tables in its configured schema, in addition to the privileges required to read and write
 their rows.
@@ -76,6 +76,10 @@ planning record and attaches its result artifacts to the same `run_id`; it does 
 a second Sync identity. `add_prefect_execution` appends stage and retry links as they become
 known without changing the Sync record's identity.
 
+Mutations against a missing Sync run raise `RunNotFoundError`. Read operations continue
+to return `LookupResult` with `reason="run-not-found"`, so absence remains a normal,
+non-exceptional lookup result.
+
 ## Artifact publication and lookup
 
 Artifact keys contain their SHA-256 digest and never change. Publication first reserves a
@@ -87,14 +91,20 @@ and uses a create-only manifest put as the object-store commit point. A crash be
 final relational mark leaves durable pending evidence rather than exposing the artifact.
 The run cannot be finished while any pending publication exists.
 
+An `S3Client` implementation must make `put(..., if_absent=True)` an atomic,
+create-only write and translate an existing-key conflict to `DuplicateArtifactError`.
+This prevents a racing publisher from replacing the immutable manifest.
+
 To recover from an interrupted publication, retry `publish_artifact` with the same run and
 artifact IDs, content, kind, and media type. Matching is performed after secret redaction.
 If data and manifest are already complete, the retry verifies them and performs only the
 missing relational mark. If the manifest is absent, the retry resumes object publication
-and then marks the reference published. Different content or metadata is rejected without
-changing the pending reservation or writing to the artifact provider; correct the caller
-input and retry the original publication. Once published, the artifact remains immutable
-and any further publication with that identity is rejected as already published.
+and then marks the reference published when needed. This exact-match repair also covers a
+relational row already marked published whose manifest is missing. Different content or
+metadata is rejected without changing the pending reservation or writing to the artifact
+provider; correct the caller input and retry the original publication. Once published, the
+artifact remains immutable and any further publication with that identity is rejected as
+already published.
 
 A lookup returns `LookupResult` rather than treating absence as an empty record. Reasons
 include `run-not-found`, `artifact-reference-not-found`, `manifest-unavailable`,
@@ -125,15 +135,16 @@ current-side wire measurement is not a retained artifact in this fixture.
 Run:
 
 ```bash
+uv sync --extra dev
 uv run pytest -q -s tests/product_store/test_sizing.py
 ```
 
-Observed on macOS with Python 3.13.3 on 2026-08-08:
+Observed on macOS with Python 3.13.3 on 2026-08-09:
 
 | Fixture | Records (baseline/current) | Artifact payload | Manifests | Relational store | Total files | Total logical bytes |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| VAL-8 88k | 88,117 / 87,868 | 23,015,700 B | 2,732 B | 36,864 B | 11 | 23,055,296 B |
-| Representative 10k | 10,051 / 10,023 | 2,722,700 B | 2,877 B | 36,864 B | 11 | 2,762,441 B |
+| VAL-8 88k | 88,117 / 87,868 | 23,015,700 B | 2,732 B | 40,960 B | 11 | 23,059,392 B |
+| Representative 10k | 10,051 / 10,023 | 2,722,700 B | 2,877 B | 40,960 B | 11 | 2,766,537 B |
 
 The five artifact payloads account for ten object files (data plus manifest) and the
 SQLite run/reference/link schema accounts for one database file. Filesystem allocation,
