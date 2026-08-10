@@ -113,6 +113,7 @@ def test_public_surface_is_explicit_and_versioned() -> None:
     assert api.PlanRequest(sync_name=SYNC_NAME, config_directory="configs").model_dump() == {
         "sync_name": SYNC_NAME,
         "config_directory": "configs",
+        "product_cache_location": None,
         "branch": None,
     }
 
@@ -126,6 +127,12 @@ def test_requests_are_strict_and_immutable() -> None:
         )
     with pytest.raises(ValidationError):
         request.run_id = "different"
+    with pytest.raises(ValidationError, match="product_cache_location must be absolute"):
+        api.PlanRequest(
+            sync_name=SYNC_NAME,
+            config_directory="configs",
+            product_cache_location="relative/product-cache",
+        )
 
 
 def test_result_and_lifecycle_readers_preserve_future_values(monkeypatch: pytest.MonkeyPatch) -> None:

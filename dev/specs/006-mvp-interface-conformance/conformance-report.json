@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "brief": "DB-006-v2",
+  "base": "8ba0c57a7601bd0ffc75431488d6b59717217de6",
+  "oracle": "tests/conformance/oracle.py",
+  "normalization": {
+    "generated_ids": ["run_id", "flow_run_id", "deployment_id", "receipt_id", "event_id"],
+    "timestamps": ["started_at", "finished_at", "created_at", "updated_at", "last_observed_at"],
+    "other_fields": "retained"
+  },
+  "provider_profiles": ["sqlite-filesystem", "postgresql-s3-compatible-live-isolated"],
+  "prefect_version": "3.8.1",
+  "verification": {
+    "conformance_tests": 11,
+    "focused_tests": 222,
+    "full_pytest": {
+      "passed": 1304,
+      "skipped": 14,
+      "xfailed": 1
+    },
+    "ruff": "pass",
+    "ty": "pass-with-inherited-warnings",
+    "docs_build": "pass",
+    "netbox_to_infrahub": "external-precondition-unavailable"
+  },
+  "cases": [
+    {"id": "C01", "operation": "plan", "surfaces": ["cli", "python", "managed"], "status": "pass"},
+    {"id": "C02", "operation": "verify", "surfaces": ["cli-review", "python", "managed"], "status": "pass"},
+    {"id": "C03", "operation": "apply", "surfaces": ["cli", "python", "managed"], "status": "pass"},
+    {"id": "C04", "operation": "sync", "surfaces": ["cli", "python", "managed"], "status": "pass"},
+    {"id": "C05", "operation": "plan", "assertion": "complete-product-record-and-artifact-equivalence", "status": "pass"},
+    {"id": "C06", "assertion": "secret-sentinel-absent-from-durable-boundaries", "status": "pass"},
+    {"id": "C07", "assertion": "restart-retention-and-single-apply-identity", "status": "pass"}
+  ],
+  "criteria": {
+    "DBA-001": "pass",
+    "DBA-002": "pass",
+    "DBA-003": "pass",
+    "DBA-004": "pass",
+    "DBA-005": "pass",
+    "DBA-006": "pass",
+    "DBA-007": "pass",
+    "DBA-008": "pass",
+    "DBA-009": "external-services-not-qualified",
+    "DBA-010": "pass",
+    "DBA-011": "pass",
+    "DBA-012": "pass"
+  },
+  "release_gaps": [
+    "configuration-package-registration-and-version-management",
+    "released-prefect-extras-dependency",
+    "netbox-to-infrahub-running-service-qualification"
+  ]
+}

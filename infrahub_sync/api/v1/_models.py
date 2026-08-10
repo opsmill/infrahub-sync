@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import (
@@ -10,6 +11,7 @@ from pydantic import (
     ConfigDict,
     Field,
     SerializerFunctionWrapHandler,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -63,6 +65,15 @@ class _Request(BaseModel):
 
     sync_name: str = Field(min_length=1)
     config_directory: str = Field(min_length=1)
+    product_cache_location: str | None = None
+
+    @field_validator("product_cache_location")
+    @classmethod
+    def _require_absolute_product_cache(cls, value: str | None) -> str | None:
+        if value is not None and not Path(value).expanduser().is_absolute():
+            msg = "product_cache_location must be absolute after user expansion"
+            raise ValueError(msg)
+        return value
 
 
 class PlanRequest(_Request):

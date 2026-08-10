@@ -8,9 +8,19 @@ artifacts. It is independent of Prefect: a standalone run has no Prefect links, 
 managed run can retain any number of purpose-labelled execution links after Prefect no
 longer has the corresponding flow-run detail.
 
-This is a Python provider surface. The managed Sync HTTP API and its worker use the local
-profile for durable run, plan, result, artifact, execution-link, mutation-receipt, and audit
-integration. The CLI and local public run API retain their existing cache contracts.
+The managed Sync HTTP API and its worker use the local profile for durable run, plan,
+result, artifact, execution-link, mutation-receipt, and audit integration. Standalone CLI
+and public Python operations can opt into the same product-run and plan-review contract by
+setting an explicit product-cache location. Their established run-directory and saved-plan
+cache remains the execution artifact source.
+
+For Python, pass `product_cache_location` on each version 1 request. For the CLI, pass
+`--product-cache-location` to `diff`, `sync`, and `apply`; the same option is available when
+reviewing a saved plan through `diff --from-plan`. The path must be absolute after user
+expansion, and every stage continuing a plan must use the same location.
+
+This is minimum product-projection configuration. It does not register or version a
+configuration package, select a new provider type, or add a release-management API.
 
 ## Provider profiles
 

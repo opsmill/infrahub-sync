@@ -28,6 +28,7 @@ from infrahub_sync.plan.review import (
     resolve_run_directory,
 )
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME
+from infrahub_sync.product_store.standalone import execute_standalone
 
 from ._models import (
     ApplyRequest,
@@ -146,13 +147,18 @@ def _plan_instance(
     run_id: str,
     operation: Operation,
     secrets: Sequence[str],
+    product_cache_location: str | None = None,
     lock_already_held: bool = False,
 ) -> tuple[SavedPlan, Path]:
     """Create and retrieve one saved plan through the shared execution core."""
     _log_lifecycle(run_id=run_id, operation=operation, stage="plan", outcome="running", secrets=secrets)
-    saved = execute_run(
+    saved = execute_standalone(
         instance,
         operation="plan",
+        product_cache_location=product_cache_location,
+        product_operation=operation,
+        complete_plan=operation == "plan",
+        _core_executor=execute_run,
         branch=branch,
         run_id=run_id,
         show_progress=False,
@@ -174,13 +180,17 @@ def _verify_instance(
     run_id: str,
     operation: Operation,
     secrets: Sequence[str],
+    product_cache_location: str | None = None,
     lock_already_held: bool = False,
 ) -> tuple[SavedPlan, Path]:
     """Independently verify and retrieve a saved plan without constructing adapters."""
     _log_lifecycle(run_id=run_id, operation=operation, stage="verify", outcome="running", secrets=secrets)
-    saved = execute_run(
+    saved = execute_standalone(
         instance,
         operation="verify",
+        product_cache_location=product_cache_location,
+        product_operation=operation,
+        _core_executor=execute_run,
         run_id=run_id,
         _lock_already_held=lock_already_held,
         _run_file_mode="sync" if operation == "sync" else None,
@@ -200,13 +210,17 @@ def _apply_instance(
     operation: Operation,
     secrets: Sequence[str],
     saved: SavedPlan,
+    product_cache_location: str | None = None,
     lock_already_held: bool = False,
 ) -> SavedPlan:
     """Apply the reviewed artifact, including its immediate mandatory verification."""
     _log_lifecycle(run_id=run_id, operation=operation, stage="apply", outcome="running", secrets=secrets)
-    execute_run(
+    execute_standalone(
         instance,
         operation="apply",
+        product_cache_location=product_cache_location,
+        product_operation=operation,
+        _core_executor=execute_run,
         confirm_writes=True,
         run_id=run_id,
         branch=branch,
@@ -232,6 +246,7 @@ def plan(request: PlanRequest) -> RunResult:
             run_id=run_id,
             operation="plan",
             secrets=secrets,
+            product_cache_location=request.product_cache_location,
         )
         outcome = "no-change" if saved.summary().total == 0 else "planned"
         return _result(
@@ -259,6 +274,7 @@ def verify(request: VerifyRequest) -> RunResult:
             run_id=request.run_id,
             operation="verify",
             secrets=secrets,
+            product_cache_location=request.product_cache_location,
         )
         return _result(
             saved=saved,
@@ -291,6 +307,7 @@ def apply(request: ApplyRequest) -> RunResult:
             operation="apply",
             secrets=secrets,
             saved=saved,
+            product_cache_location=request.product_cache_location,
         )
         outcome = "no-change" if saved.summary().total == 0 else "applied"
         return _result(
@@ -327,6 +344,7 @@ def sync(request: SyncRequest) -> RunResult:
                 run_id=run_id,
                 operation="sync",
                 secrets=secrets,
+                product_cache_location=request.product_cache_location,
                 lock_already_held=True,
             )
             stage = "verify"
@@ -335,6 +353,7 @@ def sync(request: SyncRequest) -> RunResult:
                 run_id=run_id,
                 operation="sync",
                 secrets=secrets,
+                product_cache_location=request.product_cache_location,
                 lock_already_held=True,
             )
             stage = "apply"
@@ -346,6 +365,7 @@ def sync(request: SyncRequest) -> RunResult:
                 operation="sync",
                 secrets=secrets,
                 saved=saved,
+                product_cache_location=request.product_cache_location,
                 lock_already_held=True,
             )
         outcome = "no-change" if saved.summary().total == 0 else "applied"
