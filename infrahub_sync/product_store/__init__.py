@@ -1,6 +1,13 @@
 """Durable Sync product records and immutable artifacts."""
 
-from infrahub_sync.product_store.models import ArtifactReference, LookupResult, PrefectExecutionLink, ProductRun
+from infrahub_sync.product_store.models import (
+    ArtifactReference,
+    AuditEvent,
+    LookupResult,
+    MutationReceipt,
+    PrefectExecutionLink,
+    ProductRun,
+)
 from infrahub_sync.product_store.store import (
     ArtifactUnavailableError,
     DBAPIConnection,
@@ -10,6 +17,7 @@ from infrahub_sync.product_store.store import (
     ProductProjection,
     RunNotFoundError,
     S3Client,
+    WriteAdmissionConflictError,
     local_product_projection,
     production_product_projection,
 )
@@ -17,16 +25,19 @@ from infrahub_sync.product_store.store import (
 __all__ = (
     "ArtifactReference",
     "ArtifactUnavailableError",
+    "AuditEvent",
     "DBAPIConnection",
     "DuplicateArtifactError",
     "DuplicatePrefectExecutionError",
     "DuplicateRunError",
     "LookupResult",
+    "MutationReceipt",
     "PrefectExecutionLink",
     "ProductProjection",
     "ProductRun",
     "RunNotFoundError",
     "S3Client",
+    "WriteAdmissionConflictError",
     "local_product_projection",
     "production_product_projection",
 )

@@ -26,12 +26,13 @@ The flow calls the shared execution surface IN-PROCESS; it never spawns the CLI.
 import dataclasses
 import logging
 import os
+from collections.abc import Sequence
 from typing import Any, Literal, Protocol
 
 from prefect import flow
 from prefect.logging import get_run_logger
 
-from infrahub_sync.execution import RunExecutionError, run_remote_request
+from infrahub_sync.execution import RunExecutionError, redact, run_remote_request
 
 logger = logging.getLogger(__name__)
 
@@ -77,14 +78,15 @@ class RunLoggerBridge(logging.Handler):
     observable without any change to the engine.
     """
 
-    def __init__(self, run_logger: RunLogger) -> None:
+    def __init__(self, run_logger: RunLogger, *, secrets: Sequence[str] = ()) -> None:
         super().__init__(level=BRIDGED_LEVEL)
         self._run_logger = run_logger
+        self._secrets = secrets
 
     def emit(self, record: logging.LogRecord) -> None:
         """Re-log the record through the run logger, preserving level and origin name."""
         try:
-            self._run_logger.log(record.levelno, "%s | %s", record.name, record.getMessage())
+            self._run_logger.log(record.levelno, "%s | %s", record.name, redact(record.getMessage(), self._secrets))
         except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             # `logging.Handler.emit` must never propagate: `Handler.handle` does not
             # shield it, so anything raised here escapes at the unrelated logging
