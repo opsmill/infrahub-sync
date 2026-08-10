@@ -497,7 +497,7 @@ def test_missing_configured_product_record_is_a_validation_refusal(
     assert caught.value.operation == operation
     assert caught.value.stage == operation
     assert caught.value.run_id == RUN_ID
-    assert RUN_ID in str(caught.value)
+    assert f"configured product run {RUN_ID!r} is unavailable" in str(caught.value)
 
 
 class _RecordingDestination:
