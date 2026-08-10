@@ -281,7 +281,6 @@ class ManagedRunService:
             )
             raise self._error(409, "no-active-execution", "the run has no managed execution to cancel", run_id=run_id)
         link: PrefectExecutionLink | None = None
-        unavailable_detail = False
         for candidate in reversed(run.prefect_executions):
             try:
                 observed = await self._orchestration.observe(candidate.flow_run_id)
@@ -295,7 +294,6 @@ class ManagedRunService:
                 )
             if not observed.available:
                 if observed.reason == "prefect-execution-unavailable":
-                    unavailable_detail = True
                     continue
                 self._raise_cancel_unavailable(
                     receipt,
@@ -307,13 +305,6 @@ class ManagedRunService:
                 continue
             link = candidate
             break
-        if link is None and unavailable_detail:
-            self._raise_cancel_unavailable(
-                receipt,
-                principal,
-                request.reason,
-                "the active managed execution cannot be confirmed",
-            )
         if link is None:
             self._audit(
                 run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="refused-terminal"

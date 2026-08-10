@@ -373,6 +373,34 @@ def test_cancel_scans_past_newer_non_active_links(
     assert orchestration.cancelled == [apply_flow_run_id]
 
 
+def test_cancel_treats_expired_and_terminal_links_as_non_cancellable(
+    managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, projection, orchestration = managed
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+    plan = _publish_plan(projection, run_id)
+    applied = client.post(
+        f"/runs/{run_id}/apply",
+        headers={**AUTH, "Idempotency-Key": "apply-before-expiry"},
+        json={"expected_checksum": plan.checksum, "reason": "approved", "confirm_writes": True},
+    )
+    plan_flow_run_id = created.json()["orchestration"][-1]["flow_run_id"]
+    apply_flow_run_id = applied.json()["orchestration"][-1]["flow_run_id"]
+    orchestration.observations.pop(plan_flow_run_id)
+    orchestration.observations[apply_flow_run_id] = Observation(available=True, state="completed")
+
+    cancelled = client.post(
+        f"/runs/{run_id}/cancel",
+        headers={**AUTH, "Idempotency-Key": "cancel-expired-and-terminal"},
+        json={"reason": "stop if still active"},
+    )
+
+    assert cancelled.status_code == 409
+    assert cancelled.json()["error"]["code"] == "execution-terminal"
+    assert orchestration.cancelled == []
+
+
 def test_owner_admin_authorization_apply_verify_and_cancel(  # noqa: PLR0914 - one end-to-end matrix.
     managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
 ) -> None:
