@@ -18,56 +18,66 @@
       "artifact_references[*].created_at",
       "artifact_semantics.run_id"
     ],
+    "run_identity_aliasing": "required-within-envelope-before-cross-surface-normalization",
     "recursive_key_name_normalization": false,
     "other_fields": "retained"
   },
   "provider_profiles": ["sqlite-filesystem", "postgresql-s3-compatible-live-isolated"],
   "prefect_version": "3.8.1",
   "verification": {
-    "conformance_tests": 29,
-    "focused_tests": 428,
+    "conformance_tests": 34,
+    "focused_tests": 433,
     "interface_matrix_tests": 10,
     "full_pytest": {
-      "passed": 1320,
+      "passed": 1329,
       "skipped": 14,
       "xfailed": 1
     },
     "ruff": "pass",
     "ty": "pass-with-inherited-warnings",
     "docs_build": "pass",
-    "netbox_to_infrahub": "external-precondition-unavailable"
+    "netbox_to_infrahub": {
+      "generate": "pass-live-4-files",
+      "integration_suite": "7-passed-1-skipped-76.54s-only-after-uncommitted-public-demo-device-repin",
+      "bounded_db006_cycle": "pass-real-extraction-and-destination-writes",
+      "shipped_unbounded_example": "unqualified-pre-existing-hazards",
+      "environment_teardown": "pending-under-authorized-investigation-lease"
+    }
   },
   "cases": [
-    {"id": "C01", "operation": "plan", "surfaces": ["cli", "python", "managed-worker"], "status": "actual-boundary-and-measured-destination-equal"},
+    {"id": "C01", "operation": "plan", "surfaces": ["cli", "python", "managed-worker"], "status": "actual-boundary-and-in-memory-routing-effect-equal"},
     {"id": "C02", "operation": "verify", "surfaces": ["python", "managed-worker"], "status": "returned-common-fields-and-durable-evidence-equal", "counts": "not-claimed-managed-worker-result-has-no-summary", "cli": "same-byte-review-only-no-independent-verify"},
-    {"id": "C03", "operation": "apply", "surfaces": ["cli", "python", "managed-worker"], "status": "actual-boundary-and-measured-destination-equal"},
-    {"id": "C04", "operation": "sync", "surfaces": ["cli", "python", "managed-worker"], "status": "actual-boundary-and-measured-destination-equal"},
-    {"id": "C05", "operation": "plan", "assertion": "complete-product-record-and-artifact-equivalence", "status": "pass"},
+    {"id": "C03", "operation": "apply", "surfaces": ["cli", "python", "managed-worker"], "status": "actual-boundary-and-in-memory-routing-effect-equal"},
+    {"id": "C04", "operation": "sync", "surfaces": ["cli", "python", "managed-worker"], "status": "actual-boundary-and-in-memory-routing-effect-equal"},
+    {"id": "C05", "operation": "plan", "assertion": "observed-product-record-and-exact-artifact-seam-equivalence", "status": "pass", "full_operation_envelope": "owned-by-executed-interface-matrix"},
     {"id": "C06", "assertion": "secret-sentinel-absent-from-durable-boundaries", "status": "pass"},
     {"id": "C07", "assertion": "restart-retention-and-single-apply-identity", "status": "pass"},
     {"id": "C08", "assertion": "http-prefect-plan-verify-apply-sync-executed", "status": "pass", "full_product_equality": "not-claimed-http-actor-audit-prefect-fields-retained"},
     {"id": "C09", "assertion": "same-plan-bytes-cli-plan-python-verify-cli-review", "status": "pass"},
     {"id": "C10", "assertion": "direct-sync-review-published-before-serial-and-parallel-writes", "status": "pass"},
     {"id": "C11", "assertion": "partial-apply-evidence-and-duplicate-plan-refusal", "status": "pass"},
-    {"id": "C12", "assertion": "returned-count-outcome-operation-and-measured-destination-mutations-refused", "status": "pass"}
+    {"id": "C12", "assertion": "returned-count-outcome-operation-and-observed-routing-state-mutations-refused", "status": "pass"},
+    {"id": "C13", "assertion": "pending-publication-failure-terminal-artifact-incomplete-and-retryable", "status": "pass"},
+    {"id": "C14", "assertion": "unresolvable-user-paths-typed-at-cli-and-api-boundaries", "status": "pass"},
+    {"id": "C15", "assertion": "all-run-identity-aliases-consistent-before-normalization", "status": "pass"}
   ],
   "criteria": {
     "DBA-001": "pass",
-    "DBA-002": "pass-actual-interface-returns-and-measured-destinations-http-owned-fields-retained-separately",
+    "DBA-002": "pass-actual-interface-returns-and-in-memory-routing-effects-http-owned-fields-retained-separately",
     "DBA-003": "pass",
     "DBA-004": "pass",
     "DBA-005": "pass-actual-worker-results-adapted-http-lifecycle-executed-separately",
     "DBA-006": "pass-common-verify-fields-only-cli-has-review-not-independent-verify",
     "DBA-007": "pass",
     "DBA-008": "pass",
-    "DBA-009": "external-services-not-qualified",
+    "DBA-009": "partial-bounded-live-cycle-pass-unbounded-shipped-example-unqualified",
     "DBA-010": "pass",
-    "DBA-011": "pass",
+    "DBA-011": "partial-db006-created-services-torn-down-independent-live-environment-under-authorized-investigation-lease",
     "DBA-012": "pass"
   },
   "release_gaps": [
     "configuration-package-registration-and-version-management",
     "released-prefect-extras-dependency",
-    "netbox-to-infrahub-running-service-qualification"
+    "unbounded-shipped-netbox-to-infrahub-example-qualification"
   ]
 }

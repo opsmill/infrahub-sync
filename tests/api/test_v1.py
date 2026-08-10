@@ -133,6 +133,12 @@ def test_requests_are_strict_and_immutable() -> None:
             config_directory="configs",
             product_cache_location="relative/product-cache",
         )
+    with pytest.raises(ValidationError, match="unresolvable user home"):
+        api.PlanRequest(
+            sync_name=SYNC_NAME,
+            config_directory="configs",
+            product_cache_location="~db006-user-that-cannot-exist/product-cache",
+        )
 
 
 def test_result_and_lifecycle_readers_preserve_future_values(monkeypatch: pytest.MonkeyPatch) -> None:

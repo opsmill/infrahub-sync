@@ -28,9 +28,15 @@ Normalization is an exact schema-path allowlist, not a recursive key-name rule:
 - `artifact_references[*].run_id` and `.created_at`;
 - `artifact_semantics.run_id`.
 
+A single envelope must first prove that every present run identity above has the same
+value. Only after this intra-envelope ownership check succeeds are those locations mapped
+to the cross-surface `<generated>` placeholder. A ProductRun, returned result, reference,
+or artifact that names a different owner therefore fails before normalization.
+
 A nested semantic payload field named `run_id` or `created_at` remains exact. Mutation
 tests prove disagreements at `product_record.payload.run_id`, `result.payload.created_at`,
-and `artifact_semantics.payload.run_id` fail the oracle.
+and `artifact_semantics.payload.run_id` fail the oracle. Separate ownership mutations
+prove disagreements in ProductRun, result, and artifact identity locations also fail.
 
 `None` remains `None`, so absence is not normalized into presence. Configuration
 references, operation/phase/outcome vocabulary, counts, results, artifact IDs, kinds,

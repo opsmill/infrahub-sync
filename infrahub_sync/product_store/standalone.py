@@ -210,7 +210,12 @@ def _prepare_projection(
         raise StandaloneProductRecordError(msg)
 
     try:
-        projection = local_product_projection(Path(product_cache_location).expanduser())
+        cache_location = Path(product_cache_location).expanduser()
+    except RuntimeError:
+        msg = f"product cache path has an unresolvable user home: {str(product_cache_location)!r}"
+        raise StandaloneProductRecordError(msg) from None
+    try:
+        projection = local_product_projection(cache_location)
     except ValueError as exc:
         raise StandaloneProductRecordError(str(exc)) from None
     secrets = collect_secret_values(sync_instance)

@@ -30,12 +30,28 @@ def _envelope(surface: Surface) -> CanonicalEnvelope:
             "outcome": "planned",
             "summary": {"create": 1, "update": 0, "delete": 0},
             "results": {"operation": "plan"},
-            "artifact_refs": [],
+            "artifact_refs": [
+                {
+                    "artifact_id": "plan-review",
+                    "run_id": f"{surface}-run",
+                    "created_at": "2026-08-10T12:00:00+00:00",
+                }
+            ],
             "prefect_executions": [],
         },
         result={"run_id": f"{surface}-run", "operation": "plan", "outcome": "planned"},
-        artifact_references=[],
-        artifact_semantics={"checksum": "a" * 64, "operations": [{"action": "create"}]},
+        artifact_references=[
+            {
+                "artifact_id": "plan-review",
+                "run_id": f"{surface}-run",
+                "created_at": "2026-08-10T12:00:00+00:00",
+            }
+        ],
+        artifact_semantics={
+            "run_id": f"{surface}-run",
+            "checksum": "a" * 64,
+            "operations": [{"action": "create"}],
+        },
     )
 
 
@@ -72,3 +88,23 @@ def test_oracle_does_not_normalize_semantic_payload_keys(container: str, nested_
                 replace(managed, **{container: managed_data}),
             ]
         )
+
+
+@pytest.mark.parametrize("owner", ["product-record", "result", "artifact"])
+def test_oracle_refuses_intra_envelope_run_ownership_disagreement(owner: str) -> None:
+    envelope = _envelope("cli")
+    if owner == "product-record":
+        product_record = dict(deepcopy(envelope.product_record))
+        product_record["run_id"] = "wrong-owner"
+        mutated = replace(envelope, product_record=product_record)
+    elif owner == "result":
+        result = dict(envelope.result)
+        result["run_id"] = "wrong-owner"
+        mutated = replace(envelope, result=result)
+    else:
+        artifact_semantics = dict(deepcopy(envelope.artifact_semantics))
+        artifact_semantics["run_id"] = "wrong-owner"
+        mutated = replace(envelope, artifact_semantics=artifact_semantics)
+
+    with pytest.raises(AssertionError, match="inconsistent run identity aliases"):
+        mutated.normalized()

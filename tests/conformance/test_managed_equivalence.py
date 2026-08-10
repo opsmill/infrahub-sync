@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -19,10 +19,9 @@ from infrahub_sync.plan.models import PlanManifest
 from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.product_store import ProductRun, local_product_projection
 from infrahub_sync.product_store.standalone import execute_standalone
-from tests.conformance.oracle import CanonicalEnvelope, Surface, assert_equivalent
 
 
-def test_managed_and_standalone_plan_records_and_artifacts_are_canonically_equal(
+def test_managed_and_standalone_plan_product_projection_seams_match(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -89,23 +88,14 @@ def test_managed_and_standalone_plan_records_and_artifacts_are_canonically_equal
     assert standalone_artifact is not None
     assert managed_artifact is not None
 
-    def envelope(surface: Surface, record: ProductRun, artifact: bytes) -> CanonicalEnvelope:
-        return CanonicalEnvelope(
-            surface=surface,
-            operation="plan",
-            plan_fingerprint=saved.manifest.plan_checksum,
-            counts={"create": 0, "update": 0, "delete": 0},
-            outcome="no-change",
-            destination_effects={"created": 0, "updated": 0, "deleted": 0},
-            product_record=record.model_dump(mode="json"),
-            result=record.results,
-            artifact_references=[item.model_dump(mode="json") for item in record.artifact_refs],
-            artifact_semantics=json.loads(artifact),
-        )
+    def stable_product_record(record: ProductRun) -> dict[str, object]:
+        data = record.model_dump(mode="json")
+        data["started_at"] = "<generated>"
+        data["finished_at"] = "<generated>"
+        references = cast("list[dict[str, object]]", data["artifact_refs"])
+        for reference in references:
+            reference["created_at"] = "<generated>"
+        return data
 
-    assert_equivalent(
-        [
-            envelope("python", standalone_record, standalone_artifact),
-            envelope("managed", managed_record, managed_artifact),
-        ]
-    )
+    assert stable_product_record(standalone_record) == stable_product_record(managed_record)
+    assert standalone_artifact == managed_artifact

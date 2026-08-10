@@ -70,7 +70,12 @@ class _Request(BaseModel):
     @field_validator("product_cache_location")
     @classmethod
     def _require_absolute_product_cache(cls, value: str | None) -> str | None:
-        if value is not None and not Path(value).expanduser().is_absolute():
+        try:
+            expanded = None if value is None else Path(value).expanduser()
+        except RuntimeError:
+            msg = "product_cache_location has an unresolvable user home"
+            raise ValueError(msg) from None
+        if expanded is not None and not expanded.is_absolute():
             msg = "product_cache_location must be absolute after user expansion"
             raise ValueError(msg)
         return value

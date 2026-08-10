@@ -4,7 +4,8 @@
 
 - Repository: `opsmill/infrahub-sync`
 - Required base: `8ba0c57a7601bd0ffc75431488d6b59717217de6`
-- Review branch: `feature/db-006-mvp-interface-conformance`
+- Merge-readiness starting revision: `645d5f4a666de3afe81411c59948f5c0b136549d`
+- Review branch: `feature/db-006-merge-readiness`
 - This change adds only opt-in standalone consumption of the existing DB-003
   SQLite/filesystem product projection. It adds no provider, route, operation,
   configuration-package registry, scheduler, recovery surface, or Prefect authority.
@@ -25,6 +26,7 @@ extra. Do not change the accepted Prefect Extras Git pin.
 ```bash
 uv run pytest -q tests/conformance
 uv run pytest -q tests/conformance/test_interface_matrix.py
+uv run pytest -q tests/product_store/test_contract.py -k interrupted_publication
 uv run pytest -q tests/api/test_v1.py tests/test_execution_cli_parity.py
 uv run pytest -q tests/product_store tests/managed tests/orchestration/test_flow.py
 uv run ruff check infrahub_sync tests/conformance tests/api/test_v1.py

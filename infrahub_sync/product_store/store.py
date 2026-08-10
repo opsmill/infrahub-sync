@@ -1209,12 +1209,12 @@ class ProductProjection:
         results: Mapping[str, Any],
         secrets: Sequence[str] = (),
     ) -> None:
-        """Complete or extend a run only while every attached artifact is available."""
+        """Finish a run when artifacts are available, or retain a safe failed terminal state."""
         run = self.lookup_run(run_id)
         if run.value is None:
             msg = f"Sync run ID {run_id!r} is unavailable"
             raise RunNotFoundError(msg)
-        if self._records.has_pending_artifacts(run_id):
+        if outcome != "failed" and self._records.has_pending_artifacts(run_id):
             msg = f"Sync run ID {run_id!r} has an incomplete artifact publication"
             raise ArtifactUnavailableError(msg)
         for reference in run.value.artifact_refs:

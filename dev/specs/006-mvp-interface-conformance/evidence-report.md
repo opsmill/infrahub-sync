@@ -72,9 +72,10 @@ not optimize or alter the harness.
   exposed incorrect `copy` and `put(if_absent=...)` method signatures in the probe itself;
   both exited through the teardown trap with zero DB-006 containers remaining. The final
   probe implemented the documented `S3Client` protocol and passed.
-- No Infrahub or NetBox service/token variables were present, and no corresponding service
-  container was available. The shipped NetBox-to-Infrahub plan/apply qualification therefore
-  stopped at its documented external setup precondition.
+- In the implementation agent's initial environment, no Infrahub or NetBox service/token
+  variables were present and no corresponding service container was available. That run
+  therefore stopped at its documented external setup precondition. Independent live-review
+  evidence obtained later is recorded below and supersedes only that availability finding.
 - A fresh Python 3.10 virtual environment installed the base project without the `prefect`
   or `managed` extras. `prefect`, `fastapi`, `uvicorn`, and `opsmill_prefect_extras` were
   absent; importing the v1 API, CLI, and standalone projector loaded neither Prefect nor
@@ -167,7 +168,7 @@ The lossless oracle now normalizes only exact schema paths. Three mutation cases
 paths:
 
 - actual Typer CLI, public Python functions, and managed worker for plan, apply, and
-  confirmed sync, with actual returned common fields, measured destination effects, and
+  confirmed sync, with actual returned common fields, in-memory routing effects, and
   complete actor-free ProductRun/reference/artifact equality;
 - public Python and managed worker independent verify common-return fields plus durable
   verification evidence (the managed verify return has no action-count summary);
@@ -232,11 +233,12 @@ one create operation and observes these producing boundaries directly:
 - CLI: captured core `RunResult`, successful Typer exit, and CLI/log rendering;
 - Python: the actual public v1 `RunResult` returned by plan/apply/sync;
 - managed worker and HTTP-to-Prefect completion: the actual worker result dictionary;
-- destination effects: an instrumented isolated destination probe, measured after each
-  interface call (zero for plan, one create for apply and confirmed sync).
+- routing effects: an instrumented in-memory probe behind a stubbed core, observed after
+  each interface call (zero for plan, one routed create for apply and confirmed sync).
+  This proves boundary routing and mutation sensitivity, not real adapter writes.
 
 Four mutation cases change one actual public returned count, worker outcome, worker
-operation, or measured destination state. Each now reaches the canonical envelope and
+operation, or observed routing state. Each now reaches the canonical envelope and
 causes comparison failure. Full verify-envelope equality is not claimed: Python and
 managed verify compare only their actually returned common run ID/operation/outcome,
 durable verification result, and review artifact because the managed verify result has no
@@ -258,3 +260,92 @@ pass; seven files formatted; all checks passed
 uv run ty check tests/conformance/interface_adapters.py tests/conformance/test_interface_matrix.py
 pass; no diagnostics
 ```
+
+## Independent live-review evidence
+
+An authorized independent reviewer later exercised a fresh Infrahub development stack
+against the public NetBox demo. No code or environment from that ongoing investigation
+was changed by this correction.
+
+- `infrahub-sync generate --name from-netbox --directory examples/` passed and rendered
+  four files.
+- The committed live integration suite failed with 8 setup errors because its `cisco1`
+  public-demo pin was stale. Only after an uncommitted re-pin to
+  `dmi01-akron-rtr01` did it pass 7 tests with 1 skip in 76.54 seconds. That pin is not
+  part of DB-006 merge-readiness.
+- A bounded DB-006 `--product-cache-location` cycle passed with real extraction and real
+  destination writes for review, apply, serial sync, parallel sync, convergence, and typed
+  negative paths.
+- The unbounded shipped example remains unqualified because of pre-existing live-data and
+  adapter hazards. Those issues, the stale pin, and the `--continue-on-error` remedy gap
+  belong to the separate issue-investigator lane.
+- The independent live environment remains under an authorized investigation lease with
+  residue intentionally retained; it has not yet been torn down. Consequently DBA-009 and
+  DBA-011 have partial evidence, not unconditional pass status.
+
+## Merge-readiness correction
+
+The correction reproduces a failure inside artifact publication after the relational
+reservation. The ProductRun now reaches `sync-failed` / `failed`, retains typed failure
+evidence, and has a finish timestamp while the review lookup remains
+`artifact-publication-incomplete`. Both local and production-compatible contract profiles
+prove that successful completion stays blocked, then the exact publication can resume
+after provider reconstruction and the run can finish successfully.
+
+Standalone cache preparation now translates `Path.expanduser()` failure for an unknown
+`~user` into the existing typed CLI refusal; the public request model reports a Pydantic
+`ValidationError`. The real serial/parallel ordering test pins its pipeline lock to an
+absolute `tmp_path` cache. The oracle validates ProductRun, result, reference, and artifact
+run-ID aliases before normalizing generated identity, with three ownership mutation cases.
+
+The former managed-equivalence test is now explicitly a product-projection seam test. It
+compares observed complete records after generated timestamp normalization and exact
+artifact bytes; it no longer fills half a canonical envelope with shared constants. Full
+plan/apply/sync operation-envelope evidence remains in the executed three-interface
+matrix, whose in-memory probe proves routing/boundary effects rather than real writes.
+
+Merge-readiness gates:
+
+```text
+uv sync --extra dev --extra prefect --extra managed
+pass; lockfile and accepted Prefect Extras pin unchanged
+
+uv run pytest -q tests/conformance tests/api/test_v1.py tests/test_execution_cli_parity.py tests/test_execution_surface.py tests/test_potenda_parallel.py tests/test_potenda_plan_artifact.py tests/product_store tests/managed tests/orchestration/test_flow.py
+433 passed, 2 inherited warnings in 26.93s
+
+uv run pytest -q
+1329 passed, 14 skipped, 1 xfailed, 4 inherited warnings in 69.30s
+
+uv run invoke linter.format
+pass; Python-only Ruff formatter and checks
+
+uv run ruff format --check . && uv run ruff check .
+pass; 153 files formatted; all checks passed
+
+uv run ty check .
+exit 0; four inherited unused-ignore warnings
+
+uv run invoke docs.rumdl && uv run invoke linter.lint-yaml
+pass; 69 Markdown/MDX files and all YAML files
+
+uv run invoke docs.generate && uv run invoke docs.docusaurus
+pass; CLI reference generated and optimized static site built
+
+uv run invoke lint
+exit 28 at the inherited pylint baseline; rating 9.94/10 unchanged
+
+uv run pylint infrahub_sync/product_store/store.py infrahub_sync/product_store/standalone.py infrahub_sync/api/v1/_models.py --score=no
+exit 16 only for inherited store.py C0302 too-many-lines; no standalone/API finding
+
+uv run infrahub-sync --help
+uv run infrahub-sync list --directory examples/
+uv run infrahub-sync diff --help
+uv run infrahub-sync sync --help
+uv run infrahub-sync apply --help
+pass; 14 configurations listed and product-cache option present on all owning commands
+```
+
+The integration-backed generate command was not re-run from this worktree because the
+independent live environment is reserved under the investigation lease. Its supplied live
+result (pass, four files) is recorded above; this correction did not contact or alter that
+environment.

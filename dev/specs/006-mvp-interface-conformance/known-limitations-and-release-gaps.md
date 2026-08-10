@@ -16,15 +16,21 @@
 - The default DB-003 production-profile contract uses a PostgreSQL-paramstyle emulator and
   deterministic S3-compatible client. Live PostgreSQL/S3 evidence is recorded separately
   when isolated Docker services and temporary client dependencies are available.
-- The shipped NetBox-to-Infrahub example requires a fresh Infrahub instance, matching
-  schema library, current public NetBox demo token/data, and `pynetbox`. Missing any one is
-  an external qualification precondition, not authority to add a new adapter or release
-  capability.
+- Independent live review generated the shipped NetBox-to-Infrahub example successfully.
+  The integration suite passed 7 tests with 1 skip in 76.54 seconds only after an
+  uncommitted public-demo device re-pin. The bounded DB-006 product-cache cycle passed
+  against real extraction and destination writes. The unbounded shipped example remains
+  unqualified because of pre-existing live-data and adapter hazards; neither the stale pin
+  nor those hazards is part of this correction.
 - Running-service evidence is bounded to available, isolated services. No existing
-  container, cache, Prefect deployment, destination, or external service is mutated.
+  container, cache, Prefect deployment, destination, or external service is mutated by
+  this correction. The independent live environment remains under an authorized
+  investigation lease and has not yet been torn down.
 - The oracle proves complete ProductRun/artifact equality for the plan envelope and the
   executed CLI/Python/actor-free-managed-worker plan, apply, and sync envelopes, including
-  actual returned counts/outcomes/operations and measured destination effects. Python and
+  actual returned counts/outcomes/operations and in-memory routing/boundary effects. The
+  probe is fed by a stubbed core and does not prove real adapter writes; the bounded live
+  cycle is the real-write evidence. Python and
   managed independent verify compare only their returned common fields plus durable
   verification evidence because the managed verify result has no action-count summary.
   Existing managed failure, cancellation, missing-detail, restart, and idempotency suites

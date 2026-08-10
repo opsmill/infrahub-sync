@@ -25,6 +25,7 @@ from infrahub_sync.plan.models import ApplyRecord, PlanManifest
 from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.product_store.standalone import StandaloneProductRecordError, execute_standalone
+from infrahub_sync.product_store.store import FileArtifactStore, SQLiteRunStore
 
 
 def _saved(run_id: str) -> SavedPlan:
@@ -392,6 +393,42 @@ destination:
     assert record.phase == "planned"
 
 
+def test_cli_plan_refuses_an_unresolvable_product_cache_user_without_a_traceback(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config_root = tmp_path / "configs"
+    sync_root = config_root / "inventory"
+    sync_root.mkdir(parents=True)
+    (sync_root / "config.yml").write_text(
+        """name: inventory
+source:
+  name: source
+destination:
+  name: destination
+""",
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"):
+        invocation = CliRunner().invoke(
+            app,
+            [
+                "diff",
+                "--name",
+                "inventory",
+                "--directory",
+                str(config_root),
+                "--product-cache-location",
+                "~db006-user-that-cannot-exist/product-cache",
+            ],
+        )
+
+    assert invocation.exit_code == 1
+    assert "unresolvable user home" in caplog.text
+    assert "Traceback" not in invocation.output
+
+
 def test_cli_review_renders_a_configured_product_record_refusal_without_a_traceback(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -545,6 +582,7 @@ def test_configured_cli_sync_publishes_review_before_any_destination_write(
     tmp_path: Path,
     parallel: bool,  # noqa: FBT001
 ) -> None:
+    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str((tmp_path / "run-cache").resolve()))
     run_id = f"run-prewrite-{'parallel' if parallel else 'serial'}"
     product_cache = (tmp_path / "products").resolve()
     projection = local_product_projection(product_cache)
@@ -662,3 +700,62 @@ def test_configured_sync_publication_failure_refuses_before_destination_write(
         )
 
     assert writes == []
+
+
+def test_configured_sync_mid_publication_failure_is_terminal_and_artifact_stays_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id = "run-mid-publication-failure"
+    cache = (tmp_path / "products").resolve()
+    saved = _saved(run_id)
+    writes: list[str] = []
+
+    def core(_instance: object, *, operation: str, **kwargs: object) -> RunResult:
+        assert operation == "sync"
+        callback = cast("Callable[[], None]", kwargs["_plan_committed"])
+        callback()
+        writes.append("destination-write")
+        return RunResult(
+            sync_name="inventory",
+            operation="sync",
+            run_id=run_id,
+            status="no-change",
+            changed=False,
+            summary={"create": 0, "update": 0, "delete": 0},
+            artifact_path=str(tmp_path / run_id),
+        )
+
+    def fail_after_reservation(_self: FileArtifactStore, _reference: object, _data: bytes) -> None:
+        stored = SQLiteRunStore(cache / "product-records.sqlite3").lookup_artifact_reference(
+            run_id,
+            "plan-review",
+        )
+        assert stored.value is not None
+        _reserved, published = stored.value
+        assert published is False
+        message = "injected failure after artifact reservation"
+        raise OSError(message)
+
+    monkeypatch.setattr("infrahub_sync.product_store.standalone.read_saved_plan", lambda **_kwargs: saved)
+    monkeypatch.setattr(FileArtifactStore, "publish", fail_after_reservation)
+
+    with pytest.raises(OSError, match="failure after artifact reservation"):
+        execute_standalone(
+            _instance(tmp_path),
+            operation="sync",
+            run_id=run_id,
+            confirm_writes=True,
+            product_cache_location=cache,
+            _core_executor=core,
+        )
+
+    assert writes == []
+    restarted = local_product_projection(cache)
+    record = restarted.lookup_run(run_id).value
+    assert record is not None
+    assert record.phase == "sync-failed"
+    assert record.outcome == "failed"
+    assert record.finished_at is not None
+    assert record.results["sync_failure"]["error_type"] == "OSError"
+    assert restarted.lookup_artifact(run_id, "plan-review").reason == "artifact-publication-incomplete"

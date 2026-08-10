@@ -809,6 +809,19 @@ def test_interrupted_publication_can_resume_and_finish_the_run(profile: str, tmp
     assert projection.lookup_artifact("run-001", "plan").reason == "artifact-publication-incomplete"
     with pytest.raises(ArtifactUnavailableError, match="incomplete artifact publication"):
         projection.finish_run("run-001", phase="planned", outcome="succeeded", summary={}, results={})
+    projection.finish_run(
+        "run-001",
+        phase="plan-failed",
+        outcome="failed",
+        summary={"failed_stage": "plan"},
+        results={"plan_failure": {"outcome": "failed"}},
+    )
+    failed = projection.lookup_run("run-001").value
+    assert failed is not None
+    assert failed.phase == "plan-failed"
+    assert failed.outcome == "failed"
+    assert failed.finished_at is not None
+    assert projection.lookup_artifact("run-001", "plan").reason == "artifact-publication-incomplete"
     if profile == "production":
         assert not [key for (_, key) in fake_s3.objects if key.endswith("manifest.json")]
     else:
