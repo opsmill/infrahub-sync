@@ -238,6 +238,7 @@ class _RecordingEngine:
         self.destination = destination
         self.apply_calls = 0
         self.artifacts: list[object] = []
+        self.last_applied_plan_action_counts = {"create": 1, "update": 2, "delete": 3}
 
     def apply_plan(
         self,
@@ -305,6 +306,12 @@ def test_a_matching_destination_applies_without_ceremony(tmp_path: Path) -> None
     assert engine.artifacts[0] is not None, (
         "the binding was compared against a read the engine never received, so the two could diverge"
     )
+
+
+def test_plan_applier_reads_action_counts_through_the_public_engine_accessor(tmp_path: Path) -> None:
+    applier, _engine = _applier(tmp_path, _BoundDestination(RECORDED_URL))
+
+    assert applier.applied_plan_action_counts == {"create": 1, "update": 2, "delete": 3}
 
 
 def test_a_plan_without_the_field_applies_against_any_destination(tmp_path: Path) -> None:

@@ -24,6 +24,7 @@ import stat
 import subprocess  # noqa: S404 — an exited producer is the point: FR-007 measures reading after it is gone
 import sys
 import time
+import traceback
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,7 @@ from typer.testing import CliRunner
 from infrahub_sync.cache.locks import pipeline_lock
 from infrahub_sync.cache.parquet_io import write_resource_side
 from infrahub_sync.cli import app
+from infrahub_sync.execution import execute_run
 from infrahub_sync.plan.checksum import source_snapshot_records
 from infrahub_sync.plan.config_version import default_config_version
 from infrahub_sync.plan.errors import (
@@ -1007,7 +1009,7 @@ def test_the_review_path_never_takes_the_pipeline_lock(tmp_path: Path) -> None:
         taken.append(sync_name)
         return pipeline_lock(sync_name, **kwargs)
 
-    with patch("infrahub_sync.cli.pipeline_lock", _record):
+    with patch("infrahub_sync.execution.pipeline_lock", _record):
         result = _review("--from-plan", RUN_ID)
 
     assert result.exit_code == 0, result.output
@@ -1402,10 +1404,23 @@ class DefectiveDestination(RecordingDestination):
     `client.schema.get` returns something other than a `NodeSchemaAPI`.
     """
 
+    def __init__(self, message: str = "a code defect, not a destination refusal") -> None:
+        super().__init__()
+        self.message = message
+
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
         if self.writes:
-            msg = "a code defect, not a destination refusal"
-            raise AssertionError(msg)
+            raise AssertionError(self.message)
+        return super().apply_planned_operation(operation=operation, peers=peers)
+
+
+class ValueErrorDestination(RecordingDestination):
+    """A destination whose second write exposes an unexpected SDK-shape defect."""
+
+    def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
+        if self.writes:
+            msg = "SDK shape defect mid-apply, after one write landed"
+            raise ValueError(msg)
         return super().apply_planned_operation(operation=operation, peers=peers)
 
 
@@ -1782,6 +1797,7 @@ def test_a_missing_run_refuses_naming_the_runs_that_exist_and_creates_no_directo
     assert "'20260101T0000-deadbeef'" in message
     assert RUN_ID in message
     assert "Next action:" in message
+    assert message.count("Next action:") == 1
     assert _tree(_cache_root(tmp_path)) == before
 
 
@@ -2049,24 +2065,50 @@ def test_an_interrupt_mid_apply_records_failed_and_the_partial_applied_set(tmp_p
     assert recorded["summary"]["skipped_delete_count"] == 0
 
 
-def test_a_code_defect_escapes_the_command_unchanged_while_the_run_records_what_was_written(
+def test_a_code_defect_escapes_as_a_sanitized_wrapper_while_the_run_records_what_was_written(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """On the CLI path: the defect keeps its traceback, the run keeps the record."""
-    _appliable_run(tmp_path)
-    destination = DefectiveDestination()
+    """The defect shape and partial record survive, but its config secret cannot render."""
+    sentinel = "db004-apply-config-secret-sentinel"
+    sync_instance = get_instance(name=SYNC_NAME, directory=str(EXAMPLES_DIR))
+    assert sync_instance is not None
+    sync_instance = sync_instance.model_copy(deep=True)
+    assert sync_instance.destination.settings is not None
+    sync_instance.destination.settings["api_token"] = sentinel
+    _appliable_run(tmp_path, config_version=default_config_version(sync_instance))
+    destination = DefectiveDestination(f"a code defect, not a destination refusal: {sentinel}")
 
-    with caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"):
+    with (
+        patch("infrahub_sync.cli.get_instance", return_value=sync_instance),
+        caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"),
+    ):
         result = _run_apply(destination)
 
     assert result.exit_code != 0
-    assert isinstance(result.exception, AssertionError), (
-        f"the defect must escape as itself, not as a taxonomy refusal; got {result.exception!r}"
-    )
+    assert isinstance(result.exception, RuntimeError)
+    assert "AssertionError" in str(result.exception)
     reported = _operator_errors(caplog)
     assert "defect rather than a destination refusal" in reported, (
         "the operator has to be told the destination is not the thing to repair"
     )
+    assert "***" in reported
+    assert sentinel not in reported
+    assert sentinel not in result.output
+    assert result.exception is not None
+    assert isinstance(result.exception.__cause__, RuntimeError)
+    assert "AssertionError" in str(result.exception.__cause__)
+    rendered = "".join(traceback.format_exception(result.exception))
+    assert sentinel not in rendered
+    assert "apply_planned_operation" in rendered
+    raised_chain: list[BaseException] = [result.exception]
+    index = 0
+    while index < len(raised_chain):
+        error = raised_chain[index]
+        for linked in (error.__cause__, error.__context__):
+            if linked is not None and linked not in raised_chain:
+                raised_chain.append(linked)
+        index += 1
+    assert all(sentinel not in str(error) for error in raised_chain)
     assert OperationApplyFailedError.next_action not in reported, "and must not be given the refusal's remedy"
 
     first_id = str(APPLY_PLAN[0]["operation_id"])
@@ -2076,6 +2118,118 @@ def test_a_code_defect_escapes_the_command_unchanged_while_the_run_records_what_
     assert recorded["summary"]["applied_operations"] == [first_id]
     assert recorded["summary"]["failed_operation"] == str(APPLY_PLAN[1]["operation_id"])
     assert recorded["summary"]["may_have_partially_written"] is True
+
+
+def test_a_mid_apply_value_error_is_reported_as_a_defect_with_its_partial_write(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A ValueError after a write is not mislabeled as applier construction failure."""
+    _appliable_run(tmp_path)
+    destination = ValueErrorDestination()
+
+    with caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"):
+        result = _run_apply(destination)
+
+    assert result.exit_code != 0
+    assert isinstance(result.exception, RuntimeError)
+    assert "ValueError" in str(result.exception)
+    assert destination.writes == [str(APPLY_PLAN[0]["operation_id"])]
+    reported = _operator_errors(caplog)
+    assert "defect rather than a destination refusal" in reported
+    assert "Failed to initialize the destination for the apply" not in reported
+    assert "may have written part of its change" in reported
+    assert _run_json(tmp_path)["summary"]["may_have_partially_written"] is True
+
+
+def test_apply_does_not_reread_the_plan_after_successful_destination_writes(tmp_path: Path) -> None:
+    """A CLI apply remains successful even if a now-unneeded post-apply reader would fail."""
+    _appliable_run(tmp_path)
+    destination = RecordingDestination()
+
+    with patch(
+        "infrahub_sync.execution.read_saved_plan",
+        side_effect=PlanArtifactUnreadableError("post-apply reread must not happen"),
+    ):
+        result = _run_apply(destination)
+
+    assert result.exit_code == 0, result.output
+    assert len(destination.writes) == len(APPLY_PLAN)
+    assert _run_json(tmp_path)["status"] == "applied"
+
+
+def test_apply_result_counts_come_from_the_artifact_consumed_before_destination_writes(tmp_path: Path) -> None:
+    """The core returns correct counts without a failure point after completed writes."""
+    _appliable_run(tmp_path)
+    destination = RecordingDestination()
+    sync_instance = get_instance(name=SYNC_NAME, directory=str(EXAMPLES_DIR))
+    assert sync_instance is not None
+
+    with patch(
+        "infrahub_sync.execution.read_saved_plan",
+        side_effect=PlanArtifactUnreadableError("post-apply reread must not happen"),
+    ):
+        result = execute_run(
+            sync_instance,
+            operation="apply",
+            confirm_writes=True,
+            run_id=RUN_ID,
+            _plan_applier_factory=_patched_open_existing(destination),
+        )
+
+    assert result.summary == {"create": 1, "update": 1, "delete": 0}
+    assert destination.writes == [str(operation["operation_id"]) for operation in APPLY_PLAN]
+
+
+def test_apply_factory_refusal_redacts_resolved_configuration_credentials(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Inline destination credentials cannot leak from the construction-only apply seam."""
+    sentinel = "db004-apply-factory-config-secret"
+    sync_instance = get_instance(name=SYNC_NAME, directory=str(EXAMPLES_DIR))
+    assert sync_instance is not None
+    sync_instance = sync_instance.model_copy(deep=True)
+    assert sync_instance.destination.settings is not None
+    sync_instance.destination.settings["api_token"] = sentinel
+    _appliable_run(tmp_path, config_version=default_config_version(sync_instance))
+
+    with (
+        patch("infrahub_sync.cli.get_instance", return_value=sync_instance),
+        patch("infrahub_sync.cli.PlanApplier.open_existing", side_effect=ValueError(f"adapter rejected {sentinel}")),
+        caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"),
+    ):
+        result = _apply(RUN_ID)
+
+    assert result.exit_code == 1
+    reported = _operator_errors(caplog)
+    assert sentinel not in reported
+    assert "***" in reported
+    assert "defect rather than a destination refusal" not in reported
+
+
+def test_apply_plan_refusal_redacts_resolved_configuration_credentials(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Designed apply refusals use the resolved instance's redaction values."""
+    sentinel = "db004-apply-refusal-config-secret"
+    sync_instance = get_instance(name=SYNC_NAME, directory=str(EXAMPLES_DIR))
+    assert sync_instance is not None
+    sync_instance = sync_instance.model_copy(deep=True)
+    assert sync_instance.destination.settings is not None
+    sync_instance.destination.settings["api_token"] = sentinel
+    _appliable_run(tmp_path, config_version=default_config_version(sync_instance))
+    refusal = PlanVerificationError(f"plan refused credential {sentinel}")
+
+    with (
+        patch("infrahub_sync.cli.get_instance", return_value=sync_instance),
+        patch("infrahub_sync.cli.execute_run", side_effect=refusal),
+        caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"),
+    ):
+        result = _apply(RUN_ID)
+
+    assert result.exit_code == 1
+    reported = _operator_errors(caplog)
+    assert sentinel not in reported
+    assert "***" in reported
 
 
 # ======================================================================================
@@ -2134,7 +2288,7 @@ def test_a_generation_committed_while_the_diff_waited_for_the_lock_is_left_intac
     committed: dict[Path, bytes] = {}
 
     @contextmanager
-    def _commit_while_waiting(name: str) -> Iterator[None]:
+    def _commit_while_waiting(name: str, **_kwargs: object) -> Iterator[None]:
         with pipeline_lock(name):
             directory = _appliable_run(tmp_path)
             committed.update(
@@ -2145,7 +2299,7 @@ def test_a_generation_committed_while_the_diff_waited_for_the_lock_is_left_intac
 
     with (
         caplog.at_level(logging.ERROR, logger="infrahub_sync.cli"),
-        patch("infrahub_sync.cli.pipeline_lock", _commit_while_waiting),
+        patch("infrahub_sync.execution.pipeline_lock", _commit_while_waiting),
     ):
         result = _diff_into(RUN_ID)
 
@@ -2325,6 +2479,7 @@ def test_an_apply_naming_another_generations_checksum_refuses_before_the_destina
     assert approved in message
     assert _stored_checksum(tmp_path) in message
     assert "Next action:" in message
+    assert message.count("Next action:") == 1
     assert not (_cache_root(tmp_path) / RUN_ID / "run.json").exists()
 
 

@@ -56,6 +56,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'reference/config',
         'reference/schema-mapping',
+        'reference/python-api',
         'reference/cli',
         'reference/incremental-extraction',
         'reference/prefect-remote-run',

@@ -16,19 +16,22 @@ import logging
 import os
 import subprocess  # noqa: S404 — patched, never invoked; the spy proves no subprocess starts
 import traceback
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, NoReturn
+from timeit import default_timer as timer
+from typing import Any, Literal, NoReturn
 
 import pytest
 import yaml
 from filelock import Timeout
 
-from infrahub_sync import SyncAdapter, SyncInstance, SyncStore
+from infrahub_sync import SyncAdapter, SyncInstance, SyncStore, execution
 from infrahub_sync.cache.locks import pipeline_lock
 from infrahub_sync.cache.parquet_io import write_plan
 from infrahub_sync.cache.sidecars import RunFile
 from infrahub_sync.execution import (
     REDACTED,
+    RunConcurrencyError,
     RunExecutionError,
     RunResult,
     RunValidationError,
@@ -158,6 +161,7 @@ class _FakePotenda:
         self.run_dir = run_dir
         self.run_id = run_dir.name
         self.top_level = ["InfraDevice"]
+        self.tiers: list[set[str]] | None = None
         self.force_full_extract = False
         self.factory_kwargs = factory_kwargs
         self.rows = rows
@@ -195,6 +199,13 @@ class _FakePotenda:
 
     def persist_baseline_counts(self) -> None:
         self.baseline_persisted = True
+
+    def sync_in_tiers(self, *, parallel: bool, allow_rowcount_drop: bool) -> dict[str, int]:
+        assert parallel is True
+        self.guardrail_allow_drop = allow_rowcount_drop
+        self.synced = bool(self.rows)
+        self.baseline_persisted = True
+        return {action: sum(row["action"] == action for row in self.rows) for action in ("create", "update", "delete")}
 
 
 class _SpyFactory:
@@ -1133,11 +1144,11 @@ def test_unconfirmed_sync_is_refused_through_the_remote_composition(config_dir: 
     assert factory.calls == []
 
 
-def test_unknown_operation_is_refused(config_dir: str, cache_root: Path) -> None:
+def test_unconfirmed_apply_is_refused(config_dir: str, cache_root: Path) -> None:
     instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
     factory = _SpyFactory(cache_root=cache_root)
     with pytest.raises(RunValidationError):
-        execute_run(instance, operation="apply", potenda_factory=factory)  # ty: ignore[invalid-argument-type]
+        execute_run(instance, operation="apply", potenda_factory=factory)
     assert factory.calls == []
 
 
@@ -1146,12 +1157,58 @@ def test_unknown_operation_is_refused(config_dir: str, cache_root: Path) -> None
 # --------------------------------------------------------------------------- #
 
 
-def test_execute_run_lets_lock_timeout_propagate_unchanged(config_dir: str, cache_root: Path) -> None:
+def test_execute_run_reports_advisory_sidecar_and_raises_a_bounded_typed_refusal(
+    config_dir: str,
+    cache_root: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
     factory = _SpyFactory(cache_root=cache_root)
-    with pipeline_lock(SYNC_NAME, timeout=5), pytest.raises(Timeout):
-        execute_run(instance, operation="plan", potenda_factory=factory, _lock_timeout=0.2)
+    holder = "20260808T1200-holder01"
+    RunFile(path=cache_root / holder / "run.json", status="running", mode="sync").save()
+    started = timer()
+    with (
+        pipeline_lock(SYNC_NAME, timeout=5),
+        caplog.at_level(logging.WARNING, logger="infrahub_sync.execution"),
+        pytest.raises(RunConcurrencyError) as excinfo,
+    ):
+        execute_run(instance, operation="plan", potenda_factory=factory, _lock_timeout=0.05)
+    elapsed = timer() - started
+
+    assert elapsed < 1.0
+    assert holder in caplog.text
+    assert "waiting up to 0.05 seconds" in caplog.text
+    assert holder in str(excinfo.value)
+    assert "may be stale" in str(excinfo.value)
+    assert "holds it" not in str(excinfo.value)
+    assert "within 0.05 seconds" in str(excinfo.value)
     assert factory.calls == []
+
+
+def test_execute_run_logs_the_latest_running_sidecar_before_starting_its_bounded_wait(
+    config_dir: str,
+    cache_root: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    holder = "20260808T1201-holder02"
+    RunFile(path=cache_root / holder / "run.json", status="running", mode="sync").save()
+    timeouts: list[float] = []
+
+    @contextmanager
+    def contended_lock(_sync_name: str, *, timeout: float) -> Any:  # noqa: ANN401
+        timeouts.append(timeout)
+        if timeout != 0:
+            assert holder in caplog.text
+        raise Timeout(str(cache_root / ".lock"))
+        yield  # pragma: no cover - keeps this a context manager
+
+    monkeypatch.setattr("infrahub_sync.execution.pipeline_lock", contended_lock)
+    with caplog.at_level(logging.WARNING, logger="infrahub_sync.execution"), pytest.raises(RunConcurrencyError):
+        execute_run(instance, operation="plan", _lock_timeout=0.25)
+
+    assert timeouts == [0, 0.25]
 
 
 def test_run_remote_request_wraps_lock_timeout(config_dir: str, cache_root: Path) -> None:
@@ -1513,6 +1570,23 @@ def test_plan_legacy_writer_summary_falls_back_to_diff_rows(
     assert factory.engine.diff_rows_materialized == 1
 
 
+@pytest.mark.parametrize("print_diff", [True, False])
+def test_plan_honors_diff_log_suppression(
+    config_dir: str,
+    cache_root: Path,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    print_diff: bool,
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root, rows=[_plan_row("create", "core01")])
+
+    with caplog.at_level(logging.INFO, logger="infrahub_sync.execution"):
+        execute_run(instance, operation="plan", print_diff=print_diff, potenda_factory=factory)
+
+    assert ("fake-diff(1 rows)" in caplog.text) is print_diff
+
+
 @pytest.mark.parametrize(
     ("write_result", "message"),
     [
@@ -1564,10 +1638,22 @@ def test_plan_through_the_remote_composition_returns_a_result(config_dir: str, c
     assert Path(result.artifact_path).name == result.run_id
 
 
-def test_lifecycle_failure_marks_run_json_failed_and_reraises(config_dir: str, cache_root: Path) -> None:
+def test_lifecycle_failure_marks_run_json_failed_and_reraises(
+    config_dir: str,
+    cache_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The preserved CLI pattern: run.json is never left at status='running'."""
     instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
     factory = _SpyFactory(cache_root=cache_root)
+    saved_statuses: list[str] = []
+    real_save = RunFile.save
+
+    def recording_save(run_file: RunFile) -> None:
+        saved_statuses.append(run_file.status)
+        real_save(run_file)
+
+    monkeypatch.setattr(RunFile, "save", recording_save)
 
     def exploding_load() -> None:
         msg = "diff engine unavailable"
@@ -1584,6 +1670,200 @@ def test_lifecycle_failure_marks_run_json_failed_and_reraises(config_dir: str, c
         execute_run(instance, operation="plan", potenda_factory=patched)
 
     assert RunFile.load_or_default(cache_root / RUN_ID / "run.json").status == "failed"
+    assert saved_statuses == ["running", "failed"]
+
+
+def test_failure_sidecar_save_errors_never_replace_the_lifecycle_exception(
+    config_dir: str,
+    cache_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root)
+    real_save = RunFile.save
+
+    def fail_only_failure_saves(run_file: RunFile) -> None:
+        if run_file.status == "failed":
+            msg = "failure sidecar storage unavailable"
+            raise OSError(msg)
+        real_save(run_file)
+
+    monkeypatch.setattr(RunFile, "save", fail_only_failure_saves)
+
+    original_error = RuntimeError("original extraction failure")
+
+    def exploding_load() -> None:
+        raise original_error
+
+    original_call = factory.__call__
+
+    def patched(**kwargs: object) -> Any:  # noqa: ANN401 - a fake engine, not a real Potenda
+        engine = original_call(**kwargs)
+        engine.load_both_sides = exploding_load
+        return engine
+
+    with (
+        caplog.at_level(logging.WARNING, logger="infrahub_sync.execution"),
+        pytest.raises(RuntimeError, match="original extraction failure") as caught,
+    ):
+        execute_run(instance, operation="plan", potenda_factory=patched)
+    assert caught.value is original_error
+    assert "Unable to persist failed run state after two attempts (OSError)" in caplog.text
+    assert "failure sidecar storage unavailable" not in caplog.text
+
+
+def test_failed_transition_uses_the_in_memory_summary_when_disk_is_corrupt(
+    config_dir: str,
+    cache_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root, rows=[_plan_row("create", "core01")])
+
+    def corrupt_then_refuse(**_kwargs: object) -> NoReturn:
+        (cache_root / RUN_ID / "run.json").write_text("not-json", encoding="utf-8")
+        msg = "saved plan could not be reconstructed"
+        raise OSError(msg)
+
+    monkeypatch.setattr(execution, "read_saved_plan", corrupt_then_refuse)
+
+    with pytest.raises(OSError, match="could not be reconstructed"):
+        execute_run(
+            instance,
+            operation="plan",
+            potenda_factory=factory,
+            _return_saved_plan=True,
+        )
+
+    run_file = RunFile.load_or_default(cache_root / RUN_ID / "run.json")
+    assert run_file.status == "failed"
+    assert run_file.summary == {"resources": 1}
+
+
+def test_public_plan_result_construction_failure_is_terminal(
+    config_dir: str,
+    cache_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root, rows=[_plan_row("create", "core01")])
+
+    def refuse_saved_plan(**_kwargs: object) -> NoReturn:
+        msg = "saved plan could not be reconstructed"
+        raise OSError(msg)
+
+    monkeypatch.setattr(execution, "read_saved_plan", refuse_saved_plan)
+
+    with pytest.raises(OSError, match="could not be reconstructed"):
+        execute_run(
+            instance,
+            operation="plan",
+            potenda_factory=factory,
+            _return_saved_plan=True,
+        )
+
+    run_file = RunFile.load_or_default(cache_root / RUN_ID / "run.json")
+    assert (run_file.mode, run_file.status) == ("diff", "failed")
+
+
+@pytest.mark.parametrize(
+    ("run_file_mode", "expected_mode"),
+    [
+        pytest.param(None, "diff", id="public-plan"),
+        pytest.param("sync", "sync", id="composed-sync-plan-stage"),
+    ],
+)
+def test_plan_final_sidecar_save_failure_is_terminal(
+    config_dir: str,
+    cache_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    run_file_mode: Literal["sync"] | None,
+    expected_mode: Literal["diff", "sync"],
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root, rows=[_plan_row("create", "core01")])
+    attempted_statuses: list[str] = []
+    failed_final_save = False
+    real_save = RunFile.save
+
+    def fail_final_save_once(run_file: RunFile) -> None:
+        nonlocal failed_final_save
+        attempted_statuses.append(run_file.status)
+        if run_file.finished_at is not None and not failed_final_save:
+            failed_final_save = True
+            msg = "final run sidecar save failed"
+            raise OSError(msg)
+        real_save(run_file)
+
+    monkeypatch.setattr(RunFile, "save", fail_final_save_once)
+
+    with pytest.raises(OSError, match="final run sidecar save failed"):
+        execute_run(
+            instance,
+            operation="plan",
+            potenda_factory=factory,
+            _run_file_mode=run_file_mode,
+        )
+
+    run_file = RunFile.load_or_default(cache_root / RUN_ID / "run.json")
+    assert (run_file.mode, run_file.status) == (expected_mode, "failed")
+    assert run_file.finished_at is not None
+    assert attempted_statuses == ["running", "dry-run", "failed"]
+
+
+def test_composed_sync_plan_failure_records_sync_mode(config_dir: str, cache_root: Path) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root)
+
+    def exploding_load() -> None:
+        msg = "source extraction failed"
+        raise RuntimeError(msg)
+
+    original_call = factory.__call__
+
+    def patched(**kwargs: object) -> Any:  # noqa: ANN401 - a fake engine, not a real Potenda
+        engine = original_call(**kwargs)
+        engine.load_both_sides = exploding_load
+        return engine
+
+    with pytest.raises(RuntimeError, match="source extraction failed"):
+        execute_run(
+            instance,
+            operation="plan",
+            potenda_factory=patched,
+            _run_file_mode="sync",
+        )
+
+    run_file = RunFile.load_or_default(cache_root / RUN_ID / "run.json")
+    assert (run_file.mode, run_file.status) == ("sync", "failed")
+
+
+def test_composed_operation_skips_nested_core_lock(
+    config_dir: str,
+    cache_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root, rows=[_plan_row("create", "core01")])
+
+    @contextmanager
+    def nested_lock_is_forbidden(*_args: object, **_kwargs: object) -> Any:  # noqa: ANN401
+        pytest.fail("a composed operation reacquired the already-held pipeline lock")
+        yield
+
+    monkeypatch.setattr(execution, "_run_lock", nested_lock_is_forbidden)
+
+    result = execute_run(
+        instance,
+        operation="plan",
+        potenda_factory=factory,
+        _lock_already_held=True,
+        _run_file_mode="sync",
+    )
+
+    assert result.status == "planned"
+    assert RunFile.load_or_default(cache_root / RUN_ID / "run.json").mode == "sync"
 
 
 # --------------------------------------------------------------------------- #
@@ -1648,6 +1928,34 @@ def test_confirmed_sync_summary_counts_every_action(config_dir: str, cache_root:
 
     assert result.status == "applied"
     assert dict(result.summary) == {"create": 2, "update": 1, "delete": 1}
+
+
+def test_confirmed_parallel_sync_returns_its_aggregated_plan_counts(config_dir: str, cache_root: Path) -> None:
+    """A tier-parallel write reports the materialized plan instead of no-change."""
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    rows = [_plan_row("create", "core01"), _plan_row("update", "edge01"), _plan_row("delete", "edge02")]
+    factory = _SpyFactory(cache_root=cache_root, rows=rows)
+
+    def parallel_factory(**kwargs: object) -> Any:  # noqa: ANN401
+        engine = factory(**kwargs)
+        engine.tiers = [{"InfraDevice"}]
+        return engine
+
+    result = execute_run(
+        instance,
+        operation="sync",
+        confirm_writes=True,
+        parallel=True,
+        potenda_factory=parallel_factory,
+    )
+
+    assert result.status == "applied"
+    assert result.changed is True
+    assert dict(result.summary) == {"create": 1, "update": 1, "delete": 1}
+    assert RunFile.load_or_default(cache_root / RUN_ID / "run.json").summary == {
+        "resources": 1,
+        "mode": "parallel",
+    }
 
 
 def test_confirmed_sync_rejects_a_malformed_writer_summary_before_writing(

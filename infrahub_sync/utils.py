@@ -329,6 +329,15 @@ class PlanApplier:
         self.run_dir = run_dir
         self.run_id = run_id
 
+    @property
+    def applied_plan_action_counts(self) -> dict[str, int]:
+        """Return counts parsed from the in-memory artifact just applied."""
+        counts = self.engine.last_applied_plan_action_counts
+        if counts is None:
+            msg = "PlanApplier completed without retaining action counts from the applied artifact."
+            raise RuntimeError(msg)
+        return counts
+
     @classmethod
     def open_existing(
         cls,
@@ -391,11 +400,11 @@ class PlanApplier:
     ) -> ApplyRecord:
         """Apply the stored plan — the engine's contract, unchanged; writes no run file (AD069).
 
-        **This seam performs the apply's one read.** The artifact is read here and handed to
-        both the destination-binding precheck below and the engine, so the bytes the binding
-        was compared against, the bytes verified, and the bytes applied are the same bytes —
-        a plan swapped under the run between two reads cannot be applied by an apply that
-        checked the other copy (DBR-006).
+        This seam performs the apply's one read. The same object reaches the
+        destination-binding precheck and the engine, so the bytes the binding was compared
+        against, the bytes verified, and the bytes applied are the same bytes — a plan swapped
+        under the run between two reads cannot be applied by an apply that checked the other
+        copy (DBR-006).
 
         The binding precheck compares the manifest's recorded destination against the live
         adapter's and refuses on a mismatch; `allow_destination_change` turns that refusal into

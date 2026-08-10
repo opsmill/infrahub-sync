@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import textwrap
 from collections.abc import Mapping
-from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
@@ -11,29 +10,23 @@ import typer
 from infrahub_sdk import InfrahubClientSync
 from infrahub_sdk.exceptions import ServerNotResponsiveError
 
-from infrahub_sync.cache.locks import pipeline_lock
-from infrahub_sync.cache.sidecars import RunFile
-from infrahub_sync.execution import execute_run
+from infrahub_sync.execution import (
+    RunConcurrencyError,
+    collect_secret_values,
+    execute_run,
+    redact,
+    sanitize_exception_chain,
+)
 
 # Imported at module level rather than deferred: `infrahub_sync.utils` below already pulls
 # the engine, which pulls this package, so deferring these would buy no import time and only
 # hide where the command's behavior comes from.
 from infrahub_sync.plan.errors import (
-    ApplyRecordInvariantError,
-    OperationApplyFailedError,
     PlanArtifactError,
     PlanGenerationExistsError,
     UnknownPlanKindError,
+    UnsafeRunIdentifierError,
 )
-from infrahub_sync.plan.models import ApplyRecord
-from infrahub_sync.plan.reader import read_plan_artifact_bytes, require_plan_directory
-from infrahub_sync.plan.review import (
-    expected_checksum_refusal,
-    read_saved_plan,
-    require_stored_run,
-    resolve_run_directory,
-)
-from infrahub_sync.plan.writer import require_uncommitted_plan
 from infrahub_sync.utils import (
     PlanApplier,
     find_missing_schema_model,
@@ -46,7 +39,6 @@ from infrahub_sync.utils import (
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
-    from pathlib import Path
 
     from infrahub_sdk.schema import GenericSchema, NodeSchema
 
@@ -98,8 +90,9 @@ def main(
         typer.echo(ctx.get_help())
 
 
-def print_error_and_abort(message: str) -> NoReturn:
-    logger.error("%s", message)
+def print_error_and_abort(message: str, sync_instance: SyncInstance | None = None) -> NoReturn:
+    """Log one operator-facing refusal after redacting resolved credentials."""
+    logger.error("%s", redact(message, collect_secret_values(sync_instance)))
     raise typer.Abort
 
 
@@ -399,7 +392,7 @@ def _review_saved_plan(
             run_id,
         )
     try:
-        plan = read_saved_plan(sync_name=sync_instance.name, run_id=run_id, config=sync_instance)
+        plan = execute_run(sync_instance, operation="verify", run_id=run_id)
         summary = plan.summary()
         records = _select_review_records(plan, run_id=run_id, kind=kind) if detail else []
     except PlanArtifactError as exc:
@@ -410,27 +403,6 @@ def _review_saved_plan(
         _echo_plan_detail(summary, records)
     else:
         _echo_plan_summary(summary)
-
-
-def _require_a_free_run_id(*, sync_name: str, run_id: str | None) -> None:
-    """Refuse re-planning into a run id that is unusable, or whose plan generation is committed.
-
-    Here as well as in the writer, because extraction rewrites the run's `A/` snapshots that the
-    committed plan's manifest binds itself to: a re-plan reaching only the writer's refusal would
-    already have invalidated the plan it was refused for.
-
-    Both verdicts come from the functions the review and apply paths reach, so `diff --run-id`
-    refuses an identifier carrying `/` or `..` with the designed refusal those commands give it,
-    rather than letting the layout guard's `ValueError` surface later as a mislabelled
-    initialization failure.
-    """
-    if run_id is None:
-        return
-    try:
-        directory = resolve_run_directory(sync_name, run_id)
-        require_uncommitted_plan(directory, run_id=run_id)
-    except PlanArtifactError as exc:
-        print_error_and_abort(str(exc))
 
 
 def _cli_potenda_factory(**kwargs: Any) -> Potenda:
@@ -444,7 +416,17 @@ def _cli_potenda_factory(**kwargs: Any) -> Potenda:
     try:
         return get_potenda_from_instance(**kwargs)
     except (ImportError, ValueError) as exc:
-        print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}")
+        sync_instance = cast("SyncInstance", kwargs["sync_instance"])
+        print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}", sync_instance)
+
+
+def _cli_plan_applier_factory(*args: Any, **kwargs: Any) -> PlanApplier:
+    """Construct an applier while retaining the CLI's construction-only refusal."""
+    sync_instance = cast("SyncInstance", args[0] if args else kwargs["sync_instance"])
+    try:
+        return PlanApplier.open_existing(*args, **kwargs)
+    except (ImportError, ValueError) as exc:
+        print_error_and_abort(f"Failed to initialize the destination for the apply: {exc}", sync_instance)
 
 
 @app.command(name="list")
@@ -529,11 +511,6 @@ def diff_cmd(
         )
         return
 
-    # A plan generation is immutable once committed, so `--run-id` naming a run that already holds
-    # one is refused before the lock, the adapters and the extraction that would overwrite the
-    # snapshots that plan is bound to.
-    _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id)
-
     # Add adapter paths from CLI to the sync instance if specified
     if adapter_path is not None:
         if sync_instance.adapters_path:
@@ -543,34 +520,23 @@ def diff_cmd(
 
     verbosity_level = ctx.obj.get("verbosity", logging.INFO) if ctx.obj else logging.INFO
 
-    with pipeline_lock(sync_instance.name):
-        # Asked again under the lock and still before anything is built or extracted: the check
-        # above is a fast path, and a generation committed while this invocation waited for the lock
-        # would otherwise have its snapshots rewritten before the writer refused it. One `stat`.
-        _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id)
-
-        # The lifecycle delegates to the shared execution surface. The CLI keeps
-        # the outer lock solely so the saved-plan immutability guard can be repeated
-        # after a contending process releases it; tell the surface not to reacquire it.
-        try:
-            execute_run(
-                sync_instance,
-                operation="plan",
-                confirm_writes=False,
-                branch=branch,
-                show_progress=show_progress,
-                verbosity=verbosity_level,
-                run_id=run_id,
-                concurrent_load=concurrent_load,
-                full_extract=full_extract,
-                potenda_factory=_cli_potenda_factory,
-                _lock_already_held=True,
-            )
-        except PlanGenerationExistsError as exc:
-            # `execute_run` has already marked run.json failed. Keep the saved-plan
-            # command's narrow one-line refusal for the residual writer-stage race;
-            # every other derivation failure still escapes with its traceback.
-            print_error_and_abort(str(exc))
+    try:
+        execute_run(
+            sync_instance,
+            operation="plan",
+            confirm_writes=False,
+            branch=branch,
+            show_progress=show_progress,
+            verbosity=verbosity_level,
+            run_id=run_id,
+            concurrent_load=concurrent_load,
+            full_extract=full_extract,
+            potenda_factory=_cli_potenda_factory,
+        )
+    except (PlanGenerationExistsError, UnsafeRunIdentifierError, RunConcurrencyError) as exc:
+        # The core marks run.json failed. Keep the saved-plan command's narrow
+        # one-line refusal for the residual writer-stage race.
+        print_error_and_abort(str(exc))
 
 
 @app.command(name="sync")
@@ -634,153 +600,26 @@ def sync_cmd(
 
     verbosity_level = ctx.obj.get("verbosity", logging.INFO) if ctx.obj else logging.INFO
 
-    # The lock stays here: the parallel branch below needs it, and the branch predicate
-    # reads `ptd.tiers`, so the engine must exist before the branch is taken. It is
-    # therefore built EXACTLY ONCE, here — a second construction would allocate a second
-    # run_dir/run_id and re-emit the tier log lines. The serial branch hands this engine
-    # to `execute_run` through a closure and passes `_lock_already_held=True` so the
-    # surface does not try to re-acquire the lock this block already holds.
-    with pipeline_lock(sync_instance.name):
-        ptd = _cli_potenda_factory(
-            sync_instance=sync_instance,
+    try:
+        execute_run(
+            sync_instance,
+            operation="sync",
+            confirm_writes=True,  # the explicit human CLI invocation IS the confirmation
             branch=branch,
             show_progress=show_progress,
             verbosity=verbosity_level,
-            continue_on_error=continue_on_error,
             concurrent_load=concurrent_load,
+            full_extract=full_extract,
+            allow_rowcount_drop=allow_rowcount_drop,
+            continue_on_error=continue_on_error,
+            print_diff=diff,
+            parallel=parallel,
+            potenda_factory=_cli_potenda_factory,
+            _serial_load_error=lambda exc: print_error_and_abort(str(exc), sync_instance),
+            _parallel_sync_error=lambda exc: print_error_and_abort(str(exc), sync_instance),
         )
-
-        ptd.force_full_extract = full_extract
-        if ptd.run_dir is None:  # get_potenda_from_instance always allocates one
-            msg = "get_potenda_from_instance did not allocate a run_dir"
-            raise RuntimeError(msg)
-        run_file = RunFile(path=ptd.run_dir / "run.json", status="running", mode="sync")
-        run_file.save()
-
-        try:
-            if parallel and not ptd.tiers:
-                logger.warning(
-                    "--parallel ignored because order: is set in config.yml; "
-                    "remove order: to enable tier-by-tier execution",
-                )
-
-            if parallel and ptd.tiers:
-                try:
-                    ptd.sync_in_tiers(parallel=True, allow_rowcount_drop=allow_rowcount_drop)
-                except ValueError as exc:
-                    run_file.status = "failed"
-                    run_file.save()
-                    print_error_and_abort(str(exc))
-                run_file.summary = {"resources": len(ptd.top_level), "mode": "parallel"}
-            else:
-                execute_run(
-                    sync_instance,
-                    operation="sync",
-                    confirm_writes=True,  # the explicit human CLI invocation IS the confirmation
-                    branch=branch,
-                    show_progress=show_progress,
-                    verbosity=verbosity_level,
-                    concurrent_load=concurrent_load,
-                    full_extract=full_extract,
-                    allow_rowcount_drop=allow_rowcount_drop,
-                    continue_on_error=continue_on_error,
-                    print_diff=diff,
-                    potenda_factory=lambda **_kwargs: ptd,
-                    _serial_load_error=lambda exc: print_error_and_abort(str(exc)),
-                    _lock_already_held=True,
-                )
-                # `execute_run` owns the rest of the serial run: it finalizes the same
-                # run.json and emits the closing log line.
-                return
-
-            run_file.status = "applied"
-        except Exception:
-            run_file.status = "failed"
-            run_file.save()
-            raise
-
-        run_file.finished_at = datetime.now(timezone.utc).isoformat()
-        run_file.save()
-        logger.info("Sync run %s at %s", ptd.run_id, ptd.run_dir)
-
-
-def _require_applicable_plan(*, sync_name: str, run_id: str) -> Path:
-    """Refuse an apply whose run does not exist, or holds no plan artifact (AD026, AD059).
-
-    Both verdicts come from the same functions the review path reaches, so the unknown-run
-    enumeration (bounded to the most recent twenty, with the total when it truncates, and a
-    stated no-runs message when the sync has never run — AD073) and the re-plan instruction
-    are written once and cannot drift between the two commands an operator meets them from.
-
-    Returns the located run directory, so the approval check below reads the stored artifact without
-    resolving the run a second time.
-    """
-    try:
-        directory = require_stored_run(sync_name, run_id)
-        require_plan_directory(directory)
-    except PlanArtifactError as exc:
+    except RunConcurrencyError as exc:
         print_error_and_abort(str(exc))
-    return directory
-
-
-def _require_expected_checksum(*, run_directory: Path, run_id: str, expected: str | None) -> None:
-    """Refuse early an apply whose stored plan is not the plan the operator approved (FR-030).
-
-    The **fast path**, and the only one that can promise no destination was contacted: it needs
-    nothing but the stored artifact, so a wrong approval refuses here rather than after an adapter
-    is built. It is not the authoritative answer — the artifact could still change between this
-    read and the one the apply consumes, so the applier asks again about the bytes it applies.
-
-    The comparison itself, its tolerances and its wording belong to `expected_checksum_refusal`,
-    which returns text and leaves the presentation to this one line — including the fail-closed
-    arm for a stored plan that cannot be hashed at all.
-    """
-    if expected is None:
-        return
-    try:
-        artifact = read_plan_artifact_bytes(run_directory)
-        refusal = expected_checksum_refusal(artifact=artifact, run_id=run_id, expected=expected)
-    except PlanArtifactError as exc:
-        print_error_and_abort(str(exc))
-    if refusal is not None:
-        print_error_and_abort(refusal.text)
-
-
-def _record_and_abort(run_file: RunFile, exc: PlanArtifactError, record: ApplyRecord) -> NoReturn:
-    """Record what the apply did, then report a designed refusal as one error line.
-
-    Every member of the plan-artifact taxonomy names its own remedy (AD059), so an operator
-    who meets one has met a decision the tool made on purpose, not a crash — and reads it
-    the way `_require_applicable_plan` four lines above already reports its own refusals.
-
-    The recording happens **before** the abort and merges `record` into the summary before
-    `save()`, because `RunFile.save()` writes the whole payload from this instance
-    (`infrahub_sync.cache.sidecars`) and would otherwise destroy it (AD062, AD069).
-    """
-    run_file.summary.update(record.as_summary_keys())
-    run_file.status = "failed"
-    run_file.save()
-    print_error_and_abort(str(exc))
-
-
-def _record_carried(run_file: RunFile, exc: BaseException) -> None:
-    """Record whatever the engine attached to `exc`, then leave the exception to its caller.
-
-    The counterpart of `_record_and_abort` for the exceptions the engine deliberately does
-    **not** convert into the taxonomy (`Potenda.OPERATIONAL_APPLY_FAILURES` is the boundary):
-    an interrupt, and any defect. Both may leave destination writes behind, so the record
-    rides on the exception as an `apply_record` attribute and is merged here before `save()`,
-    which writes the whole payload from this instance (AD062, AD069). An exception carrying
-    nothing records the keys present and empty rather than absent, for the same reason.
-
-    This function does not raise: the caller re-raises, so the exception keeps its own
-    traceback — which for a defect is the only place its diagnosis lives.
-    """
-    carried = getattr(exc, "apply_record", None)
-    partial = carried if isinstance(carried, ApplyRecord) else ApplyRecord()
-    run_file.summary.update(partial.as_summary_keys())
-    run_file.status = "failed"
-    run_file.save()
 
 
 @app.command(name="apply")
@@ -814,115 +653,51 @@ def apply_cmd(
     if not sync_instance:
         print_error_and_abort("Failed to load sync instance.")
 
-    # Refuse **before constructing anything** (AD026): an apply naming a run that does not
-    # exist, or whose run holds no plan, is refused before even the destination adapter is
-    # imported — the applier below constructs the destination and locates the stored run
-    # without creating anything, so this refusal leaves no trace of the attempt.
-    run_directory = _require_applicable_plan(sync_name=sync_instance.name, run_id=run_id)
-
-    # The approval binding's fast path, before anything is constructed: an apply that names the
-    # checksum it approved must not reach a destination with a plan that is not it. The
-    # authoritative comparison is the applier's, against the bytes it applies.
-    _require_expected_checksum(run_directory=run_directory, run_id=run_id, expected=expected_checksum)
-
     verbosity_level = ctx.obj.get("verbosity", logging.INFO) if ctx.obj else logging.INFO
-
-    with pipeline_lock(sync_instance.name):
-        # Apply-specific assembly: the destination only — apply never reads the source, so a
-        # host with destination credentials applies a plan without the source's dependencies
-        # — and no sidecar writes: the stored run's files are the immutable provenance of
-        # the plan under apply. The plan's destination binding is the supported apply-time
-        # guard against a drifted destination.
-        # Assembly failures are reported the way `diff` and `sync` report theirs: an adapter that
-        # cannot be loaded or initialized has a remedy, and it escaped here as a raw traceback
-        # because this construction sits outside the apply loop's own arms below.
-        try:
-            applier = PlanApplier.open_existing(
-                sync_instance,
-                run_id=run_id,
-                branch=branch,
-                verbosity=verbosity_level,
-            )
-        except (ImportError, ValueError) as exc:
-            print_error_and_abort(f"Failed to initialize the destination for the apply: {exc}")
-        run_file = RunFile(path=applier.run_dir / "run.json", status="running", mode="apply")
-        run_file.save()
-
-        # This command is the **single writer** of `run.json` (AD069). `apply_plan` returns
-        # the record and writes no run file; the merge below has to happen before every
-        # `save()`, because `RunFile.save()` writes the whole payload from this instance
-        # (`infrahub_sync.cache.sidecars`) and would otherwise destroy the record
-        # with the empty summary built above.
-        try:
-            record = applier.apply_plan(
-                allow_destination_change=allow_destination_change, expected_checksum=expected_checksum
-            )
-            run_file.summary.update(record.as_summary_keys())
-            run_file.status = "applied"
-        except (OperationApplyFailedError, ApplyRecordInvariantError) as exc:
-            # The two record-carrying members of the taxonomy, ahead of the general arm below
-            # because they are `PlanArtifactError` subclasses and it would otherwise swallow
-            # them — and with them the record each carries. A rejection carries the **partial**
-            # one, which is what lets FR-025's last-applied pointer survive a partial apply
-            # instead of being overwritten with an empty list; the invariant error is raised
-            # *after* the loop wrote every non-delete operation, so its record holds the real
-            # counts, and merging an empty one would tell an operator that a run which wrote
-            # everything applied nothing.
-            _record_and_abort(run_file, exc, exc.apply_record)
-        except PlanArtifactError as exc:
-            # Every remaining member of the taxonomy is a **designed refusal** that wrote
-            # nothing and names its own remedy, so it reaches the operator as that message
-            # rather than as a stack trace (AD059). It records every summary key as present
-            # and empty rather than absent: "nothing was applied" must be readable from the
-            # run, not inferred from a missing key (AD062).
-            _record_and_abort(run_file, exc, ApplyRecord())
-        except Exception as exc:
-            # Outside the taxonomy **and** outside the engine's operational boundary, so not a
-            # designed refusal but a defect — this code's, or an SDK shape change's. It keeps
-            # its traceback, which is the only place its diagnosis lives, and it is *not*
-            # dressed up as a destination rejection: the operator is told the destination is
-            # not the thing to repair, and that the apply may have left writes behind.
-            # The engine attaches the partial record even here, so this arm persists it rather
-            # than the empty one it used to record.
-            # `logger.error` and not `logger.exception`: the `raise` below carries the traceback
-            # to the operator already, and logging it here would print it twice.
-            logger.error(  # noqa: TRY400
-                "Apply of run %s failed with an unexpected error, which is a defect rather than a "
-                "destination refusal: %s: %s. The traceback below is the diagnosis; the run records "
-                "what was applied before it, and the failing operation may have written part of its "
-                "change. Do not re-plan on the assumption the destination is at fault.",
-                applier.run_id,
-                type(exc).__name__,
-                exc,
-            )
-            _record_carried(run_file, exc)
-            raise
-        except BaseException as exc:
-            # An interrupt — Ctrl-C on a long apply. Not a defect and not a refusal, so it gets
-            # no error line of its own: the operator caused it and knows what they did. Writes
-            # have already landed, and the run has to say so before the interrupt continues on
-            # its way; without this arm the sidecar keeps the `running` status and the empty
-            # summary it was saved with, claiming nothing was even attempted (AD062). Never
-            # swallowed: the bare `raise` is what keeps Ctrl-C stopping the process.
-            _record_carried(run_file, exc)
-            raise
-        run_file.finished_at = datetime.now(timezone.utc).isoformat()
-        run_file.save()
-        if record.skipped_delete_count:
-            # A delete-bearing plan completes, which is a designed limitation of this release
-            # and not a failure (AD055) — so the count belongs on the last line an operator
-            # reads as well as in the engine's warning, and at `WARNING` for the same reason
-            # that one is pinned there (AD089). The level follows the count it reports: the
-            # branch below carries none and stays at `INFO`, which keeps `--quiet` silent on
-            # an apply with nothing to disclose.
-            logger.warning(
-                "Applied run %s: %d operations applied, %d deletes skipped",
-                applier.run_id,
-                len(record.applied_operations),
-                record.skipped_delete_count,
-            )
-        else:
-            logger.info("Applied run %s", applier.run_id)
+    unexpected_error: Exception | None = None
+    unexpected_traceback = None
+    try:
+        result = execute_run(
+            sync_instance,
+            operation="apply",
+            confirm_writes=True,
+            run_id=run_id,
+            branch=branch,
+            verbosity=verbosity_level,
+            allow_destination_change=allow_destination_change,
+            expected_checksum=expected_checksum,
+            _plan_applier_factory=_cli_plan_applier_factory,
+        )
+    except (PlanArtifactError, RunConcurrencyError) as exc:
+        print_error_and_abort(str(exc), sync_instance)
+    except typer.Abort:
+        # A construction-only factory refusal already rendered its one-line message.
+        raise
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        secrets = collect_secret_values(sync_instance)
+        sanitized_message = redact(str(exc), secrets)
+        logger.error(  # noqa: TRY400
+            "Apply of run %s failed with an unexpected error, which is a defect rather than a "
+            "destination refusal: %s: %s. The traceback below is the diagnosis; the run records "
+            "what was applied before it, and the failing operation may have written part of its "
+            "change. Do not re-plan on the assumption the destination is at fault.",
+            run_id,
+            type(exc).__name__,
+            sanitized_message,
+        )
+        unexpected_error = RuntimeError(f"{type(exc).__name__}: {sanitized_message}")
+        unexpected_error.__cause__ = sanitize_exception_chain(exc, secrets)
+        unexpected_error.__suppress_context__ = True
+        unexpected_traceback = exc.__traceback__
+    if unexpected_error is not None:
+        raise unexpected_error.with_traceback(unexpected_traceback)
+    summary = result.summary
+    skipped = summary["delete"]
+    applied = summary["create"] + summary["update"]
+    if skipped:
+        logger.warning("Applied run %s: %d operations applied, %d deletes skipped", run_id, applied, skipped)
+    else:
+        logger.info("Applied run %s", run_id)
 
 
 @app.command(name="generate")
