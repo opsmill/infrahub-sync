@@ -158,6 +158,7 @@ class Potenda:
         self._schema_subhash: str = schema_subhash
         self._counts: dict[str, int] = {}
         self._last_plan_action_counts: dict[str, int] | None = None
+        self._last_applied_plan_action_counts: dict[str, int] | None = None
         self._did_full_extract: bool = False
         # Per-side extraction mode, recorded alongside the OR-accumulated
         # `_did_full_extract` rather than in place of it. FR-015 derives deletes only
@@ -203,6 +204,13 @@ class Potenda:
         # Fallback to `SKIP_UNMATCHED_DST` if nothing is define
         if self.flags == DiffSyncFlags.NONE:
             self.flags = DiffSyncFlags.SKIP_UNMATCHED_DST
+
+    @property
+    def last_applied_plan_action_counts(self) -> dict[str, int] | None:
+        """Return a copy of the most recent applied plan's action counts."""
+        if self._last_applied_plan_action_counts is None:
+            return None
+        return dict(self._last_applied_plan_action_counts)
 
     def _print_callback(self, stage: str, elements_processed: int, total_models: int):
         """Callback for DiffSync progress tracking."""
@@ -705,6 +713,9 @@ class Potenda:
         # per-record validity — an unrecognized `action` above all — which is still refused
         # before the first destination write.
         loaded = parse_plan_artifact(raw, run_id=run_id)
+        self._last_applied_plan_action_counts = {
+            action: sum(operation.action == action for operation in loaded.operations) for action in ACTIONS
+        }
 
         # One memo for the whole apply, discarded with it — the same lifetime as the run. The
         # destination supplies it, so the engine builds a resolver for a destination it does
@@ -859,7 +870,7 @@ class Potenda:
         for resource, current in self._counts.items():
             guard.check(resource, current=current)
 
-    def sync_in_tiers(self, *, parallel: bool = False, allow_rowcount_drop: bool = False) -> None:
+    def sync_in_tiers(self, *, parallel: bool = False, allow_rowcount_drop: bool = False) -> dict[str, int]:
         """Run diff+sync one tier at a time.
 
         When `parallel=False`, falls back to the existing serial pathway.
@@ -894,7 +905,8 @@ class Potenda:
             self.persist_baseline_counts()
             self.persist_cursors_for_run(side="A")
             self.persist_cursors_for_run(side="B")
-            return
+            rows = self._diff_to_rows(diff)
+            return {action: sum(row["action"] == action for row in rows) for action in ACTIONS}
 
         self.load_both_sides()
         self.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
@@ -941,3 +953,4 @@ class Potenda:
         self.persist_cursors_for_run(side="A")
         self.persist_cursors_for_run(side="B")
         _ = parallel  # reserved for diffsync v3 thread fan-out; see backport doc
+        return {action: sum(row["action"] == action for row in aggregated_rows) for action in ACTIONS}

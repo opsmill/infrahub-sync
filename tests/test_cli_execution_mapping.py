@@ -16,13 +16,14 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from filelock import Timeout
 from typer.testing import CliRunner
 
 from infrahub_sync.cache.guardrails import RowcountGuardrailError
 from infrahub_sync.cache.locks import pipeline_lock
+from infrahub_sync.cache.sidecars import RunFile
 from infrahub_sync.cli import app
 from infrahub_sync.plan.errors import PlanGenerationExistsError
+from infrahub_sync.utils import get_instance
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -160,24 +161,70 @@ def test_diff_factory_import_error_is_reported_as_one_line(run_dir: Path, cli_lo
     assert not (run_dir / "run.json").exists()
 
 
-def test_diff_lock_contention_surfaces_filelock_timeout(run_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A held pipeline lock surfaces as an uncaught `filelock.Timeout`, engine unbuilt."""
+def test_cli_refusal_redacts_environment_credentials(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch, cli_logs: pytest.LogCaptureFixture
+) -> None:
+    """The CLI boundary never writes a credential-shaped environment value to its error logger."""
+    sentinel = "db004-secret-sentinel"
+    monkeypatch.setenv("DB004_TOKEN", sentinel)
+    with patch(FACTORY, side_effect=ValueError(f"adapter rejected {sentinel}")):
+        result = _invoke("diff")
+
+    assert result.exit_code == 1
+    messages = _messages(cli_logs)
+    assert sentinel not in "\n".join(messages)
+    assert any("***" in message for message in messages)
+    assert not (run_dir / "run.json").exists()
+
+
+@pytest.mark.parametrize(("command", "extra"), [("diff", ()), ("sync", ("--no-parallel",))])
+def test_factory_refusal_redacts_resolved_configuration_credentials(
+    command: str, extra: tuple[str, ...], run_dir: Path, cli_logs: pytest.LogCaptureFixture
+) -> None:
+    """Diff and sync factory messages redact inline credentials as well as environment ones."""
+    sentinel = "db004-factory-config-secret"
+    sync_instance = get_instance(name=SYNC_NAME, directory=str(EXAMPLES_DIR))
+    assert sync_instance is not None
+    sync_instance = sync_instance.model_copy(deep=True)
+    assert sync_instance.destination.settings is not None
+    sync_instance.destination.settings["api_token"] = sentinel
+
+    with (
+        patch("infrahub_sync.cli.get_instance", return_value=sync_instance),
+        patch(FACTORY, side_effect=ValueError(f"adapter rejected {sentinel}")),
+    ):
+        result = _invoke(command, *extra)
+
+    assert result.exit_code == 1
+    messages = "\n".join(_messages(cli_logs))
+    assert sentinel not in messages
+    assert "***" in messages
+    assert not (run_dir / "run.json").exists()
+
+
+def test_diff_lock_contention_reports_the_latest_running_sidecar_as_advisory(
+    run_dir: Path, monkeypatch: pytest.MonkeyPatch, cli_logs: pytest.LogCaptureFixture
+) -> None:
+    """A held lock is a bounded CLI refusal with advisory sidecar context."""
 
     def short_lock(sync_name: str, *, timeout: float = 60.0) -> Any:  # noqa: ANN401, ARG001 - drop-in for the real one
         return pipeline_lock(sync_name, timeout=0.05)
 
-    # Shortened wherever the lock is taken, so this test is a valid oracle for both
-    # the pre-refactor command body and the surface that now owns the acquisition.
+    # The shared surface is now the sole lock owner.
     monkeypatch.setattr("infrahub_sync.execution.pipeline_lock", short_lock)
-    monkeypatch.setattr("infrahub_sync.cli.pipeline_lock", short_lock)
     factory = MagicMock(return_value=_fake_potenda(run_dir))
+    RunFile(path=run_dir / "run.json", status="running", mode="sync").save()
     with pipeline_lock(SYNC_NAME), patch(FACTORY, factory):
         result = _invoke("diff")
 
     assert result.exit_code == 1
-    assert isinstance(result.exception, Timeout)
+    assert isinstance(result.exception, SystemExit)
+    messages = " ".join(_messages(cli_logs))
+    assert "latest run sidecar still marked running is 'test-run'" in messages
+    assert "may be stale" in messages
+    assert "holds it" not in messages
     factory.assert_not_called()
-    assert not (run_dir / "run.json").exists()
+    assert _run_json(run_dir)["status"] == "running"
 
 
 # --------------------------------------------------------------------------- #
@@ -212,6 +259,32 @@ def test_sync_serial_load_value_error_aborts_without_a_prefix(
     messages = _messages(cli_logs)
     assert "destination load failed" in messages
     assert not any("Failed to initialize the Sync Instance" in msg for msg in messages)
+    assert _run_json(run_dir)["status"] == "failed"
+
+
+def test_sync_serial_load_refusal_redacts_resolved_configuration_credentials(
+    run_dir: Path, cli_logs: pytest.LogCaptureFixture
+) -> None:
+    """Serial-load refusals cannot leak inline credentials through their error text."""
+    sentinel = "db004-serial-load-config-secret"
+    sync_instance = get_instance(name=SYNC_NAME, directory=str(EXAMPLES_DIR))
+    assert sync_instance is not None
+    sync_instance = sync_instance.model_copy(deep=True)
+    assert sync_instance.destination.settings is not None
+    sync_instance.destination.settings["api_token"] = sentinel
+    fake_ptd = _fake_potenda(run_dir)
+    fake_ptd.load_both_sides.side_effect = ValueError(f"destination load rejected {sentinel}")
+
+    with (
+        patch("infrahub_sync.cli.get_instance", return_value=sync_instance),
+        patch(FACTORY, return_value=fake_ptd),
+    ):
+        result = _invoke("sync", "--no-parallel")
+
+    assert result.exit_code == 1
+    messages = "\n".join(_messages(cli_logs))
+    assert sentinel not in messages
+    assert "***" in messages
     assert _run_json(run_dir)["status"] == "failed"
 
 

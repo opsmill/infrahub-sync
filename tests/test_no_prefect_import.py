@@ -23,7 +23,18 @@ EXAMPLES_DIR = REPO_ROOT / "examples"
 PROBE_SCRIPT = f"""
 import sys
 
+
+class BlockPrefectImport:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "prefect" or fullname.startswith("prefect."):
+            raise ModuleNotFoundError("Prefect is deliberately unavailable in this base-package probe")
+        return None
+
+
+sys.meta_path.insert(0, BlockPrefectImport())
+
 import infrahub_sync
+import infrahub_sync.api.v1
 import infrahub_sync.cli
 import infrahub_sync.execution
 from typer.testing import CliRunner

@@ -1,13 +1,17 @@
-"""Shared typed execution surface for the diff/plan and serial-sync lifecycles.
+"""Shared typed execution surface for plan, sync, verify, and apply lifecycles.
 
-Exactly three callers use this module: the CLI ``diff`` command, the serial
-branch of the CLI ``sync`` command, and the packaged Prefect flow. It imports no
-Prefect symbol and stays importable in a base install.
+Four entry paths use this module: the CLI ``diff``, ``sync``, and ``apply``
+commands, plus the packaged Prefect flow. The CLI ``diff`` path selects either
+plan generation or saved-plan verification, and ``sync`` selects serial or
+tier-parallel execution. This module imports no Prefect symbol and stays
+importable in a base install.
 
-Failure semantics: :func:`execute_run` raises ORIGINAL exception types and never
-wraps them; :func:`run_remote_request` is the one sanitize-and-wrap boundary that
-converts failures into :class:`RunValidationError` / :class:`RunExecutionError`.
+Failure semantics: :func:`execute_run` preserves lifecycle exception types,
+apart from its typed concurrency refusal; :func:`run_remote_request` is the one
+sanitize-and-wrap boundary that converts failures into
+:class:`RunValidationError` / :class:`RunExecutionError`.
 """
+# pylint: disable=too-many-lines
 
 from __future__ import annotations
 
@@ -15,14 +19,14 @@ import logging
 import os
 import re
 from collections.abc import Mapping
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, ExitStack, contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from timeit import default_timer as timer
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, overload
 
 import pydantic
 import yaml
@@ -30,19 +34,37 @@ from filelock import Timeout
 
 from infrahub_sync import SyncConfig, SyncInstance
 from infrahub_sync.cache.locks import pipeline_lock
+from infrahub_sync.cache.paths import cache_root_for
 from infrahub_sync.cache.sidecars import RunFile
-from infrahub_sync.utils import get_potenda_from_instance
+from infrahub_sync.plan.config_version import resolve_config_version
+from infrahub_sync.plan.errors import (
+    ApplyRecordInvariantError,
+    OperationApplyFailedError,
+    PlanArtifactError,
+    PlanVerificationError,
+)
+from infrahub_sync.plan.models import ApplyRecord
+from infrahub_sync.plan.reader import read_plan_artifact_bytes, require_plan_directory
+from infrahub_sync.plan.review import (
+    expected_checksum_refusal,
+    read_saved_plan,
+    require_stored_run,
+    resolve_run_directory,
+)
+from infrahub_sync.plan.verify import verify_plan
+from infrahub_sync.plan.writer import require_uncommitted_plan
+from infrahub_sync.utils import PlanApplier, get_potenda_from_instance
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Sequence
-    from contextlib import AbstractContextManager
+    from collections.abc import Callable, Iterable, Iterator, Sequence
     from typing import NoReturn
 
+    from infrahub_sync.plan.review import SavedPlan
     from infrahub_sync.potenda import Potenda
 
 logger = logging.getLogger(__name__)
 
-Operation = Literal["plan", "sync"]
+Operation = Literal["plan", "sync", "verify", "apply"]
 Status = Literal["planned", "applied", "no-change"]
 ActionKey = Literal["create", "update", "delete"]
 
@@ -74,7 +96,7 @@ class PotendaFactory(Protocol):
     ) -> Potenda: ...
 
 
-OPERATIONS: tuple[Operation, ...] = ("plan", "sync")
+OPERATIONS: tuple[Operation, ...] = ("plan", "sync", "verify", "apply")
 ACTION_KEYS: tuple[ActionKey, ...] = ("create", "update", "delete")
 
 REDACTED = "***"
@@ -176,6 +198,10 @@ class RunValidationError(Exception):
 
 class RunExecutionError(Exception):
     """Adapter or engine failure after validation passed."""
+
+
+class RunConcurrencyError(Exception):
+    """A same-configuration run could not acquire the bounded pipeline lock."""
 
 
 class _FactoryValueError(Exception):
@@ -476,8 +502,8 @@ class RunResult:
         if self.status == "planned" and self.operation != "plan":
             msg = f"status='planned' requires operation='plan', got operation={self.operation!r}"
             raise ValueError(msg)
-        if self.status == "applied" and self.operation != "sync":
-            msg = f"status='applied' requires operation='sync', got operation={self.operation!r}"
+        if self.status == "applied" and self.operation not in ("sync", "apply"):
+            msg = f"status='applied' requires operation='sync' or 'apply', got operation={self.operation!r}"
             raise ValueError(msg)
         artifact = Path(self.artifact_path)
         if not artifact.is_absolute():
@@ -618,12 +644,13 @@ def _summary_from_plan_write(
     return _summarize_rows(fallback_rows()) if summary is None else summary
 
 
-def _run_plan_lifecycle(*, ptd: Potenda, run_file: RunFile) -> dict[ActionKey, int]:
+def _run_plan_lifecycle(*, ptd: Potenda, run_file: RunFile, print_diff: bool) -> dict[ActionKey, int]:
     """Reproduce the CLI `diff` lifecycle and return authoritative operation counts."""
     ptd.load_both_sides()
     mydiff = ptd.diff()
     write_result = ptd.write_plan(mydiff)
-    logger.info("\n%s", mydiff.str())
+    if print_diff:
+        logger.info("\n%s", mydiff.str())
     run_file.status = "dry-run"
     run_file.summary = {"resources": len(ptd.top_level)}
     return _summary_from_plan_write(write_result, lambda: ptd._diff_to_rows(mydiff))
@@ -641,8 +668,6 @@ def _run_sync_lifecycle(
     try:
         ptd.load_both_sides()
     except ValueError as exc:
-        run_file.status = "failed"
-        run_file.save()
         if serial_load_error is not None:
             # CLI-only seam: the unprefixed abort fires at the site, exactly as
             # cli.py:265-268 does today.
@@ -665,6 +690,224 @@ def _run_sync_lifecycle(
     run_file.summary = {"resources": len(ptd.top_level), "mode": "serial"}
     run_file.status = "applied"
     return _summarize_rows(ptd._diff_to_rows(mydiff))
+
+
+def _run_parallel_sync_lifecycle(
+    *,
+    ptd: Potenda,
+    run_file: RunFile,
+    allow_rowcount_drop: bool,
+    parallel_sync_error: Callable[[ValueError], NoReturn] | None,
+) -> dict[ActionKey, int]:
+    """Run the established tier-parallel lifecycle and return its plan counts."""
+    try:
+        summary = ptd.sync_in_tiers(parallel=True, allow_rowcount_drop=allow_rowcount_drop)
+    except ValueError as exc:
+        if parallel_sync_error is not None:
+            parallel_sync_error(exc)
+        raise
+    run_file.summary = {"resources": len(ptd.top_level), "mode": "parallel"}
+    run_file.status = "applied"
+    return {action: summary[action] for action in ACTION_KEYS}
+
+
+def _require_a_free_run_id(*, sync_name: str, run_id: str | None) -> None:
+    """Refuse a plan generation that would overwrite a committed saved plan."""
+    if run_id is None:
+        return
+    directory = resolve_run_directory(sync_name, run_id)
+    require_uncommitted_plan(directory, run_id=run_id)
+
+
+def _latest_running_run_id(sync_name: str) -> str | None:
+    """Return the newest run still marked running, which may be stale."""
+    root = cache_root_for(sync_name)
+    try:
+        candidates = sorted((path for path in root.iterdir() if path.is_dir()), reverse=True)
+    except OSError:
+        return None
+    for directory in candidates[:20]:
+        try:
+            run_file = RunFile.load_or_default(directory / "run.json")
+        except (OSError, ValueError):
+            continue
+        if run_file.status == "running":
+            return directory.name
+    return None
+
+
+@contextmanager
+def _run_lock(sync_name: str, *, timeout: float) -> Iterator[None]:
+    """Acquire the core-owned lock and report advisory sidecar context while waiting."""
+    lock_stack = ExitStack()
+    try:
+        lock_stack.enter_context(pipeline_lock(sync_name, timeout=0))
+    except Timeout:
+        latest_running = _latest_running_run_id(sync_name)
+        detail = (
+            f"the latest run sidecar still marked running is {latest_running!r} (it may be stale)"
+            if latest_running is not None
+            else "no run sidecar currently identifies the lock owner"
+        )
+        logger.warning("Sync %r is locked; %s; waiting up to %s seconds", sync_name, detail, timeout)
+        try:
+            lock_stack.enter_context(pipeline_lock(sync_name, timeout=timeout))
+        except Timeout as exc:
+            lock_stack.close()
+            msg = f"Sync {sync_name!r} could not acquire its pipeline lock within {timeout} seconds; {detail}."
+            raise RunConcurrencyError(msg) from exc
+    with lock_stack:
+        yield
+
+
+@contextmanager
+def bounded_run_lock(sync_name: str, *, timeout: float = 60.0) -> Iterator[None]:
+    """Expose the shared bounded run lock to in-process product compositions."""
+    with _run_lock(sync_name, timeout=timeout):
+        yield
+
+
+def _require_applicable_plan(*, sync_name: str, run_id: str) -> Path:
+    """Locate an existing saved plan before constructing an apply destination."""
+    directory = require_stored_run(sync_name, run_id)
+    require_plan_directory(directory)
+    return directory
+
+
+def _require_expected_checksum(*, run_directory: Path, run_id: str, expected: str | None) -> None:
+    """Perform the apply command's no-destination checksum fast path."""
+    if expected is None:
+        return
+    artifact = read_plan_artifact_bytes(run_directory)
+    refusal = expected_checksum_refusal(artifact=artifact, run_id=run_id, expected=expected)
+    if refusal is not None:
+        raise PlanVerificationError(refusal.reason, next_action=refusal.next_action)
+
+
+def _apply_summary(counts: Mapping[str, int]) -> dict[ActionKey, int]:
+    """Return action counts parsed from the exact artifact consumed by apply."""
+    return {action: counts.get(action, 0) for action in ACTION_KEYS}
+
+
+def _save_run_transition(
+    run_directory: Path,
+    *,
+    mode: Literal["diff", "sync", "apply"],
+    status: Literal["running", "applied", "failed"],
+    record: ApplyRecord | None = None,
+    run_file: RunFile | None = None,
+) -> None:
+    """Persist one core-owned transition without discarding earlier summary data."""
+    run_file = run_file or RunFile.load_or_default(run_directory / "run.json")
+    run_file.mode = mode
+    run_file.status = status
+    if record is not None:
+        run_file.summary.update(record.as_summary_keys())
+    run_file.finished_at = None if status == "running" else datetime.now(timezone.utc).isoformat()
+    run_file.save()
+
+
+def _save_failed_run(
+    run_directory: Path,
+    *,
+    mode: Literal["diff", "sync", "apply"],
+    record: ApplyRecord | None = None,
+    run_file: RunFile | None = None,
+) -> None:
+    """Best-effort a terminal failure without replacing the lifecycle exception."""
+    final_error: BaseException | None = None
+    for _attempt in range(2):
+        try:
+            _save_run_transition(
+                run_directory,
+                mode=mode,
+                status="failed",
+                record=record,
+                run_file=run_file,
+            )
+        except BaseException as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            final_error = exc
+            continue
+        else:
+            return
+    error_type = type(final_error).__name__ if final_error is not None else "unknown error"
+    logger.warning(
+        "Unable to persist failed run state after two attempts (%s)",
+        error_type,
+    )
+
+
+def _read_verified_plan(*, sync_instance: SyncInstance, run_id: str) -> SavedPlan:
+    """Read and independently verify one saved plan without constructing adapters."""
+    saved = read_saved_plan(sync_name=sync_instance.name, run_id=run_id, config=sync_instance)
+    run_directory = resolve_run_directory(sync_instance.name, run_id)
+    failures = verify_plan(
+        artifact=read_plan_artifact_bytes(run_directory),
+        run_id=run_id,
+        config_version=resolve_config_version(sync_instance),
+    )
+    if failures:
+        checks = ", ".join(failure.check for failure in failures)
+        detail = "; ".join(
+            f"{failure.check}: expected {failure.expected}; found {failure.found}" for failure in failures
+        )
+        next_actions = tuple(dict.fromkeys(failure.next_action for failure in failures))
+        msg = f"Saved plan {run_id!r} failed verification checks: {checks}. {detail}"
+        raise PlanVerificationError(msg, next_action=" ".join(next_actions))
+    return saved
+
+
+def _run_apply_lifecycle(
+    *,
+    sync_instance: SyncInstance,
+    run_id: str,
+    branch: str | None,
+    verbosity: int,
+    allow_destination_change: bool,
+    expected_checksum: str | None,
+    _plan_applier_factory: Callable[..., PlanApplier] | None,
+    run_directory: Path,
+    sidecar_mode: Literal["sync", "apply"],
+) -> RunResult:
+    """Apply one saved plan while the shared core owns its sidecar transitions."""
+    factory = _plan_applier_factory if _plan_applier_factory is not None else PlanApplier.open_existing
+    try:
+        applier = factory(sync_instance, run_id=run_id, branch=branch, verbosity=verbosity)
+    except BaseException:
+        if sidecar_mode == "sync":
+            _save_failed_run(run_directory, mode="sync")
+        raise
+
+    run_file = RunFile.load_or_default(run_directory / "run.json")
+    _save_run_transition(run_directory, mode=sidecar_mode, status="running", run_file=run_file)
+    try:
+        record = applier.apply_plan(
+            allow_destination_change=allow_destination_change,
+            expected_checksum=expected_checksum,
+        )
+    except (OperationApplyFailedError, ApplyRecordInvariantError) as exc:
+        _save_failed_run(run_directory, mode=sidecar_mode, record=exc.apply_record, run_file=run_file)
+        raise
+    except PlanArtifactError:
+        _save_failed_run(run_directory, mode=sidecar_mode, record=ApplyRecord(), run_file=run_file)
+        raise
+    except BaseException as exc:
+        carried = getattr(exc, "apply_record", None)
+        partial = carried if isinstance(carried, ApplyRecord) else ApplyRecord()
+        _save_failed_run(run_directory, mode=sidecar_mode, record=partial, run_file=run_file)
+        raise
+
+    try:
+        _save_run_transition(run_directory, mode=sidecar_mode, status="applied", record=record, run_file=run_file)
+    except BaseException:
+        _save_failed_run(run_directory, mode=sidecar_mode, record=record, run_file=run_file)
+        raise
+    return _build_result(
+        sync_instance=sync_instance,
+        operation="apply",
+        ptd=applier.engine,
+        summary=_apply_summary(applier.applied_plan_action_counts),
+    )
 
 
 def _build_result(
@@ -693,6 +936,102 @@ def _build_result(
     )
 
 
+def _execute_verify_operation(
+    *,
+    sync_instance: SyncInstance,
+    run_id: str,
+    require_verified: bool,
+    run_file_mode: Literal["diff", "sync"] | None,
+) -> SavedPlan:
+    """Run one read-only verification, terminalizing only a composed run failure."""
+    try:
+        if require_verified:
+            return _read_verified_plan(sync_instance=sync_instance, run_id=run_id)
+        return read_saved_plan(sync_name=sync_instance.name, run_id=run_id, config=sync_instance)
+    except BaseException:
+        if run_file_mode is not None:
+            _save_failed_run(resolve_run_directory(sync_instance.name, run_id), mode=run_file_mode)
+        raise
+
+
+def _execute_apply_operation(
+    *,
+    sync_instance: SyncInstance,
+    run_id: str,
+    branch: str | None,
+    verbosity: int,
+    allow_destination_change: bool,
+    expected_checksum: str | None,
+    plan_applier_factory: Callable[..., PlanApplier] | None,
+    lock_timeout: float,
+    lock_already_held: bool,
+    run_file_mode: Literal["diff", "sync"] | None,
+) -> RunResult:
+    """Apply one reviewed plan with core-owned lock and sidecar transitions."""
+    run_directory = _require_applicable_plan(sync_name=sync_instance.name, run_id=run_id)
+    sidecar_mode: Literal["sync", "apply"] = "sync" if run_file_mode == "sync" else "apply"
+    try:
+        _require_expected_checksum(run_directory=run_directory, run_id=run_id, expected=expected_checksum)
+    except BaseException:
+        if sidecar_mode == "sync":
+            _save_failed_run(run_directory, mode="sync")
+        raise
+    apply_lock: AbstractContextManager[None] = (
+        nullcontext() if lock_already_held else _run_lock(sync_instance.name, timeout=lock_timeout)
+    )
+    with apply_lock:
+        return _run_apply_lifecycle(
+            sync_instance=sync_instance,
+            run_id=run_id,
+            branch=branch,
+            verbosity=verbosity,
+            allow_destination_change=allow_destination_change,
+            expected_checksum=expected_checksum,
+            _plan_applier_factory=plan_applier_factory,
+            run_directory=run_directory,
+            sidecar_mode=sidecar_mode,
+        )
+
+
+def _validate_operation_request(*, operation: Operation, confirm_writes: bool, run_id: str | None) -> None:
+    """Refuse invalid operation inputs before any adapter or run state is constructed."""
+    if operation not in OPERATIONS:
+        msg = f"Unsupported operation {operation!r} — expected one of {OPERATIONS!r}"
+        raise RunValidationError(msg)
+    if operation in ("sync", "apply") and not confirm_writes:
+        msg = f"confirm_writes=true is required to run operation={operation}"
+        raise RunValidationError(msg)
+    if operation in ("verify", "apply") and run_id is None:
+        msg = f"run_id is required to run operation={operation}"
+        raise RunValidationError(msg)
+
+
+# Pylint applies this check to the implementation's first line, below the overloads.
+# pylint: disable=too-many-branches
+@overload
+def execute_run(sync_instance: SyncInstance, *, operation: Literal["verify"], **kwargs: Any) -> SavedPlan: ...
+
+
+@overload
+def execute_run(
+    sync_instance: SyncInstance,
+    *,
+    operation: Literal["plan"],
+    _return_saved_plan: Literal[True],
+    **kwargs: Any,
+) -> SavedPlan: ...
+
+
+@overload
+def execute_run(
+    sync_instance: SyncInstance, *, operation: Literal["plan", "sync", "apply"], **kwargs: Any
+) -> RunResult: ...
+
+
+@overload
+def execute_run(sync_instance: SyncInstance, *, operation: Operation, **kwargs: Any) -> RunResult | SavedPlan: ...
+
+
 def execute_run(
     sync_instance: SyncInstance,
     *,
@@ -709,38 +1048,67 @@ def execute_run(
     continue_on_error: bool = False,
     print_diff: bool = True,
     potenda_factory: PotendaFactory | None = None,
-    # Private seams — not part of the remote contract; run_remote_request never sets
-    # _serial_load_error or _lock_already_held.
+    parallel: bool = False,
+    allow_destination_change: bool = False,
+    expected_checksum: str | None = None,
+    # Private seams — not part of the remote contract; run_remote_request never sets them.
+    _plan_applier_factory: Callable[..., PlanApplier] | None = None,
     _lock_timeout: float = 60.0,
     _serial_load_error: Callable[[ValueError], NoReturn] | None = None,
+    _parallel_sync_error: Callable[[ValueError], NoReturn] | None = None,
     _lock_already_held: bool = False,
-) -> RunResult:
-    """Run one plan (== the diff lifecycle) or serial sync against a resolved instance.
+    _run_file_mode: Literal["diff", "sync"] | None = None,
+    _require_verified: bool = False,
+    _return_saved_plan: bool = False,
+) -> RunResult | SavedPlan:
+    """Run one product operation against a resolved instance.
 
-    Raises the ORIGINAL exception types of every engine failure — no
-    sanitize-and-wrap happens here. The only surface-typed raise is the
-    validation refusal below, which is unreachable from the CLI callers.
+    The core owns all write-capable locks and all run-sidecar transitions.  The
+    CLI remains responsible only for argument parsing and rendering, so the
+    existing command-specific failure shapes stay at that boundary.
 
     Raises:
-        RunValidationError: unknown `operation`, or `operation="sync"` without
-            `confirm_writes` (refused BEFORE any adapter is constructed).
+        RunConcurrencyError: the same synchronization remains locked after the
+            bounded wait, with advisory context from the latest running sidecar.
+        RunValidationError: an unsupported operation, a missing saved-plan id,
+            or an unconfirmed write (all refused before an adapter is built).
     """
-    if operation not in OPERATIONS:
-        msg = f"Unsupported operation {operation!r} — expected one of {OPERATIONS!r}"
-        raise RunValidationError(msg)
-    if operation == "sync" and not confirm_writes:
-        msg = "confirm_writes=true is required to run operation=sync"
-        raise RunValidationError(msg)
+    _validate_operation_request(operation=operation, confirm_writes=confirm_writes, run_id=run_id)
 
-    # A second same-process FileLock on the same path does not re-enter: it
-    # blocks for the full timeout and then raises filelock.Timeout. The CLI
-    # serial-sync caller therefore keeps its own outer `with pipeline_lock(...)`
-    # (the parallel branch it shares a command body with still needs it) and
-    # passes _lock_already_held=True so this function does not self-deadlock.
-    lock_scope: AbstractContextManager[None] = (
-        nullcontext() if _lock_already_held else pipeline_lock(sync_instance.name, timeout=_lock_timeout)
+    if operation == "verify":
+        assert run_id is not None  # narrowed above; verification never allocates a run.
+        return _execute_verify_operation(
+            sync_instance=sync_instance,
+            run_id=run_id,
+            require_verified=_require_verified,
+            run_file_mode=_run_file_mode,
+        )
+
+    if operation == "apply":
+        assert run_id is not None  # narrowed above; keeps the saved-plan boundary explicit.
+        return _execute_apply_operation(
+            sync_instance=sync_instance,
+            run_id=run_id,
+            branch=branch,
+            verbosity=verbosity,
+            allow_destination_change=allow_destination_change,
+            expected_checksum=expected_checksum,
+            plan_applier_factory=_plan_applier_factory,
+            lock_timeout=_lock_timeout,
+            lock_already_held=_lock_already_held,
+            run_file_mode=_run_file_mode,
+        )
+
+    if operation == "plan":
+        _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id)
+
+    run_lock: AbstractContextManager[None] = (
+        nullcontext() if _lock_already_held else _run_lock(sync_instance.name, timeout=_lock_timeout)
     )
-    with lock_scope:
+    with run_lock:
+        if operation == "plan":
+            # A plan may have been committed while this command waited for the lock.
+            _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id)
         factory: PotendaFactory = potenda_factory if potenda_factory is not None else get_potenda_from_instance
         # Pinned call shape: all seven keyword arguments of
         # utils.get_potenda_from_instance, always explicitly, for both operations.
@@ -757,17 +1125,31 @@ def execute_run(
         if ptd.run_dir is None:  # get_potenda_from_instance always allocates one
             msg = "get_potenda_from_instance did not allocate a run_dir"
             raise RuntimeError(msg)
+        run_mode: Literal["diff", "sync"] = _run_file_mode or ("diff" if operation == "plan" else "sync")
         run_file = RunFile(
             path=ptd.run_dir / "run.json",
             status="running",
-            mode="diff" if operation == "plan" else "sync",
+            mode=run_mode,
         )
         run_file.save()
 
+        saved_plan: SavedPlan | None = None
         try:
             if operation == "plan":
-                summary = _run_plan_lifecycle(ptd=ptd, run_file=run_file)
+                summary = _run_plan_lifecycle(ptd=ptd, run_file=run_file, print_diff=print_diff)
+            elif parallel and ptd.tiers:
+                summary = _run_parallel_sync_lifecycle(
+                    ptd=ptd,
+                    run_file=run_file,
+                    allow_rowcount_drop=allow_rowcount_drop,
+                    parallel_sync_error=_parallel_sync_error,
+                )
             else:
+                if parallel and not ptd.tiers:
+                    logger.warning(
+                        "--parallel ignored because order: is set in config.yml; "
+                        "remove order: to enable tier-by-tier execution",
+                    )
                 summary = _run_sync_lifecycle(
                     ptd=ptd,
                     run_file=run_file,
@@ -775,24 +1157,28 @@ def execute_run(
                     allow_rowcount_drop=allow_rowcount_drop,
                     serial_load_error=_serial_load_error,
                 )
-        except Exception:
+            if operation == "plan" and _return_saved_plan:
+                saved_plan = read_saved_plan(sync_name=sync_instance.name, run_id=str(ptd.run_id), config=sync_instance)
+
+            run_file.finished_at = datetime.now(timezone.utc).isoformat()
+            run_file.save()
+        except BaseException:
             # Preserved CLI pattern (cli.py:156-159 / 285-288), verbatim: mark
             # run.json failed, then bare re-raise of the ORIGINAL exception, so a
             # lifecycle failure can never leave run.json at status="running".
             # This broad except is that existing pattern, not new looseness.
-            run_file.status = "failed"
-            run_file.save()
+            _save_failed_run(ptd.run_dir, mode=run_mode, run_file=run_file)
             raise
-
-        run_file.finished_at = datetime.now(timezone.utc).isoformat()
-        run_file.save()
         if operation == "plan":
             logger.info("Cached run %s at %s", ptd.run_id, ptd.run_dir)
         else:
             logger.info("Sync run %s at %s", ptd.run_id, ptd.run_dir)
+        if saved_plan is not None:
+            return saved_plan
         return _build_result(sync_instance=sync_instance, operation=operation, ptd=ptd, summary=summary)
 
 
+# pylint: enable=too-many-branches
 # --------------------------------------------------------------------------- #
 # Remote composition — THE sanitize-and-wrap boundary
 # --------------------------------------------------------------------------- #
@@ -873,23 +1259,22 @@ def run_remote_request(
     try:
         sync_instance = resolve_sync_instance(sync_name, directory=config_directory)
         secrets = collect_secret_values(sync_instance)
-        return execute_run(
-            sync_instance,
-            operation=operation,
-            confirm_writes=confirm_writes,
-            branch=branch,
-            show_progress=False,
-            potenda_factory=factory,
-            _lock_timeout=_lock_timeout,
+        return cast(
+            "RunResult",
+            execute_run(
+                sync_instance,
+                operation=operation,
+                confirm_writes=confirm_writes,
+                branch=branch,
+                show_progress=False,
+                potenda_factory=factory,
+                _lock_timeout=_lock_timeout,
+            ),
         )
     except RunValidationError:
         raise
-    except Timeout as exc:
-        msg = redact(
-            f"Sync {sync_name!r} could not acquire its pipeline lock within {_lock_timeout} seconds — "
-            "another run is in progress",
-            secrets,
-        )
+    except RunConcurrencyError as exc:
+        msg = redact(str(exc), secrets)
         raise RunExecutionError(msg) from sanitize_exception_chain(exc, secrets)
     except _FactoryValueError as exc:
         # Factory stage only. A load-stage `ValueError` (potenda wraps every load

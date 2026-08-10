@@ -1,0 +1,176 @@
+---
+title: Python API
+description: Run local Infrahub Sync plan, verify, apply, and confirmed sync operations from Python.
+---
+
+Import the version 1 Python API from `infrahub_sync.api.v1` to run an Infrahub Sync
+configuration in-process. The API uses the same execution and saved-plan contracts as the
+product and does not invoke the CLI.
+
+The base `infrahub-sync` installation includes this API. Prefect and an external control
+plane are not required. The source and destination declared by the selected configuration
+remain the runtime integrations for operations that contact adapters.
+
+## Create a plan
+
+`plan` loads and validates the named configuration, reads both adapters, saves the proposed
+operations, and returns their counts and artifact locations.
+
+```python
+from infrahub_sync.api.v1 import PlanRequest, plan
+
+result = plan(
+    PlanRequest(
+        sync_name="from-netbox",
+        config_directory="examples",
+        branch="main",
+    )
+)
+
+print(result.run_id)
+print(result.counts.create)
+print(result.domain_summary)
+```
+
+A plan does not write to the destination. Store the returned `run_id`, then review the
+manifest and operations under the returned artifact references before applying it.
+
+The plan artifact is committed before the API reads it back to build `RunResult`. If the API
+cannot read it back, `plan` raises `RunExecutionError` and marks the run failed, but it does not
+rewrite the immutable plan. Use the error's `run_id` to inspect or verify the committed
+artifact before deciding whether to apply it or create a fresh plan.
+
+## Verify a saved plan
+
+`verify` is independent and read-only. It reads the stored plan and checks its format, run
+binding, checksum, source snapshots, and configuration version. It does not construct an
+adapter, change run state, or write to the destination.
+
+```python
+from infrahub_sync.api.v1 import VerifyRequest, verify
+
+verified = verify(
+    VerifyRequest(
+        sync_name="from-netbox",
+        config_directory="examples",
+        run_id=result.run_id,
+    )
+)
+
+assert verified.outcome == "verified"
+```
+
+Verification against the live destination remains part of apply. Independent verification
+cannot prove that an endpoint or branch still matches without constructing the destination
+adapter.
+
+## Apply a reviewed plan
+
+Pass the checksum from the reviewed plan manifest. A preliminary read checks that checksum
+before constructing the destination. The apply seam then reads the artifact once and uses
+those same bytes for its required verification and writes. It applies the stored operations
+without extracting the source or recomputing the plan.
+
+```python
+from infrahub_sync.api.v1 import ApplyRequest, apply
+
+# Replace this value with the exact plan_checksum from the reviewed manifest.
+reviewed_checksum = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+applied = apply(
+    ApplyRequest(
+        sync_name="from-netbox",
+        config_directory="examples",
+        run_id=result.run_id,
+        expected_checksum=reviewed_checksum,
+        branch="main",
+    )
+)
+
+assert applied.outcome in {"applied", "no-change"}
+```
+
+Recorded delete operations remain visible in `counts.delete` but are not sent to the
+destination in this release. A destination mismatch, stale configuration, changed source
+snapshot, or checksum mismatch refuses before the first write.
+
+## Run a confirmed sync
+
+`sync` composes the same plan, independent verification, and apply operations. Set
+`confirm_writes=True`; omission or `False` refuses before configuration loading or adapter
+construction.
+
+```python
+from infrahub_sync.api.v1 import SyncRequest, sync
+
+synced = sync(
+    SyncRequest(
+        sync_name="from-netbox",
+        config_directory="examples",
+        branch="main",
+        confirm_writes=True,
+    )
+)
+```
+
+The API applies only the operations materialized in the saved plan. An inherited engine
+limitation means a difference that exists solely in nested child elements can be detected
+without producing a saved operation row; in that case API `sync` reports `no-change` and
+does not write that nested-only difference.
+
+## Result contract
+
+All four functions return `RunResult` on success.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `api_version` | `"1"` | Public result schema version. |
+| `run_id` | `str` | Stable Sync run identifier. |
+| `operation` | `"plan"`, `"sync"`, `"verify"`, or `"apply"` | Requested product operation. |
+| `phase` | `str` | Current product phase. Readers preserve values added by later releases. |
+| `outcome` | `str` | Product outcome, such as `planned`, `verified`, `applied`, or `no-change`. Readers preserve values added by later releases. |
+| `counts` | `ActionCounts` | Zero-filled `create`, `update`, and `delete` saved-operation counts. |
+| `domain_summary` | `dict[str, int]` | Saved-operation counts grouped by destination kind. |
+| `artifacts` | `tuple[ArtifactReference, ...]` | Absolute local references for the run directory, plan manifest, and plan operations. |
+
+Artifact references are local paths on the process host. The API does not upload or retain
+them outside the configured cache.
+
+## Errors and redaction
+
+Catch `RunValidationError` for request, configuration, and saved-plan safety refusals. Catch
+`RunExecutionError` for adapter and engine failures after validation. Both inherit from
+`RunError` and provide `api_version`, `run_id`, `operation`, `stage`, `outcome`, and a
+secret-safe `message`.
+
+```python
+from infrahub_sync.api.v1 import RunError, SyncRequest, sync
+
+request = SyncRequest(
+    sync_name="from-netbox",
+    config_directory="examples",
+    confirm_writes=True,
+)
+
+try:
+    synced = sync(request)
+except RunError as exc:
+    error_data = exc.model_dump()
+```
+
+Result serialization and public error messages redact collected credential-bearing values.
+The sanitized exception cause chain prevents those values from reappearing in a rendered
+stack trace. Credentials remain process configuration; do not put them in request fields.
+
+Write-capable operations use one bounded lock per synchronization. A confirmed `sync` that
+cannot acquire the lock within 60 seconds raises `RunExecutionError` with `stage="lock"`.
+Any run identifier mentioned in that message comes from the latest sidecar still marked
+running; it is diagnostic context and may be stale, not proof that the named run owns the
+lock.
+
+## Lifecycle logs
+
+Each operation emits standard-library `logging` records at lifecycle boundaries. Records
+carry `api_version`, `run_id`, `operation`, `stage`, and `outcome` as structured attributes.
+Use `LifecycleEvent.model_validate(record.__dict__)` to read them. Its `stage` and `outcome`
+fields accept values introduced by future releases.
