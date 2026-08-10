@@ -43,7 +43,6 @@ jobs:
     strategy:
       matrix:
         python-version:
-          - "3.10"
           - "3.11"
           - "3.12"
           - "3.13"
@@ -63,7 +62,7 @@ jobs:
       # collection-time skips so the separate base-install leg can remain free of
       # Prefect and managed-service dependencies.
       - name: "Install dependencies"
-        run: uv sync --frozen --extra dev --extra prefect --extra managed
+        run: uv sync --python ${{ matrix.python-version }} --frozen --extra dev --extra prefect --extra managed
 
       # Runs only `-m "not integration"`. Integration tests need a live
       # Infrahub instance and are opted into via `invoke tests-integration`
@@ -77,7 +76,7 @@ jobs:
     # the base package neither imports nor needs Prefect; only an install where
     # Prefect is genuinely absent proves the base install still imports and the CLI
     # still runs. The flow suite skips here, by design.
-    name: "Unit Tests (base install, no prefect extra)"
+    name: "Unit Tests (base install, Python 3.10, no managed runtimes)"
     needs: ["files-changed"]
     if: needs.files-changed.outputs.sync == 'true'
     runs-on: "ubuntu-22.04"
@@ -91,11 +90,14 @@ jobs:
         with:
           version: "latest"
 
-      - name: "Set up Python 3.12"
-        run: uv python install 3.12
+      - name: "Set up Python 3.10"
+        run: uv python install 3.10
 
       - name: "Install dependencies"
-        run: uv sync --frozen --extra dev
+        run: uv sync --python 3.10 --frozen --extra dev
+
+      - name: "Assert Python 3.10 is active"
+        run: uv run --no-sync python -c "import sys; assert sys.version_info[:2] == (3, 10), sys.version"
 
       - name: "Assert managed runtime dependencies are absent from this environment"
         run: |

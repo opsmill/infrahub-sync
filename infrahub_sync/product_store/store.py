@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS prefect_executions (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS prefect_executions_run_position
     ON prefect_executions (run_id, position);
+CREATE UNIQUE INDEX IF NOT EXISTS prefect_executions_run_purpose_attempt
+    ON prefect_executions (run_id, purpose, attempt);
 CREATE TABLE IF NOT EXISTS mutation_receipts (
     receipt_id TEXT PRIMARY KEY, actor TEXT NOT NULL, key_digest TEXT NOT NULL,
     operation TEXT NOT NULL, target_run_id TEXT, request_fingerprint TEXT NOT NULL,
@@ -52,6 +54,11 @@ CREATE TABLE IF NOT EXISTS mutation_receipts (
     state TEXT NOT NULL, response_status INTEGER, response_body TEXT, flow_run_id TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     UNIQUE (actor, key_digest)
+);
+CREATE TABLE IF NOT EXISTS write_admissions (
+    run_id TEXT PRIMARY KEY, receipt_id TEXT NOT NULL UNIQUE, operation TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES product_runs(run_id),
+    FOREIGN KEY (receipt_id) REFERENCES mutation_receipts(receipt_id)
 );
 CREATE TABLE IF NOT EXISTS audit_events (
     event_id TEXT PRIMARY KEY, run_id TEXT, actor TEXT NOT NULL, operation TEXT NOT NULL,
@@ -108,6 +115,10 @@ class DuplicatePrefectExecutionError(ValueError):
     """The Prefect flow-run ID is already linked to this Sync run."""
 
 
+class WriteAdmissionConflictError(ValueError):
+    """A product run already owns its one durable write-capable admission."""
+
+
 class ArtifactUnavailableError(RuntimeError):
     """A referenced artifact is not available as a complete, valid publication."""
 
@@ -157,13 +168,17 @@ class _RunStore(Protocol):
 
     def has_pending_artifacts(self, run_id: str) -> bool: ...
 
-    def add_prefect_execution(self, run_id: str, link: PrefectExecutionLink) -> None: ...
+    def add_prefect_execution(
+        self, run_id: str, link: PrefectExecutionLink, *, allocate_attempt: bool = False
+    ) -> PrefectExecutionLink: ...
 
     def observe_prefect_execution(
         self, run_id: str, flow_run_id: str, *, state: str | None, observed_at: datetime
     ) -> None: ...
 
-    def reserve_mutation(self, receipt: MutationReceipt, run: ProductRun | None) -> tuple[MutationReceipt, bool]: ...
+    def reserve_mutation(
+        self, receipt: MutationReceipt, run: ProductRun | None, *, admit_write: bool = False
+    ) -> tuple[MutationReceipt, bool]: ...
 
     def lookup_mutation(self, actor: str, key_digest: str) -> LookupResult[MutationReceipt]: ...
 
@@ -413,7 +428,13 @@ class _RelationalRunStore:
             connection.close()
         return row is not None and int(row[0]) > 0
 
-    def add_prefect_execution(self, run_id: str, link: PrefectExecutionLink) -> None:
+    def add_prefect_execution(
+        self,
+        run_id: str,
+        link: PrefectExecutionLink,
+        *,
+        allocate_attempt: bool = False,
+    ) -> PrefectExecutionLink:
         last_conflict: BaseException | None = None
         for attempt in range(_PREFECT_POSITION_ATTEMPTS):
             connection = self._connect()
@@ -426,7 +447,19 @@ class _RelationalRunStore:
                     )
                     position_row = cursor.fetchone()
                     position = int(position_row[0]) if position_row is not None else 0
-                    self._insert_prefect_execution(cursor, run_id, link, position)
+                    allocated_link = link
+                    if allocate_attempt:
+                        cursor.execute(
+                            self._sql(
+                                "SELECT COALESCE(MAX(attempt) + 1, 1) FROM prefect_executions "
+                                "WHERE run_id = ? AND purpose = ?"
+                            ),
+                            (run_id, link.purpose),
+                        )
+                        attempt_row = cursor.fetchone()
+                        ordinal = int(attempt_row[0]) if attempt_row is not None else 1
+                        allocated_link = link.model_copy(update={"attempt": ordinal})
+                    self._insert_prefect_execution(cursor, run_id, allocated_link, position)
                     connection.commit()
                 except Exception as exc:  # pylint: disable=broad-exception-caught
                     # DB-API drivers do not share an integrity-error base class;
@@ -436,7 +469,7 @@ class _RelationalRunStore:
                         raise
                     last_conflict = exc
                 else:
-                    return
+                    return allocated_link
                 finally:
                     cursor.close()
             finally:
@@ -448,6 +481,8 @@ class _RelationalRunStore:
             if attempt + 1 == _PREFECT_POSITION_ATTEMPTS:
                 msg = f"Could not allocate a Prefect execution position for Sync run {run_id!r}"
                 raise RuntimeError(msg) from last_conflict
+        msg = "Prefect execution allocation loop exited unexpectedly"
+        raise AssertionError(msg)
 
     def _insert_prefect_execution(
         self, cursor: _Cursor, run_id: str, link: PrefectExecutionLink, position: int
@@ -505,7 +540,13 @@ class _RelationalRunStore:
         finally:
             connection.close()
 
-    def reserve_mutation(self, receipt: MutationReceipt, run: ProductRun | None) -> tuple[MutationReceipt, bool]:
+    def reserve_mutation(
+        self,
+        receipt: MutationReceipt,
+        run: ProductRun | None,
+        *,
+        admit_write: bool = False,
+    ) -> tuple[MutationReceipt, bool]:
         """Atomically reserve actor/key and optionally create its product run."""
         connection = self._connect()
         try:
@@ -515,6 +556,11 @@ class _RelationalRunStore:
                     cursor.execute(self._sql(_INSERT_MUTATION_RECEIPT), _receipt_values(receipt))
                     if run is not None:
                         self._insert_product_run(cursor, run)
+                    if admit_write:
+                        cursor.execute(
+                            self._sql("INSERT INTO write_admissions (run_id, receipt_id, operation) VALUES (?, ?, ?)"),
+                            (receipt.run_id, receipt.receipt_id, receipt.operation),
+                        )
                     connection.commit()
                 except Exception as exc:  # pylint: disable=broad-exception-caught
                     connection.rollback()
@@ -523,6 +569,9 @@ class _RelationalRunStore:
                     existing = self.lookup_mutation(receipt.actor, receipt.key_digest)
                     if existing.value is not None:
                         return existing.value, False
+                    if admit_write and self._write_admission_exists(receipt.run_id):
+                        msg = f"Sync run {receipt.run_id!r} already has a write-capable admission"
+                        raise WriteAdmissionConflictError(msg) from exc
                     if run is not None and self.exists(run.run_id):
                         msg = f"Sync run ID {run.run_id!r} already exists"
                         raise DuplicateRunError(msg) from exc
@@ -532,6 +581,18 @@ class _RelationalRunStore:
         finally:
             connection.close()
         return receipt, True
+
+    def _write_admission_exists(self, run_id: str) -> bool:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql("SELECT 1 FROM write_admissions WHERE run_id = ?"), (run_id,))
+                return cursor.fetchone() is not None
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
 
     def lookup_mutation(self, actor: str, key_digest: str) -> LookupResult[MutationReceipt]:
         connection = self._connect()
@@ -917,13 +978,20 @@ class ProductProjection:
         """Look up a product record by stable Sync run ID."""
         return self._records.lookup(run_id)
 
-    def add_prefect_execution(self, run_id: str, link: PrefectExecutionLink, *, secrets: Sequence[str] = ()) -> None:
-        """Append one purpose-labelled execution without changing Sync identity."""
+    def add_prefect_execution(
+        self,
+        run_id: str,
+        link: PrefectExecutionLink,
+        *,
+        allocate_attempt: bool = False,
+        secrets: Sequence[str] = (),
+    ) -> PrefectExecutionLink:
+        """Append one purpose-labelled execution, optionally allocating its ordinal atomically."""
         if not self._records.exists(run_id):
             msg = f"Cannot link a Prefect execution to unavailable Sync run ID {run_id!r}"
             raise RunNotFoundError(msg)
         sanitized = PrefectExecutionLink.model_validate(_redact_value(link.model_dump(mode="json"), secrets))
-        self._records.add_prefect_execution(run_id, sanitized)
+        return self._records.add_prefect_execution(run_id, sanitized, allocate_attempt=allocate_attempt)
 
     def observe_prefect_execution(
         self,
@@ -946,9 +1014,10 @@ class ProductProjection:
         receipt: MutationReceipt,
         *,
         run: ProductRun | None = None,
+        admit_write: bool = False,
         secrets: Sequence[str] = (),
     ) -> tuple[MutationReceipt, bool]:
-        """Reserve one actor/key mutation, optionally with its run, in one transaction."""
+        """Reserve one actor/key mutation and optional run/write admission atomically."""
         sanitized_receipt = MutationReceipt.model_validate(_redact_value(receipt.model_dump(mode="json"), secrets))
         sanitized_run = None if run is None else _redacted_run(run, secrets)
         if sanitized_run is not None:
@@ -962,7 +1031,7 @@ class ProductProjection:
             if sanitized_run.run_id != sanitized_receipt.run_id:
                 msg = "a mutation receipt and its atomically created product run must share one run ID"
                 raise ValueError(msg)
-        return self._records.reserve_mutation(sanitized_receipt, sanitized_run)
+        return self._records.reserve_mutation(sanitized_receipt, sanitized_run, admit_write=admit_write)
 
     def lookup_mutation(self, actor: str, key_digest: str) -> LookupResult[MutationReceipt]:
         """Look up the durable receipt for an actor and hashed client key."""

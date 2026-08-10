@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Barrier
 from uuid import NAMESPACE_URL, uuid5
 
 import pytest
@@ -34,6 +36,7 @@ class _FakeOrchestration:
         self.by_key: dict[str, Submission] = {}
         self.observations: dict[str, Observation] = {}
         self.fail_after_accept_once = False
+        self.cancel_failure = False
         self.cancelled: list[str] = []
 
     async def submit(self, parameters: dict[str, object], *, idempotency_key: str) -> Submission:
@@ -58,6 +61,8 @@ class _FakeOrchestration:
 
     async def cancel(self, flow_run_id: str) -> Observation:
         self.cancelled.append(flow_run_id)
+        if self.cancel_failure:
+            return Observation(available=False, state="running", reason="prefect-cancellation-unavailable")
         observed = Observation(available=True, state="cancelling")
         self.observations[flow_run_id] = observed
         return observed
@@ -253,6 +258,25 @@ def test_retained_routes_survive_missing_prefect_detail(
     assert artifact.headers["digest"].startswith("sha-256=")
 
 
+def test_cancellation_transport_failure_remains_a_typed_mutation_error(
+    managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, _projection, orchestration = managed
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+    orchestration.cancel_failure = True
+
+    response = client.post(
+        f"/runs/{run_id}/cancel",
+        headers={**AUTH, "Idempotency-Key": "cancel-transport-failure"},
+        json={"reason": "stop after transport failure"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "orchestration-unavailable"
+    assert response.json()["error"]["mutation_id"].startswith("m-")
+
+
 def test_owner_admin_authorization_apply_verify_and_cancel(  # noqa: PLR0914 - one end-to-end matrix.
     managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
 ) -> None:
@@ -331,6 +355,97 @@ def test_owner_admin_authorization_apply_verify_and_cancel(  # noqa: PLR0914 - o
     assert set(run.audit_links) == {event.event_id for event in projection.audit_events(run_id)}
 
 
+def test_concurrent_and_post_completion_distinct_apply_keys_are_refused(
+    managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, projection, orchestration = managed
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+    plan = _publish_plan(projection, run_id)
+    ready = Barrier(2)
+
+    def apply(position: int):
+        ready.wait()
+        return client.post(
+            f"/runs/{run_id}/apply",
+            headers={**AUTH, "Idempotency-Key": f"concurrent-apply-{position}"},
+            json={
+                "expected_checksum": plan.checksum,
+                "confirm_writes": True,
+                "reason": f"concurrent approval {position}",
+            },
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(apply, range(2)))
+
+    accepted = next(response for response in responses if response.status_code == 202)
+    refused = next(response for response in responses if response.status_code == 409)
+    accepted_position = next(position for position, response in enumerate(responses) if response.status_code == 202)
+    assert refused.json()["error"]["code"] == "apply-already-admitted"
+    assert len(orchestration.submissions) == 2
+
+    projection.finish_run(
+        run_id,
+        phase="applied",
+        outcome="applied",
+        summary={"sync_name": "inventory", "create": 1, "update": 0, "delete": 0},
+        results={"outcome": "applied"},
+    )
+    replay = client.post(
+        f"/runs/{run_id}/apply",
+        headers={**AUTH, "Idempotency-Key": f"concurrent-apply-{accepted_position}"},
+        json={
+            "expected_checksum": plan.checksum,
+            "confirm_writes": True,
+            "reason": f"concurrent approval {accepted_position}",
+        },
+    )
+    post_completion = client.post(
+        f"/runs/{run_id}/apply",
+        headers={**AUTH, "Idempotency-Key": "post-completion-apply"},
+        json={"expected_checksum": plan.checksum, "confirm_writes": True, "reason": "apply again"},
+    )
+
+    assert replay.status_code == 202
+    assert replay.json() == accepted.json()
+    assert post_completion.status_code == 409
+    assert post_completion.json()["error"]["code"] == "apply-already-admitted"
+    assert len(orchestration.submissions) == 2
+    refusals = [event for event in projection.audit_events(run_id) if event.outcome == "refused-apply-admission"]
+    assert len(refusals) == 2
+
+
+def test_confirmed_sync_reserves_its_write_admission_and_replays(
+    managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, projection, orchestration = managed
+    body = {
+        "sync_name": "inventory",
+        "operation": "sync",
+        "configuration_reference": "sha256:configuration",
+        "confirm_writes": True,
+        "reason": "approved composed sync",
+    }
+    headers = {"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": "confirmed-sync"}
+
+    accepted = client.post("/runs", headers=headers, json=body)
+    replay = client.post("/runs", headers=headers, json=body)
+    run_id = accepted.json()["run"]["run_id"]
+    plan = _publish_plan(projection, run_id)
+    later_apply = client.post(
+        f"/runs/{run_id}/apply",
+        headers={**AUTH, "Idempotency-Key": "apply-after-sync"},
+        json={"expected_checksum": plan.checksum, "confirm_writes": True, "reason": "duplicate write"},
+    )
+
+    assert accepted.status_code == 202
+    assert replay.json() == accepted.json()
+    assert later_apply.status_code == 409
+    assert later_apply.json()["error"]["code"] == "apply-already-admitted"
+    assert [parameters["stage"] for parameters, _ in orchestration.submissions] == ["sync"]
+
+
 @pytest.mark.parametrize(
     ("actor", "token", "expected_status"),
     [
@@ -381,7 +496,7 @@ def test_owner_and_administrator_mutation_matrix(
         assert not orchestration.cancelled
 
 
-def test_stable_not_found_expired_unavailable_and_unhandled_errors(
+def test_stable_not_found_expired_unavailable_and_degraded_prefect_reads(
     managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -414,19 +529,19 @@ def test_stable_not_found_expired_unavailable_and_unhandled_errors(
         )
     expired = client.get(f"/runs/{run_id}/plan", headers=headers)
 
-    async def broken_observation(_flow_run_id: str) -> Observation:  # noqa: RUF029
-        msg = "internal-token-canary"
-        raise RuntimeError(msg)
+    async def unavailable_observation(_flow_run_id: str) -> Observation:  # noqa: RUF029
+        return Observation(available=False, state=None, reason="prefect-read-unavailable")
 
-    monkeypatch.setattr(orchestration, "observe", broken_observation)
-    with TestClient(client.app, raise_server_exceptions=False) as error_client:
-        unhandled = error_client.get(f"/runs/{run_id}", headers=headers)
+    monkeypatch.setattr(orchestration, "observe", unavailable_observation)
+    degraded = client.get(f"/runs/{run_id}", headers=headers)
 
     assert missing.status_code == 404
     assert unavailable_response.status_code == 503
     assert expired.status_code == 410
-    assert unhandled.status_code == 503
-    for response in (missing, unavailable_response, expired, unhandled):
+    assert degraded.status_code == 200
+    assert degraded.json()["orchestration"][0]["detail_available"] is False
+    assert degraded.json()["orchestration"][0]["unavailable_reason"] == "prefect-read-unavailable"
+    for response in (missing, unavailable_response, expired):
         assert set(response.json()) == {"error"}
         assert "token-canary" not in response.text
 

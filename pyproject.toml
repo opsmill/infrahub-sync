@@ -55,6 +55,7 @@ prefect = [
 # Prefect integration is pinned to the reviewed DB-102/103/104 stack exactly.
 managed = [
     "fastapi>=0.115,<1; python_version >= '3.11'",
+    "httpx>=0.27,<1; python_version >= '3.11'",
     "opsmill-prefect-extras @ git+https://github.com/opsmill/prefect-extras.git@84688eb8d8db7e17770413640a66481ccdc3e725 ; python_version >= '3.11'",
     "prefect==3.8.1; python_version >= '3.11'",
     "uvicorn>=0.34,<1; python_version >= '3.11'",

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
+import httpx
 from opsmill_prefect_extras.executors import (
     IdempotentWorkflowExecutor,
     RemoteExecutionClient,
@@ -69,6 +70,8 @@ class PrefectOrchestration:
             run = await self._client.read_flow_run(UUID(flow_run_id))
         except ObjectNotFound:
             return Observation(available=False, state=None, reason="prefect-execution-unavailable")
+        except httpx.HTTPError:
+            return Observation(available=False, state=None, reason="prefect-read-unavailable")
         state = run.state
         if state is None:
             return Observation(available=True, state="pending")
@@ -79,5 +82,8 @@ class PrefectOrchestration:
         observed = await self.observe(flow_run_id)
         if not observed.available or observed.state in {"completed", "failed", "crashed", "cancelled"}:
             return observed
-        await self._client.set_flow_run_state(UUID(flow_run_id), Cancelling())
+        try:
+            await self._client.set_flow_run_state(UUID(flow_run_id), Cancelling())
+        except httpx.HTTPError:
+            return Observation(available=False, state=observed.state, reason="prefect-cancellation-unavailable")
         return await self.observe(flow_run_id)

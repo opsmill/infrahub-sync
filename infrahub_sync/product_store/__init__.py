@@ -17,6 +17,7 @@ from infrahub_sync.product_store.store import (
     ProductProjection,
     RunNotFoundError,
     S3Client,
+    WriteAdmissionConflictError,
     local_product_projection,
     production_product_projection,
 )
@@ -36,6 +37,7 @@ __all__ = (
     "ProductRun",
     "RunNotFoundError",
     "S3Client",
+    "WriteAdmissionConflictError",
     "local_product_projection",
     "production_product_projection",
 )

@@ -19,6 +19,7 @@ from infrahub_sync.product_store import (
     PrefectExecutionLink,
     ProductProjection,
     ProductRun,
+    WriteAdmissionConflictError,
 )
 
 from .models import (
@@ -119,7 +120,12 @@ class ManagedRunService:
             phase="accepted",
             summary={"sync_name": request.sync_name},
         )
-        reserved, _ = self._projection.reserve_mutation(receipt, run=run, secrets=self._secrets)
+        reserved, _ = self._projection.reserve_mutation(
+            receipt,
+            run=run,
+            admit_write=request.operation == "sync",
+            secrets=self._secrets,
+        )
         self._require_matching_receipt(reserved, receipt)
         if reserved.state == "accepted":
             self._audit(
@@ -197,14 +203,30 @@ class ManagedRunService:
                 "expected_checksum does not match the retained reviewed plan",
                 run_id=run_id,
             )
-        receipt = self._reserve_existing(
-            run,
-            principal,
-            idempotency_key,
-            operation="apply",
-            reason=request.reason,
-            body=request.model_dump(mode="json"),
-        )
+        try:
+            receipt = self._reserve_existing(
+                run,
+                principal,
+                idempotency_key,
+                operation="apply",
+                reason=request.reason,
+                body=request.model_dump(mode="json"),
+                admit_write=True,
+            )
+        except WriteAdmissionConflictError:
+            self._audit(
+                run_id,
+                actor=principal.actor,
+                operation="apply",
+                reason=request.reason,
+                outcome="refused-apply-admission",
+            )
+            raise self._error(
+                409,
+                "apply-already-admitted",
+                "a write-capable apply stage is already admitted for this Sync run",
+                run_id=run_id,
+            ) from None
         if receipt.state == "accepted":
             self._audit(run_id, actor=principal.actor, operation="apply", reason=request.reason, outcome="replayed")
             return self._stored_response(receipt)
@@ -364,17 +386,20 @@ class ManagedRunService:
             error.__cause__ = sanitize_exception_chain(exc, self._secrets)
             error.__suppress_context__ = True
             raise error from error.__cause__
-        run = self._required_run(receipt.run_id)
-        attempt = 1 + sum(link.purpose == receipt.operation for link in run.prefect_executions)
         link = PrefectExecutionLink(
             flow_run_id=submission.flow_run_id,
             purpose=receipt.operation,
-            attempt=attempt,
+            attempt=1,
             last_observed_state=submission.state,
             last_observed_at=datetime.now(timezone.utc),
         )
         try:
-            self._projection.add_prefect_execution(receipt.run_id, link, secrets=self._secrets)
+            self._projection.add_prefect_execution(
+                receipt.run_id,
+                link,
+                allocate_attempt=True,
+                secrets=self._secrets,
+            )
         except DuplicatePrefectExecutionError:
             self._projection.observe_prefect_execution(
                 receipt.run_id,
@@ -412,6 +437,7 @@ class ManagedRunService:
         operation: str,
         reason: str,
         body: dict[str, Any],
+        admit_write: bool = False,
     ) -> MutationReceipt:
         receipt = self._new_receipt(
             actor=principal.actor,
@@ -423,7 +449,11 @@ class ManagedRunService:
             reason=reason,
             now=datetime.now(timezone.utc),
         )
-        reserved, _ = self._projection.reserve_mutation(receipt, secrets=self._secrets)
+        reserved, _ = self._projection.reserve_mutation(
+            receipt,
+            admit_write=admit_write,
+            secrets=self._secrets,
+        )
         self._require_matching_receipt(reserved, receipt)
         return reserved
 

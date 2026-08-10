@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal, NoReturn
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 
 pytest.importorskip("prefect")
@@ -17,13 +18,13 @@ pytest.importorskip("opsmill_prefect_extras")
 from opsmill_prefect_extras.deployments import apply_deployments
 from opsmill_prefect_extras.workflows import assert_valid_definitions
 from prefect.exceptions import MissingContextError, ObjectNotFound
-from prefect.states import Pending
+from prefect.states import Failed, Pending
 
 from infrahub_sync.execution import RunResult
 from infrahub_sync.managed import flow as managed_flow
 from infrahub_sync.managed.deploy import CATALOGUE
 from infrahub_sync.managed.flow import managed_sync_run
-from infrahub_sync.managed.orchestration import MANAGED_DEFINITION, PrefectOrchestration
+from infrahub_sync.managed.orchestration import MANAGED_DEFINITION, Observation, PrefectOrchestration
 from infrahub_sync.orchestration.flow import infrahub_sync_run
 from infrahub_sync.plan.models import PlanManifest
 from infrahub_sync.plan.review import SavedPlan
@@ -50,6 +51,17 @@ def _saved(run_id: str) -> SavedPlan:
 
 def _instance(sync_name: str, *, directory: str) -> SimpleNamespace:  # noqa: ARG001 - resolver protocol fake.
     return SimpleNamespace(name=sync_name)
+
+
+class _RecordingRunLogger:
+    def __init__(self) -> None:
+        self.rendered: list[str] = []
+
+    def log(self, _level: int, message: str, *args: object) -> None:
+        self.rendered.append(message % args)
+
+    def info(self, message: str, *args: object) -> None:
+        self.rendered.append(message % args)
 
 
 def _create_product_run(
@@ -112,6 +124,61 @@ def test_missing_context_uses_local_logger_without_constructing_a_bridge(monkeyp
     assert prefect_context is False
 
 
+def test_managed_flow_redacts_worker_logs_exception_chain_and_failed_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    environment_canary = "worker-environment-token-canary"
+    configuration_canary = "worker-configuration-token-canary"
+    run_id = "run-managed-secret-failure"
+    projection = _create_product_run(tmp_path.resolve(), run_id)
+    run_logger = _RecordingRunLogger()
+    instance = SimpleNamespace(
+        name="inventory",
+        source=SimpleNamespace(settings={"token": configuration_canary}),
+        destination=SimpleNamespace(settings={}),
+        store=None,
+    )
+    monkeypatch.setenv("NETBOX_TOKEN", environment_canary)
+    monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(managed_flow, "_run_logger", lambda: (run_logger, True))
+
+    def resolve(_sync_name: str, *, directory: str):  # noqa: ARG001
+        logging.getLogger("infrahub_sync.managed.worker").warning(
+            "resolution used %s",
+            environment_canary,
+        )
+        return instance
+
+    def fail_plan(_instance, *, run_id: str, branch: str | None, composed_sync: bool):  # noqa: ARG001
+        logging.getLogger("infrahub_sync.managed.worker").error(
+            "execution used %s",
+            configuration_canary,
+        )
+        cause_message = f"transport rejected {environment_canary}"
+        failure_message = f"adapter rejected {configuration_canary}"
+        raise ValueError(failure_message) from ConnectionError(cause_message)
+
+    monkeypatch.setattr(managed_flow, "resolve_sync_instance", resolve)
+    monkeypatch.setattr(managed_flow, "_plan", fail_plan)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        managed_sync_run.fn(run_id, "inventory", "plan", "sha256:configuration")
+
+    failure = exc_info.value
+    failed_state = Failed(message=str(failure), data=failure)
+    chain: list[BaseException] = []
+    current: BaseException | None = failure
+    while current is not None:
+        chain.append(current)
+        current = current.__cause__
+    scanned = repr((run_logger.rendered, chain, failed_state))
+    assert environment_canary not in scanned
+    assert configuration_canary not in scanned
+    assert "***" in scanned
+    assert failure.__context__ is None
+
+
 def test_managed_plan_worker_updates_the_api_created_run_and_publishes_review(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -122,7 +189,7 @@ def test_managed_plan_worker_updates_the_api_created_run_and_publishes_review(
     monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
     monkeypatch.setattr(managed_flow, "resolve_sync_instance", _instance)
-    monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance: ())
+    monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
 
     def plan(_instance, *, run_id: str, branch: str | None, composed_sync: bool):  # noqa: ARG001
         seen.append(run_id)
@@ -154,7 +221,7 @@ def test_managed_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.M
     monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
     monkeypatch.setattr(managed_flow, "resolve_sync_instance", _instance)
-    monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance: ())
+    monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "execute_run", lambda *_args, **_kwargs: saved)
 
     result = managed_sync_run.fn(
@@ -190,7 +257,7 @@ def test_confirmed_managed_sync_calls_plan_verify_apply_in_order_on_one_run(
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
     monkeypatch.setattr(managed_flow, "bounded_run_lock", lambda *_args, **_kwargs: nullcontext())
     monkeypatch.setattr(managed_flow, "resolve_sync_instance", _instance)
-    monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance: ())
+    monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
 
     def plan(_instance, *, run_id: str, branch: str | None, composed_sync: bool):  # noqa: ARG001
         calls.append(("plan", run_id))
@@ -288,6 +355,30 @@ async def test_prefect_extras_executor_receives_opaque_key_unchanged() -> None:
     assert submission.flow_run_id == str(client.flow_run.id)
     assert client.keys == ["opaque-prefect-key"]
     assert client.parameters == [parameters]
+
+
+class _ReadTransportFailureClient:
+    async def read_flow_run(self, _flow_run_id: UUID):  # noqa: PLR6301 - protocol fake.
+        request = httpx.Request("GET", "http://prefect.invalid/api/flow_runs/id")
+        message = "Prefect is unavailable"
+        raise httpx.ConnectError(message, request=request)
+
+
+@pytest.mark.asyncio
+async def test_prefect_read_transport_failure_becomes_missing_live_detail() -> None:
+    gateway = PrefectOrchestration(
+        _ReadTransportFailureClient()  # ty: ignore[invalid-argument-type] - read-only protocol fake.
+    )
+
+    observed = await gateway.observe(str(uuid4()))
+    cancelled = await gateway.cancel(str(uuid4()))
+
+    assert observed == Observation(
+        available=False,
+        state=None,
+        reason="prefect-read-unavailable",
+    )
+    assert cancelled == observed
 
 
 class _DeploymentClient:
