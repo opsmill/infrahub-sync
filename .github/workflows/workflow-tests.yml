@@ -43,6 +43,7 @@ jobs:
     strategy:
       matrix:
         python-version:
+          - "3.10"
           - "3.11"
           - "3.12"
           - "3.13"
@@ -58,10 +59,14 @@ jobs:
       - name: "Set up Python ${{ matrix.python-version }}"
         run: uv python install ${{ matrix.python-version }}
 
-      # The optional orchestration profiles are required here: their suites use
-      # collection-time skips so the separate base-install leg can remain free of
-      # Prefect and managed-service dependencies.
-      - name: "Install dependencies"
+      - name: "Install Developer Preview dependencies on Python 3.10"
+        if: matrix.python-version == '3.10'
+        run: uv sync --python 3.10 --frozen --extra dev --extra prefect
+
+      # Managed HTTP support is Python 3.11+; the separate 3.10 leg still proves
+      # the preserved Developer Preview orchestration profile.
+      - name: "Install managed dependencies on Python 3.11+"
+        if: matrix.python-version != '3.10'
         run: uv sync --python ${{ matrix.python-version }} --frozen --extra dev --extra prefect --extra managed
 
       # Runs only `-m "not integration"`. Integration tests need a live

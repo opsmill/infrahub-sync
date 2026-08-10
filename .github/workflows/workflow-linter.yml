@@ -61,6 +61,7 @@ jobs:
     strategy:
       matrix:
         python-version:
+          - "3.10"
           - "3.11"
           - "3.12"
           - "3.13"
@@ -77,9 +78,13 @@ jobs:
       - name: "Set up Python ${{ matrix.python-version }}"
         run: uv python install ${{ matrix.python-version }}
 
-      # Optional orchestration imports must resolve in the ty gate. The managed
-      # profile also carries Prefect Extras, FastAPI, and the ASGI server.
-      - name: "Install dependencies"
+      - name: "Install Developer Preview dependencies on Python 3.10"
+        if: matrix.python-version == '3.10'
+        run: uv sync --python 3.10 --frozen --extra dev --extra prefect
+
+      # Optional managed imports resolve only on their supported Python range.
+      - name: "Install managed dependencies on Python 3.11+"
+        if: matrix.python-version != '3.10'
         run: uv sync --python ${{ matrix.python-version }} --frozen --extra dev --extra prefect --extra managed
 
       - name: "Linting: ruff check"
@@ -88,7 +93,12 @@ jobs:
       - name: "Linting: ruff format"
         run: "uv run ruff format --check --diff ."
 
+      - name: "Linting: ty check (Developer Preview Python 3.10)"
+        if: matrix.python-version == '3.10'
+        run: "uv run ty check --exclude infrahub_sync/managed --exclude tests/managed ."
+
       - name: "Linting: ty check (managed Python 3.11+)"
+        if: matrix.python-version != '3.10'
         run: "uv run ty check ."
 
       # TODO: Need to cleanup code

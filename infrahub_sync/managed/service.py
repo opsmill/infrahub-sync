@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from hashlib import sha256
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 from uuid import uuid4
 
 from pydantic import ValidationError
@@ -152,6 +152,18 @@ class ManagedRunService:
     ) -> tuple[int, dict[str, Any]]:
         """Accept an independently auditable, read-only verification."""
         run = self._owned_run(run_id, principal, "verify", request.reason)
+        body = request.model_dump(mode="json")
+        parameters = self._stage_parameters(run, "verify", confirm_writes=False)
+        existing = self._lookup_existing_receipt(
+            run,
+            principal,
+            idempotency_key,
+            operation="verify",
+            reason=request.reason,
+            body=body,
+        )
+        if existing is not None:
+            return await self._resume_or_replay(existing, parameters, principal, request.reason)
         self._plan(run_id)
         receipt = self._reserve_existing(
             run,
@@ -159,19 +171,33 @@ class ManagedRunService:
             idempotency_key,
             operation="verify",
             reason=request.reason,
-            body=request.model_dump(mode="json"),
+            body=body,
         )
-        if receipt.state == "accepted":
-            self._audit(run_id, actor=principal.actor, operation="verify", reason=request.reason, outcome="replayed")
-            return self._stored_response(receipt)
-        parameters = self._stage_parameters(run, "verify", confirm_writes=False)
-        return await self._submit(receipt, parameters, principal, request.reason)
+        return await self._resume_or_replay(receipt, parameters, principal, request.reason)
 
     async def apply_run(
         self, run_id: str, request: ApplyRunRequest, principal: Principal, idempotency_key: str
     ) -> tuple[int, dict[str, Any]]:
         """Accept apply only for the exact reviewed retained plan."""
         run = self._owned_run(run_id, principal, "apply", request.reason)
+        body = request.model_dump(mode="json")
+        parameters = self._stage_parameters(
+            run,
+            "apply",
+            branch=request.branch,
+            expected_checksum=request.expected_checksum,
+            confirm_writes=True,
+        )
+        existing = self._lookup_existing_receipt(
+            run,
+            principal,
+            idempotency_key,
+            operation="apply",
+            reason=request.reason,
+            body=body,
+        )
+        if existing is not None:
+            return await self._resume_or_replay(existing, parameters, principal, request.reason)
         self._require_non_secret_parameters(
             principal.actor,
             "apply",
@@ -210,7 +236,7 @@ class ManagedRunService:
                 idempotency_key,
                 operation="apply",
                 reason=request.reason,
-                body=request.model_dump(mode="json"),
+                body=body,
                 admit_write=True,
             )
         except WriteAdmissionConflictError:
@@ -227,17 +253,7 @@ class ManagedRunService:
                 "a write-capable apply stage is already admitted for this Sync run",
                 run_id=run_id,
             ) from None
-        if receipt.state == "accepted":
-            self._audit(run_id, actor=principal.actor, operation="apply", reason=request.reason, outcome="replayed")
-            return self._stored_response(receipt)
-        parameters = self._stage_parameters(
-            run,
-            "apply",
-            branch=request.branch,
-            expected_checksum=request.expected_checksum,
-            confirm_writes=True,
-        )
-        return await self._submit(receipt, parameters, principal, request.reason)
+        return await self._resume_or_replay(receipt, parameters, principal, request.reason)
 
     async def cancel_run(
         self, run_id: str, request: CancelRunRequest, principal: Principal, idempotency_key: str
@@ -264,35 +280,61 @@ class ManagedRunService:
                 outcome="refused-no-execution",
             )
             raise self._error(409, "no-active-execution", "the run has no managed execution to cancel", run_id=run_id)
-        link = run.prefect_executions[-1]
-        observed = await self._orchestration.observe(link.flow_run_id)
-        if not observed.available:
-            self._audit(run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="unavailable")
-            raise self._error(
-                503,
-                "orchestration-unavailable",
+        link: PrefectExecutionLink | None = None
+        unavailable_detail = False
+        for candidate in reversed(run.prefect_executions):
+            try:
+                observed = await self._orchestration.observe(candidate.flow_run_id)
+            except Exception as exc:  # pylint: disable=broad-exception-caught  # noqa: BLE001
+                self._raise_cancel_unavailable(
+                    receipt,
+                    principal,
+                    request.reason,
+                    "the active managed execution cannot be confirmed",
+                    exc=exc,
+                )
+            if not observed.available:
+                if observed.reason == "prefect-execution-unavailable":
+                    unavailable_detail = True
+                    continue
+                self._raise_cancel_unavailable(
+                    receipt,
+                    principal,
+                    request.reason,
+                    "the active managed execution cannot be confirmed",
+                )
+            if observed.state in TERMINAL_STATES:
+                continue
+            link = candidate
+            break
+        if link is None and unavailable_detail:
+            self._raise_cancel_unavailable(
+                receipt,
+                principal,
+                request.reason,
                 "the active managed execution cannot be confirmed",
-                run_id=run_id,
-                mutation_id=receipt.receipt_id,
             )
-        if observed.state in TERMINAL_STATES:
+        if link is None:
             self._audit(
-                run_id,
-                actor=principal.actor,
-                operation="cancel",
-                reason=request.reason,
-                outcome="refused-terminal",
+                run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="refused-terminal"
             )
             raise self._error(409, "execution-terminal", "the managed execution is already terminal", run_id=run_id)
-        cancelled = await self._orchestration.cancel(link.flow_run_id)
-        if not cancelled.available:
-            self._audit(run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="unavailable")
-            raise self._error(
-                503,
-                "orchestration-unavailable",
+        try:
+            cancelled = await self._orchestration.cancel(link.flow_run_id)
+        except Exception as exc:  # pylint: disable=broad-exception-caught  # noqa: BLE001
+            self._raise_cancel_unavailable(
+                receipt,
+                principal,
+                request.reason,
                 "Prefect could not confirm the cancellation request",
-                run_id=run_id,
-                mutation_id=receipt.receipt_id,
+                exc=exc,
+            )
+        if not cancelled.available:
+            self._raise_cancel_unavailable(
+                receipt,
+                principal,
+                request.reason,
+                "Prefect could not confirm the cancellation request",
             )
         self._projection.observe_prefect_execution(
             run_id,
@@ -314,6 +356,29 @@ class ManagedRunService:
         )
         self._audit(run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="accepted")
         return self._stored_response(completed)
+
+    def _raise_cancel_unavailable(
+        self,
+        receipt: MutationReceipt,
+        principal: Principal,
+        reason: str,
+        message: str,
+        *,
+        exc: Exception | None = None,
+    ) -> NoReturn:
+        self._audit(receipt.run_id, actor=principal.actor, operation="cancel", reason=reason, outcome="unavailable")
+        error = self._error(
+            503,
+            "orchestration-unavailable",
+            message,
+            run_id=receipt.run_id,
+            mutation_id=receipt.receipt_id,
+        )
+        if exc is None:
+            raise error
+        error.__cause__ = sanitize_exception_chain(exc, self._secrets)
+        error.__suppress_context__ = True
+        raise error from error.__cause__
 
     async def get_run(self, run_id: str) -> RunResource:
         """Return retained product state even when Prefect detail expired."""
@@ -456,6 +521,50 @@ class ManagedRunService:
         )
         self._require_matching_receipt(reserved, receipt)
         return reserved
+
+    def _lookup_existing_receipt(
+        self,
+        run: ProductRun,
+        principal: Principal,
+        idempotency_key: str,
+        *,
+        operation: str,
+        reason: str,
+        body: dict[str, Any],
+    ) -> MutationReceipt | None:
+        requested = self._new_receipt(
+            actor=principal.actor,
+            idempotency_key=idempotency_key,
+            operation=operation,
+            target_run_id=run.run_id,
+            run_id=run.run_id,
+            body=body,
+            reason=reason,
+            now=datetime.now(timezone.utc),
+        )
+        existing = self._projection.lookup_mutation(requested.actor, requested.key_digest).value
+        if existing is None:
+            return None
+        self._require_matching_receipt(existing, requested)
+        return existing
+
+    async def _resume_or_replay(
+        self,
+        receipt: MutationReceipt,
+        parameters: dict[str, object],
+        principal: Principal,
+        reason: str,
+    ) -> tuple[int, dict[str, Any]]:
+        if receipt.state == "accepted":
+            self._audit(
+                receipt.run_id,
+                actor=principal.actor,
+                operation=receipt.operation,
+                reason=reason,
+                outcome="replayed",
+            )
+            return self._stored_response(receipt)
+        return await self._submit(receipt, parameters, principal, reason)
 
     @staticmethod
     def _new_receipt(

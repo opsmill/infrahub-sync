@@ -22,9 +22,9 @@ worker that can run its deployment:
 pip install 'infrahub-sync[managed]'
 ```
 
-The profile directly installs FastAPI, Uvicorn, Prefect 3.8.1, and OpsMill Prefect Extras
-from commit `84688eb8d8db7e17770413640a66481ccdc3e725`. The base installation does not
-import these packages. Ordinary CLI and Python API imports remain Prefect-free.
+The profile directly installs FastAPI, HTTPX, Uvicorn, Prefect 3.8.1, and OpsMill Prefect
+Extras from commit `84688eb8d8db7e17770413640a66481ccdc3e725`. The base installation does
+not import these packages. Ordinary CLI and Python API imports remain Prefect-free.
 
 You also need:
 
@@ -214,6 +214,12 @@ flow-run ID.
 
 Do not change the request body, including `reason`, while retrying. Use a new idempotency key
 for a new intent.
+
+The first confirmed composed `sync` or reviewed `apply` permanently consumes that run's
+single write admission, including when the execution later fails, crashes, or is cancelled.
+Retry an uncertain request with its original idempotency key. To make another write attempt
+after a terminal failure or cancellation, create and review a new plan run; a new key on the
+old run returns `409 apply-already-admitted`.
 
 ## Errors and retained state
 

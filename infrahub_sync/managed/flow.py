@@ -25,6 +25,7 @@ from infrahub_sync.execution import (
     sanitize_exception_chain,
 )
 from infrahub_sync.orchestration.flow import BRIDGED_LEVEL, SOURCE_LOGGER_NAME, RunLogger, RunLoggerBridge
+from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.product_store import ProductProjection, local_product_projection
 
@@ -203,9 +204,9 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             "checksum_ok": saved.checksum_ok,
             "verification_notes": list(saved.verification_notes),
         }
-        projection.record_results(
+        projection.merge_results(
             run_id,
-            {**stored.value.results, "verification": result},
+            {"verification": result},
             secrets=secrets,
         )
     elif stage == "apply":
@@ -264,6 +265,68 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     return result
 
 
+def _failure_evidence(
+    stage: Literal["plan", "verify", "apply", "sync"],
+    exc: Exception,
+) -> dict[str, Any]:
+    evidence: dict[str, Any] = {
+        "stage": stage,
+        "outcome": "failed",
+        "error_type": type(exc).__name__,
+    }
+    apply_record = getattr(exc, "apply_record", None)
+    if isinstance(apply_record, ApplyRecord):
+        evidence.update(apply_record.as_summary_keys())
+    return evidence
+
+
+def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    run_id: str,
+    stage: Literal["plan", "verify", "apply", "sync"],
+    exc: Exception,
+    run_logger: RunLogger,
+    secrets: Sequence[str],
+) -> None:
+    """Best-effort durable product evidence without masking the worker failure."""
+    try:
+        _config_directory, projection = _runtime()
+        stored = projection.lookup_run(run_id).value
+        if stored is None:
+            return
+        evidence = _failure_evidence(stage, exc)
+        projection.merge_results(run_id, {f"{stage}_failure": evidence}, secrets=secrets)
+        if stage == "verify":
+            return
+        refreshed = projection.lookup_run(run_id).value
+        if refreshed is None:
+            return
+        partial = {
+            key: evidence[key]
+            for key in (
+                "applied_operations",
+                "skipped_delete_operations",
+                "skipped_delete_count",
+                "failed_operation",
+                "may_have_partially_written",
+            )
+            if key in evidence
+        }
+        projection.finish_run(
+            run_id,
+            phase=f"{stage}-failed",
+            outcome="failed",
+            summary={**refreshed.summary, "failed_stage": stage, **partial},
+            results=refreshed.results,
+            secrets=secrets,
+        )
+    except Exception as persistence_error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        run_logger.log(
+            logging.WARNING,
+            "managed Sync failure evidence could not be persisted (%s)",
+            type(persistence_error).__name__,
+        )
+
+
 @flow(name=MANAGED_FLOW_NAME)
 def managed_sync_run(  # pylint: disable=too-many-positional-arguments
     run_id: str,
@@ -293,6 +356,7 @@ def managed_sync_run(  # pylint: disable=too-many-positional-arguments
             )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         # Rebuilt after the original exception context exits.
+        _record_failure(run_id, stage, exc, run_logger, secrets)
         failure = sanitize_exception_chain(exc, secrets)
     assert failure is not None
     secrets.clear()

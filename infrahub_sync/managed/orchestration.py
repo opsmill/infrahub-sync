@@ -84,6 +84,6 @@ class PrefectOrchestration:
             return observed
         try:
             await self._client.set_flow_run_state(UUID(flow_run_id), Cancelling())
-        except httpx.HTTPError:
+        except (ObjectNotFound, httpx.HTTPError):
             return Observation(available=False, state=observed.state, reason="prefect-cancellation-unavailable")
         return await self.observe(flow_run_id)

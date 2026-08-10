@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from tempfile import mkdtemp
+from time import sleep
 from typing import Any, Protocol, cast
 
 from pydantic import TypeAdapter
@@ -73,6 +74,7 @@ CREATE INDEX IF NOT EXISTS audit_events_run_created
 _SQLITE_UNIQUE_CONSTRAINT_CODES = frozenset({1555, 2067})
 _POSTGRESQL_SCHEMA_CONFLICT_CODES = frozenset({"23505", "42P07", "42710"})
 _PREFECT_POSITION_ATTEMPTS = 3
+_RESULT_MERGE_ATTEMPTS = 5
 _SCHEMA_INITIALIZATION_ATTEMPTS = 2
 _JSON_MAPPING_ADAPTER = TypeAdapter(dict[str, Any])
 
@@ -197,6 +199,8 @@ class _RunStore(Protocol):
     def audit_events(self, run_id: str | None = None) -> tuple[AuditEvent, ...]: ...
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
+
+    def merge_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
 
     def finish(
         self,
@@ -737,6 +741,44 @@ class _RelationalRunStore:
         finally:
             connection.close()
 
+    def merge_results(self, run_id: str, results: Mapping[str, Any]) -> None:
+        """Merge result fields with optimistic concurrency across DB-API providers."""
+        last_conflict: BaseException | None = None
+        for attempt in range(_RESULT_MERGE_ATTEMPTS):
+            connection = self._connect()
+            retry = False
+            try:
+                cursor = connection.cursor()
+                try:
+                    cursor.execute(self._sql("SELECT results FROM product_runs WHERE run_id = ?"), (run_id,))
+                    row = _require_result_row(cursor.fetchone(), run_id)
+                    current_text = str(row[0])
+                    current = _JSON_MAPPING_ADAPTER.validate_json(current_text)
+                    merged = {**current, **results}
+                    cursor.execute(
+                        self._sql("UPDATE product_runs SET results = ? WHERE run_id = ? AND results = ?"),
+                        (_json(merged), run_id, current_text),
+                    )
+                    if cursor.rowcount == 1:
+                        connection.commit()
+                        return
+                    connection.rollback()
+                    retry = True
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    connection.rollback()
+                    if not _is_retryable_write_conflict(exc):
+                        raise
+                    last_conflict = exc
+                    retry = True
+                finally:
+                    cursor.close()
+            finally:
+                connection.close()
+            if retry and attempt + 1 < _RESULT_MERGE_ATTEMPTS:
+                sleep(0.01)
+        msg = f"Could not merge concurrent results for Sync run ID {run_id!r}"
+        raise RuntimeError(msg) from last_conflict
+
     def _insert_reference(self, cursor: _Cursor, reference: ArtifactReference, *, published: bool) -> None:
         cursor.execute(
             self._sql(_INSERT_ARTIFACT_REFERENCE),
@@ -1076,6 +1118,17 @@ class ProductProjection:
         sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(results), secrets))
         self._records.record_results(redact(run_id, secrets), sanitized)
 
+    def merge_results(
+        self,
+        run_id: str,
+        results: Mapping[str, Any],
+        *,
+        secrets: Sequence[str] = (),
+    ) -> None:
+        """Atomically merge retained result fields without a stale read/replace race."""
+        sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(results), secrets))
+        self._records.merge_results(redact(run_id, secrets), sanitized)
+
     def publish_artifact(
         self,
         run_id: str,
@@ -1344,6 +1397,12 @@ def _is_unique_violation(exc: BaseException) -> bool:
     return getattr(diagnostic, "sqlstate", None) == "23505"
 
 
+def _is_retryable_write_conflict(exc: BaseException) -> bool:
+    if isinstance(exc, sqlite3.OperationalError):
+        return "database is locked" in str(exc).lower()
+    return _sqlstate(exc) in {"40001", "40P01"}
+
+
 def _sqlstate(exc: BaseException) -> str | None:
     direct = getattr(exc, "sqlstate", None) or getattr(exc, "pgcode", None)
     if isinstance(direct, str):
@@ -1375,6 +1434,13 @@ def _require_run_results_recorded(cursor: _Cursor, run_id: str) -> None:
     if cursor.rowcount != 1:
         msg = f"Cannot record results for unavailable Sync run ID {run_id!r}"
         raise RunNotFoundError(msg)
+
+
+def _require_result_row(row: Sequence[Any] | None, run_id: str) -> Sequence[Any]:
+    if row is None:
+        msg = f"Cannot merge results for unavailable Sync run ID {run_id!r}"
+        raise RunNotFoundError(msg)
+    return row
 
 
 def _redact_value(value: Any, secrets: Sequence[str]) -> Any:

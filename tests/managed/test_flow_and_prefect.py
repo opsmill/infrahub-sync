@@ -26,7 +26,8 @@ from infrahub_sync.managed.deploy import CATALOGUE
 from infrahub_sync.managed.flow import managed_sync_run
 from infrahub_sync.managed.orchestration import MANAGED_DEFINITION, Observation, PrefectOrchestration
 from infrahub_sync.orchestration.flow import infrahub_sync_run
-from infrahub_sync.plan.models import PlanManifest
+from infrahub_sync.plan.errors import OperationApplyFailedError
+from infrahub_sync.plan.models import ApplyRecord, PlanManifest
 from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.product_store import ProductRun, local_product_projection
 
@@ -177,6 +178,58 @@ def test_managed_flow_redacts_worker_logs_exception_chain_and_failed_state(
     assert configuration_canary not in scanned
     assert "***" in scanned
     assert failure.__context__ is None
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert stored.phase == "plan-failed"
+    assert stored.outcome == "failed"
+    assert stored.results["plan_failure"] == {
+        "stage": "plan",
+        "outcome": "failed",
+        "error_type": "ValueError",
+    }
+    assert environment_canary not in stored.model_dump_json()
+    assert configuration_canary not in stored.model_dump_json()
+
+
+def test_managed_apply_failure_retains_partial_write_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id = "run-managed-apply-failure"
+    projection = _create_product_run(tmp_path.resolve(), run_id)
+    partial = ApplyRecord(applied_operations=("op-applied",), failed_operation="op-failed")
+    monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
+    monkeypatch.setattr(managed_flow, "resolve_sync_instance", _instance)
+    monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
+
+    def fail_apply(*_args: object, **_kwargs: object) -> NoReturn:
+        msg = "destination rejected operation"
+        raise OperationApplyFailedError(msg, apply_record=partial)
+
+    monkeypatch.setattr(managed_flow, "execute_run", fail_apply)
+
+    with pytest.raises(RuntimeError):
+        managed_sync_run.fn(
+            run_id,
+            "inventory",
+            "apply",
+            "sha256:configuration",
+            expected_checksum="a" * 64,
+            confirm_writes=True,
+        )
+
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert stored.phase == "apply-failed"
+    assert stored.outcome == "failed"
+    assert stored.summary["may_have_partially_written"] is True
+    assert stored.results["apply_failure"] == {
+        "stage": "apply",
+        "outcome": "failed",
+        "error_type": "OperationApplyFailedError",
+        **partial.as_summary_keys(),
+    }
 
 
 def test_managed_plan_worker_updates_the_api_created_run_and_publishes_review(

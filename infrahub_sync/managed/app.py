@@ -1,6 +1,7 @@
 """FastAPI routing for the stable managed Sync HTTP contract."""
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, Request, Response
@@ -34,10 +35,11 @@ def create_app(service: ManagedRunService, resolver: PrincipalResolver) -> FastA
     application = FastAPI(title="Infrahub Sync managed API", version="1.0.0")
 
     def authenticate(request: Request, authorization: Annotated[str | None, Header()] = None) -> Principal:
-        if authorization is None or not authorization.startswith("Bearer "):
+        parts = [] if authorization is None else authorization.split(None, 1)
+        if len(parts) != 2 or parts[0].casefold() != "bearer" or not parts[1]:
             service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
             raise ManagedAPIError(401, "unauthenticated", "a valid bearer token is required")
-        token = authorization.removeprefix("Bearer ")
+        token = parts[1]
         principal = resolver.resolve(token)
         if principal is None:
             service.record_authentication_refusal(request.url.path, "invalid-bearer-token")
@@ -70,9 +72,17 @@ def create_app(service: ManagedRunService, resolver: PrincipalResolver) -> FastA
         )
         return JSONResponse(status_code=422, content=envelope.model_dump(mode="json"))
 
-    @application.exception_handler(Exception)
-    async def unavailable_error(_request: Request, exc: Exception) -> JSONResponse:  # noqa: RUF029
-        logger.error("managed API request failed: %s", type(exc).__name__)
+    @application.middleware("http")
+    async def contain_unhandled_error(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        try:
+            return await call_next(request)
+        except Exception as exc:  # pylint: disable=broad-exception-caught  # noqa: BLE001
+            logger.error(  # noqa: TRY400 - raw traceback text must not cross this log boundary.
+                "managed API request failed: %s", type(exc).__name__
+            )
         envelope = ErrorEnvelope(
             error=ErrorDetail(
                 code="service-unavailable",

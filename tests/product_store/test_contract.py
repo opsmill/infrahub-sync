@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
+from threading import Barrier
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -1292,6 +1293,25 @@ def test_redaction_precedes_every_relational_and_artifact_write(provider: Produc
     assert artifact is not None
     assert secret.encode() not in artifact
     assert b"***" in artifact
+
+
+def test_concurrent_result_merges_retain_every_stage_on_both_profiles(provider: ProductProjection) -> None:
+    provider.create_run(_run())
+    ready = Barrier(2)
+
+    def merge(stage: str) -> None:
+        ready.wait()
+        provider.merge_results("run-001", {stage: {"outcome": stage}})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(merge, ("verification", "apply_failure")))
+
+    loaded = provider.lookup_run("run-001").value
+    assert loaded is not None
+    assert loaded.results == {
+        "apply_failure": {"outcome": "apply_failure"},
+        "verification": {"outcome": "verification"},
+    }
 
 
 @pytest.mark.parametrize("mutation", ["create", "finish"])
