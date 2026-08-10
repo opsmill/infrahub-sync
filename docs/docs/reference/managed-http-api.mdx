@@ -1,0 +1,253 @@
+---
+title: Managed Sync HTTP API
+sidebar_position: 7
+---
+
+The managed Sync HTTP API accepts authenticated run requests, records a stable Sync run
+identity, and delegates execution to a separate Prefect deployment. Sync owns the HTTP,
+authorization, plan, result, artifact, audit, and idempotency contracts. Prefect owns live
+execution state, workers, retries, logs, and cancellation.
+
+The existing [Prefect remote run developer preview](./prefect-remote-run.mdx) remains a
+separate four-parameter deployment. Use the managed API when a trusted automation client
+needs reviewed-plan apply, durable results, artifact retrieval, or actor-scoped mutation
+control.
+
+## Install the managed profile
+
+The managed profile requires Python 3.11 or later. Install it on the API host and every
+worker that can run its deployment:
+
+```bash
+pip install 'infrahub-sync[managed]'
+```
+
+The profile directly installs FastAPI, Uvicorn, Prefect 3.8.1, and OpsMill Prefect Extras
+from commit `84688eb8d8db7e17770413640a66481ccdc3e725`. The base installation does not
+import these packages. Ordinary CLI and Python API imports remain Prefect-free.
+
+You also need:
+
+- a Prefect API and an existing process work pool;
+- a worker with access to the allowed Sync configuration directory;
+- an absolute saved-plan cache path shared by worker processes; and
+- one absolute durable product-cache path visible to both the API and workers.
+
+The MVP product-cache profile uses SQLite and the local filesystem. Run the API and workers
+on infrastructure where they can use the same filesystem paths. The API does not copy
+worker-local paths through Prefect.
+
+## Configure principals
+
+`INFRAHUB_SYNC_MANAGED_BEARER_TOKENS` contains a non-empty JSON object keyed by actor. Each
+entry has a bearer token of at least 16 characters and an optional administrator flag:
+
+```bash
+export INFRAHUB_SYNC_MANAGED_BEARER_TOKENS='{
+  "automation@example.com": {
+    "token": "replace-with-a-secret-token",
+    "administrator": false
+  },
+  "sync-admin@example.com": {
+    "token": "replace-with-another-secret-token",
+    "administrator": true
+  }
+}'
+```
+
+Inject this value through your deployment's secret mechanism. Do not put a real token in a
+shell history, Sync configuration, request body, idempotency key, or Prefect parameter.
+Tokens must be unique. The resolver compares them with a timing-safe operation and never
+persists, returns, or submits them to Prefect.
+
+Any authenticated principal can create and inspect a run. Only the initiating actor or an
+administrator can verify, apply, or cancel it. Every accepted mutation and authorization
+refusal records secret-safe actor, reason, and outcome evidence.
+
+## Deploy the managed flow
+
+Set the work pool name, then apply the managed deployment:
+
+```bash
+export PREFECT_API_URL="http://127.0.0.1:4200/api"
+export INFRAHUB_SYNC_MANAGED_WORK_POOL="sync-process-pool"
+python -m infrahub_sync.managed.deploy
+```
+
+The command validates and applies `infrahub-sync-managed/run` through OpsMill Prefect
+Extras. It does not create a work pool or start a worker.
+
+Configure the worker environment before it starts:
+
+| Variable | Requirement |
+| --- | --- |
+| `PREFECT_API_URL` | Prefect API used by the deployment and worker. |
+| `INFRAHUB_SYNC_CONFIG_DIRECTORY` | Existing directory containing the Sync configurations allowed on this worker. |
+| `INFRAHUB_SYNC_CACHE_DIR` | Absolute shared cache root for saved plans and run artifacts. |
+| `INFRAHUB_SYNC_MANAGED_CACHE_LOCATION` | Absolute durable product-cache root shared with the API. |
+| Adapter credential variables | Credentials required by the selected Sync configuration. Keep them in the worker environment or its secret provider. |
+
+The managed flow accepts exactly seven bounded parameters:
+
+| Parameter | Type | Purpose |
+| --- | --- | --- |
+| `run_id` | `str` | API-created Sync run identity. |
+| `sync_name` | `str` | Configuration selected from the worker's configured directory. |
+| `stage` | `plan`, `verify`, `apply`, or `sync` | Execution stage accepted by the API. |
+| `configuration_reference` | `str` | Immutable, non-secret configuration revision recorded on the product run. |
+| `branch` | `str` or `null` | Optional Infrahub branch. |
+| `expected_checksum` | SHA-256 string or `null` | Reviewed checksum required by `apply`. |
+| `confirm_writes` | `bool` | Required for `apply` and composed `sync`. |
+
+The API rejects configured secret values in flow-bound request fields. Credentials,
+endpoints, adapter instances, and filesystem paths are never flow parameters.
+
+## Start the API
+
+Set the same product-cache path used by the worker and start Uvicorn through the packaged
+entry point:
+
+```bash
+export PREFECT_API_URL="http://127.0.0.1:4200/api"
+export INFRAHUB_SYNC_MANAGED_CACHE_LOCATION="/var/lib/infrahub-sync/product-cache"
+export INFRAHUB_SYNC_MANAGED_HOST="127.0.0.1"
+python -m infrahub_sync.managed.serve
+```
+
+The server listens on port `8000`. Its host defaults to `127.0.0.1`. Put TLS and any
+network access controls at your ingress boundary. The bearer-token provider is the MVP
+application authentication boundary, not a replacement for transport security.
+
+## Routes
+
+Every route requires `Authorization: Bearer <token>`. Every `POST` route also requires a
+non-empty `Idempotency-Key` header and a non-empty `reason` in its JSON body.
+
+| Route | Behavior |
+| --- | --- |
+| `POST /runs` | Create one Sync run and accept `plan` or confirmed composed `sync`. |
+| `GET /runs/{run_id}` | Return the durable product record with current linked Prefect detail when available. |
+| `GET /runs/{run_id}/plan` | Return retained saved-plan review data. |
+| `GET /runs/{run_id}/results` | Return retained results independently of Prefect result retention. |
+| `GET /runs/{run_id}/artifacts` | List immutable run-owned artifact references. |
+| `GET /runs/{run_id}/artifacts/{artifact_id}` | Return verified artifact bytes with their media type and `Digest` header. |
+| `POST /runs/{run_id}/verify` | Accept read-only saved-plan verification without changing product lifecycle state. |
+| `POST /runs/{run_id}/apply` | Accept a confirmed apply for the exact retained reviewed checksum. |
+| `POST /runs/{run_id}/cancel` | Ask Prefect to cancel only the latest active linked execution. |
+
+### Create a plan
+
+Supply a stable non-secret reference for the exact configuration revision you intend the
+worker to resolve:
+
+```bash
+curl --request POST http://127.0.0.1:8000/runs \
+  --header "Authorization: Bearer $SYNC_API_TOKEN" \
+  --header "Idempotency-Key: plan-inventory-2026-08-10" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "sync_name": "inventory",
+    "operation": "plan",
+    "configuration_reference": "sha256:7a15c1e2",
+    "reason": "review inventory changes"
+  }'
+```
+
+Acceptance returns `202` with the durable `ProductRun` and its first orchestration link.
+The `run_id` in that response is the identity for every later stage, result, artifact, and
+Prefect execution link.
+
+Read the plan after the worker publishes it:
+
+```bash
+curl --header "Authorization: Bearer $SYNC_API_TOKEN" \
+  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/plan
+```
+
+The plan response includes its checksum, checksum verification state, summary, verification
+notes, and per-object operations.
+
+### Verify and apply the reviewed plan
+
+Verification is read-only and retains verification evidence without finishing or otherwise
+advancing the product run:
+
+```bash
+curl --request POST \
+  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/verify \
+  --header "Authorization: Bearer $SYNC_API_TOKEN" \
+  --header "Idempotency-Key: verify-20260810T1500-0123abcd" \
+  --header "Content-Type: application/json" \
+  --data '{"reason":"verify the reviewed plan"}'
+```
+
+Apply requires the exact retained checksum and explicit write confirmation:
+
+```bash
+curl --request POST \
+  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/apply \
+  --header "Authorization: Bearer $SYNC_API_TOKEN" \
+  --header "Idempotency-Key: apply-20260810T1500-0123abcd" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "expected_checksum": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "confirm_writes": true,
+    "reason": "change approved"
+  }'
+```
+
+The worker verifies the saved plan again before its first destination write. Destination
+deletes remain disabled.
+
+## Idempotency and retries
+
+An exact retry by the same actor with the same `Idempotency-Key`, target, and JSON body
+returns the stored status and body. A different request using that actor and key returns
+`409 idempotency-conflict`.
+
+Sync stores a SHA-256 digest of the client key, never the raw key. Before dispatch, it
+atomically reserves a durable mutation receipt; run creation reserves the receipt and
+product run in one transaction. The receipt owns a separate opaque key passed to Prefect's
+native idempotency field. If an HTTP or Prefect response is lost after submission, retry the
+exact request. The retry reuses the receipt, opaque Prefect key, Sync run ID, and Prefect
+flow-run ID.
+
+Do not change the request body, including `reason`, while retrying. Use a new idempotency key
+for a new intent.
+
+## Errors and retained state
+
+Every error uses the same envelope:
+
+```json
+{
+  "error": {
+    "code": "checksum-conflict",
+    "message": "expected_checksum does not match the retained reviewed plan",
+    "status": 409,
+    "run_id": "20260810T1500-0123abcd",
+    "mutation_id": null
+  }
+}
+```
+
+| Status | Meaning |
+| --- | --- |
+| `401` | Missing or invalid authentication. |
+| `403` | The actor does not own the mutation and is not an administrator. |
+| `404` | The Sync run or run-owned artifact does not exist. |
+| `409` | Idempotency conflict, missing confirmation, stale checksum, or non-cancellable execution. |
+| `410` | The retained plan or artifact has expired. |
+| `422` | Invalid request schema, missing idempotency key, or a secret-bearing flow parameter. |
+| `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved. |
+
+Prefect detail can expire or become unavailable while the durable Sync record, results,
+and published artifacts remain readable. Cancellation never deletes the product record or
+its execution history. The API does not add a Sync-owned queue, retry policy, scheduler,
+recovery state machine, or overlap policy.
+
+## Related
+
+- [Durable product records](./durable-product-records.mdx)
+- [Saved-plan review and apply](../running-a-sync.mdx)
+- [Prefect remote run developer preview](./prefect-remote-run.mdx)

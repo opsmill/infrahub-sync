@@ -8,8 +8,9 @@ artifacts. It is independent of Prefect: a standalone run has no Prefect links, 
 managed run can retain any number of purpose-labelled execution links after Prefect no
 longer has the corresponding flow-run detail.
 
-This is a Python provider surface. The CLI, public run API, and managed execution paths do
-not use it yet; their shared integration is a separate compatibility step.
+This is a Python provider surface. The managed Sync HTTP API and its worker use the local
+profile for durable run, plan, result, artifact, execution-link, mutation-receipt, and audit
+integration. The CLI and local public run API retain their existing cache contracts.
 
 ## Provider profiles
 
@@ -90,6 +91,17 @@ results, phase, and Prefect-link metadata. It rejects records that already have 
 timestamp, outcome, or artifact reference; those completion fields must be added through
 the publication and finish operations so their integrity checks cannot be bypassed.
 
+Managed mutations reserve a `MutationReceipt` unique by actor and SHA-256 digest of the
+client idempotency key. A receipt binds the operation, target, request fingerprint, reason,
+Sync run, opaque Prefect key, state, and exact accepted response. The raw client key is not
+stored. Run creation commits its receipt and unfinished product run in one relational
+transaction. `AuditEvent` records secret-safe actor, reason, operation, and outcome evidence
+for accepted mutations and refusals.
+
+`record_results` updates retained result evidence without changing product phase, outcome,
+or finish time. Managed verification uses this operation because verification is read-only
+for both the destination and product lifecycle.
+
 ## Artifact publication and lookup
 
 Artifact keys contain their SHA-256 digest and never change. Publication first reserves a
@@ -131,11 +143,11 @@ retention is independent.
 
 ## Secret boundary
 
-Pass the credential values collected by `collect_secret_values` to `create_run`,
-`add_prefect_execution`, `publish_artifact`, and `finish_run`. Values are redacted from
-nested record data and raw artifact bytes before either provider is called. Do not put
-secrets into identifiers; credentials should continue to come from environment variables
-or a secret manager.
+Pass the credential values collected by `collect_secret_values` to mutation, audit, run,
+execution-link, result, artifact, and finish operations. Values are redacted from nested
+record data and raw artifact bytes before either provider is called. Do not put secrets into
+identifiers; credentials should continue to come from environment variables or a secret
+manager.
 
 ## Reproducible sizing evidence
 
