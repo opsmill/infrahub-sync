@@ -24,6 +24,7 @@ extra. Do not change the accepted Prefect Extras Git pin.
 
 ```bash
 uv run pytest -q tests/conformance
+uv run pytest -q tests/conformance/test_interface_matrix.py
 uv run pytest -q tests/api/test_v1.py tests/test_execution_cli_parity.py
 uv run pytest -q tests/product_store tests/managed tests/orchestration/test_flow.py
 uv run ruff check infrahub_sync tests/conformance tests/api/test_v1.py
@@ -32,10 +33,12 @@ uv run ty check .
 
 Review these seams first:
 
-1. `tests/conformance/oracle.py` — bounded normalization and lossless field retention.
-2. `infrahub_sync/product_store/standalone.py` — the opt-in projection adapter.
-3. `infrahub_sync/api/v1/_operations.py` — one product identity across composed sync.
-4. `infrahub_sync/cli.py` — thin option routing; legacy behavior when the option is absent.
+1. `tests/conformance/oracle.py` — exact-path normalization and lossless field retention.
+2. `tests/conformance/interface_adapters.py` and `test_interface_matrix.py` — executed
+   surface adapters and operation matrix.
+3. `infrahub_sync/product_store/standalone.py` — the opt-in projection adapter.
+4. `infrahub_sync/api/v1/_operations.py` — one product identity across composed sync.
+5. `infrahub_sync/cli.py` — thin option routing; legacy behavior when the option is absent.
 
 ## Manual smoke checks
 

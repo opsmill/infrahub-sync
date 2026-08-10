@@ -8,8 +8,22 @@ from typing import Any, Literal, cast
 
 Surface = Literal["cli", "python", "managed"]
 
-GENERATED_ID_FIELDS = frozenset({"run_id", "flow_run_id", "deployment_id", "receipt_id", "event_id"})
-TIMESTAMP_FIELDS = frozenset({"started_at", "finished_at", "created_at", "updated_at", "last_observed_at"})
+NORMALIZED_SCHEMA_PATHS = frozenset(
+    {
+        ("product_record", "run_id"),
+        ("product_record", "started_at"),
+        ("product_record", "finished_at"),
+        ("product_record", "artifact_refs", "*", "run_id"),
+        ("product_record", "artifact_refs", "*", "created_at"),
+        ("product_record", "prefect_executions", "*", "flow_run_id"),
+        ("product_record", "prefect_executions", "*", "deployment_id"),
+        ("product_record", "prefect_executions", "*", "last_observed_at"),
+        ("result", "run_id"),
+        ("artifact_references", "*", "run_id"),
+        ("artifact_references", "*", "created_at"),
+        ("artifact_semantics", "run_id"),
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,15 +48,13 @@ class CanonicalEnvelope:
         return cast("dict[str, object]", _normalize(data))
 
 
-def _normalize(value: object, *, field: str | None = None) -> object:
-    if field in GENERATED_ID_FIELDS:
-        return "<generated-id>" if value is not None else None
-    if field in TIMESTAMP_FIELDS:
-        return "<timestamp>" if value is not None else None
+def _normalize(value: object, *, path: tuple[str, ...] = ()) -> object:
+    if path in NORMALIZED_SCHEMA_PATHS:
+        return "<generated>" if value is not None else None
     if isinstance(value, Mapping):
-        return {str(key): _normalize(item, field=str(key)) for key, item in value.items()}
+        return {str(key): _normalize(item, path=(*path, str(key))) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_normalize(item) for item in value]
+        return [_normalize(item, path=(*path, "*")) for item in value]
     return value
 
 

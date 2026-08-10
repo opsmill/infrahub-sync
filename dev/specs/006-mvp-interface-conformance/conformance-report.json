@@ -4,17 +4,30 @@
   "base": "8ba0c57a7601bd0ffc75431488d6b59717217de6",
   "oracle": "tests/conformance/oracle.py",
   "normalization": {
-    "generated_ids": ["run_id", "flow_run_id", "deployment_id", "receipt_id", "event_id"],
-    "timestamps": ["started_at", "finished_at", "created_at", "updated_at", "last_observed_at"],
+    "exact_schema_paths": [
+      "product_record.run_id",
+      "product_record.started_at",
+      "product_record.finished_at",
+      "product_record.artifact_refs[*].run_id",
+      "product_record.artifact_refs[*].created_at",
+      "product_record.prefect_executions[*].flow_run_id",
+      "product_record.prefect_executions[*].deployment_id",
+      "product_record.prefect_executions[*].last_observed_at",
+      "result.run_id",
+      "artifact_references[*].run_id",
+      "artifact_references[*].created_at",
+      "artifact_semantics.run_id"
+    ],
+    "recursive_key_name_normalization": false,
     "other_fields": "retained"
   },
   "provider_profiles": ["sqlite-filesystem", "postgresql-s3-compatible-live-isolated"],
   "prefect_version": "3.8.1",
   "verification": {
-    "conformance_tests": 11,
-    "focused_tests": 222,
+    "conformance_tests": 25,
+    "focused_tests": 424,
     "full_pytest": {
-      "passed": 1304,
+      "passed": 1320,
       "skipped": 14,
       "xfailed": 1
     },
@@ -24,21 +37,25 @@
     "netbox_to_infrahub": "external-precondition-unavailable"
   },
   "cases": [
-    {"id": "C01", "operation": "plan", "surfaces": ["cli", "python", "managed"], "status": "pass"},
-    {"id": "C02", "operation": "verify", "surfaces": ["cli-review", "python", "managed"], "status": "pass"},
-    {"id": "C03", "operation": "apply", "surfaces": ["cli", "python", "managed"], "status": "pass"},
-    {"id": "C04", "operation": "sync", "surfaces": ["cli", "python", "managed"], "status": "pass"},
+    {"id": "C01", "operation": "plan", "surfaces": ["cli", "python", "managed-worker"], "status": "executed-equal"},
+    {"id": "C02", "operation": "verify", "surfaces": ["python", "managed-worker"], "status": "executed-equal", "cli": "same-byte-review-only-no-independent-verify"},
+    {"id": "C03", "operation": "apply", "surfaces": ["cli", "python", "managed-worker"], "status": "executed-equal"},
+    {"id": "C04", "operation": "sync", "surfaces": ["cli", "python", "managed-worker"], "status": "executed-equal"},
     {"id": "C05", "operation": "plan", "assertion": "complete-product-record-and-artifact-equivalence", "status": "pass"},
     {"id": "C06", "assertion": "secret-sentinel-absent-from-durable-boundaries", "status": "pass"},
-    {"id": "C07", "assertion": "restart-retention-and-single-apply-identity", "status": "pass"}
+    {"id": "C07", "assertion": "restart-retention-and-single-apply-identity", "status": "pass"},
+    {"id": "C08", "assertion": "http-prefect-plan-verify-apply-sync-executed", "status": "pass", "full_product_equality": "not-claimed-http-actor-audit-prefect-fields-retained"},
+    {"id": "C09", "assertion": "same-plan-bytes-cli-plan-python-verify-cli-review", "status": "pass"},
+    {"id": "C10", "assertion": "direct-sync-review-published-before-serial-and-parallel-writes", "status": "pass"},
+    {"id": "C11", "assertion": "partial-apply-evidence-and-duplicate-plan-refusal", "status": "pass"}
   ],
   "criteria": {
     "DBA-001": "pass",
-    "DBA-002": "pass",
+    "DBA-002": "pass-equivalent-worker-inputs-http-owned-fields-retained-separately",
     "DBA-003": "pass",
     "DBA-004": "pass",
-    "DBA-005": "pass",
-    "DBA-006": "pass",
+    "DBA-005": "pass-worker-matrix-http-lifecycle-executed-separately",
+    "DBA-006": "pass-cli-has-review-not-independent-verify",
     "DBA-007": "pass",
     "DBA-008": "pass",
     "DBA-009": "external-services-not-qualified",

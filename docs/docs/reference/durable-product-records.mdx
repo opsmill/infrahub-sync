@@ -22,6 +22,11 @@ expansion, and every stage continuing a plan must use the same location.
 This is minimum product-projection configuration. It does not register or version a
 configuration package, select a new provider type, or add a release-management API.
 
+For configured direct `sync`, the immutable review artifact is published after the saved
+plan commits and before the first destination write, in both serial and tiered execution.
+If publication fails, synchronization stops before contacting the destination write
+surface and retains typed failure evidence on the ProductRun.
+
 ## Provider profiles
 
 The local profile requires an explicit cache directory and creates a SQLite database plus

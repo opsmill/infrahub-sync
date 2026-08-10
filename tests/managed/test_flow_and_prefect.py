@@ -232,6 +232,49 @@ def test_managed_apply_failure_retains_partial_write_evidence(
     }
 
 
+def test_managed_confirmed_sync_retains_the_semantic_sync_operation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id = "run-managed-semantic-sync"
+    projection = _create_product_run(tmp_path.resolve(), run_id, operation="sync")
+    saved = _saved(run_id)
+    monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
+    monkeypatch.setattr(managed_flow, "resolve_sync_instance", _instance)
+    monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
+    monkeypatch.setattr(managed_flow, "bounded_run_lock", lambda *_args, **_kwargs: nullcontext())
+
+    def core(_instance: object, *, operation: str, **_kwargs: object) -> SavedPlan | RunResult:
+        if operation in {"plan", "verify"}:
+            return saved
+        return RunResult(
+            sync_name="inventory",
+            operation="apply",
+            run_id=run_id,
+            status="no-change",
+            changed=False,
+            summary={"create": 0, "update": 0, "delete": 0},
+            artifact_path=str(tmp_path / run_id),
+        )
+
+    monkeypatch.setattr(managed_flow, "execute_run", core)
+
+    result = managed_sync_run.fn(
+        run_id,
+        "inventory",
+        "sync",
+        "sha256:configuration",
+        confirm_writes=True,
+    )
+
+    assert result["operation"] == "sync"
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert stored.operation == "sync"
+    assert stored.results["operation"] == "sync"
+
+
 def test_managed_plan_worker_updates_the_api_created_run_and_publishes_review(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

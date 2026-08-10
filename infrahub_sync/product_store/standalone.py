@@ -12,9 +12,10 @@ from pydantic import BaseModel, ConfigDict
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.execution import ACTION_KEYS, Operation, RunResult, collect_secret_values, execute_run
 from infrahub_sync.plan.config_version import resolve_config_version
+from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.plan.review import SavedPlan, read_saved_plan
 from infrahub_sync.product_store.models import ProductRun
-from infrahub_sync.product_store.store import ProductProjection, local_product_projection
+from infrahub_sync.product_store.store import DuplicateRunError, ProductProjection, local_product_projection
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -84,6 +85,25 @@ def _execution_result(result: RunResult, *, operation: Operation) -> dict[str, A
     }
 
 
+def _finish_execution(
+    projection: ProductProjection,
+    *,
+    run_id: str,
+    result: RunResult,
+    operation: Operation,
+    sync_name: str,
+    secrets: Sequence[str],
+) -> None:
+    projection.finish_run(
+        run_id,
+        phase="applied",
+        outcome=result.status,
+        summary={"sync_name": sync_name, **{key: result.summary[key] for key in ACTION_KEYS}},
+        results=_execution_result(result, operation=operation),
+        secrets=secrets,
+    )
+
+
 def _publish_plan(
     projection: ProductProjection,
     run_id: str,
@@ -132,24 +152,38 @@ def _record_failure(
     exc: BaseException,
     secrets: Sequence[str],
 ) -> None:
-    evidence = {
+    evidence: dict[str, Any] = {
         "stage": operation,
         "outcome": "failed",
         "error_type": type(exc).__name__,
     }
+    apply_record = getattr(exc, "apply_record", None)
+    if isinstance(apply_record, ApplyRecord):
+        evidence.update(apply_record.as_summary_keys())
     try:
+        projection.merge_results(run_id, {f"{operation}_failure": evidence}, secrets=secrets)
         if operation == "verify":
-            projection.merge_results(run_id, {"verification_failure": evidence}, secrets=secrets)
             return
-        stored = projection.lookup_run(run_id).value
-        if stored is None:
+        refreshed = projection.lookup_run(run_id).value
+        if refreshed is None:
             return
+        partial = {
+            key: evidence[key]
+            for key in (
+                "applied_operations",
+                "skipped_delete_operations",
+                "skipped_delete_count",
+                "failed_operation",
+                "may_have_partially_written",
+            )
+            if key in evidence
+        }
         projection.finish_run(
             run_id,
             phase=f"{operation}-failed",
             outcome="failed",
-            summary={**stored.summary, "failed_stage": operation},
-            results={**stored.results, f"{operation}_failure": evidence},
+            summary={**refreshed.summary, "failed_stage": operation, **partial},
+            results=refreshed.results,
             secrets=secrets,
         )
     except Exception as persistence_error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
@@ -157,6 +191,54 @@ def _record_failure(
             "Standalone Sync failure evidence could not be persisted (%s)",
             type(persistence_error).__name__,
         )
+
+
+def _prepare_projection(
+    sync_instance: SyncInstance,
+    *,
+    operation: Operation,
+    semantic_operation: Operation,
+    product_cache_location: str | Path,
+    kwargs: dict[str, Any],
+) -> tuple[ProductProjection, str, Sequence[str]]:
+    supplied_run_id = kwargs.get("run_id")
+    if supplied_run_id is None and operation in ("plan", "sync"):
+        supplied_run_id = generate_run_id()
+        kwargs["run_id"] = supplied_run_id
+    if not isinstance(supplied_run_id, str):
+        msg = f"run_id is required for configured standalone operation={operation}"
+        raise StandaloneProductRecordError(msg)
+
+    try:
+        projection = local_product_projection(Path(product_cache_location).expanduser())
+    except ValueError as exc:
+        raise StandaloneProductRecordError(str(exc)) from None
+    secrets = collect_secret_values(sync_instance)
+    configuration_reference = resolve_config_version(sync_instance)
+    if operation in ("plan", "sync"):
+        try:
+            projection.create_run(
+                ProductRun(
+                    run_id=supplied_run_id,
+                    operation=semantic_operation,
+                    configuration_reference=configuration_reference,
+                    started_at=datetime.now(timezone.utc),
+                    phase="accepted",
+                    summary={"sync_name": sync_instance.name},
+                ),
+                secrets=secrets,
+            )
+        except DuplicateRunError as exc:
+            msg = f"Configured product run {supplied_run_id!r} already exists; use a fresh run ID."
+            raise StandaloneProductRecordError(msg) from exc
+    else:
+        _require_existing_run(
+            projection,
+            run_id=supplied_run_id,
+            sync_instance=sync_instance,
+            configuration_reference=configuration_reference,
+        )
+    return projection, supplied_run_id, secrets
 
 
 @overload
@@ -220,40 +302,24 @@ def execute_standalone(  # pylint: disable=too-many-branches
         return core_executor(sync_instance, operation=operation, **kwargs)
 
     semantic_operation = product_operation or operation
-    supplied_run_id = kwargs.get("run_id")
-    if supplied_run_id is None and operation in ("plan", "sync"):
-        supplied_run_id = generate_run_id()
-        kwargs["run_id"] = supplied_run_id
-    if not isinstance(supplied_run_id, str):
-        msg = f"run_id is required for configured standalone operation={operation}"
-        raise StandaloneProductRecordError(msg)
+    projection, supplied_run_id, secrets = _prepare_projection(
+        sync_instance,
+        operation=operation,
+        semantic_operation=semantic_operation,
+        product_cache_location=product_cache_location,
+        kwargs=kwargs,
+    )
 
-    root = Path(product_cache_location).expanduser()
-    try:
-        projection = local_product_projection(root)
-    except ValueError as exc:
-        raise StandaloneProductRecordError(str(exc)) from None
-    secrets = collect_secret_values(sync_instance)
-    configuration_reference = resolve_config_version(sync_instance)
-    if operation in ("plan", "sync"):
-        projection.create_run(
-            ProductRun(
-                run_id=supplied_run_id,
-                operation=semantic_operation,
-                configuration_reference=configuration_reference,
-                started_at=datetime.now(timezone.utc),
-                phase="accepted",
-                summary={"sync_name": sync_instance.name},
-            ),
-            secrets=secrets,
-        )
-    else:
-        _require_existing_run(
-            projection,
-            run_id=supplied_run_id,
-            sync_instance=sync_instance,
-            configuration_reference=configuration_reference,
-        )
+    plan_published = False
+
+    def publish_committed_plan() -> None:
+        nonlocal plan_published
+        saved_plan = read_saved_plan(sync_name=sync_instance.name, run_id=supplied_run_id, config=sync_instance)
+        _publish_plan(projection, supplied_run_id, saved_plan, secrets)
+        plan_published = True
+
+    if operation == "sync":
+        kwargs["_plan_committed"] = publish_committed_plan
 
     try:
         result = core_executor(sync_instance, operation=operation, **kwargs)
@@ -274,41 +340,34 @@ def execute_standalone(  # pylint: disable=too-many-branches
                     results=plan_result,
                     secrets=secrets,
                 )
-        elif operation == "verify" and kwargs.get("_require_verified"):
+        elif operation == "verify":
             assert isinstance(result, SavedPlan)
-            projection.merge_results(
-                supplied_run_id,
-                {"verification": _verification_result(supplied_run_id, result)},
-                secrets=secrets,
-            )
+            if kwargs.get("_require_verified"):
+                projection.merge_results(
+                    supplied_run_id,
+                    {"verification": _verification_result(supplied_run_id, result)},
+                    secrets=secrets,
+                )
         elif operation == "apply":
             assert isinstance(result, RunResult)
-            execution_result = _execution_result(result, operation=semantic_operation)
-            projection.finish_run(
-                supplied_run_id,
-                phase="applied",
-                outcome=result.status,
-                summary={
-                    "sync_name": sync_instance.name,
-                    **{key: result.summary[key] for key in ACTION_KEYS},
-                },
-                results=execution_result,
+            _finish_execution(
+                projection,
+                run_id=supplied_run_id,
+                result=result,
+                operation=semantic_operation,
+                sync_name=sync_instance.name,
                 secrets=secrets,
             )
         else:
             assert isinstance(result, RunResult)
-            saved = read_saved_plan(sync_name=sync_instance.name, run_id=supplied_run_id, config=sync_instance)
-            _publish_plan(projection, supplied_run_id, saved, secrets)
-            execution_result = _execution_result(result, operation=semantic_operation)
-            projection.finish_run(
-                supplied_run_id,
-                phase="applied",
-                outcome=result.status,
-                summary={
-                    "sync_name": sync_instance.name,
-                    **{key: result.summary[key] for key in ACTION_KEYS},
-                },
-                results=execution_result,
+            if not plan_published:
+                publish_committed_plan()
+            _finish_execution(
+                projection,
+                run_id=supplied_run_id,
+                result=result,
+                operation=semantic_operation,
+                sync_name=sync_instance.name,
                 secrets=secrets,
             )
     except BaseException as exc:

@@ -23,9 +23,17 @@
 - Running-service evidence is bounded to available, isolated services. No existing
   container, cache, Prefect deployment, destination, or external service is mutated.
 - The oracle proves complete ProductRun/artifact equality for the plan envelope and the
-  same saved-plan lifecycle for local plan/verify/apply/sync. Existing managed failure,
+  executed CLI/Python/actor-free-managed-worker plan, apply, and sync envelopes. Python
+  and managed independent verify compare equal. Existing managed failure,
   cancellation, missing-detail, restart, and idempotency suites remain the owning evidence
   for those HTTP/Prefect-only behaviors.
+- The CLI exposes saved-plan review, not an independent `verify` product operation. The
+  matrix exercises CLI plan, Python verification, and CLI review against the exact same
+  manifest bytes; adding a CLI verify operation would be new public scope.
+- Managed HTTP necessarily records actor, audit, and Prefect correlation fields that
+  standalone calls do not have. The lossless oracle retains these differences. The HTTP
+  lifecycle is executed and scanned separately rather than deleting named product fields
+  to manufacture equality.
 
 ## Product limitations retained
 

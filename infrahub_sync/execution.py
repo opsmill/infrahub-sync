@@ -663,6 +663,7 @@ def _run_sync_lifecycle(
     print_diff: bool,
     allow_rowcount_drop: bool,
     serial_load_error: Callable[[ValueError], NoReturn] | None,
+    plan_committed: Callable[[], None] | None,
 ) -> dict[ActionKey, int]:
     """Reproduce the CLI serial `sync` lifecycle and return its live diff-row counts."""
     try:
@@ -677,6 +678,8 @@ def _run_sync_lifecycle(
     mydiff = ptd.diff()
     write_result = ptd.write_plan(mydiff)
     _validated_plan_write_summary(write_result)
+    if plan_committed is not None:
+        plan_committed()
     if mydiff.has_diffs():
         if print_diff:
             logger.info("\n%s", mydiff.str())
@@ -698,10 +701,18 @@ def _run_parallel_sync_lifecycle(
     run_file: RunFile,
     allow_rowcount_drop: bool,
     parallel_sync_error: Callable[[ValueError], NoReturn] | None,
+    plan_committed: Callable[[], None] | None,
 ) -> dict[ActionKey, int]:
     """Run the established tier-parallel lifecycle and return its plan counts."""
     try:
-        summary = ptd.sync_in_tiers(parallel=True, allow_rowcount_drop=allow_rowcount_drop)
+        if plan_committed is None:
+            summary = ptd.sync_in_tiers(parallel=True, allow_rowcount_drop=allow_rowcount_drop)
+        else:
+            summary = ptd.sync_in_tiers(
+                parallel=True,
+                allow_rowcount_drop=allow_rowcount_drop,
+                plan_committed=plan_committed,
+            )
     except ValueError as exc:
         if parallel_sync_error is not None:
             parallel_sync_error(exc)
@@ -1060,6 +1071,7 @@ def execute_run(
     _run_file_mode: Literal["diff", "sync"] | None = None,
     _require_verified: bool = False,
     _return_saved_plan: bool = False,
+    _plan_committed: Callable[[], None] | None = None,
 ) -> RunResult | SavedPlan:
     """Run one product operation against a resolved instance.
 
@@ -1143,6 +1155,7 @@ def execute_run(
                     run_file=run_file,
                     allow_rowcount_drop=allow_rowcount_drop,
                     parallel_sync_error=_parallel_sync_error,
+                    plan_committed=_plan_committed,
                 )
             else:
                 if parallel and not ptd.tiers:
@@ -1156,6 +1169,7 @@ def execute_run(
                     print_diff=print_diff,
                     allow_rowcount_drop=allow_rowcount_drop,
                     serial_load_error=_serial_load_error,
+                    plan_committed=_plan_committed,
                 )
             if operation == "plan" and _return_saved_plan:
                 saved_plan = read_saved_plan(sync_name=sync_instance.name, run_id=str(ptd.run_id), config=sync_instance)

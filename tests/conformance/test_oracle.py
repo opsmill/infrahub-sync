@@ -51,3 +51,24 @@ def test_oracle_refuses_to_hide_a_named_product_field_disagreement() -> None:
 
     with pytest.raises(AssertionError, match="canonical interface disagreement"):
         assert_equivalent([cli, managed])
+
+
+@pytest.mark.parametrize(
+    ("container", "nested_field"),
+    [("product_record", "run_id"), ("result", "created_at"), ("artifact_semantics", "run_id")],
+)
+def test_oracle_does_not_normalize_semantic_payload_keys(container: str, nested_field: str) -> None:
+    cli = _envelope("cli")
+    managed = _envelope("managed")
+    cli_data = dict(deepcopy(getattr(cli, container)))
+    managed_data = dict(deepcopy(getattr(managed, container)))
+    cli_data["payload"] = {nested_field: "semantic-a"}
+    managed_data["payload"] = {nested_field: "semantic-b"}
+
+    with pytest.raises(AssertionError, match="canonical interface disagreement"):
+        assert_equivalent(
+            [
+                replace(cli, **{container: cli_data}),
+                replace(managed, **{container: managed_data}),
+            ]
+        )

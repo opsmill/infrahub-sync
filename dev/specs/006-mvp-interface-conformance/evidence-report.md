@@ -108,8 +108,10 @@ uv run pytest -q
 1304 passed, 14 skipped, 1 xfailed, 4 warnings in 77.07s
 ```
 
-After adding the CLI review-refusal case, the final focused rerun passed 222 tests with one
-inherited warning in 23.44 seconds; the conformance-only total is 11.
+After adding the CLI review-refusal case, the first implementation's focused rerun passed
+222 tests with one inherited warning in 23.44 seconds. Independent review then required the
+bounded correction evidence below; those later totals supersede the initial conformance
+count.
 
 Formatting and static checks:
 
@@ -154,4 +156,67 @@ uv run infrahub-sync apply --help
 pass; --product-cache-location present
 uv run infrahub-sync generate --name from-netbox --directory examples/
 stopped at documented external precondition: localhost Infrahub unavailable; no file changed
+```
+
+## Independent-review correction pass
+
+The lossless oracle now normalizes only exact schema paths. Three mutation cases plant
+`run_id` or `created_at` under semantic payloads and prove that each disagreement fails.
+
+`tests/conformance/test_interface_matrix.py` executes, rather than fabricates, these
+paths:
+
+- actual Typer CLI, public Python functions, and managed worker for plan, apply, and
+  confirmed sync, with complete actor-free ProductRun/result/reference/artifact equality;
+- public Python and managed worker independent verify equality;
+- CLI plan writing a real v2 manifest, public Python verifying those exact bytes, and CLI
+  review reading the unchanged bytes;
+- managed HTTP admission through captured Prefect parameters into worker plan, verify,
+  reviewed apply, and confirmed sync completion.
+
+The HTTP matrix scans success results, a checksum-refusal error, logs, submitted Prefect
+parameters, retained records, and artifacts for the recognizable configuration sentinel
+and HTTP bearer token. HTTP-owned actor, audit, and Prefect-link fields remain present and
+are reported separately rather than normalized away. The CLI has saved-plan review but no
+independent verify operation; the report does not claim otherwise.
+
+The expanded matrix exposed and repaired four additional concrete lifecycle discrepancies:
+managed confirmed sync retained `operation=apply`; standalone apply failures dropped
+`ApplyRecord` partial-write fields; direct CLI sync projected its review artifact after
+writes; and configured CLI review treated a read-only SavedPlan as a sync result. It also
+proved duplicate configured plans now produce the typed one-line refusal.
+
+Pre-final correction command:
+
+```text
+uv run pytest -q tests/conformance tests/managed/test_flow_and_prefect.py tests/test_execution_surface.py tests/test_potenda_parallel.py tests/test_potenda_plan_artifact.py
+217 passed, 1 warning in 3.32s
+
+uv run pytest -q tests/conformance/test_interface_matrix.py
+6 passed, 1 inherited warning
+```
+
+Final correction-pass behavior gates:
+
+```text
+uv run pytest -q tests/conformance tests/api/test_v1.py tests/test_execution_cli_parity.py tests/test_execution_surface.py tests/test_potenda_parallel.py tests/test_potenda_plan_artifact.py tests/product_store tests/managed tests/orchestration/test_flow.py
+424 passed, 2 inherited warnings in 23.26s
+
+uv run pytest -q
+1320 passed, 14 skipped, 1 xfailed, 4 inherited warnings in 68.24s
+
+uv run ruff format --check . && uv run ruff check .
+pass; 153 files formatted; all checks passed
+
+uv run pylint infrahub_sync/product_store/standalone.py --score=no
+pass; the correction introduced no local pylint finding
+
+uv run ty check .
+exit 0; four inherited unused-ignore warnings
+
+uv run invoke docs.rumdl && uv run invoke linter.lint-yaml
+pass; 69 Markdown/MDX files and all YAML files
+
+uv run invoke docs.generate && uv run invoke docs.docusaurus
+pass; CLI reference regenerated and optimized static site built
 ```
