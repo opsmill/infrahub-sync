@@ -17,7 +17,14 @@ from pydantic import TypeAdapter
 
 from infrahub_sync.execution import REDACTED, redact
 from infrahub_sync.plan.canonical import canonical_json_bytes
-from infrahub_sync.product_store.models import ArtifactReference, LookupResult, PrefectExecutionLink, ProductRun
+from infrahub_sync.product_store.models import (
+    ArtifactReference,
+    AuditEvent,
+    LookupResult,
+    MutationReceipt,
+    PrefectExecutionLink,
+    ProductRun,
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS product_runs (
@@ -38,6 +45,20 @@ CREATE TABLE IF NOT EXISTS prefect_executions (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS prefect_executions_run_position
     ON prefect_executions (run_id, position);
+CREATE TABLE IF NOT EXISTS mutation_receipts (
+    receipt_id TEXT PRIMARY KEY, actor TEXT NOT NULL, key_digest TEXT NOT NULL,
+    operation TEXT NOT NULL, target_run_id TEXT, request_fingerprint TEXT NOT NULL,
+    reason TEXT NOT NULL, run_id TEXT NOT NULL, prefect_key TEXT NOT NULL,
+    state TEXT NOT NULL, response_status INTEGER, response_body TEXT, flow_run_id TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    UNIQUE (actor, key_digest)
+);
+CREATE TABLE IF NOT EXISTS audit_events (
+    event_id TEXT PRIMARY KEY, run_id TEXT, actor TEXT NOT NULL, operation TEXT NOT NULL,
+    reason TEXT NOT NULL, outcome TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS audit_events_run_created
+    ON audit_events (run_id, created_at);
 """
 
 # Stable SQLite extended result codes. Python 3.10's sqlite3 module does not expose
@@ -62,6 +83,17 @@ _SELECT_PREFECT_EXECUTIONS = """SELECT run_id, flow_run_id, deployment_id, purpo
 last_observed_at, position FROM prefect_executions WHERE run_id = ? ORDER BY position"""
 _INSERT_PREFECT_EXECUTION = """INSERT INTO prefect_executions (run_id, flow_run_id, deployment_id, purpose, attempt,
 last_observed_state, last_observed_at, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"""
+_INSERT_MUTATION_RECEIPT = """INSERT INTO mutation_receipts (receipt_id, actor, key_digest, operation,
+target_run_id, request_fingerprint, reason, run_id, prefect_key, state, response_status, response_body,
+flow_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+_SELECT_MUTATION_RECEIPT = """SELECT receipt_id, actor, key_digest, operation, target_run_id,
+request_fingerprint, reason, run_id, prefect_key, state, response_status, response_body, flow_run_id,
+created_at, updated_at FROM mutation_receipts WHERE actor = ? AND key_digest = ?"""
+_INSERT_AUDIT_EVENT = """INSERT INTO audit_events (event_id, run_id, actor, operation, reason, outcome, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)"""
+_SELECT_AUDIT_EVENTS = """SELECT event_id, run_id, actor, operation, reason, outcome, created_at
+FROM audit_events WHERE run_id = ? ORDER BY created_at, event_id"""
+_SELECT_AUDIT_LINKS = "SELECT event_id FROM audit_events WHERE run_id = ? ORDER BY created_at, event_id"
 
 
 class DuplicateRunError(ValueError):
@@ -127,6 +159,30 @@ class _RunStore(Protocol):
 
     def add_prefect_execution(self, run_id: str, link: PrefectExecutionLink) -> None: ...
 
+    def observe_prefect_execution(
+        self, run_id: str, flow_run_id: str, *, state: str | None, observed_at: datetime
+    ) -> None: ...
+
+    def reserve_mutation(self, receipt: MutationReceipt, run: ProductRun | None) -> tuple[MutationReceipt, bool]: ...
+
+    def lookup_mutation(self, actor: str, key_digest: str) -> LookupResult[MutationReceipt]: ...
+
+    def complete_mutation(
+        self,
+        receipt_id: str,
+        *,
+        response_status: int,
+        response_body: Mapping[str, Any],
+        flow_run_id: str,
+        updated_at: datetime,
+    ) -> MutationReceipt: ...
+
+    def record_audit(self, event: AuditEvent) -> None: ...
+
+    def audit_events(self, run_id: str | None = None) -> tuple[AuditEvent, ...]: ...
+
+    def record_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
+
     def finish(
         self,
         run_id: str,
@@ -189,22 +245,7 @@ class _RelationalRunStore:
             cursor = connection.cursor()
             try:
                 try:
-                    cursor.execute(
-                        self._sql(_INSERT_PRODUCT_RUN),
-                        (
-                            run.run_id,
-                            run.operation,
-                            run.configuration_reference,
-                            run.actor,
-                            _json(run.audit_links),
-                            run.started_at.isoformat(),
-                            _iso(run.finished_at),
-                            run.phase,
-                            run.outcome,
-                            _json(run.summary),
-                            _json(run.results),
-                        ),
-                    )
+                    self._insert_product_run_row(cursor, run)
                 except Exception as exc:  # pylint: disable=broad-exception-caught
                     # Synchronous DB-API drivers do not share an integrity-error
                     # base class; inspect uniqueness only for the stable run ID.
@@ -222,6 +263,29 @@ class _RelationalRunStore:
                 cursor.close()
         finally:
             connection.close()
+
+    def _insert_product_run(self, cursor: _Cursor, run: ProductRun) -> None:
+        self._insert_product_run_row(cursor, run)
+        for position, link in enumerate(run.prefect_executions):
+            self._insert_prefect_execution(cursor, run.run_id, link, position)
+
+    def _insert_product_run_row(self, cursor: _Cursor, run: ProductRun) -> None:
+        cursor.execute(
+            self._sql(_INSERT_PRODUCT_RUN),
+            (
+                run.run_id,
+                run.operation,
+                run.configuration_reference,
+                run.actor,
+                _json(run.audit_links),
+                run.started_at.isoformat(),
+                _iso(run.finished_at),
+                run.phase,
+                run.outcome,
+                _json(run.summary),
+                _json(run.results),
+            ),
+        )
 
     def lookup(self, run_id: str) -> LookupResult[ProductRun]:
         connection = self._connect()
@@ -245,11 +309,13 @@ class _RelationalRunStore:
                     (run_id,),
                 )
                 links = cursor.fetchall()
+                cursor.execute(self._sql(_SELECT_AUDIT_LINKS), (run_id,))
+                audit_links = cursor.fetchall()
             finally:
                 cursor.close()
         finally:
             connection.close()
-        return LookupResult(value=_run_from_rows(row, references, links))
+        return LookupResult(value=_run_from_rows(row, references, links, audit_links))
 
     def exists(self, run_id: str) -> bool:
         """Return run existence without hydrating child records."""
@@ -410,6 +476,201 @@ class _RelationalRunStore:
                     (run_id, flow_run_id),
                 )
                 return cursor.fetchone() is not None
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def observe_prefect_execution(
+        self, run_id: str, flow_run_id: str, *, state: str | None, observed_at: datetime
+    ) -> None:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql(
+                        "UPDATE prefect_executions SET last_observed_state = ?, last_observed_at = ? "
+                        "WHERE run_id = ? AND flow_run_id = ?"
+                    ),
+                    (state, observed_at.isoformat(), run_id, flow_run_id),
+                )
+                _require_execution_observed(cursor, run_id, flow_run_id)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def reserve_mutation(self, receipt: MutationReceipt, run: ProductRun | None) -> tuple[MutationReceipt, bool]:
+        """Atomically reserve actor/key and optionally create its product run."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                try:
+                    cursor.execute(self._sql(_INSERT_MUTATION_RECEIPT), _receipt_values(receipt))
+                    if run is not None:
+                        self._insert_product_run(cursor, run)
+                    connection.commit()
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    connection.rollback()
+                    if not _is_unique_violation(exc):
+                        raise
+                    existing = self.lookup_mutation(receipt.actor, receipt.key_digest)
+                    if existing.value is not None:
+                        return existing.value, False
+                    if run is not None and self.exists(run.run_id):
+                        msg = f"Sync run ID {run.run_id!r} already exists"
+                        raise DuplicateRunError(msg) from exc
+                    raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return receipt, True
+
+    def lookup_mutation(self, actor: str, key_digest: str) -> LookupResult[MutationReceipt]:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_SELECT_MUTATION_RECEIPT), (actor, key_digest))
+                row = cursor.fetchone()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        if row is None:
+            return LookupResult(value=None, reason="mutation-receipt-not-found")
+        return LookupResult(value=_receipt_from_row(row))
+
+    def complete_mutation(
+        self,
+        receipt_id: str,
+        *,
+        response_status: int,
+        response_body: Mapping[str, Any],
+        flow_run_id: str,
+        updated_at: datetime,
+    ) -> MutationReceipt:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql(
+                        "UPDATE mutation_receipts SET state = 'accepted', response_status = ?, response_body = ?, "
+                        "flow_run_id = ?, updated_at = ? WHERE receipt_id = ? AND state = 'reserved'"
+                    ),
+                    (response_status, _json(response_body), flow_run_id, updated_at.isoformat(), receipt_id),
+                )
+                completed = cursor.rowcount == 1
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        receipt = self._lookup_mutation_by_id(receipt_id)
+        if completed:
+            return receipt
+        if (
+            receipt.state == "accepted"
+            and receipt.response_status == response_status
+            and receipt.flow_run_id == flow_run_id
+        ):
+            return receipt
+        msg = f"Mutation receipt {receipt_id!r} is already complete with a different response"
+        raise ValueError(msg)
+
+    def _lookup_mutation_by_id(self, receipt_id: str) -> MutationReceipt:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql(
+                        "SELECT receipt_id, actor, key_digest, operation, target_run_id, request_fingerprint, "
+                        "reason, run_id, prefect_key, state, response_status, response_body, flow_run_id, "
+                        "created_at, updated_at FROM mutation_receipts WHERE receipt_id = ?"
+                    ),
+                    (receipt_id,),
+                )
+                row = cursor.fetchone()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        if row is None:
+            msg = f"Mutation receipt {receipt_id!r} is unavailable"
+            raise RunNotFoundError(msg)
+        return _receipt_from_row(row)
+
+    def record_audit(self, event: AuditEvent) -> None:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql(_INSERT_AUDIT_EVENT),
+                    (
+                        event.event_id,
+                        event.run_id,
+                        event.actor,
+                        event.operation,
+                        event.reason,
+                        event.outcome,
+                        event.created_at.isoformat(),
+                    ),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def audit_events(self, run_id: str | None = None) -> tuple[AuditEvent, ...]:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                if run_id is None:
+                    cursor.execute(
+                        "SELECT event_id, run_id, actor, operation, reason, outcome, created_at "
+                        "FROM audit_events ORDER BY created_at, event_id"
+                    )
+                else:
+                    cursor.execute(self._sql(_SELECT_AUDIT_EVENTS), (run_id,))
+                rows = cursor.fetchall()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return tuple(_audit_from_row(row) for row in rows)
+
+    def record_results(self, run_id: str, results: Mapping[str, Any]) -> None:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql("UPDATE product_runs SET results = ? WHERE run_id = ?"),
+                    (_json(results), run_id),
+                )
+                _require_run_results_recorded(cursor, run_id)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
             finally:
                 cursor.close()
         finally:
@@ -664,6 +925,88 @@ class ProductProjection:
         sanitized = PrefectExecutionLink.model_validate(_redact_value(link.model_dump(mode="json"), secrets))
         self._records.add_prefect_execution(run_id, sanitized)
 
+    def observe_prefect_execution(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        state: str | None,
+        secrets: Sequence[str] = (),
+    ) -> None:
+        """Update live detail for an existing link without creating a retry link."""
+        self._records.observe_prefect_execution(
+            redact(run_id, secrets),
+            redact(flow_run_id, secrets),
+            state=None if state is None else redact(state, secrets),
+            observed_at=datetime.now(timezone.utc),
+        )
+
+    def reserve_mutation(
+        self,
+        receipt: MutationReceipt,
+        *,
+        run: ProductRun | None = None,
+        secrets: Sequence[str] = (),
+    ) -> tuple[MutationReceipt, bool]:
+        """Reserve one actor/key mutation, optionally with its run, in one transaction."""
+        sanitized_receipt = MutationReceipt.model_validate(_redact_value(receipt.model_dump(mode="json"), secrets))
+        sanitized_run = None if run is None else _redacted_run(run, secrets)
+        if sanitized_run is not None:
+            if (
+                sanitized_run.finished_at is not None
+                or sanitized_run.outcome is not None
+                or sanitized_run.artifact_refs
+            ):
+                msg = "a mutation-created product record must be unfinished and have no artifact references"
+                raise ValueError(msg)
+            if sanitized_run.run_id != sanitized_receipt.run_id:
+                msg = "a mutation receipt and its atomically created product run must share one run ID"
+                raise ValueError(msg)
+        return self._records.reserve_mutation(sanitized_receipt, sanitized_run)
+
+    def lookup_mutation(self, actor: str, key_digest: str) -> LookupResult[MutationReceipt]:
+        """Look up the durable receipt for an actor and hashed client key."""
+        return self._records.lookup_mutation(actor, key_digest)
+
+    def complete_mutation(
+        self,
+        receipt_id: str,
+        *,
+        response_status: int,
+        response_body: Mapping[str, Any],
+        flow_run_id: str,
+        secrets: Sequence[str] = (),
+    ) -> MutationReceipt:
+        """Persist the exact accepted HTTP response and Prefect identity."""
+        sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(response_body), secrets))
+        return self._records.complete_mutation(
+            redact(receipt_id, secrets),
+            response_status=response_status,
+            response_body=sanitized,
+            flow_run_id=redact(flow_run_id, secrets),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+    def record_audit(self, event: AuditEvent, *, secrets: Sequence[str] = ()) -> None:
+        """Append one immutable, secret-safe authorization or mutation event."""
+        sanitized = AuditEvent.model_validate(_redact_value(event.model_dump(mode="json"), secrets))
+        self._records.record_audit(sanitized)
+
+    def audit_events(self, run_id: str | None = None) -> tuple[AuditEvent, ...]:
+        """Return all audit evidence, optionally narrowed to one Sync run."""
+        return self._records.audit_events(run_id)
+
+    def record_results(
+        self,
+        run_id: str,
+        results: Mapping[str, Any],
+        *,
+        secrets: Sequence[str] = (),
+    ) -> None:
+        """Update retained result evidence without changing the run lifecycle."""
+        sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(results), secrets))
+        self._records.record_results(redact(run_id, secrets), sanitized)
+
     def publish_artifact(
         self,
         run_id: str,
@@ -807,15 +1150,19 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def _run_from_rows(
-    row: Sequence[Any], references: Sequence[Sequence[Any]], links: Sequence[Sequence[Any]]
+    row: Sequence[Any],
+    references: Sequence[Sequence[Any]],
+    links: Sequence[Sequence[Any]],
+    managed_audit_links: Sequence[Sequence[Any]],
 ) -> ProductRun:
+    audit_links = tuple(dict.fromkeys((*json.loads(row[4]), *(str(item[0]) for item in managed_audit_links))))
     return ProductRun.model_validate(
         {
             "run_id": row[0],
             "operation": row[1],
             "configuration_reference": row[2],
             "actor": row[3],
-            "audit_links": json.loads(row[4]),
+            "audit_links": audit_links,
             "started_at": row[5],
             "finished_at": row[6],
             "phase": row[7],
@@ -834,6 +1181,62 @@ def _run_from_rows(
                 }
                 for item in links
             ],
+        }
+    )
+
+
+def _receipt_values(receipt: MutationReceipt) -> tuple[Any, ...]:
+    return (
+        receipt.receipt_id,
+        receipt.actor,
+        receipt.key_digest,
+        receipt.operation,
+        receipt.target_run_id,
+        receipt.request_fingerprint,
+        receipt.reason,
+        receipt.run_id,
+        receipt.prefect_key,
+        receipt.state,
+        receipt.response_status,
+        None if receipt.response_body is None else _json(receipt.response_body),
+        receipt.flow_run_id,
+        receipt.created_at.isoformat(),
+        receipt.updated_at.isoformat(),
+    )
+
+
+def _receipt_from_row(row: Sequence[Any]) -> MutationReceipt:
+    return MutationReceipt.model_validate(
+        {
+            "receipt_id": row[0],
+            "actor": row[1],
+            "key_digest": row[2],
+            "operation": row[3],
+            "target_run_id": row[4],
+            "request_fingerprint": row[5],
+            "reason": row[6],
+            "run_id": row[7],
+            "prefect_key": row[8],
+            "state": row[9],
+            "response_status": row[10],
+            "response_body": None if row[11] is None else json.loads(row[11]),
+            "flow_run_id": row[12],
+            "created_at": row[13],
+            "updated_at": row[14],
+        }
+    )
+
+
+def _audit_from_row(row: Sequence[Any]) -> AuditEvent:
+    return AuditEvent.model_validate(
+        {
+            "event_id": row[0],
+            "run_id": row[1],
+            "actor": row[2],
+            "operation": row[3],
+            "reason": row[4],
+            "outcome": row[5],
+            "created_at": row[6],
         }
     )
 
@@ -890,6 +1293,18 @@ def _require_publication_marked(cursor: _Cursor, reference: ArtifactReference) -
 def _require_run_finished(cursor: _Cursor, run_id: str) -> None:
     if cursor.rowcount != 1:
         msg = f"Cannot finish unavailable Sync run ID {run_id!r}"
+        raise RunNotFoundError(msg)
+
+
+def _require_execution_observed(cursor: _Cursor, run_id: str, flow_run_id: str) -> None:
+    if cursor.rowcount != 1:
+        msg = f"Prefect flow-run ID {flow_run_id!r} is not linked to Sync run {run_id!r}"
+        raise RunNotFoundError(msg)
+
+
+def _require_run_results_recorded(cursor: _Cursor, run_id: str) -> None:
+    if cursor.rowcount != 1:
+        msg = f"Cannot record results for unavailable Sync run ID {run_id!r}"
         raise RunNotFoundError(msg)
 
 

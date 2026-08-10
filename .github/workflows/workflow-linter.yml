@@ -78,13 +78,10 @@ jobs:
       - name: "Set up Python ${{ matrix.python-version }}"
         run: uv python install ${{ matrix.python-version }}
 
-      # The `prefect` extra is required by the ty gate: with Prefect absent, ty
-      # reports `unresolved-import` for every `prefect` import in
-      # `infrahub_sync/orchestration/` and `tests/orchestration/` (measured: 13
-      # diagnostics instead of 4), so the type gate would fail on code it cannot
-      # see. Ruff needs no extra, but it runs in this same job.
+      # Optional orchestration imports must resolve in the ty gate. The managed
+      # profile also carries Prefect Extras, FastAPI, and the ASGI server.
       - name: "Install dependencies"
-        run: uv sync --frozen --extra dev --extra prefect
+        run: uv sync --frozen --extra dev --extra prefect --extra managed
 
       - name: "Linting: ruff check"
         run: "uv run ruff check ."
@@ -92,7 +89,12 @@ jobs:
       - name: "Linting: ruff format"
         run: "uv run ruff format --check --diff ."
 
-      - name: "Linting: ty check"
+      - name: "Linting: ty check (base Python 3.10)"
+        if: matrix.python-version == '3.10'
+        run: "uv run ty check --exclude infrahub_sync/managed --exclude tests/managed ."
+
+      - name: "Linting: ty check (managed Python 3.11+)"
+        if: matrix.python-version != '3.10'
         run: "uv run ty check ."
 
       # TODO: Need to cleanup code

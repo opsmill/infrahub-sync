@@ -59,11 +59,11 @@ jobs:
       - name: "Set up Python ${{ matrix.python-version }}"
         run: uv python install ${{ matrix.python-version }}
 
-      # The `prefect` extra is required: without it `tests/orchestration/test_flow.py`
-      # is skipped whole by its `pytest.importorskip("prefect")`, so the flow, log
-      # bridge, parameter-contract and canary-redaction suites would never run here.
+      # The optional orchestration profiles are required here: their suites use
+      # collection-time skips so the separate base-install leg can remain free of
+      # Prefect and managed-service dependencies.
       - name: "Install dependencies"
-        run: uv sync --frozen --extra dev --extra prefect
+        run: uv sync --frozen --extra dev --extra prefect --extra managed
 
       # Runs only `-m "not integration"`. Integration tests need a live
       # Infrahub instance and are opted into via `invoke tests-integration`
@@ -97,12 +97,14 @@ jobs:
       - name: "Install dependencies"
         run: uv sync --frozen --extra dev
 
-      - name: "Assert prefect is absent from this environment"
+      - name: "Assert managed runtime dependencies are absent from this environment"
         run: |
-          if uv run --no-sync python -c "import prefect" 2>/dev/null; then
-            echo "prefect is importable — this leg must be a base install"
-            exit 1
-          fi
+          for module in prefect fastapi uvicorn opsmill_prefect_extras; do
+            if uv run --no-sync python -c "import ${module}" 2>/dev/null; then
+              echo "${module} is importable — this leg must be a base install"
+              exit 1
+            fi
+          done
 
       - name: "pytest: unit tests"
         run: uv run --no-sync invoke tests.tests-unit

@@ -50,6 +50,15 @@ infrahub-sync = "infrahub_sync.cli:app"
 prefect = [
     "prefect==3.8.1",
 ]
+# Managed HTTP service and worker profile (Python 3.11-3.13). Every runtime
+# imported directly by `infrahub_sync.managed` is declared here; the reusable
+# Prefect integration is pinned to the reviewed DB-102/103/104 stack exactly.
+managed = [
+    "fastapi>=0.115,<1; python_version >= '3.11'",
+    "opsmill-prefect-extras @ git+https://github.com/opsmill/prefect-extras.git@84688eb8d8db7e17770413640a66481ccdc3e725 ; python_version >= '3.11'",
+    "prefect==3.8.1; python_version >= '3.11'",
+    "uvicorn>=0.34,<1; python_version >= '3.11'",
+]
 dev = [
     "yamllint>=1.37.1",
     "pylint",
@@ -78,6 +87,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["infrahub_sync"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.pylint.general]
 extension-pkg-whitelist = [
@@ -415,4 +427,3 @@ showcontent = true
 directory = "housekeeping"
 name = "Housekeeping"
 showcontent = true
-

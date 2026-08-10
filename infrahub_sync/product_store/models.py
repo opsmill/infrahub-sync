@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime  # noqa: TC003 - pydantic resolves this annotation at runtime.
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -115,6 +115,69 @@ class ProductRun(BaseModel):
             msg = "Prefect flow-run IDs must be unique within a product record"
             raise ValueError(msg)
         return self
+
+
+class MutationReceipt(BaseModel):
+    """Durable actor/key reservation for one managed HTTP mutation."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    receipt_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    actor: str = Field(min_length=1)
+    key_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    operation: str = Field(min_length=1)
+    target_run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
+    request_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    reason: str = Field(min_length=1)
+    run_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    prefect_key: str = Field(pattern=r"^[0-9a-f]{64}$")
+    state: Literal["reserved", "accepted"] = "reserved"
+    response_status: int | None = Field(default=None, ge=100, le=599)
+    response_body: dict[str, Any] | None = None
+    flow_run_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    @field_validator("created_at", "updated_at")
+    @classmethod
+    def _require_receipt_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            msg = "mutation-receipt timestamps must include a timezone"
+            raise ValueError(msg)
+        return value
+
+    @model_validator(mode="after")
+    def _require_accepted_response(self) -> MutationReceipt:
+        accepted_values = (self.response_status, self.response_body, self.flow_run_id)
+        if self.state == "accepted" and any(value is None for value in accepted_values):
+            msg = "an accepted mutation receipt requires its status, response, and Prefect flow-run ID"
+            raise ValueError(msg)
+        if self.state == "reserved" and any(value is not None for value in accepted_values):
+            msg = "a reserved mutation receipt cannot carry an accepted response"
+            raise ValueError(msg)
+        return self
+
+
+class AuditEvent(BaseModel):
+    """Secret-safe durable evidence for one managed API decision."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    event_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
+    actor: str = Field(min_length=1)
+    operation: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    outcome: str = Field(min_length=1)
+    created_at: datetime
+
+    @field_validator("created_at")
+    @classmethod
+    def _require_audit_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            msg = "audit-event timestamps must include a timezone"
+            raise ValueError(msg)
+        return value
 
 
 T = TypeVar("T")

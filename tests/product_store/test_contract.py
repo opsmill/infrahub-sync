@@ -4,6 +4,7 @@ import sqlite3
 import subprocess  # noqa: S404 - fixed local interpreter probes restart durability.
 import sys
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -18,9 +19,11 @@ from infrahub_sync import product_store
 from infrahub_sync.product_store import (
     ArtifactReference,
     ArtifactUnavailableError,
+    AuditEvent,
     DuplicateArtifactError,
     DuplicatePrefectExecutionError,
     DuplicateRunError,
+    MutationReceipt,
     PrefectExecutionLink,
     ProductProjection,
     ProductRun,
@@ -33,11 +36,13 @@ from infrahub_sync.product_store.store import FileArtifactStore, PostgreSQLRunSt
 EXPECTED_PUBLIC_NAMES = {
     "ArtifactReference",
     "ArtifactUnavailableError",
+    "AuditEvent",
     "DBAPIConnection",
     "DuplicateArtifactError",
     "DuplicatePrefectExecutionError",
     "DuplicateRunError",
     "LookupResult",
+    "MutationReceipt",
     "PrefectExecutionLink",
     "ProductProjection",
     "ProductRun",
@@ -283,6 +288,28 @@ def _artifact_reference(
     )
 
 
+def _receipt(
+    receipt_id: str = "mutation-001",
+    *,
+    run_id: str = "run-001",
+    reason: str = "operator requested a plan",
+) -> MutationReceipt:
+    now = datetime(2026, 8, 10, 12, tzinfo=timezone.utc)
+    return MutationReceipt(
+        receipt_id=receipt_id,
+        actor="operator@example.com",
+        key_digest=sha256(b"client-key").hexdigest(),
+        operation="plan",
+        target_run_id=None,
+        request_fingerprint=sha256(b"canonical-request").hexdigest(),
+        reason=reason,
+        run_id=run_id,
+        prefect_key=sha256(receipt_id.encode()).hexdigest(),
+        created_at=now,
+        updated_at=now,
+    )
+
+
 def test_public_surface_is_exactly_the_supported_contract() -> None:
     assert set(product_store.__all__) == EXPECTED_PUBLIC_NAMES
 
@@ -389,6 +416,108 @@ def test_zero_link_standalone_round_trip(provider: ProductProjection) -> None:
     assert result.value == expected
     assert result.value is not None
     assert result.value.prefect_executions == ()
+
+
+def test_mutation_reservation_atomically_creates_one_run_and_replays_on_both_profiles(
+    provider: ProductProjection,
+) -> None:
+    receipt = _receipt()
+
+    first, created = provider.reserve_mutation(receipt, run=_run())
+    replay_request = _receipt("mutation-002", run_id="run-never-created")
+    replay, replay_created = provider.reserve_mutation(replay_request, run=_run("run-never-created"))
+
+    assert created is True
+    assert replay_created is False
+    assert replay == first
+    assert provider.lookup_run("run-001").value == _run()
+    assert provider.lookup_run("run-never-created").reason == "run-not-found"
+
+
+def test_sqlite_concurrent_mutation_reservation_creates_exactly_one_product_run(tmp_path: Path) -> None:
+    projection = local_product_projection(tmp_path.resolve())
+
+    def reserve(position: int) -> tuple[MutationReceipt, bool]:
+        receipt = _receipt(f"mutation-{position:03d}", run_id=f"run-{position:03d}")
+        return projection.reserve_mutation(receipt, run=_run(f"run-{position:03d}"))
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(reserve, range(8)))
+
+    assert sum(created for _, created in results) == 1
+    winning_run_ids = {receipt.run_id for receipt, _ in results}
+    assert len(winning_run_ids) == 1
+    assert projection.lookup_run(winning_run_ids.pop()).available
+
+
+def test_receipt_completion_and_audit_are_durable_and_secret_safe(provider: ProductProjection) -> None:
+    token = "token-canary-value"  # noqa: S105 - deliberate non-secret boundary canary.
+    receipt = _receipt(reason=f"requested with {token}")
+    reserved, created = provider.reserve_mutation(receipt, run=_run(), secrets=(token,))
+    assert created
+    assert reserved.reason == "requested with ***"
+
+    completed = provider.complete_mutation(
+        reserved.receipt_id,
+        response_status=202,
+        response_body={"run_id": "run-001", "detail": token},
+        flow_run_id="flow-001",
+        secrets=(token,),
+    )
+    replayed_completion = provider.complete_mutation(
+        reserved.receipt_id,
+        response_status=202,
+        response_body={"run_id": "run-001", "detail": token},
+        flow_run_id="flow-001",
+        secrets=(token,),
+    )
+    converged_completion = provider.complete_mutation(
+        reserved.receipt_id,
+        response_status=202,
+        response_body={"run_id": "racing-response"},
+        flow_run_id="flow-001",
+    )
+    provider.record_audit(
+        AuditEvent(
+            event_id="audit-001",
+            run_id="run-001",
+            actor="operator@example.com",
+            operation="plan",
+            reason=token,
+            outcome="accepted",
+            created_at=datetime.now(timezone.utc),
+        ),
+        secrets=(token,),
+    )
+
+    assert completed.state == "accepted"
+    assert replayed_completion == completed
+    assert converged_completion == completed
+    assert completed.response_body == {"detail": "***", "run_id": "run-001"}
+    assert provider.audit_events("run-001")[0].reason == "***"
+    audited_run = provider.lookup_run("run-001").value
+    assert audited_run is not None
+    assert audited_run.audit_links == ("ticket:change-42", "audit-001")
+
+    with pytest.raises(ValueError, match="different response"):
+        provider.complete_mutation(
+            reserved.receipt_id,
+            response_status=202,
+            response_body={"run_id": "different"},
+            flow_run_id="flow-002",
+        )
+
+
+def test_record_results_does_not_change_product_lifecycle(provider: ProductProjection) -> None:
+    original = _run().model_copy(update={"phase": "planned", "summary": {"total": 1}})
+    provider.create_run(original)
+
+    provider.record_results("run-001", {"verification": {"outcome": "verified"}})
+
+    updated = provider.lookup_run("run-001").value
+    assert updated is not None
+    assert updated.model_dump(exclude={"results"}) == original.model_dump(exclude={"results"})
+    assert updated.results == {"verification": {"outcome": "verified"}}
 
 
 def test_sqlite_foreign_key_failure_passes_through_as_integrity_error(tmp_path: Path) -> None:
