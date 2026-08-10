@@ -15,6 +15,7 @@
 | Publish direct-sync review before writes | C11: configured CLI sync projected its review only after core completion | Add one private plan-commit callback at the serial and tiered pre-write boundaries | serial/parallel pre-write ordering and publication-refusal tests |
 | Type duplicate configured plans | C12: DB-003 duplicate-run rejection escaped the CLI boundary | Translate it to the existing standalone typed refusal | `test_duplicate_configured_cli_plan_is_a_one_line_typed_refusal` |
 | Keep CLI review read-only | C13: the expanded matrix exposed configured review falling into the sync-result branch | Handle non-verifying review as a SavedPlan with no product mutation | same-byte CLI review matrix |
+| Derive the oracle from observed boundaries | C14: the first adapters recomputed operation/counts/outcome from plan/product inputs and accepted literal destination counts | Map captured CLI core plus rendering, public `RunResult`, and managed worker dictionaries; measure an instrumented nonzero destination | `test_interface_adapter_mutations_cannot_false_pass`; nonzero plan/apply/sync matrix; HTTP worker-envelope assertions |
 
 No production edit exists without a case above. Existing managed lifecycle ownership and
 DB-005 routes were not refactored.

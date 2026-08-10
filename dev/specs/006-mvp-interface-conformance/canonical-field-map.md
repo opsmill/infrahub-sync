@@ -6,13 +6,13 @@ the fields below; adapters remove only interface transport/rendering containers.
 
 | Canonical field | CLI source | Python source | Managed source | Comparison |
 |---|---|---|---|---|
-| `operation` | core request/result | v1 request/result | managed stage/product run | exact |
-| `plan_fingerprint` | saved-plan checksum | saved-plan checksum | retained plan checksum | exact |
-| `counts.create/update/delete` | core/public summary | `ActionCounts` | stage/product summary | exact, zero-filled |
-| `outcome` | core status | v1 outcome | managed stage/product outcome | exact |
-| `destination_effects` | isolated destination observation | isolated destination observation | isolated destination observation | exact |
+| `operation` | captured core result after successful Typer invocation | actual v1 `RunResult` | actual worker result dictionary | exact |
+| `plan_fingerprint` | decoded published review | decoded published review | decoded published review | exact |
+| `counts.create/update/delete` | captured core result summary | actual v1 `RunResult.counts` | actual worker result summary | exact, zero-filled |
+| `outcome` | captured core status | actual v1 `RunResult.outcome` | actual worker result outcome | exact |
+| `destination_effects` | instrumented isolated destination measurement | instrumented isolated destination measurement | instrumented isolated destination measurement | exact |
 | `product_record.*` | DB-003 lookup | DB-003 lookup | DB-003 lookup | every `ProductRun` field retained |
-| `result.*` | retained result | v1/retained result | retained result | every named field retained |
+| `result.*` | mapped captured core result | mapped actual v1 return | mapped actual worker return | common run ID, operation, outcome, counts, and successful boundary retained |
 | `artifact_references[]` | DB-003 artifact refs | DB-003 artifact refs | DB-003 artifact refs | every `ArtifactReference` field retained |
 | `artifact_semantics` | decoded `plan-review` | decoded `plan-review` | decoded `plan-review` | exact |
 
@@ -51,6 +51,8 @@ Prefect links remain present. Those HTTP-only product fields are neither project
 nor falsely claimed equal to standalone records.
 
 The landed CLI has review (`diff --from-plan`) rather than an independent verify
-operation. Python and managed verify envelopes compare equal; CLI review is exercised
-against the exact same manifest bytes produced by CLI plan and subsequently verified by
-Python.
+operation. Python and managed verify compare their actually returned common fields
+(`run_id`, operation/stage, and outcome), durable verification result, and artifact.
+Managed verify does not return action counts, so the report does not claim full verify
+return-envelope equality. CLI review is exercised against the exact same manifest bytes
+produced by CLI plan and subsequently verified by Python.

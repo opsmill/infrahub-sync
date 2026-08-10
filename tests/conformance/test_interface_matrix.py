@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import traceback
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from contextlib import nullcontext
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal, cast
+from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
 import pytest
@@ -33,16 +34,57 @@ from infrahub_sync.managed.flow import managed_sync_run
 from infrahub_sync.managed.orchestration import Observation, Submission
 from infrahub_sync.managed.service import ManagedRunService
 from infrahub_sync.plan.config_version import resolve_config_version
-from infrahub_sync.plan.models import PlanManifest
+from infrahub_sync.plan.identity import operation_id
+from infrahub_sync.plan.models import PlanManifest, PlannedOperation
 from infrahub_sync.plan.review import SavedPlan, read_saved_plan, resolve_run_directory
 from infrahub_sync.plan.writer import write_plan_artifact
 from infrahub_sync.product_store import ProductProjection, ProductRun, local_product_projection
 from infrahub_sync.product_store.standalone import execute_standalone
-from tests.conformance.interface_adapters import product_envelope, serialized_boundaries
-from tests.conformance.oracle import CanonicalEnvelope, Surface, assert_equivalent
+from tests.conformance.interface_adapters import (
+    cli_product_envelope,
+    managed_product_envelope,
+    python_product_envelope,
+    serialized_boundaries,
+)
+from tests.conformance.oracle import CanonicalEnvelope, assert_equivalent
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Literal
 
 SENTINEL = "db006-interface-sentinel-credential"
 AUTH_TOKEN = "db006-managed-owner-token"  # noqa: S105 - deliberate non-secret canary.
+
+
+@dataclass
+class _DestinationProbe:
+    created_objects: set[str] = field(default_factory=set)
+    updated_objects: set[str] = field(default_factory=set)
+    deleted_objects: set[str] = field(default_factory=set)
+
+    def apply(self, saved: SavedPlan) -> None:
+        """Mutate isolated destination state from the reviewed operations, not the return."""
+        for operation in saved.operations():
+            targets = {
+                "create": self.created_objects,
+                "update": self.updated_objects,
+                "delete": self.deleted_objects,
+            }[operation.action]
+            targets.add(operation.operation_id)
+
+    def measure(self) -> Mapping[str, int]:
+        return {
+            "created": len(self.created_objects),
+            "updated": len(self.updated_objects),
+            "deleted": len(self.deleted_objects),
+        }
+
+    def snapshot(self) -> _DestinationProbe:
+        return type(self)(
+            created_objects=set(self.created_objects),
+            updated_objects=set(self.updated_objects),
+            deleted_objects=set(self.deleted_objects),
+        )
 
 
 def _instance(tmp_path: Path) -> SyncInstance:
@@ -55,6 +97,15 @@ def _instance(tmp_path: Path) -> SyncInstance:
 
 
 def _saved(run_id: str, instance: SyncInstance) -> SavedPlan:
+    identity = {"name": "edge-1"}
+    operation = PlannedOperation(
+        operation_id=operation_id("create", "DcimDevice", identity),
+        action="create",
+        kind="DcimDevice",
+        identity=identity,
+        tier=0,
+        payload=identity,
+    )
     return SavedPlan(
         manifest=PlanManifest(
             format_version=2,
@@ -62,47 +113,38 @@ def _saved(run_id: str, instance: SyncInstance) -> SavedPlan:
             created_at="2026-08-10T12:00:00+00:00",
             config_version=resolve_config_version(instance),
             source_snapshot=[],
-            operations_count=0,
+            operations_count=1,
             delete_operations_computed=True,
             plan_checksum="a" * 64,
         ),
-        operations=[],
+        operations=[operation],
         checksum_ok=True,
         verification_notes=[],
     )
 
 
 def _result(run_id: str, operation: Operation, tmp_path: Path) -> RunResult:
+    outcome = "planned" if operation == "plan" else "applied"
     return RunResult(
         sync_name="inventory",
         operation=operation,
         run_id=run_id,
-        status="no-change",
-        changed=False,
-        summary={"create": 0, "update": 0, "delete": 0},
+        status=outcome,
+        changed=True,
+        summary={"create": 1, "update": 0, "delete": 0},
         artifact_path=str(tmp_path / run_id),
     )
 
 
-def _observation(
-    surface: Surface,
-    operation: str,
-    saved: SavedPlan,
+def _product_parts(
     projection: ProductProjection,
     run_id: str,
-) -> CanonicalEnvelope:
+) -> tuple[ProductRun, bytes]:
     record = projection.lookup_run(run_id).value
     artifact = projection.lookup_artifact(run_id, "plan-review").value
     assert record is not None
     assert artifact is not None
-    return product_envelope(
-        surface=surface,
-        operation=operation,
-        saved=saved,
-        record=record,
-        artifact=artifact,
-        destination_effects={"created": 0, "updated": 0, "deleted": 0},
-    )
+    return record, artifact
 
 
 def _seed_plan(instance: SyncInstance, saved: SavedPlan, projection_root: Path) -> None:
@@ -121,10 +163,13 @@ def _run_cli(
     tmp_path: Path,
     operation: Operation,
     run_id: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> CanonicalEnvelope:
     instance = _instance(tmp_path)
     saved = _saved(run_id, instance)
     root = (tmp_path / "cli-products").resolve()
+    destination = _DestinationProbe()
+    captured: list[RunResult] = []
     if operation == "apply":
         _seed_plan(instance, saved, root)
 
@@ -132,7 +177,11 @@ def _run_cli(
         if operation == "sync":
             callback = cast("Callable[[], None]", kwargs["_plan_committed"])
             callback()
-        return _result(run_id, operation, tmp_path)
+        result = _result(run_id, operation, tmp_path)
+        captured.append(result)
+        if operation in {"apply", "sync"}:
+            destination.apply(saved)
+        return result
 
     monkeypatch.setattr("infrahub_sync.cli.get_instance", lambda **_kwargs: instance)
     monkeypatch.setattr("infrahub_sync.cli.execute_run", core)
@@ -146,9 +195,21 @@ def _run_cli(
     else:
         arguments = ["sync", *common, "--no-parallel"]
 
-    invoked = CliRunner().invoke(app, arguments)
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        invoked = CliRunner().invoke(app, arguments)
     assert invoked.exit_code == 0, invoked.output
-    return _observation("cli", operation, saved, local_product_projection(root), run_id)
+    assert len(captured) == 1
+    rendering = "\n".join((invoked.output, *(record.getMessage() for record in caplog.records)))
+    record, artifact = _product_parts(local_product_projection(root), run_id)
+    return cli_product_envelope(
+        core_result=captured[0],
+        exit_code=invoked.exit_code,
+        rendering=rendering,
+        record=record,
+        artifact=artifact,
+        destination=destination,
+    )
 
 
 def _run_python(
@@ -160,11 +221,16 @@ def _run_python(
     instance = _instance(tmp_path)
     saved = _saved(run_id, instance)
     root = (tmp_path / "python-products").resolve()
+    destination = _DestinationProbe()
     if operation == "apply":
         _seed_plan(instance, saved, root)
 
     def core(_instance: object, *, operation: Operation, **_kwargs: object) -> SavedPlan | RunResult:
-        return saved if operation in {"plan", "verify"} else _result(run_id, "apply", tmp_path)
+        if operation in {"plan", "verify"}:
+            return saved
+        result = _result(run_id, "apply", tmp_path)
+        destination.apply(saved)
+        return result
 
     monkeypatch.setattr(api_operations, "generate_run_id", lambda: run_id)
     monkeypatch.setattr(api_operations, "resolve_sync_instance", lambda *_args, **_kwargs: instance)
@@ -173,11 +239,11 @@ def _run_python(
     monkeypatch.setattr(api_operations, "execute_run", core)
     monkeypatch.setattr(api_operations, "bounded_run_lock", lambda *_args, **_kwargs: nullcontext())
     if operation == "plan":
-        api.plan(
+        public_result = api.plan(
             api.PlanRequest(sync_name="inventory", config_directory=str(tmp_path), product_cache_location=str(root))
         )
     elif operation == "apply":
-        api.apply(
+        public_result = api.apply(
             api.ApplyRequest(
                 sync_name="inventory",
                 config_directory=str(tmp_path),
@@ -187,7 +253,7 @@ def _run_python(
             )
         )
     else:
-        api.sync(
+        public_result = api.sync(
             api.SyncRequest(
                 sync_name="inventory",
                 config_directory=str(tmp_path),
@@ -195,7 +261,13 @@ def _run_python(
                 product_cache_location=str(root),
             )
         )
-    return _observation("python", operation, saved, local_product_projection(root), run_id)
+    record, artifact = _product_parts(local_product_projection(root), run_id)
+    return python_product_envelope(
+        public_result=public_result,
+        record=record,
+        artifact=artifact,
+        destination=destination,
+    )
 
 
 def _run_managed_worker(
@@ -207,6 +279,7 @@ def _run_managed_worker(
     instance = _instance(tmp_path)
     saved = _saved(run_id, instance)
     root = (tmp_path / "managed-products").resolve()
+    destination = _DestinationProbe()
     projection = local_product_projection(root)
     projection.create_run(
         ProductRun(
@@ -226,12 +299,16 @@ def _run_managed_worker(
     monkeypatch.setattr(managed_flow, "_plan", lambda *_args, **_kwargs: saved)
 
     def core(_instance: object, *, operation: Operation, **_kwargs: object) -> SavedPlan | RunResult:
-        return saved if operation == "verify" else _result(run_id, "apply", tmp_path)
+        if operation == "verify":
+            return saved
+        result = _result(run_id, "apply", tmp_path)
+        destination.apply(saved)
+        return result
 
     monkeypatch.setattr(managed_flow, "execute_run", core)
     if operation == "apply":
         managed_sync_run.fn(run_id, "inventory", "plan", resolve_config_version(instance))
-        managed_sync_run.fn(
+        worker_result = managed_sync_run.fn(
             run_id,
             "inventory",
             "apply",
@@ -240,14 +317,20 @@ def _run_managed_worker(
             confirm_writes=True,
         )
     else:
-        managed_sync_run.fn(
+        worker_result = managed_sync_run.fn(
             run_id,
             "inventory",
             operation,
             resolve_config_version(instance),
             confirm_writes=operation == "sync",
         )
-    return _observation("managed", operation, saved, projection, run_id)
+    record, artifact = _product_parts(projection, run_id)
+    return managed_product_envelope(
+        worker_result=worker_result,
+        record=record,
+        artifact=artifact,
+        destination=destination,
+    )
 
 
 @pytest.mark.parametrize("operation", ["plan", "apply", "sync"])
@@ -255,21 +338,101 @@ def test_executed_three_interface_product_envelopes_are_equal(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     operation: Operation,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     run_id = f"run-matrix-{operation}"
-    observations: list[CanonicalEnvelope] = []
-    for surface_runner in (_run_cli, _run_python, _run_managed_worker):
-        with monkeypatch.context() as scoped:
-            observations.append(surface_runner(scoped, tmp_path / surface_runner.__name__, operation, run_id))
+    with monkeypatch.context() as scoped:
+        cli = _run_cli(scoped, tmp_path / "cli", operation, run_id, caplog)
+    with monkeypatch.context() as scoped:
+        python = _run_python(scoped, tmp_path / "python", operation, run_id)
+    with monkeypatch.context() as scoped:
+        managed = _run_managed_worker(scoped, tmp_path / "managed", operation, run_id)
+    observations = [cli, python, managed]
     assert_equivalent(observations)
 
 
-def test_python_and_managed_verify_are_equal_and_cli_review_consumes_the_same_plan(
+@pytest.mark.parametrize("mutation", ["returned-count", "returned-outcome", "returned-operation", "destination"])
+def test_interface_adapter_mutations_cannot_false_pass(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    run_id = "run-adapter-mutation"
+    instance = _instance(tmp_path)
+    saved = _saved(run_id, instance)
+    projection = local_product_projection((tmp_path / "products").resolve())
+    _seed_plan(instance, saved, tmp_path / "products")
+    record, artifact = _product_parts(projection, run_id)
+    core_result = _result(run_id, "plan", tmp_path)
+    public_result = api.RunResult(
+        run_id=run_id,
+        operation="plan",
+        phase="completed",
+        outcome="planned",
+        counts=api.ActionCounts(create=1),
+        domain_summary={"DcimDevice": 1},
+        artifacts=(),
+    )
+    worker_result: dict[str, object] = {
+        "run_id": run_id,
+        "stage": "plan",
+        "outcome": "planned",
+        "summary": saved.summary().model_dump(mode="json"),
+    }
+    expected = cli_product_envelope(
+        core_result=core_result,
+        exit_code=0,
+        rendering="plan completed",
+        record=record,
+        artifact=artifact,
+        destination=_DestinationProbe(),
+    )
+
+    destination = _DestinationProbe()
+    if mutation == "returned-count":
+        public_result = public_result.model_copy(update={"counts": api.ActionCounts(create=99)})
+        observed = python_product_envelope(
+            public_result=public_result,
+            record=record,
+            artifact=artifact,
+            destination=destination,
+        )
+    elif mutation == "returned-outcome":
+        worker_result["outcome"] = "failed"
+        observed = managed_product_envelope(
+            worker_result=worker_result,
+            record=record,
+            artifact=artifact,
+            destination=destination,
+        )
+    elif mutation == "returned-operation":
+        worker_result["operation"] = "apply"
+        observed = managed_product_envelope(
+            worker_result=worker_result,
+            record=record,
+            artifact=artifact,
+            destination=destination,
+        )
+    else:
+        destination.created_objects.add("unexpected-destination-object")
+        observed = managed_product_envelope(
+            worker_result=worker_result,
+            record=record,
+            artifact=artifact,
+            destination=destination,
+        )
+
+    with pytest.raises(AssertionError, match="canonical interface disagreement"):
+        assert_equivalent([expected, observed])
+
+
+def test_python_and_managed_verify_common_fields_and_cli_review_consume_the_same_plan(  # noqa: PLR0914
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     run_id = "run-matrix-verify"
-    observations: list[CanonicalEnvelope] = []
+    common_results: list[dict[str, object]] = []
+    verification_results: list[object] = []
+    artifacts: list[object] = []
     for surface in ("python", "managed"):
         root = (tmp_path / surface).resolve()
         instance = _instance(root)
@@ -293,7 +456,7 @@ def test_python_and_managed_verify_are_equal_and_cli_review_consumes_the_same_pl
                     "execute_run",
                     lambda *_args, _saved=saved, **_kwargs: _saved,
                 )
-                api.verify(
+                public_result = api.verify(
                     api.VerifyRequest(
                         sync_name="inventory",
                         config_directory=str(root),
@@ -319,9 +482,34 @@ def test_python_and_managed_verify_are_equal_and_cli_review_consumes_the_same_pl
                     "execute_run",
                     lambda *_args, _saved=saved, **_kwargs: _saved,
                 )
-                managed_sync_run.fn(run_id, "inventory", "verify", resolve_config_version(instance))
-        observations.append(_observation(surface, "verify", saved, projection, run_id))
-    assert_equivalent(observations)
+                worker_result = managed_sync_run.fn(
+                    run_id,
+                    "inventory",
+                    "verify",
+                    resolve_config_version(instance),
+                )
+        record, artifact = _product_parts(projection, run_id)
+        if surface == "python":
+            common_results.append(
+                {
+                    "run_id": public_result.run_id,
+                    "operation": public_result.operation,
+                    "outcome": public_result.outcome,
+                }
+            )
+        else:
+            common_results.append(
+                {
+                    "run_id": worker_result["run_id"],
+                    "operation": worker_result["stage"],
+                    "outcome": worker_result["outcome"],
+                }
+            )
+        verification_results.append(record.results["verification"])
+        artifacts.append(json.loads(artifact))
+    assert common_results[0] == common_results[1]
+    assert verification_results[0] == verification_results[1]
+    assert artifacts[0] == artifacts[1]
 
     cli_root = (tmp_path / "cli-review").resolve()
     cli_instance = _instance(cli_root)
@@ -448,7 +636,7 @@ def _execute_submission(parameters: Mapping[str, object]) -> dict[str, object]:
     )
 
 
-def test_managed_http_prefect_parameters_and_all_worker_operations_are_executed_and_secret_safe(  # noqa: PLR0914
+def test_managed_http_prefect_parameters_and_all_worker_operations_are_executed_and_secret_safe(  # noqa: PLR0914, PLR0915
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
@@ -461,6 +649,8 @@ def test_managed_http_prefect_parameters_and_all_worker_operations_are_executed_
         create_app(ManagedRunService(projection, orchestration, secrets=resolver.secret_values), resolver)
     )
     instance = _instance(tmp_path)
+    plan_destination = _DestinationProbe()
+    sync_destination = _DestinationProbe()
     configuration_reference = resolve_config_version(instance)
     headers = {"Authorization": f"Bearer {AUTH_TOKEN}"}
 
@@ -484,14 +674,17 @@ def test_managed_http_prefect_parameters_and_all_worker_operations_are_executed_
         monkeypatch.setattr(managed_flow, "resolve_sync_instance", lambda *_args, **_kwargs: instance)
         monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: (SENTINEL,))
         monkeypatch.setattr(managed_flow, "_plan", lambda *_args, **_kwargs: saved)
-        monkeypatch.setattr(
-            managed_flow,
-            "execute_run",
-            lambda *_args, operation, **_kwargs: (
-                saved if operation == "verify" else _result(plan_run_id, "apply", tmp_path)
-            ),
-        )
-        _execute_submission(plan_parameters)
+
+        def plan_core(*_args: object, operation: Operation, **_kwargs: object) -> SavedPlan | RunResult:
+            if operation == "verify":
+                return saved
+            result = _result(plan_run_id, "apply", tmp_path)
+            plan_destination.apply(saved)
+            return result
+
+        monkeypatch.setattr(managed_flow, "execute_run", plan_core)
+        plan_worker_result = _execute_submission(plan_parameters)
+        plan_destination_after_plan = plan_destination.snapshot()
 
         verified = client.post(
             f"/runs/{plan_run_id}/verify",
@@ -499,7 +692,7 @@ def test_managed_http_prefect_parameters_and_all_worker_operations_are_executed_
             json={"reason": "matrix verify"},
         )
         assert verified.status_code == 202
-        _execute_submission(orchestration.submissions[-1])
+        verify_worker_result = _execute_submission(orchestration.submissions[-1])
 
         refused = client.post(
             f"/runs/{plan_run_id}/apply",
@@ -522,7 +715,7 @@ def test_managed_http_prefect_parameters_and_all_worker_operations_are_executed_
             },
         )
         assert applied.status_code == 202
-        _execute_submission(orchestration.submissions[-1])
+        apply_worker_result = _execute_submission(orchestration.submissions[-1])
 
         synced = client.post(
             "/runs",
@@ -540,13 +733,15 @@ def test_managed_http_prefect_parameters_and_all_worker_operations_are_executed_
         sync_run_id = str(sync_parameters["run_id"])
         sync_saved = _saved(sync_run_id, instance)
         monkeypatch.setattr(managed_flow, "_plan", lambda *_args, **_kwargs: sync_saved)
-        monkeypatch.setattr(
-            managed_flow,
-            "execute_run",
-            lambda *_args, operation, **_kwargs: (
-                sync_saved if operation == "verify" else _result(sync_run_id, "apply", tmp_path)
-            ),
-        )
+
+        def sync_core(*_args: object, operation: Operation, **_kwargs: object) -> SavedPlan | RunResult:
+            if operation == "verify":
+                return sync_saved
+            result = _result(sync_run_id, "apply", tmp_path)
+            sync_destination.apply(sync_saved)
+            return result
+
+        monkeypatch.setattr(managed_flow, "execute_run", sync_core)
         monkeypatch.setattr(managed_flow, "bounded_run_lock", lambda *_args, **_kwargs: nullcontext())
         sync_result = _execute_submission(sync_parameters)
         assert sync_result["operation"] == "sync"
@@ -558,6 +753,33 @@ def test_managed_http_prefect_parameters_and_all_worker_operations_are_executed_
         projection.lookup_artifact(plan_run_id, "plan-review").value,
         projection.lookup_artifact(sync_run_id, "plan-review").value,
     ]
+    assert records[0] is not None
+    assert records[1] is not None
+    assert artifacts[0] is not None
+    assert artifacts[1] is not None
+    plan_envelope = managed_product_envelope(
+        worker_result=plan_worker_result,
+        record=records[0],
+        artifact=artifacts[0],
+        destination=plan_destination_after_plan,
+    )
+    apply_envelope = managed_product_envelope(
+        worker_result=apply_worker_result,
+        record=records[0],
+        artifact=artifacts[0],
+        destination=plan_destination,
+    )
+    sync_envelope = managed_product_envelope(
+        worker_result=sync_result,
+        record=records[1],
+        artifact=artifacts[1],
+        destination=sync_destination,
+    )
+    assert plan_envelope.counts == {"create": 1, "update": 0, "delete": 0}
+    assert plan_envelope.destination_effects == {"created": 0, "updated": 0, "deleted": 0}
+    assert apply_envelope.destination_effects["created"] == 1
+    assert sync_envelope.operation == "sync"
+    assert sync_envelope.destination_effects["created"] == 1
     boundary = serialized_boundaries(
         planned.json(),
         verified.json(),
@@ -565,6 +787,10 @@ def test_managed_http_prefect_parameters_and_all_worker_operations_are_executed_
         applied.json(),
         synced.json(),
         orchestration.submissions,
+        plan_worker_result,
+        verify_worker_result,
+        apply_worker_result,
+        sync_result,
         records,
         artifacts,
         caplog.text,
@@ -574,7 +800,6 @@ def test_managed_http_prefect_parameters_and_all_worker_operations_are_executed_
 
     # HTTP necessarily adds actor/audit/Prefect correlation fields. The lossless oracle
     # retains them, so direct worker and HTTP records are not falsely declared equal.
-    assert records[0] is not None
     assert records[0].actor == "owner"
     assert records[0].audit_links
     assert records[0].prefect_executions

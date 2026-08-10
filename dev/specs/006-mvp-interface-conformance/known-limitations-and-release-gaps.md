@@ -23,10 +23,12 @@
 - Running-service evidence is bounded to available, isolated services. No existing
   container, cache, Prefect deployment, destination, or external service is mutated.
 - The oracle proves complete ProductRun/artifact equality for the plan envelope and the
-  executed CLI/Python/actor-free-managed-worker plan, apply, and sync envelopes. Python
-  and managed independent verify compare equal. Existing managed failure,
-  cancellation, missing-detail, restart, and idempotency suites remain the owning evidence
-  for those HTTP/Prefect-only behaviors.
+  executed CLI/Python/actor-free-managed-worker plan, apply, and sync envelopes, including
+  actual returned counts/outcomes/operations and measured destination effects. Python and
+  managed independent verify compare only their returned common fields plus durable
+  verification evidence because the managed verify result has no action-count summary.
+  Existing managed failure, cancellation, missing-detail, restart, and idempotency suites
+  remain the owning evidence for those HTTP/Prefect-only behaviors.
 - The CLI exposes saved-plan review, not an independent `verify` product operation. The
   matrix exercises CLI plan, Python verification, and CLI review against the exact same
   manifest bytes; adding a CLI verify operation would be new public scope.

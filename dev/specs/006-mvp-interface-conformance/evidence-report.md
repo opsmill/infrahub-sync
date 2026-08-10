@@ -167,8 +167,10 @@ The lossless oracle now normalizes only exact schema paths. Three mutation cases
 paths:
 
 - actual Typer CLI, public Python functions, and managed worker for plan, apply, and
-  confirmed sync, with complete actor-free ProductRun/result/reference/artifact equality;
-- public Python and managed worker independent verify equality;
+  confirmed sync, with actual returned common fields, measured destination effects, and
+  complete actor-free ProductRun/reference/artifact equality;
+- public Python and managed worker independent verify common-return fields plus durable
+  verification evidence (the managed verify return has no action-count summary);
 - CLI plan writing a real v2 manifest, public Python verifying those exact bytes, and CLI
   review reading the unchanged bytes;
 - managed HTTP admission through captured Prefect parameters into worker plan, verify,
@@ -219,4 +221,40 @@ pass; 69 Markdown/MDX files and all YAML files
 
 uv run invoke docs.generate && uv run invoke docs.docusaurus
 pass; CLI reference regenerated and optimized static site built
+```
+
+## Boundary-derived adapter correction
+
+The final evidence-only correction removes every synthesized operation, count, outcome,
+and destination-effect input from the interface adapter. The executable fixture now has
+one create operation and observes these producing boundaries directly:
+
+- CLI: captured core `RunResult`, successful Typer exit, and CLI/log rendering;
+- Python: the actual public v1 `RunResult` returned by plan/apply/sync;
+- managed worker and HTTP-to-Prefect completion: the actual worker result dictionary;
+- destination effects: an instrumented isolated destination probe, measured after each
+  interface call (zero for plan, one create for apply and confirmed sync).
+
+Four mutation cases change one actual public returned count, worker outcome, worker
+operation, or measured destination state. Each now reaches the canonical envelope and
+causes comparison failure. Full verify-envelope equality is not claimed: Python and
+managed verify compare only their actually returned common run ID/operation/outcome,
+durable verification result, and review artifact because the managed verify result has no
+summary/counts field.
+
+```text
+uv run pytest -q tests/conformance/test_interface_matrix.py
+10 passed, 1 inherited warning
+
+uv run pytest -q tests/conformance
+29 passed, 1 inherited warning in 1.75s
+
+uv run pytest -q tests/conformance tests/api/test_v1.py tests/test_execution_cli_parity.py tests/test_execution_surface.py tests/test_potenda_parallel.py tests/test_potenda_plan_artifact.py tests/product_store tests/managed tests/orchestration/test_flow.py
+428 passed, 2 inherited warnings in 24.94s
+
+uv run ruff format --check tests/conformance && uv run ruff check tests/conformance
+pass; seven files formatted; all checks passed
+
+uv run ty check tests/conformance/interface_adapters.py tests/conformance/test_interface_matrix.py
+pass; no diagnostics
 ```
