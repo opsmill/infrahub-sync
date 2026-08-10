@@ -26,10 +26,10 @@
   "prefect_version": "3.8.1",
   "verification": {
     "conformance_tests": 34,
-    "focused_tests": 433,
+    "focused_tests": 435,
     "interface_matrix_tests": 10,
     "full_pytest": {
-      "passed": 1329,
+      "passed": 1331,
       "skipped": 14,
       "xfailed": 1
     },

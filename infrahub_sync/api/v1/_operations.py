@@ -28,7 +28,7 @@ from infrahub_sync.plan.review import (
     resolve_run_directory,
 )
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME
-from infrahub_sync.product_store.standalone import execute_standalone
+from infrahub_sync.product_store.standalone import StandaloneProductRecordError, execute_standalone
 
 from ._models import (
     ApplyRequest,
@@ -86,7 +86,8 @@ def _translate_error(
     execution_failure = isinstance(exc, (OperationApplyFailedError, ApplyRecordInvariantError))
     error_type = (
         RunValidationError
-        if isinstance(exc, (CoreRunValidationError, PlanArtifactError)) and not execution_failure
+        if isinstance(exc, (CoreRunValidationError, PlanArtifactError, StandaloneProductRecordError))
+        and not execution_failure
         else RunExecutionError
     )
     public = error_type(

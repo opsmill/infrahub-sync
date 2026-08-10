@@ -8,18 +8,19 @@
 - Review branch: `feature/db-006-merge-readiness`
 - This change adds only opt-in standalone consumption of the existing DB-003
   SQLite/filesystem product projection. It adds no provider, route, operation,
-  configuration-package registry, scheduler, recovery surface, or Prefect authority.
+  configuration-package registry, scheduler, public recovery API, or Prefect authority.
+  Internal interrupted-publication recovery and provider reconstruction remain supported.
 
 ## Setup
 
 ```bash
 git rev-parse HEAD
 git merge-base --is-ancestor 8ba0c57a7601bd0ffc75431488d6b59717217de6 HEAD
-uv sync --extra dev --extra prefect
+uv sync --extra dev --extra prefect --extra managed
 ```
 
-The managed comparison additionally needs the repository's already-declared `managed`
-extra. Do not change the accepted Prefect Extras Git pin.
+The setup uses the repository's already-declared `managed` extra. Do not change the
+accepted Prefect Extras Git pin.
 
 ## Focused review
 

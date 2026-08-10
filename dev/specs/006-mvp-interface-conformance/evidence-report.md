@@ -85,7 +85,10 @@ not optimize or alter the harness.
   DB006_BASE_INSTALL_PASS python=3.10 optional_managed_modules=absent
   DB006_BASE_INSTALL_TEARDOWN_PASS remaining=0
   ```
-- No external write, package publication, push, merge, or promotion occurred.
+- During that initial environment-only qualification, no external write, package
+  publication, push, merge, or promotion occurred. The later authorized live review wrote
+  only to its fresh isolated Infrahub development destination at `http://localhost:8000`,
+  as recorded under independent live-review evidence below.
 
 ## Final verification
 
@@ -261,6 +264,9 @@ uv run ty check tests/conformance/interface_adapters.py tests/conformance/test_i
 pass; no diagnostics
 ```
 
+The 29-test conformance result above is historical evidence from the interface-adapter
+correction. It was superseded by the final merge-readiness gate recorded below.
+
 ## Independent live-review evidence
 
 An authorized independent reviewer later exercised a fresh Infrahub development stack
@@ -321,10 +327,13 @@ uv sync --extra dev --extra prefect --extra managed
 pass; lockfile and accepted Prefect Extras pin unchanged
 
 uv run pytest -q tests/conformance tests/api/test_v1.py tests/test_execution_cli_parity.py tests/test_execution_surface.py tests/test_potenda_parallel.py tests/test_potenda_plan_artifact.py tests/product_store tests/managed tests/orchestration/test_flow.py
-433 passed, 2 inherited warnings in 26.93s
+435 passed, 2 inherited warnings in 25.76s
+
+uv run pytest -q tests/conformance
+34 passed, 1 inherited warning in 1.77s
 
 uv run pytest -q
-1329 passed, 14 skipped, 1 xfailed, 4 inherited warnings in 69.30s
+1331 passed, 14 skipped, 1 xfailed, 4 inherited warnings in 67.45s
 
 uv run invoke linter.format
 pass; Python-only Ruff formatter and checks

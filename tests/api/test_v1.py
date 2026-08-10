@@ -25,6 +25,7 @@ from infrahub_sync.plan.models import ApplyRecord, VerificationFailure
 from infrahub_sync.plan.reader import read_plan_artifact_bytes
 from infrahub_sync.plan.review import SavedPlan, read_saved_plan
 from infrahub_sync.potenda import Potenda
+from infrahub_sync.product_store.standalone import StandaloneProductRecordError
 from infrahub_sync.utils import PlanApplier
 from tests.plan.artifact_fixtures import operation_record, tamper_with_operations, tamperable_operation, write_artifact
 
@@ -451,6 +452,52 @@ def test_stale_plan_verification_raises_a_typed_product_refusal(
     assert caught.value.operation == "verify"
     assert caught.value.stage == "verify"
     assert "plan_checksum" in str(caught.value)
+
+
+@pytest.mark.parametrize("operation", ["verify", "apply"])
+def test_missing_configured_product_record_is_a_validation_refusal(
+    operation: str,
+    config_directory: Path,
+    instance: SyncInstance,
+    cache_directory: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _directory, checksum = _saved_run(instance)
+    product_cache = str((cache_directory / "product-records").resolve())
+
+    def missing_product_record(*_args: object, **_kwargs: object) -> NoReturn:
+        message = f"configured product run {RUN_ID!r} is unavailable"
+        raise StandaloneProductRecordError(message)
+
+    monkeypatch.setattr(operations, "execute_standalone", missing_product_record)
+
+    def invoke() -> api.RunResult:
+        if operation == "verify":
+            return api.verify(
+                api.VerifyRequest(
+                    sync_name=SYNC_NAME,
+                    config_directory=str(config_directory),
+                    run_id=RUN_ID,
+                    product_cache_location=product_cache,
+                )
+            )
+        return api.apply(
+            api.ApplyRequest(
+                sync_name=SYNC_NAME,
+                config_directory=str(config_directory),
+                run_id=RUN_ID,
+                expected_checksum=checksum,
+                product_cache_location=product_cache,
+            )
+        )
+
+    with pytest.raises(api.RunValidationError) as caught:
+        invoke()
+
+    assert caught.value.operation == operation
+    assert caught.value.stage == operation
+    assert caught.value.run_id == RUN_ID
+    assert RUN_ID in str(caught.value)
 
 
 class _RecordingDestination:
