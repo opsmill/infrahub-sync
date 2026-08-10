@@ -41,7 +41,8 @@
       "integration_suite": "7-passed-1-skipped-76.54s-only-after-uncommitted-public-demo-device-repin",
       "bounded_db006_cycle": "pass-real-extraction-and-destination-writes",
       "shipped_unbounded_example": "unqualified-pre-existing-hazards",
-      "environment_teardown": "pending-under-authorized-investigation-lease"
+      "investigation_record": "infrahub-sync-lab@2cd4010234608fee5d737f8cf051cb576516fd3d:.planning/investigations/2026-08-10-lag-peer-identity-rediff-crash.md",
+      "environment_teardown": "pass-eight-containers-five-volumes-one-network-removed-ports-and-compose-project-clear"
     }
   },
   "cases": [
@@ -72,7 +73,7 @@
     "DBA-008": "pass",
     "DBA-009": "partial-bounded-live-cycle-pass-unbounded-shipped-example-unqualified",
     "DBA-010": "pass",
-    "DBA-011": "partial-db006-created-services-torn-down-independent-live-environment-under-authorized-investigation-lease",
+    "DBA-011": "pass-all-db006-and-independent-live-review-resources-torn-down-with-recorded-receipt",
     "DBA-012": "pass"
   },
   "release_gaps": [

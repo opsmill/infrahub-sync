@@ -264,8 +264,8 @@ pass; no diagnostics
 ## Independent live-review evidence
 
 An authorized independent reviewer later exercised a fresh Infrahub development stack
-against the public NetBox demo. No code or environment from that ongoing investigation
-was changed by this correction.
+against the public NetBox demo. No code or environment from that investigation was
+changed by this correction.
 
 - `infrahub-sync generate --name from-netbox --directory examples/` passed and rendered
   four files.
@@ -279,9 +279,19 @@ was changed by this correction.
 - The unbounded shipped example remains unqualified because of pre-existing live-data and
   adapter hazards. Those issues, the stale pin, and the `--continue-on-error` remedy gap
   belong to the separate issue-investigator lane.
-- The independent live environment remains under an authorized investigation lease with
-  residue intentionally retained; it has not yet been torn down. Consequently DBA-009 and
-  DBA-011 have partial evidence, not unconditional pass status.
+- The issue-investigator classified the post-convergence relationship-crossing peer
+  identity crash as a high-severity pre-existing adapter/SDK interaction defect, not a
+  DB-006 regression. The issue-ready draft remains local and no external issue was filed.
+  The durable record is
+  `infrahub-sync-lab@2cd4010234608fee5d737f8cf051cb576516fd3d` at
+  `.planning/investigations/2026-08-10-lag-peer-identity-rediff-crash.md`.
+- At 2026-08-10T16:05:55-04:00, the investigator ran the owning checkout's documented
+  `uv run invoke demo.destroy`. The teardown removed all eight assigned containers, five
+  project volumes, and the compose network; verification found no remaining resources for
+  the compose project and ports 8000 and 6362 were free. Disposable scratch was moved to
+  the macOS Trash, while the canonical review bundle and planning record were retained.
+  DBA-011 therefore passes. DBA-009 remains partial because teardown does not qualify the
+  shipped unbounded example or repair its pre-existing adapter hazard.
 
 ## Merge-readiness correction
 
@@ -345,7 +355,8 @@ uv run infrahub-sync apply --help
 pass; 14 configurations listed and product-cache option present on all owning commands
 ```
 
-The integration-backed generate command was not re-run from this worktree because the
-independent live environment is reserved under the investigation lease. Its supplied live
+The integration-backed generate command was not re-run from this worktree while the
+independent live environment was reserved under the investigation lease. Its supplied live
 result (pass, four files) is recorded above; this correction did not contact or alter that
-environment.
+environment. The later authorized teardown and investigation disposition are recorded in
+the independent live-review evidence section.
