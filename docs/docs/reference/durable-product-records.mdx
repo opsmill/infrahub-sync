@@ -8,9 +8,26 @@ artifacts. It is independent of Prefect: a standalone run has no Prefect links, 
 managed run can retain any number of purpose-labelled execution links after Prefect no
 longer has the corresponding flow-run detail.
 
-This is a Python provider surface. The managed Sync HTTP API and its worker use the local
-profile for durable run, plan, result, artifact, execution-link, mutation-receipt, and audit
-integration. The CLI and local public run API retain their existing cache contracts.
+The managed Sync HTTP API and its worker use the local profile for durable run, plan,
+result, artifact, execution-link, mutation-receipt, and audit integration. Standalone CLI
+and public Python operations can opt into the same product-run and plan-review contract by
+setting an explicit product-cache location. Their established run-directory and saved-plan
+cache remains the execution artifact source.
+
+For Python, pass `product_cache_location` on each version 1 request. For the CLI, pass
+`--product-cache-location` to `diff`, `sync`, and `apply`; the same option is available when
+reviewing a saved plan through `diff --from-plan`. The path must be absolute after user
+expansion, an unresolvable `~user` is rejected as invalid configuration, and every stage
+continuing a plan must use the same location.
+
+This is minimum product-projection configuration. It does not register or version a
+configuration package, select a new provider type, or add a release-management API.
+
+For configured direct `sync`, the immutable review artifact is published after the saved
+plan commits and before the first destination write, in both serial and tiered execution.
+If publication fails, synchronization stops before contacting the destination write
+surface and retains typed failure evidence on a terminal failed ProductRun. A reserved
+artifact remains unavailable until an exact publication retry completes it.
 
 ## Provider profiles
 
@@ -111,7 +128,9 @@ second relational transaction. The filesystem profile commits data and manifest 
 atomic directory rename. The S3-compatible profile copies staged data to its immutable key
 and uses a create-only manifest put as the object-store commit point. A crash before the
 final relational mark leaves durable pending evidence rather than exposing the artifact.
-The run cannot be finished while any pending publication exists.
+The run cannot be finished successfully while any pending publication exists. It can be
+finished with `outcome="failed"` so publication failure evidence reaches a safe terminal
+state while the pending artifact remains unavailable.
 
 An `S3Client` implementation must make `put(..., if_absent=True)` an atomic,
 create-only write and translate an existing-key conflict to `DuplicateArtifactError`.

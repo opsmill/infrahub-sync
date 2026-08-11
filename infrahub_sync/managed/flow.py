@@ -252,7 +252,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 _run_file_mode="sync",
             )
             assert isinstance(applied, RunResult)
-        result = _result_data(applied)
+        result = {**_result_data(applied), "operation": "sync"}
         projection.finish_run(
             run_id,
             phase="applied",

@@ -11,6 +11,19 @@ The base `infrahub-sync` installation includes this API. Prefect and an external
 plane are not required. The source and destination declared by the selected configuration
 remain the runtime integrations for operations that contact adapters.
 
+## Optional durable product projection
+
+Every request accepts an optional `product_cache_location`. Set it to an absolute local
+path to publish the same `ProductRun` and immutable `plan-review` artifact contract used by
+managed execution. If it is omitted, the established run-directory and saved-plan behavior
+is unchanged.
+
+Use the same location for plan, verify, and apply. Reviewed apply advances the planning
+record under its original run ID; it does not allocate another product record. A confirmed
+sync similarly keeps one product identity across its plan, verification, and apply stages.
+The local projection uses SQLite and the filesystem and imports no Prefect or managed
+runtime module.
+
 ## Create a plan
 
 `plan` loads and validates the named configuration, reads both adapters, saves the proposed
@@ -24,6 +37,7 @@ result = plan(
         sync_name="from-netbox",
         config_directory="examples",
         branch="main",
+        product_cache_location="/var/lib/infrahub-sync/product-cache",
     )
 )
 
@@ -54,6 +68,7 @@ verified = verify(
         sync_name="from-netbox",
         config_directory="examples",
         run_id=result.run_id,
+        product_cache_location="/var/lib/infrahub-sync/product-cache",
     )
 )
 
@@ -84,6 +99,7 @@ applied = apply(
         run_id=result.run_id,
         expected_checksum=reviewed_checksum,
         branch="main",
+        product_cache_location="/var/lib/infrahub-sync/product-cache",
     )
 )
 
@@ -109,6 +125,7 @@ synced = sync(
         config_directory="examples",
         branch="main",
         confirm_writes=True,
+        product_cache_location="/var/lib/infrahub-sync/product-cache",
     )
 )
 ```
