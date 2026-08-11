@@ -60,6 +60,8 @@ const sidebars: SidebarsConfig = {
         'reference/cli',
         'reference/incremental-extraction',
         'reference/prefect-remote-run',
+        'reference/durable-product-records',
+        'reference/managed-http-api',
       ],
     },
     {

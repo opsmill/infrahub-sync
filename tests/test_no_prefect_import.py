@@ -1,4 +1,4 @@
-"""The base package must never import Prefect (DBA-001, SC-006, DBR-010).
+"""The base package must never import optional Prefect profiles (DBA-001, SC-006, DBR-010).
 
 The `sys.modules` half runs in a FRESH interpreter on purpose: this suite is
 collected with the `prefect` extra installed, and collecting
@@ -19,19 +19,23 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_ROOT = REPO_ROOT / "infrahub_sync"
 EXAMPLES_DIR = REPO_ROOT / "examples"
+OPTIONAL_PACKAGE_NAMES = frozenset({"managed", "orchestration"})
+OPTIONAL_PACKAGE_PREFIXES = tuple(f"infrahub_sync.{name}" for name in sorted(OPTIONAL_PACKAGE_NAMES))
+OPTIONAL_DISTRIBUTION_NAMES = frozenset({"fastapi", "opsmill_prefect_extras", "prefect", "uvicorn"})
 
 PROBE_SCRIPT = f"""
 import sys
 
 
-class BlockPrefectImport:
+class BlockOptionalImport:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == "prefect" or fullname.startswith("prefect."):
-            raise ModuleNotFoundError("Prefect is deliberately unavailable in this base-package probe")
+        root = fullname.partition(".")[0]
+        if root in {sorted(OPTIONAL_DISTRIBUTION_NAMES)!r}:
+            raise ModuleNotFoundError(f"{{root}} is deliberately unavailable in this base-package probe")
         return None
 
 
-sys.meta_path.insert(0, BlockPrefectImport())
+sys.meta_path.insert(0, BlockOptionalImport())
 
 import infrahub_sync
 import infrahub_sync.api.v1
@@ -47,18 +51,19 @@ list_result = runner.invoke(
 )
 assert list_result.exit_code == 0, list_result.output
 
-leaked = sorted(m for m in sys.modules if m == "prefect" or m.startswith("prefect."))
-assert not leaked, f"prefect modules imported by the base package: {{leaked}}"
-print("NO-PREFECT-IMPORT-OK")
+optional_roots = {sorted(OPTIONAL_DISTRIBUTION_NAMES)!r}
+leaked = sorted(m for m in sys.modules if m.partition(".")[0] in optional_roots)
+assert not leaked, f"optional managed modules imported by the base package: {{leaked}}"
+print("NO-OPTIONAL-MANAGED-IMPORT-OK")
 """
 
 
 def _module_paths() -> list[Path]:
-    """Every base-package module — the whole package except `orchestration/`."""
+    """Every base-package module, excluding optional runtime profiles."""
     return [
         path
         for path in sorted(PACKAGE_ROOT.rglob("*.py"))
-        if "orchestration" not in path.relative_to(PACKAGE_ROOT).parts
+        if not OPTIONAL_PACKAGE_NAMES.intersection(path.relative_to(PACKAGE_ROOT).parts)
     ]
 
 
@@ -95,8 +100,8 @@ def _imported_names(path: Path, *, root: Path = REPO_ROOT) -> set[str]:
     return names
 
 
-def test_base_package_imports_and_runs_without_prefect_in_a_fresh_interpreter() -> None:
-    """Importing the package and running CLI sanity must not pull in Prefect."""
+def test_base_package_imports_and_runs_without_managed_dependencies_in_a_fresh_interpreter() -> None:
+    """Base imports and CLI sanity must not pull in managed dependencies."""
     completed = subprocess.run(  # noqa: S603 - fixed argv, this interpreter, no shell
         [sys.executable, "-c", PROBE_SCRIPT],
         capture_output=True,
@@ -105,24 +110,23 @@ def test_base_package_imports_and_runs_without_prefect_in_a_fresh_interpreter() 
         cwd=str(REPO_ROOT),
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert "NO-PREFECT-IMPORT-OK" in completed.stdout
+    assert "NO-OPTIONAL-MANAGED-IMPORT-OK" in completed.stdout
 
 
-def test_execution_surface_imports_no_prefect_and_no_orchestration() -> None:
-    """The shared surface is import-light: no Prefect, no orchestration package."""
+def test_execution_surface_imports_no_optional_managed_runtime() -> None:
+    """The shared surface imports no optional runtime distribution or package."""
     imported = _imported_names(PACKAGE_ROOT / "execution.py")
-    assert not [name for name in imported if name == "prefect" or name.startswith("prefect.")]
-    assert not [name for name in imported if name.startswith("infrahub_sync.orchestration")]
+    assert not [name for name in imported if name.partition(".")[0] in OPTIONAL_DISTRIBUTION_NAMES]
+    assert not [name for name in imported if name.startswith(OPTIONAL_PACKAGE_PREFIXES)]
 
 
-def test_no_base_package_module_imports_the_orchestration_package() -> None:
-    """Nothing outside `orchestration/` may reach into it — that is what keeps the
-    base install Prefect-free even though the extra ships in the same package."""
+def test_no_base_package_module_imports_an_optional_runtime_package() -> None:
+    """Base modules must not reach into optional runtime profiles."""
     offenders = {
         str(path.relative_to(REPO_ROOT)): sorted(
             name
             for name in _imported_names(path)
-            if name == "prefect" or name.startswith(("prefect.", "infrahub_sync.orchestration"))
+            if name.partition(".")[0] in OPTIONAL_DISTRIBUTION_NAMES or name.startswith(OPTIONAL_PACKAGE_PREFIXES)
         )
         for path in _module_paths()
     }
@@ -136,9 +140,11 @@ def test_no_base_package_module_imports_the_orchestration_package() -> None:
         ("infrahub_sync/probe.py", "from . import orchestration\n"),
         ("infrahub_sync/adapters/probe.py", "from ..orchestration import flow\n"),
         ("infrahub_sync/adapters/__init__.py", "from ..orchestration import flow\n"),
+        ("infrahub_sync/probe.py", "from .managed import app\n"),
+        ("infrahub_sync/adapters/probe.py", "from ..managed import app\n"),
     ],
 )
-def test_the_scan_resolves_relative_imports_of_the_orchestration_package(
+def test_the_scan_resolves_relative_imports_of_optional_runtime_packages(
     tmp_path: Path, module_path: str, source: str
 ) -> None:
     """The boundary is only enforced if the scan sees the in-package import forms.
@@ -153,4 +159,4 @@ def test_the_scan_resolves_relative_imports_of_the_orchestration_package(
 
     names = _imported_names(probe, root=tmp_path)
 
-    assert [name for name in names if name.startswith("infrahub_sync.orchestration")]
+    assert [name for name in names if name.startswith(OPTIONAL_PACKAGE_PREFIXES)]

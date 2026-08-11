@@ -27,6 +27,7 @@ from infrahub_sync.plan.errors import (
     UnknownPlanKindError,
     UnsafeRunIdentifierError,
 )
+from infrahub_sync.product_store.standalone import StandaloneProductRecordError, execute_standalone
 from infrahub_sync.utils import (
     PlanApplier,
     find_missing_schema_model,
@@ -372,6 +373,7 @@ def _review_saved_plan(
     detail: bool,
     kind: str | None,
     ignored_run_id: str | None = None,
+    product_cache_location: str | None = None,
 ) -> None:
     """Render the plan artifact stored for `run_id` and write nothing (FR-008, AD021, AD031).
 
@@ -392,10 +394,16 @@ def _review_saved_plan(
             run_id,
         )
     try:
-        plan = execute_run(sync_instance, operation="verify", run_id=run_id)
+        plan = execute_standalone(
+            sync_instance,
+            operation="verify",
+            run_id=run_id,
+            product_cache_location=product_cache_location,
+            _core_executor=execute_run,
+        )
         summary = plan.summary()
         records = _select_review_records(plan, run_id=run_id, kind=kind) if detail else []
-    except PlanArtifactError as exc:
+    except (PlanArtifactError, StandaloneProductRecordError) as exc:
         print_error_and_abort(str(exc))
 
     _echo_plan_header(plan=plan, summary=summary, sync_name=sync_instance.name, run_id=run_id)
@@ -485,6 +493,10 @@ def diff_cmd(
         default=None,
         help="Narrow --detail to a single destination kind. Requires --from-plan and --detail.",
     ),
+    product_cache_location: str | None = typer.Option(
+        default=None,
+        help="Absolute local product-cache path. When set, publish the durable ProductRun and plan-review artifact.",
+    ),
 ) -> None:
     """Calculate and print the differences between the source and the destination systems for a given project."""
     _check_review_options(from_plan=from_plan, detail=detail, kind=kind)
@@ -508,6 +520,7 @@ def diff_cmd(
             detail=detail,
             kind=kind,
             ignored_run_id=run_id,
+            product_cache_location=product_cache_location,
         )
         return
 
@@ -521,9 +534,11 @@ def diff_cmd(
     verbosity_level = ctx.obj.get("verbosity", logging.INFO) if ctx.obj else logging.INFO
 
     try:
-        execute_run(
+        execute_standalone(
             sync_instance,
             operation="plan",
+            product_cache_location=product_cache_location,
+            _core_executor=execute_run,
             confirm_writes=False,
             branch=branch,
             show_progress=show_progress,
@@ -533,7 +548,12 @@ def diff_cmd(
             full_extract=full_extract,
             potenda_factory=_cli_potenda_factory,
         )
-    except (PlanGenerationExistsError, UnsafeRunIdentifierError, RunConcurrencyError) as exc:
+    except (
+        PlanGenerationExistsError,
+        UnsafeRunIdentifierError,
+        RunConcurrencyError,
+        StandaloneProductRecordError,
+    ) as exc:
         # The core marks run.json failed. Keep the saved-plan command's narrow
         # one-line refusal for the residual writer-stage race.
         print_error_and_abort(str(exc))
@@ -582,6 +602,10 @@ def sync_cmd(
             "the cursor-driven incremental path on warm runs — see docs/reference/incremental-extraction."
         ),
     ),
+    product_cache_location: str | None = typer.Option(
+        default=None,
+        help="Absolute local product-cache path. When set, publish the durable ProductRun and plan-review artifact.",
+    ),
 ) -> None:
     """Synchronize the data between source and the destination systems for a given project or configuration file."""
     if sum([bool(name), bool(config_file)]) != 1:
@@ -601,9 +625,11 @@ def sync_cmd(
     verbosity_level = ctx.obj.get("verbosity", logging.INFO) if ctx.obj else logging.INFO
 
     try:
-        execute_run(
+        execute_standalone(
             sync_instance,
             operation="sync",
+            product_cache_location=product_cache_location,
+            _core_executor=execute_run,
             confirm_writes=True,  # the explicit human CLI invocation IS the confirmation
             branch=branch,
             show_progress=show_progress,
@@ -618,7 +644,7 @@ def sync_cmd(
             _serial_load_error=lambda exc: print_error_and_abort(str(exc), sync_instance),
             _parallel_sync_error=lambda exc: print_error_and_abort(str(exc), sync_instance),
         )
-    except RunConcurrencyError as exc:
+    except (RunConcurrencyError, StandaloneProductRecordError) as exc:
         print_error_and_abort(str(exc))
 
 
@@ -645,6 +671,10 @@ def apply_cmd(
             "of the review output. A mismatch refuses before the destination is contacted."
         ),
     ),
+    product_cache_location: str | None = typer.Option(
+        default=None,
+        help="Absolute local product-cache path used by the plan. When set, extend its durable ProductRun.",
+    ),
 ) -> None:
     """Apply a previously cached plan against the destination — no source extraction."""
     if sum([bool(name), bool(config_file)]) != 1:
@@ -657,9 +687,11 @@ def apply_cmd(
     unexpected_error: Exception | None = None
     unexpected_traceback = None
     try:
-        result = execute_run(
+        result = execute_standalone(
             sync_instance,
             operation="apply",
+            product_cache_location=product_cache_location,
+            _core_executor=execute_run,
             confirm_writes=True,
             run_id=run_id,
             branch=branch,
@@ -668,7 +700,7 @@ def apply_cmd(
             expected_checksum=expected_checksum,
             _plan_applier_factory=_cli_plan_applier_factory,
         )
-    except (PlanArtifactError, RunConcurrencyError) as exc:
+    except (PlanArtifactError, RunConcurrencyError, StandaloneProductRecordError) as exc:
         print_error_and_abort(str(exc), sync_instance)
     except typer.Abort:
         # A construction-only factory refusal already rendered its one-line message.

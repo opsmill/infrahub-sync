@@ -59,11 +59,15 @@ jobs:
       - name: "Set up Python ${{ matrix.python-version }}"
         run: uv python install ${{ matrix.python-version }}
 
-      # The `prefect` extra is required: without it `tests/orchestration/test_flow.py`
-      # is skipped whole by its `pytest.importorskip("prefect")`, so the flow, log
-      # bridge, parameter-contract and canary-redaction suites would never run here.
-      - name: "Install dependencies"
-        run: uv sync --frozen --extra dev --extra prefect
+      - name: "Install Developer Preview dependencies on Python 3.10"
+        if: matrix.python-version == '3.10'
+        run: uv sync --python 3.10 --frozen --extra dev --extra prefect
+
+      # Managed HTTP support is Python 3.11+; the separate 3.10 leg still proves
+      # the preserved Developer Preview orchestration profile.
+      - name: "Install managed dependencies on Python 3.11+"
+        if: matrix.python-version != '3.10'
+        run: uv sync --python ${{ matrix.python-version }} --frozen --extra dev --extra prefect --extra managed
 
       # Runs only `-m "not integration"`. Integration tests need a live
       # Infrahub instance and are opted into via `invoke tests-integration`
@@ -77,7 +81,7 @@ jobs:
     # the base package neither imports nor needs Prefect; only an install where
     # Prefect is genuinely absent proves the base install still imports and the CLI
     # still runs. The flow suite skips here, by design.
-    name: "Unit Tests (base install, no prefect extra)"
+    name: "Unit Tests (base install, Python 3.10, no managed runtimes)"
     needs: ["files-changed"]
     if: needs.files-changed.outputs.sync == 'true'
     runs-on: "ubuntu-22.04"
@@ -91,18 +95,23 @@ jobs:
         with:
           version: "latest"
 
-      - name: "Set up Python 3.12"
-        run: uv python install 3.12
+      - name: "Set up Python 3.10"
+        run: uv python install 3.10
 
       - name: "Install dependencies"
-        run: uv sync --frozen --extra dev
+        run: uv sync --python 3.10 --frozen --extra dev
 
-      - name: "Assert prefect is absent from this environment"
+      - name: "Assert Python 3.10 is active"
+        run: uv run --no-sync python -c "import sys; assert sys.version_info[:2] == (3, 10), sys.version"
+
+      - name: "Assert managed runtime dependencies are absent from this environment"
         run: |
-          if uv run --no-sync python -c "import prefect" 2>/dev/null; then
-            echo "prefect is importable — this leg must be a base install"
-            exit 1
-          fi
+          for module in prefect fastapi uvicorn opsmill_prefect_extras; do
+            if uv run --no-sync python -c "import ${module}" 2>/dev/null; then
+              echo "${module} is importable — this leg must be a base install"
+              exit 1
+            fi
+          done
 
       - name: "pytest: unit tests"
         run: uv run --no-sync invoke tests.tests-unit

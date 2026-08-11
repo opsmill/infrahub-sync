@@ -74,7 +74,7 @@ OPERATIONAL_APPLY_FAILURES: tuple[type[Exception], ...] = (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from datetime import datetime
     from pathlib import Path
 
@@ -870,7 +870,13 @@ class Potenda:
         for resource, current in self._counts.items():
             guard.check(resource, current=current)
 
-    def sync_in_tiers(self, *, parallel: bool = False, allow_rowcount_drop: bool = False) -> dict[str, int]:
+    def sync_in_tiers(
+        self,
+        *,
+        parallel: bool = False,
+        allow_rowcount_drop: bool = False,
+        plan_committed: Callable[[], None] | None = None,
+    ) -> dict[str, int]:
         """Run diff+sync one tier at a time.
 
         When `parallel=False`, falls back to the existing serial pathway.
@@ -896,6 +902,8 @@ class Potenda:
             self.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
             diff = self.diff()
             self.write_plan(diff)
+            if plan_committed is not None:
+                plan_committed()
             if diff.has_diffs():
                 self.sync(diff=diff)
                 # Re-snapshot destination AFTER writes so the next warm run
@@ -931,6 +939,8 @@ class Potenda:
         # Before the first destination write, and after top_level is restored so the
         # derived deletes cover every kind rather than the last tier's (FR-001, AD039).
         self.write_plan_artifact([diff for _tier_list, diff in retained])
+        if plan_committed is not None:
+            plan_committed()
 
         # Execution loop: replay the retained diffs in tier order. `top_level` is
         # irrelevant here — the synchronizer walks the Diff it is handed.

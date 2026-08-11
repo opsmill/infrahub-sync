@@ -64,6 +64,7 @@ $ infrahub-sync diff [OPTIONS]
 * `--from-plan TEXT`: Review the saved plan artifact for this run id instead of comparing live systems. Constructs no adapter, extracts nothing, and takes no lock.
 * `--detail`: Expand the plan summary to one record per operation. Requires --from-plan.
 * `--kind TEXT`: Narrow --detail to a single destination kind. Requires --from-plan and --detail.
+* `--product-cache-location TEXT`: Absolute local product-cache path. When set, publish the durable ProductRun and plan-review artifact.
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync sync`
@@ -90,6 +91,7 @@ $ infrahub-sync sync [OPTIONS]
 * `--continue-on-error / --no-continue-on-error`: Log and skip peer relationships whose identifier values are missing instead of aborting. Useful when source data is partial; review the warnings before relying on the result.  [default: no-continue-on-error]
 * `--concurrent-load / --no-concurrent-load`: Load source and destination concurrently. Disable when a custom adapter isn&#x27;t thread-safe.  [default: concurrent-load]
 * `--full-extract / --no-full-extract`: Re-extract every resource from scratch (default). Pass --no-full-extract to enable the cursor-driven incremental path on warm runs — see docs/reference/incremental-extraction.  [default: full-extract]
+* `--product-cache-location TEXT`: Absolute local product-cache path. When set, publish the durable ProductRun and plan-review artifact.
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync apply`
@@ -111,6 +113,7 @@ $ infrahub-sync apply [OPTIONS]
 * `--branch TEXT`: Branch to use for the apply.
 * `--allow-destination-change / --no-allow-destination-change`: Apply even though the live destination endpoint or branch differs from the one the plan was computed against. Without it, a destination mismatch refuses before any write.  [default: no-allow-destination-change]
 * `--expected-checksum TEXT`: Apply only if the stored plan hashes to this checksum — the `plan checksum` line of the review output. A mismatch refuses before the destination is contacted.
+* `--product-cache-location TEXT`: Absolute local product-cache path used by the plan. When set, extend its durable ProductRun.
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync generate`
