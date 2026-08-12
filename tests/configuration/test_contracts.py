@@ -1,0 +1,297 @@
+"""Behavioral tests for declared configuration identity and adapter capabilities."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+import pytest
+from pydantic import ValidationError
+
+from infrahub_sync.configuration import (
+    BUILTIN_ADAPTER_CAPABILITIES,
+    AdapterConfigurationCapabilities,
+    ConfigurationPackage,
+    CredentialConfigurationError,
+    EnvironmentCredentialProvider,
+    UnknownAdapterCapabilitiesError,
+    ValidationFinding,
+    get_adapter_capabilities,
+    resolve_reference,
+    sort_findings,
+    validate_package_credentials,
+)
+
+
+def _package(**updates: object) -> ConfigurationPackage:
+    data: dict[str, object] = {
+        "format_version": 1,
+        "configuration": {
+            "name": "from-netbox",
+            "source": {
+                "name": "netbox",
+                "settings": {
+                    "url": "https://demo.netbox.dev",
+                    "token": {"$credential": "netbox-token"},
+                },
+            },
+            "destination": {
+                "name": "infrahub",
+                "settings": {
+                    "url": "http://localhost:8000",
+                    "token": {"$credential": "infrahub-token"},
+                },
+            },
+            "order": [],
+            "schema_mapping": [],
+            "diffsync_flags": [],
+            "incremental": None,
+        },
+        "package_metadata": {"adapter_api_version": 1},
+        "credentials": {
+            "netbox-token": {"provider": "env", "identifier": "NETBOX_TOKEN"},
+            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"},
+        },
+    }
+    data.update(updates)
+    return ConfigurationPackage.model_validate(data)
+
+
+def test_checksum_is_stable_across_mapping_order() -> None:
+    first = _package()
+    second = ConfigurationPackage.model_validate(
+        {
+            "credentials": dict(reversed(list(first.model_dump(mode="json")["credentials"].items()))),
+            "configuration": first.model_dump(mode="json")["configuration"],
+            "package_metadata": {"adapter_api_version": 1},
+            "format_version": 1,
+        }
+    )
+
+    assert first.checksum() == second.checksum()
+
+
+def test_checksum_changes_with_declared_credential_identifier() -> None:
+    baseline = _package()
+    changed = baseline.model_dump(mode="json")
+    changed["credentials"]["netbox-token"]["identifier"] = "OTHER_NETBOX_TOKEN"
+
+    assert ConfigurationPackage.model_validate(changed).checksum() != baseline.checksum()
+
+
+def test_package_rejects_machine_local_directory() -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["directory"] = "/example/generated"
+
+    with pytest.raises(ValidationError, match="unsupported declared fields: directory"):
+        ConfigurationPackage.model_validate(data)
+
+
+def test_package_rejects_nested_fields_legacy_models_would_ignore() -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["ignored"] = "would-not-be-hashed"
+
+    with pytest.raises(ValidationError, match=r"configuration\.source contains unsupported declared fields: ignored"):
+        ConfigurationPackage.model_validate(data)
+
+
+@pytest.mark.parametrize("value", [datetime(2026, 8, 12, tzinfo=timezone.utc), ("not", "json"), {1: "non-string-key"}])
+def test_package_rejects_non_json_values(value: object) -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["settings"]["unexpected"] = value
+
+    with pytest.raises(ValidationError, match=r"non-JSON|non-string"):
+        ConfigurationPackage.model_validate(data)
+
+
+def test_credential_reference_whitespace_is_rejected_not_normalized() -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["settings"]["token"] = {"$credential": " netbox-token "}
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError, match="malformed credential reference"):
+        validate_package_credentials(package)
+
+
+def test_package_rejects_non_finite_numbers() -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["settings"]["timeout"] = float("nan")
+
+    with pytest.raises(ValidationError, match="non-finite"):
+        ConfigurationPackage.model_validate(data)
+
+
+def test_package_rejects_recursive_declarations() -> None:
+    data = _package().model_dump(mode="json")
+    recursive: dict[str, object] = {}
+    recursive["self"] = recursive
+    data["configuration"]["source"]["settings"]["recursive"] = recursive
+
+    with pytest.raises(ValidationError, match="recursive mapping"):
+        ConfigurationPackage.model_validate(data)
+
+
+def test_inline_credential_is_refused_without_echoing_value() -> None:
+    canary = "canary-inline-secret"
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["settings"]["token"] = canary
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    assert "inline credential" in str(caught.value)
+    assert canary not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        {"$credential": "netbox-token", "fallback": "unsafe"},
+        {"$credential": ""},
+        {"$credential": 3},
+    ],
+)
+def test_malformed_reference_node_is_refused_without_echo(node: object) -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["settings"]["token"] = node
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError, match="malformed credential reference"):
+        validate_package_credentials(package)
+
+
+def test_unknown_named_reference_is_refused() -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["settings"]["token"] = {"$credential": "missing-token"}
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError, match="unknown credential reference 'missing-token'"):
+        validate_package_credentials(package)
+
+
+def test_reserved_reference_node_is_validated_outside_known_credential_paths() -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["settings"]["headers"] = {"authorization": {"$credential": "missing-header"}}
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError, match="unknown credential reference 'missing-header'"):
+        validate_package_credentials(package)
+
+
+def test_declared_references_validate_without_resolving_environment() -> None:
+    package = _package()
+
+    validate_package_credentials(package)
+
+
+def test_package_validation_checks_provider_without_reading_environment() -> None:
+    data = _package().model_dump(mode="json")
+    data["credentials"]["netbox-token"]["provider"] = "vault"
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError, match=r"provider 'vault'.*not installed"):
+        validate_package_credentials(package)
+
+
+def test_package_validation_checks_environment_identifier_without_reading_value() -> None:
+    data = _package().model_dump(mode="json")
+    data["credentials"]["netbox-token"]["identifier"] = "INVALID-NAME"
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError, match="invalid environment identifier"):
+        validate_package_credentials(package)
+
+
+def test_environment_provider_returns_exact_runtime_value() -> None:
+    provider = EnvironmentCredentialProvider({"TOKEN_NAME": "runtime-secret"})
+
+    assert provider.resolve("TOKEN_NAME") == "runtime-secret"
+
+
+@pytest.mark.parametrize("identifier", ["", "9INVALID", "HAS-DASH"])
+def test_environment_provider_refuses_invalid_identifier(identifier: str) -> None:
+    with pytest.raises(CredentialConfigurationError, match="identifier"):
+        EnvironmentCredentialProvider({identifier: "secret"}).resolve(identifier)
+
+
+@pytest.mark.parametrize("environment", [{}, {"NETBOX_TOKEN": ""}])
+def test_environment_provider_refuses_missing_or_empty_value(environment: dict[str, str]) -> None:
+    with pytest.raises(CredentialConfigurationError, match="missing or empty"):
+        EnvironmentCredentialProvider(environment).resolve("NETBOX_TOKEN")
+
+
+def test_reference_resolution_does_not_mutate_declared_package() -> None:
+    package = _package()
+    before = package.model_dump(mode="json")
+
+    value = resolve_reference(package, "netbox-token", environment={"NETBOX_TOKEN": "runtime-secret"})
+
+    assert value == "runtime-secret"
+    assert package.model_dump(mode="json") == before
+    assert "runtime-secret" not in str(package.model_dump(mode="json"))
+
+
+def test_unknown_provider_is_refused_without_reading_environment() -> None:
+    data = _package().model_dump(mode="json")
+    data["credentials"]["netbox-token"]["provider"] = "vault"
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError, match="provider 'vault' is not installed"):
+        resolve_reference(package, "netbox-token", environment={"NETBOX_TOKEN": "secret"})
+
+
+def test_all_bundled_adapter_modules_have_static_declarations() -> None:
+    expected = {
+        "aci",
+        "genericrestapi",
+        "infrahub",
+        "ipfabricsync",
+        "nautobot",
+        "netbox",
+        "peeringmanager",
+        "prometheus",
+        "slurpitsync",
+    }
+
+    assert set(BUILTIN_ADAPTER_CAPABILITIES) == expected
+    assert all(capability.contract_version == 1 for capability in BUILTIN_ADAPTER_CAPABILITIES.values())
+
+
+def test_capability_lookup_is_case_insensitive_but_unknown_is_refused() -> None:
+    assert get_adapter_capabilities("NetBox").adapter_name == "netbox"
+    with pytest.raises(UnknownAdapterCapabilitiesError, match="no configuration capability declaration"):
+        get_adapter_capabilities("custom")
+
+
+def test_source_only_capability_cannot_claim_destination_writes() -> None:
+    with pytest.raises(ValueError, match="source-only"):
+        AdapterConfigurationCapabilities(
+            adapter_name="example",
+            roles=frozenset({"source"}),
+            supported_destination_write_operations=frozenset({"create"}),
+        )
+
+
+def test_wrong_adapter_role_is_refused() -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["destination"] = {"name": "netbox", "settings": {}}
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError, match="does not support the destination role"):
+        validate_package_credentials(package)
+
+
+def test_findings_use_deterministic_interface_order() -> None:
+    findings = [
+        ValidationFinding(code="optional-field", severity="warning", location="/z", message="optional"),
+        ValidationFinding(code="missing-field", severity="error", location="/a", message="missing"),
+        ValidationFinding(code="another-error", severity="error", location="/a", message="another"),
+        ValidationFinding(code="warning-first", severity="warning", location="/a", message="warning"),
+    ]
+
+    assert [finding.code for finding in sort_findings(findings)] == [
+        "another-error",
+        "missing-field",
+        "warning-first",
+        "optional-field",
+    ]

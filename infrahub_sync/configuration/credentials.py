@@ -1,0 +1,163 @@
+"""Credential-reference validation and runtime provider contracts."""
+
+from __future__ import annotations
+
+import os
+import re
+from collections.abc import Mapping
+from typing import Protocol, cast
+
+from pydantic import ValidationError
+
+from .capabilities import AdapterConfigurationCapabilities, AdapterRole, get_adapter_capabilities
+from .models import ConfigurationPackage, CredentialReference, CredentialReferenceNode
+
+_ENV_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+class CredentialConfigurationError(ValueError):
+    """A declared package contains an unsafe or unresolved credential shape."""
+
+
+class CredentialProvider(Protocol):
+    """Resolve one non-secret identifier inside a worker-owned runtime."""
+
+    def resolve(self, identifier: str) -> str:
+        """Return the non-empty credential value or raise a safe error."""
+
+
+class EnvironmentCredentialProvider:
+    """Resolve credentials from exact environment-variable identifiers."""
+
+    def __init__(self, environment: Mapping[str, str] | None = None) -> None:
+        self._environment = os.environ if environment is None else environment
+
+    def resolve(self, identifier: str) -> str:
+        """Return a non-empty environment value without including it in errors."""
+        if _ENV_IDENTIFIER.fullmatch(identifier) is None:
+            msg = f"environment credential identifier {identifier!r} is invalid"
+            raise CredentialConfigurationError(msg)
+        value = self._environment.get(identifier)
+        if value is None or not value:
+            msg = f"environment credential {identifier!r} is missing or empty"
+            raise CredentialConfigurationError(msg)
+        return value
+
+
+def provider_for(reference: CredentialReference, *, environment: Mapping[str, str] | None = None) -> CredentialProvider:
+    """Return the shipped provider for a declared reference."""
+    if reference.provider == "env":
+        return EnvironmentCredentialProvider(environment)
+    msg = f"credential provider {reference.provider!r} is not installed"
+    raise CredentialConfigurationError(msg)
+
+
+def _validate_reference_declarations(package: ConfigurationPackage) -> None:
+    """Validate provider names and identifiers without resolving credential values."""
+    for name, reference in package.credentials.items():
+        if reference.provider != "env":
+            msg = f"credential reference {name!r} uses provider {reference.provider!r}, which is not installed"
+            raise CredentialConfigurationError(msg)
+        if _ENV_IDENTIFIER.fullmatch(reference.identifier) is None:
+            msg = f"credential reference {name!r} has an invalid environment identifier"
+            raise CredentialConfigurationError(msg)
+
+
+def _setting_at_path(settings: Mapping[str, object], path: str) -> tuple[bool, object | None]:
+    current: object = settings
+    for component in path.split("."):
+        if not isinstance(current, Mapping) or component not in current:
+            return False, None
+        current = cast("Mapping[str, object]", current)[component]
+    return True, current
+
+
+def _reference_name(value: object, *, location: str) -> str:
+    if not isinstance(value, Mapping) or "$credential" not in value:
+        msg = f"{location} contains an inline credential value"
+        raise CredentialConfigurationError(msg)
+    try:
+        node = CredentialReferenceNode.model_validate(value)
+    except ValidationError:
+        msg = f"{location} contains a malformed credential reference"
+        raise CredentialConfigurationError(msg) from None
+    return node.reference_name
+
+
+def _validate_all_reference_nodes(
+    value: object,
+    package: ConfigurationPackage,
+    *,
+    location: str,
+) -> None:
+    """Validate every use of the reserved ``$credential`` key without echoing values."""
+    if isinstance(value, Mapping):
+        if "$credential" in value:
+            reference_name = _reference_name(value, location=location)
+            if reference_name not in package.credentials:
+                msg = f"{location} names unknown credential reference {reference_name!r}"
+                raise CredentialConfigurationError(msg)
+            return
+        for key, item in value.items():
+            escaped = str(key).replace("~", "~0").replace("/", "~1")
+            _validate_all_reference_nodes(item, package, location=f"{location}/{escaped}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_all_reference_nodes(item, package, location=f"{location}/{index}")
+
+
+def _validate_adapter_credentials(
+    package: ConfigurationPackage,
+    capabilities: AdapterConfigurationCapabilities,
+    *,
+    role: AdapterRole,
+    settings: Mapping[str, object],
+) -> None:
+    if role not in capabilities.roles:
+        msg = f"adapter {capabilities.adapter_name!r} does not support the {role} role"
+        raise CredentialConfigurationError(msg)
+    for path in capabilities.credential_setting_paths:
+        present, value = _setting_at_path(settings, path)
+        if not present or value is None:
+            continue
+        location = f"/configuration/{role}/settings/{path.replace('.', '/')}"
+        reference_name = _reference_name(value, location=location)
+        if reference_name not in package.credentials:
+            msg = f"{location} names unknown credential reference {reference_name!r}"
+            raise CredentialConfigurationError(msg)
+
+
+def validate_package_credentials(package: ConfigurationPackage) -> None:
+    """Prove bundled adapter settings contain references rather than credential values."""
+    _validate_reference_declarations(package)
+    source = package.configuration.source
+    destination = package.configuration.destination
+    _validate_all_reference_nodes(source.settings or {}, package, location="/configuration/source/settings")
+    _validate_all_reference_nodes(destination.settings or {}, package, location="/configuration/destination/settings")
+    _validate_adapter_credentials(
+        package,
+        get_adapter_capabilities(source.name),
+        role="source",
+        settings=source.settings or {},
+    )
+    _validate_adapter_credentials(
+        package,
+        get_adapter_capabilities(destination.name),
+        role="destination",
+        settings=destination.settings or {},
+    )
+
+
+def resolve_reference(
+    package: ConfigurationPackage,
+    reference_name: str,
+    *,
+    environment: Mapping[str, str] | None = None,
+) -> str:
+    """Resolve one named reference without mutating the declared package."""
+    try:
+        reference = package.credentials[reference_name]
+    except KeyError:
+        msg = f"credential reference {reference_name!r} is not declared"
+        raise CredentialConfigurationError(msg) from None
+    return provider_for(reference, environment=environment).resolve(reference.identifier)

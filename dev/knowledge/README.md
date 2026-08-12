@@ -28,6 +28,8 @@ procedures see [`dev/guides/`](../guides/README.md).
 
 ## Running a sync from something other than the CLI
 
+- [Configuration foundation](configuration-foundation.md) — declared package identity,
+  runtime credential references, and the connection-free adapter capability declaration.
 - [The shared execution surface](execution-surface.md) — the typed entry point to one run:
   `RunResult`, the failure classes, the pipeline lock, and the plan fingerprint.
 - [Prefect orchestration](orchestration-prefect.md) — the packaged flow and serve
