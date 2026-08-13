@@ -126,11 +126,12 @@ does not change how Infrahub matches an upsert to an existing object.
 Relationship identifiers must also be covered at the peer's full generated
 identity; matching only one component of a composite peer identity is unsafe.
 
-The `sync` command refuses the run before writing when the upsert key is
-coarser, because otherwise two source objects could silently converge onto one
-destination object. Read-only comparison remains available so you can inspect
-the proposed changes before aligning the generated model or destination
-schema.
+The `sync` command refuses creates for the affected kind before writing when
+the upsert key is coarser, because otherwise two source objects could silently
+converge onto one destination object. Updates remain safe because they address
+an existing Infrahub node by ID. Read-only comparison remains available so you
+can inspect the proposed changes before aligning the generated model or
+destination schema.
 
 ## Filters
 

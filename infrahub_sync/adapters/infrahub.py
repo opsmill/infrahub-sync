@@ -301,12 +301,12 @@ def _path_parts(path: str) -> tuple[str, ...]:
 
 
 def _writable_diff_kinds(diff: Diff) -> frozenset[str]:
-    """Return model kinds with create or update actions in a DiffSync diff."""
+    """Return model kinds with create actions that can enter the upsert path."""
     writable: set[str] = set()
     pending = list(diff.get_children())
     while pending:
         element = pending.pop()
-        if element.action in {DiffSyncActions.CREATE, DiffSyncActions.UPDATE}:
+        if element.action is DiffSyncActions.CREATE:
             writable.add(element.type)
         pending.extend(element.get_children())
     return frozenset(writable)

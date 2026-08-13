@@ -9,7 +9,21 @@ from diffsync import Adapter, Diff
 from diffsync.diff import DiffElement
 
 from infrahub_sync import SchemaMappingModel, SyncAdapter, SyncConfig
-from infrahub_sync.adapters.infrahub import InfrahubAdapter
+from infrahub_sync.adapters.infrahub import ConvergenceIdentityError, InfrahubAdapter
+
+
+def _two_rack_create_diff() -> Diff:
+    """Build the production-shaped diff for two same-named racks in different sites."""
+    diff = Diff()
+    for site in ("atlanta", "boston"):
+        rack = DiffElement(
+            obj_type="LocationRack",
+            name=f"rack-a__{site}",
+            keys={"name": "rack-a", "site": site},
+        )
+        rack.add_attrs(source={"description": f"Rack in {site}"})
+        diff.add(rack)
+    return diff
 
 
 def test_finer_mapping_identity_is_refused_before_destination_writes(
@@ -34,6 +48,7 @@ def test_finer_mapping_identity_is_refused_before_destination_writes(
             uniqueness_constraints=[["name__value"]],
         )
     }
+    destination.client = SimpleNamespace(create=pytest.fail)
     entered_write_path = False
 
     def _enter_write_path(*_args: object, **_kwargs: object) -> Diff:
@@ -43,8 +58,8 @@ def test_finer_mapping_identity_is_refused_before_destination_writes(
 
     monkeypatch.setattr(Adapter, "sync_from", _enter_write_path)
 
-    with pytest.raises(ValueError) as exc_info:
-        destination.sync_from(Adapter())
+    with pytest.raises(ConvergenceIdentityError) as exc_info:
+        destination.sync_from(Adapter(), diff=_two_rack_create_diff())
 
     message = str(exc_info.value)
     assert "LocationRack" in message
@@ -106,16 +121,25 @@ def test_covering_hfid_allows_destination_writes(monkeypatch: pytest.MonkeyPatch
     }
     entered_write_path = False
 
-    def _enter_write_path(*_args: object, **_kwargs: object) -> Diff:
+    observed_keys: list[dict[str, str]] = []
+
+    def _enter_write_path(*_args: object, **kwargs: object) -> Diff:
         nonlocal entered_write_path
         entered_write_path = True
-        return Diff()
+        supplied_diff = kwargs["diff"]
+        assert isinstance(supplied_diff, Diff)
+        observed_keys.extend(child.keys for child in supplied_diff.get_children())
+        return supplied_diff
 
     monkeypatch.setattr(Adapter, "sync_from", _enter_write_path)
 
-    destination.sync_from(Adapter())
+    destination.sync_from(Adapter(), diff=_two_rack_create_diff())
 
     assert entered_write_path is True
+    assert observed_keys == [
+        {"name": "rack-a", "site": "atlanta"},
+        {"name": "rack-a", "site": "boston"},
+    ]
 
 
 def test_generated_model_identity_is_validated_when_config_identifiers_are_omitted(
@@ -315,6 +339,42 @@ def test_inactive_unsafe_mapping_does_not_block_unrelated_write(
         nonlocal entered_write_path
         entered_write_path = True
         return Diff()
+
+    monkeypatch.setattr(Adapter, "sync_from", _enter_write_path)
+
+    destination.sync_from(Adapter(), diff=diff)
+
+    assert entered_write_path is True
+
+
+def test_update_only_diff_does_not_enter_upsert_identity_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Updates address an existing Infrahub node by ID and do not use the upsert key."""
+    destination = InfrahubAdapter.__new__(InfrahubAdapter)
+    destination.config = SyncConfig(
+        name="rack-sync",
+        source=SyncAdapter(name="netbox"),
+        destination=SyncAdapter(name="infrahub"),
+        schema_mapping=[SchemaMappingModel(name="LocationRack", identifiers=["name", "site"])],
+    )
+    destination.schema = {
+        "LocationRack": SimpleNamespace(human_friendly_id=["name__value"], relationships=[]),
+    }
+    diff = Diff()
+    rack = DiffElement(
+        obj_type="LocationRack",
+        name="rack-a__atlanta",
+        keys={"name": "rack-a", "site": "atlanta"},
+    )
+    rack.add_attrs(source={"description": "New"}, dest={"description": "Old"})
+    diff.add(rack)
+    entered_write_path = False
+
+    def _enter_write_path(*_args: object, **_kwargs: object) -> Diff:
+        nonlocal entered_write_path
+        entered_write_path = True
+        return diff
 
     monkeypatch.setattr(Adapter, "sync_from", _enter_write_path)
 
