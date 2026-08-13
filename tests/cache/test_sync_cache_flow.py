@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from infrahub_sync.cache.parquet_io import read_table
 from infrahub_sync.potenda import Potenda
 
@@ -81,6 +83,42 @@ def test_sync_in_tiers_aggregates_plan_rows_across_tiers(tmp_path: Path) -> None
     assert sorted(plan.column("resource").to_pylist()) == ["Device", "Tag"]
     assert sorted(plan.column("action").to_pylist()) == ["create", "create"]
     ptd.persist_baseline_counts.assert_called_once()  # ty: ignore[unresolved-attribute]
+
+
+def test_sync_in_tiers_validates_every_diff_before_the_first_write(tmp_path: Path) -> None:
+    """An unsafe later tier must refuse before an earlier safe tier is written."""
+    src = _make_fake_adapter({"Tag": [_FakeRecord(name="prod")], "Device": [_FakeRecord(name="d1")]})
+    dst = _make_fake_adapter({"Tag": [], "Device": []})
+    diffs = [
+        _Diff({"Tag": [_Child("create", "prod")]}),
+        _Diff({"Device": [_Child("create", "d1")]}),
+    ]
+    diff_iter = iter(diffs)
+    validated: list[_Diff] = []
+
+    def validate(*, diff: _Diff) -> None:
+        validated.append(diff)
+        if diff is diffs[1]:
+            msg = "unsafe Device identity"
+            raise ValueError(msg)
+
+    dst.validate_convergence_identities = validate
+    ptd = Potenda(
+        source=src,
+        destination=dst,
+        config=None,  # ty: ignore[invalid-argument-type]
+        top_level=["Tag", "Device"],
+        tiers=[{"Tag"}, {"Device"}],
+        run_dir=tmp_path,
+    )
+    ptd.diff = lambda: next(diff_iter)  # ty: ignore[invalid-assignment]
+    ptd.sync = MagicMock()  # ty: ignore[invalid-assignment]
+
+    with pytest.raises(ValueError, match="unsafe Device identity"):
+        ptd.sync_in_tiers(parallel=True)
+
+    assert validated == diffs
+    ptd.sync.assert_not_called()  # ty: ignore[unresolved-attribute]
 
 
 def test_sync_in_tiers_runs_rowcount_guardrail(tmp_path: Path) -> None:

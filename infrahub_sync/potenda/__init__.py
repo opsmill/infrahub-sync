@@ -475,7 +475,7 @@ class Potenda:
         self.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
         saved_top = self.destination.top_level
         aggregated_rows: list[dict[str, str]] = []
-        any_writes = False
+        tier_diffs: list[tuple[list[str], Diff]] = []
         try:
             for idx, tier in enumerate(self.tiers):
                 tier_list = sorted(tier)
@@ -483,9 +483,20 @@ class Potenda:
                 self.destination.top_level = tier_list  # ty: ignore[invalid-attribute-access]
                 diff = self.diff()
                 aggregated_rows.extend(self._diff_to_rows(diff))
-                if diff.has_diffs():
-                    self.sync(diff=diff)
-                    any_writes = True
+                tier_diffs.append((tier_list, diff))
+
+            validate = getattr(self.destination, "validate_convergence_identities", None)
+            if callable(validate):
+                for _, diff in tier_diffs:
+                    validate(diff=diff)
+
+            any_writes = False
+            for tier_list, diff in tier_diffs:
+                self.destination.top_level = tier_list  # ty: ignore[invalid-attribute-access]
+                if not diff.has_diffs():
+                    continue
+                self.sync(diff=diff)
+                any_writes = True
         finally:
             self.destination.top_level = saved_top  # ty: ignore[invalid-attribute-access]
 

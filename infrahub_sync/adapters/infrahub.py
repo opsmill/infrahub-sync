@@ -438,7 +438,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             for peer_identifier in peer_identifiers
         )
 
-    def _validate_convergence_identities(self, diff: Diff | None = None) -> None:
+    def validate_convergence_identities(self, diff: Diff | None = None) -> None:
         """Refuse writable model identities finer than Infrahub's upsert key."""
         writable_kinds = _writable_diff_kinds(diff) if diff is not None else None
         for mapping in self.config.schema_mapping:
@@ -485,7 +485,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         diff: Diff | None = None,
     ) -> Diff:
         """Validate convergence identities before entering DiffSync's write path."""
-        self._validate_convergence_identities(diff=diff)
+        self.validate_convergence_identities(diff=diff)
         return super().sync_from(
             source=source,
             diff_class=diff_class,
