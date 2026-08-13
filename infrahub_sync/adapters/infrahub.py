@@ -6,7 +6,8 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
-from diffsync import Adapter, DiffSyncModel
+from diffsync import Adapter, Diff, DiffSyncModel
+from diffsync.enum import DiffSyncFlags
 from infrahub_sdk import (
     Config,
     InfrahubClientSync,
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 _TIMESTAMP_FILTER_KW = "node_metadata__updated_at__after"
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping, MutableMapping
+    from collections.abc import Callable, Iterator, Mapping, MutableMapping
 
     from infrahub_sdk.node import InfrahubNodeSync, RelatedNodeSync, RelationshipManagerSync
     from infrahub_sdk.schema import MainSchemaTypesAPI
@@ -274,6 +275,35 @@ class PeerIdentifierError(ValueError):
         super().__init__(msg)
 
 
+class ConvergenceIdentityError(ValueError):
+    """Raised before writes when no destination key covers a mapping identity."""
+
+
+def _component_field(component: str) -> str:
+    """Return the mapping field at the root of an Infrahub schema key path."""
+    return component.split("__", 1)[0]
+
+
+def _destination_identity_keys(node_schema: object) -> list[frozenset[str]]:
+    """Return the destination keys that can distinguish convergent writes."""
+    constraints = getattr(node_schema, "uniqueness_constraints", None) or []
+    human_friendly_id = getattr(node_schema, "human_friendly_id", None)
+    declared = [*constraints, *([human_friendly_id] if human_friendly_id else [])]
+    keys = {frozenset(_component_field(component) for component in key) for key in declared if key}
+    return sorted(keys, key=lambda key: tuple(sorted(key)))
+
+
+def _closest_destination_key(
+    identifiers: frozenset[str],
+    destination_keys: list[frozenset[str]],
+) -> frozenset[str]:
+    """Choose the declared key that covers the largest part of an identity."""
+    return min(
+        destination_keys,
+        key=lambda key: (-len(identifiers & key), tuple(sorted(key))),
+    )
+
+
 class InfrahubAdapter(DiffSyncMixin, Adapter):
     type = "Infrahub"
 
@@ -343,6 +373,49 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         # We will keep a copy of the schema
         self.schema: MutableMapping[str, MainSchemaTypesAPI] = self.client.schema.all(branch=infrahub_branch)
+
+    def _validate_convergence_identities(self) -> None:
+        """Refuse mappings whose identity is finer than every destination key."""
+        for mapping in self.config.schema_mapping:
+            identifiers = frozenset(mapping.identifiers or ())
+            node_schema = self.schema.get(mapping.name)
+            if not identifiers or node_schema is None:
+                continue
+
+            destination_keys = _destination_identity_keys(node_schema)
+            if not destination_keys or any(identifiers <= key for key in destination_keys):
+                continue
+
+            closest = _closest_destination_key(identifiers, destination_keys)
+            uncovered = ", ".join(sorted(identifiers - closest))
+            mapping_identity = ", ".join(sorted(identifiers))
+            destination_key = ", ".join(sorted(closest))
+            msg = (
+                f"Refusing to sync destination kind {mapping.name}: mapping identity "
+                f"({mapping_identity}) is finer than every declared destination key; "
+                f"closest key: ({destination_key}); uncovered mapping identifier(s): {uncovered}. "
+                "Align the schema mapping identifiers with a destination human-friendly ID "
+                "or uniqueness constraint before retrying."
+            )
+            raise ConvergenceIdentityError(msg)
+
+    def sync_from(  # pylint: disable=too-many-positional-arguments
+        self,
+        source: Adapter,
+        diff_class: type[Diff] = Diff,
+        flags: DiffSyncFlags = DiffSyncFlags.NONE,
+        callback: Callable[[str, int, int], None] | None = None,
+        diff: Diff | None = None,
+    ) -> Diff:
+        """Validate convergence identities before entering DiffSync's write path."""
+        self._validate_convergence_identities()
+        return super().sync_from(
+            source=source,
+            diff_class=diff_class,
+            flags=flags,
+            callback=callback,
+            diff=diff,
+        )
 
     def cursor_tier_for(self, model_name: str) -> CursorTier:
         """TIMESTAMP for any kind present in the live Infrahub schema.

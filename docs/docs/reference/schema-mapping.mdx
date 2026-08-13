@@ -117,6 +117,15 @@ identifiers: ["address", "vrf"]
 
 All listed fields must be present and unique together. Each identifier field must also be mapped in the `fields` list.
 
+When Infrahub is the destination, at least one human-friendly ID or uniqueness
+constraint in the destination schema must cover every field in `identifiers`.
+For example, a mapping identified by `["name", "site"]` requires a destination
+key that includes both `name` and `site`. The `sync` command refuses the run
+before writing when every destination key is coarser, because otherwise two
+source objects could silently converge onto one destination object. Read-only
+comparison remains available so you can inspect the proposed changes before
+aligning the mapping or destination schema.
+
 ## Filters
 
 Filters control which objects from the source get synced. Apply them at the model level to include or exclude specific objects.
