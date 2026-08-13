@@ -94,6 +94,16 @@ def resolve_peer_node(
     return peer_node
 
 
+def _relationship_input_data(peer_id: str | None, source: str | None, owner: str | None) -> dict[str, Any]:
+    """Build cardinality-many relationship input with optional attribution."""
+    data: dict[str, Any] = {"id": peer_id}
+    if source:
+        data["source"] = source
+    if owner:
+        data["owner"] = owner
+    return data
+
+
 def update_node(
     node: InfrahubNodeSync,
     attrs: Mapping[str, Any],
@@ -109,8 +119,8 @@ def update_node(
     Args:
         node: The node to update.
         attrs: The attributes and relationships to update.
-        source: Optional source ID to set on updated attributes.
-        owner: Optional owner ID to set on updated attributes.
+        source: Optional source ID to set on updated attributes and relationships.
+        owner: Optional owner ID to set on updated attributes and relationships.
     """
     schemas: Mapping[str, MainSchemaTypesAPI] = node._client.schema.all(branch=node._branch)
     for attr_name, attr_value in attrs.items():
@@ -141,7 +151,14 @@ def update_node(
                         if not peer_node:
                             logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, attr_value)
                             continue
+                        # Keep the peer object so the SDK can detect resource pools
+                        # and generate a ``from_pool`` allocation when required.
                         setattr(node, attr_name, peer_node)
+                        relationship: RelatedNodeSync = getattr(node, attr_name)
+                        if source:
+                            relationship.source = source
+                        if owner:
+                            relationship.owner = owner
                     else:
                         # TODO: delete the old relationship data ?
                         pass
@@ -172,7 +189,7 @@ def update_node(
                         attr_manager.remove(existing_id)
 
                     for new_id in new_only:
-                        attr_manager.add(new_id)
+                        attr_manager.add(_relationship_input_data(new_id, source, owner))
 
     return node
 
