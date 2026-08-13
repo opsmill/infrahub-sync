@@ -996,13 +996,28 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         diff: Diff | None = None,
     ) -> Diff:
         """Validate convergence identities before entering DiffSync's write path."""
-        self.validate_convergence_identities(diff=diff)
+        effective_diff = diff
+        if not effective_diff:
+            # Preserve the schema-level refusal before doing comparison work, then
+            # validate the exact diff DiffSync would otherwise compute and immediately
+            # write. Passing that same object onward closes the public diff=None path.
+            self.validate_convergence_identities()
+            effective_diff = self.diff_from(
+                source=source,
+                diff_class=diff_class,
+                flags=flags,
+                callback=callback,
+            )
+
+        self.validate_convergence_identities(diff=effective_diff)
+        if not effective_diff:
+            return effective_diff
         return super().sync_from(
             source=source,
             diff_class=diff_class,
             flags=flags,
             callback=callback,
-            diff=diff,
+            diff=effective_diff,
         )
 
     def cursor_tier_for(self, model_name: str) -> CursorTier:

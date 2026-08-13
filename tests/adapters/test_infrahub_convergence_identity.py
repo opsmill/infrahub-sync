@@ -131,6 +131,40 @@ def test_null_generated_identity_value_is_refused_before_destination_writes(
     assert entered_write_path is False
 
 
+def test_omitted_diff_is_computed_then_validated_before_destination_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The public `diff=None` path cannot let DiffSync compute and immediately write a null key."""
+    destination = InfrahubAdapter.__new__(InfrahubAdapter)
+    destination.config = SyncConfig(
+        name="null-key-sync",
+        source=SyncAdapter(name="source"),
+        destination=SyncAdapter(name="infrahub"),
+        schema_mapping=[SchemaMappingModel(name="Thing", identifiers=["name"])],
+    )
+    destination.schema = {"Thing": SimpleNamespace(human_friendly_id=["name__value"])}
+    destination.Thing = type("Thing", (), {"_identifiers": ("name",)})
+    computed = Diff()
+    element = DiffElement(obj_type="Thing", name="null-key", keys={"name": None})
+    element.add_attrs(source={"description": "unsafe"})
+    computed.add(element)
+    entered_write_path = False
+
+    monkeypatch.setattr(InfrahubAdapter, "diff_from", lambda *_args, **_kwargs: computed)
+
+    def _enter_write_path(*_args: object, **_kwargs: object) -> Diff:
+        nonlocal entered_write_path
+        entered_write_path = True
+        return Diff()
+
+    monkeypatch.setattr(Adapter, "sync_from", _enter_write_path)
+
+    with pytest.raises(ConvergenceIdentityError, match="missing or null"):
+        destination.sync_from(Adapter())
+
+    assert entered_write_path is False
+
+
 def test_covering_uniqueness_constraint_does_not_override_coarser_hfid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -266,7 +300,7 @@ def test_generated_model_identity_prevents_a_stale_config_false_refusal(
 
     monkeypatch.setattr(Adapter, "sync_from", _enter_write_path)
 
-    destination.sync_from(Adapter())
+    destination.sync_from(Adapter(), diff=_two_rack_create_diff())
 
     assert entered_write_path is True
 
