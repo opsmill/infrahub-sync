@@ -919,7 +919,6 @@ class Potenda:
         self.load_both_sides()
         self.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
         saved_top = self.destination.top_level
-
         # Compute loop: every tier's diff, each computed against its own narrowed
         # destination top_level, retained for the execution loop below.
         retained: list[tuple[list[str], Any]] = []
@@ -935,6 +934,11 @@ class Potenda:
         aggregated_rows: list[dict[str, str]] = []
         for _tier_list, diff in retained:
             aggregated_rows.extend(self._diff_to_rows(diff))
+
+        validate = getattr(self.destination, "validate_convergence_identities", None)
+        if callable(validate):
+            for _, diff in retained:
+                validate(diff=diff)
 
         # Before the first destination write, and after top_level is restored so the
         # derived deletes cover every kind rather than the last tier's (FR-001, AD039).
