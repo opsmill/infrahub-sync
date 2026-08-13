@@ -56,7 +56,7 @@ from infrahub_sync.plan.errors import (
     UnwalkedDiffChildrenError,
 )
 from infrahub_sync.plan.identity import operation_id
-from infrahub_sync.plan.models import SC006_MASKED_FIELDS, RelationshipReference
+from infrahub_sync.plan.models import SC006_MASKED_FIELDS, PlannedOperation, RelationshipReference
 from infrahub_sync.plan.review import read_saved_plan
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME
 from infrahub_sync.potenda import Potenda
@@ -65,8 +65,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from click.testing import Result
-
-    from infrahub_sync.plan.models import PlannedOperation
 
 DERIVE_LOGGER = "infrahub_sync.plan.derive"
 
@@ -2466,6 +2464,49 @@ def test_default_filter_is_the_upsert_key_when_hfid_is_absent(caplog: pytest.Log
 
     messages = derive_warnings(caplog)
     assert any("does not distinguish: site" in message for message in messages)
+    assert not any("unkeyed" in message for message in messages)
+
+
+def test_nested_peer_identity_is_compared_with_the_full_upsert_path(caplog: pytest.LogCaptureFixture) -> None:
+    """A peer's extra identity leaf is not hidden by a matching relationship root."""
+    identity = {
+        "name": "rack-a",
+        "site": {
+            "peer_kind": "LocationSite",
+            "identity": {"name": "atlanta", "tenant": "production"},
+        },
+    }
+    operation = PlannedOperation(
+        operation_id=operation_id("create", "LocationRack", identity),
+        action="create",
+        kind="LocationRack",
+        identity=identity,
+        tier=1,
+        payload={"name": "rack-a"},
+        relationships=[
+            RelationshipReference(
+                field="site",
+                peer_kind="LocationSite",
+                cardinality="one",
+                peers=[{"name": "atlanta", "tenant": "production"}],
+            )
+        ],
+    )
+    schema = {
+        "LocationRack": schema_node(
+            human_friendly_id=["name__value", "site__name__value"],
+            uniqueness_constraints=[["name__value", "site__name__value", "site__tenant__value"]],
+        )
+    }
+
+    with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
+        warn_missing_convergence_key(
+            destination=_FakeAdapter("destination", schema=schema),
+            operations=[operation],
+        )
+
+    (message,) = [message for message in derive_warnings(caplog) if "is finer than" in message]
+    assert "does not distinguish: site.tenant" in message
 
 
 def test_a_kind_declaring_no_destination_key_at_all_is_left_to_the_unkeyed_warning(

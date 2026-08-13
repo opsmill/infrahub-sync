@@ -45,6 +45,7 @@ from infrahub_sync.plan.checksum import source_snapshot_records
 from infrahub_sync.plan.config_version import default_config_version
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
+    ConvergenceIdentityError,
     DuplicateOperationIdError,
     OperationApplyFailedError,
     PeerAmbiguousError,
@@ -1136,6 +1137,7 @@ TAXONOMY_CASES: dict[str, Callable[[], PlanArtifactError]] = {
     "peer_not_found": lambda: PeerNotFoundError("Peer 'p' of kind 'K' matches no destination object."),
     "peer_ambiguous": lambda: PeerAmbiguousError("Peer 'p' of kind 'K' matches 2 destination objects."),
     "unaccounted_identity_component": lambda: UnaccountedIdentityComponentError("Kind 'K' omits component 'c'."),
+    "convergence_identity": lambda: ConvergenceIdentityError("Kind 'K' has a finer writable identity."),
     "unkeyed_write_refused": lambda: UnkeyedWriteRefusedError("The rendered mutation for 'K' carries no key."),
     "plan_verification": lambda: PlanVerificationError("The plan artifact of run 'r' cannot be applied."),
     "operation_apply_failed": lambda: OperationApplyFailedError(

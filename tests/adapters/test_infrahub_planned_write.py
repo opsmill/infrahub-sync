@@ -578,6 +578,7 @@ def test_finer_saved_plan_identity_is_refused_before_the_idless_upsert(action: s
     message = str(exc_info.value)
     assert operation.operation_id in message
     assert "uncovered identity component(s): site" in message
+    assert exc_info.value.next_action in message
     assert client.mutations == []
 
 
@@ -613,10 +614,10 @@ def test_an_unkeyed_render_for_an_all_direct_hfid_kind_raises_naming_lost_compon
     assert not client.mutations, "The gate runs before the write is issued."
 
 
-def test_a_kind_declaring_no_human_friendly_id_is_written_and_never_refused(
+def test_a_kind_with_only_a_default_filter_is_written_without_an_unkeyed_warning(
     captured_logs: pytest.LogCaptureFixture,
 ) -> None:
-    """AD076: the gate's third arm — no human-friendly ID is a schema fact, not a defect."""
+    """A server-side default filter keys an upsert even when the SDK renders no HFID."""
     client = RecordingClient()
     adapter = make_adapter(client)
 
@@ -627,15 +628,7 @@ def test_a_kind_declaring_no_human_friendly_id_is_written_and_never_refused(
     assert client.mutation_names == [f"{KEYLESS_KIND}Upsert"], (
         "An absent human-friendly ID must not refuse the operation: the write is issued."
     )
-    reports = unkeyed_reports(captured_logs)
-    assert len(reports) == 1
-    message = reports[0].getMessage()
-    assert "declares no human-friendly ID" in message
-    assert "no convergence key" in message
-    assert "lost its identity components" not in message, (
-        "The kind declares no convergence key at all; naming a lost payload component sends the "
-        "operator after a cause that does not exist."
-    )
+    assert unkeyed_reports(captured_logs) == []
 
 
 def test_the_unkeyed_render_is_reported_once_per_kind_at_warning_level(
@@ -671,10 +664,10 @@ def test_the_unkeyed_render_is_reported_once_per_kind_at_warning_level(
     assert "crosses a relationship" in message, "The report must name the condition that produced it."
 
 
-def test_the_unkeyed_render_report_is_deduplicated_per_kind_not_per_run(
+def test_default_filter_kind_does_not_add_a_false_unkeyed_report(
     captured_logs: pytest.LogCaptureFixture,
 ) -> None:
-    """AD078: two unkeyed kinds produce two reports."""
+    """Only the relationship-crossing HFID is reported; a default filter is keyed."""
     client = RecordingClient()
     adapter = make_adapter(client)
     peers = PeerResolver(adapter)
@@ -685,13 +678,10 @@ def test_the_unkeyed_render_report_is_deduplicated_per_kind_not_per_run(
     adapter.apply_planned_operation(operation=keyless, peers=peers)
 
     reports = unkeyed_reports(captured_logs)
-    assert len(reports) == 2, (
-        f"Each unkeyed destination kind is reported once, got {[r.getMessage() for r in reports]}."
-    )
-    assert {DEVICE_KIND, KEYLESS_KIND} == {
-        kind for kind in (DEVICE_KIND, KEYLESS_KIND) if any(kind in r.getMessage() for r in reports)
-    }
-    assert all(record.levelno >= logging.WARNING for record in reports)
+    assert len(reports) == 1
+    assert DEVICE_KIND in reports[0].getMessage()
+    assert KEYLESS_KIND not in reports[0].getMessage()
+    assert reports[0].levelno >= logging.WARNING
 
 
 def test_the_dedup_set_lives_for_one_apply_and_not_for_the_adapter_instance(

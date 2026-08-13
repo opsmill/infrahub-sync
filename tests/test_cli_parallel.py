@@ -133,7 +133,8 @@ def test_serial_sync_presents_convergence_refusal_without_raw_exception(
     fake_ptd = _make_fake_potenda(tiers=None, run_dir=run_dir)
     fake_ptd.diff.return_value.has_diffs.return_value = True
     refusal = "Refusing to sync destination kind LocationRack: uncovered mapping identifier(s): site."
-    fake_ptd.sync.side_effect = ConvergenceIdentityError(refusal)
+    error = ConvergenceIdentityError(refusal)
+    fake_ptd.sync.side_effect = error
     runner = CliRunner()
 
     with (
@@ -146,7 +147,7 @@ def test_serial_sync_presents_convergence_refusal_without_raw_exception(
         )
 
     assert result.exit_code == 1
-    abort.assert_called_once_with(refusal)
+    abort.assert_called_once_with(str(error))
 
 
 def test_serial_sync_does_not_present_unrelated_value_error_as_refusal(

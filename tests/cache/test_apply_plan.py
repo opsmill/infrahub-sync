@@ -25,6 +25,7 @@ from infrahub_sdk.exceptions import AuthenticationError, GraphQLError, ServerNot
 
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
+    ConvergenceIdentityError,
     OperationApplyFailedError,
     PeerNotFoundError,
     PlanArtifactTornError,
@@ -474,6 +475,10 @@ DESTINATION_REJECTIONS = (
     pytest.param(
         PeerNotFoundError("Operation 'op_a' references peer kind 'LocationSite' matching no object."),
         id="plan-taxonomy-peer-miss",
+    ),
+    pytest.param(
+        ConvergenceIdentityError("A saved identity is finer than the destination upsert key."),
+        id="convergence-identity-refusal",
     ),
 )
 

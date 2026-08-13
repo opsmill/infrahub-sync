@@ -42,6 +42,7 @@ enters the comparison result the write path consumes (FR-016).
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from diffsync.exceptions import ObjectNotFound
@@ -56,7 +57,7 @@ from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Sequence
 
     from infrahub_sync import SyncConfig
 
@@ -589,18 +590,53 @@ def _identity_attributes_by_kind(operations: Sequence[PlannedOperation]) -> dict
     return by_kind
 
 
-def _destination_upsert_key(node: Any) -> tuple[str, ...]:
-    """The key Infrahub actually uses for an upsert, as mapping field names."""
+def _component_parts(component: str) -> tuple[str, ...]:
+    """Split an Infrahub schema path and drop its terminal property suffix."""
+    parts = tuple(component.split(COMPONENT_PATH_SEPARATOR))
+    if parts and parts[-1] in {"value", "id"}:
+        return parts[:-1]
+    return parts
+
+
+def _destination_upsert_paths(node: Any) -> tuple[tuple[str, ...], ...]:
+    """The exact schema paths Infrahub actually uses for an upsert."""
     human_friendly_id = getattr(node, "human_friendly_id", None)
     if human_friendly_id:
-        return tuple(sorted({_component_field(component) for component in human_friendly_id}))
+        return tuple(sorted({_component_parts(component) for component in human_friendly_id}))
     default_filter = getattr(node, "default_filter", None)
     if default_filter:
-        return (_component_field(default_filter),)
+        return (_component_parts(default_filter),)
     return ()
 
 
-def _merged_identity_counts(operations: Sequence[PlannedOperation], *, key: tuple[str, ...]) -> tuple[int, int]:
+def _identity_leaf_paths(identity: Mapping[str, Any], *, prefix: tuple[str, ...] = ()) -> set[tuple[str, ...]]:
+    """Return every leaf path that distinguishes one recorded identity."""
+    leaves: set[tuple[str, ...]] = set()
+    for name, value in identity.items():
+        path = (*prefix, name)
+        nested = value.get("identity") if isinstance(value, Mapping) else None
+        if isinstance(nested, Mapping) and nested:
+            leaves.update(_identity_leaf_paths(nested, prefix=path))
+        else:
+            leaves.add(path)
+    return leaves
+
+
+def _identity_value_at_path(identity: Mapping[str, Any], path: tuple[str, ...]) -> Any:
+    """Read one exact upsert path from a recursively recorded identity."""
+    value: Any = identity
+    for index, segment in enumerate(path):
+        if not isinstance(value, Mapping) or segment not in value:
+            return None
+        value = value[segment]
+        if index < len(path) - 1 and isinstance(value, Mapping) and isinstance(value.get("identity"), Mapping):
+            value = value["identity"]
+    return value
+
+
+def _merged_identity_counts(
+    operations: Sequence[PlannedOperation], *, paths: tuple[tuple[str, ...], ...]
+) -> tuple[int, int]:
     """How many source objects collide, and onto how many destination identities.
 
     The plan's operations for one kind, grouped by their identity projected onto `key` — what
@@ -612,7 +648,7 @@ def _merged_identity_counts(operations: Sequence[PlannedOperation], *, key: tupl
     for operation in operations:
         if operation.action == DIFF_DELETE_ACTION:
             continue
-        projection = {name: value for name, value in operation.identity.items() if name in key}
+        projection = {".".join(path): _identity_value_at_path(operation.identity, path) for path in paths}
         encoded = canonical_json_bytes(projection, kind=operation.kind)
         groups[encoded] = groups.get(encoded, 0) + 1
     collided = [count for count in groups.values() if count > 1]
@@ -623,7 +659,6 @@ def _warn_identity_finer_than_destination_key(
     *,
     kind: str,
     node: Any,
-    supplied: set[str],
     operations: Sequence[PlannedOperation],
 ) -> None:
     """Warn where the destination cannot tell the plan's identities apart.
@@ -645,12 +680,15 @@ def _warn_identity_finer_than_destination_key(
     (tighten the destination schema, loosen the mapping, or override per kind) is a
     per-deployment decision and out of this release's scope.
     """
-    key = _destination_upsert_key(node)
-    if not key or supplied <= set(key):
+    paths = _destination_upsert_paths(node)
+    if not paths:
         return
 
-    uncovered = sorted(supplied - set(key))
-    collided, destination_identities = _merged_identity_counts(operations, key=key)
+    identity_paths = set().union(*(_identity_leaf_paths(operation.identity) for operation in operations))
+    uncovered = sorted(identity_paths - set(paths))
+    if not uncovered:
+        return
+    collided, destination_identities = _merged_identity_counts(operations, paths=paths)
     if collided:
         identities = "identity" if destination_identities == 1 else "identities"
         observed = (
@@ -667,9 +705,9 @@ def _warn_identity_finer_than_destination_key(
         "upsert key (%s), so distinct source objects merge instead of duplicating; the destination "
         "does not distinguish: %s. %s",
         kind,
-        ", ".join(sorted(supplied)),
-        ", ".join(key),
-        ", ".join(uncovered),
+        ", ".join(".".join(path) for path in sorted(identity_paths)),
+        ", ".join(".".join(path) for path in paths),
+        ", ".join(".".join(path) for path in uncovered),
         observed,
     )
 
@@ -680,8 +718,8 @@ def warn_missing_convergence_key(*, destination: Any, operations: Sequence[Plann
     Three independent conditions, all read from the same cached destination schema object,
     each warned about on the **log stream** naming the kind and what is missing:
 
-    1. the kind declares no `human_friendly_id`, or the plan's identity does not supply
-       every one of its components — what observable convergence rides on;
+    1. the kind declares neither a `human_friendly_id` nor a `default_filter`, or the plan's
+       identity does not supply every HFID component — what observable convergence rides on;
     2. the kind declares no `uniqueness_constraints` entry covered by the plan's identity
        attributes — a different condition, because a kind with a complete human-friendly ID
        and no uniqueness constraint still duplicates silently;
@@ -712,18 +750,18 @@ def warn_missing_convergence_key(*, destination: Any, operations: Sequence[Plann
         _warn_identity_finer_than_destination_key(
             kind=kind,
             node=node,
-            supplied=supplied,
             operations=[operation for operation in operations if operation.kind == kind],
         )
 
         human_friendly_id = getattr(node, "human_friendly_id", None)
-        if not human_friendly_id:
+        default_filter = getattr(node, "default_filter", None)
+        if not human_friendly_id and not default_filter:
             logger.warning(
                 "Plan: destination kind %s declares no human-friendly ID, so its convergent write is "
                 "unkeyed and a re-apply may duplicate it",
                 kind,
             )
-        else:
+        elif human_friendly_id:
             missing = [component for component in human_friendly_id if _component_field(component) not in supplied]
             if missing:
                 logger.warning(

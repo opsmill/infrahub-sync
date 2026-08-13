@@ -31,6 +31,7 @@ from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.generator import has_field
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.errors import (
+    ConvergenceIdentityError,
     PeerAmbiguousError,
     PeerNotFoundError,
     SkippedDeleteOperation,
@@ -723,10 +724,6 @@ class PeerIdentifierError(ValueError):
         super().__init__(msg)
 
 
-class ConvergenceIdentityError(ValueError):
-    """Raised before writes when no destination key covers a mapping identity."""
-
-
 def _destination_upsert_paths(node_schema: object) -> tuple[str, ...]:
     """Return the schema paths Infrahub actually uses to match an upsert."""
     human_friendly_id = getattr(node_schema, "human_friendly_id", None)
@@ -1213,11 +1210,10 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     def _report_unkeyed_render(self, *, node: InfrahubNodeSync, node_schema: NodeSchemaAPI) -> None:
         """The keyedness gate: read the rendered mutation input and branch on it (AD066).
 
-        Keyedness is a property of the **rendered mutation**, not of the assembled data: the
-        SDK keys the upsert on `data["id"]` if the node has one and otherwise on
-        `data["hfid"]`, and `get_human_friendly_id()` returns `None` as soon as any component
-        resolves to `None`. All of that is client-side, so the render is readable before the
-        write is issued.
+        Keyedness is normally visible in the **rendered mutation**, not merely the assembled
+        data: the SDK emits `data["id"]` for a known node and otherwise attempts
+        `data["hfid"]`. The exception is a kind with no HFID and a default filter, which the
+        Infrahub server uses directly from the payload.
 
         **The render is read two levels deep (AD076).** `_generate_input_data` returns
         `{"data": mutation_payload, "variables": …, "mutation_variables": …}` where
@@ -1225,7 +1221,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         tests a one-key mapping, is true for every operation ever rendered, and would make
         the raising arm below fire on all of them.
 
-        Three arms, by the destination kind's HFID shape:
+        Four arms, by the destination kind's key shape:
 
         - **all components direct** — a render carrying neither key can only mean the payload
           lost its identity components, so it **raises**;
@@ -1234,9 +1230,10 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
           supplied as a resolved node id), so it **warns once per kind and proceeds**;
           refusing would withdraw every relationship-bearing kind from what this release
           delivers, and the destination's convergent write may still key server-side;
-        - **no HFID declared at all** — unkeyed is a schema fact rather than a defect, and
-          FR-024 explicitly permits such a kind and requires the run to survive it, so it
-          **warns on the same terms and never raises (AD076)**.
+        - **no HFID, with a default filter** — the server still has a key, so the absent SDK
+          `hfid` is expected and no warning is emitted;
+        - **neither HFID nor default filter** — the kind is genuinely unkeyed, so it warns
+          and proceeds under AD076's legacy boundary.
 
         Raises:
             UnkeyedWriteRefusedError: the render is unkeyed for an all-direct HFID kind.
@@ -1247,6 +1244,12 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         kind = node_schema.kind
         components = _hfid_components(node_schema)
+
+        # With no HFID, Infrahub's server-side upsert falls back to the schema's
+        # default filter. The SDK has no `hfid` to render in that case, but the
+        # mutation is still keyed by the payload field selected by the server.
+        if not components and getattr(node_schema, "default_filter", None):
+            return
 
         if components and all(len(_component_segments(component)) == 1 for component in components):
             msg = (
@@ -1426,8 +1429,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         changed since. It is the only check that can say *which* component is missing, which
         is why it is kept alongside the rendered-mutation gate rather than replaced by it.
 
-        A kind that declares no human-friendly ID has no components and so passes here; that
-        case is the gate's third arm (AD076).
+        A kind that declares no human-friendly ID has no components and so passes this
+        HFID-specific diagnostic. The convergence-identity guard separately validates its
+        default filter, or refuses an identity when the kind has no upsert key at all.
 
         Raises:
             UnaccountedIdentityComponentError: naming the kind and the missing components.

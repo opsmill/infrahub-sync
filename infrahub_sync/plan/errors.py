@@ -238,6 +238,16 @@ class UnaccountedIdentityComponentError(PlanArtifactError):
     )
 
 
+class ConvergenceIdentityError(PlanArtifactError, ValueError):
+    """A writable identity is finer than Infrahub's actual upsert key."""
+
+    next_action = (
+        "Align the mapping identity with the destination human-friendly ID (or default filter when no "
+        "human-friendly ID exists), then re-run `diff` and review the new plan. A uniqueness constraint "
+        "does not change the key used by an Infrahub upsert."
+    )
+
+
 class UnkeyedWriteRefusedError(PlanArtifactError):
     """The rendered mutation carries no key for a kind whose HFID is all-direct (AD066).
 
