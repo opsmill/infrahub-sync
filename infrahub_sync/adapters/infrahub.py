@@ -7,7 +7,8 @@ import os
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from diffsync import Adapter, DiffSyncModel
+from diffsync import Adapter, Diff, DiffSyncModel
+from diffsync.enum import DiffSyncActions, DiffSyncFlags
 from infrahub_sdk import (
     Config,
     InfrahubClientSync,
@@ -62,7 +63,11 @@ def resolved_endpoint(settings: Mapping[str, Any], branch: str | None) -> tuple[
 _TIMESTAMP_FILTER_KW = "node_metadata__updated_at__after"
 
 if TYPE_CHECKING:
+<<<<<<< HEAD
     from collections.abc import Iterator, MutableMapping, Sequence
+=======
+    from collections.abc import Callable, Iterator, Mapping, MutableMapping
+>>>>>>> origin/feature/sync-36-convergence-identity
 
     from infrahub_sdk.node import InfrahubNodeSync, RelatedNodeSync, RelationshipManagerSync
     from infrahub_sdk.schema import MainSchemaTypesAPI
@@ -122,6 +127,16 @@ def resolve_peer_node(
     return peer_node
 
 
+def _relationship_input_data(peer_id: str | None, source: str | None, owner: str | None) -> dict[str, Any]:
+    """Build cardinality-many relationship input with optional attribution."""
+    data: dict[str, Any] = {"id": peer_id}
+    if source:
+        data["source"] = source
+    if owner:
+        data["owner"] = owner
+    return data
+
+
 def update_node(
     node: InfrahubNodeSync,
     attrs: Mapping[str, Any],
@@ -137,8 +152,8 @@ def update_node(
     Args:
         node: The node to update.
         attrs: The attributes and relationships to update.
-        source: Optional source ID to set on updated attributes.
-        owner: Optional owner ID to set on updated attributes.
+        source: Optional source ID to set on updated attributes and relationships.
+        owner: Optional owner ID to set on updated attributes and relationships.
     """
     schemas: Mapping[str, MainSchemaTypesAPI] = node._client.schema.all(branch=node._branch)
     for attr_name, attr_value in attrs.items():
@@ -169,7 +184,14 @@ def update_node(
                         if not peer_node:
                             logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, attr_value)
                             continue
+                        # Keep the peer object so the SDK can detect resource pools
+                        # and generate a ``from_pool`` allocation when required.
                         setattr(node, attr_name, peer_node)
+                        relationship: RelatedNodeSync = getattr(node, attr_name)
+                        if source:
+                            relationship.source = source
+                        if owner:
+                            relationship.owner = owner
                     else:
                         # TODO: delete the old relationship data ?
                         pass
@@ -200,7 +222,7 @@ def update_node(
                         attr_manager.remove(existing_id)
 
                     for new_id in new_only:
-                        attr_manager.add(new_id)
+                        attr_manager.add(_relationship_input_data(new_id, source, owner))
 
     return node
 
@@ -705,6 +727,43 @@ class PeerIdentifierError(ValueError):
         super().__init__(msg)
 
 
+class ConvergenceIdentityError(ValueError):
+    """Raised before writes when no destination key covers a mapping identity."""
+
+
+def _destination_upsert_paths(node_schema: object) -> tuple[str, ...]:
+    """Return the schema paths Infrahub actually uses to match an upsert."""
+    human_friendly_id = getattr(node_schema, "human_friendly_id", None)
+    if human_friendly_id:
+        return tuple(human_friendly_id)
+
+    default_filter = getattr(node_schema, "default_filter", None)
+    if default_filter:
+        return (default_filter,)
+
+    return ()
+
+
+def _path_parts(path: str) -> tuple[str, ...]:
+    """Split an Infrahub key path, excluding attribute-property suffixes."""
+    parts = tuple(path.split("__"))
+    if parts and parts[-1] in {"value", "id"}:
+        return parts[:-1]
+    return parts
+
+
+def _writable_diff_kinds(diff: Diff) -> frozenset[str]:
+    """Return model kinds with create actions that can enter the upsert path."""
+    writable: set[str] = set()
+    pending = list(diff.get_children())
+    while pending:
+        element = pending.pop()
+        if element.action == DiffSyncActions.CREATE:
+            writable.add(element.type)
+        pending.extend(element.get_children())
+    return frozenset(writable)
+
+
 class InfrahubAdapter(DiffSyncMixin, Adapter):
     type = "Infrahub"
 
@@ -791,6 +850,101 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         # We will keep a copy of the schema
         self.schema: MutableMapping[str, MainSchemaTypesAPI] = self.client.schema.all(branch=infrahub_branch)
+
+    def _identifier_is_covered(
+        self,
+        *,
+        kind: str,
+        identifier: str,
+        paths: tuple[tuple[str, ...], ...],
+        visited: frozenset[tuple[str, str]] = frozenset(),
+    ) -> bool:
+        """Return whether upsert paths distinguish a generated identifier value."""
+        matching_tails = tuple(path[1:] for path in paths if path and path[0] == identifier)
+        if not matching_tails:
+            return False
+
+        node_schema = self.schema.get(kind)
+        relationships = getattr(node_schema, "relationships", ())
+        relationship = next((item for item in relationships if item.name == identifier), None)
+        if relationship is None:
+            return True
+
+        peer_kind = relationship.peer
+        peer_model = getattr(self, peer_kind, None)
+        peer_identifiers = tuple(getattr(peer_model, "_identifiers", ()) or ())
+        if not peer_identifiers:
+            return False
+
+        marker = (kind, identifier)
+        if marker in visited:
+            return False
+        next_visited = visited | {marker}
+        return all(
+            self._identifier_is_covered(
+                kind=peer_kind,
+                identifier=peer_identifier,
+                paths=matching_tails,
+                visited=next_visited,
+            )
+            for peer_identifier in peer_identifiers
+        )
+
+    def _validate_convergence_identities(self, diff: Diff | None = None) -> None:
+        """Refuse writable model identities finer than Infrahub's upsert key."""
+        writable_kinds = _writable_diff_kinds(diff) if diff is not None else None
+        for mapping in self.config.schema_mapping:
+            if writable_kinds is not None and mapping.name not in writable_kinds:
+                continue
+
+            model_class = getattr(self, mapping.name, None)
+            identifiers = frozenset(getattr(model_class, "_identifiers", None) or mapping.identifiers or ())
+            node_schema = self.schema.get(mapping.name)
+            if not identifiers or node_schema is None:
+                continue
+
+            upsert_paths = _destination_upsert_paths(node_schema)
+            path_parts = tuple(_path_parts(path) for path in upsert_paths)
+            uncovered_identifiers = frozenset(
+                identifier
+                for identifier in identifiers
+                if not self._identifier_is_covered(kind=mapping.name, identifier=identifier, paths=path_parts)
+            )
+            if not uncovered_identifiers:
+                continue
+
+            uncovered = ", ".join(sorted(uncovered_identifiers))
+            mapping_identity = ", ".join(sorted(identifiers))
+            destination_key = ", ".join(sorted(path.replace("__value", "").replace("__", ".") for path in upsert_paths))
+            if not destination_key:
+                destination_key = "none"
+            msg = (
+                f"Refusing to sync destination kind {mapping.name}: generated model identity "
+                f"({mapping_identity}) is finer than its destination upsert key "
+                f"({destination_key}); uncovered mapping identifier(s): {uncovered}. "
+                "Align the generated model identity with the destination human-friendly ID "
+                "(or its default filter when no human-friendly ID exists) before retrying. "
+                "A uniqueness constraint alone does not change the upsert match key."
+            )
+            raise ConvergenceIdentityError(msg)
+
+    def sync_from(  # pylint: disable=too-many-positional-arguments
+        self,
+        source: Adapter,
+        diff_class: type[Diff] = Diff,
+        flags: DiffSyncFlags = DiffSyncFlags.NONE,
+        callback: Callable[[str, int, int], None] | None = None,
+        diff: Diff | None = None,
+    ) -> Diff:
+        """Validate convergence identities before entering DiffSync's write path."""
+        self._validate_convergence_identities(diff=diff)
+        return super().sync_from(
+            source=source,
+            diff_class=diff_class,
+            flags=flags,
+            callback=callback,
+            diff=diff,
+        )
 
     def cursor_tier_for(self, model_name: str) -> CursorTier:
         """TIMESTAMP for any kind present in the live Infrahub schema.

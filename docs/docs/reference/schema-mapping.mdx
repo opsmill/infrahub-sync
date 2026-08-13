@@ -117,6 +117,22 @@ identifiers: ["address", "vrf"]
 
 All listed fields must be present and unique together. Each identifier field must also be mapped in the `fields` list.
 
+When Infrahub is the destination, its human-friendly ID must cover every field
+in the generated model's identity. If the kind has no human-friendly ID, its
+default filter must provide that coverage instead. For example, a model
+identified by `["name", "site"]` requires a human-friendly ID containing both
+`name` and `site`. A uniqueness constraint alone is not sufficient because it
+does not change how Infrahub matches an upsert to an existing object.
+Relationship identifiers must also be covered at the peer's full generated
+identity; matching only one component of a composite peer identity is unsafe.
+
+The `sync` command refuses creates for the affected kind before writing when
+the upsert key is coarser, because otherwise two source objects could silently
+converge onto one destination object. Updates remain safe because they address
+an existing Infrahub node by ID. Read-only comparison remains available so you
+can inspect the proposed changes before aligning the generated model or
+destination schema.
+
 ## Filters
 
 Filters control which objects from the source get synced. Apply them at the model level to include or exclude specific objects.

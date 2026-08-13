@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
+import typer
 from typer.testing import CliRunner
 
+from infrahub_sync.adapters.infrahub import ConvergenceIdentityError
 from infrahub_sync.cli import app
 from infrahub_sync.utils import get_instance
 
@@ -118,6 +120,60 @@ def test_no_parallel_runs_serial(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     fake_ptd.sync_in_tiers.assert_not_called()
     fake_ptd.load_both_sides.assert_called_once()
     fake_ptd.diff.assert_called_once()
+
+
+def test_serial_sync_presents_convergence_refusal_without_raw_exception(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Serial sync must present the pre-write refusal through the normal CLI error path."""
+    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path))
+    run_dir = tmp_path / "from-netbox" / "test-run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    fake_ptd = _make_fake_potenda(tiers=None, run_dir=run_dir)
+    fake_ptd.diff.return_value.has_diffs.return_value = True
+    refusal = "Refusing to sync destination kind LocationRack: uncovered mapping identifier(s): site."
+    fake_ptd.sync.side_effect = ConvergenceIdentityError(refusal)
+    runner = CliRunner()
+
+    with (
+        patch("infrahub_sync.cli.get_potenda_from_instance", return_value=fake_ptd),
+        patch("infrahub_sync.cli.print_error_and_abort", side_effect=typer.Abort) as abort,
+    ):
+        result = runner.invoke(
+            app,
+            ["sync", "--no-parallel", "--name", "from-netbox", "--directory", str(EXAMPLES_DIR)],
+        )
+
+    assert result.exit_code == 1
+    abort.assert_called_once_with(refusal)
+
+
+def test_serial_sync_does_not_present_unrelated_value_error_as_refusal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only convergence refusals use the serial sync presentation path."""
+    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path))
+    run_dir = tmp_path / "from-netbox" / "test-run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    fake_ptd = _make_fake_potenda(tiers=None, run_dir=run_dir)
+    unrelated_error = ValueError("unexpected diff failure")
+    fake_ptd.diff.side_effect = unrelated_error
+    runner = CliRunner()
+
+    with (
+        patch("infrahub_sync.cli.get_potenda_from_instance", return_value=fake_ptd),
+        patch("infrahub_sync.cli.print_error_and_abort", side_effect=typer.Abort) as abort,
+    ):
+        result = runner.invoke(
+            app,
+            ["sync", "--no-parallel", "--name", "from-netbox", "--directory", str(EXAMPLES_DIR)],
+        )
+
+    assert result.exit_code == 1
+    assert result.exception is unrelated_error
+    abort.assert_not_called()
 
 
 def test_parallel_flag_warns_when_order_explicit(
