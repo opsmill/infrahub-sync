@@ -6,9 +6,10 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from hashlib import sha256
+from types import MappingProxyType
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_serializer, field_validator, model_validator
 
 from infrahub_sync import (
     IncrementalConfig,
@@ -166,7 +167,7 @@ class ConfigurationPackage(BaseModel):
     format_version: Literal[1] = 1
     configuration: SyncConfig
     package_metadata: ConfigurationPackageMetadata = Field(default_factory=ConfigurationPackageMetadata)
-    credentials: dict[str, CredentialReference] = Field(default_factory=dict)
+    credentials: Mapping[str, CredentialReference] = Field(default_factory=dict, validate_default=True)
 
     @model_validator(mode="before")
     @classmethod
@@ -182,12 +183,16 @@ class ConfigurationPackage(BaseModel):
 
     @field_validator("credentials")
     @classmethod
-    def _validate_reference_names(cls, value: dict[str, CredentialReference]) -> dict[str, CredentialReference]:
+    def _validate_reference_names(cls, value: Mapping[str, CredentialReference]) -> Mapping[str, CredentialReference]:
         invalid = sorted(name for name in value if _REFERENCE_NAME_RE.fullmatch(name) is None)
         if invalid:
             msg = f"credential reference names are invalid: {', '.join(invalid)}"
             raise ValueError(msg)
-        return value
+        return MappingProxyType(dict(value))
+
+    @field_serializer("credentials")
+    def _serialize_credentials(self, value: Mapping[str, CredentialReference]) -> dict[str, CredentialReference]:
+        return dict(value)
 
     def declared_content(self) -> dict[str, Any]:
         """Return the exact JSON-native content covered by the package checksum."""

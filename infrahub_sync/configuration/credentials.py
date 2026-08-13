@@ -16,6 +16,9 @@ _ENV_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _STORE_CREDENTIAL_SETTING_PATHS = {
     "redis": ("url", "username", "password"),
 }
+_STORE_SETTING_PATHS = {
+    "redis": frozenset({"db", "host", "password", "port", "store_id", "url", "username"}),
+}
 
 
 class CredentialConfigurationError(ValueError):
@@ -143,6 +146,10 @@ def _validate_store_credentials(package: ConfigurationPackage) -> None:
             msg = f"store type {store.type!r} has no configuration capability declaration"
             raise CredentialConfigurationError(msg) from None
         return
+    unsupported_settings = sorted(set(settings) - _STORE_SETTING_PATHS[store.type])
+    if unsupported_settings:
+        msg = f"store type {store.type!r} contains unsupported declared settings: {', '.join(unsupported_settings)}"
+        raise CredentialConfigurationError(msg)
     for path in credential_paths:
         present, value = _setting_at_path(settings, path)
         if not present or value is None:

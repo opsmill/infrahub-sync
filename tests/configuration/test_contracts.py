@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
@@ -78,6 +79,25 @@ def test_checksum_changes_with_declared_credential_identifier() -> None:
     changed["credentials"]["netbox-token"]["identifier"] = "OTHER_NETBOX_TOKEN"
 
     assert ConfigurationPackage.model_validate(changed).checksum() != baseline.checksum()
+
+
+def test_package_credentials_cannot_mutate_after_validation() -> None:
+    package = _package()
+    checksum = package.checksum()
+
+    with pytest.raises(TypeError):
+        cast("Any", package.credentials)["later"] = package.credentials["netbox-token"]
+
+    assert package.checksum() == checksum
+
+
+def test_default_empty_credentials_cannot_mutate_after_validation() -> None:
+    data = _package().model_dump(mode="json")
+    del data["credentials"]
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(TypeError):
+        cast("Any", package.credentials)["later"] = {"provider": "env", "identifier": "LATER"}
 
 
 def test_package_rejects_machine_local_directory() -> None:
@@ -249,6 +269,23 @@ def test_store_inline_credential_is_refused_without_echoing_value() -> None:
     assert canary not in str(caught.value)
 
 
+@pytest.mark.parametrize("setting", ["sentinel_password", "tls_key_password"])
+def test_redis_store_rejects_undeclared_credential_settings(setting: str) -> None:
+    canary = "undeclared-store-secret"
+    data = _package().model_dump(mode="json")
+    data["configuration"]["store"] = {
+        "type": "redis",
+        "settings": {"host": "localhost", setting: canary},
+    }
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    assert "unsupported declared settings" in str(caught.value)
+    assert canary not in str(caught.value)
+
+
 def test_reserved_reference_node_is_validated_in_store_settings() -> None:
     data = _package().model_dump(mode="json")
     data["configuration"]["store"] = {
@@ -356,6 +393,46 @@ def test_source_only_capability_cannot_claim_destination_writes() -> None:
             adapter_name="example",
             roles=frozenset({"source"}),
             supported_destination_write_operations=frozenset({"create"}),
+        )
+
+
+def test_capability_collections_are_normalized_and_immutable() -> None:
+    roles = {"source"}
+    paths = ["token"]
+    writes: set[str] = set()
+    capability = AdapterConfigurationCapabilities(
+        adapter_name="example",
+        roles=cast("Any", roles),
+        credential_setting_paths=cast("Any", paths),
+        supported_destination_write_operations=cast("Any", writes),
+    )
+
+    roles.add("destination")
+    paths.append("password")
+    writes.add("create")
+
+    assert capability.roles == frozenset({"source"})
+    assert capability.credential_setting_paths == ("token",)
+    assert capability.supported_destination_write_operations == frozenset()
+
+
+@pytest.mark.parametrize(
+    ("roles", "writes", "message"),
+    [
+        ({"reader"}, set(), "unsupported roles"),
+        ({"destination"}, {"replace"}, "unsupported destination write operations"),
+    ],
+)
+def test_capability_rejects_unsupported_literal_values(
+    roles: set[str],
+    writes: set[str],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        AdapterConfigurationCapabilities(
+            adapter_name="example",
+            roles=cast("Any", roles),
+            supported_destination_write_operations=cast("Any", writes),
         )
 
 

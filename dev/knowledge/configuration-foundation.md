@@ -36,16 +36,17 @@ write operations, schema-validation availability, and an optional bounded config
 validator. It must never contain clients, connections, credentials, or orchestration
 objects.
 
-Bundled declarations live in `infrahub_sync.configuration.capabilities`. A custom adapter
-without a declaration is refused by registration because Sync cannot prove which of its
-settings are credentials. A future adapter-extension surface can contribute the same
-record through plugin metadata; it must preserve contract version 1 and the exact
-credential-reference rules.
+Bundled declarations live in `infrahub_sync.configuration.capabilities`. Package
+validation refuses adapters without a bundled declaration because Sync cannot prove
+which of their settings are credentials. A future adapter-extension and registration
+surface can contribute the same record through plugin metadata; it must preserve
+contract version 1 and the exact credential-reference rules.
 
 The version-1 envelope refuses `adapters_path` and per-role `adapter` overrides. Those
 fields select machine-local or arbitrary adapter code whose credential-bearing settings
-cannot be proven by a bundled capability declaration. Redis store URLs, usernames, and
-passwords follow the same credential-reference rule as adapter settings.
+cannot be proven by a bundled capability declaration. Redis accepts only its declared
+store settings; its URLs, usernames, and passwords follow the same credential-reference
+rule as adapter settings.
 
 The declaration is intentionally narrower than the complete adapter conformance profile.
 It provides the durable seam configuration validation needs without claiming that every

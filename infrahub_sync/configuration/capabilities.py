@@ -14,6 +14,8 @@ AdapterRole = Literal["source", "destination"]
 WriteOperation = Literal["create", "update", "delete"]
 ConfigurationValidator = Callable[[ConfigurationPackage, AdapterRole], Sequence[ValidationFinding]]
 _ADAPTER_NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
+_ADAPTER_ROLES: frozenset[AdapterRole] = frozenset({"source", "destination"})
+_WRITE_OPERATIONS: frozenset[WriteOperation] = frozenset({"create", "update", "delete"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,19 +31,37 @@ class AdapterConfigurationCapabilities:
     contract_version: Literal[1] = 1
 
     def __post_init__(self) -> None:
+        roles = frozenset(self.roles)
+        credential_setting_paths = tuple(self.credential_setting_paths)
+        write_operations = frozenset(self.supported_destination_write_operations)
+        object.__setattr__(self, "roles", roles)
+        object.__setattr__(self, "credential_setting_paths", credential_setting_paths)
+        object.__setattr__(self, "supported_destination_write_operations", write_operations)
+
         if _ADAPTER_NAME.fullmatch(self.adapter_name) is None:
             msg = "adapter_name must be a lowercase configuration name"
             raise ValueError(msg)
-        if not self.roles:
+        unsupported_roles = roles - _ADAPTER_ROLES
+        if unsupported_roles:
+            msg = f"adapter {self.adapter_name!r} contains unsupported roles: {sorted(unsupported_roles)!r}"
+            raise ValueError(msg)
+        unsupported_write_operations = write_operations - _WRITE_OPERATIONS
+        if unsupported_write_operations:
+            msg = (
+                f"adapter {self.adapter_name!r} contains unsupported destination write operations: "
+                f"{sorted(unsupported_write_operations)!r}"
+            )
+            raise ValueError(msg)
+        if not roles:
             msg = f"adapter {self.adapter_name!r} must declare at least one role"
             raise ValueError(msg)
-        if "destination" not in self.roles and self.supported_destination_write_operations:
+        if "destination" not in roles and write_operations:
             msg = f"source-only adapter {self.adapter_name!r} cannot declare destination writes"
             raise ValueError(msg)
-        if len(self.credential_setting_paths) != len(set(self.credential_setting_paths)):
+        if len(credential_setting_paths) != len(set(credential_setting_paths)):
             msg = f"adapter {self.adapter_name!r} contains duplicate credential paths"
             raise ValueError(msg)
-        if any(not path or path.startswith(".") or path.endswith(".") for path in self.credential_setting_paths):
+        if any(not path or path.startswith(".") or path.endswith(".") for path in credential_setting_paths):
             msg = f"adapter {self.adapter_name!r} contains an invalid credential path"
             raise ValueError(msg)
 
