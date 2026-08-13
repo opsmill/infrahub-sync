@@ -63,11 +63,7 @@ def resolved_endpoint(settings: Mapping[str, Any], branch: str | None) -> tuple[
 _TIMESTAMP_FILTER_KW = "node_metadata__updated_at__after"
 
 if TYPE_CHECKING:
-<<<<<<< HEAD
-    from collections.abc import Iterator, MutableMapping, Sequence
-=======
-    from collections.abc import Callable, Iterator, Mapping, MutableMapping
->>>>>>> origin/feature/sync-36-convergence-identity
+    from collections.abc import Callable, Iterator, MutableMapping, Sequence
 
     from infrahub_sdk.node import InfrahubNodeSync, RelatedNodeSync, RelationshipManagerSync
     from infrahub_sdk.schema import MainSchemaTypesAPI

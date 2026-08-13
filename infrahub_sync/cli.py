@@ -10,7 +10,7 @@ import typer
 from infrahub_sdk import InfrahubClientSync
 from infrahub_sdk.exceptions import ServerNotResponsiveError
 
-<<<<<<< HEAD
+from infrahub_sync.adapters.infrahub import ConvergenceIdentityError
 from infrahub_sync.execution import (
     RunConcurrencyError,
     collect_secret_values,
@@ -29,11 +29,6 @@ from infrahub_sync.plan.errors import (
     UnsafeRunIdentifierError,
 )
 from infrahub_sync.product_store.standalone import StandaloneProductRecordError, execute_standalone
-=======
-from infrahub_sync.adapters.infrahub import ConvergenceIdentityError
-from infrahub_sync.cache.locks import pipeline_lock
-from infrahub_sync.cache.sidecars import RunFile
->>>>>>> origin/feature/sync-36-convergence-identity
 from infrahub_sync.utils import (
     PlanApplier,
     find_missing_schema_model,
@@ -630,7 +625,6 @@ def sync_cmd(
 
     verbosity_level = ctx.obj.get("verbosity", logging.INFO) if ctx.obj else logging.INFO
 
-<<<<<<< HEAD
     try:
         execute_standalone(
             sync_instance,
@@ -651,81 +645,8 @@ def sync_cmd(
             _serial_load_error=lambda exc: print_error_and_abort(str(exc), sync_instance),
             _parallel_sync_error=lambda exc: print_error_and_abort(str(exc), sync_instance),
         )
-    except (RunConcurrencyError, StandaloneProductRecordError) as exc:
+    except (ConvergenceIdentityError, RunConcurrencyError, StandaloneProductRecordError) as exc:
         print_error_and_abort(str(exc))
-=======
-    with pipeline_lock(sync_instance.name):
-        try:
-            ptd = get_potenda_from_instance(
-                sync_instance=sync_instance,
-                branch=branch,
-                show_progress=show_progress,
-                verbosity=verbosity_level,
-                continue_on_error=continue_on_error,
-                concurrent_load=concurrent_load,
-            )
-        except ValueError as exc:
-            print_error_and_abort(f"Failed to initialize the Sync Instance: {exc}")
-
-        ptd.force_full_extract = full_extract
-        if ptd.run_dir is None:  # get_potenda_from_instance always allocates one
-            msg = "get_potenda_from_instance did not allocate a run_dir"
-            raise RuntimeError(msg)
-        run_file = RunFile(path=ptd.run_dir / "run.json", status="running", mode="sync")
-        run_file.save()
-
-        try:
-            if parallel and not ptd.tiers:
-                logger.warning(
-                    "--parallel ignored because order: is set in config.yml; "
-                    "remove order: to enable tier-by-tier execution",
-                )
-
-            if parallel and ptd.tiers:
-                try:
-                    ptd.sync_in_tiers(parallel=True, allow_rowcount_drop=allow_rowcount_drop)
-                except ValueError as exc:
-                    run_file.status = "failed"
-                    run_file.save()
-                    print_error_and_abort(str(exc))
-                run_file.summary = {"resources": len(ptd.top_level), "mode": "parallel"}
-            else:
-                try:
-                    ptd.load_both_sides()
-                except ValueError as exc:
-                    run_file.status = "failed"
-                    run_file.save()
-                    print_error_and_abort(str(exc))
-                ptd.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
-                mydiff = ptd.diff()
-                ptd.write_plan(mydiff)
-                if mydiff.has_diffs():
-                    if diff:
-                        logger.info("\n%s", mydiff.str())
-                    start_synctime = timer()
-                    try:
-                        ptd.sync(diff=mydiff)
-                    except ConvergenceIdentityError as exc:
-                        run_file.status = "failed"
-                        run_file.save()
-                        print_error_and_abort(str(exc))
-                    end_synctime = timer()
-                    logger.info("Sync: Completed in %s sec", end_synctime - start_synctime)
-                else:
-                    logger.info("No difference found. Nothing to sync")
-                ptd.persist_baseline_counts()
-                run_file.summary = {"resources": len(ptd.top_level), "mode": "serial"}
-
-            run_file.status = "applied"
-        except Exception:
-            run_file.status = "failed"
-            run_file.save()
-            raise
-
-        run_file.finished_at = datetime.now(timezone.utc).isoformat()
-        run_file.save()
-        logger.info("Sync run %s at %s", ptd.run_id, ptd.run_dir)
->>>>>>> origin/feature/sync-36-convergence-identity
 
 
 @app.command(name="apply")
