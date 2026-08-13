@@ -3,8 +3,7 @@
 Regression coverage for the bug where ``update_node`` stamped ``source``/
 ``owner`` metadata onto updated **attributes** but not onto updated
 **relationships** (opsmill/infrahub-sync#142). A relationship changed by a sync
-must now carry the same attribution as an attribute changed in the same update,
-matching the create path.
+must now carry the same attribution as an attribute changed in the same update.
 
 The tests use lightweight stand-ins where sufficient and real SDK nodes for the
 cardinality-one path, where retaining the resolved peer controls resource-pool

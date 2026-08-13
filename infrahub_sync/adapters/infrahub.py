@@ -95,11 +95,7 @@ def resolve_peer_node(
 
 
 def _relationship_input_data(peer_id: str | None, source: str | None, owner: str | None) -> dict[str, Any]:
-    """Build cardinality-many input data with optional attribution.
-
-    Passing this dict to ``RelationshipManagerSync.add`` stamps the same
-    attribution the attribute-update path applies.
-    """
+    """Build cardinality-many relationship input with optional attribution."""
     data: dict[str, Any] = {"id": peer_id}
     if source:
         data["source"] = source
@@ -193,8 +189,6 @@ def update_node(
                         attr_manager.remove(existing_id)
 
                     for new_id in new_only:
-                        # Add via a data dict so source/owner attribution is stamped
-                        # on the newly added relationship peer.
                         attr_manager.add(_relationship_input_data(new_id, source, owner))
 
     return node
