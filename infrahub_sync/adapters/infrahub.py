@@ -284,24 +284,19 @@ def _component_field(component: str) -> str:
     return component.split("__", 1)[0]
 
 
-def _destination_identity_keys(node_schema: object) -> list[frozenset[str]]:
-    """Return the destination keys that can distinguish convergent writes."""
-    constraints = getattr(node_schema, "uniqueness_constraints", None) or []
+def _destination_upsert_key(node_schema: object) -> frozenset[str]:
+    """Return the schema fields Infrahub actually uses to match an upsert."""
     human_friendly_id = getattr(node_schema, "human_friendly_id", None)
-    declared = [*constraints, *([human_friendly_id] if human_friendly_id else [])]
-    keys = {frozenset(_component_field(component) for component in key) for key in declared if key}
-    return sorted(keys, key=lambda key: tuple(sorted(key)))
+    if human_friendly_id:
+        return frozenset(_component_field(component) for component in human_friendly_id)
 
+    default_filter = getattr(node_schema, "default_filter", None)
+    if default_filter:
+        return frozenset({_component_field(default_filter)})
 
-def _closest_destination_key(
-    identifiers: frozenset[str],
-    destination_keys: list[frozenset[str]],
-) -> frozenset[str]:
-    """Choose the declared key that covers the largest part of an identity."""
-    return min(
-        destination_keys,
-        key=lambda key: (-len(identifiers & key), tuple(sorted(key))),
-    )
+    # Keyless upserts have a separate duplication hazard, but cannot collapse
+    # distinct source identities by matching them onto one destination object.
+    return frozenset()
 
 
 class InfrahubAdapter(DiffSyncMixin, Adapter):
@@ -375,27 +370,28 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         self.schema: MutableMapping[str, MainSchemaTypesAPI] = self.client.schema.all(branch=infrahub_branch)
 
     def _validate_convergence_identities(self) -> None:
-        """Refuse mappings whose identity is finer than every destination key."""
+        """Refuse runtime model identities finer than Infrahub's upsert key."""
         for mapping in self.config.schema_mapping:
-            identifiers = frozenset(mapping.identifiers or ())
+            model_class = getattr(self, mapping.name, None)
+            identifiers = frozenset(getattr(model_class, "_identifiers", None) or mapping.identifiers or ())
             node_schema = self.schema.get(mapping.name)
             if not identifiers or node_schema is None:
                 continue
 
-            destination_keys = _destination_identity_keys(node_schema)
-            if not destination_keys or any(identifiers <= key for key in destination_keys):
+            upsert_key = _destination_upsert_key(node_schema)
+            if not upsert_key or identifiers <= upsert_key:
                 continue
 
-            closest = _closest_destination_key(identifiers, destination_keys)
-            uncovered = ", ".join(sorted(identifiers - closest))
+            uncovered = ", ".join(sorted(identifiers - upsert_key))
             mapping_identity = ", ".join(sorted(identifiers))
-            destination_key = ", ".join(sorted(closest))
+            destination_key = ", ".join(sorted(upsert_key))
             msg = (
-                f"Refusing to sync destination kind {mapping.name}: mapping identity "
-                f"({mapping_identity}) is finer than every declared destination key; "
-                f"closest key: ({destination_key}); uncovered mapping identifier(s): {uncovered}. "
-                "Align the schema mapping identifiers with a destination human-friendly ID "
-                "or uniqueness constraint before retrying."
+                f"Refusing to sync destination kind {mapping.name}: generated model identity "
+                f"({mapping_identity}) is finer than its destination upsert key "
+                f"({destination_key}); uncovered mapping identifier(s): {uncovered}. "
+                "Align the generated model identity with the destination human-friendly ID "
+                "(or its default filter when no human-friendly ID exists) before retrying. "
+                "A uniqueness constraint alone does not change the upsert match key."
             )
             raise ConvergenceIdentityError(msg)
 
