@@ -306,7 +306,7 @@ def _writable_diff_kinds(diff: Diff) -> frozenset[str]:
     pending = list(diff.get_children())
     while pending:
         element = pending.pop()
-        if element.action is DiffSyncActions.CREATE:
+        if element.action == DiffSyncActions.CREATE:
             writable.add(element.type)
         pending.extend(element.get_children())
     return frozenset(writable)

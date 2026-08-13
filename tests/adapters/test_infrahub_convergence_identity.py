@@ -314,7 +314,7 @@ def test_relationship_hfid_must_cover_full_peer_identity(
 def test_inactive_unsafe_mapping_does_not_block_unrelated_write(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Only kinds with create or update actions in the supplied diff are validated."""
+    """Only kinds with create actions in the supplied diff are validated."""
     destination = InfrahubAdapter.__new__(InfrahubAdapter)
     destination.config = SyncConfig(
         name="mixed-sync",
