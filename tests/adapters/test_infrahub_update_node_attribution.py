@@ -6,20 +6,21 @@ Regression coverage for the bug where ``update_node`` stamped ``source``/
 must now carry the same attribution as an attribute changed in the same update,
 matching the create path.
 
-The tests use lightweight stand-ins for ``InfrahubNodeSync`` — ``update_node``
-only touches a handful of members — and monkeypatch ``resolve_peer_node`` so no
-SDK/network plumbing is needed. Two tests additionally build a *real*
-``RelatedNodeSync`` from the helper's output to prove the attribution actually
-serialises into (or stays out of) the GraphQL mutation input.
+The tests use lightweight stand-ins where sufficient and real SDK nodes for the
+cardinality-one path, where retaining the resolved peer controls resource-pool
+allocation behavior. ``resolve_peer_node`` is monkeypatched so no network
+plumbing is needed.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
+from infrahub_sdk.node import InfrahubNodeSync, RelatedNodeSync
+from infrahub_sdk.schema.main import NodeSchemaAPI, RelationshipSchemaAPI
 
 from infrahub_sync.adapters import infrahub as infrahub_adapter
 from infrahub_sync.adapters.infrahub import _relationship_input_data, update_node  # noqa: PLC2701
@@ -122,6 +123,24 @@ def _run_update(node: FakeNode, attrs: dict[str, object], source: str | None = N
     update_node(node, attrs, source=source, owner=owner)  # ty: ignore[invalid-argument-type]
 
 
+def _make_sdk_relationship_nodes(*, resource_pool: bool = False) -> tuple[InfrahubNodeSync, InfrahubNodeSync]:
+    """Build real SDK nodes for a cardinality-one update without network access."""
+    relationship_schema = RelationshipSchemaAPI(name="location", peer="LocationRack", cardinality="one")
+    node_schema = NodeSchemaAPI(name="Device", namespace="Test", relationships=[relationship_schema])
+    peer_schema = NodeSchemaAPI(
+        name="RackPool" if resource_pool else "Rack",
+        namespace="Location",
+        inherit_from=["CoreResourcePool"] if resource_pool else [],
+    )
+    client = MagicMock()
+    client.default_branch = "main"
+    client.request_context = None
+    client.schema.all.return_value = {relationship_schema.peer: peer_schema}
+    node = InfrahubNodeSync(client=client, schema=node_schema, data={"id": "device-id"})
+    peer = InfrahubNodeSync(client=client, schema=peer_schema, data={"id": "pool-id" if resource_pool else "rack-id"})
+    return node, peer
+
+
 @pytest.fixture
 def patch_resolve_peer(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make ``resolve_peer_node`` return a peer whose ``id`` echoes the lookup key."""
@@ -196,8 +215,8 @@ def test_update_node_attribute_gets_source_and_owner() -> None:
     _run_update(node, {"position": 5}, source=SOURCE_ID, owner=OWNER_ID)
 
     assert holder.value == 5
-    assert holder.source is not None
-    assert holder.owner is not None
+    assert holder.source.id == SOURCE_ID
+    assert holder.owner.id == OWNER_ID
 
 
 def test_update_node_attribute_no_attribution_when_unset() -> None:
@@ -217,24 +236,46 @@ def test_update_node_attribute_no_attribution_when_unset() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_update_node_relationship_one_gets_attribution(patch_resolve_peer: None) -> None:  # noqa: ARG001
-    rel = FakeRelSchema(name="location", peer="LocationRack", cardinality="one")
-    schema = FakeSchema(relationships=[rel], relationship_names=["location"])
-    node = FakeNode(schema=schema, client=FakeClient(peers={"LocationRack": object()}))
+def test_update_node_relationship_one_gets_attribution(monkeypatch: pytest.MonkeyPatch) -> None:
+    node, peer = _make_sdk_relationship_nodes()
+    monkeypatch.setattr(infrahub_adapter, "resolve_peer_node", lambda **_kwargs: peer)
 
-    _run_update(node, {"location": "rack-uid"}, source=SOURCE_ID, owner=OWNER_ID)
+    update_node(node, {"location": "rack-uid"}, source=SOURCE_ID, owner=OWNER_ID)
 
-    assert node.__dict__["location"] == {"id": "rack-uid", "source": SOURCE_ID, "owner": OWNER_ID}
+    relationship = cast("RelatedNodeSync", node.location)
+    assert relationship.peer is peer
+    assert vars(relationship)["source"] == SOURCE_ID
+    assert vars(relationship)["owner"] == OWNER_ID
+    assert relationship._generate_input_data() == {
+        "id": "rack-id",
+        "_relation__source": SOURCE_ID,
+        "_relation__owner": OWNER_ID,
+    }
 
 
-def test_update_node_relationship_one_no_attribution_when_unset(patch_resolve_peer: None) -> None:  # noqa: ARG001
-    rel = FakeRelSchema(name="location", peer="LocationRack", cardinality="one")
-    schema = FakeSchema(relationships=[rel], relationship_names=["location"])
-    node = FakeNode(schema=schema, client=FakeClient(peers={"LocationRack": object()}))
+def test_update_node_relationship_one_no_attribution_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    node, peer = _make_sdk_relationship_nodes()
+    monkeypatch.setattr(infrahub_adapter, "resolve_peer_node", lambda **_kwargs: peer)
 
-    _run_update(node, {"location": "rack-uid"})
+    update_node(node, {"location": "rack-uid"})
 
-    assert node.__dict__["location"] == {"id": "rack-uid"}
+    relationship = cast("RelatedNodeSync", node.location)
+    assert relationship.peer is peer
+    assert vars(relationship)["source"] is None
+    assert vars(relationship)["owner"] is None
+    assert relationship._generate_input_data() == {"id": "rack-id"}
+
+
+def test_update_node_relationship_one_preserves_resource_pool_allocation(monkeypatch: pytest.MonkeyPatch) -> None:
+    node, pool = _make_sdk_relationship_nodes(resource_pool=True)
+    monkeypatch.setattr(infrahub_adapter, "resolve_peer_node", lambda **_kwargs: pool)
+
+    update_node(node, {"location": "pool-uid"}, source=SOURCE_ID, owner=OWNER_ID)
+
+    relationship = cast("RelatedNodeSync", node.location)
+    assert relationship.peer is pool
+    assert relationship.is_resource_pool is True
+    assert node._generate_input_data()["data"]["data"]["location"] == {"from_pool": {"id": "pool-id"}}
 
 
 # ---------------------------------------------------------------------------

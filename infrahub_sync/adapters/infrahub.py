@@ -95,13 +95,10 @@ def resolve_peer_node(
 
 
 def _relationship_input_data(peer_id: str | None, source: str | None, owner: str | None) -> dict[str, Any]:
-    """Build relationship input data (peer id + optional source/owner attribution).
+    """Build cardinality-many input data with optional attribution.
 
-    Assigning a plain peer node to a relationship leaves its ``source``/``owner``
-    metadata unset, so a relationship updated by a sync would carry no lineage
-    back to the sync's source/owner. Passing this dict to ``setattr`` (one) or
-    ``RelationshipManagerSync.add`` (many) stamps the same attribution the
-    attribute-update path applies, matching what the create path already does.
+    Passing this dict to ``RelationshipManagerSync.add`` stamps the same
+    attribution the attribute-update path applies.
     """
     data: dict[str, Any] = {"id": peer_id}
     if source:
@@ -158,9 +155,14 @@ def update_node(
                         if not peer_node:
                             logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, attr_value)
                             continue
-                        # Assign via a data dict (not the bare peer) so source/owner
-                        # attribution is stamped on the updated relationship.
-                        setattr(node, attr_name, _relationship_input_data(peer_node.id, source, owner))
+                        # Keep the peer object so the SDK can detect resource pools
+                        # and generate a ``from_pool`` allocation when required.
+                        setattr(node, attr_name, peer_node)
+                        relationship: RelatedNodeSync = getattr(node, attr_name)
+                        if source:
+                            relationship.source = source
+                        if owner:
+                            relationship.owner = owner
                     else:
                         # TODO: delete the old relationship data ?
                         pass
