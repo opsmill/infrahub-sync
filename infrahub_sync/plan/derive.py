@@ -70,7 +70,7 @@ DIFF_DELETE_ACTION = "delete"
 # Separator between the segments of a *schema* component path — `name__value` for a direct
 # attribute, `site__name__value` for one that crosses a relationship. Named so the "never
 # split a unique-id on `__`" rule has something to point at: the only thing this module
-# splits on it is a schema path, in `_component_field`.
+# splits on it is a schema path, in `_component_parts`.
 COMPONENT_PATH_SEPARATOR = "__"
 
 
@@ -563,30 +563,19 @@ def derive_deletes(  # pylint: disable=redefined-outer-name
     return operations
 
 
-def _component_field(component: str) -> str:
-    """The mapping field name a schema component path starts with.
+def _identity_paths_by_kind(operations: Sequence[PlannedOperation]) -> dict[str, set[tuple[str, ...]]]:
+    """Exact identity leaf paths the plan supplies per destination kind.
 
-    Infrahub writes a human-friendly-ID component and a uniqueness-constraint component as
-    a path — `name__value` for a direct attribute, `site__name__value` for one that crosses
-    a relationship — while the plan's destination identity is keyed by the mapping field
-    name, which is the path's first segment.
-    """
-    return component.split(COMPONENT_PATH_SEPARATOR, 1)[0]
-
-
-def _identity_attributes_by_kind(operations: Sequence[PlannedOperation]) -> dict[str, set[str]]:
-    """Identity attribute names the plan supplies per destination kind.
-
-    Intersected across a kind's operations, so a component missing from any one of them is
+    Intersected across a kind's operations, so a path missing from any one of them is
     reported rather than masked by a sibling that happens to carry it.
     """
-    by_kind: dict[str, set[str]] = {}
+    by_kind: dict[str, set[tuple[str, ...]]] = {}
     for operation in operations:
-        attributes = set(operation.identity)
+        paths = _identity_leaf_paths(operation.identity)
         if operation.kind in by_kind:
-            by_kind[operation.kind] &= attributes
+            by_kind[operation.kind] &= paths
         else:
-            by_kind[operation.kind] = attributes
+            by_kind[operation.kind] = paths
     return by_kind
 
 
@@ -632,6 +621,17 @@ def _identity_value_at_path(identity: Mapping[str, Any], path: tuple[str, ...]) 
         if index < len(path) - 1 and isinstance(value, Mapping) and isinstance(value.get("identity"), Mapping):
             value = value["identity"]
     return value
+
+
+def _identity_supplies_component(identity_paths: set[tuple[str, ...]], component: tuple[str, ...]) -> bool:
+    """Return whether an identity supplies one exact schema component.
+
+    A one-segment relationship component is supplied by any nested identity for that
+    relationship. Multi-segment components must match their exact nested leaf path.
+    """
+    return component in identity_paths or (
+        len(component) == 1 and any(path[:1] == component for path in identity_paths)
+    )
 
 
 def _merged_identity_counts(
@@ -741,12 +741,12 @@ def warn_missing_convergence_key(*, destination: Any, operations: Sequence[Plann
         logger.debug("Plan: the destination exposes no schema, so the convergence-key warning is skipped (AD052)")
         return
 
-    for kind, supplied in sorted(_identity_attributes_by_kind(operations).items()):
+    for kind, supplied_paths in sorted(_identity_paths_by_kind(operations).items()):
         node = schema.get(kind) if hasattr(schema, "get") else None
         if node is None:
             logger.debug("Plan: the destination schema declares no kind %s; convergence-key warning skipped", kind)
             continue
-        readable = ", ".join(sorted(supplied))
+        readable = ", ".join(".".join(path) for path in sorted(supplied_paths))
         _warn_identity_finer_than_destination_key(
             kind=kind,
             node=node,
@@ -762,7 +762,11 @@ def warn_missing_convergence_key(*, destination: Any, operations: Sequence[Plann
                 kind,
             )
         elif human_friendly_id:
-            missing = [component for component in human_friendly_id if _component_field(component) not in supplied]
+            missing = [
+                component
+                for component in human_friendly_id
+                if not _identity_supplies_component(supplied_paths, _component_parts(component))
+            ]
             if missing:
                 logger.warning(
                     "Plan: the plan's identity for destination kind %s (%s) does not supply every "
@@ -775,7 +779,8 @@ def warn_missing_convergence_key(*, destination: Any, operations: Sequence[Plann
 
         constraints = getattr(node, "uniqueness_constraints", None) or []
         covered = any(
-            {_component_field(component) for component in constraint} <= supplied for constraint in constraints
+            all(_identity_supplies_component(supplied_paths, _component_parts(component)) for component in constraint)
+            for constraint in constraints
         )
         if not covered:
             logger.warning(

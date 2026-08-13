@@ -66,6 +66,7 @@ _TIMESTAMP_FILTER_KW = "node_metadata__updated_at__after"
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, MutableMapping, Sequence
 
+    from diffsync.diff import DiffElement
     from infrahub_sdk.node import InfrahubNodeSync, RelatedNodeSync, RelationshipManagerSync
     from infrahub_sdk.schema import MainSchemaTypesAPI
     from infrahub_sdk.store import NodeStoreSync
@@ -758,7 +759,7 @@ def _identity_component_is_covered(*, value: Any, paths: tuple[tuple[str, ...], 
             )
             for nested_name, nested_value in nested_identity.items()
         )
-    return () in paths
+    return value is not None and () in paths
 
 
 def _uncovered_recorded_identity(
@@ -785,6 +786,18 @@ def _writable_diff_kinds(diff: Diff) -> frozenset[str]:
             writable.add(element.type)
         pending.extend(element.get_children())
     return frozenset(writable)
+
+
+def _writable_diff_elements(diff: Diff, *, kind: str) -> tuple[DiffElement, ...]:
+    """Return create elements of one kind that can enter the id-less upsert path."""
+    writable: list[DiffElement] = []
+    pending = list(diff.get_children())
+    while pending:
+        element = pending.pop()
+        if element.action == DiffSyncActions.CREATE and element.type == kind:
+            writable.append(element)
+        pending.extend(element.get_children())
+    return tuple(writable)
 
 
 class InfrahubAdapter(DiffSyncMixin, Adapter):
@@ -923,8 +936,31 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             model_class = getattr(self, mapping.name, None)
             identifiers = frozenset(getattr(model_class, "_identifiers", None) or mapping.identifiers or ())
             node_schema = self.schema.get(mapping.name)
-            if not identifiers or node_schema is None:
+            if node_schema is None:
                 continue
+
+            if not identifiers:
+                msg = (
+                    f"Refusing to sync destination kind {mapping.name}: the generated model has no "
+                    "identity, so an id-less upsert cannot be proven convergent. Configure at least "
+                    "one mapping identifier before retrying."
+                )
+                raise ConvergenceIdentityError(msg)
+
+            if diff is not None:
+                missing_values = frozenset(
+                    identifier
+                    for element in _writable_diff_elements(diff, kind=mapping.name)
+                    for identifier in identifiers
+                    if element.keys.get(identifier) is None
+                )
+                if missing_values:
+                    msg = (
+                        f"Refusing to sync destination kind {mapping.name}: create identity value(s) "
+                        f"{', '.join(sorted(missing_values))} are missing or null, so an id-less upsert "
+                        "cannot be proven convergent. Populate every mapping identifier before retrying."
+                    )
+                    raise ConvergenceIdentityError(msg)
 
             upsert_paths = _destination_upsert_paths(node_schema)
             path_parts = tuple(_path_parts(path) for path in upsert_paths)
@@ -1248,8 +1284,22 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         # With no HFID, Infrahub's server-side upsert falls back to the schema's
         # default filter. The SDK has no `hfid` to render in that case, but the
         # mutation is still keyed by the payload field selected by the server.
-        if not components and getattr(node_schema, "default_filter", None):
-            return
+        default_filter = getattr(node_schema, "default_filter", None)
+        if not components and default_filter:
+            value: Any = rendered
+            for segment in default_filter.split("__"):
+                if not isinstance(value, Mapping) or segment not in value:
+                    value = None
+                    break
+                value = value[segment]
+            if value is not None:
+                return
+            msg = (
+                f"The mutation rendered for kind {kind!r} carries neither 'id' nor 'hfid', and its "
+                f"default-filter path {default_filter!r} has no value. The id-less upsert would be "
+                "unkeyed and a re-apply could duplicate the object."
+            )
+            raise UnkeyedWriteRefusedError(msg)
 
         if components and all(len(_component_segments(component)) == 1 for component in components):
             msg = (
@@ -1396,6 +1446,14 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     @staticmethod
     def _validate_planned_operation_identity(*, node_schema: NodeSchemaAPI, operation: PlannedOperation) -> None:
         """Refuse a saved-plan identity finer than the id-less upsert that applies it."""
+        if not operation.identity:
+            msg = (
+                f"Refusing to apply saved operation {operation.operation_id!r} for destination kind "
+                f"{operation.kind}: the recorded identity is empty, so its id-less upsert cannot be "
+                "proven convergent. Rebuild the plan with at least one identity component."
+            )
+            raise ConvergenceIdentityError(msg)
+
         upsert_paths = _destination_upsert_paths(node_schema)
         path_parts = tuple(_path_parts(path) for path in upsert_paths)
         uncovered = _uncovered_recorded_identity(identity=operation.identity, upsert_paths=path_parts)

@@ -582,6 +582,63 @@ def test_finer_saved_plan_identity_is_refused_before_the_idless_upsert(action: s
     assert client.mutations == []
 
 
+@pytest.mark.parametrize("action", ["create", "update"])
+def test_empty_saved_plan_identity_is_refused_before_the_idless_upsert(action: str) -> None:
+    """An empty recorded identity cannot make a saved upsert idempotent."""
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    operation = make_operation(
+        kind=KEYLESS_KIND,
+        action=action,
+        identity={},
+        payload={"description": "unsafe"},
+    )
+
+    with pytest.raises(ConvergenceIdentityError, match="recorded identity is empty"):
+        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    assert client.mutations == []
+
+
+@pytest.mark.parametrize("action", ["create", "update"])
+def test_null_default_filter_identity_is_refused_before_the_idless_upsert(action: str) -> None:
+    """A declared default filter is not a key when its recorded value is null."""
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    operation = make_operation(
+        kind=KEYLESS_KIND,
+        action=action,
+        identity={"name": None},
+        payload={"name": None},
+    )
+
+    with pytest.raises(ConvergenceIdentityError, match=r"uncovered identity component\(s\): name"):
+        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    assert client.mutations == []
+
+
+def test_default_filter_payload_without_a_value_is_refused_by_the_render_gate() -> None:
+    """A declared default filter cannot mask a rendered mutation that lost its value."""
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    node = client.create(
+        kind=KEYLESS_KIND,
+        data=client.schema.generate_payload_create(
+            schema=KEYLESS_SCHEMA,
+            data={"name": None},
+            source=None,
+            owner=None,
+            is_protected=True,
+        ),
+    )
+
+    with pytest.raises(UnkeyedWriteRefusedError, match="default-filter path"):
+        adapter._report_unkeyed_render(node=node, node_schema=KEYLESS_SCHEMA)
+
+    assert client.mutations == []
+
+
 def test_a_payload_missing_an_identity_component_is_refused_before_any_write() -> None:
     """AD042/AD051: a payload assembled from attributes alone leaves the upsert unkeyed."""
     client = RecordingClient()

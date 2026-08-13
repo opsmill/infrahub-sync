@@ -301,8 +301,8 @@ def test_the_guard_message_names_the_missing_components() -> None:
     assert "gamma" in message
 
 
-def test_an_empty_identity_passes_the_guard_vacuously() -> None:
-    """No components means nothing to require; the guard adds no rule of its own."""
+def test_an_empty_identity_remains_a_valid_plan_value_for_read_only_boundaries() -> None:
+    """The artifact accepts it; write destinations decide whether it is safe to apply."""
     operation = PlannedOperation(**_operation(identity={}, payload={"description": "x"}))
     assert operation.identity == {}
 

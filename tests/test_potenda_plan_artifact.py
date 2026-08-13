@@ -2509,6 +2509,46 @@ def test_nested_peer_identity_is_compared_with_the_full_upsert_path(caplog: pyte
     assert "does not distinguish: site.tenant" in message
 
 
+def test_nested_identity_does_not_cover_a_different_hfid_leaf(caplog: pytest.LogCaptureFixture) -> None:
+    """Supplying `site.tenant` does not satisfy an HFID that requires `site.name`."""
+    identity = {
+        "name": "rack-a",
+        "site": {"peer_kind": "LocationSite", "identity": {"tenant": "production"}},
+    }
+    operation = PlannedOperation(
+        operation_id=operation_id("create", "LocationRack", identity),
+        action="create",
+        kind="LocationRack",
+        identity=identity,
+        tier=1,
+        payload={"name": "rack-a"},
+        relationships=[
+            RelationshipReference(
+                field="site",
+                peer_kind="LocationSite",
+                cardinality="one",
+                peers=[{"tenant": "production"}],
+            )
+        ],
+    )
+    schema = {
+        "LocationRack": schema_node(
+            human_friendly_id=["name__value", "site__name__value"],
+            uniqueness_constraints=[["name__value", "site__name__value"]],
+        )
+    }
+
+    with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
+        warn_missing_convergence_key(
+            destination=_FakeAdapter("destination", schema=schema),
+            operations=[operation],
+        )
+
+    messages = derive_warnings(caplog)
+    assert any("missing: site__name__value" in message for message in messages)
+    assert any("no uniqueness constraint covered" in message for message in messages)
+
+
 def test_a_kind_declaring_no_destination_key_at_all_is_left_to_the_unkeyed_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

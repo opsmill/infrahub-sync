@@ -67,6 +67,70 @@ def test_finer_mapping_identity_is_refused_before_destination_writes(
     assert entered_write_path is False
 
 
+def test_empty_generated_identity_is_refused_before_destination_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A create model with no identity cannot enter the id-less upsert path."""
+    destination = InfrahubAdapter.__new__(InfrahubAdapter)
+    destination.config = SyncConfig(
+        name="unkeyed-sync",
+        source=SyncAdapter(name="source"),
+        destination=SyncAdapter(name="infrahub"),
+        schema_mapping=[SchemaMappingModel(name="UnkeyedThing", identifiers=[])],
+    )
+    destination.schema = {"UnkeyedThing": SimpleNamespace(human_friendly_id=[], default_filter=None)}
+    destination.UnkeyedThing = type("UnkeyedThing", (), {"_identifiers": ()})
+    entered_write_path = False
+
+    def _enter_write_path(*_args: object, **_kwargs: object) -> Diff:
+        nonlocal entered_write_path
+        entered_write_path = True
+        return Diff()
+
+    monkeypatch.setattr(Adapter, "sync_from", _enter_write_path)
+    diff = Diff()
+    element = DiffElement(obj_type="UnkeyedThing", name="unkeyed", keys={})
+    element.add_attrs(source={"description": "unsafe"})
+    diff.add(element)
+
+    with pytest.raises(ConvergenceIdentityError, match="has no identity"):
+        destination.sync_from(Adapter(), diff=diff)
+
+    assert entered_write_path is False
+
+
+def test_null_generated_identity_value_is_refused_before_destination_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A configured identifier still cannot key an upsert when its create value is null."""
+    destination = InfrahubAdapter.__new__(InfrahubAdapter)
+    destination.config = SyncConfig(
+        name="null-key-sync",
+        source=SyncAdapter(name="source"),
+        destination=SyncAdapter(name="infrahub"),
+        schema_mapping=[SchemaMappingModel(name="Thing", identifiers=["name"])],
+    )
+    destination.schema = {"Thing": SimpleNamespace(human_friendly_id=["name__value"])}
+    destination.Thing = type("Thing", (), {"_identifiers": ("name",)})
+    entered_write_path = False
+
+    def _enter_write_path(*_args: object, **_kwargs: object) -> Diff:
+        nonlocal entered_write_path
+        entered_write_path = True
+        return Diff()
+
+    monkeypatch.setattr(Adapter, "sync_from", _enter_write_path)
+    diff = Diff()
+    element = DiffElement(obj_type="Thing", name="null-key", keys={"name": None})
+    element.add_attrs(source={"description": "unsafe"})
+    diff.add(element)
+
+    with pytest.raises(ConvergenceIdentityError, match="missing or null"):
+        destination.sync_from(Adapter(), diff=diff)
+
+    assert entered_write_path is False
+
+
 def test_covering_uniqueness_constraint_does_not_override_coarser_hfid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
