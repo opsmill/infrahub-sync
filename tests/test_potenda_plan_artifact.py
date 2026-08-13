@@ -951,10 +951,17 @@ def test_tier_is_recorded_on_every_operation(
 
 
 def schema_node(
-    *, human_friendly_id: list[str] | None, uniqueness_constraints: list[list[str]] | None
+    *,
+    human_friendly_id: list[str] | None,
+    uniqueness_constraints: list[list[str]] | None,
+    default_filter: str | None = None,
 ) -> SimpleNamespace:
     """A destination schema node exposing only the two fields FR-024 reads."""
-    return SimpleNamespace(human_friendly_id=human_friendly_id, uniqueness_constraints=uniqueness_constraints)
+    return SimpleNamespace(
+        human_friendly_id=human_friendly_id,
+        uniqueness_constraints=uniqueness_constraints,
+        default_filter=default_filter,
+    )
 
 
 def test_warns_when_the_destination_kind_declares_no_human_friendly_id(caplog: pytest.LogCaptureFixture) -> None:
@@ -2420,8 +2427,10 @@ def test_the_hazard_is_reported_even_before_any_two_objects_collide(caplog: pyte
     assert "does not distinguish: site" in message
 
 
-def test_no_merge_warning_where_a_destination_key_covers_the_plan_identity(caplog: pytest.LogCaptureFixture) -> None:
-    """The control case: a constraint that does distinguish `(name, site)` is silent."""
+def test_covering_uniqueness_constraint_does_not_hide_coarser_upsert_key(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A uniqueness constraint does not change the HFID used by upsert."""
     schema = {
         "LocationRack": schema_node(
             human_friendly_id=["name__value"],
@@ -2435,7 +2444,28 @@ def test_no_merge_warning_where_a_destination_key_covers_the_plan_identity(caplo
             operations=rack_operations("dm-akron", "dm-albany", "dm-buffalo"),
         )
 
-    assert derive_warnings(caplog) == []
+    (message,) = [message for message in derive_warnings(caplog) if "is finer than" in message]
+    assert "does not distinguish: site" in message
+
+
+def test_default_filter_is_the_upsert_key_when_hfid_is_absent(caplog: pytest.LogCaptureFixture) -> None:
+    """The merge diagnostic follows Infrahub's default-filter fallback."""
+    schema = {
+        "LocationRack": schema_node(
+            human_friendly_id=None,
+            uniqueness_constraints=[["name__value", "site__name__value"]],
+            default_filter="name__value",
+        )
+    }
+
+    with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
+        warn_missing_convergence_key(
+            destination=_FakeAdapter("destination", schema=schema),
+            operations=rack_operations("dm-akron", "dm-albany", "dm-buffalo"),
+        )
+
+    messages = derive_warnings(caplog)
+    assert any("does not distinguish: site" in message for message in messages)
 
 
 def test_a_kind_declaring_no_destination_key_at_all_is_left_to_the_unkeyed_warning(

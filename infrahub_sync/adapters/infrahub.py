@@ -748,6 +748,36 @@ def _path_parts(path: str) -> tuple[str, ...]:
     return parts
 
 
+def _identity_component_is_covered(*, value: Any, paths: tuple[tuple[str, ...], ...]) -> bool:
+    """Return whether upsert-path tails distinguish one recorded identity value."""
+    nested_identity = value.get("identity") if isinstance(value, Mapping) else None
+    if isinstance(nested_identity, Mapping):
+        if not nested_identity:
+            return False
+        return all(
+            _identity_component_is_covered(
+                value=nested_value,
+                paths=tuple(path[1:] for path in paths if path and path[0] == nested_name),
+            )
+            for nested_name, nested_value in nested_identity.items()
+        )
+    return () in paths
+
+
+def _uncovered_recorded_identity(
+    *, identity: Mapping[str, Any], upsert_paths: tuple[tuple[str, ...], ...]
+) -> frozenset[str]:
+    """Return recorded identity fields that Infrahub's upsert key cannot distinguish."""
+    return frozenset(
+        name
+        for name, value in identity.items()
+        if not _identity_component_is_covered(
+            value=value,
+            paths=tuple(path[1:] for path in upsert_paths if path and path[0] == name),
+        )
+    )
+
+
 def _writable_diff_kinds(diff: Diff) -> frozenset[str]:
     """Return model kinds with create actions that can enter the upsert path."""
     writable: set[str] = set()
@@ -1285,9 +1315,10 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         forbids. The payload is authoritative for the mapped fields it carries and touches no
         unmapped destination field.
 
-        Two checks sit before the write and they are different checks (AD066): the
-        per-component **diagnostic** below, which names *which* human-friendly-ID component
-        is unaccounted for, and `_report_unkeyed_render`'s **gate** on the rendered mutation.
+        Three checks sit before the write: the per-component **diagnostic** below names
+        which human-friendly-ID component is unaccounted for; the convergence-identity
+        guard refuses a recorded identity finer than the id-less upsert key; and
+        `_report_unkeyed_render` is the final **gate** on the rendered mutation (AD066).
 
         The write is not the last destination interaction: every cardinality-many
         relationship is then written explicitly as a replace-set by a single targeted
@@ -1299,6 +1330,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 limitation, not a failure), and no skip is recorded — see above.
             UnaccountedIdentityComponentError: a human-friendly-ID component of the
                 destination kind is not accounted for by the payload and the operation.
+            ConvergenceIdentityError: the recorded identity is finer than the destination
+                key used by the id-less upsert.
             UnkeyedWriteRefusedError: the rendered mutation is unkeyed for a kind whose
                 human-friendly ID is all-direct.
             PeerNotFoundError: a peer identity matches no destination object.
@@ -1333,6 +1366,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             data[reference.field] = peer_ids[0] if reference.cardinality == "one" else peer_ids
 
         self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
+        self._validate_planned_operation_identity(node_schema=node_schema, operation=operation)
 
         source_id = self.source_node.id if self.source_node else None
         owner_id = self.owner_node.id if self.owner_node else None
@@ -1355,6 +1389,28 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         node_id = _require_node_id(node, context=f"for operation {operation.operation_id!r}")
         peers.remember(operation.kind, operation.identity, node_id)
         return node_id
+
+    @staticmethod
+    def _validate_planned_operation_identity(*, node_schema: NodeSchemaAPI, operation: PlannedOperation) -> None:
+        """Refuse a saved-plan identity finer than the id-less upsert that applies it."""
+        upsert_paths = _destination_upsert_paths(node_schema)
+        path_parts = tuple(_path_parts(path) for path in upsert_paths)
+        uncovered = _uncovered_recorded_identity(identity=operation.identity, upsert_paths=path_parts)
+        if not uncovered:
+            return
+
+        mapping_identity = ", ".join(sorted(operation.identity))
+        destination_key = ", ".join(sorted(path.replace("__value", "").replace("__", ".") for path in upsert_paths))
+        if not destination_key:
+            destination_key = "none"
+        msg = (
+            f"Refusing to apply saved operation {operation.operation_id!r} for destination kind "
+            f"{operation.kind}: recorded identity ({mapping_identity}) is finer than its destination "
+            f"upsert key ({destination_key}); uncovered identity component(s): "
+            f"{', '.join(sorted(uncovered))}. Saved creates and updates both use an id-less upsert, "
+            "so a uniqueness constraint alone cannot make this write converge safely."
+        )
+        raise ConvergenceIdentityError(msg)
 
     @staticmethod
     def _assert_identity_components_accounted_for(

@@ -38,6 +38,7 @@ from infrahub_sdk.schema.main import (
 )
 
 from infrahub_sync.adapters.infrahub import (
+    ConvergenceIdentityError,
     InfrahubAdapter,
     InfrahubModel,
     PeerResolver,
@@ -213,6 +214,28 @@ GROUP_SCHEMA = NodeSchemaAPI(
     relationships=[_many("group-members", "members", TAG_KIND), _many("group-watchers", "watchers", TAG_KIND)],
 )
 
+RACK_SCHEMA = NodeSchemaAPI(
+    id="rack-schema",
+    name="Rack",
+    namespace="Test",
+    label="Rack",
+    default_filter="name__value",
+    human_friendly_id=["name__value"],
+    uniqueness_constraints=[["name__value", "site__name__value"]],
+    attributes=[_text("rack-name", "name", optional=False)],
+    relationships=[
+        RelationshipSchemaAPI(
+            id="rack-site",
+            name="site",
+            peer=SITE_KIND,
+            cardinality="one",
+            kind=RelationshipKind.ATTRIBUTE,
+            optional=False,
+            identifier="rack__site",
+        )
+    ],
+)
+
 SCHEMAS: dict[str, NodeSchemaAPI] = {
     SITE_KIND: SITE_SCHEMA,
     TAG_KIND: TAG_SCHEMA,
@@ -221,6 +244,7 @@ SCHEMAS: dict[str, NodeSchemaAPI] = {
     ORPHAN_KIND: ORPHAN_SCHEMA,
     TEAM_KIND: TEAM_SCHEMA,
     GROUP_KIND: GROUP_SCHEMA,
+    "TestRack": RACK_SCHEMA,
 }
 
 
@@ -529,6 +553,32 @@ def test_generate_payload_create_receives_the_source_owner_and_protection_argume
     assert call["owner"] == "owner-account-1"
     assert call["is_protected"] is True
     assert call["data"] == {"name": "site-a"}, "`data` is the payload plus resolved peer ids, and nothing else."
+
+
+@pytest.mark.parametrize("action", ["create", "update"])
+def test_finer_saved_plan_identity_is_refused_before_the_idless_upsert(action: str) -> None:
+    """Saved creates and updates cannot rely on a covering uniqueness constraint."""
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    peers = PeerResolver(adapter)
+    peers.remember(SITE_KIND, {"name": "site-a"}, "site-id-1")
+    operation = make_operation(
+        kind="TestRack",
+        action=action,
+        identity={"name": "rack-a", "site": {"peer_kind": SITE_KIND, "identity": {"name": "site-a"}}},
+        payload={"name": "rack-a"},
+        relationships=[
+            RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"name": "site-a"}])
+        ],
+    )
+
+    with pytest.raises(ConvergenceIdentityError) as exc_info:
+        adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    message = str(exc_info.value)
+    assert operation.operation_id in message
+    assert "uncovered identity component(s): site" in message
+    assert client.mutations == []
 
 
 def test_a_payload_missing_an_identity_component_is_refused_before_any_write() -> None:

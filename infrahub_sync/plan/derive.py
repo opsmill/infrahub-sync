@@ -589,18 +589,15 @@ def _identity_attributes_by_kind(operations: Sequence[PlannedOperation]) -> dict
     return by_kind
 
 
-def _destination_keys(node: Any) -> list[tuple[str, ...]]:
-    """Every key the destination could converge a kind on, as mapping field names.
-
-    The kind's human-friendly ID and each of its uniqueness constraints, each reduced from
-    component paths to the mapping field names the plan's identity is keyed by. Sorted and
-    deduplicated so which key a warning names does not depend on schema iteration order.
-    """
-    constraints = getattr(node, "uniqueness_constraints", None) or []
+def _destination_upsert_key(node: Any) -> tuple[str, ...]:
+    """The key Infrahub actually uses for an upsert, as mapping field names."""
     human_friendly_id = getattr(node, "human_friendly_id", None)
-    declared = [*constraints, *([human_friendly_id] if human_friendly_id else [])]
-    keys = {tuple(sorted({_component_field(component) for component in key})) for key in declared if key}
-    return sorted(keys)
+    if human_friendly_id:
+        return tuple(sorted({_component_field(component) for component in human_friendly_id}))
+    default_filter = getattr(node, "default_filter", None)
+    if default_filter:
+        return (_component_field(default_filter),)
+    return ()
 
 
 def _merged_identity_counts(operations: Sequence[PlannedOperation], *, key: tuple[str, ...]) -> tuple[int, int]:
@@ -648,15 +645,12 @@ def _warn_identity_finer_than_destination_key(
     (tighten the destination schema, loosen the mapping, or override per kind) is a
     per-deployment decision and out of this release's scope.
     """
-    keys = _destination_keys(node)
-    if not keys or any(supplied <= set(key) for key in keys):
+    key = _destination_upsert_key(node)
+    if not key or supplied <= set(key):
         return
 
-    # The key the destination will really converge on: the one that accounts for most of the
-    # plan's identity. Ties break on the sorted order, so the choice is deterministic.
-    closest = min(keys, key=lambda key: (-len(supplied & set(key)), key))
-    uncovered = sorted(supplied - set(closest))
-    collided, destination_identities = _merged_identity_counts(operations, key=closest)
+    uncovered = sorted(supplied - set(key))
+    collided, destination_identities = _merged_identity_counts(operations, key=key)
     if collided:
         identities = "identity" if destination_identities == 1 else "identities"
         observed = (
@@ -669,12 +663,12 @@ def _warn_identity_finer_than_destination_key(
             f"objects differing only in those attributes would silently become one"
         )
     logger.warning(
-        "Plan: the plan's identity for destination kind %s (%s) is finer than every key the destination "
-        "can converge it on (%s), so distinct source objects merge instead of duplicating; the destination "
+        "Plan: the plan's identity for destination kind %s (%s) is finer than the destination's "
+        "upsert key (%s), so distinct source objects merge instead of duplicating; the destination "
         "does not distinguish: %s. %s",
         kind,
         ", ".join(sorted(supplied)),
-        ", ".join(closest),
+        ", ".join(key),
         ", ".join(uncovered),
         observed,
     )
@@ -691,8 +685,9 @@ def warn_missing_convergence_key(*, destination: Any, operations: Sequence[Plann
     2. the kind declares no `uniqueness_constraints` entry covered by the plan's identity
        attributes — a different condition, because a kind with a complete human-friendly ID
        and no uniqueness constraint still duplicates silently;
-    3. no key the destination declares covers the plan's identity — the opposite direction,
-       where source objects **merge** rather than duplicate; see
+    3. the destination's actual upsert key (human-friendly ID, or default filter when no
+       human-friendly ID exists) does not cover the plan's identity — the opposite
+       direction, where source objects **merge** rather than duplicate; see
        `_warn_identity_finer_than_destination_key`.
 
     **Guarded on the destination exposing a schema at all (AD052)**, since `self.schema` is
