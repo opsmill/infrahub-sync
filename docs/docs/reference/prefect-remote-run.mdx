@@ -1,14 +1,13 @@
 ---
-title: Prefect remote run (developer preview)
+title: Prefect remote run
 ---
 
 `infrahub-sync` ships an optional Prefect integration that exposes one sync run as a
 Prefect deployment, so a plan or a sync can be started and observed over Prefect's own
 REST API instead of by shelling out to the CLI.
 
-This is a **developer preview**. The flow parameters, the returned result fields, and the
-summary log line described here are stable for the preview and may be extended, but not
-silently reshaped, by later work.
+The flow parameters, returned result fields, and summary log line form the remote-run
+contract. Changes may extend that contract, but must not silently reshape existing fields.
 
 :::warning Trusted development environment only
 
@@ -30,10 +29,17 @@ Prefect is an optional extra, pinned to a single version:
 prefect = ["prefect==3.8.1"]
 ```
 
-While this remains an unpublished preview, install it from a repository checkout of the
-branch that carries it — `pip install -e '.[prefect]'` from the repository root. Once the
-integration ships in a release, the ordinary extra syntax
-(`pip install 'infrahub-sync[prefect]'`) applies.
+Install the extra from the same source as Infrahub Sync. From a repository checkout, run:
+
+```bash
+pip install -e '.[prefect]'
+```
+
+For an installed package, run:
+
+```bash
+pip install 'infrahub-sync[prefect]'
+```
 
 Nothing in the base installation imports, starts, or contacts Prefect. Only the
 `infrahub_sync.orchestration` modules import it, and no other part of the package imports
@@ -145,7 +151,7 @@ write — while materializing zero rows, so the result comes back
 
 Do not read `changed=false` as "the destination was not touched". For a definitive
 account of what a run did, read the artifacts under `artifact_path` on the runner host.
-This is a known limit of the preview.
+This is a known limit of the direct Prefect deployment.
 
 :::
 
@@ -161,7 +167,7 @@ run 20260731T1058-07e1e25e finished: status=planned changed=True summary=create:
 
 Its fields mirror the result: the leading value is `run_id`, followed by `status`,
 `changed`, the three `summary` counts, and `artifact_path`. The format is contractual for
-this preview and safe to parse. Everything the sync itself logs — load, diff, plan, and
+this integration and safe to parse. Everything the sync itself logs — load, diff, plan, and
 per-adapter lifecycle lines — is forwarded into the same flow-run log at `INFO`, with the
 originating logger name preserved.
 
@@ -174,15 +180,18 @@ originating logger name preserved.
 | `COMPLETED` | `applied` | `applied` | Sync that wrote the changes |
 | `FAILED` | no result returned | `failed`, or no run directory when the refusal precedes execution | Validation refusal or execution failure; the sanitized cause is the Prefect state message |
 
-## What the preview does not include
+## Scope and limitations
 
-No API façade of our own, no remote reviewed-plan or apply workflow, no per-stage tasks,
-no work pools or workers, no triggers, and no production deployment profile. Saved-plan
-review and apply remain available through the CLI. Concurrency guarantees are limited to
-the per-configuration lock the sync engine already applies on a single runner host: a
-second run of the same configuration waits for that lock and fails if it times out,
-rather than hanging. Beyond it, the preview promises no queuing, ordering, or overlap
-policy.
+The direct deployment does not provide a Sync-owned HTTP API, remote reviewed-plan apply,
+per-stage tasks, work pools, workers, triggers, or an overlap policy. Saved-plan review and
+apply remain available through the CLI. Use the separate
+[managed Sync HTTP API](./managed-http-api.mdx) when an automation client needs a stable
+Sync-owned API, durable results and artifacts, reviewed-plan apply, actor authorization,
+or managed worker execution.
+
+Concurrency guarantees for this direct deployment are limited to the per-configuration
+lock on one runner host. A second run of the same configuration waits for that lock and
+fails if it times out. The deployment adds no queue or ordering policy beyond that lock.
 
 ## Related
 

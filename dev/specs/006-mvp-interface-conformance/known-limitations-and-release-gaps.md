@@ -49,7 +49,7 @@
 
 ## Product limitations retained
 
-- Delete operations remain reviewable but are not executed by this release.
+- Delete operations remain reviewable but are not executed.
 - The public Python and CLI projection supports the existing local SQLite/filesystem
   provider only. Adding a provider selector is out of DB-006 scope; production
   PostgreSQL/S3 construction remains the DB-003 Python provider surface.

@@ -8,7 +8,7 @@ identity, and delegates execution to a separate Prefect deployment. Sync owns th
 authorization, plan, result, artifact, audit, and idempotency contracts. Prefect owns live
 execution state, workers, retries, logs, and cancellation.
 
-The existing [Prefect remote run developer preview](./prefect-remote-run.mdx) remains a
+The [direct Prefect remote run](./prefect-remote-run.mdx) remains a
 separate four-parameter deployment. Use the managed API when a trusted automation client
 needs reviewed-plan apply, durable results, artifact retrieval, or actor-scoped mutation
 control.
@@ -20,6 +20,12 @@ worker that can run its deployment:
 
 ```bash
 pip install 'infrahub-sync[managed]'
+```
+
+From a repository checkout, install the matching source and development tools instead:
+
+```bash
+uv sync --extra dev --extra prefect --extra managed
 ```
 
 The profile directly installs FastAPI, HTTPX, Uvicorn, Prefect 3.8.1, and OpsMill Prefect
@@ -256,4 +262,4 @@ recovery state machine, or overlap policy.
 
 - [Durable product records](./durable-product-records.mdx)
 - [Saved-plan review and apply](../running-a-sync.mdx)
-- [Prefect remote run developer preview](./prefect-remote-run.mdx)
+- [Prefect remote run](./prefect-remote-run.mdx)

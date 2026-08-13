@@ -89,7 +89,7 @@ so nothing in the format says *clear this*. Derivation cannot produce it either:
 whose mapped value is `None` is treated as absent and skipped. This is an intended v1 scope limit and
 **parity with live `sync`**, which skips a `None` there for the same reason; a relationship a plan does
 not mention is one the apply leaves alone. Clearing a cardinality-one peer is done at the destination,
-and encoding it is a `format_version` extension for a later release.
+and encoding it requires a future `format_version` extension.
 
 ### The payload carries the identity
 

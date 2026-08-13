@@ -40,7 +40,7 @@ FLOW_NAME = "infrahub-sync"
 # Deployment named "run", NOT a repeat of the flow name: the lookup path reads
 # /api/deployments/name/infrahub-sync/run instead of the stuttering
 # .../infrahub-sync/infrahub-sync, and future orchestration work gets sibling
-# deployments as .../infrahub-sync/<verb> for free. Renaming after the preview
+# deployments as .../infrahub-sync/<verb> for free. Renaming either value
 # would break every remote caller's lookup.
 DEPLOYMENT_NAME = "run"
 CONFIG_DIR_ENV = "INFRAHUB_SYNC_CONFIG_DIRECTORY"
@@ -53,7 +53,7 @@ BRIDGED_LEVEL = logging.INFO
 # Contractual format of the one summary line a remote caller may parse. Carries
 # five RunResult fields (run_id, status, changed, summary, artifact_path);
 # sync_name and operation deliberately do not appear. Changing it is a breaking
-# change for consumers of this preview.
+# change for consumers of this deployment contract.
 SUMMARY_LINE_FORMAT = "run %s finished: status=%s changed=%s summary=create:%d,update:%d,delete:%d artifact=%s"
 
 

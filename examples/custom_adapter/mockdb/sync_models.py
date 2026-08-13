@@ -7,11 +7,9 @@ from infrahub_sync.plugin_loader import PluginLoader
 # Load model class dynamically at runtime (honor adapters_path, safe fallback)
 try:
     _loader = PluginLoader.from_env_and_args(adapter_paths=[])
-
     _spec = "./examples/custom_adapter/custom_adapter_src/custom_adapter.py"
-
     _ModelBaseClass = _loader.resolve(_spec, default_class_candidates=("Model",))
-except Exception:
+except Exception:  # noqa: BLE001 -- generated adapters need a safe import fallback
     # Fallback: use DiffSyncModel to avoid import-time failure
     from diffsync import DiffSyncModel as _FallbackModel
 
@@ -27,8 +25,8 @@ class InfraDevice(_ModelBaseClass):
     _modelname = "InfraDevice"
     _identifiers = ("name",)
     _attributes = ("type",)
-    name: str
     type: str
+    name: str
 
     local_id: str | None = None
     local_data: Any | None = None

@@ -7,8 +7,8 @@
 #
 #   1. Auto-tiered write order. The `order:` list has been removed; the engine
 #      derives tiers from `schema_mapping[].fields[].reference` and groups
-#      kinds that can be written in parallel. Add `--parallel` to `sync` to
-#      enforce a hard barrier between tiers.
+#      kinds that can be written in parallel. Tiered parallel execution is the
+#      default; pass `--no-parallel` when you need serial execution.
 #
 #   2. Sidecar cache and the saved plan artifact. Every `diff` writes
 #      per-resource snapshots, a `plan.parquet` for querying, and a `plan/`
@@ -17,11 +17,13 @@
 #      pass it to `diff --from-plan` to review the plan, and to `apply` to
 #      apply it without re-extracting the source.
 #
-# Usage:
-#   uv run infrahub-sync diff --name from-netbox --directory sync-projects
-#   uv run infrahub-sync diff --name from-netbox --from-plan <run_id> --directory sync-projects
-#   uv run infrahub-sync apply --name from-netbox --run-id <run_id> --directory sync-projects
-#   uv run infrahub-sync sync --name from-netbox --directory sync-projects --parallel
+# Usage from this repository's root. If you copy the project elsewhere, replace
+# `examples` with the directory containing the copied project:
+#   uv run infrahub-sync diff --name from-netbox --directory examples
+#   uv run infrahub-sync diff --name from-netbox --from-plan <run_id> --directory examples
+#   uv run infrahub-sync apply --name from-netbox --run-id <run_id> --directory examples \
+#     --expected-checksum <plan_checksum_from_review>
+#   uv run infrahub-sync sync --name from-netbox --directory examples
 #
 # ---------------------------------------------------------------------------
 

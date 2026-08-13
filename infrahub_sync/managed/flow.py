@@ -2,7 +2,7 @@
 
 # Deliberately no ``from __future__ import annotations``. Prefect parameter
 # validation must receive the concrete Literal at runtime; the preserved
-# Developer Preview flow documents the affected Prefect/Pydantic versions.
+# The direct Prefect flow documents the affected Prefect/Pydantic versions.
 
 import logging
 import os

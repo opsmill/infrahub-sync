@@ -124,7 +124,7 @@ def _delete_disclosure(summary: PlanSummary) -> list[str]:
     Both are obligations rather than formatting choices. Without the first, a plan whose
     whole delete class was never computed renders identically to a plan that genuinely has
     no deletes, and FR-015's "explicit and reviewable" claim — AD024's entire justification
-    for omitting deletes from this release — is delivered by nothing. Without the second, a
+    for omitting deletes from apply — is delivered by nothing. Without the second, a
     reviewer approves a plan without seeing, in the same output they approve, which of its
     operations will not be written.
     """
@@ -143,7 +143,7 @@ def _delete_disclosure(summary: PlanSummary) -> list[str]:
         notes.append(
             _note(
                 f"{count} delete operation(s) are recorded in this plan and NONE will be executed "
-                f"against the destination by this release. Applying this plan will complete "
+                f"against the destination. Applying this plan will complete "
                 f"successfully and record {count} skipped deletes on the run. Every delete record "
                 f'the --detail listing shows carries a "(not executed)" marker — a --kind filter '
                 f"may narrow the listing so that none of them are shown."

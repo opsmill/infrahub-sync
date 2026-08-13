@@ -77,5 +77,5 @@ needed companion pins in the extra, and both are fixed upstream by 3.8.1. Reject
 the extra to a version that needs two repair pins to start is worse than adjusting one base
 declaration.
 
-**Allow `redis>=5`** — rejected: it ships a redis major bump to every existing user inside a
-preview, and it makes a downstream `diffsync[redis]` requirement unsatisfiable.
+**Allow `redis>=5`** — rejected: it forces a Redis major-version change on every existing
+installation, and it makes a downstream `diffsync[redis]` requirement unsatisfiable.

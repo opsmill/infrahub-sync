@@ -23,7 +23,8 @@ Infrahub Sync supports the following:
 - **Adapter** — the component that connects Infrahub Sync to a specific system. Each adapter handles both communication (API calls, authentication, request handling) and translation (converting the system's data into the internal sync engine's format). Infrahub Sync ships with adapters for common systems and supports custom adapters for systems without a pre-built one.
 - **Schema mapping** — the part of the project configuration that defines how source fields map to destination fields. Direct field mappings, references between models, identifiers, and static values are all declared in YAML.
 
-Three CLI commands operate on a sync project: `generate`, `diff`, and `sync`.
+The core CLI workflow uses `generate`, `diff`, and either `apply` or `sync`. The `list`
+command discovers projects before that workflow begins.
 
 ### Define a sync project
 
@@ -41,11 +42,31 @@ Each sync project consists of a directory and a `config.yml` describing the sync
 
 ### Execute the sync
 
-`infrahub-sync sync --name <project> --directory <dir>` applies the changes calculated by the diff, in the order defined by the project's `order` key — independent models first, then dependent models, then models that reference earlier ones. The sync is idempotent: if a run fails partway through, re-running calculates a fresh diff and applies whatever is still outstanding.
+`infrahub-sync sync --name <project> --directory <dir>` calculates a plan and applies its
+write operations. When `order` is omitted, the engine derives dependency tiers from the
+schema mapping. When `order` is present, the configured sequence is used.
+
+After a failed write, inspect the run record and destination before calculating a fresh
+plan. A failed operation can have written part of its change, and safe re-application is
+not established for destination kinds whose identity crosses a relationship. See
+[Run a sync](./running-a-sync.mdx) for recovery and convergence details.
 
 Three `diffsync_flags` (`SKIP_UNMATCHED_DST` by default, `SKIP_UNMATCHED_SRC`, `SKIP_MODIFIED`) and per-mapping filters control what each run is allowed to change.
 
 → [Run a sync](./running-a-sync.mdx) · [Sync CLI](./reference/cli.mdx)
+
+### Choose an execution surface
+
+| Surface | Use it for | Runtime requirements |
+|---|---|---|
+| CLI | Interactive and scheduled operations, including saved-plan review and apply | Base installation plus adapter dependencies |
+| Python API | Typed in-process plan, verify, apply, and confirmed sync operations | Base installation plus adapter dependencies |
+| Direct Prefect deployment | Starting and observing one plan or confirmed sync through Prefect's API | `prefect` extra and a Prefect server |
+| Managed Sync HTTP API | Authenticated remote runs, durable records and artifacts, reviewed apply, idempotency, and cancellation | `managed` extra, Prefect, a work pool, a worker, and shared durable storage |
+
+Use the [Python API](./reference/python-api.mdx),
+[Prefect remote run](./reference/prefect-remote-run.mdx), or
+[managed HTTP API](./reference/managed-http-api.mdx) reference for setup and contracts.
 
 ## Who it's for
 
@@ -71,7 +92,7 @@ Infrahub is populated from what is actually deployed in the network rather than 
 
 - **Pre-built adapter library** — adapters for Infrahub, NetBox, Nautobot, IP Fabric, Cisco ACI, LibreNMS, Observium, Peering Manager, Prometheus, and Slurp’it, plus a Generic REST API adapter for systems with HTTP/JSON APIs. Each adapter handles both communication and translation for its target system.
 - **Declarative YAML configuration** — a single file per sync project defines source, destination, sync order, and per-model schema mapping. Mappings support 14 filter operations (including `regex` and `is_ip_within`), per-field transforms, custom Jinja filters, and ordered cross-reference resolution.
-- **Sync engine** — built on the `diffsync` framework. Diffs and applies only deltas; three flags control what each run is allowed to change (creates, deletes, modifications).
+- **Sync engine** — built on the `diffsync` framework. Plans record deltas; three flags control what each run is allowed to change. Delete operations remain reviewable but are not executed.
 - **Typer-based CLI** — five commands: `list` (show available projects), `generate` (produce adapter code from the configuration), `diff` (preview changes), `sync` (apply changes), `apply` (write a previously reviewed saved plan to the destination without re-extracting the source).
 - **Custom adapter support** — for systems without a pre-built adapter, write a local custom adapter and load it from a filesystem path, a Python module path, or an installed entry point (`INFRAHUB_SYNC_ADAPTER_PATHS`).
 - **Custom CA certificate support** — connect to systems with self-signed or internal CA-issued TLS certificates.
@@ -112,7 +133,11 @@ No. Infrahub Sync is designed to move data one model at a time, on the team's ow
 No. Infrahub Sync runs as a CLI and is designed to plug into whatever scheduling tooling the team already uses — cron, CI jobs, Prefect, Dagster, or similar. There is no built-in scheduler by design.
 
 **What happens if a sync run fails partway through?**
-Sync runs are idempotent. Re-running the sync calculates a fresh diff against the current destination state and applies only what is still outstanding. Retries on failure are safe.
+Inspect the run record and destination before retrying. Calculate a fresh plan after a
+failed write. A failed operation can have written part of its change, and destination
+kinds whose identity crosses a relationship may not converge safely when reapplied. The
+[run recovery guidance](./running-a-sync.mdx) explains how to interpret partial-write
+evidence and when to inspect the destination.
 
 **Can changes in the destination be overwritten by a sync?**
 By default, `SKIP_UNMATCHED_DST` is enabled, which preserves destination objects that have no corresponding object in the source. For destination objects that do have a source match, the sync's behavior depends on the configured `diffsync_flags`. Decide upfront which system is authoritative for each model and configure the flags accordingly.
@@ -130,6 +155,9 @@ Yes. Each sync project is independent — a separate directory, configuration, a
 | Set up your environment | [Install Infrahub Sync](./installation.mdx) |
 | Configure a sync project | [Create a sync project](./creating-a-sync-project.mdx) · [Sync instance configuration](./reference/config.mdx) |
 | Run a sync | [Run a sync](./running-a-sync.mdx) |
+| Use the Python API | [Python API](./reference/python-api.mdx) |
+| Run through Prefect | [Prefect remote run](./reference/prefect-remote-run.mdx) |
+| Operate the managed HTTP API | [Managed Sync HTTP API](./reference/managed-http-api.mdx) |
 | CLI reference | [Sync CLI](./reference/cli.mdx) |
 | All adapters | See the **Adapters** section in the sidebar |
 | Custom CA certificates | [Use custom CA certificates](./custom-certificates.mdx) |

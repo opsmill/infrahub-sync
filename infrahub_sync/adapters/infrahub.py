@@ -484,7 +484,7 @@ class PeerResolver:
           specified remedy for a kind whose HFID does not cover its plan identity is the
           `<rel>__ids` fallback — resolve the reference component's own peer first,
           recursively through this same resolver, then filter `<rel>__ids=[<id>]` — which
-          this release does not implement; FR-024 already warns at plan time about exactly
+          planned apply does not implement; FR-024 already warns at plan time about exactly
           this condition, and this is its apply-time counterpart;
         - a kind that declares no usable HFID component at all falls back to the identity's
           own direct scalars as `<attr>__value` filters, which is the only thing the apply
@@ -1052,7 +1052,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         - **a component crosses a relationship** — the render carries neither key today for a
           reason this outcome does not control (the SDK cannot form the `hfid` from a peer
           supplied as a resolved node id), so it **warns once per kind and proceeds**;
-          refusing would withdraw every relationship-bearing kind from what this release
+          refusing would withdraw every relationship-bearing kind from what planned apply
           delivers, and the destination's convergent write may still key server-side;
         - **no HFID declared at all** — unkeyed is a schema fact rather than a defect, and
           FR-024 explicitly permits such a kind and requires the run to survive it, so it
@@ -1157,7 +1157,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         if operation.action == "delete":
             msg = (
                 f"Operation {operation.operation_id!r} is a delete of a {operation.kind!r} object. "
-                "Applying deletes is out of scope for this release, so it was not executed and the "
+                "Applying deletes is not supported, so the delete was not executed and the "
                 "destination was not touched."
             )
             raise SkippedDeleteOperation(msg)

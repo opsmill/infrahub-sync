@@ -88,7 +88,7 @@ You should see the Infrahub web interface with a navigation menu on the left sid
 1. Install the Python dependencies with uv:
 
 ```bash
-uv add "infrahub-sync==2.0.0" pynetbox
+uv add infrahub-sync pynetbox
 ```
 
 This installs the `infrahub-sync` command. `pynetbox` is required by the NetBox adapter.
@@ -113,12 +113,14 @@ This is a production-grade Infrahub schema, not a copy of NetBox's data model. I
 
 :::
 
-This collection of schemas is still a work in progress; eventually it will be available through the marketplace. For now, download the files directly:
+This collection of schemas is maintained separately from Infrahub Sync. Download the
+exact source revision verified with this configuration so the destination kind names and
+relationships remain compatible:
 
 ```bash
-BRANCH="bgi-schema-library-v2"
+SCHEMA_LIBRARY_REF="893be13f465158fdf49ce4133a501c8355d53a32"
 DEST="schemas"
-BASE_URL="https://raw.githubusercontent.com/opsmill/schema-library/${BRANCH}"
+BASE_URL="https://raw.githubusercontent.com/opsmill/schema-library/${SCHEMA_LIBRARY_REF}"
 
 FILES=(
   "base/dcim.yml"
@@ -143,6 +145,10 @@ for f in "${FILES[@]}"; do
   curl -sSL --create-dirs -o "${DEST}/${f}" "${BASE_URL}/${f}"
 done
 ```
+
+Do not substitute `models/examples/netbox/netbox.yml` from the Infrahub source
+repository. Despite its similar name, it defines a different model whose kinds do not
+match this sync configuration.
 
 Export the local Infrahub address and API token. Infrahub Sync will need them later to authenticate against your instance:
 
@@ -204,7 +210,11 @@ Open `sync-projects/netbox-demo/config.yml` in an editor and scan the top-level 
 
 The configuration includes default endpoint values, but the environment variables exported above take precedence for tokens and URLs.
 
-The example configuration comments also mention `apply`, `--run-id`, and `--parallel`. This tutorial uses the beginner path: preview with `diff`, then write with `sync --diff`. See [Run a sync](../running-a-sync.mdx) for cached plans and parallel execution.
+The example configuration comments also describe saved-plan review and apply. This
+tutorial first uses `diff` to inspect the current systems, then uses `sync --diff` to load
+them again, calculate a new plan, print it, and apply it. See
+[Run a sync](../running-a-sync.mdx) when you need to apply the exact saved plan you
+reviewed instead of recalculating it.
 
 For a fuller explanation of this file, see [Create a sync project](../creating-a-sync-project.mdx) and the [schema mapping reference](../reference/schema-mapping.mdx).
 
@@ -228,7 +238,10 @@ Infrahub tracks changes through branches, so you can review a batch of imported 
 uv run infrahubctl branch create netbox-import
 ```
 
-The rest of this tutorial runs `diff` and `sync` against this branch with `--branch netbox-import`, so the import can be reviewed before merging. For more about branches and proposed changes, see [Infrahub version control](https://docs.infrahub.app/topics/version-control/).
+The rest of this tutorial runs `diff` and `sync` against this branch with
+`--branch netbox-import`, so you can inspect the destination changes before merging the
+Infrahub branch. For more about branches and proposed changes, see
+[Infrahub version control](https://docs.infrahub.app/topics/version-control/).
 
 ## Preview the changes
 
@@ -238,13 +251,19 @@ Run a dry-run diff against the `netbox-import` branch before writing any data to
 uv run infrahub-sync diff --name from-netbox --directory sync-projects --branch netbox-import
 ```
 
-The `diff` command loads data from NetBox and Infrahub, compares both sides, and prints the planned changes. It also saves a plan artifact under `.infrahub-sync-cache/from-netbox/<run-id>/plan/`, which you can review on its own with `infrahub-sync diff --name from-netbox --directory sync-projects --from-plan <run-id>`.
+The `diff` command loads data from NetBox and Infrahub, compares both sides, and prints the
+planned changes. It also saves a plan artifact under
+`.infrahub-sync-cache/from-netbox/<run-id>/plan/`, which you can review on its own with
+`infrahub-sync diff --name from-netbox --directory sync-projects --from-plan <run-id>`.
+The `sync` command in the next step creates and applies a new plan; it does not apply this
+saved artifact.
 
 Review the output before continuing. On a first run against an empty branch, most planned changes should be creates. Exact counts depend on the current public NetBox demo data.
 
 ## Sync the data
 
-After reviewing the diff, run the sync against the same branch.
+After inspecting the diff, run the sync against the same branch. The command loads both
+systems again and prints the newly calculated plan before writing.
 
 ```bash
 uv run infrahub-sync sync --name from-netbox --directory sync-projects --branch netbox-import --diff
@@ -321,6 +340,20 @@ export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
 
 This error names whichever adapter (NetBox or Infrahub) is missing its variables — the same message is raised for either one.
 
+### `generate` reports destination models missing from the schema
+
+```text
+ERROR | One or more model model are not present in the Schema - ['LocationSite', ...]
+```
+
+The destination does not have the schema collection this configuration maps to. Download
+and load every file listed in [Load a schema into Infrahub](#load-a-schema-into-infrahub),
+then run `generate` again. Use a fresh Infrahub instance or branch if an existing
+`InfraDevice` or another overlapping kind prevents that collection from loading.
+
+The similarly named `models/examples/netbox/netbox.yml` file in the Infrahub source
+repository is not a replacement: it uses a different set of destination kinds.
+
 ### `infrahub-sync` fails with `Object ... already present`
 
 ```text
@@ -356,7 +389,7 @@ The unresolvable peer link is logged and skipped rather than aborting the run. T
 
 Two things to be clear about:
 
-- **This is not a NetBox-specific defect, and it is not introduced by the saved-plan workflow.** It is present in the released destination adapter, and it affects any configuration in which a mapped kind references a peer kind whose `identifiers` include a relationship — the `nautobot`, `ipfabric`, `slurpit`, and `aci` example configurations all contain that shape. It is a recorded limitation of this release, assigned to later work.
+- **This is not a NetBox-specific defect, and it is not introduced by the saved-plan workflow.** It affects any configuration in which a mapped kind references a peer kind whose `identifiers` include a relationship — the `nautobot`, `ipfabric`, `slurpit`, and `aci` example configurations all contain that shape.
 - **`--continue-on-error` is a `sync` option, and it only covers this loading failure.** It does not make a run tolerant of everything: a source record that references a peer the source itself cannot resolve still fails the whole run when the plan is derived, by design. Use it for this destination-loading case, not as a general "keep going" switch.
 
 ## Next steps
