@@ -252,20 +252,10 @@ def sync_cmd(
                 )
 
             if parallel and ptd.tiers:
-                try:
-                    ptd.sync_in_tiers(parallel=True, allow_rowcount_drop=allow_rowcount_drop)
-                except ValueError as exc:
-                    run_file.status = "failed"
-                    run_file.save()
-                    print_error_and_abort(str(exc))
+                ptd.sync_in_tiers(parallel=True, allow_rowcount_drop=allow_rowcount_drop)
                 run_file.summary = {"resources": len(ptd.top_level), "mode": "parallel"}
             else:
-                try:
-                    ptd.load_both_sides()
-                except ValueError as exc:
-                    run_file.status = "failed"
-                    run_file.save()
-                    print_error_and_abort(str(exc))
+                ptd.load_both_sides()
                 ptd.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
                 mydiff = ptd.diff()
                 ptd.write_plan(mydiff)
@@ -282,6 +272,10 @@ def sync_cmd(
                 run_file.summary = {"resources": len(ptd.top_level), "mode": "serial"}
 
             run_file.status = "applied"
+        except ValueError as exc:
+            run_file.status = "failed"
+            run_file.save()
+            print_error_and_abort(str(exc))
         except Exception:
             run_file.status = "failed"
             run_file.save()
