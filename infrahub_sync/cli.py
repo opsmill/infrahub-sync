@@ -10,6 +10,7 @@ import typer
 from infrahub_sdk import InfrahubClientSync
 from infrahub_sdk.exceptions import ServerNotResponsiveError
 
+from infrahub_sync.adapters.infrahub import ConvergenceIdentityError
 from infrahub_sync.cache.locks import pipeline_lock
 from infrahub_sync.cache.sidecars import RunFile
 from infrahub_sync.utils import (
@@ -252,10 +253,20 @@ def sync_cmd(
                 )
 
             if parallel and ptd.tiers:
-                ptd.sync_in_tiers(parallel=True, allow_rowcount_drop=allow_rowcount_drop)
+                try:
+                    ptd.sync_in_tiers(parallel=True, allow_rowcount_drop=allow_rowcount_drop)
+                except ValueError as exc:
+                    run_file.status = "failed"
+                    run_file.save()
+                    print_error_and_abort(str(exc))
                 run_file.summary = {"resources": len(ptd.top_level), "mode": "parallel"}
             else:
-                ptd.load_both_sides()
+                try:
+                    ptd.load_both_sides()
+                except ValueError as exc:
+                    run_file.status = "failed"
+                    run_file.save()
+                    print_error_and_abort(str(exc))
                 ptd.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
                 mydiff = ptd.diff()
                 ptd.write_plan(mydiff)
@@ -263,7 +274,12 @@ def sync_cmd(
                     if diff:
                         logger.info("\n%s", mydiff.str())
                     start_synctime = timer()
-                    ptd.sync(diff=mydiff)
+                    try:
+                        ptd.sync(diff=mydiff)
+                    except ConvergenceIdentityError as exc:
+                        run_file.status = "failed"
+                        run_file.save()
+                        print_error_and_abort(str(exc))
                     end_synctime = timer()
                     logger.info("Sync: Completed in %s sec", end_synctime - start_synctime)
                 else:
@@ -272,10 +288,6 @@ def sync_cmd(
                 run_file.summary = {"resources": len(ptd.top_level), "mode": "serial"}
 
             run_file.status = "applied"
-        except ValueError as exc:
-            run_file.status = "failed"
-            run_file.save()
-            print_error_and_abort(str(exc))
         except Exception:
             run_file.status = "failed"
             run_file.save()

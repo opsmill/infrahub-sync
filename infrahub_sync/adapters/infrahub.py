@@ -7,7 +7,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from diffsync import Adapter, Diff, DiffSyncModel
-from diffsync.enum import DiffSyncFlags
+from diffsync.enum import DiffSyncActions, DiffSyncFlags
 from infrahub_sdk import (
     Config,
     InfrahubClientSync,
@@ -279,24 +279,37 @@ class ConvergenceIdentityError(ValueError):
     """Raised before writes when no destination key covers a mapping identity."""
 
 
-def _component_field(component: str) -> str:
-    """Return the mapping field at the root of an Infrahub schema key path."""
-    return component.split("__", 1)[0]
-
-
-def _destination_upsert_key(node_schema: object) -> frozenset[str]:
-    """Return the schema fields Infrahub actually uses to match an upsert."""
+def _destination_upsert_paths(node_schema: object) -> tuple[str, ...]:
+    """Return the schema paths Infrahub actually uses to match an upsert."""
     human_friendly_id = getattr(node_schema, "human_friendly_id", None)
     if human_friendly_id:
-        return frozenset(_component_field(component) for component in human_friendly_id)
+        return tuple(human_friendly_id)
 
     default_filter = getattr(node_schema, "default_filter", None)
     if default_filter:
-        return frozenset({_component_field(default_filter)})
+        return (default_filter,)
 
-    # Keyless upserts have a separate duplication hazard, but cannot collapse
-    # distinct source identities by matching them onto one destination object.
-    return frozenset()
+    return ()
+
+
+def _path_parts(path: str) -> tuple[str, ...]:
+    """Split an Infrahub key path, excluding attribute-property suffixes."""
+    parts = tuple(path.split("__"))
+    if parts and parts[-1] in {"value", "id"}:
+        return parts[:-1]
+    return parts
+
+
+def _writable_diff_kinds(diff: Diff) -> frozenset[str]:
+    """Return model kinds with create or update actions in a DiffSync diff."""
+    writable: set[str] = set()
+    pending = list(diff.get_children())
+    while pending:
+        element = pending.pop()
+        if element.action in {DiffSyncActions.CREATE, DiffSyncActions.UPDATE}:
+            writable.add(element.type)
+        pending.extend(element.get_children())
+    return frozenset(writable)
 
 
 class InfrahubAdapter(DiffSyncMixin, Adapter):
@@ -369,22 +382,73 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         # We will keep a copy of the schema
         self.schema: MutableMapping[str, MainSchemaTypesAPI] = self.client.schema.all(branch=infrahub_branch)
 
-    def _validate_convergence_identities(self) -> None:
-        """Refuse runtime model identities finer than Infrahub's upsert key."""
+    def _identifier_is_covered(
+        self,
+        *,
+        kind: str,
+        identifier: str,
+        paths: tuple[tuple[str, ...], ...],
+        visited: frozenset[tuple[str, str]] = frozenset(),
+    ) -> bool:
+        """Return whether upsert paths distinguish a generated identifier value."""
+        matching_tails = tuple(path[1:] for path in paths if path and path[0] == identifier)
+        if not matching_tails:
+            return False
+
+        node_schema = self.schema.get(kind)
+        relationships = getattr(node_schema, "relationships", ())
+        relationship = next((item for item in relationships if item.name == identifier), None)
+        if relationship is None:
+            return True
+
+        peer_kind = relationship.peer
+        peer_model = getattr(self, peer_kind, None)
+        peer_identifiers = tuple(getattr(peer_model, "_identifiers", ()) or ())
+        if not peer_identifiers:
+            return False
+
+        marker = (kind, identifier)
+        if marker in visited:
+            return False
+        next_visited = visited | {marker}
+        return all(
+            self._identifier_is_covered(
+                kind=peer_kind,
+                identifier=peer_identifier,
+                paths=matching_tails,
+                visited=next_visited,
+            )
+            for peer_identifier in peer_identifiers
+        )
+
+    def _validate_convergence_identities(self, diff: Diff | None = None) -> None:
+        """Refuse writable model identities finer than Infrahub's upsert key."""
+        writable_kinds = _writable_diff_kinds(diff) if diff is not None else None
         for mapping in self.config.schema_mapping:
+            if writable_kinds is not None and mapping.name not in writable_kinds:
+                continue
+
             model_class = getattr(self, mapping.name, None)
             identifiers = frozenset(getattr(model_class, "_identifiers", None) or mapping.identifiers or ())
             node_schema = self.schema.get(mapping.name)
             if not identifiers or node_schema is None:
                 continue
 
-            upsert_key = _destination_upsert_key(node_schema)
-            if not upsert_key or identifiers <= upsert_key:
+            upsert_paths = _destination_upsert_paths(node_schema)
+            path_parts = tuple(_path_parts(path) for path in upsert_paths)
+            uncovered_identifiers = frozenset(
+                identifier
+                for identifier in identifiers
+                if not self._identifier_is_covered(kind=mapping.name, identifier=identifier, paths=path_parts)
+            )
+            if not uncovered_identifiers:
                 continue
 
-            uncovered = ", ".join(sorted(identifiers - upsert_key))
+            uncovered = ", ".join(sorted(uncovered_identifiers))
             mapping_identity = ", ".join(sorted(identifiers))
-            destination_key = ", ".join(sorted(upsert_key))
+            destination_key = ", ".join(sorted(path.replace("__value", "").replace("__", ".") for path in upsert_paths))
+            if not destination_key:
+                destination_key = "none"
             msg = (
                 f"Refusing to sync destination kind {mapping.name}: generated model identity "
                 f"({mapping_identity}) is finer than its destination upsert key "
@@ -404,7 +468,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         diff: Diff | None = None,
     ) -> Diff:
         """Validate convergence identities before entering DiffSync's write path."""
-        self._validate_convergence_identities()
+        self._validate_convergence_identities(diff=diff)
         return super().sync_from(
             source=source,
             diff_class=diff_class,

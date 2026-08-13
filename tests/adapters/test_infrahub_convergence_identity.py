@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from diffsync import Adapter, Diff
+from diffsync.diff import DiffElement
 
 from infrahub_sync import SchemaMappingModel, SyncAdapter, SyncConfig
 from infrahub_sync.adapters.infrahub import InfrahubAdapter
@@ -213,6 +214,113 @@ def test_default_filter_is_validated_when_destination_has_no_hfid(
         destination.sync_from(Adapter())
 
     assert entered_write_path is False
+
+
+def test_missing_upsert_key_is_refused_before_destination_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A destination without any match key cannot prove a composite identity is safe."""
+    destination = InfrahubAdapter.__new__(InfrahubAdapter)
+    destination.config = SyncConfig(
+        name="rack-sync",
+        source=SyncAdapter(name="netbox"),
+        destination=SyncAdapter(name="infrahub"),
+        schema_mapping=[SchemaMappingModel(name="LocationRack", identifiers=["name", "site"])],
+    )
+    destination.schema = {
+        "LocationRack": SimpleNamespace(
+            human_friendly_id=None,
+            default_filter=None,
+            uniqueness_constraints=[["name__value"]],
+        )
+    }
+    entered_write_path = False
+
+    def _enter_write_path(*_args: object, **_kwargs: object) -> Diff:
+        nonlocal entered_write_path
+        entered_write_path = True
+        return Diff()
+
+    monkeypatch.setattr(Adapter, "sync_from", _enter_write_path)
+
+    with pytest.raises(ValueError) as exc_info:
+        destination.sync_from(Adapter())
+
+    assert "destination upsert key (none)" in str(exc_info.value)
+    assert "uncovered mapping identifier(s): name, site" in str(exc_info.value)
+    assert entered_write_path is False
+
+
+def test_relationship_hfid_must_cover_full_peer_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A relationship key by peer name is unsafe when the peer also needs tenant."""
+    destination = InfrahubAdapter.__new__(InfrahubAdapter)
+    destination.config = SyncConfig(
+        name="rack-sync",
+        source=SyncAdapter(name="netbox"),
+        destination=SyncAdapter(name="infrahub"),
+        schema_mapping=[SchemaMappingModel(name="LocationRack", identifiers=["name", "site"])],
+    )
+    destination.LocationRack = SimpleNamespace(_identifiers=("name", "site"))
+    destination.LocationSite = SimpleNamespace(_identifiers=("name", "tenant"))
+    destination.schema = {
+        "LocationRack": SimpleNamespace(
+            human_friendly_id=["name__value", "site__name__value"],
+            relationships=[SimpleNamespace(name="site", peer="LocationSite")],
+        ),
+        "LocationSite": SimpleNamespace(relationships=[]),
+    }
+    entered_write_path = False
+
+    def _enter_write_path(*_args: object, **_kwargs: object) -> Diff:
+        nonlocal entered_write_path
+        entered_write_path = True
+        return Diff()
+
+    monkeypatch.setattr(Adapter, "sync_from", _enter_write_path)
+
+    with pytest.raises(ValueError) as exc_info:
+        destination.sync_from(Adapter())
+
+    assert "uncovered mapping identifier(s): site" in str(exc_info.value)
+    assert entered_write_path is False
+
+
+def test_inactive_unsafe_mapping_does_not_block_unrelated_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only kinds with create or update actions in the supplied diff are validated."""
+    destination = InfrahubAdapter.__new__(InfrahubAdapter)
+    destination.config = SyncConfig(
+        name="mixed-sync",
+        source=SyncAdapter(name="netbox"),
+        destination=SyncAdapter(name="infrahub"),
+        schema_mapping=[
+            SchemaMappingModel(name="LocationRack", identifiers=["name", "site"]),
+            SchemaMappingModel(name="BuiltinTag", identifiers=["name"]),
+        ],
+    )
+    destination.schema = {
+        "LocationRack": SimpleNamespace(human_friendly_id=["name__value"], relationships=[]),
+        "BuiltinTag": SimpleNamespace(human_friendly_id=["name__value"], relationships=[]),
+    }
+    diff = Diff()
+    tag = DiffElement(obj_type="BuiltinTag", name="red", keys={"name": "red"})
+    tag.add_attrs(source={"description": "Red"})
+    diff.add(tag)
+    entered_write_path = False
+
+    def _enter_write_path(*_args: object, **_kwargs: object) -> Diff:
+        nonlocal entered_write_path
+        entered_write_path = True
+        return Diff()
+
+    monkeypatch.setattr(Adapter, "sync_from", _enter_write_path)
+
+    destination.sync_from(Adapter(), diff=diff)
+
+    assert entered_write_path is True
 
 
 def test_read_only_diff_remains_available_for_an_unsafe_identity(

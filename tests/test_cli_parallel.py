@@ -114,6 +114,33 @@ def test_serial_sync_presents_convergence_refusal_without_raw_exception(
     abort.assert_called_once_with(refusal)
 
 
+def test_serial_sync_does_not_present_unrelated_value_error_as_refusal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only convergence refusals use the serial sync presentation path."""
+    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path))
+    run_dir = tmp_path / "from-netbox" / "test-run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    fake_ptd = _make_fake_potenda(tiers=None, run_dir=run_dir)
+    unrelated_error = ValueError("unexpected diff failure")
+    fake_ptd.diff.side_effect = unrelated_error
+    runner = CliRunner()
+
+    with (
+        patch("infrahub_sync.cli.get_potenda_from_instance", return_value=fake_ptd),
+        patch("infrahub_sync.cli.print_error_and_abort", side_effect=typer.Abort) as abort,
+    ):
+        result = runner.invoke(
+            app,
+            ["sync", "--no-parallel", "--name", "from-netbox", "--directory", str(EXAMPLES_DIR)],
+        )
+
+    assert result.exit_code == 1
+    assert result.exception is unrelated_error
+    abort.assert_not_called()
+
+
 def test_parallel_flag_warns_when_order_explicit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
