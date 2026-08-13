@@ -11,11 +11,13 @@ from infrahub_sync.configuration import (
     BUILTIN_ADAPTER_CAPABILITIES,
     AdapterConfigurationCapabilities,
     ConfigurationPackage,
+    ConfigurationPackageParseError,
     CredentialConfigurationError,
     EnvironmentCredentialProvider,
     UnknownAdapterCapabilitiesError,
     ValidationFinding,
     get_adapter_capabilities,
+    parse_configuration_package,
     resolve_reference,
     sort_findings,
     validate_package_credentials,
@@ -86,6 +88,23 @@ def test_package_rejects_machine_local_directory() -> None:
         ConfigurationPackage.model_validate(data)
 
 
+def test_package_rejects_machine_local_adapter_path() -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["adapters_path"] = ["/home/alice/custom-adapters"]
+
+    with pytest.raises(ValidationError, match="unsupported declared fields: adapters_path"):
+        ConfigurationPackage.model_validate(data)
+
+
+@pytest.mark.parametrize("role", ["source", "destination"])
+def test_package_rejects_custom_adapter_override(role: str) -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"][role]["adapter"] = "evil.module:CustomSync"
+
+    with pytest.raises(ValidationError, match="unsupported declared fields: adapter"):
+        ConfigurationPackage.model_validate(data)
+
+
 def test_package_rejects_nested_fields_legacy_models_would_ignore() -> None:
     data = _package().model_dump(mode="json")
     data["configuration"]["source"]["ignored"] = "would-not-be-hashed"
@@ -128,6 +147,28 @@ def test_package_rejects_recursive_declarations() -> None:
 
     with pytest.raises(ValidationError, match="recursive mapping"):
         ConfigurationPackage.model_validate(data)
+
+
+@pytest.mark.parametrize(
+    "unsafe_credentials",
+    [
+        {"nt": "hunter2-inline-secret"},
+        {"nt": {"provider": "env", "identifier": "X", "value": "hunter2-extra-secret"}},
+    ],
+)
+def test_safe_parse_boundary_does_not_echo_rejected_credential_values(
+    unsafe_credentials: dict[str, object],
+) -> None:
+    canaries = ("hunter2-inline-secret", "hunter2-extra-secret")
+    data = _package().model_dump(mode="json")
+    data["credentials"] = unsafe_credentials
+
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(data)
+
+    message = str(caught.value)
+    assert "/credentials/nt" in message
+    assert all(canary not in message for canary in canaries)
 
 
 def test_inline_credential_is_refused_without_echoing_value() -> None:
@@ -175,6 +216,48 @@ def test_reserved_reference_node_is_validated_outside_known_credential_paths() -
     package = ConfigurationPackage.model_validate(data)
 
     with pytest.raises(CredentialConfigurationError, match="unknown credential reference 'missing-header'"):
+        validate_package_credentials(package)
+
+
+def test_reserved_reference_node_is_validated_in_schema_mapping_static_value() -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["schema_mapping"] = [
+        {
+            "name": "Device",
+            "fields": [{"name": "token", "static": {"$credential": "missing-static"}}],
+        }
+    ]
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError, match="unknown credential reference 'missing-static'"):
+        validate_package_credentials(package)
+
+
+def test_store_inline_credential_is_refused_without_echoing_value() -> None:
+    canary = "store-inline-secret"
+    data = _package().model_dump(mode="json")
+    data["configuration"]["store"] = {
+        "type": "redis",
+        "settings": {"host": "localhost", "password": canary},
+    }
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    assert "inline credential" in str(caught.value)
+    assert canary not in str(caught.value)
+
+
+def test_reserved_reference_node_is_validated_in_store_settings() -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["store"] = {
+        "type": "redis",
+        "settings": {"host": "localhost", "token": {"$credential": "missing-store"}},
+    }
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError, match="unknown credential reference 'missing-store'"):
         validate_package_credentials(package)
 
 
@@ -255,6 +338,10 @@ def test_all_bundled_adapter_modules_have_static_declarations() -> None:
 
     assert set(BUILTIN_ADAPTER_CAPABILITIES) == expected
     assert all(capability.contract_version == 1 for capability in BUILTIN_ADAPTER_CAPABILITIES.values())
+    assert BUILTIN_ADAPTER_CAPABILITIES["peeringmanager"].supported_destination_write_operations == {
+        "create",
+        "update",
+    }
 
 
 def test_capability_lookup_is_case_insensitive_but_unknown_is_refused() -> None:

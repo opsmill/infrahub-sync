@@ -20,9 +20,11 @@ from .credentials import (
 from .models import (
     ConfigurationPackage,
     ConfigurationPackageMetadata,
+    ConfigurationPackageParseError,
     CredentialReference,
     CredentialReferenceNode,
     ValidationFinding,
+    parse_configuration_package,
     sort_findings,
 )
 
@@ -32,6 +34,7 @@ __all__ = [
     "AdapterRole",
     "ConfigurationPackage",
     "ConfigurationPackageMetadata",
+    "ConfigurationPackageParseError",
     "ConfigurationValidator",
     "CredentialConfigurationError",
     "CredentialProvider",
@@ -42,6 +45,7 @@ __all__ = [
     "ValidationFinding",
     "WriteOperation",
     "get_adapter_capabilities",
+    "parse_configuration_package",
     "provider_for",
     "resolve_reference",
     "sort_findings",

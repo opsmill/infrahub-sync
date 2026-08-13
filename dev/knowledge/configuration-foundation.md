@@ -6,6 +6,11 @@ checksum covers only declared JSON content, including credential references and
 behavior-affecting package metadata. Generated code, local paths, registry identity, and
 resolved secret values never enter the checksum.
 
+Durable or public callers parse untrusted declarations with
+`parse_configuration_package()`. This boundary converts Pydantic failures into locations
+and reason codes without including rejected values. Calling Pydantic's low-level
+`ConfigurationPackage.model_validate()` directly is reserved for already-trusted data.
+
 Credential-bearing adapter settings use an exact reference node:
 
 ```yaml
@@ -36,6 +41,11 @@ without a declaration is refused by registration because Sync cannot prove which
 settings are credentials. A future adapter-extension surface can contribute the same
 record through plugin metadata; it must preserve contract version 1 and the exact
 credential-reference rules.
+
+The version-1 envelope refuses `adapters_path` and per-role `adapter` overrides. Those
+fields select machine-local or arbitrary adapter code whose credential-bearing settings
+cannot be proven by a bundled capability declaration. Redis store URLs, usernames, and
+passwords follow the same credential-reference rule as adapter settings.
 
 The declaration is intentionally narrower than the complete adapter conformance profile.
 It provides the durable seam configuration validation needs without claiming that every

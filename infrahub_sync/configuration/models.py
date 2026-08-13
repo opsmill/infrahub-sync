@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from hashlib import sha256
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from infrahub_sync import (
     IncrementalConfig,
@@ -28,6 +28,10 @@ _REFERENCE_NAME_RE = re.compile(_REFERENCE_NAME_PATTERN)
 _MAX_DECLARATION_DEPTH = 64
 
 
+class ConfigurationPackageParseError(ValueError):
+    """A declared package failed validation at a secret-safe public boundary."""
+
+
 def _require_known_fields(value: Any, model: type[BaseModel], *, location: str) -> None:
     """Prevent legacy permissive models from dropping declaration content before hashing."""
     if not isinstance(value, Mapping):
@@ -43,8 +47,15 @@ def _require_strict_configuration(value: Any) -> None:
     if not isinstance(value, Mapping):
         return
     _require_known_fields(value, SyncConfig, location="configuration")
+    if value.get("adapters_path") is not None:
+        msg = "configuration contains unsupported declared fields: adapters_path"
+        raise ValueError(msg)
     for role in ("source", "destination"):
-        _require_known_fields(value.get(role), SyncAdapter, location=f"configuration.{role}")
+        adapter = value.get(role)
+        _require_known_fields(adapter, SyncAdapter, location=f"configuration.{role}")
+        if isinstance(adapter, Mapping) and adapter.get("adapter") is not None:
+            msg = f"configuration.{role} contains unsupported declared fields: adapter"
+            raise ValueError(msg)
     _require_known_fields(value.get("store"), SyncStore, location="configuration.store")
     _require_known_fields(value.get("incremental"), IncrementalConfig, location="configuration.incremental")
     mappings = value.get("schema_mapping")
@@ -185,6 +196,31 @@ class ConfigurationPackage(BaseModel):
     def checksum(self) -> str:
         """Return lowercase SHA-256 over canonical declared package content."""
         return sha256(canonical_json_bytes(self.declared_content(), kind="configuration-package")).hexdigest()
+
+
+def _safe_validation_location(error: Mapping[str, Any]) -> str:
+    """Return one JSON-Pointer-like validation location without input values."""
+    components = []
+    for component in error.get("loc", ()):
+        escaped = str(component).replace("~", "~0").replace("/", "~1")
+        components.append(escaped)
+    return "/" + "/".join(components) if components else "/"
+
+
+def parse_configuration_package(value: object) -> ConfigurationPackage:
+    """Parse declared package content without exposing rejected input in errors."""
+    try:
+        return ConfigurationPackage.model_validate(value)
+    except ValidationError as exc:
+        failures = sorted(
+            {
+                (_safe_validation_location(error), str(error.get("type", "invalid-value")))
+                for error in exc.errors(include_input=False, include_context=False, include_url=False)
+            }
+        )
+        details = "; ".join(f"{location}: {reason}" for location, reason in failures)
+        msg = f"configuration package is invalid at {details}"
+        raise ConfigurationPackageParseError(msg) from None
 
 
 def sort_findings(findings: Sequence[ValidationFinding]) -> tuple[ValidationFinding, ...]:

@@ -13,6 +13,9 @@ from .capabilities import AdapterConfigurationCapabilities, AdapterRole, get_ada
 from .models import ConfigurationPackage, CredentialReference, CredentialReferenceNode
 
 _ENV_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_STORE_CREDENTIAL_SETTING_PATHS = {
+    "redis": ("url", "username", "password"),
+}
 
 
 class CredentialConfigurationError(ValueError):
@@ -127,13 +130,37 @@ def _validate_adapter_credentials(
             raise CredentialConfigurationError(msg)
 
 
+def _validate_store_credentials(package: ConfigurationPackage) -> None:
+    """Refuse inline values at credential-bearing store settings."""
+    store = package.configuration.store
+    if store is None:
+        return
+    settings = store.settings or {}
+    try:
+        credential_paths = _STORE_CREDENTIAL_SETTING_PATHS[store.type]
+    except KeyError:
+        if settings:
+            msg = f"store type {store.type!r} has no configuration capability declaration"
+            raise CredentialConfigurationError(msg) from None
+        return
+    for path in credential_paths:
+        present, value = _setting_at_path(settings, path)
+        if not present or value is None:
+            continue
+        location = f"/configuration/store/settings/{path.replace('.', '/')}"
+        reference_name = _reference_name(value, location=location)
+        if reference_name not in package.credentials:
+            msg = f"{location} names unknown credential reference {reference_name!r}"
+            raise CredentialConfigurationError(msg)
+
+
 def validate_package_credentials(package: ConfigurationPackage) -> None:
     """Prove bundled adapter settings contain references rather than credential values."""
     _validate_reference_declarations(package)
     source = package.configuration.source
     destination = package.configuration.destination
-    _validate_all_reference_nodes(source.settings or {}, package, location="/configuration/source/settings")
-    _validate_all_reference_nodes(destination.settings or {}, package, location="/configuration/destination/settings")
+    _validate_all_reference_nodes(package.declared_content(), package, location="")
+    _validate_store_credentials(package)
     _validate_adapter_credentials(
         package,
         get_adapter_capabilities(source.name),

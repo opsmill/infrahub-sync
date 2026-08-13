@@ -88,6 +88,7 @@ BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
             adapter_name="peeringmanager",
             roles=_BOTH,
             credential_setting_paths=("token", "username", "password"),
+            supported_destination_write_operations=_CREATE_UPDATE,
         ),
         "prometheus": AdapterConfigurationCapabilities(
             adapter_name="prometheus",
