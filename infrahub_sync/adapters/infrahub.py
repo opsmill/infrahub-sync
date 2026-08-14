@@ -196,6 +196,8 @@ def update_node(
 
                 elif rel_schema.cardinality == "many":
                     attr_manager: RelationshipManagerSync = getattr(node, attr_name)
+                    if not attr_manager.initialized:
+                        attr_manager.fetch()
                     existing_peer_ids = attr_manager.peer_ids
                     new_peer_ids = []
 
@@ -212,9 +214,6 @@ def update_node(
                             new_peer_ids.append(peer_node.id)
 
                     _, existing_only, new_only = compare_lists(existing_peer_ids, new_peer_ids)
-
-                    if not attr_manager.initialized:
-                        attr_manager.fetch()
 
                     for existing_id in existing_only:
                         attr_manager.remove(existing_id)
