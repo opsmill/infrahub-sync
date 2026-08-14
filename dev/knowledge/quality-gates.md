@@ -98,15 +98,16 @@ Two mistakes cost real time on this repository, both worth avoiding by rule:
   has repeated basenames across adapter directories (`infrahub/sync_adapter.py`,
   `netbox/sync_adapter.py`), and flattening makes the collision look like a diff.
 
-## `infrahub-sync generate` dirties the tree
+## `infrahub-sync generate` rewrites generated files
 
 `infrahub-sync generate --name from-netbox --directory examples/` is prescribed as a CLI
-sanity check, and it **rewrites committed files**. The generator templates iterate the live
-schema unsorted, so output tracks API response order: expect a few hundred lines of pure
-ordering churn, and a fixed point that is stable within a session but moves between sessions.
+sanity check, and it **rewrites committed files**. The generator sorts schema nodes,
+attributes, and relationships before rendering, so API response order does not affect the
+output. Generation can still update files when the live schema differs from the schema used
+for the committed example.
 
-The expected outcome is a dirty tree to restore with `git checkout -- <paths>`, not a clean
-one. The non-determinism itself is a filed bug, not a property to design around.
+Review the diff after a live generation check. Preserve intentional schema-driven changes;
+restore incidental generated-file changes before committing unrelated work.
 
 ## CI
 

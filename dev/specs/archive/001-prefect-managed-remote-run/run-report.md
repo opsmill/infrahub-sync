@@ -1,4 +1,4 @@
-# Run Report: Prefect-Managed Remote Infrahub Sync Run (Developer Preview)
+# Run Report: Prefect-Managed Remote Infrahub Sync Run
 
 Evidence log for feature `001-prefect-managed-remote-run`, branch
 `001-prefect-managed-remote-run-local-dp-001`. Each phase appends its measured evidence

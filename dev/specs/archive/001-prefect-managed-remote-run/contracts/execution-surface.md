@@ -277,7 +277,7 @@ def execute_run(
        to `write_plan` — and NEVER by re-reading `plan.parquet` (the DBA-009 fixture
        population's fakes never write one). Nested-child caveat (binding):
        `_diff_to_rows` walks only the diff root's direct children while
-       `Diff.has_diffs()` is recursive; the materialized rows are the preview's
+       `Diff.has_diffs()` is recursive; the materialized rows are the feature's
        result fidelity boundary — `has_diffs()` continues to gate `sync` execution
        exactly as today, but the result fields come from the rows, so a
        nested-children-only diff yields `status="no-change"` / `changed=False` /

@@ -192,7 +192,7 @@ configurations become remotely invokable by name — including `operation=sync` 
 `confirm_writes=true` against whatever `from-netbox`, `from-nautobot`, etc. resolve to
 (their configs default to localhost endpoints, and several will die confusingly on
 missing optional adapter deps). It also maximizes the X2 blast radius: any one broken
-example config bricks the whole remote surface. The preview's own key entity says the
+example config bricks the whole remote surface. The feature's own key entity says the
 directory is the input boundary; the walkthrough should model scoping it.
 
 **Recommendation**: quickstart and README use
@@ -275,7 +275,7 @@ while a packaged flow ships in the same release.
 
 **Recommendation**: T035 revises the Prefect subsection to lead with the packaged
 optional integration (one short paragraph + link to the new reference page and example),
-demoting CLI-wrapping to "if you need behaviors the preview doesn't cover (schedules,
+demoting CLI-wrapping to "if you need behaviors the feature doesn't cover (schedules,
 retries, work pools)". Keep the rest of the page as is.
 
 ---
@@ -345,7 +345,7 @@ future orchestration briefs adding flows/deployments beside this one.
 **Friction**: the flow/deployment pair produces the stuttering path
 `/api/deployments/name/infrahub-sync/infrahub-sync` in every transcript, and the flat
 name leaves no room for siblings (a future B-002 apply deployment would sit
-asymmetrically next to it). Renaming after the preview breaks every caller's lookup.
+asymmetrically next to it). Renaming after delivery breaks every caller's lookup.
 
 **Recommendation**: consider `DEPLOYMENT_NAME = "run"` (path
 `/deployments/name/infrahub-sync/run`; reads as what it is, and future briefs get

@@ -1,15 +1,12 @@
-# Known limitations and release gaps
+# Known limitations and qualification gaps
 
-## Hard release gates not implemented by DB-006
+## External prerequisites
 
 1. **Configuration-package registration/version management is absent.** MVP records an
    immutable configuration fingerprint/reference. There is no registration API, version
    lifecycle, or package promotion contract.
-2. **Prefect Extras is still an exact Git dependency.** The accepted staging pin is not a
-   released dependency and must be replaced through its owning release process before
-   PyPI publication or promotion to `main`.
-3. **No release promotion occurred.** This branch was not merged, pushed, published, or
-   promoted to `main`.
+2. **Prefect Extras is still an exact Git dependency.** Public package installation
+   requires a published dependency instead of repository credentials.
 
 ## Qualification limits
 

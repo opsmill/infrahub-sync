@@ -28,19 +28,19 @@ class _GeneratedModelBase(_ModelBaseClass):
         local_data: Any | None = None
 
 
-{%- for nodekind, node in schema.items() -%}
+{%- for nodekind, node in schema.items() | sort -%}
 {%-  if node | get_identifiers(config) and config | has_node(node.kind) %}
 class {{ nodekind }}(_GeneratedModelBase):
     _modelname = "{{ node.kind }}"
     _identifiers = {{ node | get_identifiers(config) | list_to_set }}
-    _attributes = {{ node | get_attributes(config) | list_to_set }}
+    _attributes = {{ node | get_attributes(config) | default([], true) | sort | list_to_set }}
 
-{%-      for attr in node.attributes -%}
+{%-      for attr in node.attributes | sort(attribute="name") -%}
 {%-          if config | has_field(node.kind, attr.name) %}
     {{ attr.name }}: {{ attr | get_kind }}
 {%-          endif -%}
 {%-      endfor -%}
-{%-      for rel in node.relationships -%}
+{%-      for rel in node.relationships | sort(attribute="name") -%}
 {%-          if config | has_field(node.kind, rel.name) %}
     {{ rel.name }}: {{ rel | get_kind }}
 {%-          endif -%}
