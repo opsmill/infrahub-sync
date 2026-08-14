@@ -870,6 +870,31 @@ class Potenda:
         for resource, current in self._counts.items():
             guard.check(resource, current=current)
 
+    def _sync_without_tiers(
+        self,
+        *,
+        allow_rowcount_drop: bool,
+        plan_committed: Callable[[], None] | None,
+    ) -> dict[str, int]:
+        """Run the serial diff and sync path when no execution tiers are configured."""
+        self.load_both_sides()
+        self.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
+        diff = self.diff()
+        self.write_plan(diff)
+        if plan_committed is not None:
+            plan_committed()
+        if diff.has_diffs():
+            self.sync(diff=diff)
+            # Re-snapshot destination AFTER writes so the next warm run
+            # hydrates from real post-sync state rather than the pre-sync
+            # (often empty) snapshot. Source state was already final.
+            self._write_side_snapshot("B", self.destination)
+        self.persist_baseline_counts()
+        self.persist_cursors_for_run(side="A")
+        self.persist_cursors_for_run(side="B")
+        rows = self._diff_to_rows(diff)
+        return {action: sum(row["action"] == action for row in rows) for action in ACTIONS}
+
     def sync_in_tiers(
         self,
         *,
@@ -898,23 +923,10 @@ class Potenda:
         branch writes from every tier's retained diff.
         """
         if not self.tiers:
-            self.load_both_sides()
-            self.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
-            diff = self.diff()
-            self.write_plan(diff)
-            if plan_committed is not None:
-                plan_committed()
-            if diff.has_diffs():
-                self.sync(diff=diff)
-                # Re-snapshot destination AFTER writes so the next warm run
-                # hydrates from real post-sync state rather than the pre-sync
-                # (often empty) snapshot. Source state was already final.
-                self._write_side_snapshot("B", self.destination)
-            self.persist_baseline_counts()
-            self.persist_cursors_for_run(side="A")
-            self.persist_cursors_for_run(side="B")
-            rows = self._diff_to_rows(diff)
-            return {action: sum(row["action"] == action for row in rows) for action in ACTIONS}
+            return self._sync_without_tiers(
+                allow_rowcount_drop=allow_rowcount_drop,
+                plan_committed=plan_committed,
+            )
 
         self.load_both_sides()
         self.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
