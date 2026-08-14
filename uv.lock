@@ -1073,6 +1073,7 @@ dependencies = [
     { name = "netutils" },
     { name = "pyarrow" },
     { name = "redis" },
+    { name = "ruff" },
     { name = "structlog" },
     { name = "tqdm" },
 ]
@@ -1135,6 +1136,7 @@ requires-dist = [
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.8" },
     { name = "redis", specifier = ">=4.3,<9" },
     { name = "requests", marker = "extra == 'dev'" },
+    { name = "ruff", specifier = ">=0.15.5,<0.16" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.5" },
     { name = "rumdl", marker = "extra == 'dev'", specifier = ">=0.1.68" },
     { name = "structlog", specifier = ">=25.1,<26.0" },

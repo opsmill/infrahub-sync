@@ -30,6 +30,10 @@ dependencies = [
     # consumer that still requires `diffsync[redis]` keeps resolving, at redis 4.6.0.
     "redis>=4.3,<9",
     "netutils>=1.9,<2.0",
+    # Runtime (not only dev) dependency: `generate` formats its rendered Python with
+    # `ruff format` so regeneration is byte-stable. Kept to one minor series because
+    # formatter output may change between Ruff minor versions.
+    "ruff>=0.15.5,<0.16",
     "tqdm>=4.67",
     "pyarrow>=17,<22",
     "fsspec>=2024.6",

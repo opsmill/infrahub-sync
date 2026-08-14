@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess  # noqa: S404 -- fixed argv (sys.executable -m ruff), no shell, no user input
+import sys
 from typing import TYPE_CHECKING, Any, Union
 
 import jinja2
@@ -170,5 +172,46 @@ def render_template(template_file: Path, output_dir: Path, output_file: Path, co
     template = template_env.get_template(str(template_file))
 
     rendered_tpl = template.render(**context)
+    if output_file.suffix == ".py":
+        rendered_tpl = format_generated_python(source=rendered_tpl, filename=str(output_file))
     output_filename = output_dir / output_file
     output_filename.write_text(rendered_tpl, encoding="utf-8")
+
+
+class GeneratedCodeFormattingError(RuntimeError):
+    """Raised when Ruff cannot format a generated Python file."""
+
+
+def format_generated_python(source: str, filename: str) -> str:
+    """Format generated Python with Ruff so identical schema input yields identical bytes.
+
+    Runs ``ruff format`` in isolated mode with a fixed line length, so the output does not
+    depend on any configuration file present in (or absent from) the caller's project.
+    """
+    command = [
+        sys.executable,
+        "-m",
+        "ruff",
+        "format",
+        "--isolated",
+        "--line-length",
+        "120",
+        "--stdin-filename",
+        filename,
+        "-",
+    ]
+    try:
+        result = subprocess.run(  # noqa: S603
+            command,
+            input=source,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        msg = f"Unable to run Ruff to format generated file {filename}: {exc}"
+        raise GeneratedCodeFormattingError(msg) from exc
+    if result.returncode != 0:
+        msg = f"Ruff failed to format generated file {filename}: {result.stderr.strip()}"
+        raise GeneratedCodeFormattingError(msg)
+    return result.stdout

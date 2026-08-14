@@ -16,7 +16,7 @@ from infrahub_sync.generator import render_template
     ("adapter_paths", "loader_call"),
     [
         (None, "PluginLoader.from_env_and_args(adapter_paths=[])"),
-        (["/opt/sync-adapters"], "PluginLoader.from_env_and_args(adapter_paths=['/opt/sync-adapters'])"),
+        (["/opt/sync-adapters"], 'PluginLoader.from_env_and_args(adapter_paths=["/opt/sync-adapters"])'),
     ],
 )
 def test_generated_models_are_valid_python(
