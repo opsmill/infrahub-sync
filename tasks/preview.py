@@ -306,7 +306,7 @@ def logs(context: Context, name: str = "sync-api", lines: int = 50) -> None:
     """Print the tail of a managed host process log (sync-api or prefect-worker)."""
     del context
     if name not in MANAGED_PROCESSES:
-        msg = f"unknown process {name!r}; expected one of {MANAGED_PROCESSES}"
+        msg = f"unknown process {name!r}; expected one of {sorted(MANAGED_PROCESSES)}"
         raise PreviewError(msg)
     log_path = _log_file(name)
     if not log_path.exists():
