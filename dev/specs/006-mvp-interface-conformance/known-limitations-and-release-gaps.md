@@ -46,7 +46,7 @@
 
 ## Product limitations retained
 
-- Delete operations remain reviewable but are not executed.
+- Saved-plan apply records delete operations for review but does not execute them.
 - The public Python and CLI projection supports the existing local SQLite/filesystem
   provider only. Adding a provider selector is out of DB-006 scope; production
   PostgreSQL/S3 construction remains the DB-003 Python provider surface.

@@ -28,11 +28,11 @@ def test_pylint_regression_locations_reports_only_regressed_codes() -> None:
         "messages": [
             {
                 "messageId": "E0401",
-                "relativePath": "infrahub_sync/managed/deploy.py",
+                "path": "infrahub_sync/managed/deploy.py",
                 "line": 8,
                 "symbol": "import-error",
             },
-            {"messageId": "C0302", "relativePath": "infrahub_sync/cli.py", "line": 1, "symbol": "too-many-lines"},
+            {"messageId": "C0302", "path": "infrahub_sync/cli.py", "line": 1, "symbol": "too-many-lines"},
         ]
     }
 

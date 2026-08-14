@@ -78,8 +78,8 @@ infrahub-sync sync --name my_project --directory configs --diff --show-progress
 ### Unresolvable source references fail the run
 
 Both `diff` and `sync` derive a plan from the
-comparison before anything is written, and a source record referencing a peer the loaded source
-cannot resolve **fails the whole run** at that point:
+comparison before any destination data is written, and a source record referencing a peer the
+loaded source cannot resolve **fails the whole run** at that point:
 
 ```text
 ERROR | The peer 'leaf-99' referenced by field 'device' of kind 'InterfacePhysical' is not present
@@ -245,7 +245,7 @@ count, and every delete the `--detail` listing shows is marked `(not executed)`:
 
 ```text
 NOTE  1 delete operation(s) are recorded in this plan and NONE will be executed against the
-      destination. Applying this plan will complete successfully and record
+      destination. An apply of this plan that passes its checks and writes records
       1 skipped deletes on the run. Every delete record the --detail listing shows carries a
       "(not executed)" marker — a --kind filter may narrow the listing so that none of them
       are shown.
@@ -313,10 +313,11 @@ line at `INFO` instead, which keeps `infrahub-sync --quiet apply ...` silent whe
 disclose.
 
 **This is a designed limitation, not a failure.** Applying deletes is not supported. An operator
-who runs this against a non-pristine destination —
-one holding objects the source no longer has — will meet a non-zero skipped-delete count on every
-apply, and should not read it as a broken run. The skipped identifiers are recorded on the run, so
-the difference between what you reviewed and what was written is always readable.
+who applies a plan holding delete records — derived from a full destination load against a
+destination holding objects the source no longer has — will meet a non-zero skipped-delete count,
+and should not read it as a broken run. (A plan derived from an incremental destination load may
+compute no deletes at all.) The skipped identifiers are recorded on the run, so the difference
+between what you reviewed and what was written is always readable.
 
 #### Convergence is not verified for relationship-keyed kinds
 

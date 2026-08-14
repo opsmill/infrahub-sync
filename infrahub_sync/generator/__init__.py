@@ -207,9 +207,13 @@ def format_generated_python(source: str, filename: str) -> str:
             capture_output=True,
             text=True,
             check=False,
+            timeout=60,
         )
     except OSError as exc:
         msg = f"Unable to run Ruff to format generated file {filename}: {exc}"
+        raise GeneratedCodeFormattingError(msg) from exc
+    except subprocess.TimeoutExpired as exc:
+        msg = f"Ruff timed out formatting generated file {filename}"
         raise GeneratedCodeFormattingError(msg) from exc
     if result.returncode != 0:
         msg = f"Ruff failed to format generated file {filename}: {result.stderr.strip()}"

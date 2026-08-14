@@ -29,17 +29,14 @@ Prefect is an optional extra, pinned to a single version:
 prefect = ["prefect==3.8.1"]
 ```
 
-Install the extra from the same source as Infrahub Sync. From a repository checkout, run:
+No published release carries this extra yet, so install it from a repository checkout:
 
 ```bash
 pip install -e '.[prefect]'
 ```
 
-For an installed package, run:
-
-```bash
-pip install 'infrahub-sync[prefect]'
-```
+Once a release ships the integration, the ordinary extra syntax
+(`pip install 'infrahub-sync[prefect]'`) applies.
 
 Nothing in the base installation imports, starts, or contacts Prefect. Only the
 `infrahub_sync.orchestration` modules import it, and no other part of the package imports

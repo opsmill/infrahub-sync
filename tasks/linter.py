@@ -147,7 +147,7 @@ def _pylint_regression_locations(report: dict[str, Any]) -> list[str]:
     for message in messages:
         if not isinstance(message, dict) or message.get("messageId") not in regressed:
             continue
-        path = message.get("relativePath") or message.get("absolutePath") or "<unknown>"
+        path = message.get("path") or message.get("absolutePath") or "<unknown>"
         line = message.get("line", "?")
         symbol = message.get("symbol", "")
         locations.append(f"{path}:{line}: {message['messageId']} ({symbol})")

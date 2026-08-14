@@ -21,6 +21,7 @@ from infrahub_sync.execution import (
 # Imported at module level rather than deferred: `infrahub_sync.utils` below already pulls
 # the engine, which pulls this package, so deferring these would buy no import time and only
 # hide where the command's behavior comes from.
+from infrahub_sync.generator import GeneratedCodeFormattingError
 from infrahub_sync.plan.errors import (
     PlanArtifactError,
     PlanGenerationExistsError,
@@ -143,8 +144,8 @@ def _delete_disclosure(summary: PlanSummary) -> list[str]:
         notes.append(
             _note(
                 f"{count} delete operation(s) are recorded in this plan and NONE will be executed "
-                f"against the destination. Applying this plan will complete "
-                f"successfully and record {count} skipped deletes on the run. Every delete record "
+                f"against the destination. An apply of this plan that passes its checks and "
+                f"writes records {count} skipped deletes on the run. Every delete record "
                 f'the --detail listing shows carries a "(not executed)" marker — a --kind filter '
                 f"may narrow the listing so that none of them are shown."
             )
@@ -785,6 +786,9 @@ def generate(
     if missing_schema_models:
         print_error_and_abort(f"One or more models are not present in the schema - {missing_schema_models}")
 
-    rendered_files = render_adapter(sync_instance=sync_instance, schema=typed_schema)
+    try:
+        rendered_files = render_adapter(sync_instance=sync_instance, schema=typed_schema)
+    except GeneratedCodeFormattingError as exc:
+        print_error_and_abort(str(exc))
     for template, output_path in rendered_files:
         logger.info("Rendered template %s to %s", template, output_path)
