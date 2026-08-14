@@ -1,38 +1,44 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 
 from infrahub_sync.plugin_loader import PluginLoader
+
 # Load model class dynamically at runtime (honor adapters_path, safe fallback)
 try:
-
     _loader = PluginLoader.from_env_and_args()
-
 
     _spec = "infrahub"
 
     _ModelBaseClass = _loader.resolve(_spec, default_class_candidates=("Model",))
-except Exception:
+except Exception:  # noqa: BLE001 -- generated adapters need a safe import fallback
     # Fallback: use DiffSyncModel to avoid import-time failure
     from diffsync import DiffSyncModel as _FallbackModel
+
     _ModelBaseClass = _FallbackModel
+
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
 #  This file has been generated with the command `infrahub-sync generate`
 #  All modifications will be lost the next time you reexecute this command
 # -------------------------------------------------------
-class BuiltinTag(_ModelBaseClass):
+class _GeneratedModelBase(_ModelBaseClass):
+    if "local_id" not in getattr(_ModelBaseClass, "model_fields", {}):
+        local_id: str | None = None
+    if "local_data" not in getattr(_ModelBaseClass, "model_fields", {}):
+        local_data: Any | None = None
+
+
+class BuiltinTag(_GeneratedModelBase):
     _modelname = "BuiltinTag"
     _identifiers = ("name",)
     _attributes = ("description",)
     name: str
     description: str | None = None
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class DcimDeviceType(_ModelBaseClass):
+class DcimDeviceType(_GeneratedModelBase):
     _modelname = "DcimDeviceType"
     _identifiers = ("name", "manufacturer")
     _attributes = ("height", "full_depth", "part_number", "weight")
@@ -43,23 +49,29 @@ class DcimDeviceType(_ModelBaseClass):
     weight: int | None = None
     manufacturer: str
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class DcimPlatform(_ModelBaseClass):
+class DcimPlatform(_GeneratedModelBase):
     _modelname = "DcimPlatform"
     _identifiers = ("name",)
     _attributes = ("manufacturer",)
     name: str
     manufacturer: str | None = None
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class DcimDevice(_ModelBaseClass):
+class DcimDevice(_GeneratedModelBase):
     _modelname = "DcimDevice"
     _identifiers = ("location", "name")
-    _attributes = ("tags", "platform", "primary_address", "device_type", "status", "description", "position", "rack_face", "serial")
+    _attributes = (
+        "tags",
+        "platform",
+        "primary_address",
+        "device_type",
+        "status",
+        "description",
+        "position",
+        "rack_face",
+        "serial",
+    )
     status: str | None = "active"
     description: str | None = None
     name: str
@@ -72,10 +84,8 @@ class DcimDevice(_ModelBaseClass):
     device_type: str | None = None
     location: str
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class InterfacePhysical(_ModelBaseClass):
+class InterfacePhysical(_GeneratedModelBase):
     _modelname = "InterfacePhysical"
     _identifiers = ("device", "name")
     _attributes = ("bundle", "ip_addresses", "mtu", "description", "mac_address", "l2_mode")
@@ -88,10 +98,8 @@ class InterfacePhysical(_ModelBaseClass):
     device: str
     ip_addresses: list[str] | None = []
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class InterfaceVirtual(_ModelBaseClass):
+class InterfaceVirtual(_GeneratedModelBase):
     _modelname = "InterfaceVirtual"
     _identifiers = ("device", "name")
     _attributes = ("untagged_vlan", "tagged_vlan", "ip_addresses", "description", "mac_address", "l2_mode")
@@ -104,10 +112,8 @@ class InterfaceVirtual(_ModelBaseClass):
     tagged_vlan: list[str] | None = []
     ip_addresses: list[str] | None = []
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class IpamPrefix(_ModelBaseClass):
+class IpamPrefix(_GeneratedModelBase):
     _modelname = "IpamPrefix"
     _identifiers = ("prefix", "vrf")
     _attributes = ("status", "description", "member_type")
@@ -117,10 +123,8 @@ class IpamPrefix(_ModelBaseClass):
     member_type: str | None = "address"
     vrf: str | None = None
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class IpamIPAddress(_ModelBaseClass):
+class IpamIPAddress(_GeneratedModelBase):
     _modelname = "IpamIPAddress"
     _identifiers = ("address", "vrf")
     _attributes = ("description", "status")
@@ -129,10 +133,8 @@ class IpamIPAddress(_ModelBaseClass):
     address: str
     vrf: str | None = None
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class OrganizationManufacturer(_ModelBaseClass):
+class OrganizationManufacturer(_GeneratedModelBase):
     _modelname = "OrganizationManufacturer"
     _identifiers = ("name",)
     _attributes = ("tags", "description")
@@ -140,10 +142,8 @@ class OrganizationManufacturer(_ModelBaseClass):
     description: str | None = None
     tags: list[str] | None = []
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class OrganizationProvider(_ModelBaseClass):
+class OrganizationProvider(_GeneratedModelBase):
     _modelname = "OrganizationProvider"
     _identifiers = ("name",)
     _attributes = ("tags", "description")
@@ -151,10 +151,8 @@ class OrganizationProvider(_ModelBaseClass):
     description: str | None = None
     tags: list[str] | None = []
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class IpamAggregate(_ModelBaseClass):
+class IpamAggregate(_GeneratedModelBase):
     _modelname = "IpamAggregate"
     _identifiers = ("prefix",)
     _attributes = ("rir", "description", "date_added")
@@ -163,10 +161,8 @@ class IpamAggregate(_ModelBaseClass):
     prefix: str
     rir: str
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class OrganizationRIR(_ModelBaseClass):
+class OrganizationRIR(_GeneratedModelBase):
     _modelname = "OrganizationRIR"
     _identifiers = ("name",)
     _attributes = ("tags", "is_private", "description")
@@ -175,10 +171,8 @@ class OrganizationRIR(_ModelBaseClass):
     description: str | None = None
     tags: list[str] | None = []
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class DcimCircuit(_ModelBaseClass):
+class DcimCircuit(_GeneratedModelBase):
     _modelname = "DcimCircuit"
     _identifiers = ("circuit_id",)
     _attributes = ("provider", "status", "commit_rate", "description")
@@ -188,13 +182,19 @@ class DcimCircuit(_ModelBaseClass):
     description: str | None = None
     provider: str
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class InterfaceLag(_ModelBaseClass):
+class InterfaceLag(_GeneratedModelBase):
     _modelname = "InterfaceLag"
     _identifiers = ("device", "name")
-    _attributes = ("untagged_vlan", "tagged_vlan", "ip_addresses", "description", "mac_address", "l2_mode", "bundle_number")
+    _attributes = (
+        "untagged_vlan",
+        "tagged_vlan",
+        "ip_addresses",
+        "description",
+        "mac_address",
+        "l2_mode",
+        "bundle_number",
+    )
     name: str
     description: str | None = None
     mac_address: str | None = None
@@ -205,10 +205,8 @@ class InterfaceLag(_ModelBaseClass):
     tagged_vlan: list[str] | None = []
     ip_addresses: list[str] | None = []
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class LocationSite(_ModelBaseClass):
+class LocationSite(_GeneratedModelBase):
     _modelname = "LocationSite"
     _identifiers = ("name",)
     _attributes = ("tags", "facility", "timezone", "physical_address", "status", "description")
@@ -220,10 +218,8 @@ class LocationSite(_ModelBaseClass):
     description: str | None = None
     tags: list[str] | None = []
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class LocationRack(_ModelBaseClass):
+class LocationRack(_GeneratedModelBase):
     _modelname = "LocationRack"
     _identifiers = ("name", "site")
     _attributes = ("tags", "asset_tag", "serial_number", "facility_id", "height", "status")
@@ -236,10 +232,8 @@ class LocationRack(_ModelBaseClass):
     site: str
     tags: list[str] | None = []
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class IpamVLAN(_ModelBaseClass):
+class IpamVLAN(_GeneratedModelBase):
     _modelname = "IpamVLAN"
     _identifiers = ("name", "vlan_id", "vlan_group")
     _attributes = ("description", "status")
@@ -249,20 +243,16 @@ class IpamVLAN(_ModelBaseClass):
     status: str | None = "active"
     vlan_group: str
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class IpamVLANGroup(_ModelBaseClass):
+class IpamVLANGroup(_GeneratedModelBase):
     _modelname = "IpamVLANGroup"
     _identifiers = ("name",)
     _attributes = ("description",)
     description: str | None = None
     name: str
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class IpamVRF(_ModelBaseClass):
+class IpamVRF(_GeneratedModelBase):
     _modelname = "IpamVRF"
     _identifiers = ("name",)
     _attributes = ("export_rt", "import_rt", "vrf_rd", "enforce_unique", "description")
@@ -273,15 +263,10 @@ class IpamVRF(_ModelBaseClass):
     export_rt: list[str] | None = []
     import_rt: list[str] | None = []
 
-    local_id: str | None = None
-    local_data: Any | None = None
 
-class IpamRouteTarget(_ModelBaseClass):
+class IpamRouteTarget(_GeneratedModelBase):
     _modelname = "IpamRouteTarget"
     _identifiers = ("name",)
     _attributes = ("description",)
     description: str | None = None
     name: str
-
-    local_id: str | None = None
-    local_data: Any | None = None

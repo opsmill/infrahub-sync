@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 from invoke import Context, task
@@ -7,6 +8,13 @@ from .utils import ESCAPED_REPO_PATH
 NAMESPACE = "INFRAHUB-SYNC"
 CURRENT_DIRECTORY = Path(__file__).parent.resolve()
 MAIN_DIRECTORY = "."
+
+
+def _ty_check_command(python_major: int, python_minor: int) -> str:
+    """Return the type-check command for the active supported runtime profile."""
+    if (python_major, python_minor) == (3, 10):
+        return "uv run ty check --exclude infrahub_sync/managed --exclude tests/managed ."
+    return "uv run ty check ."
 
 
 @task(name="format")
@@ -73,7 +81,7 @@ def lint_ty(context: Context) -> None:
     """Run ty type checker against project files."""
 
     print(f" - [{NAMESPACE}] Check code with ty")
-    exec_cmd = "uv run ty check ."
+    exec_cmd = _ty_check_command(sys.version_info.major, sys.version_info.minor)
 
     with context.cd(ESCAPED_REPO_PATH):
         context.run(exec_cmd)

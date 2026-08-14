@@ -18,7 +18,7 @@ does **not** exit 0 on a clean checkout, and `invoke format` damages tracked Mar
 | 2 | `linter.lint-ruff` | `ruff format --check --diff . && ruff check --diff .` |
 | 3 | `linter.lint-pylint` | `pylint infrahub_sync/` |
 | 4 | `linter.lint-yaml` | `yamllint .` |
-| 5 | `linter.lint-ty` | `uv run ty check .` |
+| 5 | `linter.lint-ty` | Profile-aware `uv run ty check` (see [CI](#ci)) |
 
 **rumdl runs first, and the chain short-circuits.** Every leg calls `context.run` without
 `warn=True`, so the first non-zero exit raises and no later leg runs. A Markdown nit
@@ -54,20 +54,21 @@ unreachable by any name; run the four `linter.lint-*` tasks individually.
 ## The inherited pylint baseline
 
 `pylint infrahub_sync/` does not pass, and has not for a long time. Measured directly on
-this repository — commit `1424941`, environment synced with `--extra dev --extra prefect`:
+this repository at commit `697b2f4`, using Python 3.13.3, Pylint 4.0.5, and an environment
+synced with `--extra dev --extra prefect --extra managed`:
 
-- exit code **30**, which is pylint's bitmask for error (2) + warning (4) + refactor (8) +
-  convention (16) — not a count;
-- rating **9.69/10**;
-- **54** diagnostics across **11** message codes.
+- exit code **28**, which is pylint's bitmask for warning (4) + refactor (8) + convention
+  (16) — not a count;
+- rating **9.94/10**;
+- **30** diagnostics across **11** message codes.
 
 | Code | Count |
 |---|---|
-| `C0415` import-outside-toplevel | 29 |
+| `C0415` import-outside-toplevel | 5 |
 | `C0413` wrong-import-position | 9 |
 | `R0917` too-many-positional-arguments | 5 |
 | `W0613` unused-argument | 4 |
-| `C0412`, `E0213`, `R0912`, `R0915`, `R1705`, `R1720`, `W0707` | 1 each |
+| `C0302`, `C0412`, `R0912`, `R0915`, `R1705`, `R1720`, `W0707` | 1 each |
 
 **The count is environment-dependent.** pylint can analyse more code once optional
 dependencies resolve, so a base-only environment reports fewer diagnostics than a
@@ -109,9 +110,19 @@ one. The non-determinism itself is a filed bug, not a property to design around.
 
 ## CI
 
-Linting runs in an environment synced with `--extra dev --extra prefect`, because the type
-gate needs Prefect present: without it, `ty` reports `unresolved-import` for every `prefect`
-import in `infrahub_sync/orchestration/`.
+Python 3.11–3.13 linting runs in an environment synced with
+`--extra dev --extra prefect --extra managed`. The type gate checks the full tree; the
+managed extra requires read access to the private `opsmill/prefect-extras` Git dependency.
+
+Python 3.10 linting uses `--extra dev --extra prefect` and runs:
+
+```bash
+uv run ty check --exclude infrahub_sync/managed --exclude tests/managed .
+```
+
+Managed Sync supports Python 3.11–3.13 only, so this exclusion is the supported direct
+Prefect profile rather than a reduced full-service check. `invoke linter.lint-ty` selects
+the same command from the active Python version.
 
 Tests run in **two** legs — one with the `prefect` extra, one without, where the base leg
 first asserts Prefect is genuinely not importable. See

@@ -13,17 +13,27 @@
 
 ## Setup
 
+Use Python 3.11–3.13 for the full development profile. The `managed` extra currently
+includes an exact Git dependency on the private `opsmill/prefect-extras` repository, so
+this command requires read access to that repository:
+
 ```bash
-pyenv local 3.12.x || use system Python 3.10–3.13
-uv sync --extra dev --extra prefect
+uv sync --extra dev --extra prefect --extra managed
+```
+
+On Python 3.10, install the direct Prefect profile instead. Managed Sync supports Python
+3.11–3.13 only:
+
+```bash
+uv sync --python 3.10 --extra dev --extra prefect
 ```
 
 ## Required Development Workflow
 
-Run in order before committing:
+Run the setup command for your Python profile, then run these commands in order before
+committing:
 
 ```bash
-uv sync --extra dev --extra prefect
 uv run invoke format
 uv run invoke lint
 ```
@@ -39,8 +49,10 @@ task formats Python only.
 
 The `prefect` extra is not optional for development: without it `ty` cannot resolve
 `infrahub_sync/orchestration/`'s imports and `tests/orchestration/test_flow.py` skips
-itself whole, so both gates would pass without ever checking that code. CI installs it
-for the same reason, alongside one base-install job that keeps the Prefect-free
+itself whole. On Python 3.11–3.13, the `managed` extra is required too; otherwise `ty`
+cannot resolve the managed service's Prefect Extras imports. On Python 3.10,
+`invoke linter.lint-ty` excludes `infrahub_sync/managed` and `tests/managed`, matching
+CI's direct Prefect gate. CI also runs a base-install job that keeps the Prefect-free
 guarantee honest.
 
 **CLI sanity after changes:**
@@ -69,7 +81,7 @@ uv run invoke docs.docusaurus
 **Policy:**
 
 - New or changed code is Ruff-clean and typed where touched (docstrings, specific exceptions).
-- The codebase is clean under ty with no `[[tool.ty.overrides]]` blocks in `pyproject.toml`. Don't reintroduce overrides to mask type errors — fix the underlying issue, or use a targeted `# ty: ignore[<rule>]` with a short TODO at the call site. Ad-hoc check: `uv run ty check .`.
+- The codebase is clean under ty with no `[[tool.ty.overrides]]` blocks in `pyproject.toml`. Don't reintroduce overrides to mask type errors — fix the underlying issue, or use a targeted `# ty: ignore[<rule>]` with a short TODO at the call site. Run `uv run ty check .` in the full Python 3.11–3.13 profile. On Python 3.10, run `uv run ty check --exclude infrahub_sync/managed --exclude tests/managed .`.
 - If you add tests, run `uv run pytest -q`.
 
 ## Repository Structure
@@ -181,7 +193,7 @@ uv run rumdl fmt .     # fix
 **Approval checklist:**
 
 - [ ] Format and lint clean on changed areas.
-- [ ] `uv run ty check .` exits 0; new code typed.
+- [ ] The type-check command for the active Python profile exits 0; new code typed.
 - [ ] CLI behaviors validated (`--help`, `list`, targeted `generate`).
 - [ ] Docs updated if flags or config changed.
 - [ ] Error handling uses specific exception types and clear messages.

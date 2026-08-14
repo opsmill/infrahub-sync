@@ -44,6 +44,11 @@ uv run infrahub-sync apply --name from-netbox --directory examples/ --run-id <ru
 - `LocationRack` uses `name` plus `site` in this configuration, while the current
   destination schema keys racks by `name` alone. Reapplying or replanning racks
   is not convergent when different sites contain racks with the same name.
+- After a write creates physical interfaces bundled into a LAG, a later `diff` against
+  the same branch can fail while loading the destination. The
+  [NetBox tutorial troubleshooting section](../../docs/docs/tutorials/netbox-demo-to-infrahub.mdx#diff-fails-after-a-sync-that-wrote-interfaces)
+  records the error, cause, and recovery procedure. This destination-loading defect is
+  not specific to NetBox.
 
 For the bounded NetBox acceptance path, run
 `tests/integration/test_saved_plan_apply_integration.py`. It derives a ten-kind

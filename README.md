@@ -134,8 +134,9 @@ may change.
 See the [Python API](https://docs.infrahub.app/sync/reference/python-api),
 [Prefect remote run](https://docs.infrahub.app/sync/reference/prefect-remote-run), and
 [managed HTTP API](https://docs.infrahub.app/sync/reference/managed-http-api) references
-for their contracts and setup. For a deterministic checkout-based review, follow the
-[`custom-example` plan and apply guide](examples/custom_adapter/README.md).
+for their contracts and setup. For a bounded checkout-based live review, follow the
+[`custom-example` plan and apply guide](examples/custom_adapter/README.md). Its source
+fixture is deterministic; the review still uses a live, writable Infrahub destination.
 
 ---
 

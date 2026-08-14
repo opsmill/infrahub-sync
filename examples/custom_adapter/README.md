@@ -1,8 +1,9 @@
 # Review the local plan and apply workflow
 
-The `custom-example` project provides a deterministic source for reviewing the local CLI
-and Python execution surfaces. Its custom source adapter reads five devices from
-`custom_adapter_src/mock_db.json`; Infrahub is the destination.
+The `custom-example` project provides a deterministic source fixture for a bounded live
+review of the local CLI and Python execution surfaces. Its custom source adapter reads
+five devices from `custom_adapter_src/mock_db.json`; a live, writable Infrahub instance is
+the destination.
 
 Run every command from the repository root. The configuration uses repository-relative
 adapter and fixture paths.

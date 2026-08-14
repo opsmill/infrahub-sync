@@ -21,12 +21,16 @@ except Exception:  # noqa: BLE001 -- generated adapters need a safe import fallb
 #  This file has been generated with the command `infrahub-sync generate`
 #  All modifications will be lost the next time you reexecute this command
 # -------------------------------------------------------
-class InfraDevice(_ModelBaseClass):
+class _GeneratedModelBase(_ModelBaseClass):
+    if "local_id" not in getattr(_ModelBaseClass, "model_fields", {}):
+        local_id: str | None = None
+    if "local_data" not in getattr(_ModelBaseClass, "model_fields", {}):
+        local_data: Any | None = None
+
+
+class InfraDevice(_GeneratedModelBase):
     _modelname = "InfraDevice"
     _identifiers = ("name",)
     _attributes = ("type",)
-    type: str
     name: str
-
-    local_id: str | None = None
-    local_data: Any | None = None
+    type: str
