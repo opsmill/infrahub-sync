@@ -998,10 +998,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """Validate convergence identities before entering DiffSync's write path."""
         effective_diff = diff
         if not effective_diff:
-            # Preserve the schema-level refusal before doing comparison work, then
-            # validate the exact diff DiffSync would otherwise compute and immediately
-            # write. Passing that same object onward closes the public diff=None path.
-            self.validate_convergence_identities()
+            # Validate the exact diff DiffSync would otherwise compute and immediately
+            # write. Passing that same object onward closes the public diff=None path
+            # without letting inactive or update-only mappings block the run.
             effective_diff = self.diff_from(
                 source=source,
                 diff_class=diff_class,

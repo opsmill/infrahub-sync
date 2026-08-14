@@ -197,7 +197,7 @@ def test_covering_uniqueness_constraint_does_not_override_coarser_hfid(
     monkeypatch.setattr(Adapter, "sync_from", _enter_write_path)
 
     with pytest.raises(ValueError):
-        destination.sync_from(Adapter())
+        destination.sync_from(Adapter(), diff=_two_rack_create_diff())
 
     assert entered_write_path is False
 
@@ -268,7 +268,7 @@ def test_generated_model_identity_is_validated_when_config_identifiers_are_omitt
     monkeypatch.setattr(Adapter, "sync_from", _enter_write_path)
 
     with pytest.raises(ValueError):
-        destination.sync_from(Adapter())
+        destination.sync_from(Adapter(), diff=_two_rack_create_diff())
 
     assert entered_write_path is False
 
@@ -333,7 +333,7 @@ def test_default_filter_is_validated_when_destination_has_no_hfid(
     monkeypatch.setattr(Adapter, "sync_from", _enter_write_path)
 
     with pytest.raises(ValueError):
-        destination.sync_from(Adapter())
+        destination.sync_from(Adapter(), diff=_two_rack_create_diff())
 
     assert entered_write_path is False
 
@@ -366,7 +366,7 @@ def test_missing_upsert_key_is_refused_before_destination_writes(
     monkeypatch.setattr(Adapter, "sync_from", _enter_write_path)
 
     with pytest.raises(ValueError) as exc_info:
-        destination.sync_from(Adapter())
+        destination.sync_from(Adapter(), diff=_two_rack_create_diff())
 
     assert "destination upsert key (none)" in str(exc_info.value)
     assert "uncovered mapping identifier(s): name, site" in str(exc_info.value)
@@ -403,7 +403,7 @@ def test_relationship_hfid_must_cover_full_peer_identity(
     monkeypatch.setattr(Adapter, "sync_from", _enter_write_path)
 
     with pytest.raises(ValueError) as exc_info:
-        destination.sync_from(Adapter())
+        destination.sync_from(Adapter(), diff=_two_rack_create_diff())
 
     assert "uncovered mapping identifier(s): site" in str(exc_info.value)
     assert entered_write_path is False
@@ -445,6 +445,46 @@ def test_inactive_unsafe_mapping_does_not_block_unrelated_write(
     assert entered_write_path is True
 
 
+def test_omitted_diff_does_not_activate_an_unrelated_unsafe_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Validation follows create actions in the computed diff, not every configured kind."""
+    destination = InfrahubAdapter.__new__(InfrahubAdapter)
+    destination.config = SyncConfig(
+        name="mixed-sync",
+        source=SyncAdapter(name="source"),
+        destination=SyncAdapter(name="infrahub"),
+        schema_mapping=[
+            SchemaMappingModel(name="LocationRack", identifiers=["name", "site"]),
+            SchemaMappingModel(name="BuiltinTag", identifiers=["name"]),
+        ],
+    )
+    destination.schema = {
+        "LocationRack": SimpleNamespace(human_friendly_id=["name__value"], relationships=[]),
+        "BuiltinTag": SimpleNamespace(human_friendly_id=["name__value"], relationships=[]),
+    }
+    computed = Diff()
+    tag = DiffElement(obj_type="BuiltinTag", name="red", keys={"name": "red"})
+    tag.add_attrs(source={"description": "Red"})
+    computed.add(tag)
+    observed_diff: Diff | None = None
+
+    monkeypatch.setattr(InfrahubAdapter, "diff_from", lambda *_args, **_kwargs: computed)
+
+    def _enter_write_path(*_args: object, **kwargs: object) -> Diff:
+        nonlocal observed_diff
+        supplied_diff = kwargs["diff"]
+        assert isinstance(supplied_diff, Diff)
+        observed_diff = supplied_diff
+        return observed_diff
+
+    monkeypatch.setattr(Adapter, "sync_from", _enter_write_path)
+
+    destination.sync_from(Adapter())
+
+    assert observed_diff is computed
+
+
 def test_update_only_diff_does_not_enter_upsert_identity_guard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -479,6 +519,46 @@ def test_update_only_diff_does_not_enter_upsert_identity_guard(
     destination.sync_from(Adapter(), diff=diff)
 
     assert entered_write_path is True
+
+
+def test_omitted_diff_with_only_updates_does_not_enter_upsert_identity_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A computed update still addresses the existing node by ID and remains allowed."""
+    destination = InfrahubAdapter.__new__(InfrahubAdapter)
+    destination.config = SyncConfig(
+        name="rack-sync",
+        source=SyncAdapter(name="source"),
+        destination=SyncAdapter(name="infrahub"),
+        schema_mapping=[SchemaMappingModel(name="LocationRack", identifiers=["name", "site"])],
+    )
+    destination.schema = {
+        "LocationRack": SimpleNamespace(human_friendly_id=["name__value"], relationships=[]),
+    }
+    computed = Diff()
+    rack = DiffElement(
+        obj_type="LocationRack",
+        name="rack-a__atlanta",
+        keys={"name": "rack-a", "site": "atlanta"},
+    )
+    rack.add_attrs(source={"description": "New"}, dest={"description": "Old"})
+    computed.add(rack)
+    observed_diff: Diff | None = None
+
+    monkeypatch.setattr(InfrahubAdapter, "diff_from", lambda *_args, **_kwargs: computed)
+
+    def _enter_write_path(*_args: object, **kwargs: object) -> Diff:
+        nonlocal observed_diff
+        supplied_diff = kwargs["diff"]
+        assert isinstance(supplied_diff, Diff)
+        observed_diff = supplied_diff
+        return observed_diff
+
+    monkeypatch.setattr(Adapter, "sync_from", _enter_write_path)
+
+    destination.sync_from(Adapter())
+
+    assert observed_diff is computed
 
 
 def test_read_only_diff_remains_available_for_an_unsafe_identity(
