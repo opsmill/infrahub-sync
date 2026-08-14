@@ -60,10 +60,13 @@ prefect = [
 # Managed HTTP service and worker profile (Python 3.11-3.13). Every runtime
 # imported directly by `infrahub_sync.managed` is declared here; the reusable
 # Prefect integration is pinned to the reviewed DB-102/103/104 stack exactly.
+# The previous `opsmill-prefect-extras` private Git pin is vendored instead: the
+# package ships from this repository at `opsmill_prefect_extras/`, byte-identical to
+# upstream commit 84688eb8d8db7e17770413640a66481ccdc3e725. See
+# `opsmill_prefect_extras/VENDORED.md` for the freeze and re-adoption rules.
 managed = [
     "fastapi>=0.115,<1; python_version >= '3.11'",
     "httpx>=0.27,<1; python_version >= '3.11'",
-    "opsmill-prefect-extras @ git+https://github.com/opsmill/prefect-extras.git@84688eb8d8db7e17770413640a66481ccdc3e725 ; python_version >= '3.11'",
     "prefect==3.8.1; python_version >= '3.11'",
     "uvicorn>=0.34,<1; python_version >= '3.11'",
 ]
@@ -94,7 +97,10 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["infrahub_sync"]
+# `opsmill_prefect_extras` is a vendored copy of the private upstream package,
+# byte-identical at its original import name so nothing in this repository or its
+# tests rewrites imports; see `opsmill_prefect_extras/VENDORED.md`.
+packages = ["infrahub_sync", "opsmill_prefect_extras"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -188,6 +194,11 @@ exclude = [
     "build",
     "dist",
     "examples",
+    # Vendored byte-identical upstream code and its upstream tests; the freeze rule in
+    # opsmill_prefect_extras/VENDORED.md forbids local rewrites, so Ruff must not
+    # reformat or lint them to this repository's profile. ty still checks them.
+    "opsmill_prefect_extras",
+    "tests/vendored_prefect_extras",
 ]
 
 
@@ -214,6 +225,9 @@ line-ending = "auto"
 
 [tool.ruff.lint.isort]
 known-first-party = ["infrahub"]
+# The vendored package keeps its upstream (third-party) import classification so
+# consumer import blocks stay byte-stable across vendoring and later re-adoption.
+known-third-party = ["opsmill_prefect_extras"]
 
 [tool.ruff.lint.pycodestyle]
 max-line-length = 150

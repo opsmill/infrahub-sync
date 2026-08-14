@@ -3,13 +3,15 @@ from tasks import linter
 
 def test_ty_check_command_excludes_managed_on_python_310() -> None:
     assert linter._ty_check_command(3, 10) == (
-        "uv run ty check --exclude infrahub_sync/managed --exclude tests/managed ."
+        "uv run ty check --exclude infrahub_sync/managed --exclude tests/managed "
+        "--exclude tests/vendored_prefect_extras ."
     )
 
 
 def test_ty_check_command_checks_managed_on_supported_python() -> None:
-    assert linter._ty_check_command(3, 11) == "uv run ty check ."
-    assert linter._ty_check_command(3, 13) == "uv run ty check ."
+    expected = "uv run ty check --exclude tests/vendored_prefect_extras ."
+    assert linter._ty_check_command(3, 11) == expected
+    assert linter._ty_check_command(3, 13) == expected
 
 
 def test_pylint_command_excludes_managed_on_python_310() -> None:

@@ -104,9 +104,13 @@ jobs:
       - name: "Assert Python 3.10 is active"
         run: uv run --no-sync python -c "import sys; assert sys.version_info[:2] == (3, 10), sys.version"
 
+      # opsmill_prefect_extras is vendored first-party code shipped with the package,
+      # so it is present on disk in every install; the base-package guarantee that
+      # nothing imports it without the managed extra is enforced by
+      # tests/test_no_prefect_import.py.
       - name: "Assert managed runtime dependencies are absent from this environment"
         run: |
-          for module in prefect fastapi uvicorn opsmill_prefect_extras; do
+          for module in prefect fastapi uvicorn; do
             if uv run --no-sync python -c "import ${module}" 2>/dev/null; then
               echo "${module} is importable — this leg must be a base install"
               exit 1
