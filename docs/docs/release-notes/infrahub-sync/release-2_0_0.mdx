@@ -92,7 +92,7 @@ uv run infrahub-sync diff --name from-netbox --directory examples/
 duckdb -c "SELECT action, resource, source_id FROM read_parquet('.infrahub-sync-cache/from-netbox/<run-id>/plan.parquet') LIMIT 20"
 ```
 
-- Use `apply` (preview) to replay a cached plan without re-extracting the source. In 2.0.0 it requires destination adapter support for cached-row application, so use `sync` for built-in adapter workflows until that support is available. `apply` refuses to run when the current schema mapping and destination schema shape no longer match the cached schema sub-hash.
+- Use `apply` to replay a cached plan without re-extracting the source. In 2.0.0 it requires destination adapter support for cached-row application, so use `sync` for built-in adapter workflows until that support is available. `apply` refuses to run when the current schema mapping and destination schema shape no longer match the cached schema sub-hash.
 
 ### Type checking uses ty in invoke lint
 
@@ -119,7 +119,7 @@ Run `invoke lint` with stricter type checking and no override blocks. The projec
 - Added per-run cache artifacts under `.infrahub-sync-cache/<sync-name>/<run-id>/`, including source and destination snapshots, run metadata, cursors, and schema-sub-hash data. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
 - Added sync-level rowcount baselines under `.infrahub-sync-cache/<sync-name>/last-successful-rowcounts.json`. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
 - Added Parquet diff plans for `diff` and `sync`, so run output can be inspected with external tools. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
-- Added the `infrahub-sync apply` command (preview) as the foundation for replaying cached plans with destination adapters that support cached-row application. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
+- Added the `infrahub-sync apply` command as the foundation for replaying cached plans with destination adapters that support cached-row application. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
 - Added cursor-based incremental extraction for NetBox, Nautobot, and Infrahub, enabled with `--no-full-extract`. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
 - Added rowcount guardrails that stop `sync` when a resource count drops by more than 50 percent from the previous successful baseline. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))
 - Added `--continue-on-error` to skip peer relationships with missing identifier values while logging warnings. ([#127](https://github.com/opsmill/infrahub-sync/pull/127))

@@ -5,8 +5,8 @@
 <!-- Extracted from dev/specs/archive/001-prefect-managed-remote-run on 2026-07-31 -->
 
 What `invoke format` and `invoke lint` actually run, in what order, and what a passing result
-does and does not mean. Read this before treating either command as a gate: `invoke lint`
-does **not** exit 0 on a clean checkout, and `invoke format` damages tracked Markdown.
+does and does not mean. Both aggregates are executable gates on a clean checkout; this page
+documents their ordering, inherited Pylint baseline, and archive-formatting boundary.
 
 ## What the aggregates run
 
@@ -28,34 +28,32 @@ that leg directly.
 `invoke format` calls `docs.format` (`rumdl fmt .`) and then `linter.format_all`
 (`ruff format .` then `ruff check --fix .`).
 
-## `rumdl fmt` loses text in tracked Markdown
+## Archived specification formatting is intentionally excluded
 
-`rumdl fmt .` misparses some wrapped lines in this repository's Markdown as ATX headings,
-drops text, and cascades a heading demotion through the rest of the file.
+`rumdl fmt .` misparses some wrapped lines in archived specification artifacts as ATX
+headings, drops text, and cascades a heading demotion through the rest of the file.
 
 `dev/specs/**` — the archived spec artifacts, a historical record — is in the
 `[tool.rumdl] exclude` list in `pyproject.toml` for exactly this reason, so `invoke format`
 cannot rewrite it. That exclusion covers `rumdl check` too: the archive is not linted, and
-is not expected to be. **Every other tracked Markdown file is still in scope for the
-formatter**, and the corruption is a property of the tool, not of `dev/specs`. Prefer
-`invoke linter.format` when you only mean to format Python.
+is not expected to be. Current documentation remains in scope. Review formatter diffs as
+usual; use `invoke linter.format` when you only mean to format Python.
 
 Use `rumdl check .` and fix violations by hand. When you only want the Python formatters, run
 `invoke linter.format` — which is the *formatter* aggregate (`ruff format` + `ruff check
 --fix`), despite the name suggesting otherwise.
 
-## There is no `linter.lint` task
+## Namespaced aggregates
 
-`tasks/linter.py` decorates the Python-lint aggregate `lint_all` with `@task(name="format")`,
-colliding with `format_all` below it. `invoke --list` shows `linter.format` (which resolves
-to `format_all`, the formatter) and **no** `linter.lint`. The Python-lint aggregate is
-unreachable by any name; run the four `linter.lint-*` tasks individually.
+`invoke linter.lint` runs the four Python/YAML/type legs without the documentation check.
+`invoke linter.format` runs the Python formatter only. The top-level `invoke lint` and
+`invoke format` commands add the documentation legs before those namespaced aggregates.
 
 ## The inherited pylint baseline
 
-`pylint infrahub_sync/` does not pass, and has not for a long time. Measured directly on
-this repository at commit `697b2f4`, using Python 3.13.3, Pylint 4.0.5, and an environment
-synced with `--extra dev --extra prefect --extra managed`:
+Raw `pylint infrahub_sync/` reports inherited findings. Measured directly on this repository
+at commit `697b2f4`, using Python 3.13.3, Pylint 4.0.5, and an environment synced with
+`--extra dev --extra prefect --extra managed`:
 
 - exit code **28**, which is pylint's bitmask for warning (4) + refactor (8) + convention
   (16) — not a count;
@@ -70,20 +68,20 @@ synced with `--extra dev --extra prefect --extra managed`:
 | `W0613` unused-argument | 4 |
 | `C0302`, `C0412`, `R0912`, `R0915`, `R1705`, `R1720`, `W0707` | 1 each |
 
-**The count is environment-dependent.** pylint can analyse more code once optional
-dependencies resolve, so a base-only environment reports fewer diagnostics than a
-`dev + prefect` one at the same commit. A total on its own is not a comparable figure.
+The Invoke task reads Pylint's JSON report and makes this inherited set an executable
+no-regression gate. A new diagnostic code or a count above the table's maximum fails;
+fewer findings pass because optional dependencies can affect how much code Pylint analyses.
 
-Treat the **code set** as the baseline, not the number. A no-regression claim means: no code
-outside the set above, and no new occurrence attributable to your change.
+This keeps `invoke lint` green on the recorded baseline without disabling any diagnostic in
+Pylint configuration or allowing the inherited counts to grow.
 
 ## Measuring a no-regression claim
 
 Two mistakes cost real time on this repository, both worth avoiding by rule:
 
 - **Read the command's own exit code.** `invoke lint | tail` reports `tail`'s status, which
-  is always 0. That is how "`invoke lint` exits 0" came to be believed. Capture the status
-  from the command itself, and record the command plus its verbatim output as the evidence.
+  is always 0. Capture the status from the command itself, and record the command plus its
+  verbatim output as the evidence.
 - **Compare against an extraction of the base commit, not against your own tree.** Extract
   it read-only:
 
