@@ -33,6 +33,17 @@ def _ty_check_command(python_major: int, python_minor: int) -> str:
     return "uv run ty check ."
 
 
+def _pylint_command(python_major: int, python_minor: int) -> str:
+    """Return the Pylint command for the active supported runtime profile.
+
+    The managed tree imports optional dependencies that only install on Python
+    3.11+, so the documented 3.10 profile excludes it, mirroring the ty exclusion.
+    """
+    if (python_major, python_minor) == (3, 10):
+        return "pylint --output-format=json2 --ignore-paths='^infrahub_sync/managed/' infrahub_sync/"
+    return "pylint --output-format=json2 infrahub_sync/"
+
+
 @task(name="lint")
 def lint_all(context: Context) -> None:
     """Run all linters."""
@@ -62,7 +73,7 @@ def lint_pylint(context: Context) -> None:
     """Run Pylint and fail when diagnostics exceed the inherited baseline."""
 
     print(f" - [{NAMESPACE}] Check code with pylint")
-    exec_cmd = "pylint --output-format=json2 infrahub_sync/"
+    exec_cmd = _pylint_command(sys.version_info.major, sys.version_info.minor)
     with context.cd(ESCAPED_REPO_PATH):
         result = context.run(exec_cmd, hide=True, warn=True)
     if result is None:
@@ -83,6 +94,8 @@ def lint_pylint(context: Context) -> None:
     if regressions:
         for regression in regressions:
             print(f" - [{NAMESPACE}] Pylint regression: {regression}")
+        for location in _pylint_regression_locations(report):
+            print(f" - [{NAMESPACE}]   {location}")
         msg = "Pylint diagnostics exceed the inherited baseline"
         raise RuntimeError(msg)
 
@@ -113,6 +126,32 @@ def _pylint_regressions(report: dict[str, Any]) -> list[str]:
         elif count > maximum:
             regressions.append(f"{message_id} increased from at most {maximum} to {count}")
     return regressions
+
+
+def _pylint_regression_locations(report: dict[str, Any]) -> list[str]:
+    """Return file:line locations for every diagnostic of a regressed code."""
+    messages = report.get("messages")
+    if not isinstance(messages, list):
+        return []
+
+    counts = Counter(
+        message["messageId"]
+        for message in messages
+        if isinstance(message, dict) and isinstance(message.get("messageId"), str)
+    )
+    regressed = {
+        message_id for message_id, count in counts.items() if count > PYLINT_BASELINE_MAX_COUNTS.get(message_id, 0)
+    }
+
+    locations = []
+    for message in messages:
+        if not isinstance(message, dict) or message.get("messageId") not in regressed:
+            continue
+        path = message.get("relativePath") or message.get("absolutePath") or "<unknown>"
+        line = message.get("line", "?")
+        symbol = message.get("symbol", "")
+        locations.append(f"{path}:{line}: {message['messageId']} ({symbol})")
+    return sorted(locations)
 
 
 @task

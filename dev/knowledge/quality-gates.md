@@ -71,7 +71,10 @@ at commit `697b2f4`, using Python 3.13.3, Pylint 4.0.5, and an environment synce
 
 The Invoke task reads Pylint's JSON report and makes this inherited set an executable
 no-regression gate. A new diagnostic code or a count above the table's maximum fails;
-fewer findings pass because optional dependencies can affect how much code Pylint analyses.
+fewer findings pass, so an improvement never blocks the gate. On Python 3.10 the task
+excludes `infrahub_sync/managed`, mirroring the ty exclusion: the managed tree imports
+optional dependencies that only install on Python 3.11+, and analysing it without them
+would add import-error diagnostics rather than remove findings.
 
 This keeps `invoke lint` green on the recorded baseline without disabling any diagnostic in
 Pylint configuration or allowing the inherited counts to grow.

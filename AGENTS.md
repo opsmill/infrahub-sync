@@ -49,8 +49,8 @@ The `prefect` extra is not optional for development: without it `ty` cannot reso
 `infrahub_sync/orchestration/`'s imports and `tests/orchestration/test_flow.py` skips
 itself whole. On Python 3.11–3.13, the `managed` extra is required too; otherwise `ty`
 cannot resolve the managed service's Prefect Extras imports. On Python 3.10,
-`invoke linter.lint-ty` excludes `infrahub_sync/managed` and `tests/managed`, matching
-CI's direct Prefect gate. CI also runs a base-install job that keeps the Prefect-free
+`invoke linter.lint-ty` and `invoke linter.lint-pylint` exclude `infrahub_sync/managed`
+(ty also excludes `tests/managed`), matching CI's direct Prefect gate. CI also runs a base-install job that keeps the Prefect-free
 guarantee honest.
 
 **CLI sanity after changes:**
