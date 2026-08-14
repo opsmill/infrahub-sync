@@ -14,6 +14,8 @@ on:
 jobs:
   linter:
     uses: ./.github/workflows/workflow-linter.yml
+    secrets:
+      managed_dependency_token: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
 
   uv-checker:
     uses: ./.github/workflows/workflow-uv-check.yml
@@ -21,3 +23,5 @@ jobs:
   tests:
     needs: ["linter", "uv-checker"]
     uses: ./.github/workflows/workflow-tests.yml
+    secrets:
+      managed_dependency_token: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
