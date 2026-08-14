@@ -135,8 +135,12 @@ userinfo
 uuid
 UUID
 uv
+Uvicorn
+uvicorn
 validator
 validators
+vendored
+vendoring
 Version Control
 VRFs
 walkthrough
