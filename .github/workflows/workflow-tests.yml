@@ -54,8 +54,6 @@ jobs:
     steps:
       - name: "Check out repository code"
         uses: "actions/checkout@v5"
-        with:
-          token: ${{ secrets.managed_dependency_token || github.token }}
 
       - name: "Install uv"
         uses: "astral-sh/setup-uv@v4"
@@ -73,6 +71,11 @@ jobs:
       # the direct Prefect orchestration profile.
       - name: "Install managed dependencies on Python 3.11+"
         if: matrix.python-version != '3.10'
+        env:
+          GH_TOKEN: ${{ secrets.managed_dependency_token }}
+          GIT_CONFIG_COUNT: 1
+          GIT_CONFIG_KEY_0: credential.helper
+          GIT_CONFIG_VALUE_0: "!gh auth git-credential"
         run: uv sync --python ${{ matrix.python-version }} --frozen --extra dev --extra prefect --extra managed
 
       # Runs only `-m "not integration"`. Integration tests need a live
