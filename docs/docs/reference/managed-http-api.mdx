@@ -71,16 +71,20 @@ refusal records secret-safe actor, reason, and outcome evidence.
 
 ## Deploy the managed flow
 
-Set the work pool name, then apply the managed deployment:
+Set the work pool name and the absolute directory managed flow runs execute from —
+relative paths in Sync configurations resolve against it — then apply the managed
+deployment:
 
 ```bash
 export PREFECT_API_URL="http://127.0.0.1:4200/api"
 export INFRAHUB_SYNC_MANAGED_WORK_POOL="sync-process-pool"
+export INFRAHUB_SYNC_MANAGED_FLOW_WORKING_DIRECTORY="/path/to/checkout"
 python -m infrahub_sync.managed.deploy
 ```
 
 The command validates and applies `infrahub-sync-managed/run` through OpsMill Prefect
-Extras. It does not create a work pool or start a worker.
+Extras, then records the declared working directory as the deployment's only pull step.
+It does not create a work pool or start a worker.
 
 Configure the worker environment before it starts:
 

@@ -106,6 +106,42 @@ def test_managed_and_direct_prefect_flow_schemas_are_separate_and_exact() -> Non
     assert_valid_definitions(CATALOGUE)
 
 
+def test_flow_working_directory_is_required_absolute_and_existing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from infrahub_sync.managed import deploy
+
+    monkeypatch.delenv(deploy.FLOW_WORKING_DIRECTORY_ENV, raising=False)
+    with pytest.raises(ValueError, match=deploy.FLOW_WORKING_DIRECTORY_ENV):
+        deploy.required_flow_working_directory()
+
+    monkeypatch.setenv(deploy.FLOW_WORKING_DIRECTORY_ENV, "relative/path")
+    with pytest.raises(ValueError, match="absolute"):
+        deploy.required_flow_working_directory()
+
+    monkeypatch.setenv(deploy.FLOW_WORKING_DIRECTORY_ENV, str(tmp_path))
+    assert deploy.required_flow_working_directory() == str(tmp_path)
+    assert deploy.flow_pull_steps(str(tmp_path)) == [
+        {"prefect.deployments.steps.set_working_directory": {"directory": str(tmp_path)}}
+    ]
+
+
+def test_managed_definition_entrypoint_targets_the_flow_file() -> None:
+    """The applied deployment must carry an executable entrypoint.
+
+    Without one, a Prefect process worker refuses every managed flow run with
+    "does not have an entrypoint and can not be run" — the deployment library
+    sends the entrypoint only when the definition supplies it.
+    """
+    assert MANAGED_DEFINITION.entrypoint is not None
+    path_part, _, function_part = MANAGED_DEFINITION.entrypoint.rpartition(":")
+    flow_file = Path(path_part)
+    assert flow_file.is_absolute(), "entrypoint must encode the shared-installation path contract"
+    assert flow_file.name == "flow.py"
+    assert flow_file.is_file()
+    assert function_part == "managed_sync_run"
+
+
 def test_missing_context_uses_local_logger_without_constructing_a_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
     def missing_context():
         raise MissingContextError
