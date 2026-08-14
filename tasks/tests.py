@@ -15,7 +15,7 @@ MAIN_DIRECTORY = CURRENT_DIRECTORY.parent
 def tests_unit(context: Context) -> None:
     """Run unit tests — everything under tests/ except integration-marked tests."""
     with context.cd(MAIN_DIRECTORY):
-        context.run('pytest -m "not integration"', pty=True)
+        context.run('pytest -m "not integration and not preview"', pty=True)
 
 
 @task

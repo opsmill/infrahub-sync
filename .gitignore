@@ -29,3 +29,6 @@ venv/
 *.pem
 *.key
 credentials.json
+# Preview environment runtime state and local overrides
+.preview/
+development/preview.local.env
