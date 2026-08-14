@@ -16,14 +16,15 @@ documents their ordering, inherited Pylint baseline, and archive-formatting boun
 |---|---|---|
 | 1 | `docs.rumdl` | `rumdl check .` |
 | 2 | `linter.lint-ruff` | `ruff format --check --diff . && ruff check --diff .` |
-| 3 | `linter.lint-pylint` | `pylint infrahub_sync/` |
+| 3 | `linter.lint-pylint` | `pylint --output-format=json2 infrahub_sync/` |
 | 4 | `linter.lint-yaml` | `yamllint .` |
 | 5 | `linter.lint-ty` | Profile-aware `uv run ty check` (see [CI](#ci)) |
 
-**rumdl runs first, and the chain short-circuits.** Every leg calls `context.run` without
-`warn=True`, so the first non-zero exit raises and no later leg runs. A Markdown nit
-therefore hides every Python finding behind it. If you need a specific leg's status, invoke
-that leg directly.
+**rumdl runs first, and the chain stops after the first gate failure.** Rumdl, Ruff,
+yamllint, and ty use their process exit directly. The Pylint leg captures its JSON report
+with `warn=True` because the inherited baseline makes raw Pylint exit non-zero; the wrapper
+then raises only for a new diagnostic code, an increased count, or an unreadable report.
+If you need a specific leg's status, invoke that leg directly.
 
 `invoke format` calls `docs.format` (`rumdl fmt .`) and then `linter.format_all`
 (`ruff format .` then `ruff check --fix .`).
