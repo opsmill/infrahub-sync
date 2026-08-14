@@ -16,13 +16,20 @@ from typing import Any
 import httpx
 import pytest
 
-from tasks.preview import REPO_ROOT, load_preview_env, preview_urls
+from tasks.preview import REPO_ROOT, PreviewError, load_preview_env, preview_urls
 
 
 @pytest.fixture(scope="session")
 def preview_settings() -> dict[str, Any]:
-    """Shipped-plus-local preview settings, with derived URLs and tokens."""
-    values = load_preview_env()
+    """Shipped-plus-local preview settings, with derived URLs and tokens.
+
+    A missing or trimmed settings file skips like every other
+    unavailable-environment condition; these tests never fail for setup reasons.
+    """
+    try:
+        values = load_preview_env()
+    except PreviewError as exc:
+        pytest.skip(f"preview settings unavailable ({exc}); start with `invoke preview.up`")
     urls = preview_urls(values)
     principals = json.loads(values["PREVIEW_BEARER_TOKENS"])
     first_actor = min(principals)

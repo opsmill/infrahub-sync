@@ -38,7 +38,12 @@ COMPOSE_FILES = (
     DEV_DIR / "docker-compose.preview.yml",
 )
 SCHEMA_FILE = REPO_ROOT / "examples" / "prefect_remote_run" / "schemas" / "infra_device.yml"
-MANAGED_PROCESSES = ("sync-api", "prefect-worker")
+# Process name -> substring its command line must contain before a recorded pid
+# is treated as ours (guards against pid recycling by unrelated processes).
+MANAGED_PROCESSES = {
+    "sync-api": "infrahub_sync.managed.serve",
+    "prefect-worker": "prefect worker",
+}
 WAIT_TIMEOUT_SECONDS = 420
 
 
@@ -58,7 +63,16 @@ def load_preview_env() -> dict[str, str]:
                 continue
             key, _, value = line.partition("=")
             values[key.strip()] = value.strip()
-    missing = {"PREVIEW_INFRAHUB_PORT", "PREVIEW_PREFECT_PORT", "PREVIEW_SYNC_API_PORT"} - values.keys()
+    required = {
+        "COMPOSE_PROJECT_NAME",
+        "INFRAHUB_INITIAL_ADMIN_TOKEN",
+        "PREVIEW_BEARER_TOKENS",
+        "PREVIEW_INFRAHUB_PORT",
+        "PREVIEW_PREFECT_PORT",
+        "PREVIEW_SYNC_API_PORT",
+        "PREVIEW_WORK_POOL",
+    }
+    missing = required - values.keys()
     if missing:
         msg = f"{ENV_FILE} is missing required keys: {sorted(missing)}"
         raise PreviewError(msg)
@@ -119,6 +133,9 @@ def _wait_for_http(url: str, description: str, timeout: int = WAIT_TIMEOUT_SECON
         except httpx.HTTPError as exc:
             last_error = str(exc)
         else:
+            # Deliberate: any response below 500 counts as "the service is up",
+            # so unauthenticated probes of authenticated endpoints (401/404)
+            # qualify. A new probe URL must not rely on its body or status.
             if response.status_code < _SERVER_ERROR_FLOOR:
                 return
             last_error = f"HTTP {response.status_code}"
@@ -151,7 +168,7 @@ def _process_running(name: str) -> int | None:
         check=False,
     )
     command_line = probe.stdout.strip()
-    if probe.returncode != 0 or ("infrahub" not in command_line and "prefect" not in command_line):
+    if probe.returncode != 0 or MANAGED_PROCESSES[name] not in command_line:
         return None
     return pid
 
@@ -182,6 +199,14 @@ def _stop_process(name: str) -> None:
     print(f" - [{NAMESPACE}] Stopping {name} (pid {pid})")
     with contextlib.suppress(ProcessLookupError, PermissionError):
         os.killpg(os.getpgid(pid), signal.SIGTERM)
+        # Wait for a clean exit so containers are not torn down under a process
+        # still talking to them; escalate if it lingers.
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and _process_running(name) is not None:
+            time.sleep(0.5)
+        if _process_running(name) is not None:
+            print(f" - [{NAMESPACE}] {name} did not exit in 15s; sending SIGKILL")
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
     _pid_file(name).unlink(missing_ok=True)
 
 

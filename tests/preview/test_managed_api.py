@@ -21,17 +21,26 @@ def _client(preview_env: dict[str, Any], token: str | None) -> httpx.Client:
     return httpx.Client(base_url=preview_env["urls"]["sync_api"], headers=headers, timeout=30)
 
 
-def _wait_finished(client: httpx.Client, run_id: str) -> dict[str, Any]:
+def _wait_for_phase(client: httpx.Client, run_id: str, target_phase: str) -> dict[str, Any]:
+    """Poll until the durable record reaches the target phase.
+
+    Polling ``finished_at`` is not enough: an admitted apply continues the
+    planning run's record, and only the flow's eventual finish updates the
+    phase — the plan stage's ``finished_at`` is already set and stays set.
+    """
     deadline = time.monotonic() + POLL_TIMEOUT_SECONDS
     payload: dict[str, Any] = {}
     while time.monotonic() < deadline:
         response = client.get(f"/runs/{run_id}")
         assert response.status_code == 200, response.text
         payload = response.json()
-        if payload["run"]["finished_at"] is not None:
+        phase = payload["run"]["phase"]
+        if phase == target_phase:
             return payload
+        if "failed" in phase:
+            pytest.fail(f"run {run_id} failed while waiting for {target_phase!r}: {payload['run']}")
         time.sleep(3)
-    pytest.fail(f"run {run_id} did not finish within {POLL_TIMEOUT_SECONDS}s: {payload}")
+    pytest.fail(f"run {run_id} did not reach {target_phase!r} within {POLL_TIMEOUT_SECONDS}s: {payload}")
 
 
 def test_requests_without_a_bearer_token_are_refused(preview_env: dict[str, Any]) -> None:
@@ -55,8 +64,8 @@ def test_managed_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
         assert created.status_code == 202, created.text
         run_id = created.json()["run"]["run_id"]
 
-        planned = _wait_finished(client, run_id)
-        assert planned["run"]["outcome"] not in {None, "failed"}, planned["run"]
+        planned = _wait_for_phase(client, run_id, "planned")
+        assert planned["run"]["outcome"] is not None, planned["run"]
 
         plan_view = client.get(f"/runs/{run_id}/plan")
         assert plan_view.status_code == 200, plan_view.text
@@ -64,7 +73,7 @@ def test_managed_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
         assert plan_payload["checksum_ok"] is True
         checksum = plan_payload["checksum"]
 
-        applied = client.post(
+        apply_accepted = client.post(
             f"/runs/{run_id}/apply",
             headers={"Idempotency-Key": f"preview-smoke-{uuid.uuid4()}"},
             json={
@@ -73,10 +82,10 @@ def test_managed_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
                 "reason": "preview smoke: apply the reviewed plan",
             },
         )
-        assert applied.status_code == 202, applied.text
+        assert apply_accepted.status_code == 202, apply_accepted.text
 
-        finished = _wait_finished(client, run_id)
-        assert finished["run"]["outcome"] not in {None, "failed"}, finished["run"]
+        applied = _wait_for_phase(client, run_id, "applied")
+        assert applied["run"]["outcome"] is not None, applied["run"]
 
         results = client.get(f"/runs/{run_id}/results")
         assert results.status_code == 200, results.text

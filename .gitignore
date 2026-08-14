@@ -29,6 +29,9 @@ venv/
 *.pem
 *.key
 credentials.json
-# Preview environment runtime state and local overrides
+# Preview environment runtime state and local overrides. The shipped defaults
+# file must stay tracked despite the repository-wide *.env rule above — it
+# contains no secrets and `invoke preview.up` depends on it from a fresh clone.
 .preview/
+!development/preview.env
 development/preview.local.env
