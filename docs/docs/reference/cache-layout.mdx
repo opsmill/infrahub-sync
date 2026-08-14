@@ -60,7 +60,7 @@ mistaken for a missing one.
 
 | Field | Description |
 | --- | --- |
-| `format_version` | The artifact format. `2` today. A version this release does not support is refused rather than partially read. |
+| `format_version` | The artifact format. `2` today. An unsupported format is refused rather than partially read. |
 | `run_id` | The cache run this plan belongs to. |
 | `created_at` | UTC ISO-8601 timestamp of the write. |
 | `config_version` | The configuration the plan was derived from. `apply` compares it for equality and refuses on a mismatch. |
@@ -87,8 +87,8 @@ guessing, and the second names all three of its causes.
 
 ### Deletes in a plan
 
-Deletes are **recorded in the plan and never executed** against the destination by this
-release. Applying a delete-bearing plan applies every non-delete operation, deletes nothing,
+Deletes are **recorded in the plan and never executed** against the destination. Applying a
+delete-bearing plan applies every non-delete operation, deletes nothing,
 completes as `applied`, and records the skipped identifiers and their count on the run. That
 is a designed limitation, not a failure.
 

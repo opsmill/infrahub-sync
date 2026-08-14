@@ -34,7 +34,16 @@ Define the sync as a scheduled workflow in your CI system. CI provides run histo
 
 ### Prefect
 
-Infrahub Sync ships an optional Prefect integration as a developer preview. Install the `prefect` extra and one served deployment exposes a plan or a sync over Prefect's own REST API, with the sync's own log output forwarded into the flow-run log — no wrapper code to write and maintain. See the [Prefect remote run reference](./reference/prefect-remote-run.mdx) for the parameters, result fields, and status mapping, and `examples/prefect_remote_run/README.md` in the repository for a runnable walkthrough.
+Infrahub Sync provides two Prefect-backed execution surfaces:
+
+- Install the `prefect` extra to serve one direct deployment for plan and confirmed sync
+  requests through Prefect's API. Sync output is forwarded into the flow-run log. See the
+  [Prefect remote run reference](./reference/prefect-remote-run.mdx) and
+  `examples/prefect_remote_run/README.md` in the repository.
+- Install the `managed` extra when an automation client needs a Sync-owned authenticated
+  HTTP API, durable records and artifacts, reviewed-plan apply, idempotency, cancellation,
+  and worker execution. See the
+  [managed Sync HTTP API reference](./reference/managed-http-api.mdx).
 
 **When this works well:**
 
@@ -42,9 +51,13 @@ Infrahub Sync ships an optional Prefect integration as a developer preview. Inst
 - A sync needs to be triggered on demand from another system, over an API rather than a shell.
 - You want centralized observability across many sync projects.
 
-**Trade-offs:** Prefect itself has to be operated. If you don't already run it, this adds operational surface area. The packaged integration is a preview: it covers running and observing one plan or sync, not scheduling or retry policy.
+**Trade-offs:** Prefect itself has to be operated. If you do not already run it, this adds
+operational surface area. The direct deployment runs and observes one plan or confirmed
+sync; it does not add scheduling, retry, queue, or overlap policy.
 
-If you need behaviors the preview does not cover — schedules, retry policies, work pools and workers, or composing several sync runs into a larger flow — wrap the CLI in a flow of your own instead. A Prefect flow that shells out to `infrahub-sync sync` gives you the full Prefect feature set, at the cost of owning the wrapper.
+Use the managed API for the supported worker-backed run lifecycle. For schedules, retry
+policies, triggers, or composing several syncs into a larger workflow, configure Prefect
+around either packaged surface or wrap the CLI in a flow you own.
 
 ### Dagster, Airflow, and other workflow engines
 
@@ -71,9 +84,14 @@ Each sync run calculates a fresh diff and applies only deltas, so running more o
 
 Whatever scheduling tool you use, plan for these operational concerns:
 
-- **Logging.** Infrahub Sync emits structured logs via `structlog`. Pipe the output to your log aggregator (Splunk, Datadog, Loki, ELK, etc.).
+- **Logging.** Infrahub Sync emits lifecycle and adapter records through Python logging.
+  Forward them to the logging system used by the scheduler. Public Python API lifecycle
+  records include structured run, operation, stage, and outcome attributes.
 - **Failure detection.** The CLI returns a non-zero exit code on failure. Wire the scheduling tool to catch this and alert the appropriate channel.
-- **Idempotency.** Sync runs are idempotent. If a run fails partway through, re-running it calculates a fresh diff against the current destination state and applies what is still outstanding. Retries on failure are safe.
+- **Failure recovery.** Inspect the run record and destination after a failed write, then
+  calculate a fresh plan. A failed operation can have written part of its change. Safe
+  re-application is not established for destination kinds whose identity crosses a
+  relationship; follow the [run recovery guidance](./running-a-sync.mdx).
 - **Run isolation.** Avoid overlapping runs of the same sync project. Set the cadence longer than the run time, or have the scheduler skip a run if the previous one is still active.
 - **Sync project versioning.** Store sync project directories in version control. Tag or release configuration changes the same way you handle infrastructure code.
 
@@ -87,7 +105,8 @@ Infrahub Sync does not ship a reference container image — examples in the [Ops
 
 - **Built-in scheduler.** Use one of the options above.
 - **Sync history dashboard.** The scheduling tool typically provides this — CI run history, Prefect UI, or aggregated logs.
-- **Built-in retry policies.** Configure retries in the scheduling tool. Runs are idempotent, so retrying is safe.
+- **Built-in retry policies.** Configure retries in the scheduling tool. Treat write
+  retries according to the [documented recovery and convergence boundaries](./running-a-sync.mdx).
 - **Alerting on failure.** Configure alerts in the scheduling tool or log aggregator.
 
 ## Related

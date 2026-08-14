@@ -86,7 +86,7 @@ def _create_product_run(
     return projection
 
 
-def test_managed_and_developer_preview_flow_schemas_are_separate_and_exact() -> None:
+def test_managed_and_direct_prefect_flow_schemas_are_separate_and_exact() -> None:
     assert tuple(inspect.signature(managed_sync_run.fn).parameters) == (
         "run_id",
         "sync_name",

@@ -4,7 +4,7 @@
 
 <!-- Extracted from dev/specs/archive/001-prefect-managed-remote-run on 2026-07-31 -->
 
-`infrahub_sync/orchestration/` is the Developer Preview Prefect integration: a flow that runs one plan
+`infrahub_sync/orchestration/` is the direct Prefect integration: a flow that runs one plan
 or one confirmed sync, and a serve entrypoint that exposes it as a locally served
 deployment. It is the only package in the repository that imports `prefect`, it is installed
 by the optional `prefect` extra, and nothing in the base package imports it — see
@@ -38,7 +38,7 @@ environment.
 
 The separate `infrahub-sync-managed/run` deployment accepts exactly seven parameters:
 `run_id`, `sync_name`, `stage`, `configuration_reference`, `branch`, `expected_checksum`,
-and `confirm_writes`. It does not replace or extend the four-parameter Developer Preview
+and `confirm_writes`. It does not replace or extend the four-parameter direct Prefect
 flow. Credentials, endpoints, adapter instances, product-cache locations, and saved-plan
 cache locations stay in the managed worker environment.
 

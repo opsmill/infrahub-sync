@@ -11,6 +11,13 @@ The base `infrahub-sync` installation includes this API. Prefect and an external
 plane are not required. The source and destination declared by the selected configuration
 remain the runtime integrations for operations that contact adapters.
 
+The examples below use the repository's `custom-example` project. Its source is a local
+JSON fixture, and its destination requires the bundled schema at
+`examples/prefect_remote_run/schemas/infra_device.yml` in Infrahub. Run the examples from
+the repository root so the configuration's relative paths resolve correctly. The
+[Prefect remote run walkthrough](./prefect-remote-run.mdx) links the complete destination
+setup.
+
 ## Optional durable product projection
 
 Every request accepts an optional `product_cache_location`. Set it to an absolute local
@@ -34,7 +41,7 @@ from infrahub_sync.api.v1 import PlanRequest, plan
 
 result = plan(
     PlanRequest(
-        sync_name="from-netbox",
+        sync_name="custom-example",
         config_directory="examples",
         branch="main",
         product_cache_location="/var/lib/infrahub-sync/product-cache",
@@ -65,7 +72,7 @@ from infrahub_sync.api.v1 import VerifyRequest, verify
 
 verified = verify(
     VerifyRequest(
-        sync_name="from-netbox",
+        sync_name="custom-example",
         config_directory="examples",
         run_id=result.run_id,
         product_cache_location="/var/lib/infrahub-sync/product-cache",
@@ -87,14 +94,17 @@ those same bytes for its required verification and writes. It applies the stored
 without extracting the source or recomputing the plan.
 
 ```python
+import json
+from pathlib import Path
+
 from infrahub_sync.api.v1 import ApplyRequest, apply
 
-# Replace this value with the exact plan_checksum from the reviewed manifest.
-reviewed_checksum = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+manifest_path = next(artifact.path for artifact in result.artifacts if artifact.kind == "plan-manifest")
+reviewed_checksum = json.loads(Path(manifest_path).read_text())["plan_checksum"]
 
 applied = apply(
     ApplyRequest(
-        sync_name="from-netbox",
+        sync_name="custom-example",
         config_directory="examples",
         run_id=result.run_id,
         expected_checksum=reviewed_checksum,
@@ -107,7 +117,7 @@ assert applied.outcome in {"applied", "no-change"}
 ```
 
 Recorded delete operations remain visible in `counts.delete` but are not sent to the
-destination in this release. A destination mismatch, stale configuration, changed source
+destination. A destination mismatch, stale configuration, changed source
 snapshot, or checksum mismatch refuses before the first write.
 
 ## Run a confirmed sync
@@ -121,7 +131,7 @@ from infrahub_sync.api.v1 import SyncRequest, sync
 
 synced = sync(
     SyncRequest(
-        sync_name="from-netbox",
+        sync_name="custom-example",
         config_directory="examples",
         branch="main",
         confirm_writes=True,
@@ -144,8 +154,8 @@ All four functions return `RunResult` on success.
 | `api_version` | `"1"` | Public result schema version. |
 | `run_id` | `str` | Stable Sync run identifier. |
 | `operation` | `"plan"`, `"sync"`, `"verify"`, or `"apply"` | Requested product operation. |
-| `phase` | `str` | Current product phase. Readers preserve values added by later releases. |
-| `outcome` | `str` | Product outcome, such as `planned`, `verified`, `applied`, or `no-change`. Readers preserve values added by later releases. |
+| `phase` | `str` | Current product phase. Readers preserve values added by later versions. |
+| `outcome` | `str` | Product outcome, such as `planned`, `verified`, `applied`, or `no-change`. Readers preserve values added by later versions. |
 | `counts` | `ActionCounts` | Zero-filled `create`, `update`, and `delete` saved-operation counts. |
 | `domain_summary` | `dict[str, int]` | Saved-operation counts grouped by destination kind. |
 | `artifacts` | `tuple[ArtifactReference, ...]` | Absolute local references for the run directory, plan manifest, and plan operations. |
@@ -190,4 +200,4 @@ lock.
 Each operation emits standard-library `logging` records at lifecycle boundaries. Records
 carry `api_version`, `run_id`, `operation`, `stage`, and `outcome` as structured attributes.
 Use `LifecycleEvent.model_validate(record.__dict__)` to read them. Its `stage` and `outcome`
-fields accept values introduced by future releases.
+fields accept values introduced by future versions.

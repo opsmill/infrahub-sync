@@ -1,50 +1,48 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 
 from infrahub_sync.plugin_loader import PluginLoader
+
 # Load model class dynamically at runtime (honor adapters_path, safe fallback)
 try:
-{% if config.adapters_path %}
-    _loader = PluginLoader.from_env_and_args(adapter_paths={{ config.adapters_path }})
-{% else %}
-    _loader = PluginLoader.from_env_and_args()
-{% endif %}
-{% if adapter.adapter %}
-    _spec = "{{ adapter.adapter.split(':')[0] }}"
-{% else %}
-    _spec = "{{ adapter.name }}"
-{% endif %}
+    _loader = PluginLoader.from_env_and_args(adapter_paths={{ config.adapters_path or [] }})
+    _spec = "{{ adapter.adapter.split(':')[0] if adapter.adapter else adapter.name }}"
     _ModelBaseClass = _loader.resolve(_spec, default_class_candidates=("Model",))
-except Exception:
+except Exception:  # noqa: BLE001 -- generated adapters need a safe import fallback
     # Fallback: use DiffSyncModel to avoid import-time failure
     from diffsync import DiffSyncModel as _FallbackModel
+
     _ModelBaseClass = _FallbackModel
+
 
 # -------------------------------------------------------
 # AUTO-GENERATED FILE, DO NOT MODIFY
 #  This file has been generated with the command `infrahub-sync generate`
 #  All modifications will be lost the next time you reexecute this command
 # -------------------------------------------------------
-{%- for nodekind, node in schema.items() -%}
-{%-  if node | get_identifiers(config) and config | has_node(node.kind) %}
-class {{ nodekind }}(_ModelBaseClass):
+class _GeneratedModelBase(_ModelBaseClass):
+    if "local_id" not in getattr(_ModelBaseClass, "model_fields", {}):
+        local_id: str | None = None
+    if "local_data" not in getattr(_ModelBaseClass, "model_fields", {}):
+        local_data: Any | None = None
+
+{% for nodekind, node in schema.items() | sort -%}
+{%  if node | get_identifiers(config) and config | has_node(node.kind) %}
+class {{ nodekind }}(_GeneratedModelBase):
     _modelname = "{{ node.kind }}"
     _identifiers = {{ node | get_identifiers(config) | list_to_set }}
-    _attributes = {{ node | get_attributes(config) | list_to_set }}
+    _attributes = {{ node | get_attributes(config) | default([], true) | sort | list_to_set }}
 
-{%-      for attr in node.attributes -%}
+{%-      for attr in node.attributes | sort(attribute="name") -%}
 {%-          if config | has_field(node.kind, attr.name) %}
     {{ attr.name }}: {{ attr | get_kind }}
 {%-          endif -%}
 {%-      endfor -%}
-{%-      for rel in node.relationships -%}
+{%-      for rel in node.relationships | sort(attribute="name") -%}
 {%-          if config | has_field(node.kind, rel.name) %}
     {{ rel.name }}: {{ rel | get_kind }}
 {%-          endif -%}
 {%-      endfor %}
-
-    local_id: str | None = None
-    local_data: Any | None = None
 {%  endif %}
 {%- endfor %}

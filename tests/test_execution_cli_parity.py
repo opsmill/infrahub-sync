@@ -236,7 +236,7 @@ def test_cli_diff_and_remote_plan_agree_on_an_unchanged_fixture(config_dir: Path
 def test_nested_only_diff_reports_no_change_even_though_the_sync_ran(
     config_dir: Path, cache_root: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Materialized rows are the preview's fidelity boundary (contract step 7).
+    """Materialized rows are the result contract's fidelity boundary (contract step 7).
 
     `Potenda._diff_to_rows` walks only the diff root's direct children while
     `Diff.has_diffs()` is recursive, so a diff whose only changes sit in nested

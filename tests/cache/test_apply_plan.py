@@ -186,7 +186,7 @@ def test_a_recorded_delete_is_collected_and_never_dispatched(tmp_path: Path, cap
 
 
 def test_an_action_outside_the_vocabulary_fails_before_any_dispatch(tmp_path: Path) -> None:
-    """FR-017: an operation this release cannot interpret is refused while the plan is read."""
+    """FR-017: an operation this version cannot interpret is refused while the plan is read."""
     directory = _run_dir(tmp_path)
     records = [operation_record(identity={"name": "prod"}), operation_record(action="purge", identity={"name": "old"})]
     write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])

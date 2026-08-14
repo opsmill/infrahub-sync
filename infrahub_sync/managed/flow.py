@@ -1,8 +1,9 @@
 """Separate Prefect flow for API-created durable Sync runs."""
 
 # Deliberately no ``from __future__ import annotations``. Prefect parameter
-# validation must receive the concrete Literal at runtime; the preserved
-# Developer Preview flow documents the affected Prefect/Pydantic versions.
+# validation must receive the concrete Literal at runtime; the direct Prefect
+# flow (``infrahub_sync/orchestration/flow.py``) documents the affected
+# Prefect/Pydantic versions.
 
 import logging
 import os

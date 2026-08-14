@@ -1,4 +1,4 @@
-# Feature Specification: Prefect-Managed Remote Infrahub Sync Run (Developer Preview)
+# Feature Specification: Prefect-Managed Remote Infrahub Sync Run
 
 **Feature Branch**: `001-prefect-managed-remote-run-local-dp-001`
 
@@ -6,15 +6,15 @@
 
 **Status**: Extracted
 
-**Input**: Delivery brief DB-001 v2 (`batch-developer-preview`), primary card `LOCAL-DP-001` — "Prefect-managed remote Infrahub Sync run". The brief is the sole product and scope authority for this specification.
+**Input**: Delivery brief DB-001 v2, primary card `LOCAL-DP-001` — "Prefect-managed remote Infrahub Sync run". The brief is the sole product and scope authority for this specification.
 
 **Traceability**: Brief `DB-001` (v2, READY, approved 2026-07-30 by Blake Ellis) / card `LOCAL-DP-001`. Requirement IDs `DBR-001`–`DBR-015` and acceptance IDs `DBA-001`–`DBA-011` are carried verbatim below and must survive into planning and tasks unchanged.
 
 ## Overview
 
-Infrahub Sync is operated today only through a local CLI. A developer who wants to run it remotely must build an external control plane and wrap the CLI by hand. This Developer Preview answers a bounded product question through working software: can a developer run and observe a real Infrahub Sync operation remotely using the Prefect server and UI they get from a default installation?
+Infrahub Sync is operated today only through a local CLI. A developer who wants to run it remotely must build an external control plane and wrap the CLI by hand. This feature answers a bounded product question through working software: can a developer run and observe a real Infrahub Sync operation remotely using the Prefect server and UI they get from a default installation?
 
-The preview delivers: a narrow, typed Python execution surface shared by the existing CLI (`diff` lifecycle and the serial branch of `sync --no-parallel`) and a package-owned Prefect flow; an optional Prefect dependency (the base package stays Prefect-free); a default self-hosted Prefect Server with a locally served deployment; remote submission and inspection through Prefect's own REST API; and one reproducible example plus one qualified demonstration. The remote operation name `plan` maps to the existing `diff` lifecycle.
+The feature delivers: a narrow, typed Python execution surface shared by the existing CLI (`diff` lifecycle and the serial branch of `sync --no-parallel`) and a package-owned Prefect flow; an optional Prefect dependency (the base package stays Prefect-free); a default self-hosted Prefect Server with a locally served deployment; remote submission and inspection through Prefect's own REST API; and one reproducible example plus one qualified demonstration. The remote operation name `plan` maps to the existing `diff` lifecycle.
 
 ## Clarifications
 
@@ -41,7 +41,7 @@ These items come from the brief's readiness check of the repository at commit `9
 
 A developer installs the optional Prefect integration, starts a default self-hosted Prefect Server, and serves the packaged Infrahub Sync flow. With a known Sync configuration installed on the runner and credentials supplied through its environment, a remote caller uses Prefect's REST API to start a read-only plan and then observes the run state and Infrahub Sync logs through Prefect's API and UI.
 
-**Why this priority**: This is the core product question of the preview — remote, observable execution of a real read-only Sync operation. Without it nothing else in the brief has value, and it is safe (non-mutating) per Constitution Principle I.
+**Why this priority**: This is the core product question of the feature — remote, observable execution of a real read-only Sync operation. Without it nothing else in the brief has value, and it is safe (non-mutating) per Constitution Principle I.
 
 **Independent Test**: Against an empty qualified destination, submit `operation=plan` for the qualified configuration through Prefect's REST API; verify a flow-run ID is returned, the run reaches completed, the plan shows five creates, and the run's lifecycle plus Infrahub Sync log lines are visible in Prefect. (Maps to brief Scenario 1; verified by DBA-002, DBA-003, DBA-004.)
 
@@ -56,7 +56,7 @@ A developer installs the optional Prefect integration, starts a default self-hos
 
 A remote caller who has reviewed the plan starts a synchronization by explicitly confirming writes. The flow applies the change through the same execution surface the CLI uses, Prefect records the run as completed, and the change is observable at the destination.
 
-**Why this priority**: The confirmed write completes the vertical slice (plan → confirmed apply → converged no-change plan) that the preview must demonstrate, but it depends on the plan path existing first.
+**Why this priority**: The confirmed write completes the vertical slice (plan → confirmed apply → converged no-change plan) that the feature must demonstrate, but it depends on the plan path existing first.
 
 **Independent Test**: Against a reset empty qualified destination, submit `operation=sync` with `confirm_writes=true`; verify the run completes, the five expected `InfraDevice` objects exist at the destination, and a follow-up plan reports no changes. (Maps to brief Scenario 2; verified by DBA-005.)
 
@@ -87,7 +87,7 @@ A remote caller who requests a write without explicit confirmation, or who names
 
 A user of the existing CLI who does not install the optional extra sees no change: the base package installs and imports without Prefect, ordinary CLI use neither imports, starts, nor contacts Prefect, and the touched `diff` lifecycle and `sync --no-parallel` branch behave exactly as before. This holds equally when the optional extra is installed: installing the extra must not cause plain CLI invocations to import, start, or contact Prefect — only explicit use of the integration (the packaged flow or its serving process) does.
 
-**Why this priority**: It protects every existing user from the preview. It is listed after the demonstration stories because it constrains rather than delivers the new capability, but it must hold from the first refactoring commit.
+**Why this priority**: It protects every existing user from regression. It is listed after the demonstration stories because it constrains rather than delivers the new capability, but it must hold from the first refactoring commit.
 
 **Independent Test**: In a clean environment without the optional extra, import the package and run the CLI sanity commands with Prefect unavailable; run the existing targeted tests for `diff` and `sync --no-parallel` through the shared execution surface; compare CLI `diff` and remote `plan` outputs on reset copies of the qualified fixture. (Verified by DBA-001, DBA-009.)
 
@@ -102,7 +102,7 @@ A user of the existing CLI who does not install the optional extra sees no chang
 
 A developer unfamiliar with the implementation follows one shipped example README to install the optional integration, author/load the destination schema, configure the runner, start Prefect, serve the flow, remotely invoke a plan, and inspect the run — without reading package source.
 
-**Why this priority**: The example is how the preview transfers to other developers; it packages the earlier stories but cannot exist before them.
+**Why this priority**: The example is how the feature transfers to other developers; it packages the earlier stories but cannot exist before them.
 
 **Independent Test**: A clean-context walkthrough following only the example README reproduces the qualified plan demonstration. (Verified by DBA-002, DBA-011.)
 
@@ -117,8 +117,8 @@ A developer unfamiliar with the implementation follows one shipped example READM
 - An unreadable or invalid configuration fails before either adapter loads as a `RunValidationError` that names the configuration by its logical name (and may name the offending file) without printing configuration contents or credential values.
 - A missing credential fails clearly as a `RunExecutionError` at adapter initialization that names the missing input, while leaving credential values absent from Prefect-visible state and logs (verifiable by DBA-008's canary scan).
 - A Prefect Server outage prevents remote submission but does not change ordinary local CLI behavior — the DBR-009-preserved `diff` / `sync --no-parallel` surface and every other CLI command, which never contact Prefect per DBR-010.
-- Concurrent requests retain Prefect's default served-run behavior. Guaranteed is only what the existing per-configuration pipeline lock already provides: owned by the shared execution surface, it mutually excludes CLI and remote runs of the same configuration on the same runner host exactly as CLI invocations do today, and lock contention surfaces as a failed run (`RunExecutionError`) when the lock's acquisition timeout (60 seconds today) elapses, not a hang. Not guaranteed: queuing, ordering, overlap policies, or any cross-host exclusion — beyond that lock the preview makes no overlap or same-configuration concurrency guarantee. The qualified demonstration must not issue concurrent destination-writing runs: its plan, confirmed sync, and follow-up plan execute strictly sequentially, each reaching a terminal state before the next is submitted.
-- Failure after destination writes begin retains today's Sync behavior; the preview makes no durable-recovery claim.
+- Concurrent requests retain Prefect's default served-run behavior. Guaranteed is only what the existing per-configuration pipeline lock already provides: owned by the shared execution surface, it mutually excludes CLI and remote runs of the same configuration on the same runner host exactly as CLI invocations do today, and lock contention surfaces as a failed run (`RunExecutionError`) when the lock's acquisition timeout (60 seconds today) elapses, not a hang. Not guaranteed: queuing, ordering, overlap policies, or any cross-host exclusion — beyond that lock the feature makes no overlap or same-configuration concurrency guarantee. The qualified demonstration must not issue concurrent destination-writing runs: its plan, confirmed sync, and follow-up plan execute strictly sequentially, each reaching a terminal state before the next is submitted.
+- Failure after destination writes begin retains today's Sync behavior; the feature makes no durable-recovery claim.
 
 ## Requirements *(mandatory)*
 
@@ -127,18 +127,18 @@ A developer unfamiliar with the implementation follows one shipped example READM
 Requirement IDs are the brief's own; origin (QUOTED/DERIVED) and source references are preserved from DB-001.
 
 - **DBR-001**: Provide a remotely runnable Prefect deployment for a real Infrahub Sync operation. *(QUOTED — LOCAL-DP-001 SRC-DP-001, SRC-DP-002)*
-- **DBR-002**: Use the default self-hosted Prefect experience for the preview: local server database, built-in UI, and a locally served deployment. *(QUOTED — LOCAL-DP-001 SRC-DP-003)*
+- **DBR-002**: Use the default self-hosted Prefect experience for the feature: local server database, built-in UI, and a locally served deployment. *(QUOTED — LOCAL-DP-001 SRC-DP-003)*
 - **DBR-003**: Expose `plan` and `sync` through typed flow parameters: `sync_name`, `operation`, `confirm_writes`, and optional `branch`; `plan` is the default. *(DERIVED — LOCAL-DP-001 SRC-DP-002, SRC-DP-003; minimum input needed to exercise the two approved operations safely)*
 - **DBR-004**: Refuse `sync` before extraction or mutation unless `confirm_writes=true`. *(DERIVED — LOCAL-DP-001 SRC-DP-A02; AGENTS.md read-only and approval policy)*
 - **DBR-005**: Resolve `sync_name` only within one server-configured directory; do not accept arbitrary paths, CLI fragments, credentials, or environment overrides from remote parameters. *(DERIVED — LOCAL-DP-001 SRC-DP-003; the remote API must not become command or secret injection)*
 - **DBR-006**: Keep credentials and system endpoints in the runner environment, never in Prefect parameters or returned results. *(DERIVED — LOCAL-DP-001 SRC-DP-003; AGENTS.md secret-handling policy)*
 - **DBR-007**: Introduce a narrow typed Python execution surface used by the CLI `diff` lifecycle, the serial branch selected by `sync --no-parallel`, and the Prefect flow; remote `operation=plan` maps to the existing `diff` lifecycle. *(QUOTED — LOCAL-DP-001 SRC-DP-004, SRC-DP-005)*
 - **DBR-008**: The Prefect flow calls the Python execution surface directly and does not invoke the CLI as a subprocess. *(QUOTED — LOCAL-DP-001 SRC-DP-004, SRC-DP-005)*
-- **DBR-009**: Preserve existing user-visible CLI behavior for the touched `diff` lifecycle and `sync --no-parallel` branch. *(DERIVED — DBR-007; a shared seam must not turn the preview into an unrelated CLI behavior change)*
+- **DBR-009**: Preserve existing user-visible CLI behavior for the touched `diff` lifecycle and `sync --no-parallel` branch. *(DERIVED — DBR-007; a shared seam must not turn the feature into an unrelated CLI behavior change)*
 - **DBR-010**: Keep Prefect optional: base installation and ordinary CLI use do not import, start, or contact Prefect. *(QUOTED — LOCAL-DP-001 SRC-DP-004; accepted architecture boundary)*
-- **DBR-011**: Use Prefect's deployment and flow-run APIs as the remote API for the preview; do not add a custom product HTTP service. *(QUOTED — LOCAL-DP-001 SRC-DP-006)*
+- **DBR-011**: Use Prefect's deployment and flow-run APIs as the remote API for the feature; do not add a custom product HTTP service. *(QUOTED — LOCAL-DP-001 SRC-DP-006)*
 - **DBR-012**: Forward Infrahub Sync lifecycle logs into the Prefect flow-run log without exposing credentials. *(DERIVED — LOCAL-DP-001 SRC-DP-A01; remote observability is not useful without the underlying run output)*
-- **DBR-013**: Ship one reproducible example that installs, configures, serves, remotely invokes, and inspects the preview. *(QUOTED — LOCAL-DP-001 SRC-DP-004, SRC-DP-A03)*
+- **DBR-013**: Ship one reproducible example that installs, configures, serves, remotely invokes, and inspects the feature. *(QUOTED — LOCAL-DP-001 SRC-DP-004, SRC-DP-A03)*
 - **DBR-014**: Keep the API façade, reviewed-plan workflow, stage tasks, workers, triggers, and production profile outside this outcome and recorded only in `backlog.md`. *(QUOTED — LOCAL-DP-001 SRC-DP-007)*
 - **DBR-015**: Return the fixed `RunResult` fields defined under Key Entities; on validation or execution failure, raise a specific sanitized exception and return no successful result. *(DERIVED — DBR-007 requires a typed structured result shared by the CLI seam and Prefect flow)*
 
@@ -210,16 +210,16 @@ Requirement IDs are the brief's own; origin (QUOTED/DERIVED) and source referenc
 - Adding Prefect to the base dependency set.
 - Supporting multiple Prefect major versions.
 - Moving the current parallel CLI sync branch behind the new execution surface.
-- Refactoring parallel, incremental, apply-plan, or recovery paths not required by the preview's serial `plan` and `sync` operations.
+- Refactoring parallel, incremental, apply-plan, or recovery paths not required by the feature's serial `plan` and `sync` operations.
 
 ### Constraints
 
-- Prefect is the selected orchestration technology for this Developer Preview; a queue-versus-Prefect comparison is not part of delivery.
+- Prefect is the selected orchestration technology for this feature; a queue-versus-Prefect comparison is not part of delivery.
 - The execution engine and adapters remain Prefect-independent.
 - The integration is packaged capability; `examples/` contains only consumption and demonstration material.
 - The default self-hosted Prefect Server is for a trusted development environment and must not be documented as safe for public internet exposure; the example README owns this caveat and must state it.
 - The implementation follows the repository workflow (format → lint → CLI sanity) and preserves required CLI sanity behavior.
-- Prefect 3.8.1 is the pinned optional-extra version for the preview, and the base dependency set declares `redis` directly instead of through the `diffsync[redis]` extra — RATIFIED (D005, option D, Blake Ellis, 2026-07-30). The brief's 3.7.2 pin, and any prefect ≥ 3.6, is unsatisfiable while the base requests `diffsync[redis]`: that extra caps `redis>=4.3,<5.0`, while `prefect>=3.6` → `pydocket>=0.19.0` → `redis>=5`. The base therefore replaces `diffsync[redis]>=2.1,<3.0` with `diffsync>=2.1,<3.0` plus a directly declared `redis>=4.3,<9` — a deliberately permissive floor, NOT `redis>=5`, so existing installations and any downstream requirement on `diffsync[redis]` still resolve (verified: `redis>=4.3,<9` resolves alongside `diffsync[redis]` at redis 4.6.0; `redis>=5` makes that combination unsatisfiable). redis must be declared directly because `infrahub_sync/utils.py:11` imports `diffsync.store.redis.RedisStore` unconditionally, so the client must be present in every install. diffsync's stale `<5.0` cap is safe to override: its redis store was verified functionally intact on redis-py 4.6.0, 5.0, 6.4, 7.0 and 8.1.0 (26/26 checks including `diff_from`/`diff_to`/`sync_from` between two Redis-backed adapters; 4.6.0 and 8.1.0 byte-identical), and the override is permanent because diffsync has no 3.x release and no open PR raising the cap. The Prefect version stays pinned in the optional extra's dependency specification — consistent with the out-of-scope exclusion of supporting multiple Prefect major versions.
+- Prefect 3.8.1 is the pinned optional-extra version for the feature, and the base dependency set declares `redis` directly instead of through the `diffsync[redis]` extra — RATIFIED (D005, option D, Blake Ellis, 2026-07-30). The brief's 3.7.2 pin, and any prefect ≥ 3.6, is unsatisfiable while the base requests `diffsync[redis]`: that extra caps `redis>=4.3,<5.0`, while `prefect>=3.6` → `pydocket>=0.19.0` → `redis>=5`. The base therefore replaces `diffsync[redis]>=2.1,<3.0` with `diffsync>=2.1,<3.0` plus a directly declared `redis>=4.3,<9` — a deliberately permissive floor, NOT `redis>=5`, so existing installations and any downstream requirement on `diffsync[redis]` still resolve (verified: `redis>=4.3,<9` resolves alongside `diffsync[redis]` at redis 4.6.0; `redis>=5` makes that combination unsatisfiable). redis must be declared directly because `infrahub_sync/utils.py:11` imports `diffsync.store.redis.RedisStore` unconditionally, so the client must be present in every install. diffsync's stale `<5.0` cap is safe to override: its redis store was verified functionally intact on redis-py 4.6.0, 5.0, 6.4, 7.0 and 8.1.0 (26/26 checks including `diff_from`/`diff_to`/`sync_from` between two Redis-backed adapters; 4.6.0 and 8.1.0 byte-identical), and the override is permanent because diffsync has no 3.x release and no open PR raising the cap. The Prefect version stays pinned in the optional extra's dependency specification — consistent with the out-of-scope exclusion of supporting multiple Prefect major versions.
 
 ## Success Criteria *(mandatory)*
 
@@ -239,9 +239,9 @@ Requirement IDs are the brief's own; origin (QUOTED/DERIVED) and source referenc
 
 Documented defaults and inherited facts. The brief records "Unresolved questions: None." Two of the original informed defaults (the canonical plan fingerprint and the configuration-directory mechanism) were promoted to checkpoint decisions in the Clarifications session above (D001/D002, ratified at the Phase 4 gate on 2026-07-30) and are encoded in Key Entities and In Scope; the entries below record what remains assumption-level.
 
-- **Brief-owned assumption**: Direct use of Prefect's REST API is acceptable for a developer-facing preview; if wrong, a Sync-shaped façade must be promoted from backlog B-001 before delivery.
+- **Brief-owned assumption**: Direct use of Prefect's REST API is acceptable for a developer-facing feature; if wrong, a Sync-shaped façade must be promoted from backlog B-001 before delivery.
 - **Brief-owned assumption**: The existing `examples/custom_adapter` fixture can run against a lab Infrahub schema containing `InfraDevice(name, type)`. If wrong, the example must be repaired within this brief without changing its five-device outcome, or the brief returns for intake rather than selecting an unspecified substitute. (Repository check on 2026-07-30 confirms the fixture exists with its MockDB source at `examples/custom_adapter/custom_adapter_src/mock_db.json`.)
-- **Brief-owned assumption**: Refactoring the CLI `diff` lifecycle and the serial branch selected by `sync --no-parallel` behind one execution surface is small enough for the preview; if wrong, the brief returns for intake rather than silently falling back to an example-only subprocess wrapper.
+- **Brief-owned assumption**: Refactoring the CLI `diff` lifecycle and the serial branch selected by `sync --no-parallel` behind one execution surface is small enough for the feature; if wrong, the brief returns for intake rather than silently falling back to an example-only subprocess wrapper.
 - **Environment**: Lab facts per R-3, prepared and dated 2026-07-30 (Infrahub 1.9.8 at `http://localhost:8000`, `InfraDevice(name, type)` schema loaded on `main` with deprecation warnings for `display_labels` and `default_filter`, zero existing `InfraDevice` objects). The recorded deprecation warnings have no impact on expected outputs; demonstration transcripts containing them are not failures. If the live instance or credentials are unavailable at demonstration time, the run records the live-environment ceiling rather than blocking.
 - **Informed default (documented, not a clarification)**: "Before either adapter loads" (DBA-006, edge cases) is interpreted as: validation of `confirm_writes`, `operation`, and `sync_name` resolution completes before any source or destination adapter object is constructed or any network connection is attempted. This definition is already concrete and testable, so it stays assumption-level rather than becoming a checkpoint decision. DBR-004's "before extraction or mutation", DBA-006's "before either adapter loads", and Story 3's "before any source extraction or destination mutation" all refer to this single gate: refusing before adapter construction necessarily refuses before extraction and mutation.
 - **Informed default (documented, not a clarification)**: The "existing targeted tests" population for DBA-009 is the CLI-invoking tests in the inherited `9edc1bc` baseline that exercise the touched lifecycles — `tests/test_cli_full_extract.py`, `tests/test_cli_parallel.py` (its serial `--no-parallel` case), `tests/cache/test_cli_sync_cache.py` (its serial case), and the CLI checks in `tests/test_logging.py` — which must keep passing unmodified once `diff` and `sync --no-parallel` run through the shared execution surface.

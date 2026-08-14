@@ -1,0 +1,152 @@
+{
+  "InfraDevice": {
+    "class_module": "infrahub_sdk.schema.main",
+    "class_name": "NodeSchemaAPI",
+    "data": {
+      "attributes": [
+        {
+          "allow_override": "any",
+          "branch": "aware",
+          "choices": null,
+          "default_value": null,
+          "description": null,
+          "enum": null,
+          "id": "18cb83a4-c122-00de-3877-c5173f9b9a39",
+          "inherited": false,
+          "kind": "Text",
+          "label": "Name",
+          "max_length": null,
+          "min_length": null,
+          "name": "name",
+          "optional": false,
+          "order_weight": 1000,
+          "read_only": false,
+          "regex": null,
+          "state": "present",
+          "unique": true
+        },
+        {
+          "allow_override": "any",
+          "branch": "aware",
+          "choices": null,
+          "default_value": null,
+          "description": null,
+          "enum": null,
+          "id": "18cb83a4-d88a-f481-3871-c517771e81ab",
+          "inherited": false,
+          "kind": "Text",
+          "label": "Type",
+          "max_length": null,
+          "min_length": null,
+          "name": "type",
+          "optional": false,
+          "order_weight": 2000,
+          "read_only": false,
+          "regex": null,
+          "state": "present",
+          "unique": false
+        }
+      ],
+      "branch": "aware",
+      "children": null,
+      "default_filter": null,
+      "description": "Minimal device node used by the Prefect remote-run example.",
+      "display_label": null,
+      "display_labels": null,
+      "documentation": null,
+      "generate_profile": true,
+      "generate_template": false,
+      "hash": "93e621e45ab0bc3c4ff4c1da72015396",
+      "hierarchy": null,
+      "human_friendly_id": [
+        "name__value"
+      ],
+      "icon": "mdi:server",
+      "id": "18cb83a4-acc3-51e2-3879-c51a35596e33",
+      "include_in_menu": true,
+      "inherit_from": [],
+      "label": "Device",
+      "menu_placement": null,
+      "name": "Device",
+      "namespace": "Infra",
+      "order_by": [
+        "name__value"
+      ],
+      "parent": null,
+      "relationships": [
+        {
+          "allow_override": "any",
+          "branch": "aware",
+          "cardinality": "many",
+          "description": null,
+          "direction": "bidirectional",
+          "hierarchical": null,
+          "id": "18cb83a4-f30f-d166-3873-c510379cde41",
+          "identifier": "group_subscriber",
+          "inherited": false,
+          "kind": "Group",
+          "label": "Subscriber Of Groups",
+          "max_count": 0,
+          "min_count": 0,
+          "name": "subscriber_of_groups",
+          "on_delete": "no-action",
+          "optional": true,
+          "order_weight": 5000,
+          "peer": "CoreGroup",
+          "read_only": false,
+          "state": "present"
+        },
+        {
+          "allow_override": "any",
+          "branch": "aware",
+          "cardinality": "many",
+          "description": null,
+          "direction": "bidirectional",
+          "hierarchical": null,
+          "id": "18cb83a4-da61-d22c-3879-c518f7c5878f",
+          "identifier": "group_member",
+          "inherited": false,
+          "kind": "Group",
+          "label": "Member Of Groups",
+          "max_count": 0,
+          "min_count": 0,
+          "name": "member_of_groups",
+          "on_delete": "no-action",
+          "optional": true,
+          "order_weight": 4000,
+          "peer": "CoreGroup",
+          "read_only": false,
+          "state": "present"
+        },
+        {
+          "allow_override": "any",
+          "branch": "aware",
+          "cardinality": "many",
+          "description": null,
+          "direction": "bidirectional",
+          "hierarchical": null,
+          "id": null,
+          "identifier": "node__profile",
+          "inherited": false,
+          "kind": "Profile",
+          "label": "Profiles",
+          "max_count": 0,
+          "min_count": 0,
+          "name": "profiles",
+          "on_delete": "no-action",
+          "optional": true,
+          "order_weight": 99000,
+          "peer": "CoreProfile",
+          "read_only": false,
+          "state": "present"
+        }
+      ],
+      "state": "present",
+      "uniqueness_constraints": [
+        [
+          "name__value"
+        ]
+      ]
+    }
+  }
+}

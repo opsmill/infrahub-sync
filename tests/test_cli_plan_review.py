@@ -1594,7 +1594,7 @@ def _case_run_binding_mismatch(tmp_path: Path) -> tuple[str, ...]:
 
 
 def _case_unsupported_format_version(tmp_path: Path) -> tuple[str, ...]:
-    """SC-018: a manifest revision this release cannot interpret.
+    """SC-018: a manifest revision this version cannot interpret.
 
     Reported by the verifier's **gate**, which runs before the reader on this path (T097), so
     the operator also learns that the remaining four checks were not evaluated and why — the

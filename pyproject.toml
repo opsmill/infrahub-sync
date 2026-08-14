@@ -30,6 +30,13 @@ dependencies = [
     # consumer that still requires `diffsync[redis]` keeps resolving, at redis 4.6.0.
     "redis>=4.3,<9",
     "netutils>=1.9,<2.0",
+    # Runtime (not only dev) dependency: `generate` formats its rendered Python with
+    # `ruff format` so regeneration is byte-stable. A range, not an exact pin: an
+    # exact pin would make this package unresolvable next to any project holding a
+    # different ruff version. One minor series is Ruff's formatter-stability
+    # boundary (style changes ship in minors, not patches), and the byte-identity
+    # test enforces the contract against the locked version.
+    "ruff>=0.15.5,<0.16",
     "tqdm>=4.67",
     "pyarrow>=17,<22",
     "fsspec>=2024.6",

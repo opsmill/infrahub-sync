@@ -180,7 +180,7 @@ The result count drives three arms: exactly one returns the node id and memoizes
 `PeerNotFoundError`; **more than one** raises `PeerAmbiguousError`. Both name the peer kind, the peer
 identity, the referring operation and the operator's next action, and both fail the run. Neither is ever
 a silent skip — a dropped relationship makes the applied set differ from the reviewed set exactly as a
-dropped operation does, and unlike a skipped delete it is not a designed limitation of the release. For a
+dropped operation does, and unlike a skipped delete it is not a designed limitation. For a
 kind whose HFID does not cover its plan identity, the documented fallback is to resolve the reference
 component's own peer first and filter on `<rel>__ids`.
 
@@ -318,7 +318,7 @@ destination refusal is the more expensive mistake — the run records what was w
 ## Deletes are recorded, never executed
 
 Deletes are derived by set difference and recorded as first-class operations, then never executed —
-executing them is out of scope for this release. An apply over a delete-bearing plan completes
+executing them is not supported. An apply over a delete-bearing plan completes
 **`applied`**, with `summary["skipped_delete_count"]`, `summary["skipped_delete_operations"]` in stored
 order, and one warning naming the count. `applied_operations ∪ skipped_delete_operations` equals the
 plan's full identifier set on any completed apply, which is what keeps the applied set knowable against

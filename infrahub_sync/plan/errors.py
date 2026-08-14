@@ -24,8 +24,8 @@ if TYPE_CHECKING:
 class SkippedDeleteOperation(Exception):  # noqa: N818 — a control signal, not an error
     """A recorded delete a write surface declines to execute (FR-016, FR-017, AD055).
 
-    The **defensive** half of the contract: applying deletes is out of scope for this
-    release, so a write surface handed a `delete` must raise this rather than touch the
+    The **defensive** half of the contract: applying deletes is not supported, so a write
+    surface handed a `delete` must raise this rather than touch the
     destination. Nothing catches it in product code and the apply loop never raises it —
     `Potenda.apply_plan` recognizes a delete itself, records the identifier and continues.
 
@@ -333,12 +333,12 @@ class UnwalkedDiffChildrenError(PlanArtifactError):
 
     So the condition is refused rather than warned about, on the same reasoning as AD047:
     a derivation that degrades to warn-and-drop emits an artifact whose reviewer cannot see
-    what is missing from it. Recursing into children is not in this release's scope; the
+    what is missing from it. Recursing into children is not supported; the
     guard names the limitation at the one place where it would otherwise be invisible.
     """
 
     next_action = (
-        "Plan derivation does not descend into child objects in this release: remove `_children` from "
+        "Plan derivation does not descend into child objects: remove `_children` from "
         "that model, or synchronize the child kinds as top-level kinds of their own."
     )
 

@@ -1236,7 +1236,7 @@ def test_a_delete_bearing_plan_applies_and_records_the_skipped_deletes(
     every prose description of the obligation and vanish here.
 
     **A run state of `failed` fails this test (AD055).** Not executing a delete is a designed
-    limitation of this release; the criterion measures that the limitation is disclosed, not
+    known limitation; the criterion measures that the limitation is disclosed, not
     that the run is reported as broken.
     """
     deletes = [operation for operation in live_plan.plan.operations() if operation.action == "delete"]
@@ -1271,7 +1271,7 @@ def test_a_delete_bearing_plan_applies_and_records_the_skipped_deletes(
     for operation in deletes:
         assert _resolve_at_most_one(live_plan, operation.kind, operation.identity) is not None, (
             f"The object named by delete operation {operation.operation_id!r} is gone from the destination. "
-            "Applying deletes is out of scope for this release, so it had to survive."
+            "Applying deletes is not supported, so it had to survive."
         )
 
     run_file = RunFile.load_or_default(live_plan.run_dir / "run.json")
