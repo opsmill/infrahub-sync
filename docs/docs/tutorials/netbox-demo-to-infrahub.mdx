@@ -85,10 +85,12 @@ You should see the Infrahub web interface with a navigation menu on the left sid
 
 ## Install infrahub-sync
 
-1. Install the Python dependencies with uv:
+1. Install the Python dependencies with uv. This tutorial documents behavior from the
+   v3 development branch, which is not yet published to PyPI, so install directly from
+   the repository:
 
 ```bash
-uv add infrahub-sync pynetbox
+uv add "infrahub-sync @ git+https://github.com/opsmill/infrahub-sync.git@feature/v3-develop" pynetbox
 ```
 
 This installs the `infrahub-sync` command. `pynetbox` is required by the NetBox adapter.
@@ -343,7 +345,7 @@ This error names whichever adapter (NetBox or Infrahub) is missing its variables
 ### `generate` reports destination models missing from the schema
 
 ```text
-ERROR | One or more model model are not present in the Schema - ['LocationSite', ...]
+ERROR | One or more models are not present in the schema - ['LocationSite', ...]
 ```
 
 The destination does not have the schema collection this configuration maps to. Download

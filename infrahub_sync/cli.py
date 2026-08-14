@@ -783,7 +783,7 @@ def generate(
     typed_schema = cast("MutableMapping[str, NodeSchema | GenericSchema]", schema)
     missing_schema_models = find_missing_schema_model(sync_instance=sync_instance, schema=typed_schema)
     if missing_schema_models:
-        print_error_and_abort(f"One or more model model are not present in the Schema - {missing_schema_models}")
+        print_error_and_abort(f"One or more models are not present in the schema - {missing_schema_models}")
 
     rendered_files = render_adapter(sync_instance=sync_instance, schema=typed_schema)
     for template, output_path in rendered_files:

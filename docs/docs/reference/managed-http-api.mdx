@@ -15,18 +15,17 @@ control.
 
 ## Install the managed profile
 
-The managed profile requires Python 3.11 or later. Install it on the API host and every
+The managed profile requires Python 3.11 or later. No published package carries this
+profile yet, and its exact OpsMill Prefect Extras pin currently requires read access to
+that private repository, so install from a repository checkout on the API host and every
 worker that can run its deployment:
-
-```bash
-pip install 'infrahub-sync[managed]'
-```
-
-From a repository checkout, install the matching source and development tools instead:
 
 ```bash
 uv sync --extra dev --extra prefect --extra managed
 ```
+
+Once a release with the managed profile is published, `pip install
+'infrahub-sync[managed]'` becomes the deployment path.
 
 The profile directly installs FastAPI, HTTPX, Uvicorn, Prefect 3.8.1, and OpsMill Prefect
 Extras from commit `84688eb8d8db7e17770413640a66481ccdc3e725`. The base installation does
