@@ -10,6 +10,7 @@ markdown_all: &markdown_all
 
 sync_files: &sync_files
   - "infrahub_sync/**"
+  - "opsmill_prefect_extras/**"
 
 test_files: &test_files
   - "tests/**"
