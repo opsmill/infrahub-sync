@@ -1,0 +1,39 @@
+---
+# Preview overrides for the pinned official Infrahub compose file
+# (docker-compose.infrahub.yml — downloaded pristine from
+# https://infrahub.opsmill.io/1.10.6; do not edit that file, replace it from the
+# source URL and update VERSION in preview.env).
+#
+# This file remaps host ports so the preview never collides with another local
+# Infrahub stack, drops host port publications the preview does not need, and
+# adds a dedicated Prefect server for Infrahub Sync's managed execution path —
+# separate from Infrahub's internal task-manager, and pinned to the same Prefect
+# version as the `managed` extra (prefect==3.8.1).
+services:
+  infrahub-server:
+    ports: !override
+      - "${PREVIEW_INFRAHUB_PORT:-8080}:8000"
+
+  message-queue:
+    ports: !reset []
+
+  database:
+    ports: !reset []
+
+  sync-prefect:
+    image: "prefecthq/prefect:${PREVIEW_PREFECT_IMAGE_TAG:-3.8.1-python3.12}"
+    command: prefect server start --host 0.0.0.0 --port 4200
+    ports:
+      - "${PREVIEW_PREFECT_PORT:-4210}:4200"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://localhost:4200/api/health', timeout=5)
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
