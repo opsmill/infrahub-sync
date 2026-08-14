@@ -79,7 +79,7 @@ uv run invoke docs.docusaurus
 **Policy:**
 
 - New or changed code is Ruff-clean and typed where touched (docstrings, specific exceptions).
-- The codebase is clean under ty with no `[[tool.ty.overrides]]` blocks in `pyproject.toml`. Don't reintroduce overrides to mask type errors — fix the underlying issue, or use a targeted `# ty: ignore[<rule>]` with a short TODO at the call site. Run `uv run ty check --exclude tests/vendored_prefect_extras .` in the full Python 3.11–3.13 profile (the vendored upstream tests are frozen and not held to this repository's checks; the vendored package itself is). On Python 3.10, also exclude `infrahub_sync/managed` and `tests/managed`.
+- The codebase is clean under ty with no `[[tool.ty.overrides]]` blocks in `pyproject.toml`. Don't reintroduce overrides to mask type errors — fix the underlying issue, or use a targeted `# ty: ignore[<rule>]` with a short TODO at the call site. Run `uv run ty check .` in the full Python 3.11–3.13 profile (the frozen vendored upstream tests are excluded via `[tool.ty.src]` in `pyproject.toml`; the vendored package itself stays checked). On Python 3.10, run `uv run ty check --exclude infrahub_sync/managed --exclude tests/managed .`.
 - If you add tests, run `uv run pytest -q`.
 
 ## Repository Structure

@@ -196,7 +196,8 @@ exclude = [
     "examples",
     # Vendored byte-identical upstream code and its upstream tests; the freeze rule in
     # opsmill_prefect_extras/VENDORED.md forbids local rewrites, so Ruff must not
-    # reformat or lint them to this repository's profile. ty still checks them.
+    # reformat or lint them to this repository's profile. ty still checks the vendored
+    # package; only the vendored tests are excluded from ty (see [tool.ty.src]).
     "opsmill_prefect_extras",
     "tests/vendored_prefect_extras",
 ]
@@ -365,7 +366,11 @@ max-complexity = 33
 [tool.ty]
 
 [tool.ty.src]
-exclude = ["examples/**"]
+# tests/vendored_prefect_extras is frozen byte-identical upstream test code (see
+# opsmill_prefect_extras/VENDORED.md) and is not held to this repository's checks;
+# the vendored package itself stays type-checked. Configured here so every ty
+# entry point — local, invoke, and CI's inlined commands — agrees.
+exclude = ["examples/**", "tests/vendored_prefect_extras/**"]
 
 [tool.ty.environment]
 python-version = "3.10"

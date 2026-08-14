@@ -114,8 +114,10 @@ restore incidental generated-file changes before committing unrelated work.
 ## CI
 
 Python 3.11–3.13 linting runs in an environment synced with
-`--extra dev --extra prefect --extra managed`. The type gate checks the full tree; the
-managed extra requires read access to the private `opsmill/prefect-extras` Git dependency.
+`--extra dev --extra prefect --extra managed`. The type gate checks the full tree except
+the frozen vendored upstream tests (excluded via `[tool.ty.src]`); the former private
+`opsmill/prefect-extras` Git dependency is vendored in-repo, so no special access is
+required.
 
 Python 3.10 linting uses `--extra dev --extra prefect` and runs:
 

@@ -13,6 +13,12 @@ private upstream repository. It keeps its original top-level import name so
 that consumer imports, tests, and the eventual re-adoption need no rewrites,
 and so `diff -r` against the upstream commit stays empty.
 
+Known side effect of the frozen test suite: upstream's
+`tests/vendored_prefect_extras/workflows/conftest.py` computes a "repository
+root" from its own location and prepends it to `sys.path`; in this repository
+that path is the `tests/` directory. It is harmless here (nothing imports the
+test packages by their short names) and is left in place rather than edited.
+
 ## Freeze rule — do not modify this directory
 
 A change needed here must either:
@@ -29,4 +35,7 @@ Local lint/format tooling must exclude this directory rather than rewrite it.
 When upstream `opsmill/prefect-extras` is merged and published, delete this
 directory and `tests/vendored_prefect_extras/`, remove
 `"opsmill_prefect_extras"` from `[tool.hatch.build.targets.wheel] packages`,
-and restore the dependency in the `managed` extra.
+restore the dependency in the `managed` extra, and drop the vendoring entries
+from the Ruff exclude list, `[tool.ty.src]` exclude, the isort
+`known-third-party` pin, and `.github/file-filters.yml`.
+`tests/test_vendoring_consistency.py` fails on any half-executed re-adoption.

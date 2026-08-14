@@ -18,6 +18,7 @@ Three adaptations, all confined to this file so no vendored test changes:
 """
 
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -25,7 +26,15 @@ pytest.importorskip("prefect", reason="vendored prefect-extras tests require the
 
 from tests.vendored_prefect_extras import workflows as _vendored_workflows  # noqa: E402
 
-sys.modules.setdefault("tests.workflows", _vendored_workflows)
+_REAL_WORKFLOWS_DIR = Path(__file__).resolve().parents[1] / "workflows"
+if _REAL_WORKFLOWS_DIR.exists():
+    msg = (
+        "tests/workflows exists as a real package; the vendored suite aliases that "
+        "module name and the two would shadow each other — rename one of them"
+    )
+    raise RuntimeError(msg)
+
+sys.modules["tests.workflows"] = _vendored_workflows
 
 _UPSTREAM_DOC_TESTS = frozenset({"test_executor_docs_disclose_local_engine_limitations"})
 

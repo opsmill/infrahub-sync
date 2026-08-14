@@ -27,19 +27,10 @@ PYLINT_BASELINE_MAX_COUNTS = {
 
 
 def _ty_check_command(python_major: int, python_minor: int) -> str:
-    """Return the type-check command for the active supported runtime profile.
-
-    The vendored upstream test suite is excluded on every profile: its files are
-    frozen byte-identical to upstream (see opsmill_prefect_extras/VENDORED.md) and
-    may not be edited to satisfy this repository's stricter checks. The vendored
-    package itself stays type-checked.
-    """
+    """Return the type-check command for the active supported runtime profile."""
     if (python_major, python_minor) == (3, 10):
-        return (
-            "uv run ty check --exclude infrahub_sync/managed --exclude tests/managed "
-            "--exclude tests/vendored_prefect_extras ."
-        )
-    return "uv run ty check --exclude tests/vendored_prefect_extras ."
+        return "uv run ty check --exclude infrahub_sync/managed --exclude tests/managed ."
+    return "uv run ty check ."
 
 
 def _pylint_command(python_major: int, python_minor: int) -> str:
