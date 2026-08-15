@@ -30,6 +30,7 @@ from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.generator import has_field
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.errors import (
+    NullRelationshipValueError,
     PeerAmbiguousError,
     PeerNotFoundError,
     SkippedDeleteOperation,
@@ -1196,6 +1197,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 destination kind is not accounted for by the payload and the operation.
             UnkeyedWriteRefusedError: the rendered mutation is unkeyed for a kind whose
                 human-friendly ID is all-direct.
+            NullRelationshipValueError: a mandatory cardinality-one relationship is null
+                in the planned payload.
             PeerNotFoundError: a peer identity matches no destination object.
             PeerAmbiguousError: a peer identity matches more than one.
         """
@@ -1213,17 +1216,47 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             raise TypeError(msg)
 
         # The payload is `keys` union `source_attrs`, so it already carries the identity
-        # components the convergent write keys on (AD042). A null optional cardinality-one
-        # relationship means absence in the v1 plan contract, not a clear operation; omit it
-        # before the SDK can render the value as a relationship id.
-        omitted_null_relationships = {
-            relationship.name
+        # components the convergent write keys on (AD042). The v1 plan contract cannot
+        # distinguish an absent optional to-one relationship from an intended clear. Keep
+        # create's established omission behavior; on update, disclose that the null is a
+        # no-op rather than silently claiming convergence. A mandatory null is invalid and
+        # must stop here before the SDK can render it as a relationship id.
+        payload = operation.payload or {}
+        null_to_one_relationships = [
+            relationship
             for relationship in node_schema.relationships
-            if relationship.cardinality == "one" and relationship.optional
-        }
+            if relationship.cardinality == "one" and relationship.name in payload and payload[relationship.name] is None
+        ]
+        mandatory_null_fields = sorted(
+            relationship.name for relationship in null_to_one_relationships if not relationship.optional
+        )
+        if mandatory_null_fields:
+            fields = ", ".join(repr(field) for field in mandatory_null_fields)
+            msg = (
+                f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} carries "
+                f"null for mandatory cardinality-one relationship field(s) {fields}. The operation "
+                "was refused before SDK rendering and no destination write was attempted."
+            )
+            raise NullRelationshipValueError(msg)
+
+        optional_null_fields = sorted(
+            relationship.name for relationship in null_to_one_relationships if relationship.optional
+        )
+        if operation.action == "update" and optional_null_fields:
+            logger.warning(
+                "Planned update %s for destination kind %s carries null for optional cardinality-one "
+                "relationship field(s) %s. Plan format v1 cannot distinguish an absent relationship "
+                "from an intended clear, so the field is omitted and the destination relationship is "
+                "not cleared. Clear it directly at the destination, or use a plan format that represents "
+                "relationship clears, if the clear was intended.",
+                operation.operation_id,
+                operation.kind,
+                ", ".join(optional_null_fields),
+            )
+        omitted_null_relationships = set(optional_null_fields)
         data: dict[str, Any] = {
             field: value
-            for field, value in (operation.payload or {}).items()
+            for field, value in payload.items()
             if value is not None or field not in omitted_null_relationships
         }
         references = list(operation.relationships or ())

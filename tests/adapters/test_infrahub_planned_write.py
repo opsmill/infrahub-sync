@@ -45,6 +45,7 @@ from infrahub_sync.adapters.infrahub import (
 )
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
+    NullRelationshipValueError,
     OperationApplyFailedError,
     PeerAmbiguousError,
     PeerNotFoundError,
@@ -513,8 +514,8 @@ def test_no_unmapped_destination_field_is_written() -> None:
     )
 
 
-def test_a_null_optional_cardinality_one_relationship_is_omitted() -> None:
-    """A scalar null is data, while a null optional to-one reference is absence."""
+def test_a_create_omits_a_null_optional_cardinality_one_relationship() -> None:
+    """A scalar null is data, while a create's null optional to-one is absence."""
     client = RecordingClient()
     adapter = make_adapter(client)
     operation = make_operation(
@@ -532,6 +533,63 @@ def test_a_null_optional_cardinality_one_relationship_is_omitted() -> None:
     )
     assert "owner" not in query, f"A null optional to-one relationship must be omitted. Rendered:\n{query}"
     assert 'id: "None"' not in query, f"A null relationship must never become the string id `None`. Rendered:\n{query}"
+
+
+def test_an_update_warns_that_a_null_optional_cardinality_one_relationship_is_a_no_op(
+    captured_logs: pytest.LogCaptureFixture,
+) -> None:
+    """The v1 plan cannot distinguish an absent optional peer from an intended clear."""
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    operation = make_operation(
+        kind=TEAM_KIND,
+        action="update",
+        identity={"name": "team-a"},
+        payload={"name": "team-a", "description": None, "owner": None},
+    )
+
+    with record_payload_create(client) as calls:
+        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    assert calls[0]["data"] == {"name": "team-a", "description": None}, (
+        "The ambiguous relationship null must be a no-op without dropping a nullable scalar null."
+    )
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert"], "The ordinary update must still be applied."
+    _, query = client.mutations[0]
+    assert "owner" not in query
+    assert 'id: "None"' not in query
+    warnings = [record for record in captured_logs.records if "cannot distinguish" in record.getMessage()]
+    assert len(warnings) == 1
+    warning = warnings[0]
+    assert warning.levelno >= logging.WARNING
+    message = warning.getMessage()
+    assert operation.operation_id in message
+    assert TEAM_KIND in message
+    assert "owner" in message
+    assert "not cleared" in message
+
+
+def test_a_null_mandatory_cardinality_one_relationship_is_refused_before_any_write() -> None:
+    """A mandatory to-one null never reaches SDK rendering or the destination."""
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    operation = make_operation(
+        kind=DEVICE_KIND,
+        action="update",
+        identity={"name": "device-a"},
+        payload={"name": "device-a", "site": None},
+    )
+
+    with record_payload_create(client) as calls, pytest.raises(NullRelationshipValueError) as excinfo:
+        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    message = str(excinfo.value)
+    assert operation.operation_id in message
+    assert DEVICE_KIND in message
+    assert "site" in message
+    assert "mandatory" in message
+    assert calls == [], "The refusal must happen before SDK payload generation."
+    assert client.mutations == [], "The refusal must happen before any destination mutation."
 
 
 def test_generate_payload_create_receives_the_source_owner_and_protection_arguments() -> None:

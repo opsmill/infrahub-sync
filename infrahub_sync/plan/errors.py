@@ -255,6 +255,15 @@ class UnkeyedWriteRefusedError(PlanArtifactError):
     )
 
 
+class NullRelationshipValueError(PlanArtifactError):
+    """A planned payload carries null for a mandatory cardinality-one relationship."""
+
+    next_action = (
+        "Correct the mapping so the mandatory relationship resolves to a peer identity, then re-run "
+        "`diff` and apply the new plan."
+    )
+
+
 class PlanVerificationError(PlanArtifactError):
     """One or more pre-apply checks failed, so the apply is refused."""
 
