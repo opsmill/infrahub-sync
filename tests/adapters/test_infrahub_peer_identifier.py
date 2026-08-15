@@ -402,3 +402,25 @@ def test_complete_peer_returns_unique_id() -> None:
 
     assert result == "dc-east|acme"
     assert not harness.client.get_calls
+
+
+def test_complete_peer_adds_identity_alias_without_replacing_uuid_entry() -> None:
+    harness = _Harness()
+    parent = _make_node("InfraDevice", "parent-id", {})
+    rich_peer = _make_node(
+        "LocationGeneric",
+        "peer-id",
+        {"name": "dc-east", "organization": "acme", "description": "rich SDK node"},
+    )
+    harness.client.store.set(key="peer-id", node=rich_peer)
+
+    result = harness._resolve_peer_unique_id(
+        parent_node=parent,  # ty: ignore[invalid-argument-type]
+        rel_name="location",
+        peer_node=rich_peer,  # ty: ignore[invalid-argument-type]
+    )
+
+    assert result == "dc-east|acme"
+    assert not harness.client.get_calls
+    assert harness.client.store.get(kind="LocationGeneric", key="peer-id") is rich_peer
+    assert harness.client.store.get(kind="LocationGeneric", key="dc-east|acme") is rich_peer
