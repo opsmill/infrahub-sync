@@ -185,7 +185,7 @@ TEAM_SCHEMA = NodeSchemaAPI(
     label="Team",
     default_filter="name__value",
     human_friendly_id=["name__value"],
-    attributes=[_text("team-name", "name", optional=False)],
+    attributes=[_text("team-name", "name", optional=False), _text("team-description", "description")],
     relationships=[
         _many("team-members", "members", TAG_KIND),
         RelationshipSchemaAPI(
@@ -514,18 +514,22 @@ def test_no_unmapped_destination_field_is_written() -> None:
 
 
 def test_a_null_optional_cardinality_one_relationship_is_omitted() -> None:
-    """A null optional to-one reference is absence, not a request to look up id `None`."""
+    """A scalar null is data, while a null optional to-one reference is absence."""
     client = RecordingClient()
     adapter = make_adapter(client)
     operation = make_operation(
         kind=TEAM_KIND,
         identity={"name": "team-a"},
-        payload={"name": "team-a", "owner": None},
+        payload={"name": "team-a", "description": None, "owner": None},
     )
 
-    adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+    with record_payload_create(client) as calls:
+        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
 
     _, query = client.mutations[0]
+    assert calls[0]["data"] == {"name": "team-a", "description": None}, (
+        "Filtering must preserve a nullable ordinary scalar while omitting the null optional relationship."
+    )
     assert "owner" not in query, f"A null optional to-one relationship must be omitted. Rendered:\n{query}"
     assert 'id: "None"' not in query, f"A null relationship must never become the string id `None`. Rendered:\n{query}"
 
