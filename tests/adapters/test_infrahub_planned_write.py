@@ -513,6 +513,23 @@ def test_no_unmapped_destination_field_is_written() -> None:
     )
 
 
+def test_a_null_optional_cardinality_one_relationship_is_omitted() -> None:
+    """A null optional to-one reference is absence, not a request to look up id `None`."""
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    operation = make_operation(
+        kind=TEAM_KIND,
+        identity={"name": "team-a"},
+        payload={"name": "team-a", "owner": None},
+    )
+
+    adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    _, query = client.mutations[0]
+    assert "owner" not in query, f"A null optional to-one relationship must be omitted. Rendered:\n{query}"
+    assert 'id: "None"' not in query, f"A null relationship must never become the string id `None`. Rendered:\n{query}"
+
+
 def test_generate_payload_create_receives_the_source_owner_and_protection_arguments() -> None:
     """FR-013: lineage parity with the live `sync` create path."""
     client = RecordingClient()
