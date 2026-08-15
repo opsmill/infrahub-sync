@@ -23,6 +23,8 @@ def test_netbox_example_translates_interface_l2_mode(
 
     interface_mapping = next(mapping for mapping in config.schema_mapping if mapping.name == interface_name)
     l2_mode_field = next(field for field in interface_mapping.fields if field.name == "l2_mode")
+    l2_mode_mapping = l2_mode_field.mapping
+    assert l2_mode_mapping is not None
     record = {
         "name": "PortChannel1",
         "mode": {"value": netbox_mode} if netbox_mode is not None else None,
@@ -33,4 +35,4 @@ def test_netbox_example_translates_interface_l2_mode(
         schema_mapping=interface_mapping,
     )[0]
 
-    assert get_value(transformed_record, l2_mode_field.mapping) == expected_l2_mode
+    assert get_value(transformed_record, l2_mode_mapping) == expected_l2_mode
