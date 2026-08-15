@@ -36,3 +36,23 @@ def test_netbox_example_translates_interface_l2_mode(
     )[0]
 
     assert get_value(transformed_record, l2_mode_mapping) == expected_l2_mode
+
+
+@pytest.mark.parametrize("interface_name", ["InterfacePhysical", "InterfaceVirtual", "InterfaceLag"])
+@pytest.mark.parametrize("netbox_mode", [{}, {"value": "unsupported"}])
+def test_netbox_example_rejects_invalid_interface_l2_mode(
+    interface_name: str,
+    netbox_mode: object,
+) -> None:
+    config_path = Path(__file__).resolve().parent.parent / "examples" / "netbox_to_infrahub" / "config.yml"
+    with config_path.open() as config_file:
+        config = SyncConfig(**yaml.safe_load(config_file))
+
+    interface_mapping = next(mapping for mapping in config.schema_mapping if mapping.name == interface_name)
+    record = {"name": "PortChannel1", "mode": netbox_mode}
+
+    with pytest.raises(ValueError, match="Failed to transform 'l2_mode'"):
+        DiffSyncModelMixin.transform_records(
+            records=[record],
+            schema_mapping=interface_mapping,
+        )
