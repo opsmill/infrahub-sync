@@ -1,12 +1,15 @@
 """Unit tests for InfrahubAdapter._resolve_peer_unique_id error and skip paths.
 
 The full adapter touches an Infrahub server, so these tests build a minimal
-stand-in adapter that reuses the real helper. We only care about four things:
+stand-in adapter that reuses the real helper. The focused cases cover:
 
-  1. Missing peer identifier keys raise PeerIdentifierError with rich context.
-  2. continue_on_error=True logs a warning and returns None instead of raising.
-  3. Missing relationship identifiers are rehydrated before resolving unique_id.
-  4. Successful path returns the peer's unique_id.
+- Rich errors for missing peer identifier keys.
+- Skipping missing identifiers when continue_on_error=True.
+- Bounded hydration of missing relationship identifiers.
+- Cache refresh for repeated peer references.
+- Propagation of unexpected hydration errors.
+- Rich errors after incomplete hydration.
+- Unique ID resolution for complete peers.
 """
 
 from __future__ import annotations
@@ -253,4 +256,4 @@ def test_complete_peer_returns_unique_id() -> None:
     result = harness._resolve_peer_unique_id(parent_node=parent, rel_name="location", peer_node=peer)  # ty: ignore[invalid-argument-type]
 
     assert result == "dc-east|acme"
-    assert harness.client.get_calls == []
+    assert not harness.client.get_calls
