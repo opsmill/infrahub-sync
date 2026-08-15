@@ -1168,8 +1168,19 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             raise TypeError(msg)
 
         # The payload is `keys` union `source_attrs`, so it already carries the identity
-        # components the convergent write keys on (AD042).
-        data: dict[str, Any] = dict(operation.payload or {})
+        # components the convergent write keys on (AD042). A null optional cardinality-one
+        # relationship means absence in the v1 plan contract, not a clear operation; omit it
+        # before the SDK can render the value as a relationship id.
+        omitted_null_relationships = {
+            relationship.name
+            for relationship in node_schema.relationships
+            if relationship.cardinality == "one" and relationship.optional
+        }
+        data: dict[str, Any] = {
+            field: value
+            for field, value in (operation.payload or {}).items()
+            if value is not None or field not in omitted_null_relationships
+        }
         references = list(operation.relationships or ())
         for reference in references:
             peer_ids = [
