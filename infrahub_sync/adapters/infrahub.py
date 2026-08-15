@@ -934,6 +934,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         peer_data = self.infrahub_node_to_diffsync(peer_node)
         identifiers = tuple(peer_model._identifiers)
         missing = tuple(k for k in identifiers if k not in peer_data)
+        hydrated = False
         if missing:
             try:
                 hydrated_peer = self.client.get(
@@ -945,6 +946,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             except NodeNotFoundError:
                 hydrated_peer = None
             if hydrated_peer:
+                hydrated = True
                 peer_node = hydrated_peer
                 peer_data = self.infrahub_node_to_diffsync(peer_node)
                 missing = tuple(k for k in identifiers if k not in peer_data)
@@ -969,6 +971,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         if not peer_item:
             peer_item = peer_model(**peer_data)
             self.update_or_add_model_instance(peer_item)
+            if not hydrated:
+                self.client.store.set(key=unique_id, node=peer_node)
         resolved_unique_id = peer_item.get_unique_id()
         peer_unique_ids[peer_kind, peer_id] = resolved_unique_id
         return resolved_unique_id
