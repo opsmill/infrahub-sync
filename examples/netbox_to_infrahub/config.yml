@@ -316,7 +316,7 @@ schema_mapping:
       - name: mac_address
         mapping: mac_address
       - name: l2_mode
-        mapping: mode.value
+        mapping: l2_mode
       - name: mtu
         mapping: mtu
       - name: ip_addresses
@@ -336,6 +336,11 @@ schema_mapping:
         mapping: lag
         reference: InterfaceLag
       # TODO: many fields are not implemented in the schema (mgmt_only, type, duplex ...)
+    transforms:
+      - field: l2_mode
+        expression: >-
+          {{ {'access': 'access', 'tagged': 'trunk', 'tagged-all': 'trunk_all'}[mode.value]
+          if mode else None }}
     filters: # Filters to only get the "physical interfaces"
       # NOTE: Netbox's `type` is a nested {value, label} object, not a plain
       # string — filtering on bare `type` compares against the dict itself
@@ -371,7 +376,7 @@ schema_mapping:
       - name: mac_address
         mapping: mac_address
       - name: l2_mode
-        mapping: mode.value
+        mapping: l2_mode
       - name: ip_addresses
         mapping: ip_addresses
         reference: IpamIPAddress
@@ -385,6 +390,11 @@ schema_mapping:
         mapping: device
         reference: DcimDevice
       # TODO: many fields are not implemented in the schema (mgmt_only, type, duplex ...)
+    transforms:
+      - field: l2_mode
+        expression: >-
+          {{ {'access': 'access', 'tagged': 'trunk', 'tagged-all': 'trunk_all'}[mode.value]
+          if mode else None }}
     filters: # Filters to only get the "virtual interfaces"
       - field: type.value
         operation: "=="
@@ -408,7 +418,7 @@ schema_mapping:
       - name: mac_address
         mapping: mac_address
       - name: l2_mode
-        mapping: mode.value
+        mapping: l2_mode
       - name: ip_addresses
         mapping: ip_addresses
         reference: IpamIPAddress
@@ -430,6 +440,10 @@ schema_mapping:
         expression: |-
           {% set suffix = name[(name.rstrip('0123456789'))|length:] %}
           {{ suffix | int if suffix else None }}
+      - field: l2_mode
+        expression: >-
+          {{ {'access': 'access', 'tagged': 'trunk', 'tagged-all': 'trunk_all'}[mode.value]
+          if mode else None }}
     filters: # Filters to only get the "lag interfaces"
       - field: type.value
         operation: "=="
