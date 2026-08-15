@@ -59,6 +59,8 @@ class _FakePeerModel:
 class _Harness(InfrahubAdapter):
     """Skip the heavy __init__ that needs a real Infrahub server."""
 
+    client: _FakeClient
+
     def __init__(self, *, continue_on_error: bool = False, rehydrated_peer: object | None = None) -> None:
         # bypass the parent chain entirely
         self.client = _FakeClient(rehydrated_peer=rehydrated_peer)
@@ -126,10 +128,10 @@ def test_missing_relationship_identifier_is_rehydrated_by_uuid() -> None:
     parent = _make_node("InfraDevice", "parent-id", {})
     shallow_peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east"})
 
-    result = harness._resolve_peer_unique_id(  # ty: ignore[invalid-argument-type]
-        parent_node=parent,
+    result = harness._resolve_peer_unique_id(
+        parent_node=parent,  # ty: ignore[invalid-argument-type]
         rel_name="location",
-        peer_node=shallow_peer,
+        peer_node=shallow_peer,  # ty: ignore[invalid-argument-type]
     )
 
     assert result == "dc-east|acme"
