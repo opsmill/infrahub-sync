@@ -926,6 +926,17 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         identifiers = tuple(peer_model._identifiers)
         missing = tuple(k for k in identifiers if k not in peer_data)
         if missing:
+            hydrated_peer = self.client.get(
+                id=peer_node.id,
+                kind=peer_kind,
+                include=list(identifiers),
+                populate_store=False,
+            )
+            if hydrated_peer:
+                peer_node = hydrated_peer
+                peer_data = self.infrahub_node_to_diffsync(peer_node)
+                missing = tuple(k for k in identifiers if k not in peer_data)
+        if missing:
             err = PeerIdentifierError(
                 parent_kind=parent_node._schema.kind,
                 parent_id=str(getattr(parent_node, "id", None)),
