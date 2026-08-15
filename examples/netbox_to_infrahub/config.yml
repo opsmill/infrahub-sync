@@ -330,8 +330,8 @@ schema_mapping:
     transforms:
       - field: l2_mode
         expression: >-
-          {{ {'access': 'access', 'tagged': 'trunk', 'tagged-all': 'trunk_all'}[mode.value]
-          if mode else None }}
+          {{ ({'access': 'access', 'tagged': 'trunk', 'tagged-all': 'trunk_all'}[mode.value] | string)
+          if mode is not none else none }}
     filters: # Filters to only get the "physical interfaces"
       # NOTE: Netbox's `type` is a nested {value, label} object, not a plain
       # string — filtering on bare `type` compares against the dict itself
@@ -384,8 +384,8 @@ schema_mapping:
     transforms:
       - field: l2_mode
         expression: >-
-          {{ {'access': 'access', 'tagged': 'trunk', 'tagged-all': 'trunk_all'}[mode.value]
-          if mode else None }}
+          {{ ({'access': 'access', 'tagged': 'trunk', 'tagged-all': 'trunk_all'}[mode.value] | string)
+          if mode is not none else none }}
     filters: # Filters to only get the "virtual interfaces"
       - field: type.value
         operation: "=="
@@ -433,8 +433,8 @@ schema_mapping:
           {{ suffix | int if suffix else None }}
       - field: l2_mode
         expression: >-
-          {{ {'access': 'access', 'tagged': 'trunk', 'tagged-all': 'trunk_all'}[mode.value]
-          if mode else None }}
+          {{ ({'access': 'access', 'tagged': 'trunk', 'tagged-all': 'trunk_all'}[mode.value] | string)
+          if mode is not none else none }}
     filters: # Filters to only get the "lag interfaces"
       - field: type.value
         operation: "=="
