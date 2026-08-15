@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from infrahub_sdk.exceptions import NodeNotFoundError
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerIdentifierError
 
@@ -32,13 +33,16 @@ class _FakeStore:
 
 
 class _FakeClient:
-    def __init__(self, rehydrated_peer: object | None = None) -> None:
+    def __init__(self, rehydrated_peer: object | None = None, *, raise_not_found: bool = False) -> None:
         self.store = _FakeStore()
         self.rehydrated_peer = rehydrated_peer
+        self.raise_not_found = raise_not_found
         self.get_calls: list[dict[str, object]] = []
 
     def get(self, **kwargs: object) -> object | None:
         self.get_calls.append(kwargs)
+        if self.raise_not_found:
+            raise NodeNotFoundError(identifier={"id": [str(kwargs["id"])]})
         return self.rehydrated_peer
 
 
@@ -61,9 +65,15 @@ class _Harness(InfrahubAdapter):
 
     client: _FakeClient
 
-    def __init__(self, *, continue_on_error: bool = False, rehydrated_peer: object | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        continue_on_error: bool = False,
+        rehydrated_peer: object | None = None,
+        raise_not_found: bool = False,
+    ) -> None:
         # bypass the parent chain entirely
-        self.client = _FakeClient(rehydrated_peer=rehydrated_peer)
+        self.client = _FakeClient(rehydrated_peer=rehydrated_peer, raise_not_found=raise_not_found)
         self.store = _FakeStore()  # ty: ignore[invalid-assignment]
         self.continue_on_error = continue_on_error
         self._instances: list[object] = []
@@ -87,7 +97,7 @@ def _make_node(kind: str, node_id: str, diffsync_data: dict[str, object]) -> Sim
 
 
 def test_missing_identifier_raises_with_rich_context() -> None:
-    harness = _Harness(continue_on_error=False)
+    harness = _Harness(continue_on_error=False, raise_not_found=True)
     parent = _make_node("InfraDevice", "parent-id", {})
     peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east"})  # 'organization' missing
 
@@ -157,3 +167,4 @@ def test_complete_peer_returns_unique_id() -> None:
     result = harness._resolve_peer_unique_id(parent_node=parent, rel_name="location", peer_node=peer)  # ty: ignore[invalid-argument-type]
 
     assert result == "dc-east|acme"
+    assert harness.client.get_calls == []
