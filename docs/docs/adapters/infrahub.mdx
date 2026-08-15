@@ -158,6 +158,7 @@ When syncing data into Infrahub, the adapter tracks the source and owner of each
 - Assigning ownership to teams or groups
 
 Source and owner lineage is applied to newly created relationship edges and to relationship peers newly linked by an update. Rerunning a sync does not backfill lineage onto unchanged, pre-existing relationship edges.
+Resource-pool allocations are an exception: their relationship mutation does not include source or owner lineage.
 
 ### Default behavior
 

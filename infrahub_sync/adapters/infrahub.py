@@ -184,6 +184,8 @@ def update_node(
                         # and generate a ``from_pool`` allocation when required.
                         setattr(node, attr_name, peer_node)
                         relationship: RelatedNodeSync = getattr(node, attr_name)
+                        # The SDK renders ``from_pool`` before relationship properties,
+                        # so source and owner do not reach resource-pool allocations.
                         if source:
                             relationship.source = source
                         if owner:
