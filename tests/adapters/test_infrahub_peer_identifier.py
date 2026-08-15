@@ -5,7 +5,8 @@ stand-in adapter that reuses the real helper. We only care about three things:
 
   1. Missing peer identifier keys raise PeerIdentifierError with rich context.
   2. continue_on_error=True logs a warning and returns None instead of raising.
-  3. Successful path returns the peer's unique_id.
+  3. Missing relationship identifiers are rehydrated before resolving unique_id.
+  4. Successful path returns the peer's unique_id.
 """
 
 from __future__ import annotations
@@ -31,8 +32,14 @@ class _FakeStore:
 
 
 class _FakeClient:
-    def __init__(self) -> None:
+    def __init__(self, rehydrated_peer: object | None = None) -> None:
         self.store = _FakeStore()
+        self.rehydrated_peer = rehydrated_peer
+        self.get_calls: list[dict[str, object]] = []
+
+    def get(self, **kwargs: object) -> object | None:
+        self.get_calls.append(kwargs)
+        return self.rehydrated_peer
 
 
 class _FakePeerModel:
@@ -52,9 +59,9 @@ class _FakePeerModel:
 class _Harness(InfrahubAdapter):
     """Skip the heavy __init__ that needs a real Infrahub server."""
 
-    def __init__(self, *, continue_on_error: bool = False) -> None:
+    def __init__(self, *, continue_on_error: bool = False, rehydrated_peer: object | None = None) -> None:
         # bypass the parent chain entirely
-        self.client = _FakeClient()
+        self.client = _FakeClient(rehydrated_peer=rehydrated_peer)
         self.store = _FakeStore()  # ty: ignore[invalid-assignment]
         self.continue_on_error = continue_on_error
         self._instances: list[object] = []
@@ -107,6 +114,33 @@ def test_missing_identifier_skipped_when_continue_on_error(caplog: pytest.LogCap
 
     assert result is None
     assert any("Skipping peer relationship" in rec.message for rec in caplog.records)
+
+
+def test_missing_relationship_identifier_is_rehydrated_by_uuid() -> None:
+    hydrated_peer = _make_node(
+        "LocationGeneric",
+        "peer-id",
+        {"name": "dc-east", "organization": "acme"},
+    )
+    harness = _Harness(rehydrated_peer=hydrated_peer)
+    parent = _make_node("InfraDevice", "parent-id", {})
+    shallow_peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east"})
+
+    result = harness._resolve_peer_unique_id(  # ty: ignore[invalid-argument-type]
+        parent_node=parent,
+        rel_name="location",
+        peer_node=shallow_peer,
+    )
+
+    assert result == "dc-east|acme"
+    assert harness.client.get_calls == [
+        {
+            "id": "peer-id",
+            "kind": "LocationGeneric",
+            "include": ["name", "organization"],
+            "populate_store": False,
+        }
+    ]
 
 
 def test_complete_peer_returns_unique_id() -> None:
