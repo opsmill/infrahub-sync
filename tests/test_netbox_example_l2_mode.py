@@ -56,3 +56,19 @@ def test_netbox_example_rejects_invalid_interface_l2_mode(
             records=[record],
             schema_mapping=interface_mapping,
         )
+
+
+@pytest.mark.parametrize("interface_name", ["InterfacePhysical", "InterfaceVirtual", "InterfaceLag"])
+def test_netbox_example_refuses_q_in_q_without_destination_schema_support(interface_name: str) -> None:
+    config_path = Path(__file__).resolve().parent.parent / "examples" / "netbox_to_infrahub" / "config.yml"
+    with config_path.open() as config_file:
+        config = SyncConfig(**yaml.safe_load(config_file))
+
+    interface_mapping = next(mapping for mapping in config.schema_mapping if mapping.name == interface_name)
+    record = {"name": "PortChannel1", "mode": {"value": "q-in-q"}}
+
+    with pytest.raises(ValueError, match="q_in_q_requires_destination_schema_support"):
+        DiffSyncModelMixin.transform_records(
+            records=[record],
+            schema_mapping=interface_mapping,
+        )

@@ -328,9 +328,15 @@ schema_mapping:
         reference: InterfaceLag
       # TODO: many fields are not implemented in the schema (mgmt_only, type, duplex ...)
     transforms:
-      - field: l2_mode
+      # NetBox q-in-q is valid, but this destination schema exposes only
+      # access/trunk/trunk_all. The named undefined value makes StrictUndefined
+      # refuse q-in-q explicitly instead of applying a lossy translation;
+      # `or none` evaluates undefined results so every other unknown mode fails too.
+      - &netbox_l2_mode_transform
+        field: l2_mode
         expression: >-
-          {{ ({'access': 'access', 'tagged': 'trunk', 'tagged-all': 'trunk_all'}[mode.value] | string)
+          {{ ({'access': 'access', 'tagged': 'trunk', 'tagged-all': 'trunk_all',
+          'q-in-q': q_in_q_requires_destination_schema_support}[mode.value] or none)
           if mode is not none else none }}
     filters: # Filters to only get the "physical interfaces"
       # NOTE: Netbox's `type` is a nested {value, label} object, not a plain
@@ -382,10 +388,7 @@ schema_mapping:
         reference: DcimDevice
       # TODO: many fields are not implemented in the schema (mgmt_only, type, duplex ...)
     transforms:
-      - field: l2_mode
-        expression: >-
-          {{ ({'access': 'access', 'tagged': 'trunk', 'tagged-all': 'trunk_all'}[mode.value] | string)
-          if mode is not none else none }}
+      - *netbox_l2_mode_transform
     filters: # Filters to only get the "virtual interfaces"
       - field: type.value
         operation: "=="
@@ -431,10 +434,7 @@ schema_mapping:
         expression: |-
           {% set suffix = name[(name.rstrip('0123456789'))|length:] %}
           {{ suffix | int if suffix else None }}
-      - field: l2_mode
-        expression: >-
-          {{ ({'access': 'access', 'tagged': 'trunk', 'tagged-all': 'trunk_all'}[mode.value] | string)
-          if mode is not none else none }}
+      - *netbox_l2_mode_transform
     filters: # Filters to only get the "lag interfaces"
       - field: type.value
         operation: "=="
