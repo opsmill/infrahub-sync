@@ -553,6 +553,59 @@ def test_unexpected_hydration_error_propagates_with_continue_on_error() -> None:
     assert excinfo.value is get_error
 
 
+def test_null_hydrated_identifier_is_still_missing() -> None:
+    hydrated_peer = _make_node(
+        "LocationGeneric",
+        "peer-id",
+        {"organization": None},
+    )
+    harness = _Harness(rehydrated_peer=hydrated_peer)
+    parent = _make_node("InfraDevice", "parent-id", {})
+    shallow_peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east"})
+
+    with pytest.raises(PeerIdentifierError) as excinfo:
+        harness._resolve_peer_unique_id(
+            parent_node=parent,  # ty: ignore[invalid-argument-type]
+            rel_name="location",
+            peer_node=shallow_peer,  # ty: ignore[invalid-argument-type]
+        )
+
+    assert excinfo.value.missing_keys == ("organization",)
+    assert len(harness.client.get_calls) == 1
+
+
+def test_later_partial_peer_with_null_identifier_remains_incomplete() -> None:
+    hydrated_peer = _make_node(
+        "LocationGeneric",
+        "peer-id",
+        {"name": "dc-east", "organization": None},
+    )
+    harness = _Harness(rehydrated_peer=hydrated_peer)
+    parent = _make_node("InfraDevice", "parent-id", {})
+
+    with pytest.raises(PeerIdentifierError) as excinfo:
+        harness._resolve_peer_unique_id(
+            parent_node=parent,  # ty: ignore[invalid-argument-type]
+            rel_name="location",
+            peer_node=_make_node("LocationGeneric", "peer-id", {}),  # ty: ignore[invalid-argument-type]
+        )
+    assert excinfo.value.missing_keys == ("organization",)
+
+    with pytest.raises(PeerIdentifierError) as excinfo:
+        harness._resolve_peer_unique_id(
+            parent_node=parent,  # ty: ignore[invalid-argument-type]
+            rel_name="location",
+            peer_node=_make_node(  # ty: ignore[invalid-argument-type]
+                "LocationGeneric",
+                "peer-id",
+                {"name": None, "organization": "acme"},
+            ),
+        )
+
+    assert excinfo.value.missing_keys == ("name",)
+    assert len(harness.client.get_calls) == 1
+
+
 def test_incomplete_hydration_does_not_merge_with_later_partial_peer() -> None:
     incomplete_peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east"})
     harness = _Harness(rehydrated_peer=incomplete_peer)
@@ -699,6 +752,32 @@ def test_reconciliation_rejects_null_attribute_identifier() -> None:
 
     assert len(harness.client.store.set_calls) == set_call_count
     assert harness.client.store.get(kind="LocationGeneric", key="none|acme", raise_when_missing=False) is None
+
+
+def test_reconciliation_rejects_null_cardinality_one_relationship_identifier() -> None:
+    harness = _Harness()
+    incomplete_peer = SimpleNamespace(
+        id="lag-id",
+        _schema=SimpleNamespace(
+            kind="InterfaceLag",
+            attributes=[SimpleNamespace(name="name", optional=False)],
+            relationships=[SimpleNamespace(name="device", cardinality="one")],
+        ),
+        name=SimpleNamespace(value="lag-1"),
+        device=SimpleNamespace(id=None),
+    )
+    harness.client.store.set(key="lag-id", node=incomplete_peer)
+    set_call_count = len(harness.client.store.set_calls)
+
+    harness._reconcile_peer_sdk_alias(
+        peer_kind="InterfaceLag",
+        peer_id="lag-id",
+        unique_id="none|lag-1",
+        identifiers=("device", "name"),
+    )
+
+    assert len(harness.client.store.set_calls) == set_call_count
+    assert harness.client.store.get(kind="InterfaceLag", key="none|lag-1", raise_when_missing=False) is None
 
 
 def test_reconciliation_rejects_cardinality_many_relationship_identifier() -> None:

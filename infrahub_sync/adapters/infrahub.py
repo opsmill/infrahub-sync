@@ -987,7 +987,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 return cached_unique_id
 
         peer_data = self.infrahub_node_to_diffsync(peer_node)
-        missing = tuple(k for k in identifiers if k not in peer_data)
+        missing = tuple(k for k in identifiers if peer_data.get(k) is None)
         hydrated = False
         if missing and not hydration_attempted:
             try:
@@ -1003,7 +1003,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 hydrated = True
                 hydrated_peer_data = self.infrahub_node_to_diffsync(hydrated_peer)
                 peer_data = {**peer_data, **hydrated_peer_data}
-            missing = tuple(k for k in identifiers if k not in peer_data)
+            missing = tuple(k for k in identifiers if peer_data.get(k) is None)
         if missing:
             err = PeerIdentifierError(
                 parent_kind=parent_node._schema.kind,
