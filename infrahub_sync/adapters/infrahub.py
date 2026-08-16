@@ -731,10 +731,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
     continue_on_error: bool = False
     _peer_unique_ids: dict[tuple[str, str], str | None]
-    _peer_identifier_failure_context: dict[
-        tuple[str, str],
-        tuple[tuple[str, ...], tuple[str, ...]],
-    ]
+    _peer_hydration_data: dict[tuple[str, str], dict[str, Any] | None]
 
     # AD078 — destination kinds whose rendered mutation has already been reported as
     # unkeyed. The report is once per kind, not once per operation, because
@@ -761,7 +758,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         self.target = target
         self.config = config
         self._peer_unique_ids = {}
-        self._peer_identifier_failure_context = {}
+        self._peer_hydration_data = {}
 
         settings = adapter.settings or {}
         infrahub_url, infrahub_branch = resolved_endpoint(settings, branch)
@@ -963,27 +960,30 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         identifiers = tuple(peer_model._identifiers)
         missing = tuple(k for k in identifiers if k not in peer_data)
         hydrated = False
-        if missing and not hydration_failed:
-            try:
-                hydrated_peer = self.client.get(
-                    id=peer_node.id,
-                    kind=peer_kind,
-                    include=list(identifiers),
-                    populate_store=False,
-                )
-            except NodeNotFoundError:
-                hydrated_peer = None
-            if hydrated_peer is not None:
-                hydrated = True
-                peer_node = hydrated_peer
-                peer_data = self.infrahub_node_to_diffsync(peer_node)
-                missing = tuple(k for k in identifiers if k not in peer_data)
         if missing:
             if hydration_failed:
-                missing, present_keys = self._peer_identifier_failure_context[cache_key]
+                if cached_peer_data := self._peer_hydration_data[cache_key]:
+                    peer_data = {**cached_peer_data, **peer_data}
             else:
-                present_keys = tuple(peer_data.keys())
-                self._peer_identifier_failure_context[cache_key] = (missing, present_keys)
+                try:
+                    hydrated_peer = self.client.get(
+                        id=peer_node.id,
+                        kind=peer_kind,
+                        include=list(identifiers),
+                        populate_store=False,
+                    )
+                except NodeNotFoundError:
+                    hydrated_peer = None
+                if hydrated_peer is not None:
+                    hydrated = True
+                    peer_node = hydrated_peer
+                    hydrated_peer_data = self.infrahub_node_to_diffsync(peer_node)
+                    self._peer_hydration_data[cache_key] = dict(hydrated_peer_data)
+                    peer_data = {**peer_data, **hydrated_peer_data}
+                else:
+                    self._peer_hydration_data[cache_key] = None
+            missing = tuple(k for k in identifiers if k not in peer_data)
+        if missing:
             err = PeerIdentifierError(
                 parent_kind=parent_node._schema.kind,
                 parent_id=str(getattr(parent_node, "id", None)),
@@ -992,7 +992,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 peer_id=str(getattr(peer_node, "id", None)),
                 identifiers=identifiers,
                 missing_keys=missing,
-                present_keys=present_keys,
+                present_keys=tuple(peer_data.keys()),
             )
             self._peer_unique_ids[cache_key] = None
             if self.continue_on_error:
@@ -1013,14 +1013,15 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         # was loaded earlier. Complete nodes retain the existing identity alias
         # behavior, preferring any richer node already cached by that alias.
         sdk_peer = self.client.store.get(key=unique_id, kind=peer_kind, raise_when_missing=False)
+        if sdk_peer is None:
+            sdk_peer = self.client.store.get(key=peer_id, kind=peer_kind, raise_when_missing=False)
         if sdk_peer is not None:
             self.client.store.set(key=unique_id, node=sdk_peer)
         elif not hydrated:
-            sdk_peer = self.client.store.get(key=peer_id, kind=peer_kind, raise_when_missing=False)
             self.client.store.set(key=unique_id, node=sdk_peer or peer_node)
         resolved_unique_id = peer_item.get_unique_id()
         self._peer_unique_ids[cache_key] = resolved_unique_id
-        self._peer_identifier_failure_context.pop(cache_key, None)
+        self._peer_hydration_data.pop(cache_key, None)
         return resolved_unique_id
 
     def infrahub_node_to_diffsync(self, node: InfrahubNodeSync) -> dict[str, Any]:

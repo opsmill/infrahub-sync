@@ -128,7 +128,7 @@ class _Harness(InfrahubAdapter):
         self.store = self._diffsync_store  # ty: ignore[invalid-assignment]
         self.continue_on_error = continue_on_error
         self._peer_unique_ids = {}
-        self._peer_identifier_failure_context = {}
+        self._peer_hydration_data = {}
         self._instances: list[object] = []
         # Register the fake peer model under its kind so getattr(self, kind) works.
         self.LocationGeneric = _FakePeerModel
@@ -157,7 +157,7 @@ class _RelationshipHarness(InfrahubAdapter):
         self.store = self._diffsync_store  # ty: ignore[invalid-assignment]
         self.continue_on_error = False
         self._peer_unique_ids = {}
-        self._peer_identifier_failure_context = {}
+        self._peer_hydration_data = {}
         self._instances: list[object] = []
         self.InterfaceLag = _FakeLagModel
         self.InfraDevice = _FakeDeviceModel
@@ -362,6 +362,37 @@ def test_relationship_hydration_preserves_rich_sdk_node() -> None:
     assert _resolve_cached_sdk_peer(harness, kind="InterfaceLag", unique_id="router-1|lag-1") is rich_peer
 
 
+def test_relationship_hydration_adds_alias_for_rich_uuid_only_node() -> None:
+    rich_peer = _make_sdk_node(
+        "InterfaceLag",
+        "lag-id",
+        {"name": "lag-1", "description": "rich SDK node"},
+        {"device": ("InfraDevice", "device-id")},
+    )
+    identifier_only_peer = _make_sdk_node(
+        "InterfaceLag",
+        "lag-id",
+        {"name": "lag-1"},
+        {"device": ("InfraDevice", "device-id")},
+    )
+    harness = _RelationshipHarness(rehydrated_peer=identifier_only_peer)
+    parent = _make_node("InfraDevice", "parent-id", {})
+    shallow_peer = _make_sdk_node("InterfaceLag", "lag-id", {"name": "lag-1"})
+    _seed_relationship_stores(harness, peer=rich_peer, peer_key="rich-uuid-only")
+
+    result = harness._resolve_peer_unique_id(
+        parent_node=parent,  # ty: ignore[invalid-argument-type]
+        rel_name="bundle",
+        peer_node=shallow_peer,  # ty: ignore[invalid-argument-type]
+    )
+
+    assert result == "router-1|lag-1"
+    assert len(harness.client.get_calls) == 1
+    assert harness.client.store.get(kind="InterfaceLag", key="lag-id") is rich_peer
+    assert harness.client.store.get(kind="InterfaceLag", key="router-1|lag-1") is rich_peer
+    assert _resolve_cached_sdk_peer(harness, kind="InterfaceLag", unique_id="router-1|lag-1") is rich_peer
+
+
 def test_relationship_hydration_is_reused_for_shared_store_references() -> None:
     identifier_only_peer = _make_sdk_node(
         "InterfaceLag",
@@ -436,16 +467,16 @@ def test_incomplete_hydration_fetches_once_then_raises_rich_error() -> None:
         assert excinfo.value.rel_name == rel_name
     assert len(harness.client.get_calls) == 1
 
-    complete_peer = _make_node(
+    complementary_peer = _make_node(
         "LocationGeneric",
         "peer-id",
-        {"name": "dc-east", "organization": "acme"},
+        {"organization": "acme"},
     )
     assert (
         harness._resolve_peer_unique_id(
             parent_node=references[1][0],  # ty: ignore[invalid-argument-type]
             rel_name="site",
-            peer_node=complete_peer,  # ty: ignore[invalid-argument-type]
+            peer_node=complementary_peer,  # ty: ignore[invalid-argument-type]
         )
         == "dc-east|acme"
     )
