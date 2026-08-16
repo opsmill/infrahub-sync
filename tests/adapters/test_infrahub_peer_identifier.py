@@ -425,6 +425,38 @@ def test_relationship_hydration_prefers_rich_uuid_over_shallow_identity_alias() 
     assert _resolve_cached_sdk_peer(harness, kind="InterfaceLag", unique_id="router-1|lag-1") is rich_peer
 
 
+def test_cached_relationship_identity_repairs_later_shallow_uuid_entry() -> None:
+    rich_peer = _make_sdk_node(
+        "InterfaceLag",
+        "lag-id",
+        {"name": "lag-1", "description": "rich SDK node"},
+        {"device": ("InfraDevice", "device-id")},
+    )
+    harness = _RelationshipHarness(rehydrated_peer=rich_peer)
+    parent = _make_node("InfraDevice", "parent-id", {})
+    _seed_relationship_stores(harness, peer=rich_peer, peer_key="router-1|lag-1")
+
+    first_result = harness._resolve_peer_unique_id(
+        parent_node=parent,  # ty: ignore[invalid-argument-type]
+        rel_name="bundle",
+        peer_node=rich_peer,  # ty: ignore[invalid-argument-type]
+    )
+
+    shallow_peer = _make_sdk_node("InterfaceLag", "lag-id", {"name": "lag-1"})
+    harness.client.store.set(key="later-shallow", node=shallow_peer)
+    second_result = harness._resolve_peer_unique_id(
+        parent_node=parent,  # ty: ignore[invalid-argument-type]
+        rel_name="bundle",
+        peer_node=shallow_peer,  # ty: ignore[invalid-argument-type]
+    )
+
+    assert [first_result, second_result] == ["router-1|lag-1", "router-1|lag-1"]
+    assert not harness.client.get_calls
+    assert harness.client.store.get(kind="InterfaceLag", key="lag-id") is rich_peer
+    assert harness.client.store.get(kind="InterfaceLag", key="router-1|lag-1") is rich_peer
+    assert _resolve_cached_sdk_peer(harness, kind="InterfaceLag", unique_id="router-1|lag-1") is rich_peer
+
+
 def test_relationship_hydration_is_reused_for_shared_store_references() -> None:
     identifier_only_peer = _make_sdk_node(
         "InterfaceLag",

@@ -981,6 +981,11 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         if hydration_failed:
             cached_unique_id = self._peer_unique_ids[cache_key]
             if cached_unique_id is not None:
+                self._reconcile_peer_sdk_alias(
+                    peer_kind=peer_kind,
+                    peer_id=peer_id,
+                    unique_id=cached_unique_id,
+                )
                 return cached_unique_id
 
         peer_data = self.infrahub_node_to_diffsync(peer_node)
@@ -1039,18 +1044,32 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         # narrow result into the shared SDK store can replace a richer node that
         # was loaded earlier. Complete nodes retain the existing identity alias
         # behavior, preferring any richer node already cached by that alias.
-        sdk_peer_by_uuid = self.client.store.get(key=peer_id, kind=peer_kind, raise_when_missing=False)
-        sdk_peer_by_identity = self.client.store.get(key=unique_id, kind=peer_kind, raise_when_missing=False)
-        sdk_candidates = [peer for peer in (sdk_peer_by_uuid, sdk_peer_by_identity) if peer is not None]
-        sdk_peer = max(sdk_candidates, key=_sdk_node_richness) if sdk_candidates else None
-        if sdk_peer is not None:
-            self.client.store.set(key=unique_id, node=sdk_peer)
-        elif not hydrated:
-            self.client.store.set(key=unique_id, node=sdk_peer or peer_node)
+        self._reconcile_peer_sdk_alias(
+            peer_kind=peer_kind,
+            peer_id=peer_id,
+            unique_id=unique_id,
+            fallback_node=None if hydrated else peer_node,
+        )
         resolved_unique_id = peer_item.get_unique_id()
         self._peer_unique_ids[cache_key] = resolved_unique_id
         self._peer_hydration_data.pop(cache_key, None)
         return resolved_unique_id
+
+    def _reconcile_peer_sdk_alias(
+        self,
+        *,
+        peer_kind: str,
+        peer_id: str,
+        unique_id: str,
+        fallback_node: InfrahubNodeSync | None = None,
+    ) -> None:
+        """Point SDK UUID and identity lookups at the richest cached peer."""
+        sdk_peer_by_uuid = self.client.store.get(key=peer_id, kind=peer_kind, raise_when_missing=False)
+        sdk_peer_by_identity = self.client.store.get(key=unique_id, kind=peer_kind, raise_when_missing=False)
+        sdk_candidates = [peer for peer in (sdk_peer_by_uuid, sdk_peer_by_identity) if peer is not None]
+        sdk_peer = max(sdk_candidates, key=_sdk_node_richness) if sdk_candidates else fallback_node
+        if sdk_peer is not None:
+            self.client.store.set(key=unique_id, node=sdk_peer)
 
     def infrahub_node_to_diffsync(self, node: InfrahubNodeSync) -> dict[str, Any]:
         """
