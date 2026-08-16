@@ -126,3 +126,28 @@ def test_list_existing_ids_raises_for_unknown_model() -> None:
     adapter = _make_adapter(["InfraDevice"])
     with pytest.raises(NotImplementedError):
         list(adapter.list_existing_ids("MissingKind"))
+
+
+def test_model_loader_includes_identifiers_and_attributes() -> None:
+    adapter = _make_adapter(["InfraDevice"])
+    fake_node = MagicMock()
+    adapter.client.all.return_value = [fake_node]  # ty: ignore[unresolved-attribute]
+    adapter.infrahub_node_to_diffsync = MagicMock(  # ty: ignore[invalid-assignment]
+        return_value={"local_id": "device-id", "device": "leaf1", "name": "eth0", "description": "test"}
+    )
+    adapter.update_or_add_model_instance = MagicMock()  # ty: ignore[invalid-assignment]
+
+    fake_model = MagicMock()
+    fake_model._identifiers = ("device", "name")
+    fake_model._attributes = ("description", "name")
+    fake_item = MagicMock()
+    fake_item.get_unique_id.return_value = "leaf1"
+    fake_model.return_value = fake_item
+
+    adapter.model_loader("InfraDevice", fake_model)
+
+    adapter.client.all.assert_called_once_with(  # ty: ignore[unresolved-attribute]
+        kind="InfraDevice",
+        include=["description", "name", "device"],
+        populate_store=True,
+    )

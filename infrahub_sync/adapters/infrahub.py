@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from diffsync import Adapter, DiffSyncModel
+from diffsync.exceptions import ObjectNotFound
 from infrahub_sdk import (
     Config,
     InfrahubClientSync,
@@ -729,7 +730,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     type = "Infrahub"
 
     continue_on_error: bool = False
-    _peer_unique_ids: dict[tuple[str, str], str]
+    _peer_unique_ids: dict[tuple[str, str], str | None]
 
     # AD078 — destination kinds whose rendered mutation has already been reported as
     # unkeyed. The report is once per kind, not once per operation, because
@@ -885,7 +886,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         element = next((el for el in self.config.schema_mapping if el.name == model_name), None)
         if element:
             # Retrieve all nodes corresponding to model_name (list of InfrahubNodeSync)
-            nodes = self.client.all(kind=model_name, include=list(model._attributes), populate_store=True)
+            include = list(dict.fromkeys((*model._attributes, *model._identifiers)))
+            nodes = self.client.all(kind=model_name, include=include, populate_store=True)
 
             # Transform the list of InfrahubNodeSync into a list of (node, dict) tuples
             node_dict_pairs = [(node, self.infrahub_node_to_diffsync(node=node)) for node in nodes]
@@ -945,17 +947,17 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             return None
 
         peer_id = str(peer_node.id)
-        peer_unique_ids = getattr(self, "_peer_unique_ids", None)
-        if peer_unique_ids is None:
-            peer_unique_ids = self._peer_unique_ids = {}
-        if cached_unique_id := peer_unique_ids.get((peer_kind, peer_id)):
-            return cached_unique_id
+        cache_key = (peer_kind, peer_id)
+        hydration_failed = cache_key in self._peer_unique_ids
+        if hydration_failed:
+            cached_unique_id = self._peer_unique_ids[cache_key]
+            if cached_unique_id is not None:
+                return cached_unique_id
 
         peer_data = self.infrahub_node_to_diffsync(peer_node)
         identifiers = tuple(peer_model._identifiers)
         missing = tuple(k for k in identifiers if k not in peer_data)
-        hydrated = False
-        if missing:
+        if missing and not hydration_failed:
             try:
                 hydrated_peer = self.client.get(
                     id=peer_node.id,
@@ -965,8 +967,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 )
             except NodeNotFoundError:
                 hydrated_peer = None
-            if hydrated_peer:
-                hydrated = True
+            if hydrated_peer is not None:
                 peer_node = hydrated_peer
                 peer_data = self.infrahub_node_to_diffsync(peer_node)
                 missing = tuple(k for k in identifiers if k not in peer_data)
@@ -981,20 +982,27 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 missing_keys=missing,
                 present_keys=tuple(peer_data.keys()),
             )
+            self._peer_unique_ids[cache_key] = None
             if self.continue_on_error:
-                logger.warning("Skipping peer relationship: %s", err)
+                if not hydration_failed:
+                    logger.warning("Skipping peer relationship: %s", err)
                 return None
             raise err
 
         unique_id = peer_model.create_unique_id(**{k: peer_data[k] for k in identifiers})
-        peer_item = self.store.get(model=peer_kind, identifier=unique_id)
-        if not peer_item:
+        try:
+            peer_item = self.store.get(model=peer_kind, identifier=unique_id)
+        except ObjectNotFound:
             peer_item = peer_model(**peer_data)
             self.update_or_add_model_instance(peer_item)
-            if not hydrated:
-                self.client.store.set(key=unique_id, node=peer_node)
+
+        # Preserve a richer UUID-cached SDK node while adding the DiffSync identity alias.
+        sdk_peer = self.client.store.get(key=peer_id, kind=peer_kind, raise_when_missing=False)
+        if sdk_peer is None:
+            sdk_peer = peer_node
+        self.client.store.set(key=unique_id, node=sdk_peer)
         resolved_unique_id = peer_item.get_unique_id()
-        peer_unique_ids[peer_kind, peer_id] = resolved_unique_id
+        self._peer_unique_ids[cache_key] = resolved_unique_id
         return resolved_unique_id
 
     def infrahub_node_to_diffsync(self, node: InfrahubNodeSync) -> dict[str, Any]:
