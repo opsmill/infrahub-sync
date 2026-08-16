@@ -298,7 +298,11 @@ def test_missing_relationship_identifier_is_rehydrated_by_uuid() -> None:
     )
     harness = _Harness(rehydrated_peer=hydrated_peer)
     parent = _make_node("InfraDevice", "parent-id", {})
-    shallow_peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east"})
+    shallow_peer = _make_node(
+        "LocationGeneric",
+        "peer-id",
+        {"name": "dc-east", "organization": None},
+    )
 
     result = harness._resolve_peer_unique_id(
         parent_node=parent,  # ty: ignore[invalid-argument-type]
@@ -601,7 +605,9 @@ def test_unexpected_hydration_error_propagates_with_continue_on_error() -> None:
     assert excinfo.value is get_error
 
 
-def test_null_hydrated_identifier_is_still_missing() -> None:
+def test_verified_null_attribute_identifier_succeeds_once_and_is_cached(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     hydrated_peer = _make_node(
         "LocationGeneric",
         "peer-id",
@@ -609,33 +615,45 @@ def test_null_hydrated_identifier_is_still_missing() -> None:
     )
     harness = _Harness(rehydrated_peer=hydrated_peer)
     parent = _make_node("InfraDevice", "parent-id", {})
-    shallow_peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east"})
-
-    with pytest.raises(PeerIdentifierError) as excinfo:
-        harness._resolve_peer_unique_id(
-            parent_node=parent,  # ty: ignore[invalid-argument-type]
-            rel_name="location",
-            peer_node=shallow_peer,  # ty: ignore[invalid-argument-type]
-        )
-
-    assert excinfo.value.missing_keys == ("organization",)
-    assert len(harness.client.get_calls) == 1
-
-
-def test_later_partial_peer_with_null_identifier_remains_incomplete() -> None:
-    hydrated_peer = _make_node(
+    shallow_peer = _make_node(
         "LocationGeneric",
         "peer-id",
         {"name": "dc-east", "organization": None},
     )
-    harness = _Harness(rehydrated_peer=hydrated_peer)
+
+    with caplog.at_level(logging.WARNING, logger="infrahub_sync.adapters.infrahub"):
+        results = [
+            harness._resolve_peer_unique_id(
+                parent_node=parent,  # ty: ignore[invalid-argument-type]
+                rel_name="location",
+                peer_node=shallow_peer,  # ty: ignore[invalid-argument-type]
+            )
+            for _ in range(2)
+        ]
+
+    assert results == ["dc-east|None", "dc-east|None"]
+    assert len(harness.client.get_calls) == 1
+    assert sum("verified null attribute identifier" in record.message for record in caplog.records) == 1
+    assert harness._peer_unique_ids["LocationGeneric", "peer-id"] == "dc-east|None"
+
+
+@pytest.mark.parametrize("hydration_result", ["not-found", "incomplete"])
+def test_unverifiable_null_after_exhausted_hydration_still_errors(hydration_result: str) -> None:
+    harness = _Harness(
+        rehydrated_peer=_make_node("LocationGeneric", "peer-id", {"name": "dc-east"}),
+        raise_not_found=hydration_result == "not-found",
+    )
     parent = _make_node("InfraDevice", "parent-id", {})
 
     with pytest.raises(PeerIdentifierError) as excinfo:
         harness._resolve_peer_unique_id(
             parent_node=parent,  # ty: ignore[invalid-argument-type]
             rel_name="location",
-            peer_node=_make_node("LocationGeneric", "peer-id", {}),  # ty: ignore[invalid-argument-type]
+            peer_node=_make_node(  # ty: ignore[invalid-argument-type]
+                "LocationGeneric",
+                "peer-id",
+                {"name": "dc-east"},
+            ),
         )
     assert excinfo.value.missing_keys == ("organization",)
 
@@ -646,11 +664,35 @@ def test_later_partial_peer_with_null_identifier_remains_incomplete() -> None:
             peer_node=_make_node(  # ty: ignore[invalid-argument-type]
                 "LocationGeneric",
                 "peer-id",
-                {"name": None, "organization": "acme"},
+                {"name": "dc-east", "organization": None},
             ),
         )
 
-    assert excinfo.value.missing_keys == ("name",)
+    assert excinfo.value.missing_keys == ("organization",)
+    assert excinfo.value.parent_kind == "InfraDevice"
+    assert excinfo.value.parent_id == "parent-id"
+    assert excinfo.value.rel_name == "location"
+    assert len(harness.client.get_calls) == 1
+
+
+def test_null_relationship_identifier_is_not_verified_by_hydration() -> None:
+    hydrated_peer = _make_sdk_node(
+        "InterfaceLag",
+        "lag-id",
+        {"name": "lag-1"},
+        {"device": ("InfraDevice", "")},
+    )
+    harness = _RelationshipHarness(rehydrated_peer=hydrated_peer)
+    shallow_peer = _make_sdk_node("InterfaceLag", "lag-id", {"name": "lag-1"})
+
+    with pytest.raises(PeerIdentifierError) as excinfo:
+        harness._resolve_peer_unique_id(
+            parent_node=_make_node("InfraDevice", "parent-id", {}),  # ty: ignore[invalid-argument-type]
+            rel_name="bundle",
+            peer_node=shallow_peer,  # ty: ignore[invalid-argument-type]
+        )
+
+    assert excinfo.value.missing_keys == ("device",)
     assert len(harness.client.get_calls) == 1
 
 
