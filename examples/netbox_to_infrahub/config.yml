@@ -337,7 +337,7 @@ schema_mapping:
         expression: >-
           {{ ({'access': 'access', 'tagged': 'trunk', 'tagged-all': 'trunk_all',
           'q-in-q': q_in_q_requires_destination_schema_support}[mode.value] or none)
-          if mode is not none else none }}
+          if mode is defined and mode is not none else none }}
     filters: # Filters to only get the "physical interfaces"
       # NOTE: Netbox's `type` is a nested {value, label} object, not a plain
       # string — filtering on bare `type` compares against the dict itself
