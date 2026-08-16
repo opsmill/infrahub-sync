@@ -128,6 +128,7 @@ class _Harness(InfrahubAdapter):
         self.store = self._diffsync_store  # ty: ignore[invalid-assignment]
         self.continue_on_error = continue_on_error
         self._peer_unique_ids = {}
+        self._peer_identifier_errors = {}
         self._instances: list[object] = []
         # Register the fake peer model under its kind so getattr(self, kind) works.
         self.LocationGeneric = _FakePeerModel
@@ -156,6 +157,7 @@ class _RelationshipHarness(InfrahubAdapter):
         self.store = self._diffsync_store  # ty: ignore[invalid-assignment]
         self.continue_on_error = False
         self._peer_unique_ids = {}
+        self._peer_identifier_errors = {}
         self._instances: list[object] = []
         self.InterfaceLag = _FakeLagModel
         self.InfraDevice = _FakeDeviceModel
@@ -308,9 +310,9 @@ def test_missing_relationship_identifier_is_rehydrated_by_uuid() -> None:
     ]
     assert len(harness._instances) == 1
     assert harness.store.get(model="LocationGeneric", identifier="dc-east|acme") is harness._instances[0]
-    assert harness.client.store.get(kind="LocationGeneric", key="peer-id") is hydrated_peer
-    assert harness.client.store.get(kind="LocationGeneric", key="dc-east|acme") is hydrated_peer
-    assert _resolve_cached_sdk_peer(harness, kind="LocationGeneric", unique_id="dc-east|acme") is hydrated_peer
+    assert harness.client.store.get(kind="LocationGeneric", key="peer-id", raise_when_missing=False) is None
+    assert harness.client.store.get(kind="LocationGeneric", key="dc-east|acme", raise_when_missing=False) is None
+    assert _resolve_cached_sdk_peer(harness, kind="LocationGeneric", unique_id="dc-east|acme") is None
 
 
 def test_relationship_hydration_preserves_rich_sdk_node() -> None:
@@ -330,14 +332,20 @@ def test_relationship_hydration_preserves_rich_sdk_node() -> None:
     parent = _make_node("InfraDevice", "parent-id", {})
     shallow_peer = _make_sdk_node("InterfaceLag", "lag-id", {"name": "lag-1"})
     _seed_relationship_stores(harness, peer=rich_peer, peer_key="router-1|lag-1")
+    harness.client.store.set(key="later-shallow", node=shallow_peer)
 
-    result = harness._resolve_peer_unique_id(
-        parent_node=parent,  # ty: ignore[invalid-argument-type]
-        rel_name="bundle",
-        peer_node=shallow_peer,  # ty: ignore[invalid-argument-type]
-    )
+    results = []
+    for _ in range(2):
+        cached_peer = harness.client.store.get(kind="InterfaceLag", key="lag-id")
+        results.append(
+            harness._resolve_peer_unique_id(
+                parent_node=parent,  # ty: ignore[invalid-argument-type]
+                rel_name="bundle",
+                peer_node=cached_peer,  # ty: ignore[invalid-argument-type]
+            )
+        )
 
-    assert result == "router-1|lag-1"
+    assert results == ["router-1|lag-1", "router-1|lag-1"]
     assert harness.client.get_calls == [
         {
             "id": "lag-id",
@@ -348,9 +356,9 @@ def test_relationship_hydration_preserves_rich_sdk_node() -> None:
     ]
     cached_by_uuid = harness.client.store.get(kind="InterfaceLag", key="lag-id")
     cached_by_key = harness.client.store.get(kind="InterfaceLag", key="router-1|lag-1")
-    assert cached_by_uuid is rich_peer
+    assert cached_by_uuid is shallow_peer
     assert cached_by_key is rich_peer
-    assert cached_by_uuid.description.value == "rich SDK node"
+    assert cached_by_key.description.value == "rich SDK node"
     assert _resolve_cached_sdk_peer(harness, kind="InterfaceLag", unique_id="router-1|lag-1") is rich_peer
 
 
@@ -408,7 +416,7 @@ def test_incomplete_hydration_fetches_once_then_raises_rich_error() -> None:
     incomplete_peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east"})
     harness = _Harness(rehydrated_peer=incomplete_peer)
     parent = _make_node("InfraDevice", "parent-id", {})
-    shallow_peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east"})
+    shallow_peer = _make_node("LocationGeneric", "peer-id", {})
 
     for _ in range(2):
         with pytest.raises(PeerIdentifierError) as excinfo:
@@ -419,6 +427,7 @@ def test_incomplete_hydration_fetches_once_then_raises_rich_error() -> None:
             )
 
         assert excinfo.value.missing_keys == ("organization",)
+        assert excinfo.value.present_keys == ("name",)
     assert len(harness.client.get_calls) == 1
 
 

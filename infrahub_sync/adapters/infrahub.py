@@ -730,7 +730,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     type = "Infrahub"
 
     continue_on_error: bool = False
-    _peer_unique_ids: dict[tuple[str, str], str | None]
+    _peer_unique_ids: dict[tuple[str, str], str]
+    _peer_identifier_errors: dict[tuple[str, str], PeerIdentifierError]
 
     # AD078 — destination kinds whose rendered mutation has already been reported as
     # unkeyed. The report is once per kind, not once per operation, because
@@ -757,6 +758,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         self.target = target
         self.config = config
         self._peer_unique_ids = {}
+        self._peer_identifier_errors = {}
 
         settings = adapter.settings or {}
         infrahub_url, infrahub_branch = resolved_endpoint(settings, branch)
@@ -948,16 +950,18 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         peer_id = str(peer_node.id)
         cache_key = (peer_kind, peer_id)
-        hydration_failed = cache_key in self._peer_unique_ids
-        if hydration_failed:
-            cached_unique_id = self._peer_unique_ids[cache_key]
-            if cached_unique_id is not None:
-                return cached_unique_id
+        if cached_unique_id := self._peer_unique_ids.get(cache_key):
+            return cached_unique_id
+        if cached_error := self._peer_identifier_errors.get(cache_key):
+            if self.continue_on_error:
+                return None
+            raise cached_error
 
         peer_data = self.infrahub_node_to_diffsync(peer_node)
         identifiers = tuple(peer_model._identifiers)
         missing = tuple(k for k in identifiers if k not in peer_data)
-        if missing and not hydration_failed:
+        hydrated = False
+        if missing:
             try:
                 hydrated_peer = self.client.get(
                     id=peer_node.id,
@@ -968,6 +972,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             except NodeNotFoundError:
                 hydrated_peer = None
             if hydrated_peer is not None:
+                hydrated = True
                 peer_node = hydrated_peer
                 peer_data = self.infrahub_node_to_diffsync(peer_node)
                 missing = tuple(k for k in identifiers if k not in peer_data)
@@ -982,10 +987,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 missing_keys=missing,
                 present_keys=tuple(peer_data.keys()),
             )
-            self._peer_unique_ids[cache_key] = None
+            self._peer_identifier_errors[cache_key] = err
             if self.continue_on_error:
-                if not hydration_failed:
-                    logger.warning("Skipping peer relationship: %s", err)
+                logger.warning("Skipping peer relationship: %s", err)
                 return None
             raise err
 
@@ -996,11 +1000,15 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             peer_item = peer_model(**peer_data)
             self.update_or_add_model_instance(peer_item)
 
-        # Preserve a richer UUID-cached SDK node while adding the DiffSync identity alias.
-        sdk_peer = self.client.store.get(key=peer_id, kind=peer_kind, raise_when_missing=False)
-        if sdk_peer is None:
-            sdk_peer = peer_node
-        self.client.store.set(key=unique_id, node=sdk_peer)
+        # Identifier-only hydration is deliberately adapter-local: inserting its
+        # narrow result into the shared SDK store can replace a richer node that
+        # was loaded earlier. Complete nodes retain the existing identity alias
+        # behavior, preferring any richer node already cached by that alias.
+        if not hydrated:
+            sdk_peer = self.client.store.get(key=unique_id, kind=peer_kind, raise_when_missing=False)
+            if sdk_peer is None:
+                sdk_peer = self.client.store.get(key=peer_id, kind=peer_kind, raise_when_missing=False)
+            self.client.store.set(key=unique_id, node=sdk_peer or peer_node)
         resolved_unique_id = peer_item.get_unique_id()
         self._peer_unique_ids[cache_key] = resolved_unique_id
         return resolved_unique_id
