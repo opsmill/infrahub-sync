@@ -128,7 +128,7 @@ class _Harness(InfrahubAdapter):
         self.store = self._diffsync_store  # ty: ignore[invalid-assignment]
         self.continue_on_error = continue_on_error
         self._peer_unique_ids = {}
-        self._peer_identifier_errors = {}
+        self._peer_identifier_failure_context = {}
         self._instances: list[object] = []
         # Register the fake peer model under its kind so getattr(self, kind) works.
         self.LocationGeneric = _FakePeerModel
@@ -157,7 +157,7 @@ class _RelationshipHarness(InfrahubAdapter):
         self.store = self._diffsync_store  # ty: ignore[invalid-assignment]
         self.continue_on_error = False
         self._peer_unique_ids = {}
-        self._peer_identifier_errors = {}
+        self._peer_identifier_failure_context = {}
         self._instances: list[object] = []
         self.InterfaceLag = _FakeLagModel
         self.InfraDevice = _FakeDeviceModel
@@ -356,9 +356,9 @@ def test_relationship_hydration_preserves_rich_sdk_node() -> None:
     ]
     cached_by_uuid = harness.client.store.get(kind="InterfaceLag", key="lag-id")
     cached_by_key = harness.client.store.get(kind="InterfaceLag", key="router-1|lag-1")
-    assert cached_by_uuid is shallow_peer
+    assert cached_by_uuid is rich_peer
     assert cached_by_key is rich_peer
-    assert cached_by_key.description.value == "rich SDK node"
+    assert cached_by_uuid.description.value == "rich SDK node"
     assert _resolve_cached_sdk_peer(harness, kind="InterfaceLag", unique_id="router-1|lag-1") is rich_peer
 
 
@@ -415,19 +415,40 @@ def test_unexpected_hydration_error_propagates_with_continue_on_error() -> None:
 def test_incomplete_hydration_fetches_once_then_raises_rich_error() -> None:
     incomplete_peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east"})
     harness = _Harness(rehydrated_peer=incomplete_peer)
-    parent = _make_node("InfraDevice", "parent-id", {})
     shallow_peer = _make_node("LocationGeneric", "peer-id", {})
 
-    for _ in range(2):
+    references = [
+        (_make_node("InfraDevice", "parent-1", {}), "location"),
+        (_make_node("OtherParent", "parent-2", {}), "site"),
+    ]
+    for parent, rel_name in references:
         with pytest.raises(PeerIdentifierError) as excinfo:
             harness._resolve_peer_unique_id(
                 parent_node=parent,  # ty: ignore[invalid-argument-type]
-                rel_name="location",
+                rel_name=rel_name,
                 peer_node=shallow_peer,  # ty: ignore[invalid-argument-type]
             )
 
         assert excinfo.value.missing_keys == ("organization",)
         assert excinfo.value.present_keys == ("name",)
+        assert excinfo.value.parent_kind == parent._schema.kind
+        assert excinfo.value.parent_id == parent.id
+        assert excinfo.value.rel_name == rel_name
+    assert len(harness.client.get_calls) == 1
+
+    complete_peer = _make_node(
+        "LocationGeneric",
+        "peer-id",
+        {"name": "dc-east", "organization": "acme"},
+    )
+    assert (
+        harness._resolve_peer_unique_id(
+            parent_node=references[1][0],  # ty: ignore[invalid-argument-type]
+            rel_name="site",
+            peer_node=complete_peer,  # ty: ignore[invalid-argument-type]
+        )
+        == "dc-east|acme"
+    )
     assert len(harness.client.get_calls) == 1
 
 
