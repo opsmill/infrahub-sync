@@ -726,6 +726,33 @@ class PeerIdentifierError(ValueError):
         super().__init__(msg)
 
 
+def _populated_value_count(value: object) -> int:
+    """Count populated fields in SDK raw data for cache-richness comparison."""
+    if value is None:
+        return 0
+    if isinstance(value, Mapping):
+        return sum(1 + _populated_value_count(item) for item in value.values() if item is not None)
+    if isinstance(value, (list, tuple)):
+        return sum(_populated_value_count(item) for item in value)
+    return 1
+
+
+def _sdk_node_richness(node: object) -> int:
+    """Estimate how much data an SDK node carries without resolving relationships."""
+    raw_data_getter = getattr(node, "get_raw_graphql_data", None)
+    if callable(raw_data_getter):
+        raw_data = raw_data_getter()
+        if isinstance(raw_data, Mapping):
+            return _populated_value_count(raw_data)
+
+    schema = getattr(node, "_schema", None)
+    attribute_names = getattr(schema, "attribute_names", ())
+    relationships = getattr(schema, "relationships", ())
+    return sum(hasattr(node, name) for name in attribute_names) + sum(
+        hasattr(node, relationship.name) for relationship in relationships
+    )
+
+
 class InfrahubAdapter(DiffSyncMixin, Adapter):
     type = "Infrahub"
 
@@ -1012,9 +1039,10 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         # narrow result into the shared SDK store can replace a richer node that
         # was loaded earlier. Complete nodes retain the existing identity alias
         # behavior, preferring any richer node already cached by that alias.
-        sdk_peer = self.client.store.get(key=unique_id, kind=peer_kind, raise_when_missing=False)
-        if sdk_peer is None:
-            sdk_peer = self.client.store.get(key=peer_id, kind=peer_kind, raise_when_missing=False)
+        sdk_peer_by_uuid = self.client.store.get(key=peer_id, kind=peer_kind, raise_when_missing=False)
+        sdk_peer_by_identity = self.client.store.get(key=unique_id, kind=peer_kind, raise_when_missing=False)
+        sdk_candidates = [peer for peer in (sdk_peer_by_uuid, sdk_peer_by_identity) if peer is not None]
+        sdk_peer = max(sdk_candidates, key=_sdk_node_richness) if sdk_candidates else None
         if sdk_peer is not None:
             self.client.store.set(key=unique_id, node=sdk_peer)
         elif not hydrated:
