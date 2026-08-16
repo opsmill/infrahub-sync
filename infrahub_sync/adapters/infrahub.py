@@ -926,6 +926,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         element = next((el for el in self.config.schema_mapping if el.name == model_name), None)
         if element:
             # Retrieve all nodes corresponding to model_name (list of InfrahubNodeSync)
+            # Keep bulk loads attribute-only: bounded peer hydration verifies missing
+            # identifiers, while SYNC-68 tracks measured evaluation of bulk prefetch.
             include = list(model._attributes)
             nodes = self.client.all(kind=model_name, include=include, populate_store=True)
 
