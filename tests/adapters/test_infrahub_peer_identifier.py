@@ -30,6 +30,7 @@ class _FakeStore:
     def __init__(self) -> None:
         self._items: dict[tuple[str, str], object] = {}
         self.get_error: Exception | None = None
+        self.set_calls: list[tuple[str, object]] = []
 
     def get(
         self,
@@ -54,6 +55,7 @@ class _FakeStore:
         self._items[model, identifier] = item
 
     def set(self, *, key: str, node: object) -> None:  # match client.store.set signature
+        self.set_calls.append((key, node))
         kind = getattr(node, "_schema", SimpleNamespace(kind="?")).kind
         self._items[kind, key] = node
         if node_id := getattr(node, "id", None):
@@ -128,7 +130,6 @@ class _Harness(InfrahubAdapter):
         self.store = self._diffsync_store  # ty: ignore[invalid-assignment]
         self.continue_on_error = continue_on_error
         self._peer_unique_ids = {}
-        self._peer_hydration_data = {}
         self._instances: list[object] = []
         # Register the fake peer model under its kind so getattr(self, kind) works.
         self.LocationGeneric = _FakePeerModel
@@ -157,7 +158,6 @@ class _RelationshipHarness(InfrahubAdapter):
         self.store = self._diffsync_store  # ty: ignore[invalid-assignment]
         self.continue_on_error = False
         self._peer_unique_ids = {}
-        self._peer_hydration_data = {}
         self._instances: list[object] = []
         self.InterfaceLag = _FakeLagModel
         self.InfraDevice = _FakeDeviceModel
@@ -192,11 +192,18 @@ class _RelationshipHarness(InfrahubAdapter):
 
 
 def _make_node(kind: str, node_id: str, diffsync_data: dict[str, object]) -> SimpleNamespace:
-    return SimpleNamespace(
+    node = SimpleNamespace(
         id=node_id,
-        _schema=SimpleNamespace(kind=kind),
+        _schema=SimpleNamespace(
+            kind=kind,
+            attributes=[SimpleNamespace(name=name, optional=False) for name in diffsync_data],
+            relationships=[],
+        ),
         _fake_diffsync_data=diffsync_data,
     )
+    for name, value in diffsync_data.items():
+        setattr(node, name, SimpleNamespace(value=value))
+    return node
 
 
 def _make_sdk_node(
@@ -287,7 +294,7 @@ def test_missing_relationship_identifier_is_rehydrated_by_uuid() -> None:
     hydrated_peer = _make_node(
         "LocationGeneric",
         "peer-id",
-        {"name": "dc-east", "organization": "acme"},
+        {"organization": "acme"},
     )
     harness = _Harness(rehydrated_peer=hydrated_peer)
     parent = _make_node("InfraDevice", "parent-id", {})
@@ -425,6 +432,45 @@ def test_relationship_hydration_prefers_rich_uuid_over_shallow_identity_alias() 
     assert _resolve_cached_sdk_peer(harness, kind="InterfaceLag", unique_id="router-1|lag-1") is rich_peer
 
 
+def test_reconciliation_prefers_identity_alias_over_complete_fallback() -> None:
+    identity_alias = _make_sdk_node(
+        "InterfaceLag",
+        "lag-id",
+        {"name": "lag-1", "description": "identity alias"},
+        {"device": ("InfraDevice", "device-id")},
+    )
+    fallback_peer = _make_sdk_node(
+        "InterfaceLag",
+        "lag-id",
+        {"name": "lag-1", "description": "fallback"},
+        {"device": ("InfraDevice", "device-id")},
+    )
+    harness = _RelationshipHarness(rehydrated_peer=fallback_peer)
+    device = _make_sdk_node("InfraDevice", "device-id", {"name": "router-1"})
+    harness.client.store.set(key="router-1", node=device)
+    harness.client.store.seed(model="InterfaceLag", identifier="router-1|lag-1", item=identity_alias)
+    harness._diffsync_store.seed(
+        model="InfraDevice",
+        identifier="router-1",
+        item=_FakeDeviceModel(name="router-1"),
+    )
+    harness._diffsync_store.seed(
+        model="InterfaceLag",
+        identifier="router-1|lag-1",
+        item=_FakeLagModel(device="router-1", name="lag-1"),
+    )
+
+    result = harness._resolve_peer_unique_id(
+        parent_node=_make_node("InfraDevice", "parent-id", {}),  # ty: ignore[invalid-argument-type]
+        rel_name="bundle",
+        peer_node=fallback_peer,  # ty: ignore[invalid-argument-type]
+    )
+
+    assert result == "router-1|lag-1"
+    assert harness.client.store.get(kind="InterfaceLag", key="lag-id") is identity_alias
+    assert harness.client.store.get(kind="InterfaceLag", key="router-1|lag-1") is identity_alias
+
+
 def test_cached_relationship_identity_repairs_later_shallow_uuid_entry() -> None:
     rich_peer = _make_sdk_node(
         "InterfaceLag",
@@ -507,43 +553,84 @@ def test_unexpected_hydration_error_propagates_with_continue_on_error() -> None:
     assert excinfo.value is get_error
 
 
-def test_incomplete_hydration_fetches_once_then_raises_rich_error() -> None:
+def test_incomplete_hydration_does_not_merge_with_later_partial_peer() -> None:
     incomplete_peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east"})
     harness = _Harness(rehydrated_peer=incomplete_peer)
     shallow_peer = _make_node("LocationGeneric", "peer-id", {})
 
-    references = [
-        (_make_node("InfraDevice", "parent-1", {}), "location"),
-        (_make_node("OtherParent", "parent-2", {}), "site"),
-    ]
-    for parent, rel_name in references:
-        with pytest.raises(PeerIdentifierError) as excinfo:
-            harness._resolve_peer_unique_id(
-                parent_node=parent,  # ty: ignore[invalid-argument-type]
-                rel_name=rel_name,
-                peer_node=shallow_peer,  # ty: ignore[invalid-argument-type]
-            )
-
-        assert excinfo.value.missing_keys == ("organization",)
-        assert excinfo.value.present_keys == ("name",)
-        assert excinfo.value.parent_kind == parent._schema.kind
-        assert excinfo.value.parent_id == parent.id
-        assert excinfo.value.rel_name == rel_name
+    first_parent = _make_node("InfraDevice", "parent-1", {})
+    with pytest.raises(PeerIdentifierError) as excinfo:
+        harness._resolve_peer_unique_id(
+            parent_node=first_parent,  # ty: ignore[invalid-argument-type]
+            rel_name="location",
+            peer_node=shallow_peer,  # ty: ignore[invalid-argument-type]
+        )
+    assert excinfo.value.missing_keys == ("organization",)
+    assert excinfo.value.present_keys == ("name",)
     assert len(harness.client.get_calls) == 1
 
-    complementary_peer = _make_node(
-        "LocationGeneric",
-        "peer-id",
-        {"organization": "acme"},
-    )
-    assert (
+    second_parent = _make_node("OtherParent", "parent-2", {})
+    later_partial_peer = _make_node("LocationGeneric", "peer-id", {"organization": "acme"})
+    with pytest.raises(PeerIdentifierError) as excinfo:
         harness._resolve_peer_unique_id(
-            parent_node=references[1][0],  # ty: ignore[invalid-argument-type]
+            parent_node=second_parent,  # ty: ignore[invalid-argument-type]
             rel_name="site",
-            peer_node=complementary_peer,  # ty: ignore[invalid-argument-type]
+            peer_node=later_partial_peer,  # ty: ignore[invalid-argument-type]
         )
-        == "dc-east|acme"
+    assert excinfo.value.missing_keys == ("name",)
+    assert excinfo.value.present_keys == ("organization",)
+    assert excinfo.value.parent_kind == "OtherParent"
+    assert excinfo.value.parent_id == "parent-2"
+    assert excinfo.value.rel_name == "site"
+    assert len(harness.client.get_calls) == 1
+
+
+def test_hydration_does_not_alias_identity_incomplete_store_candidates() -> None:
+    identifier_only_peer = _make_sdk_node(
+        "InterfaceLag",
+        "lag-id",
+        {"name": "lag-1"},
+        {"device": ("InfraDevice", "device-id")},
     )
+    harness = _RelationshipHarness(rehydrated_peer=identifier_only_peer)
+    parent = _make_node("InfraDevice", "parent-id", {})
+    shallow_peer = _make_sdk_node("InterfaceLag", "lag-id", {"name": "lag-1"})
+    _seed_relationship_stores(harness, peer=shallow_peer, peer_key="initial-shallow")
+
+    result = harness._resolve_peer_unique_id(
+        parent_node=parent,  # ty: ignore[invalid-argument-type]
+        rel_name="bundle",
+        peer_node=shallow_peer,  # ty: ignore[invalid-argument-type]
+    )
+
+    assert result == "router-1|lag-1"
+    assert harness.client.store.get(kind="InterfaceLag", key="lag-id") is shallow_peer
+    assert harness.client.store.get(kind="InterfaceLag", key="router-1|lag-1", raise_when_missing=False) is None
+
+
+def test_later_complete_peer_recovers_without_second_hydration() -> None:
+    incomplete_peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east"})
+    harness = _Harness(rehydrated_peer=incomplete_peer)
+    parent = _make_node("InfraDevice", "parent-id", {})
+
+    with pytest.raises(PeerIdentifierError):
+        harness._resolve_peer_unique_id(
+            parent_node=parent,  # ty: ignore[invalid-argument-type]
+            rel_name="location",
+            peer_node=_make_node("LocationGeneric", "peer-id", {}),  # ty: ignore[invalid-argument-type]
+        )
+
+    result = harness._resolve_peer_unique_id(
+        parent_node=parent,  # ty: ignore[invalid-argument-type]
+        rel_name="location",
+        peer_node=_make_node(  # ty: ignore[invalid-argument-type]
+            "LocationGeneric",
+            "peer-id",
+            {"name": "dc-east", "organization": "acme"},
+        ),
+    )
+
+    assert result == "dc-east|acme"
     assert len(harness.client.get_calls) == 1
 
 
@@ -589,6 +676,55 @@ def test_complete_peer_returns_unique_id() -> None:
 
     assert result == "dc-east|acme"
     assert not harness.client.get_calls
+    assert harness.client.store.get(kind="LocationGeneric", key="peer-id") is peer
+    assert harness.client.store.get(kind="LocationGeneric", key="dc-east|acme") is peer
+
+
+def test_reconciliation_rejects_null_attribute_identifier() -> None:
+    harness = _Harness()
+    incomplete_peer = _make_sdk_node(
+        "LocationGeneric",
+        "peer-id",
+        {"name": None, "organization": "acme"},
+    )
+    harness.client.store.set(key="peer-id", node=incomplete_peer)
+    set_call_count = len(harness.client.store.set_calls)
+
+    harness._reconcile_peer_sdk_alias(
+        peer_kind="LocationGeneric",
+        peer_id="peer-id",
+        unique_id="none|acme",
+        identifiers=("name", "organization"),
+    )
+
+    assert len(harness.client.store.set_calls) == set_call_count
+    assert harness.client.store.get(kind="LocationGeneric", key="none|acme", raise_when_missing=False) is None
+
+
+def test_reconciliation_rejects_cardinality_many_relationship_identifier() -> None:
+    harness = _Harness()
+    incomplete_peer = SimpleNamespace(
+        id="lag-id",
+        _schema=SimpleNamespace(
+            kind="InterfaceLag",
+            attributes=[SimpleNamespace(name="name", optional=False)],
+            relationships=[SimpleNamespace(name="device", cardinality="many")],
+        ),
+        name=SimpleNamespace(value="lag-1"),
+        device=SimpleNamespace(id="device-id"),
+    )
+    harness.client.store.set(key="lag-id", node=incomplete_peer)
+    set_call_count = len(harness.client.store.set_calls)
+
+    harness._reconcile_peer_sdk_alias(
+        peer_kind="InterfaceLag",
+        peer_id="lag-id",
+        unique_id="router-1|lag-1",
+        identifiers=("device", "name"),
+    )
+
+    assert len(harness.client.store.set_calls) == set_call_count
+    assert harness.client.store.get(kind="InterfaceLag", key="router-1|lag-1", raise_when_missing=False) is None
 
 
 def test_unexpected_diffsync_store_error_propagates() -> None:
@@ -632,3 +768,14 @@ def test_complete_peer_adds_identity_alias_without_replacing_uuid_entry() -> Non
     assert not harness.client.get_calls
     assert harness.client.store.get(kind="LocationGeneric", key="peer-id") is rich_peer
     assert harness.client.store.get(kind="LocationGeneric", key="dc-east|acme") is rich_peer
+
+    set_call_count = len(harness.client.store.set_calls)
+    assert (
+        harness._resolve_peer_unique_id(
+            parent_node=parent,  # ty: ignore[invalid-argument-type]
+            rel_name="location",
+            peer_node=rich_peer,  # ty: ignore[invalid-argument-type]
+        )
+        == "dc-east|acme"
+    )
+    assert len(harness.client.store.set_calls) == set_call_count

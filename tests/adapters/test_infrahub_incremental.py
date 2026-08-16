@@ -128,7 +128,7 @@ def test_list_existing_ids_raises_for_unknown_model() -> None:
         list(adapter.list_existing_ids("MissingKind"))
 
 
-def test_model_loader_includes_identifiers_and_attributes() -> None:
+def test_model_loader_requests_mapped_attributes_only() -> None:
     adapter = _make_adapter(["InfraDevice"])
     fake_node = MagicMock()
     adapter.client.all.return_value = [fake_node]  # ty: ignore[unresolved-attribute]
@@ -148,6 +148,6 @@ def test_model_loader_includes_identifiers_and_attributes() -> None:
 
     adapter.client.all.assert_called_once_with(  # ty: ignore[unresolved-attribute]
         kind="InfraDevice",
-        include=["description", "name", "device"],
+        include=["description", "name"],
         populate_store=True,
     )
