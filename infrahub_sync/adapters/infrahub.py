@@ -1002,7 +1002,12 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             if hydrated_peer is not None:
                 hydrated = True
                 hydrated_peer_data = self.infrahub_node_to_diffsync(hydrated_peer)
-                peer_data = {**peer_data, **hydrated_peer_data}
+                hydrated_identifiers = {
+                    identifier: hydrated_peer_data[identifier]
+                    for identifier in identifiers
+                    if hydrated_peer_data.get(identifier) is not None
+                }
+                peer_data = {**peer_data, **hydrated_identifiers}
             missing = tuple(k for k in identifiers if peer_data.get(k) is None)
         if missing:
             err = PeerIdentifierError(

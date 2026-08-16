@@ -322,6 +322,54 @@ def test_missing_relationship_identifier_is_rehydrated_by_uuid() -> None:
     assert _resolve_cached_sdk_peer(harness, kind="LocationGeneric", unique_id="dc-east|acme") is None
 
 
+def test_production_converter_hydration_preserves_stub_non_identifiers() -> None:
+    hydrated_peer = _make_sdk_node(
+        "InterfaceLag",
+        "lag-id",
+        {"name": None, "description": None},
+        {"device": ("InfraDevice", "device-id")},
+    )
+    harness = _RelationshipHarness(rehydrated_peer=hydrated_peer)
+    device = _make_sdk_node("InfraDevice", "device-id", {"name": "router-1"})
+    harness.client.store.set(key="router-1", node=device)
+    harness._diffsync_store.seed(
+        model="InfraDevice",
+        identifier="router-1",
+        item=_FakeDeviceModel(name="router-1"),
+    )
+    stub_peer = _make_sdk_node(
+        "InterfaceLag",
+        "lag-id",
+        {"name": "lag-1", "description": "from relationship stub"},
+    )
+
+    result = harness._resolve_peer_unique_id(
+        parent_node=_make_node("InfraDevice", "parent-id", {}),  # ty: ignore[invalid-argument-type]
+        rel_name="bundle",
+        peer_node=stub_peer,  # ty: ignore[invalid-argument-type]
+    )
+
+    assert result == "router-1|lag-1"
+    assert len(harness._instances) == 1
+    assert harness._instances[0]._kwargs["description"] == "from relationship stub"  # ty: ignore[unresolved-attribute]
+
+
+def test_partial_sdk_converter_and_fake_store_contracts() -> None:
+    partial_peer = _make_sdk_node(
+        "InterfaceLag",
+        "lag-id",
+        {"name": None, "description": None},
+        {"device": ("InfraDevice", "")},
+    )
+    harness = _RelationshipHarness(rehydrated_peer=partial_peer)
+
+    converted = harness.infrahub_node_to_diffsync(partial_peer)  # ty: ignore[invalid-argument-type]
+
+    assert converted == {"local_id": "lag-id", "name": None, "description": None}
+    with pytest.raises(ObjectNotFound):
+        harness.client.store.get(kind="InterfaceLag", key="missing")
+
+
 def test_relationship_hydration_preserves_rich_sdk_node() -> None:
     rich_peer = _make_sdk_node(
         "InterfaceLag",
