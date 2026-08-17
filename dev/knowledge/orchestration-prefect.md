@@ -16,7 +16,7 @@ spawns the CLI.
 `infrahub_sync/managed/` is a separate, optional operational profile. Its managed flow
 consumes the API-created product run ID and delegates deployment catalogue validation,
 deployment convergence, and native submission idempotency to OpsMill Prefect Extras pinned
-at commit `84688eb8d8db7e17770413640a66481ccdc3e725`. The managed HTTP service owns the
+at commit `97465e75137f6121d0377cd637383cfb3530d734`. The managed HTTP service owns the
 public contract; Prefect remains authoritative for live execution, logs, retries, workers,
 and cancellation.
 
