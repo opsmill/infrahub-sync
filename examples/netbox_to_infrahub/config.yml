@@ -307,7 +307,7 @@ schema_mapping:
       - name: mac_address
         mapping: mac_address
       - name: l2_mode
-        mapping: mode.value
+        mapping: l2_mode
       - name: mtu
         mapping: mtu
       - name: ip_addresses
@@ -327,6 +327,17 @@ schema_mapping:
         mapping: lag
         reference: InterfaceLag
       # TODO: many fields are not implemented in the schema (mgmt_only, type, duplex ...)
+    transforms:
+      # NetBox q-in-q is valid, but this destination schema exposes only
+      # access/trunk/trunk_all. The named undefined value makes StrictUndefined
+      # refuse q-in-q explicitly instead of applying a lossy translation;
+      # `or none` evaluates undefined results so every other unknown mode fails too.
+      - &netbox_l2_mode_transform
+        field: l2_mode
+        expression: >-
+          {{ ({'access': 'access', 'tagged': 'trunk', 'tagged-all': 'trunk_all',
+          'q-in-q': q_in_q_requires_destination_schema_support}[mode.value] or none)
+          if mode is defined and mode is not none else none }}
     filters: # Filters to only get the "physical interfaces"
       # NOTE: Netbox's `type` is a nested {value, label} object, not a plain
       # string — filtering on bare `type` compares against the dict itself
@@ -362,7 +373,7 @@ schema_mapping:
       - name: mac_address
         mapping: mac_address
       - name: l2_mode
-        mapping: mode.value
+        mapping: l2_mode
       - name: ip_addresses
         mapping: ip_addresses
         reference: IpamIPAddress
@@ -376,6 +387,8 @@ schema_mapping:
         mapping: device
         reference: DcimDevice
       # TODO: many fields are not implemented in the schema (mgmt_only, type, duplex ...)
+    transforms:
+      - *netbox_l2_mode_transform
     filters: # Filters to only get the "virtual interfaces"
       - field: type.value
         operation: "=="
@@ -399,7 +412,7 @@ schema_mapping:
       - name: mac_address
         mapping: mac_address
       - name: l2_mode
-        mapping: mode.value
+        mapping: l2_mode
       - name: ip_addresses
         mapping: ip_addresses
         reference: IpamIPAddress
@@ -421,6 +434,7 @@ schema_mapping:
         expression: |-
           {% set suffix = name[(name.rstrip('0123456789'))|length:] %}
           {{ suffix | int if suffix else None }}
+      - *netbox_l2_mode_transform
     filters: # Filters to only get the "lag interfaces"
       - field: type.value
         operation: "=="
