@@ -1,7 +1,7 @@
 # Vendored: opsmill-prefect-extras
 
 This directory is a **byte-identical** copy of the private upstream package
-`opsmill/prefect-extras` at commit `84688eb8d8db7e17770413640a66481ccdc3e725`
+`opsmill/prefect-extras` at commit `97465e75137f6121d0377cd637383cfb3530d734`
 (branch `feature/db-104-executors`; upstream PRs #13–#17 remain open). Its
 upstream unit tests are copied, also byte-identical, under
 `tests/vendored_prefect_extras/`. Only this file and the test directory's

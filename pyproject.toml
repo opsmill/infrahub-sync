@@ -62,7 +62,7 @@ prefect = [
 # Prefect integration is pinned to the reviewed DB-102/103/104 stack exactly.
 # The previous `opsmill-prefect-extras` private Git pin is vendored instead: the
 # package ships from this repository at `opsmill_prefect_extras/`, byte-identical to
-# upstream commit 84688eb8d8db7e17770413640a66481ccdc3e725. See
+# upstream commit 97465e75137f6121d0377cd637383cfb3530d734. See
 # `opsmill_prefect_extras/VENDORED.md` for the freeze and re-adoption rules.
 managed = [
     "fastapi>=0.115,<1; python_version >= '3.11'",

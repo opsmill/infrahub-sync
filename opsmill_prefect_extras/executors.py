@@ -91,6 +91,8 @@ ExecutionStatus = Literal[
     "pending",
     "running",
     "cancelling",
+    "paused",
+    "suspended",
     "completed",
     "failed",
     "crashed",
@@ -469,6 +471,10 @@ def _status_for_state(state: State[Any] | None) -> ExecutionStatus:
         return "cancelled"
     if state.is_cancelling():
         return "cancelling"
+    if state.is_paused():
+        if getattr(state.state_details, "pause_reschedule", False):
+            return "suspended"
+        return "paused"
     if state.is_final():
         return "failed"
     if state.is_running():
@@ -604,6 +610,8 @@ class RemoteWorkflowExecutor:
                 parameters=validated,
                 idempotency_key=idempotency_key,
             )
-        except ObjectNotFound as exc:
-            raise WorkflowNotFoundError(definition) from exc
-        return _RemoteFlowRunHandle(self._client, flow_run.id, self._poll_interval)
+        except ObjectNotFound:
+            pass
+        else:
+            return _RemoteFlowRunHandle(self._client, flow_run.id, self._poll_interval)
+        raise WorkflowNotFoundError(definition)
