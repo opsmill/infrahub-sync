@@ -13,6 +13,7 @@ from tasks.preview import (
     COMPOSE_FILES,
     DEV_DIR,
     ENV_FILE,
+    EXPECT_MAIN_EMPTY_ENV,
     REPO_ROOT,
     SMOKE_BRANCH,
     ensure_smoke_branch,
@@ -82,7 +83,11 @@ def test_standalone_smoke_ensures_its_branch(monkeypatch: pytest.MonkeyPatch) ->
     events: list[object] = []
     context = Context()
     values = {"COMPOSE_PROJECT_NAME": "preview-test"}
-    environment = {"INFRAHUB_ADDRESS": "http://localhost:8080", "INFRAHUB_API_TOKEN": "local-token"}
+    environment = {
+        "INFRAHUB_ADDRESS": "http://localhost:8080",
+        "INFRAHUB_API_TOKEN": "local-token",
+        EXPECT_MAIN_EMPTY_ENV: "1",
+    }
 
     monkeypatch.setattr(preview, "load_preview_env", lambda: values)
     monkeypatch.setattr(preview, "_runtime_env", lambda _values: environment)
@@ -96,9 +101,36 @@ def test_standalone_smoke_ensures_its_branch(monkeypatch: pytest.MonkeyPatch) ->
 
     cast("Task", preview.smoke).body(context)
 
+    assert EXPECT_MAIN_EMPTY_ENV not in environment
     assert events == [
         ("branch", environment),
         ("run", "uv run pytest -m preview tests/preview -q", environment),
+    ]
+
+
+def test_startup_smoke_requests_the_pristine_main_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    events: list[object] = []
+    context = Context()
+    values = {"COMPOSE_PROJECT_NAME": "preview-test"}
+    environment = {"INFRAHUB_ADDRESS": "http://localhost:8080", "INFRAHUB_API_TOKEN": "local-token"}
+
+    monkeypatch.setattr(preview, "load_preview_env", lambda: values)
+    monkeypatch.setattr(preview, "_runtime_env", lambda _values: environment)
+    monkeypatch.setattr(preview, "ensure_smoke_branch", lambda _env: None)
+    monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
+    monkeypatch.setattr(
+        context,
+        "run",
+        lambda command, *, env: events.append((command, env.copy())),
+    )
+
+    preview._run_smoke(context, expect_main_empty=True)
+
+    assert events == [
+        (
+            "uv run pytest -m preview tests/preview -q",
+            {**environment, EXPECT_MAIN_EMPTY_ENV: "1"},
+        )
     ]
 
 

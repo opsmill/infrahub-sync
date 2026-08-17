@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from infrahub_sync.api.v1 import ApplyRequest, PlanRequest, VerifyRequest, apply, plan, verify
-from tasks.preview import SMOKE_BRANCH
+from tasks.preview import EXPECT_MAIN_EMPTY_ENV, SMOKE_BRANCH
 
 pytestmark = pytest.mark.preview
 
@@ -51,6 +52,11 @@ def test_python_api_plan_verify_apply(cli_environment: dict[str, Any], tmp_path:
         )
     )
     assert applied.outcome in {"applied", "no-change"}
+
+
+def test_startup_smoke_preserves_main_for_manual_walkthrough(cli_environment: dict[str, Any], tmp_path: Path) -> None:
+    if os.environ.get(EXPECT_MAIN_EMPTY_ENV) != "1":
+        pytest.skip("pristine-main acceptance runs only during preview.up")
 
     main_result = plan(
         PlanRequest(
