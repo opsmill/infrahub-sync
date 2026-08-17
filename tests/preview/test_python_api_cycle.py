@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from infrahub_sync.api.v1 import ApplyRequest, PlanRequest, VerifyRequest, apply, plan, verify
+from tasks.preview import SMOKE_BRANCH
 
 pytestmark = pytest.mark.preview
 
@@ -20,7 +21,7 @@ def test_python_api_plan_verify_apply(cli_environment: dict[str, Any], tmp_path:
         PlanRequest(
             sync_name="custom-example",
             config_directory=cli_environment["examples_dir"],
-            branch="main",
+            branch=SMOKE_BRANCH,
             product_cache_location=product_cache,
         )
     )
@@ -45,8 +46,20 @@ def test_python_api_plan_verify_apply(cli_environment: dict[str, Any], tmp_path:
             config_directory=cli_environment["examples_dir"],
             run_id=result.run_id,
             expected_checksum=reviewed_checksum,
-            branch="main",
+            branch=SMOKE_BRANCH,
             product_cache_location=product_cache,
         )
     )
     assert applied.outcome in {"applied", "no-change"}
+
+    main_result = plan(
+        PlanRequest(
+            sync_name="custom-example",
+            config_directory=cli_environment["examples_dir"],
+            branch="main",
+            product_cache_location=str(tmp_path / "main-product-cache"),
+        )
+    )
+    assert main_result.counts.create == 5, "smoke writes must leave main empty for the manual walkthrough"
+    assert main_result.counts.update == 0
+    assert main_result.counts.delete == 0
