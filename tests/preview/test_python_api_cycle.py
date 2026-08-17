@@ -66,6 +66,9 @@ def test_startup_smoke_preserves_main_for_manual_walkthrough(cli_environment: di
             product_cache_location=str(tmp_path / "main-product-cache"),
         )
     )
-    assert main_result.counts.create == 5, "smoke writes must leave main empty for the manual walkthrough"
+    assert main_result.counts.create == 5, (
+        "main is not pristine; if you already applied the custom-example walkthrough, reset with "
+        "`uv run invoke preview.down --volumes` before rerunning `preview.up`"
+    )
     assert main_result.counts.update == 0
     assert main_result.counts.delete == 0

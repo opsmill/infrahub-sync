@@ -11,6 +11,10 @@ Infrahub branch. `main` stays empty, so the custom-example CLI walkthrough
 starts with five creates; after applying that reviewed plan, the next plan has
 zero operations.
 
+`preview.up` checks that pristine `main` state during startup. After completing
+the walkthrough, rerun `preview.smoke`, or reset volumes before running
+`preview.up` again.
+
 ## Start
 
 ```bash
