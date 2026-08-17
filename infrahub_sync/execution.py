@@ -20,6 +20,7 @@ import os
 import re
 from collections.abc import Mapping
 from contextlib import AbstractContextManager, ExitStack, contextmanager, nullcontext
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -160,6 +161,12 @@ _URL_USERINFO = re.compile(r"://(?P<userinfo>[^/\s@]+)@")
 # that the config's own shape is the cause. No real adapter settings tree comes
 # close to this depth; hitting it means the walk stops descending, never raises.
 MAX_SETTINGS_DEPTH = 64
+
+# Private composition channel used only by the packaged direct Prefect flow.
+# Keeping this out of ``run_remote_request``'s parameters preserves that
+# function's remote-shaped call contract while allowing the bridge's mutable
+# collection to learn configuration-derived values after resolution.
+_REMOTE_SECRET_VALUES: ContextVar[list[str] | None] = ContextVar("remote_secret_values", default=None)
 
 # Runner-environment variables each adapter reads its credentials from, keyed by
 # the adapter's normalized name. Named here, at the remote boundary, so the
@@ -416,6 +423,16 @@ def collect_secret_values(
         for settings in settings_blocks:
             _collect_from_settings(settings or {}, values, secret_context=False, environ=env, seen=set())
     return tuple(sorted(values, key=lambda value: (-len(value), value)))
+
+
+@contextmanager
+def _bind_remote_secret_values(values: list[str]) -> Iterator[None]:
+    """Bind a flow-owned mutable secret collection for one remote request."""
+    token = _REMOTE_SECRET_VALUES.set(values)
+    try:
+        yield
+    finally:
+        _REMOTE_SECRET_VALUES.reset(token)
 
 
 def redact(message: str, secrets: Sequence[str]) -> str:
@@ -1270,9 +1287,14 @@ def run_remote_request(
             raise _FactoryValueError(str(exc)) from exc
 
     secrets = collect_secret_values()
+    shared_secrets = _REMOTE_SECRET_VALUES.get()
+    if shared_secrets is not None:
+        shared_secrets[:] = secrets
     try:
         sync_instance = resolve_sync_instance(sync_name, directory=config_directory)
         secrets = collect_secret_values(sync_instance)
+        if shared_secrets is not None:
+            shared_secrets[:] = secrets
         return cast(
             "RunResult",
             execute_run(
