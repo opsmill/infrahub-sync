@@ -38,6 +38,8 @@ COMPOSE_FILES = (
     DEV_DIR / "docker-compose.preview.yml",
 )
 SCHEMA_FILE = REPO_ROOT / "examples" / "prefect_remote_run" / "schemas" / "infra_device.yml"
+SMOKE_BRANCH = "preview-smoke"
+EXPECT_MAIN_EMPTY_ENV = "INFRAHUB_SYNC_PREVIEW_EXPECT_MAIN_EMPTY"
 # Process name -> substring its command line must contain before a recorded pid
 # is treated as ours (guards against pid recycling by unrelated processes).
 MANAGED_PROCESSES = {
@@ -115,7 +117,21 @@ def _compose(context: Context, arguments: str, values: dict[str, str]) -> None:
         f"--env-file {shlex.quote(str(ENV_FILE))} {files} {arguments}"
     )
     with context.cd(ESCAPED_REPO_PATH):
-        context.run(command, pty=False)
+        # Compose reads the shipped file itself; inject the merged values so
+        # preview.local.env overrides drive containers and task URLs together.
+        context.run(command, env=values, pty=False)
+
+
+def ensure_smoke_branch(env: dict[str, str]) -> None:
+    """Create the disposable smoke branch when it is not already present."""
+    from infrahub_sdk import InfrahubClientSync  # noqa: PLC0415 -- keep Invoke task imports lightweight
+
+    client = InfrahubClientSync(
+        address=env["INFRAHUB_ADDRESS"],
+        config={"api_token": env["INFRAHUB_API_TOKEN"]},
+    )
+    if SMOKE_BRANCH not in client.branch.all():
+        client.branch.create(SMOKE_BRANCH, sync_with_git=False)
 
 
 _SERVER_ERROR_FLOOR = 500
@@ -266,7 +282,7 @@ def up(context: Context) -> None:
     print(f" - [{NAMESPACE}] Creating a first saved plan (custom-example)")
     context.run("uv run infrahub-sync diff --name custom-example --directory examples/", env=env)
 
-    smoke(context)
+    _run_smoke(context, expect_main_empty=True)
 
     tokens = json.loads(values["PREVIEW_BEARER_TOKENS"])
     print(f" - [{NAMESPACE}] Preview environment ready")
@@ -278,13 +294,34 @@ def up(context: Context) -> None:
     print("     Next: docs/docs/reference/managed-http-api.mdx and `uv run invoke preview.status`")
 
 
-@task
-def smoke(context: Context) -> None:
-    """Run the preview smoke suite against the running environment."""
+def _run_smoke(context: Context, *, expect_main_empty: bool) -> None:
+    """Run reusable smoke checks, optionally including startup acceptance."""
+    from infrahub_sdk.exceptions import (  # noqa: PLC0415 -- keep Invoke task imports lightweight
+        ServerNotReachableError,
+    )
+
     values = load_preview_env()
+    env = _runtime_env(values)
+    if expect_main_empty:
+        env[EXPECT_MAIN_EMPTY_ENV] = "1"
+    else:
+        env.pop(EXPECT_MAIN_EMPTY_ENV, None)
+    print(f" - [{NAMESPACE}] Ensuring the {SMOKE_BRANCH} Infrahub branch exists")
+    try:
+        ensure_smoke_branch(env)
+    except ServerNotReachableError:
+        # Preserve the suite's polite stopped-environment behavior: its session
+        # fixture reports the unavailable endpoint and skips the preview tests.
+        print(f" - [{NAMESPACE}] Infrahub is not reachable; smoke tests will report the environment state")
     print(f" - [{NAMESPACE}] Running the preview smoke suite")
     with context.cd(ESCAPED_REPO_PATH):
-        context.run("uv run pytest -m preview tests/preview -q", env=_runtime_env(values))
+        context.run("uv run pytest -m preview tests/preview -q", env=env)
+
+
+@task
+def smoke(context: Context) -> None:
+    """Run reusable smoke checks against the running environment."""
+    _run_smoke(context, expect_main_empty=False)
 
 
 @task

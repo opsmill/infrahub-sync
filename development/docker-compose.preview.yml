@@ -23,6 +23,8 @@ services:
   sync-prefect:
     image: "prefecthq/prefect:${PREVIEW_PREFECT_IMAGE_TAG:-3.8.1-python3.12}"
     command: prefect server start --host 0.0.0.0 --port 4200
+    environment:
+      PREFECT_SERVER_UI_API_URL: "http://localhost:${PREVIEW_PREFECT_PORT:-4210}/api"
     ports:
       - "${PREVIEW_PREFECT_PORT:-4210}:4200"
     healthcheck:

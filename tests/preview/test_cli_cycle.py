@@ -10,6 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from infrahub_sync.cli import app
+from tasks.preview import SMOKE_BRANCH
 
 pytestmark = pytest.mark.preview
 
@@ -36,7 +37,10 @@ def test_cli_plan_review_apply_refusal_and_convergence(cli_environment: dict[str
     examples = cli_environment["examples_dir"]
 
     before = _run_ids(cache_dir)
-    planned = runner.invoke(app, ["diff", "--name", "custom-example", "--directory", examples])
+    planned = runner.invoke(
+        app,
+        ["diff", "--name", "custom-example", "--directory", examples, "--branch", SMOKE_BRANCH],
+    )
     assert planned.exit_code == 0, planned.output
     created = _run_ids(cache_dir) - before
     assert len(created) == 1, f"expected exactly one new run, got {created}"
@@ -62,6 +66,8 @@ def test_cli_plan_review_apply_refusal_and_convergence(cli_environment: dict[str
             run_id,
             "--expected-checksum",
             WRONG_CHECKSUM,
+            "--branch",
+            SMOKE_BRANCH,
         ],
     )
     assert refused.exit_code != 0, "apply must refuse a checksum that does not match the reviewed plan"
@@ -78,11 +84,16 @@ def test_cli_plan_review_apply_refusal_and_convergence(cli_environment: dict[str
             run_id,
             "--expected-checksum",
             checksum,
+            "--branch",
+            SMOKE_BRANCH,
         ],
     )
     assert applied.exit_code == 0, applied.output
 
-    convergence = runner.invoke(app, ["diff", "--name", "custom-example", "--directory", examples])
+    convergence = runner.invoke(
+        app,
+        ["diff", "--name", "custom-example", "--directory", examples, "--branch", SMOKE_BRANCH],
+    )
     assert convergence.exit_code == 0, convergence.output
     new_run = (_run_ids(cache_dir) - before) - {run_id}
     assert len(new_run) == 1

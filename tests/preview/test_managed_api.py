@@ -9,6 +9,8 @@ from typing import Any
 import httpx
 import pytest
 
+from tasks.preview import SMOKE_BRANCH
+
 pytestmark = pytest.mark.preview
 
 POLL_TIMEOUT_SECONDS = 240
@@ -58,6 +60,7 @@ def test_managed_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
                 "sync_name": "custom-example",
                 "operation": "plan",
                 "configuration_reference": "preview-smoke",
+                "branch": SMOKE_BRANCH,
                 "reason": "preview smoke: create a managed plan",
             },
         )
@@ -79,6 +82,7 @@ def test_managed_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
             json={
                 "expected_checksum": checksum,
                 "confirm_writes": True,
+                "branch": SMOKE_BRANCH,
                 "reason": "preview smoke: apply the reviewed plan",
             },
         )

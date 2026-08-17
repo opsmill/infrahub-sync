@@ -6,6 +6,15 @@ HTTP API, a Prefect worker running the managed deployment, a loaded example
 schema, and a first saved plan — finished with an automatic smoke run across
 every preview surface so you never start from a broken environment.
 
+The smoke run writes its five example devices only to the `preview-smoke`
+Infrahub branch. `main` stays empty, so the custom-example CLI walkthrough
+starts with five creates; after applying that reviewed plan, the next plan has
+zero operations.
+
+`preview.up` checks that pristine `main` state during startup. After completing
+the walkthrough, rerun `preview.smoke`, or reset volumes before running
+`preview.up` again.
+
 ## Start
 
 ```bash
