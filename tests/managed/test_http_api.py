@@ -94,10 +94,16 @@ def managed(
     return TestClient(create_app(service, resolver)), projection, orchestration
 
 
-def _create(client: TestClient, *, key: str = RAW_KEY, reason: str = "review inventory changes"):
+def _create(
+    client: TestClient,
+    *,
+    key: str = RAW_KEY,
+    reason: str = "review inventory changes",
+    authorization: str = f"Bearer {OWNER_TOKEN}",
+):
     return client.post(
         "/runs",
-        headers={"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": key},
+        headers={"Authorization": authorization, "Idempotency-Key": key},
         json={
             "sync_name": "inventory",
             "operation": "plan",
@@ -141,14 +147,17 @@ def test_authentication_idempotency_and_secret_boundaries(
     missing = client.post("/runs", json={})
     malformed = client.post("/runs", headers={"Authorization": "Basic not-a-bearer-token"}, json={})
     invalid = client.post("/runs", headers={"Authorization": "Bearer invalid-token-value"}, json={})
-    assert missing.status_code == 401
-    assert malformed.status_code == 401
-    assert invalid.status_code == 401
-    for response in (missing, malformed, invalid):
+    for response in (
+        missing,
+        malformed,
+        client.post("/runs", headers={"Authorization": "Bearer    "}, json={}),
+        invalid,
+    ):
+        assert response.status_code == 401
         assert response.json()["error"]["code"] == "unauthenticated"
         assert response.headers["WWW-Authenticate"] == "Bearer"
 
-    first = _create(client, reason=f"requested because {OWNER_TOKEN}")
+    first = _create(client, reason=f"requested because {OWNER_TOKEN}", authorization=f"Bearer    {OWNER_TOKEN}")
     replay = _create(client, reason=f"requested because {OWNER_TOKEN}")
     conflict = _create(client, reason="different reason")
 

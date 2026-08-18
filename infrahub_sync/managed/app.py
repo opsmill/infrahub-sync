@@ -43,7 +43,11 @@ def create_app(service: ManagedRunService, resolver: PrincipalResolver) -> FastA
         if credentials is None:
             service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
             raise ManagedAPIError(401, "unauthenticated", "a valid bearer token is required")
-        principal = resolver.resolve(credentials.credentials)
+        token = credentials.credentials.lstrip(" ")
+        if not token:
+            service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
+            raise ManagedAPIError(401, "unauthenticated", "a valid bearer token is required")
+        principal = resolver.resolve(token)
         if principal is None:
             service.record_authentication_refusal(request.url.path, "invalid-bearer-token")
             raise ManagedAPIError(401, "unauthenticated", "a valid bearer token is required")
