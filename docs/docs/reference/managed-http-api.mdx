@@ -127,6 +127,9 @@ The server listens on port `8000`. Its host defaults to `127.0.0.1`. Put TLS and
 network access controls at your ingress boundary. The bearer-token provider is the MVP
 application authentication boundary, not a replacement for transport security.
 
+Open `http://127.0.0.1:8000/docs`, select **Authorize**, and enter the configured token
+without the `Bearer` prefix; Swagger UI adds the complete `Authorization` header.
+
 ## Routes
 
 Every route requires `Authorization: Bearer <token>`. Every `POST` route also requires a

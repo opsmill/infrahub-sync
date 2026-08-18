@@ -7,6 +7,7 @@ from typing import Annotated, Any
 from fastapi import Depends, FastAPI, Header, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .auth import Principal, PrincipalResolver
 from .models import (
@@ -33,13 +34,19 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 def create_app(service: ManagedRunService, resolver: PrincipalResolver) -> FastAPI:
     """Create the managed application from explicit providers."""
     application = FastAPI(title="Infrahub Sync managed API", version="1.0.0")
+    bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
 
-    def authenticate(request: Request, authorization: Annotated[str | None, Header()] = None) -> Principal:
-        parts = [] if authorization is None else authorization.split(None, 1)
-        if len(parts) != 2 or parts[0].casefold() != "bearer" or not parts[1]:
+    def authenticate(
+        request: Request,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_auth)],
+    ) -> Principal:
+        if credentials is None:
             service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
             raise ManagedAPIError(401, "unauthenticated", "a valid bearer token is required")
-        token = parts[1]
+        token = credentials.credentials.lstrip(" ")
+        if not token:
+            service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
+            raise ManagedAPIError(401, "unauthenticated", "a valid bearer token is required")
         principal = resolver.resolve(token)
         if principal is None:
             service.record_authentication_refusal(request.url.path, "invalid-bearer-token")

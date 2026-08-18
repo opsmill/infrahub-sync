@@ -94,10 +94,16 @@ def managed(
     return TestClient(create_app(service, resolver)), projection, orchestration
 
 
-def _create(client: TestClient, *, key: str = RAW_KEY, reason: str = "review inventory changes"):
+def _create(
+    client: TestClient,
+    *,
+    key: str = RAW_KEY,
+    reason: str = "review inventory changes",
+    authorization: str = f"Bearer {OWNER_TOKEN}",
+):
     return client.post(
         "/runs",
-        headers={"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": key},
+        headers={"Authorization": authorization, "Idempotency-Key": key},
         json={
             "sync_name": "inventory",
             "operation": "plan",
@@ -139,12 +145,19 @@ def test_authentication_idempotency_and_secret_boundaries(
     client, projection, orchestration = managed
 
     missing = client.post("/runs", json={})
+    malformed = client.post("/runs", headers={"Authorization": "Basic not-a-bearer-token"}, json={})
     invalid = client.post("/runs", headers={"Authorization": "Bearer invalid-token-value"}, json={})
-    assert missing.status_code == 401
-    assert invalid.status_code == 401
-    assert missing.json()["error"]["code"] == "unauthenticated"
+    for response in (
+        missing,
+        malformed,
+        client.post("/runs", headers={"Authorization": "Bearer    "}, json={}),
+        invalid,
+    ):
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "unauthenticated"
+        assert response.headers["WWW-Authenticate"] == "Bearer"
 
-    first = _create(client, reason=f"requested because {OWNER_TOKEN}")
+    first = _create(client, reason=f"requested because {OWNER_TOKEN}", authorization=f"Bearer    {OWNER_TOKEN}")
     replay = _create(client, reason=f"requested because {OWNER_TOKEN}")
     conflict = _create(client, reason="different reason")
 
@@ -738,7 +751,10 @@ def test_confirmation_schema_errors_and_openapi_contract(
     assert all(set(response.json()) == {"error"} for response in (unconfirmed, missing_key, invalid, invalid_operation))
     assert not orchestration.submissions
 
-    paths = client.get("/openapi.json").json()["paths"]
+    openapi = client.get("/openapi.json").json()
+    assert openapi["components"]["securitySchemes"] == {"BearerAuth": {"scheme": "bearer", "type": "http"}}
+
+    paths = openapi["paths"]
     assert set(paths) == {
         "/runs",
         "/runs/{run_id}",
@@ -754,3 +770,4 @@ def test_confirmation_schema_errors_and_openapi_contract(
         for operation in route.values():
             assert "401" in operation["responses"]
             assert "422" in operation["responses"]
+            assert operation["security"] == [{"BearerAuth": []}]
