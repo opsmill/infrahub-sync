@@ -58,10 +58,12 @@ credential-reference settings instead. These restrictions apply to the registere
 package contract without changing the legacy `SyncConfig` runtime surface.
 
 The bundled `examples/` remain legacy filesystem `SyncConfig` inputs, not package
-declarations ready for registration. Before registration, replace inline credentials and
-environment-variable placeholders with declared credential references. Remove fields that
-legacy `SyncConfig` ignored, or decide how the package contract should represent their
-behavior. For example, legacy parsing drops the top-level `description` in
+declarations ready for registration. Before registration, replace credential-bearing values
+and placeholders with declared credential references. Convert non-secret settings and
+placeholders, such as ACI `url` and `verify`, to valid declared literal values or another
+mechanism supported by a future contract. Explicitly remove fields that legacy `SyncConfig`
+ignored, or deliberately model their behavior in a later contract version; do not silently
+carry them forward. For example, legacy parsing drops the top-level `description` in
 `examples/aci_to_infrahub/config.yml`; version 1 does not add an inert field to retain it.
 
 The declaration is intentionally narrower than the complete adapter conformance profile.
