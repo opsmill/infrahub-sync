@@ -11,6 +11,7 @@ from typing import Any, Literal, cast
 
 from diffsync.enum import DiffSyncFlags
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_serializer, field_validator, model_validator
+from pydantic_core import PydanticCustomError
 
 from infrahub_sync import (
     IncrementalConfig,
@@ -28,10 +29,30 @@ _REFERENCE_NAME_PATTERN = r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
 _PROVIDER_NAME_PATTERN = r"^[a-z][a-z0-9-]{0,63}$"
 _REFERENCE_NAME_RE = re.compile(_REFERENCE_NAME_PATTERN)
 _MAX_DECLARATION_DEPTH = 64
+_UNSUPPORTED_DECLARED_FIELDS_ERROR = "unsupported_declared_fields"
 
 
 class ConfigurationPackageParseError(ValueError):
     """A declared package failed validation at a secret-safe public boundary."""
+
+
+def _raise_unsupported_declared_fields(
+    *,
+    location: str,
+    fields: Sequence[str],
+) -> None:
+    """Raise one structured error whose context contains field names but no values."""
+    pointer = "/" + location.replace(".", "/").replace("[", "/").replace("]", "")
+    raise PydanticCustomError(
+        _UNSUPPORTED_DECLARED_FIELDS_ERROR,
+        "{location} contains unsupported declared fields: {fields}",  # noqa: RUF027
+        {
+            "location": location,
+            "pointer": pointer,
+            "fields": ", ".join(fields),
+            "field_names": tuple(fields),
+        },
+    )
 
 
 def _require_known_fields(value: Any, model: type[BaseModel], *, location: str) -> None:
@@ -40,8 +61,7 @@ def _require_known_fields(value: Any, model: type[BaseModel], *, location: str) 
         return
     unknown = sorted(set(value) - set(model.model_fields))
     if unknown:
-        msg = f"{location} contains unsupported declared fields: {', '.join(unknown)}"
-        raise ValueError(msg)
+        _raise_unsupported_declared_fields(location=location, fields=unknown)
 
 
 def _require_strict_configuration(value: Any) -> None:
@@ -50,14 +70,18 @@ def _require_strict_configuration(value: Any) -> None:
         return
     _require_known_fields(value, SyncConfig, location="configuration")
     if value.get("adapters_path") is not None:
-        msg = "configuration contains unsupported declared fields: adapters_path"
-        raise ValueError(msg)
+        _raise_unsupported_declared_fields(
+            location="configuration",
+            fields=("adapters_path",),
+        )
     for role in ("source", "destination"):
         adapter = value.get(role)
         _require_known_fields(adapter, SyncAdapter, location=f"configuration.{role}")
         if isinstance(adapter, Mapping) and adapter.get("adapter") is not None:
-            msg = f"configuration.{role} contains unsupported declared fields: adapter"
-            raise ValueError(msg)
+            _raise_unsupported_declared_fields(
+                location=f"configuration.{role}",
+                fields=("adapter",),
+            )
     _require_known_fields(value.get("store"), SyncStore, location="configuration.store")
     _require_known_fields(value.get("incremental"), IncrementalConfig, location="configuration.incremental")
     mappings = value.get("schema_mapping")
@@ -79,7 +103,11 @@ def _require_strict_configuration(value: Any) -> None:
             if not isinstance(members, list):
                 continue
             for member_index, member in enumerate(members):
-                _require_known_fields(member, model, location=f"{prefix}.{field_name}[{member_index}]")
+                _require_known_fields(
+                    member,
+                    model,
+                    location=f"{prefix}.{field_name}[{member_index}]",
+                )
 
 
 def _require_json_native(
@@ -348,6 +376,26 @@ def _safe_validation_location(error: Mapping[str, Any]) -> str:
     return "/" + "/".join(components) if components else "/"
 
 
+def _safe_validation_failures(error: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
+    """Return actionable validation details assembled only from safe error metadata."""
+    if error.get("type") != _UNSUPPORTED_DECLARED_FIELDS_ERROR:
+        return ((_safe_validation_location(error), str(error.get("type", "invalid-value"))),)
+    context = error.get("ctx")
+    if not isinstance(context, Mapping):
+        return ((_safe_validation_location(error), "unsupported declared field"),)
+    pointer = context.get("pointer")
+    field_names = context.get("field_names")
+    if not isinstance(pointer, str) or not isinstance(field_names, tuple):
+        return ((_safe_validation_location(error), "unsupported declared field"),)
+    failures = []
+    for field_name in field_names:
+        if not isinstance(field_name, str):
+            return ((_safe_validation_location(error), "unsupported declared field"),)
+        escaped = field_name.replace("~", "~0").replace("/", "~1")
+        failures.append((f"{pointer}/{escaped}", "unsupported declared field"))
+    return tuple(failures)
+
+
 def parse_configuration_package(value: object) -> ConfigurationPackage:
     """Parse declared package content without exposing rejected input in errors."""
     try:
@@ -355,8 +403,9 @@ def parse_configuration_package(value: object) -> ConfigurationPackage:
     except ValidationError as exc:
         failures = sorted(
             {
-                (_safe_validation_location(error), str(error.get("type", "invalid-value")))
-                for error in exc.errors(include_input=False, include_context=False, include_url=False)
+                failure
+                for error in exc.errors(include_input=False, include_context=True, include_url=False)
+                for failure in _safe_validation_failures(error)
             }
         )
         details = "; ".join(f"{location}: {reason}" for location, reason in failures)

@@ -323,6 +323,46 @@ def test_safe_parse_boundary_does_not_echo_rejected_credential_values(
     assert all(canary not in message for canary in canaries)
 
 
+def test_safe_parse_names_unknown_adapter_field_without_echoing_its_value() -> None:
+    canaries = (
+        "adapter-field-value-canary",
+        "url-userinfo-canary",
+        "url-query-canary",
+        "url-fragment-canary",
+    )
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["setings"] = {
+        "token": canaries[0],
+        "url": f"https://user:{canaries[1]}@example.test/path?token={canaries[2]}#{canaries[3]}",
+    }
+
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(data)
+
+    message = str(caught.value)
+    assert "/configuration/source/setings: unsupported declared field" in message
+    assert all(canary not in message for canary in canaries)
+    assert "https://" not in message
+
+
+def test_safe_parse_names_unknown_nested_mapping_field_without_echoing_its_value() -> None:
+    canary = "nested-field-value-canary"
+    data = _package().model_dump(mode="json")
+    data["configuration"]["schema_mapping"] = [
+        {
+            "name": "Device",
+            "fields": [{"name": "serial", "mapping": "serial", "maping": canary}],
+        }
+    ]
+
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(data)
+
+    message = str(caught.value)
+    assert "/configuration/schema_mapping/0/fields/0/maping: unsupported declared field" in message
+    assert canary not in message
+
+
 def test_inline_credential_is_refused_without_echoing_value() -> None:
     canary = "canary-inline-secret"
     data = _package().model_dump(mode="json")
