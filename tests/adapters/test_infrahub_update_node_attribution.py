@@ -93,6 +93,32 @@ class FakeRelManager:
         self.removed.append(peer_id)
 
 
+class LazyFakeRelManager(FakeRelManager):
+    """Manager whose destination peers are unavailable until the SDK fetches them."""
+
+    def __init__(self, remote_ids: list[str]) -> None:
+        super().__init__()
+        self.initialized = False
+        self._remote_ids = list(remote_ids)
+        self.fetch_count = 0
+
+    def fetch(self) -> None:
+        self.fetch_count += 1
+        self.peer_ids = list(self._remote_ids)
+        self.initialized = True
+
+    def add(self, data: object) -> None:
+        super().add(data)
+        if isinstance(data, dict):
+            peer_id = cast("dict[str, object]", data).get("id")
+            if isinstance(peer_id, str) and peer_id not in self.peer_ids:
+                self.peer_ids.append(peer_id)
+
+    def remove(self, peer_id: str) -> None:
+        super().remove(peer_id)
+        self.peer_ids.remove(peer_id)
+
+
 class FakeNode:
     """Stand-in for ``InfrahubNodeSync`` exposing only what ``update_node`` reads."""
 
@@ -315,3 +341,22 @@ def test_update_node_relationship_many_no_attribution_when_unset(patch_resolve_p
     _run_update(node, {"tags": ["t1-uid"]})
 
     assert manager.added == [{"id": "t1-uid"}]
+
+
+def test_update_node_fetches_many_relationship_before_reconciling_peers(patch_resolve_peer: None) -> None:  # noqa: ARG001
+    """SYNC-38: existing peers must be fetched before current and desired IDs are compared."""
+    rel = FakeRelSchema(name="tags", peer="BuiltinTag", cardinality="many")
+    schema = FakeSchema(relationships=[rel], relationship_names=["tags"])
+    manager = LazyFakeRelManager(remote_ids=["a-uid", "b-uid"])
+    node = FakeNode(
+        schema=schema,
+        client=FakeClient(peers={"BuiltinTag": object()}),
+        many_managers={"tags": manager},
+    )
+
+    _run_update(node, {"tags": ["a-uid", "c-uid"]}, source=SOURCE_ID, owner=OWNER_ID)
+
+    assert manager.fetch_count == 1
+    assert manager.peer_ids == ["a-uid", "c-uid"]
+    assert manager.removed == ["b-uid"]
+    assert manager.added == [{"id": "c-uid", "source": SOURCE_ID, "owner": OWNER_ID}]
