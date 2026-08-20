@@ -367,12 +367,31 @@ class ConfigurationPackage(BaseModel):
         return sha256(canonical_json_bytes(self.declared_content(), kind="configuration-package")).hexdigest()
 
 
+def _safe_pointer_component(value: object) -> str:
+    """Escape one validation path component for visible, single-line display."""
+    components = []
+    for character in str(value):
+        codepoint = ord(character)
+        if character == "\n":
+            components.append(r"\n")
+        elif character == "\r":
+            components.append(r"\r")
+        elif character == "\t":
+            components.append(r"\t")
+        elif codepoint < 32 or 127 <= codepoint <= 159:
+            components.append(f"\\u{codepoint:04x}")
+        elif character == "~":
+            components.append("~0")
+        elif character == "/":
+            components.append("~1")
+        else:
+            components.append(character)
+    return "".join(components)
+
+
 def _safe_validation_location(error: Mapping[str, Any]) -> str:
     """Return one JSON-Pointer-like validation location without input values."""
-    components = []
-    for component in error.get("loc", ()):
-        escaped = str(component).replace("~", "~0").replace("/", "~1")
-        components.append(escaped)
+    components = [_safe_pointer_component(component) for component in error.get("loc", ())]
     return "/" + "/".join(components) if components else "/"
 
 
@@ -391,7 +410,7 @@ def _safe_validation_failures(error: Mapping[str, Any]) -> tuple[tuple[str, str]
     for field_name in field_names:
         if not isinstance(field_name, str):
             return ((_safe_validation_location(error), "unsupported declared field"),)
-        escaped = field_name.replace("~", "~0").replace("/", "~1")
+        escaped = _safe_pointer_component(field_name)
         failures.append((f"{pointer}/{escaped}", "unsupported declared field"))
     return tuple(failures)
 
