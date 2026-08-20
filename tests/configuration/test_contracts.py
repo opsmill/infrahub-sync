@@ -354,6 +354,25 @@ def test_prometheus_custom_headers_are_refused_without_echoing_values() -> None:
     assert canary not in str(caught.value)
 
 
+def test_generic_rest_api_custom_headers_are_refused_without_echoing_values() -> None:
+    canary = "generic-rest-api-inline-canary"
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"] = {
+        "name": "genericrestapi",
+        "settings": {
+            "url": "https://rest-api.example",
+            "headers": {"Authorization": f"Bearer {canary}"},
+        },
+    }
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    assert "custom headers" in str(caught.value)
+    assert canary not in str(caught.value)
+
+
 @pytest.mark.parametrize(
     "node",
     [
