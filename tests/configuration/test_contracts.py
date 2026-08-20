@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import subprocess  # noqa: S404 - fixed interpreter runs an in-repository determinism probe.
+import sys
+import textwrap
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -556,6 +560,53 @@ def test_unproved_adapter_settings_are_refused_without_echoing_values(
     assert canary not in str(caught.value)
 
 
+def test_unsupported_adapter_settings_name_fields_in_stable_order_without_echoing_values() -> None:
+    canaries = ("alpha-setting-value-canary", "zulu-setting-value-canary")
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"] = {
+        "name": "netbox",
+        "settings": {
+            "url": "https://source.example",
+            "zulu_setting": canaries[1],
+            "alpha_setting": canaries[0],
+        },
+    }
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    message = str(caught.value)
+    assert message == (
+        "adapter 'netbox' contains unsupported declared settings for the source role: alpha_setting, zulu_setting"
+    )
+    assert all(canary not in message for canary in canaries)
+
+
+def test_unsupported_adapter_settings_render_hostile_names_safely_without_echoing_values() -> None:
+    canaries = ("literal-slash-value-canary", "newline-value-canary", "c1-value-canary")
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"] = {
+        "name": "netbox",
+        "settings": {
+            "url": "https://source.example",
+            r"bad\nfield~/": canaries[0],
+            "bad\nfield~/": canaries[1],
+            "bad\x85field~/": canaries[2],
+        },
+    }
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    message = str(caught.value)
+    expected_names = r"bad\\nfield~0~1, bad\nfield~0~1, bad\u0085field~0~1"
+    assert message == f"adapter 'netbox' contains unsupported declared settings for the source role: {expected_names}"
+    assert all(ord(character) >= 32 and not 127 <= ord(character) <= 159 for character in message)
+    assert all(canary not in message for canary in canaries)
+
+
 @pytest.mark.parametrize("adapter_name", ["genericrestapi", "peeringmanager"])
 @pytest.mark.parametrize(
     ("mapping", "canary"),
@@ -695,6 +746,70 @@ def test_url_settings_refuse_credential_bearing_forms_without_echo(
     assert canary not in str(caught.value)
 
 
+def test_multiple_invalid_url_settings_choose_the_same_first_error_across_hash_seeds() -> None:
+    canaries = ("api-endpoint-query-canary", "url-query-canary")
+    script = textwrap.dedent(
+        f"""
+        from infrahub_sync.configuration import (
+            ConfigurationPackage,
+            CredentialConfigurationError,
+            validate_package_credentials,
+        )
+
+        package = ConfigurationPackage.model_validate(
+            {{
+                "format_version": 1,
+                "configuration": {{
+                    "name": "from-aci",
+                    "source": {{
+                        "name": "aci",
+                        "settings": {{
+                            "url": "https://aci.example?token={canaries[1]}",
+                            "api_endpoint": "/api?token={canaries[0]}",
+                        }},
+                    }},
+                    "destination": {{"name": "infrahub", "settings": {{}}}},
+                }},
+            }}
+        )
+        try:
+            validate_package_credentials(package)
+        except CredentialConfigurationError as exc:
+            print(exc)
+        """
+    )
+    messages = []
+    for seed in ("0", "2"):
+        completed = subprocess.run(  # noqa: S603 - fixed interpreter and in-repository test script.
+            [sys.executable, "-c", script],
+            check=True,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PYTHONHASHSEED": seed},
+        )
+        messages.append(completed.stdout.strip())
+
+    expected = (
+        "/configuration/source/settings/api_endpoint cannot contain user information, query parameters, or fragments"
+    )
+    assert messages == [expected, expected]
+    assert all(canary not in message for canary in canaries for message in messages)
+
+
+def test_non_string_url_setting_gets_type_diagnostic_without_echoing_value() -> None:
+    canary = "non-string-url-value-canary"
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["settings"]["url"] = {"nested": canary}
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    message = str(caught.value)
+    assert message == "/configuration/source/settings/url must be declared as a string"
+    assert canary not in message
+
+
 @pytest.mark.parametrize(
     "node",
     [
@@ -775,6 +890,24 @@ def test_redis_store_rejects_undeclared_credential_settings(setting: str) -> Non
 
     assert "unsupported declared settings" in str(caught.value)
     assert canary not in str(caught.value)
+
+
+def test_redis_store_renders_unsupported_control_name_safely_without_echoing_value() -> None:
+    canary = "store-control-value-canary"
+    data = _package().model_dump(mode="json")
+    data["configuration"]["store"] = {
+        "type": "redis",
+        "settings": {"host": "localhost", "bad\nfield~/": canary},
+    }
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    message = str(caught.value)
+    assert message == r"store type 'redis' contains unsupported declared settings: bad\nfield~0~1"
+    assert all(ord(character) >= 32 and not 127 <= ord(character) <= 159 for character in message)
+    assert canary not in message
 
 
 def test_reserved_reference_node_is_validated_in_store_settings() -> None:

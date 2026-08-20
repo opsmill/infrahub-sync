@@ -11,7 +11,13 @@ from urllib.parse import urlsplit
 from pydantic import ValidationError
 
 from .capabilities import AdapterConfigurationCapabilities, AdapterRole, get_adapter_capabilities
-from .models import ConfigurationPackage, CredentialReference, CredentialReferenceNode, sort_findings
+from .models import (
+    ConfigurationPackage,
+    CredentialReference,
+    CredentialReferenceNode,
+    safe_pointer_component,
+    sort_findings,
+)
 
 _ENV_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _STORE_CREDENTIAL_SETTING_PATHS = {
@@ -124,15 +130,25 @@ def _validate_adapter_credentials(
     if role not in capabilities.roles:
         msg = f"adapter {capabilities.adapter_name!r} does not support the {role} role"
         raise CredentialConfigurationError(msg)
-    if set(settings) - capabilities.allowed_settings:
-        msg = f"adapter {capabilities.adapter_name!r} contains unsupported declared settings for the {role} role"
+    unsupported_settings = sorted(
+        (safe_pointer_component(name) for name in set(settings) - capabilities.allowed_settings)
+    )
+    if unsupported_settings:
+        msg = (
+            f"adapter {capabilities.adapter_name!r} contains unsupported declared settings for the {role} role: "
+            f"{', '.join(unsupported_settings)}"
+        )
         raise CredentialConfigurationError(msg)
-    for setting_name in capabilities.allowed_settings & _URL_SETTING_NAMES:
+    for setting_name in sorted(capabilities.allowed_settings & _URL_SETTING_NAMES):
         value = settings.get(setting_name)
         if value is None:
             continue
+        location = f"/configuration/{role}/settings/{setting_name}"
+        if not isinstance(value, str):
+            msg = f"{location} must be declared as a string"
+            raise CredentialConfigurationError(msg)
         try:
-            parsed = urlsplit(value) if isinstance(value, str) else None
+            parsed = urlsplit(value)
         except ValueError:
             parsed = None
         if (
@@ -142,7 +158,6 @@ def _validate_adapter_credentials(
             or parsed.query
             or parsed.fragment
         ):
-            location = f"/configuration/{role}/settings/{setting_name}"
             msg = f"{location} cannot contain user information, query parameters, or fragments"
             raise CredentialConfigurationError(msg)
     if capabilities.validator is not None:
@@ -174,7 +189,9 @@ def _validate_store_credentials(package: ConfigurationPackage) -> None:
             msg = f"store type {store.type!r} has no configuration capability declaration"
             raise CredentialConfigurationError(msg) from None
         return
-    unsupported_settings = sorted(set(settings) - _STORE_SETTING_PATHS[store.type])
+    unsupported_settings = sorted(
+        safe_pointer_component(name) for name in set(settings) - _STORE_SETTING_PATHS[store.type]
+    )
     if unsupported_settings:
         msg = f"store type {store.type!r} contains unsupported declared settings: {', '.join(unsupported_settings)}"
         raise CredentialConfigurationError(msg)
