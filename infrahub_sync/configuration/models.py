@@ -384,6 +384,8 @@ def _safe_pointer_component(value: object) -> str:
             components.append("~0")
         elif character == "/":
             components.append("~1")
+        elif character == "\\":
+            components.append(r"\\")
         else:
             components.append(character)
     return "".join(components)

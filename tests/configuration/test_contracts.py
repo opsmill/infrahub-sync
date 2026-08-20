@@ -390,6 +390,35 @@ def test_safe_parse_renders_unknown_field_controls_without_echoing_values(contro
     assert canary not in message
 
 
+@pytest.mark.parametrize(
+    ("control", "visible"),
+    [
+        ("\n", r"\n"),
+        ("\r", r"\r"),
+        ("\t", r"\t"),
+        ("\x1b", r"\u001b"),
+    ],
+)
+def test_safe_parse_distinguishes_controls_from_literal_escape_text(control: str, visible: str) -> None:
+    canaries = ("control-value-canary", "literal-value-canary")
+    messages = []
+    for field_name, canary in ((f"bad{control}field~/", canaries[0]), (f"bad{visible}field~/", canaries[1])):
+        data = _package().model_dump(mode="json")
+        data["configuration"]["source"][field_name] = canary
+        with pytest.raises(ConfigurationPackageParseError) as caught:
+            parse_configuration_package(data)
+        messages.append(str(caught.value))
+
+    literal_visible = visible.replace("\\", r"\\")
+    assert f"/configuration/source/bad{visible}field~0~1: unsupported declared field" in messages[0]
+    assert f"/configuration/source/bad{literal_visible}field~0~1: unsupported declared field" in messages[1]
+    assert messages[0] != messages[1]
+    assert all(
+        ord(character) >= 32 and not 127 <= ord(character) <= 159 for message in messages for character in message
+    )
+    assert all(canary not in message for canary in canaries for message in messages)
+
+
 def test_inline_credential_is_refused_without_echoing_value() -> None:
     canary = "canary-inline-secret"
     data = _package().model_dump(mode="json")
