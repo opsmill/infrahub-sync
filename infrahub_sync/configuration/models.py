@@ -30,6 +30,7 @@ _PROVIDER_NAME_PATTERN = r"^[a-z][a-z0-9-]{0,63}$"
 _REFERENCE_NAME_RE = re.compile(_REFERENCE_NAME_PATTERN)
 _MAX_DECLARATION_DEPTH = 64
 _UNSUPPORTED_DECLARED_FIELDS_ERROR = "unsupported_declared_fields"
+_INVALID_UNICODE_SURROGATE_ERROR = "invalid_unicode_surrogate"
 
 
 class ConfigurationPackageParseError(ValueError):
@@ -110,6 +111,17 @@ def _require_strict_configuration(value: Any) -> None:
                 )
 
 
+def _require_unicode_scalars(value: str, *, location: str) -> None:
+    """Reject UTF-16 surrogate code points before JSON serialization can replace them."""
+    if any(0xD800 <= ord(character) <= 0xDFFF for character in value):
+        pointer = location.removeprefix("$") or "/"
+        raise PydanticCustomError(
+            _INVALID_UNICODE_SURROGATE_ERROR,
+            "{location} contains an invalid Unicode surrogate",  # noqa: RUF027
+            {"location": location, "pointer": pointer},
+        )
+
+
 def _require_json_native(
     value: Any,
     *,
@@ -121,7 +133,10 @@ def _require_json_native(
     if _depth > _MAX_DECLARATION_DEPTH:
         msg = f"{location} exceeds the maximum declared-content depth"
         raise ValueError(msg)
-    if value is None or isinstance(value, (str, bool, int)):
+    if isinstance(value, str):
+        _require_unicode_scalars(value, location=location)
+        return
+    if value is None or isinstance(value, (bool, int)):
         return
     if isinstance(value, float):
         if not math.isfinite(value):
@@ -145,8 +160,9 @@ def _require_json_native(
             if not isinstance(key, str):
                 msg = f"{location} contains a non-string mapping key"
                 raise ValueError(msg)  # noqa: TRY004 - Pydantic input errors use one ValidationError surface.
-            escaped = key.replace("~", "~0").replace("/", "~1")
-            _require_json_native(item, location=f"{location}/{escaped}", _containers=containers, _depth=_depth + 1)
+            item_location = f"{location}/{safe_pointer_component(key)}"
+            _require_unicode_scalars(key, location=item_location)
+            _require_json_native(item, location=item_location, _containers=containers, _depth=_depth + 1)
         return
     msg = f"{location} contains non-JSON value type {type(value).__name__!r}"
     raise ValueError(msg)
@@ -402,6 +418,11 @@ def _safe_validation_location(error: Mapping[str, Any]) -> str:
 
 def _safe_validation_failures(error: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
     """Return actionable validation details assembled only from safe error metadata."""
+    if error.get("type") == _INVALID_UNICODE_SURROGATE_ERROR:
+        context = error.get("ctx")
+        pointer = context.get("pointer") if isinstance(context, Mapping) else None
+        location = pointer if isinstance(pointer, str) else _safe_validation_location(error)
+        return ((location, "invalid Unicode surrogate"),)
     if error.get("type") != _UNSUPPORTED_DECLARED_FIELDS_ERROR:
         return ((_safe_validation_location(error), str(error.get("type", "invalid-value"))),)
     context = error.get("ctx")

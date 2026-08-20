@@ -328,6 +328,59 @@ def test_safe_parse_boundary_does_not_echo_rejected_credential_values(
     assert all(canary not in message for canary in canaries)
 
 
+@pytest.mark.parametrize(
+    ("surrogate", "reference_node", "visible_surrogate"),
+    [
+        pytest.param("\ud800", {"$credential": "missing-reference-canary"}, r"\ud800", id="missing-reference"),
+        pytest.param(
+            "\ud801",
+            {"$credential": "netbox-token", "fallback": "malformed-reference-value-canary"},
+            r"\ud801",
+            id="malformed-reference",
+        ),
+    ],
+)
+def test_safe_parse_rejects_distinct_surrogate_keys_before_serialization(
+    surrogate: str,
+    reference_node: dict[str, object],
+    visible_surrogate: str,
+) -> None:
+    canaries = ("missing-reference-canary", "malformed-reference-value-canary")
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["settings"][f"nested{surrogate}reference~/"] = reference_node
+
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(data)
+
+    message = str(caught.value)
+    assert message == (
+        "configuration package is invalid at "
+        f"/configuration/source/settings/nested{visible_surrogate}reference~0~1: invalid Unicode surrogate"
+    )
+    assert len(message.splitlines()) == 1
+    assert all(character.isprintable() for character in message)
+    assert surrogate not in message
+    assert all(canary not in message for canary in canaries)
+
+
+@pytest.mark.parametrize("codepoint", [0xDC00, 0xDFFF], ids=["low-start", "low-end"])
+def test_safe_parse_rejects_surrogate_string_values_without_echo(codepoint: int) -> None:
+    canary = "surrogate-value-canary"
+    surrogate = chr(codepoint)
+    data = _package().model_dump(mode="json")
+    data["configuration"]["name"] = f"{canary}{surrogate}"
+
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(data)
+
+    message = str(caught.value)
+    assert message == "configuration package is invalid at /configuration/name: invalid Unicode surrogate"
+    assert len(message.splitlines()) == 1
+    assert all(character.isprintable() for character in message)
+    assert surrogate not in message
+    assert canary not in message
+
+
 def test_safe_parse_names_unknown_adapter_field_without_echoing_its_value() -> None:
     canaries = (
         "adapter-field-value-canary",
