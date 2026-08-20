@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Protocol, cast
 from urllib.parse import urlsplit
 
@@ -31,6 +32,12 @@ _URL_SETTING_NAMES = frozenset({"api_endpoint", "base_url", "endpoint", "url"})
 
 class CredentialConfigurationError(ValueError):
     """A declared package contains an unsafe or unresolved credential shape."""
+
+
+def _render_setting_name_list(names: Iterable[str]) -> str:
+    """Render escaped setting names with unambiguous, JSON-decodable boundaries."""
+    escaped_names = sorted(safe_pointer_component(name) for name in names)
+    return json.dumps(escaped_names, ensure_ascii=True)
 
 
 class CredentialProvider(Protocol):
@@ -130,13 +137,11 @@ def _validate_adapter_credentials(
     if role not in capabilities.roles:
         msg = f"adapter {capabilities.adapter_name!r} does not support the {role} role"
         raise CredentialConfigurationError(msg)
-    unsupported_settings = sorted(
-        (safe_pointer_component(name) for name in set(settings) - capabilities.allowed_settings)
-    )
+    unsupported_settings = set(settings) - capabilities.allowed_settings
     if unsupported_settings:
         msg = (
             f"adapter {capabilities.adapter_name!r} contains unsupported declared settings for the {role} role: "
-            f"{', '.join(unsupported_settings)}"
+            f"{_render_setting_name_list(unsupported_settings)}"
         )
         raise CredentialConfigurationError(msg)
     for setting_name in sorted(capabilities.allowed_settings & _URL_SETTING_NAMES):
@@ -189,11 +194,12 @@ def _validate_store_credentials(package: ConfigurationPackage) -> None:
             msg = f"store type {store.type!r} has no configuration capability declaration"
             raise CredentialConfigurationError(msg) from None
         return
-    unsupported_settings = sorted(
-        safe_pointer_component(name) for name in set(settings) - _STORE_SETTING_PATHS[store.type]
-    )
+    unsupported_settings = set(settings) - _STORE_SETTING_PATHS[store.type]
     if unsupported_settings:
-        msg = f"store type {store.type!r} contains unsupported declared settings: {', '.join(unsupported_settings)}"
+        msg = (
+            f"store type {store.type!r} contains unsupported declared settings: "
+            f"{_render_setting_name_list(unsupported_settings)}"
+        )
         raise CredentialConfigurationError(msg)
     for path in credential_paths:
         present, value = _setting_at_path(settings, path)

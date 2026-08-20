@@ -8,7 +8,7 @@ import os
 import subprocess  # noqa: S404 - fixed interpreter runs an in-repository determinism probe.
 import sys
 import textwrap
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from typing import Any, cast
 
@@ -31,6 +31,7 @@ from infrahub_sync.configuration import (
     sort_findings,
     validate_package_credentials,
 )
+from infrahub_sync.configuration.models import safe_pointer_component
 
 
 def _package(**updates: object) -> ConfigurationPackage:
@@ -578,7 +579,8 @@ def test_unsupported_adapter_settings_name_fields_in_stable_order_without_echoin
 
     message = str(caught.value)
     assert message == (
-        "adapter 'netbox' contains unsupported declared settings for the source role: alpha_setting, zulu_setting"
+        "adapter 'netbox' contains unsupported declared settings for the source role: "
+        '["alpha_setting", "zulu_setting"]'
     )
     assert all(canary not in message for canary in canaries)
 
@@ -601,10 +603,77 @@ def test_unsupported_adapter_settings_render_hostile_names_safely_without_echoin
         validate_package_credentials(package)
 
     message = str(caught.value)
-    expected_names = r"bad\\nfield~0~1, bad\nfield~0~1, bad\u0085field~0~1"
+    expected_names = json.dumps(
+        sorted(safe_pointer_component(name) for name in (r"bad\nfield~/", "bad\nfield~/", "bad\x85field~/"))
+    )
     assert message == f"adapter 'netbox' contains unsupported declared settings for the source role: {expected_names}"
     assert all(ord(character) >= 32 and not 127 <= ord(character) <= 159 for character in message)
     assert all(canary not in message for canary in canaries)
+
+
+def _unsupported_adapter_settings_message(settings: Mapping[str, object]) -> str:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"] = {
+        "name": "netbox",
+        "settings": {"url": "https://source.example", **settings},
+    }
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    return str(caught.value)
+
+
+def _unsupported_store_settings_message(settings: Mapping[str, object]) -> str:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["store"] = {
+        "type": "redis",
+        "settings": {"host": "localhost", **settings},
+    }
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    return str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "message_for_settings",
+    [_unsupported_adapter_settings_message, _unsupported_store_settings_message],
+    ids=["adapter", "redis-store"],
+)
+def test_unsupported_setting_name_lists_preserve_unambiguous_boundaries(
+    message_for_settings: Callable[[Mapping[str, object]], str],
+) -> None:
+    hostile_prefix = 'a"\\\n\t\x85\x9f'
+    first_names = (hostile_prefix, "b, c")
+    second_names = (f"{hostile_prefix}, b", "c")
+    canaries = (
+        "first-setting-value-canary",
+        "second-setting-value-canary",
+        "third-setting-value-canary",
+        "fourth-setting-value-canary",
+    )
+    first_settings = dict(zip(first_names, canaries[:2], strict=True))
+    second_settings = dict(zip(second_names, canaries[2:], strict=True))
+
+    first_message = message_for_settings(first_settings)
+    second_message = message_for_settings(second_settings)
+
+    assert first_message == message_for_settings(dict(reversed(first_settings.items())))
+    assert second_message == message_for_settings(dict(reversed(second_settings.items())))
+    assert first_message != second_message
+    assert json.loads(first_message.rsplit(": ", maxsplit=1)[1]) == sorted(
+        safe_pointer_component(name) for name in first_names
+    )
+    assert json.loads(second_message.rsplit(": ", maxsplit=1)[1]) == sorted(
+        safe_pointer_component(name) for name in second_names
+    )
+    assert all(ord(character) >= 32 and not 127 <= ord(character) <= 159 for character in first_message)
+    assert all(ord(character) >= 32 and not 127 <= ord(character) <= 159 for character in second_message)
+    assert all(canary not in first_message and canary not in second_message for canary in canaries)
 
 
 @pytest.mark.parametrize("adapter_name", ["genericrestapi", "peeringmanager"])
@@ -944,7 +1013,7 @@ def test_redis_store_renders_unsupported_control_name_safely_without_echoing_val
         validate_package_credentials(package)
 
     message = str(caught.value)
-    assert message == r"store type 'redis' contains unsupported declared settings: bad\nfield~0~1"
+    assert message == r"""store type 'redis' contains unsupported declared settings: ["bad\\nfield~0~1"]"""
     assert all(ord(character) >= 32 and not 127 <= ord(character) <= 159 for character in message)
     assert canary not in message
 
