@@ -5,12 +5,14 @@ import logging
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event, Thread, current_thread
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Literal, NoReturn
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from typing_extensions import Self
 
 pytest.importorskip("prefect")
 pytest.importorskip("opsmill_prefect_extras")
@@ -25,6 +27,7 @@ from infrahub_sync.managed import flow as managed_flow
 from infrahub_sync.managed.deploy import CATALOGUE
 from infrahub_sync.managed.flow import managed_sync_run
 from infrahub_sync.managed.orchestration import MANAGED_DEFINITION, Observation, PrefectOrchestration
+from infrahub_sync.orchestration import flow as direct_flow
 from infrahub_sync.orchestration.flow import infrahub_sync_run
 from infrahub_sync.plan.errors import OperationApplyFailedError
 from infrahub_sync.plan.models import ApplyRecord, PlanManifest
@@ -58,11 +61,48 @@ class _RecordingRunLogger:
     def __init__(self) -> None:
         self.rendered: list[str] = []
 
-    def log(self, _level: int, message: str, *args: object) -> None:
-        self.rendered.append(message % args)
+    def log(self, level: int, msg: str, *args: object) -> None:
+        del level
+        self.rendered.append(msg % args)
 
-    def info(self, message: str, *args: object) -> None:
-        self.rendered.append(message % args)
+    def info(self, msg: str, *args: object) -> None:
+        self.rendered.append(msg % args)
+
+
+class _LockDelegate(Protocol):
+    def acquire(self) -> bool: ...
+
+    def release(self) -> None: ...
+
+
+class _LoggerOwnershipProbe:
+    """Record lock acquisition order while delegating synchronization unchanged."""
+
+    def __init__(self, delegate: _LockDelegate) -> None:
+        self._delegate = delegate
+        self.events: list[str] = []
+        self.managed_acquire_attempted = Event()
+
+    def acquire(self) -> None:
+        """Signal from inside the contender's acquisition attempt, then delegate."""
+        thread_name = current_thread().name
+        self.events.append(f"{thread_name}:acquire-attempted")
+        if thread_name == "test-managed-flow":
+            self.managed_acquire_attempted.set()
+        self._delegate.acquire()
+        self.events.append(f"{thread_name}:acquired")
+
+    def release(self) -> None:
+        """Record release before making ownership available to a contender."""
+        self.events.append(f"{current_thread().name}:released")
+        self._delegate.release()
+
+    def __enter__(self) -> Self:
+        self.acquire()
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.release()
 
 
 def _create_product_run(
@@ -159,6 +199,127 @@ def test_missing_context_uses_local_logger_without_constructing_a_bridge(monkeyp
 
     assert isinstance(run_logger, logging.Logger)
     assert prefect_context is False
+
+
+def test_direct_and_managed_log_bridges_serialize_ownership_and_restore_state(  # noqa: PLR0914, PLR0915
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Concurrent flow bridges must not share records or clobber logger state."""
+    direct_canary = "direct-flow-secret-canary"
+    managed_canary = "managed-flow-secret-canary"
+    direct_logger = _RecordingRunLogger()
+    managed_logger = _RecordingRunLogger()
+    source_logger = logging.getLogger(managed_flow.SOURCE_LOGGER_NAME)
+    child_logger = logging.getLogger(f"{managed_flow.SOURCE_LOGGER_NAME}.concurrency-test")
+    sentinel_handler = logging.NullHandler()
+    original_handlers = list(source_logger.handlers)
+    original_level = source_logger.level
+    original_propagate = source_logger.propagate
+    direct_entered = Event()
+    release_direct = Event()
+    managed_entered = Event()
+    release_managed = Event()
+    direct_failures: list[BaseException] = []
+    managed_failures: list[BaseException] = []
+
+    def fail_direct_request(*_args: object, **_kwargs: object) -> NoReturn:
+        direct_entered.set()
+        assert release_direct.wait(timeout=5)
+        failure_message = "direct flow failed"
+        raise RuntimeError(failure_message)
+
+    def run_direct() -> None:
+        try:
+            infrahub_sync_run.fn("inventory")
+        except BaseException as exc:  # noqa: BLE001 - retain thread failure for the main test.
+            direct_failures.append(exc)
+
+    def run_managed_bridge() -> None:
+        try:
+            with managed_flow._remote_log_bridge(
+                managed_logger,
+                prefect_context=True,
+                secrets=(managed_canary,),
+            ):
+                managed_entered.set()
+                child_logger.warning("managed record used %s", managed_canary)
+                assert release_managed.wait(timeout=5)
+        except BaseException as exc:  # noqa: BLE001 - retain thread failure for the main test.
+            managed_failures.append(exc)
+
+    monkeypatch.setattr("infrahub_sync.orchestration.flow.get_run_logger", lambda: direct_logger)
+    monkeypatch.setattr("infrahub_sync.orchestration.flow.collect_secret_values", lambda: (direct_canary,))
+    monkeypatch.setattr("infrahub_sync.orchestration.flow.run_remote_request", fail_direct_request)
+    monkeypatch.setenv(managed_flow.CONFIG_DIR_ENV, str(tmp_path))
+    original_ownership_lock = direct_flow._REMOTE_LOGGER_OWNERSHIP_LOCK
+    assert managed_flow._REMOTE_LOGGER_OWNERSHIP_LOCK is original_ownership_lock
+    ownership_probe = _LoggerOwnershipProbe(original_ownership_lock)
+    monkeypatch.setattr(direct_flow, "_REMOTE_LOGGER_OWNERSHIP_LOCK", ownership_probe)
+    monkeypatch.setattr(managed_flow, "_REMOTE_LOGGER_OWNERSHIP_LOCK", ownership_probe)
+    source_logger.handlers = [sentinel_handler]
+    source_logger.setLevel(logging.ERROR)
+    source_logger.propagate = True
+
+    direct_thread = Thread(target=run_direct, name="test-direct-flow")
+    managed_thread = Thread(target=run_managed_bridge, name="test-managed-flow")
+    try:
+        direct_thread.start()
+        assert direct_entered.wait(timeout=5)
+        managed_thread.start()
+        assert ownership_probe.managed_acquire_attempted.wait(timeout=5)
+        child_logger.warning("direct record used %s", direct_canary)
+
+        release_direct.set()
+        direct_thread.join(timeout=5)
+        assert not direct_thread.is_alive()
+        assert managed_entered.wait(timeout=5)
+        release_managed.set()
+        managed_thread.join(timeout=5)
+        assert not managed_thread.is_alive()
+
+        rendered = "\n".join((*direct_logger.rendered, *managed_logger.rendered))
+        expected_acquisition_order = [
+            "test-direct-flow:acquire-attempted",
+            "test-direct-flow:acquired",
+            "test-managed-flow:acquire-attempted",
+            "test-direct-flow:released",
+            "test-managed-flow:acquired",
+            "test-managed-flow:released",
+        ]
+        violations = [
+            label
+            for label, violated in (
+                ("bridge ownership was not serialized", ownership_probe.events != expected_acquisition_order),
+                (
+                    "direct bridge received the managed record",
+                    any("managed record" in line for line in direct_logger.rendered),
+                ),
+                (
+                    "managed bridge received the direct record",
+                    any("direct record" in line for line in managed_logger.rendered),
+                ),
+                ("direct canary reached a run logger", direct_canary in rendered),
+                ("managed canary reached a run logger", managed_canary in rendered),
+                ("source handlers were not restored", source_logger.handlers != [sentinel_handler]),
+                ("source level was not restored", source_logger.level != logging.ERROR),
+                ("source propagation was not restored", source_logger.propagate is not True),
+            )
+            if violated
+        ]
+        assert violations == []
+        assert len(direct_failures) == 1
+        assert isinstance(direct_failures[0], RuntimeError)
+        assert str(direct_failures[0]) == "direct flow failed"
+        assert managed_failures == []
+    finally:
+        release_direct.set()
+        release_managed.set()
+        direct_thread.join(timeout=5)
+        managed_thread.join(timeout=5)
+        source_logger.handlers = original_handlers
+        source_logger.setLevel(original_level)
+        source_logger.propagate = original_propagate
 
 
 def test_managed_flow_redacts_worker_logs_exception_chain_and_failed_state(
