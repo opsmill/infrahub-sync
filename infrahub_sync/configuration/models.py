@@ -188,6 +188,10 @@ class _ImmutableSchemaMappingModel(SchemaMappingModel):
     transforms: tuple[_ImmutableSchemaMappingTransform, ...] | None = None
     fields: tuple[_ImmutableSchemaMappingField, ...] = ()
 
+    @field_serializer("identifiers", "filters", "transforms", "fields")
+    def _serialize_collections(self, value: tuple[Any, ...] | None) -> list[Any] | None:
+        return None if value is None else list(value)
+
 
 class _ImmutableSyncAdapter(SyncAdapter):
     """Package-local immutable form of legacy adapter settings."""
@@ -242,6 +246,10 @@ class _ImmutableSyncConfig(SyncConfig):
     schema_mapping: tuple[_ImmutableSchemaMappingModel, ...] = ()
     diffsync_flags: tuple[str | DiffSyncFlags, ...] | None = ()
     incremental: _ImmutableIncrementalConfig | None = None
+
+    @field_serializer("adapters_path", "order", "schema_mapping", "diffsync_flags")
+    def _serialize_collections(self, value: tuple[Any, ...] | None) -> list[Any] | None:
+        return None if value is None else list(value)
 
 
 class CredentialReference(BaseModel):

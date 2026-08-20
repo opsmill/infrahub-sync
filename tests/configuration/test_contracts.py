@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import Any, cast
 
 import pytest
@@ -130,6 +131,16 @@ def _mutate_schema_static_value(package: ConfigurationPackage) -> None:
     value["labels"].append("core")
 
 
+def _assert_json_containers(value: object) -> None:
+    assert not isinstance(value, (tuple, MappingProxyType))
+    if isinstance(value, dict):
+        for item in value.values():
+            _assert_json_containers(item)
+    elif isinstance(value, list):
+        for item in value:
+            _assert_json_containers(item)
+
+
 def test_checksum_is_stable_across_mapping_order() -> None:
     first = _package()
     second = ConfigurationPackage.model_validate(
@@ -200,6 +211,17 @@ def test_declared_configuration_cannot_mutate_after_validation(
     assert package.declared_content() == declared_content
     assert package.checksum() == checksum
     validate_package_credentials(package)
+
+
+def test_default_package_dump_is_json_native_and_round_trips() -> None:
+    package = _package_with_nested_declared_content()
+
+    dumped = package.model_dump(by_alias=True)
+
+    _assert_json_containers(dumped)
+    reparsed = ConfigurationPackage.model_validate(dumped)
+    assert reparsed.declared_content() == package.declared_content()
+    assert reparsed.checksum() == package.checksum()
 
 
 def test_package_rejects_machine_local_directory() -> None:
