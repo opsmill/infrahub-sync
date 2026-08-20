@@ -378,8 +378,11 @@ def safe_pointer_component(value: object) -> str:
             components.append(r"\r")
         elif character == "\t":
             components.append(r"\t")
-        elif codepoint < 32 or 127 <= codepoint <= 159:
-            components.append(f"\\u{codepoint:04x}")
+        elif not character.isprintable():
+            if codepoint <= 0xFFFF:
+                components.append(f"\\u{codepoint:04x}")
+            else:
+                components.append(f"\\U{codepoint:08x}")
         elif character == "~":
             components.append("~0")
         elif character == "/":

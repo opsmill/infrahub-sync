@@ -379,6 +379,13 @@ def test_safe_parse_names_unknown_nested_mapping_field_without_echoing_its_value
         ("\x7f", r"\u007f"),
         ("\x85", r"\u0085"),
         ("\x9f", r"\u009f"),
+        pytest.param("\u2028", r"\u2028", id="line-separator"),
+        pytest.param("\u2029", r"\u2029", id="paragraph-separator"),
+        pytest.param("\u202e", r"\u202e", id="right-to-left-override"),
+        pytest.param("\u200b", r"\u200b", id="zero-width-space"),
+        pytest.param("\u2066", r"\u2066", id="left-to-right-isolate"),
+        pytest.param("\ufeff", r"\ufeff", id="zero-width-no-break-space"),
+        pytest.param("\U000e0001", r"\U000e0001", id="language-tag"),
     ],
 )
 def test_safe_parse_renders_unknown_field_controls_without_echoing_values(control: str, visible: str) -> None:
@@ -391,7 +398,9 @@ def test_safe_parse_renders_unknown_field_controls_without_echoing_values(contro
 
     message = str(caught.value)
     assert f"/configuration/source/bad{visible}field~0~1: unsupported declared field" in message
-    assert all(ord(character) >= 32 and not 127 <= ord(character) <= 159 for character in message)
+    assert len(message.splitlines()) == 1
+    assert all(character.isprintable() for character in message)
+    assert control not in message
     assert canary not in message
 
 
@@ -402,6 +411,13 @@ def test_safe_parse_renders_unknown_field_controls_without_echoing_values(contro
         ("\r", r"\r"),
         ("\t", r"\t"),
         ("\x1b", r"\u001b"),
+        pytest.param("\u2028", r"\u2028", id="line-separator"),
+        pytest.param("\u2029", r"\u2029", id="paragraph-separator"),
+        pytest.param("\u202e", r"\u202e", id="right-to-left-override"),
+        pytest.param("\u200b", r"\u200b", id="zero-width-space"),
+        pytest.param("\u2066", r"\u2066", id="left-to-right-isolate"),
+        pytest.param("\ufeff", r"\ufeff", id="zero-width-no-break-space"),
+        pytest.param("\U000e0001", r"\U000e0001", id="language-tag"),
     ],
 )
 def test_safe_parse_distinguishes_controls_from_literal_escape_text(control: str, visible: str) -> None:
@@ -418,10 +434,23 @@ def test_safe_parse_distinguishes_controls_from_literal_escape_text(control: str
     assert f"/configuration/source/bad{visible}field~0~1: unsupported declared field" in messages[0]
     assert f"/configuration/source/bad{literal_visible}field~0~1: unsupported declared field" in messages[1]
     assert messages[0] != messages[1]
-    assert all(
-        ord(character) >= 32 and not 127 <= ord(character) <= 159 for message in messages for character in message
-    )
+    assert all(len(message.splitlines()) == 1 for message in messages)
+    assert all(character.isprintable() for message in messages for character in message)
+    assert control not in messages[0]
     assert all(canary not in message for canary in canaries for message in messages)
+
+
+def test_safe_parse_preserves_printable_unicode_in_unknown_field_locations() -> None:
+    canary = "printable-unicode-value-canary"
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["café-東京-😀~/"] = canary
+
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(data)
+
+    message = str(caught.value)
+    assert "/configuration/source/café-東京-😀~0~1: unsupported declared field" in message
+    assert canary not in message
 
 
 def test_inline_credential_is_refused_without_echoing_value() -> None:
@@ -934,23 +963,41 @@ def test_nested_reference_errors_render_hostile_setting_paths_safely(
     expected_detail: str,
 ) -> None:
     canaries = ("unsupported-setting-value-canary", "malformed-reference-value-canary")
-    hostile_setting = "bad\n\x85\\setting~/"
-    hostile_nested_key = "nested\r\x9f\\node~/"
-    data = _package().model_dump(mode="json")
-    data["configuration"]["source"]["settings"][hostile_setting] = {
-        "other": canaries[0],
-        hostile_nested_key: reference_node,
-    }
-    package = ConfigurationPackage.model_validate(data)
+    hostile_components = (
+        "bad\n\x85\u2028\u202e\u200b\U000e0001\\setting~/",
+        "nested\r\x9f\u2029\u2066\ufeff\\node~/",
+    )
+    literal_components = (
+        r"bad\n\u0085\u2028\u202e\u200b\U000e0001\setting~/",
+        r"nested\r\u009f\u2029\u2066\ufeff\node~/",
+    )
+    messages = []
+    for setting_name, nested_key in (hostile_components, literal_components):
+        data = _package().model_dump(mode="json")
+        data["configuration"]["source"]["settings"][setting_name] = {
+            "other": canaries[0],
+            nested_key: reference_node,
+        }
+        package = ConfigurationPackage.model_validate(data)
 
-    with pytest.raises(CredentialConfigurationError) as caught:
-        validate_package_credentials(package)
+        with pytest.raises(CredentialConfigurationError) as caught:
+            validate_package_credentials(package)
+        messages.append(str(caught.value))
 
-    message = str(caught.value)
-    pointer = r"/configuration/source/settings/bad\n\u0085\\setting~0~1/nested\r\u009f\\node~0~1"
-    assert message == f"{pointer} {expected_detail}"
-    assert all(ord(character) >= 32 and not 127 <= ord(character) <= 159 for character in message)
-    assert all(canary not in message for canary in canaries)
+    hostile_pointer = (
+        r"/configuration/source/settings/bad\n\u0085\u2028\u202e\u200b\U000e0001\\setting~0~1/"
+        r"nested\r\u009f\u2029\u2066\ufeff\\node~0~1"
+    )
+    literal_pointer = (
+        r"/configuration/source/settings/bad\\n\\u0085\\u2028\\u202e\\u200b\\U000e0001\\setting~0~1/"
+        r"nested\\r\\u009f\\u2029\\u2066\\ufeff\\node~0~1"
+    )
+    assert messages == [f"{hostile_pointer} {expected_detail}", f"{literal_pointer} {expected_detail}"]
+    assert messages[0] != messages[1]
+    assert all(len(message.splitlines()) == 1 for message in messages)
+    assert all(character.isprintable() for message in messages for character in message)
+    assert all(character not in messages[0] for character in "\u2028\u2029\u202e\u200b\u2066\ufeff\U000e0001")
+    assert all(canary not in message for canary in canaries for message in messages)
 
 
 def test_reserved_reference_node_is_validated_in_schema_mapping_static_value() -> None:
