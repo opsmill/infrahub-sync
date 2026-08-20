@@ -36,7 +36,7 @@ _COMPARABLE_FIELDS: tuple[str, ...] = (
     "work_pool_name",
     "job_variables",
 )
-"""Fields this feature owns and therefore reconciles."""
+"""Fields this feature can own and reconcile from a desired payload."""
 
 _SENTINEL_FLOW_ID: UUID = UUID("00000000-0000-0000-0000-000000000000")
 """A local schema-validation stand-in; it is never sent to Prefect."""
@@ -222,9 +222,9 @@ async def apply_deployments(
             client=client,
         )
 
-    manager = get_client() if client_factory is None else client_factory()
     entered = False
     try:
+        manager = get_client() if client_factory is None else client_factory()
         async with manager as active_client:
             entered = True
             return await _apply_with_client(
@@ -234,9 +234,10 @@ async def apply_deployments(
                 client=cast(DeploymentClient, active_client),
             )
     except Exception as exc:
-        if not entered:
-            raise DeploymentApplyConnectionError(exc) from None
-        raise
+        if entered:
+            raise
+        connection_error = DeploymentApplyConnectionError(exc)
+    raise connection_error from None
 
 
 async def _apply_with_client(
@@ -323,10 +324,11 @@ def _assert_definition_key_grammar(definition: WorkflowDefinition) -> None:
 
 def _matches(existing: DeploymentRecord, desired: Mapping[str, Any]) -> bool:
     """Compare the persisted deployment with the fields this feature owns."""
+    comparable_fields = _comparable_fields(desired)
     existing_payload = existing.model_dump(mode="json", exclude_none=True)
     comparable_existing = {
         field: existing_payload[field]
-        for field in _COMPARABLE_FIELDS
+        for field in comparable_fields
         if field in existing_payload
     }
     if "schedules" in comparable_existing:
@@ -337,7 +339,7 @@ def _matches(existing: DeploymentRecord, desired: Mapping[str, Any]) -> bool:
     desired_payload = _normalised_payload(desired)
     fields_match = all(
         normalized_existing.get(field) == desired_payload.get(field)
-        for field in _COMPARABLE_FIELDS
+        for field in comparable_fields
     )
     return fields_match and _response_concurrency_limit(existing_payload) == (
         desired_payload.get("concurrency_limit")
@@ -386,14 +388,30 @@ def _normalised_payload(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     return cast(Mapping[str, Any], model.model_dump(mode="json", exclude_none=True))
 
 
+def _comparable_fields(desired: Mapping[str, Any]) -> tuple[str, ...]:
+    """Select owned fields, treating empty job variables as unmanaged."""
+    job_variables = desired.get("job_variables")
+    if isinstance(job_variables, Mapping) and job_variables:
+        return _COMPARABLE_FIELDS
+    return tuple(field for field in _COMPARABLE_FIELDS if field != "job_variables")
+
+
 def _update(payload: Mapping[str, Any]) -> DeploymentUpdate:
     """Build Prefect's named update schema from the fields this feature owns."""
     normalized = _normalised_payload(payload)
     update_fields = {
         field: normalized[field]
-        for field in _COMPARABLE_FIELDS
+        for field in _comparable_fields(payload)
         if field != "name" and field in normalized
     }
+    clear_values: Mapping[str, object] = {
+        "tags": [],
+        "schedules": [],
+        "concurrency_options": None,
+        "entrypoint": None,
+    }
+    for field, value in clear_values.items():
+        update_fields.setdefault(field, value)
     # Setting this field explicitly also lets an update clear a prior limit.
     update_fields["concurrency_limit"] = normalized.get("concurrency_limit")
     return DeploymentUpdate(**update_fields)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import sys
 import threading
 from dataclasses import dataclass
@@ -17,7 +18,18 @@ from prefect import flow, get_run_logger
 from prefect.client.schemas.objects import FlowRun, State
 from prefect.exceptions import MissingContextError, ObjectNotFound, ParameterTypeError
 from prefect.flows import Flow
-from prefect.states import Cancelled, Completed, Crashed, Failed, Running
+from prefect.states import (
+    Cancelled,
+    Cancelling,
+    Completed,
+    Crashed,
+    Failed,
+    Paused,
+    Pending,
+    Running,
+    Scheduled,
+    Suspended,
+)
 
 import opsmill_prefect_extras.executors as executors_module
 from opsmill_prefect_extras.executors import (
@@ -683,8 +695,15 @@ def test_remote_terminal_faults_raise_narrow_errors_with_server_id(
     asyncio.run(scenario())
 
 
-def test_remote_missing_deployment_is_typed(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Remote runs name the missing deployment instead of exposing client details."""
+@pytest.mark.parametrize("failure_point", ["lookup", "deletion-race"])
+def test_remote_not_found_translation_discards_provider_details(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    failure_point: str,
+) -> None:
+    """Both not-found paths expose only the safe deployment target."""
+
+    provider_canary = "provider-secret-token=https://private.invalid"
 
     @flow(name="absent-flow")
     def absent_flow() -> None:
@@ -692,32 +711,13 @@ def test_remote_missing_deployment_is_typed(monkeypatch: pytest.MonkeyPatch) -> 
 
     definition = _definition(monkeypatch, absent_flow)
 
-    class MissingDeploymentClient(_Client):
-        """A seam that reports the deployment as absent."""
+    class NotFoundClient(_Client):
+        """Raise a canary-bearing provider error at either submission step."""
 
         async def read_deployment_by_name(self, name: str) -> _Deployment:
-            raise ObjectNotFound(Exception("not found"))
-
-    async def scenario() -> None:
-        with pytest.raises(WorkflowNotFoundError, match="absent-flow/run"):
-            await RemoteWorkflowExecutor(MissingDeploymentClient()).run(definition, {})
-
-    asyncio.run(scenario())
-
-
-def test_remote_deployment_deleted_between_lookup_and_submit_is_typed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A deployment deletion race is reported as the same missing target error."""
-
-    @flow(name="deleted-flow")
-    def deleted_flow() -> None:
-        return None
-
-    definition = _definition(monkeypatch, deleted_flow)
-
-    class DeletionRaceClient(_Client):
-        """Find a deployment, then emulate its removal before submission."""
+            if failure_point == "lookup":
+                raise ObjectNotFound(Exception(provider_canary), provider_canary)
+            return await super().read_deployment_by_name(name)
 
         async def create_flow_run_from_deployment(
             self,
@@ -726,11 +726,24 @@ def test_remote_deployment_deleted_between_lookup_and_submit_is_typed(
             parameters: dict[str, Any],
             idempotency_key: str | None = None,
         ) -> _FlowRun:
-            raise ObjectNotFound(Exception("deleted"))
+            raise ObjectNotFound(Exception(provider_canary), provider_canary)
 
     async def scenario() -> None:
-        with pytest.raises(WorkflowNotFoundError, match="deleted-flow/run"):
-            await RemoteWorkflowExecutor(DeletionRaceClient()).submit(definition, {})
+        with pytest.raises(WorkflowNotFoundError) as raised:
+            await RemoteWorkflowExecutor(NotFoundClient()).submit(definition, {})
+
+        error = raised.value
+        logging.getLogger(__name__).error(
+            "translated remote submission failure",
+            exc_info=(type(error), error, error.__traceback__),
+        )
+        assert error.target == "absent-flow/run"
+        assert "absent-flow/run" in str(error)
+        assert provider_canary not in str(error)
+        assert provider_canary not in repr(error)
+        assert error.__cause__ is None
+        assert error.__context__ is None
+        assert provider_canary not in caplog.text
 
     asyncio.run(scenario())
 
@@ -775,6 +788,44 @@ def test_remote_cancel_requests_cancelling_then_observes_server_acknowledgement(
         assert await handle.wait() == "cancelled"
         assert await handle.cancel() == "cancelled"
         assert client.cancellation_requests == 1
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("state", "expected_status"),
+    [
+        pytest.param(None, "failed", id="absent"),
+        pytest.param(Scheduled(), "pending", id="scheduled"),
+        pytest.param(Pending(), "pending", id="pending"),
+        pytest.param(Running(), "running", id="running"),
+        pytest.param(Cancelling(), "cancelling", id="cancelling"),
+        pytest.param(Paused(), "paused", id="paused"),
+        pytest.param(Suspended(), "suspended", id="suspended"),
+        pytest.param(Completed(), "completed", id="completed"),
+        pytest.param(Failed(), "failed", id="failed"),
+        pytest.param(Crashed(), "crashed", id="crashed"),
+        pytest.param(Cancelled(), "cancelled", id="cancelled"),
+    ],
+)
+def test_remote_status_maps_every_public_prefect_state(
+    monkeypatch: pytest.MonkeyPatch,
+    state: State[Any] | None,
+    expected_status: str,
+) -> None:
+    """Remote status distinguishes every supported portable state."""
+
+    @flow(name="status-mapping-flow")
+    def status_mapping_flow() -> None:
+        return None
+
+    definition = _definition(monkeypatch, status_mapping_flow)
+    client = _Client()
+    client.flow_run.state = state
+
+    async def scenario() -> None:
+        handle = await RemoteWorkflowExecutor(client).submit(definition, {})
+        assert await handle.status() == expected_status
 
     asyncio.run(scenario())
 

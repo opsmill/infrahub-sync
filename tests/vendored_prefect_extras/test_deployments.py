@@ -102,7 +102,7 @@ class FakePrefectClient:
             if existing.id == deployment_id:
                 existing.payload = {
                     **existing.payload,
-                    **deployment.model_dump(mode="json", exclude_none=True),
+                    **deployment.model_dump(mode="json", exclude_unset=True),
                 }
                 return
         raise AssertionError("unknown fake deployment")
@@ -244,6 +244,52 @@ def test_second_apply_is_unchanged_and_drift_is_updated() -> None:
     assert [call[0] for call in client.calls].count("update_deployment") == 1
 
 
+@pytest.mark.parametrize(
+    ("definition_kwargs", "cleared_fields"),
+    [
+        pytest.param(
+            {"cron": "0 2 * * *"},
+            {"schedules": []},
+            id="schedule",
+        ),
+        pytest.param(
+            {"concurrency_limit": 2, "collision_strategy": "CANCEL_NEW"},
+            {"concurrency_limit": None, "concurrency_options": None},
+            id="concurrency-settings",
+        ),
+        pytest.param(
+            {"entrypoint": "tests.workflows.flows:my_sync_flow"},
+            {"entrypoint": None},
+            id="entrypoint",
+        ),
+    ],
+)
+def test_removing_supported_owned_optional_settings_converges(
+    definition_kwargs: Mapping[str, Any],
+    cleared_fields: Mapping[str, object],
+) -> None:
+    client = FakePrefectClient()
+    configured = _definition("inventory-refresh", "scheduled", **definition_kwargs)
+    without_optional_settings = _definition("inventory-refresh", "scheduled")
+
+    created = _apply(
+        (configured,),
+        work_pool_name="pool",
+        client=client,
+    )
+    removed = _apply((without_optional_settings,), work_pool_name="pool", client=client)
+    unchanged = _apply(
+        (without_optional_settings,), work_pool_name="pool", client=client
+    )
+
+    assert [result.status for result in created.results] == ["created"]
+    assert [result.status for result in removed.results] == ["updated"]
+    assert [result.status for result in unchanged.results] == ["unchanged"]
+    payload = client.deployments[configured.key].payload
+    assert all(payload[field] == value for field, value in cleared_fields.items())
+    assert [call[0] for call in client.calls].count("update_deployment") == 1
+
+
 def test_create_race_converges_after_a_defensive_conflict() -> None:
     class RacingClient(FakePrefectClient):
         async def create_deployment(self, flow_id: UUID, **payload: Any) -> UUID:
@@ -315,6 +361,53 @@ def test_real_prefect_server_second_scheduled_apply_is_unchanged() -> None:
 
     assert [result.status for result in first.results] == ["created"]
     assert [result.status for result in second.results] == ["unchanged"]
+
+
+def test_real_prefect_server_omitted_job_variables_remain_unmanaged() -> None:
+    definition = _definition("integration-flow", "job-variables")
+    job_variables = {
+        "image": "registry.example/application:previous",
+        "env": {"MODE": "managed"},
+    }
+
+    async def scenario() -> tuple[
+        DeploymentApplyReport,
+        DeploymentApplyReport,
+        DeploymentApplyReport,
+        Mapping[str, Any],
+    ]:
+        async with get_client() as client:
+            await client.create_work_pool(
+                WorkPoolCreate(name="integration-pool", type="process")
+            )
+            created = await apply_deployments(
+                (definition,),
+                work_pool_name="integration-pool",
+                job_variables=job_variables,
+                client=cast(DeploymentClient, client),
+            )
+            first_omitted = await apply_deployments(
+                (definition,),
+                work_pool_name="integration-pool",
+                client=cast(DeploymentClient, client),
+            )
+            second_omitted = await apply_deployments(
+                (definition,),
+                work_pool_name="integration-pool",
+                client=cast(DeploymentClient, client),
+            )
+            persisted = await client.read_deployment_by_name(definition.key)
+            return created, first_omitted, second_omitted, persisted.job_variables
+
+    with prefect_test_harness():
+        created, first_omitted, second_omitted, persisted_job_variables = asyncio.run(
+            scenario()
+        )
+
+    assert [result.status for result in created.results] == ["created"]
+    assert [result.status for result in first_omitted.results] == ["unchanged"]
+    assert [result.status for result in second_omitted.results] == ["unchanged"]
+    assert persisted_job_variables == job_variables
 
 
 @pytest.mark.skipif(
@@ -406,14 +499,39 @@ def test_preflight_schema_and_definition_refusals_do_not_call_the_client() -> No
     ]
 
 
-def test_connection_failure_before_processing_is_typed_and_attempts_nothing() -> None:
+@pytest.mark.parametrize(
+    ("failure_point", "expected_calls"),
+    [
+        pytest.param("factory", ["factory"], id="factory-call"),
+        pytest.param("context-entry", ["factory", "enter"], id="context-entry"),
+    ],
+)
+def test_client_opening_failure_is_typed_without_retaining_provider_exception(
+    failure_point: str,
+    expected_calls: list[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     calls: list[str] = []
+    canary = "connection-sentinel-value"
 
-    @asynccontextmanager
-    async def unavailable() -> AsyncIterator[FakePrefectClient]:
-        calls.append("open")
-        raise RuntimeError("connection-sentinel-value")
-        yield FakePrefectClient()
+    class UnavailableContext:
+        async def __aenter__(self) -> FakePrefectClient:
+            calls.append("enter")
+            raise RuntimeError(canary)
+
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            traceback: object,
+        ) -> None:
+            raise AssertionError("context entry failure must not call __aexit__")
+
+    def unavailable() -> UnavailableContext:
+        calls.append("factory")
+        if failure_point == "factory":
+            raise RuntimeError(canary)
+        return UnavailableContext()
 
     with pytest.raises(DeploymentApplyConnectionError) as excinfo:
         _apply(
@@ -423,8 +541,10 @@ def test_connection_failure_before_processing_is_typed_and_attempts_nothing() ->
         )
 
     assert excinfo.value.cause_type == "RuntimeError"
-    assert "connection-sentinel-value" not in str(excinfo.value)
-    assert calls == ["open"]
+    assert canary not in f"{excinfo.value}\n{excinfo.value!r}\n{caplog.text}"
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
+    assert calls == expected_calls
 
 
 def test_client_context_receives_an_iteration_failure() -> None:
