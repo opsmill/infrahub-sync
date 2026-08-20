@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from typing_extensions import Self
 
 pytest.importorskip("prefect")
 pytest.importorskip("opsmill_prefect_extras")
@@ -96,7 +97,7 @@ class _LoggerOwnershipProbe:
         self.events.append(f"{current_thread().name}:released")
         self._delegate.release()
 
-    def __enter__(self) -> _LoggerOwnershipProbe:  # noqa: PYI034
+    def __enter__(self) -> Self:
         self.acquire()
         return self
 
