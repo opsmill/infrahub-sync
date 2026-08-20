@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, cast
 
@@ -59,6 +60,76 @@ def _package(**updates: object) -> ConfigurationPackage:
     return ConfigurationPackage.model_validate(data)
 
 
+def _package_with_nested_declared_content() -> ConfigurationPackage:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["store"] = {
+        "type": "redis",
+        "settings": {
+            "host": "localhost",
+            "password": {"$credential": "redis-password"},
+        },
+    }
+    data["configuration"]["order"] = ["Device"]
+    data["configuration"]["schema_mapping"] = [
+        {
+            "name": "Device",
+            "identifiers": ["name"],
+            "filters": [{"field": "enabled", "operation": "==", "value": {"expected": [True]}}],
+            "transforms": [{"field": "name", "expression": "value"}],
+            "fields": [{"name": "metadata", "static": {"labels": ["edge"]}}],
+        }
+    ]
+    data["credentials"]["redis-password"] = {"provider": "env", "identifier": "REDIS_PASSWORD"}
+    return ConfigurationPackage.model_validate(data)
+
+
+def _set_source_setting(package: ConfigurationPackage) -> None:
+    inline_value = "inline-secret"
+    cast("Any", package.configuration.source.settings)["token"] = inline_value
+
+
+def _set_destination_setting(package: ConfigurationPackage) -> None:
+    cast("Any", package.configuration.destination.settings)["url"] = "https://changed.example"
+
+
+def _set_store_setting(package: ConfigurationPackage) -> None:
+    store = package.configuration.store
+    assert store is not None
+    cast("Any", store.settings)["host"] = "changed.example"
+
+
+def _append_order(package: ConfigurationPackage) -> None:
+    cast("Any", package.configuration.order).append("Other")
+
+
+def _append_diffsync_flag(package: ConfigurationPackage) -> None:
+    cast("Any", package.configuration.diffsync_flags).append("SKIP_UNMATCHED_DST")
+
+
+def _append_schema_mapping(package: ConfigurationPackage) -> None:
+    cast("Any", package.configuration.schema_mapping).append(package.configuration.schema_mapping[0])
+
+
+def _rename_schema_mapping(package: ConfigurationPackage) -> None:
+    cast("Any", package.configuration.schema_mapping[0]).name = "Changed"
+
+
+def _append_schema_identifier(package: ConfigurationPackage) -> None:
+    cast("Any", package.configuration.schema_mapping[0].identifiers).append("serial")
+
+
+def _mutate_schema_filter_value(package: ConfigurationPackage) -> None:
+    filters = package.configuration.schema_mapping[0].filters
+    assert filters is not None
+    value = cast("Any", filters[0].value)
+    value["expected"].append(False)
+
+
+def _mutate_schema_static_value(package: ConfigurationPackage) -> None:
+    value = cast("Any", package.configuration.schema_mapping[0].fields[0].static)
+    value["labels"].append("core")
+
+
 def test_checksum_is_stable_across_mapping_order() -> None:
     first = _package()
     second = ConfigurationPackage.model_validate(
@@ -98,6 +169,37 @@ def test_default_empty_credentials_cannot_mutate_after_validation() -> None:
 
     with pytest.raises(TypeError):
         cast("Any", package.credentials)["later"] = {"provider": "env", "identifier": "LATER"}
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(_set_source_setting, id="source-settings"),
+        pytest.param(_set_destination_setting, id="destination-settings"),
+        pytest.param(_set_store_setting, id="store-settings"),
+        pytest.param(_append_order, id="order"),
+        pytest.param(_append_diffsync_flag, id="diffsync-flags"),
+        pytest.param(_append_schema_mapping, id="schema-mapping-list"),
+        pytest.param(_rename_schema_mapping, id="schema-mapping-model"),
+        pytest.param(_append_schema_identifier, id="schema-mapping-identifiers"),
+        pytest.param(_mutate_schema_filter_value, id="schema-mapping-filter-value"),
+        pytest.param(_mutate_schema_static_value, id="schema-mapping-static-value"),
+    ],
+)
+def test_declared_configuration_cannot_mutate_after_validation(
+    mutate: Callable[[ConfigurationPackage], None],
+) -> None:
+    package = _package_with_nested_declared_content()
+    validate_package_credentials(package)
+    declared_content = package.declared_content()
+    checksum = package.checksum()
+
+    with pytest.raises((AttributeError, TypeError, ValidationError)):
+        mutate(package)
+
+    assert package.declared_content() == declared_content
+    assert package.checksum() == checksum
+    validate_package_credentials(package)
 
 
 def test_package_rejects_machine_local_directory() -> None:
@@ -201,6 +303,25 @@ def test_inline_credential_is_refused_without_echoing_value() -> None:
         validate_package_credentials(package)
 
     assert "inline credential" in str(caught.value)
+    assert canary not in str(caught.value)
+
+
+def test_prometheus_custom_headers_are_refused_without_echoing_values() -> None:
+    canary = "prometheus-inline-canary"
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"] = {
+        "name": "prometheus",
+        "settings": {
+            "url": "https://prometheus.example",
+            "headers": {"Authorization": f"Bearer {canary}"},
+        },
+    }
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    assert "custom headers" in str(caught.value)
     assert canary not in str(caught.value)
 
 

@@ -10,7 +10,7 @@ from typing import Protocol, cast
 from pydantic import ValidationError
 
 from .capabilities import AdapterConfigurationCapabilities, AdapterRole, get_adapter_capabilities
-from .models import ConfigurationPackage, CredentialReference, CredentialReferenceNode
+from .models import ConfigurationPackage, CredentialReference, CredentialReferenceNode, sort_findings
 
 _ENV_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _STORE_CREDENTIAL_SETTING_PATHS = {
@@ -122,6 +122,11 @@ def _validate_adapter_credentials(
     if role not in capabilities.roles:
         msg = f"adapter {capabilities.adapter_name!r} does not support the {role} role"
         raise CredentialConfigurationError(msg)
+    if capabilities.validator is not None:
+        findings = sort_findings(capabilities.validator(package, role))
+        if error := next((finding for finding in findings if finding.severity == "error"), None):
+            msg = f"{error.location}: {error.message}"
+            raise CredentialConfigurationError(msg)
     for path in capabilities.credential_setting_paths:
         present, value = _setting_at_path(settings, path)
         if not present or value is None:

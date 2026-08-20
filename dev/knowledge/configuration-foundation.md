@@ -46,7 +46,9 @@ The version-1 envelope refuses `adapters_path` and per-role `adapter` overrides.
 fields select machine-local or arbitrary adapter code whose credential-bearing settings
 cannot be proven by a bundled capability declaration. Redis accepts only its declared
 store settings; its URLs, usernames, and passwords follow the same credential-reference
-rule as adapter settings.
+rule as adapter settings. Version 1 also refuses Prometheus custom headers because their
+arbitrary values cannot be proven free of inline credentials; use the declared token,
+username, and password reference settings instead.
 
 The declaration is intentionally narrower than the complete adapter conformance profile.
 It provides the durable seam configuration validation needs without claiming that every

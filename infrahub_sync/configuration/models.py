@@ -9,6 +9,7 @@ from hashlib import sha256
 from types import MappingProxyType
 from typing import Any, Literal, cast
 
+from diffsync.enum import DiffSyncFlags  # noqa: TC002 - Pydantic resolves this annotation at runtime.
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_serializer, field_validator, model_validator
 
 from infrahub_sync import (
@@ -123,6 +124,126 @@ def _require_json_native(
     raise ValueError(msg)
 
 
+def _freeze_json(value: Any) -> Any:
+    """Return an immutable recursive representation of validated JSON content."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json(item) for item in value)
+    return value
+
+
+def _thaw_json(value: Any) -> Any:
+    """Return JSON containers from an immutable declared-content representation."""
+    if isinstance(value, Mapping):
+        return {key: _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json(item) for item in value]
+    return value
+
+
+class _ImmutableSchemaMappingFilter(SchemaMappingFilter):
+    """Package-local immutable form of a legacy schema filter."""
+
+    model_config = ConfigDict(frozen=True)
+
+    @field_validator("value")
+    @classmethod
+    def _freeze_value(cls, value: Any) -> Any:
+        return _freeze_json(value)
+
+    @field_serializer("value")
+    def _serialize_value(self, value: Any) -> Any:
+        return _thaw_json(value)
+
+
+class _ImmutableSchemaMappingTransform(SchemaMappingTransform):
+    """Package-local immutable form of a legacy schema transform."""
+
+    model_config = ConfigDict(frozen=True)
+
+
+class _ImmutableSchemaMappingField(SchemaMappingField):
+    """Package-local immutable form of a legacy schema field mapping."""
+
+    model_config = ConfigDict(frozen=True)
+
+    @field_validator("static")
+    @classmethod
+    def _freeze_static(cls, value: Any) -> Any:
+        return _freeze_json(value)
+
+    @field_serializer("static")
+    def _serialize_static(self, value: Any) -> Any:
+        return _thaw_json(value)
+
+
+class _ImmutableSchemaMappingModel(SchemaMappingModel):
+    """Package-local immutable form of one legacy schema mapping."""
+
+    model_config = ConfigDict(frozen=True)
+
+    identifiers: tuple[str, ...] | None = None
+    filters: tuple[_ImmutableSchemaMappingFilter, ...] | None = None
+    transforms: tuple[_ImmutableSchemaMappingTransform, ...] | None = None
+    fields: tuple[_ImmutableSchemaMappingField, ...] = ()
+
+
+class _ImmutableSyncAdapter(SyncAdapter):
+    """Package-local immutable form of legacy adapter settings."""
+
+    model_config = ConfigDict(frozen=True)
+
+    settings: Mapping[str, Any] | None = Field(default_factory=dict, validate_default=True)
+
+    @field_validator("settings")
+    @classmethod
+    def _freeze_settings(cls, value: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+        return cast("Mapping[str, Any] | None", _freeze_json(value))
+
+    @field_serializer("settings")
+    def _serialize_settings(self, value: Mapping[str, Any] | None) -> dict[str, Any] | None:
+        return cast("dict[str, Any] | None", _thaw_json(value))
+
+
+class _ImmutableSyncStore(SyncStore):
+    """Package-local immutable form of legacy store settings."""
+
+    model_config = ConfigDict(frozen=True)
+
+    settings: Mapping[str, Any] | None = Field(default_factory=dict, validate_default=True)
+
+    @field_validator("settings")
+    @classmethod
+    def _freeze_settings(cls, value: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+        return cast("Mapping[str, Any] | None", _freeze_json(value))
+
+    @field_serializer("settings")
+    def _serialize_settings(self, value: Mapping[str, Any] | None) -> dict[str, Any] | None:
+        return cast("dict[str, Any] | None", _thaw_json(value))
+
+
+class _ImmutableIncrementalConfig(IncrementalConfig):
+    """Package-local immutable form of legacy incremental settings."""
+
+    model_config = ConfigDict(frozen=True)
+
+
+class _ImmutableSyncConfig(SyncConfig):
+    """Deeply immutable declared configuration without changing legacy runtime models."""
+
+    model_config = ConfigDict(frozen=True)
+
+    store: _ImmutableSyncStore | None = None
+    source: _ImmutableSyncAdapter
+    destination: _ImmutableSyncAdapter
+    adapters_path: tuple[str, ...] | None = None
+    order: tuple[str, ...] = ()
+    schema_mapping: tuple[_ImmutableSchemaMappingModel, ...] = ()
+    diffsync_flags: tuple[str | DiffSyncFlags, ...] | None = ()
+    incremental: _ImmutableIncrementalConfig | None = None
+
+
 class CredentialReference(BaseModel):
     """Non-secret pointer to a runtime credential provider entry."""
 
@@ -165,7 +286,7 @@ class ConfigurationPackage(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     format_version: Literal[1] = 1
-    configuration: SyncConfig
+    configuration: _ImmutableSyncConfig
     package_metadata: ConfigurationPackageMetadata = Field(default_factory=ConfigurationPackageMetadata)
     credentials: Mapping[str, CredentialReference] = Field(default_factory=dict, validate_default=True)
 

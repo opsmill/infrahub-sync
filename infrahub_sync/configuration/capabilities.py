@@ -70,6 +70,26 @@ _SOURCE_ONLY: frozenset[AdapterRole] = frozenset({"source"})
 _BOTH: frozenset[AdapterRole] = frozenset({"source", "destination"})
 _CREATE_UPDATE: frozenset[WriteOperation] = frozenset({"create", "update"})
 
+
+def _validate_prometheus_configuration(
+    package: ConfigurationPackage,
+    role: AdapterRole,
+) -> tuple[ValidationFinding, ...]:
+    """Refuse custom headers because v1 cannot prove that their values are non-secret."""
+    adapter = package.configuration.source if role == "source" else package.configuration.destination
+    settings = adapter.settings or {}
+    if "headers" not in settings:
+        return ()
+    return (
+        ValidationFinding(
+            code="unsupported-prometheus-headers",
+            severity="error",
+            location=f"/configuration/{role}/settings/headers",
+            message="Prometheus custom headers are not supported in registered configuration packages",
+        ),
+    )
+
+
 BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
     {
         "aci": AdapterConfigurationCapabilities(
@@ -114,6 +134,7 @@ BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
             adapter_name="prometheus",
             roles=_SOURCE_ONLY,
             credential_setting_paths=("token", "username", "password"),
+            validator=_validate_prometheus_configuration,
         ),
         "slurpitsync": AdapterConfigurationCapabilities(
             adapter_name="slurpitsync",
