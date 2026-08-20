@@ -179,7 +179,7 @@ BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
             roles=_BOTH,
             allowed_settings=_GENERIC_REST_SETTINGS,
             credential_setting_paths=("token", "username", "password"),
-            supported_destination_write_operations=_CREATE_UPDATE,
+            supported_destination_write_operations=frozenset({"update"}),
             validator=_validate_relative_rest_mapping_endpoints,
         ),
         "prometheus": AdapterConfigurationCapabilities(

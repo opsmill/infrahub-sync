@@ -866,9 +866,16 @@ def test_all_bundled_adapter_modules_have_static_declarations() -> None:
 
     assert set(BUILTIN_ADAPTER_CAPABILITIES) == expected
     assert all(capability.contract_version == 1 for capability in BUILTIN_ADAPTER_CAPABILITIES.values())
-    assert BUILTIN_ADAPTER_CAPABILITIES["peeringmanager"].supported_destination_write_operations == {
-        "create",
-        "update",
+
+
+def test_bundled_destination_writes_only_advertise_remote_operations() -> None:
+    assert {
+        name: capability.supported_destination_write_operations
+        for name, capability in BUILTIN_ADAPTER_CAPABILITIES.items()
+        if "destination" in capability.roles
+    } == {
+        "infrahub": frozenset({"create", "update"}),
+        "peeringmanager": frozenset({"update"}),
     }
 
 
