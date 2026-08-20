@@ -127,3 +127,13 @@ def test_bundled_literal_setting_accesses_are_declared_or_deliberately_refused(a
     assert runtime_settings <= capability.allowed_settings | deliberately_refused
     assert capability.allowed_settings == closed_surface
     assert _settings_forwarding_targets(adapter_name) == {expected_target}
+
+
+@pytest.mark.parametrize("adapter_name", BUILTIN_ADAPTER_CAPABILITIES)
+def test_dynamic_settings_forwarding_is_explicit(adapter_name: str) -> None:
+    boundary = _DYNAMIC_FORWARDING_BOUNDARIES.get(adapter_name)
+    expected_targets = frozenset() if boundary is None else frozenset({boundary[0]})
+
+    targets = _settings_forwarding_targets(adapter_name)
+
+    assert targets == expected_targets
