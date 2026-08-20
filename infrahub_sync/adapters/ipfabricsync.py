@@ -59,6 +59,8 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
             msg = "Both url and auth must be specified! Please specify in the config or using `IPF_URL` and `IPF_TOKEN` environment variables."
             raise ValueError(msg)
 
+        # Registered settings, including verify_ssl, reach the optional client here.
+        # Optional-client signature conformance is tracked separately by INFP-654.
         return IPFClient(**settings)
 
     def model_loader(self, model_name: str, model: type[IpfabricsyncModel]) -> None:

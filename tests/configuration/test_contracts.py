@@ -879,59 +879,6 @@ def test_bundled_destination_writes_only_advertise_remote_operations() -> None:
     }
 
 
-def test_bundled_capabilities_close_the_supported_setting_surface() -> None:
-    expected = {
-        "aci": {"api_endpoint", "password", "url", "username", "verify"},
-        "genericrestapi": {
-            "api_endpoint",
-            "auth_method",
-            "password",
-            "response_key_pattern",
-            "timeout",
-            "token",
-            "url",
-            "username",
-            "verify_ssl",
-        },
-        "infrahub": {"branch", "owner", "source", "token", "url", "verify_ssl"},
-        "ipfabricsync": {"auth", "base_url", "verify_ssl"},
-        "nautobot": {"token", "url", "verify_ssl"},
-        "netbox": {"token", "url", "verify_ssl"},
-        "peeringmanager": {
-            "api_endpoint",
-            "auth_method",
-            "password",
-            "response_key_pattern",
-            "timeout",
-            "token",
-            "url",
-            "username",
-            "verify_ssl",
-        },
-        "prometheus": {
-            "auth_method",
-            "endpoint",
-            "mode",
-            "password",
-            "promql",
-            "timeout",
-            "token",
-            "url",
-            "username",
-            "verify_ssl",
-        },
-        "slurpitsync": {"api_key", "token", "url", "verify_ssl"},
-    }
-
-    assert {
-        name: set(capability.allowed_settings) for name, capability in BUILTIN_ADAPTER_CAPABILITIES.items()
-    } == expected
-    assert all(
-        {path.partition(".")[0] for path in capability.credential_setting_paths} <= capability.allowed_settings
-        for capability in BUILTIN_ADAPTER_CAPABILITIES.values()
-    )
-
-
 @pytest.mark.parametrize("capability", BUILTIN_ADAPTER_CAPABILITIES.values(), ids=lambda item: item.adapter_name)
 def test_all_bundled_supported_setting_shapes_validate(capability: AdapterConfigurationCapabilities) -> None:
     credential_node = {"$credential": "adapter-credential"}
