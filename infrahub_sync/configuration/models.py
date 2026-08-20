@@ -9,7 +9,7 @@ from hashlib import sha256
 from types import MappingProxyType
 from typing import Any, Literal, cast
 
-from diffsync.enum import DiffSyncFlags  # noqa: TC002 - Pydantic resolves this annotation at runtime.
+from diffsync.enum import DiffSyncFlags
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_serializer, field_validator, model_validator
 
 from infrahub_sync import (
@@ -247,9 +247,16 @@ class _ImmutableSyncConfig(SyncConfig):
     diffsync_flags: tuple[str | DiffSyncFlags, ...] | None = ()
     incremental: _ImmutableIncrementalConfig | None = None
 
-    @field_serializer("adapters_path", "order", "schema_mapping", "diffsync_flags")
+    @field_serializer("adapters_path", "order", "schema_mapping")
     def _serialize_collections(self, value: tuple[Any, ...] | None) -> list[Any] | None:
         return None if value is None else list(value)
+
+    @field_serializer("diffsync_flags")
+    def _serialize_diffsync_flags(
+        self,
+        value: tuple[str | DiffSyncFlags, ...] | None,
+    ) -> list[str | int] | None:
+        return None if value is None else [item.value if isinstance(item, DiffSyncFlags) else item for item in value]
 
 
 class CredentialReference(BaseModel):

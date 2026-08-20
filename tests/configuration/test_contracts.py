@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import math
 from collections.abc import Callable
 from datetime import datetime, timezone
-from types import MappingProxyType
 from typing import Any, cast
 
 import pytest
@@ -71,6 +72,7 @@ def _package_with_nested_declared_content() -> ConfigurationPackage:
         },
     }
     data["configuration"]["order"] = ["Device"]
+    data["configuration"]["diffsync_flags"] = ["SKIP_UNMATCHED_DST"]
     data["configuration"]["schema_mapping"] = [
         {
             "name": "Device",
@@ -132,13 +134,17 @@ def _mutate_schema_static_value(package: ConfigurationPackage) -> None:
 
 
 def _assert_json_containers(value: object) -> None:
-    assert not isinstance(value, (tuple, MappingProxyType))
     if isinstance(value, dict):
-        for item in value.values():
+        for key, item in value.items():
+            assert type(key) is str
             _assert_json_containers(item)
     elif isinstance(value, list):
         for item in value:
             _assert_json_containers(item)
+    else:
+        assert value is None or type(value) in {str, int, float, bool}
+        if type(value) is float:
+            assert math.isfinite(value)
 
 
 def test_checksum_is_stable_across_mapping_order() -> None:
@@ -219,6 +225,7 @@ def test_default_package_dump_is_json_native_and_round_trips() -> None:
     dumped = package.model_dump(by_alias=True)
 
     _assert_json_containers(dumped)
+    json.dumps(dumped)
     reparsed = ConfigurationPackage.model_validate(dumped)
     assert reparsed.declared_content() == package.declared_content()
     assert reparsed.checksum() == package.checksum()
