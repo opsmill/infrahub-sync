@@ -785,7 +785,7 @@ class Potenda:
         if skipped_deletes:
             logger.warning(
                 "Apply of run %s: %d recorded delete operation(s) were not executed. Applying deletes "
-                "is out of scope for this release; their identifiers are recorded on the run under "
+                "is not supported; their identifiers are recorded on the run under "
                 "'skipped_delete_operations'.",
                 run_id,
                 len(skipped_deletes),
@@ -883,7 +883,7 @@ class Potenda:
         When `parallel=True`, computes **every** tier's diff first, writes the plan
         artifact, and only then executes the retained diffs tier by tier. The two loops
         are what makes FR-001's "the artifact exists before anything is written" true in
-        tier mode: interleaving diff and sync — as this branch used to — writes the first
+        tier mode: interleaving diff and sync writes the first
         tier before the second tier has even been compared, so no complete artifact can
         precede the first write, and `sync --parallel` is the default.
 

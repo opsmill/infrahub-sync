@@ -1,8 +1,9 @@
 """Separate Prefect flow for API-created durable Sync runs."""
 
 # Deliberately no ``from __future__ import annotations``. Prefect parameter
-# validation must receive the concrete Literal at runtime; the preserved
-# Developer Preview flow documents the affected Prefect/Pydantic versions.
+# validation must receive the concrete Literal at runtime; the direct Prefect
+# flow (``infrahub_sync/orchestration/flow.py``) documents the affected
+# Prefect/Pydantic versions.
 
 import logging
 import os
@@ -24,7 +25,13 @@ from infrahub_sync.execution import (
     resolve_sync_instance,
     sanitize_exception_chain,
 )
-from infrahub_sync.orchestration.flow import BRIDGED_LEVEL, SOURCE_LOGGER_NAME, RunLogger, RunLoggerBridge
+from infrahub_sync.orchestration.flow import (
+    _REMOTE_LOGGER_OWNERSHIP_LOCK,
+    BRIDGED_LEVEL,
+    SOURCE_LOGGER_NAME,
+    RunLogger,
+    RunLoggerBridge,
+)
 from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.product_store import ProductProjection, local_product_projection
@@ -58,19 +65,20 @@ def _remote_log_bridge(
     if not prefect_context:
         yield
         return
-    source_logger = logging.getLogger(SOURCE_LOGGER_NAME)
-    bridge = RunLoggerBridge(run_logger, secrets=secrets)
-    previous_level = source_logger.level
-    previous_propagate = source_logger.propagate
-    source_logger.addHandler(bridge)
-    source_logger.setLevel(BRIDGED_LEVEL)
-    source_logger.propagate = False
-    try:
-        yield
-    finally:
-        source_logger.removeHandler(bridge)
-        source_logger.setLevel(previous_level)
-        source_logger.propagate = previous_propagate
+    with _REMOTE_LOGGER_OWNERSHIP_LOCK:
+        source_logger = logging.getLogger(SOURCE_LOGGER_NAME)
+        bridge = RunLoggerBridge(run_logger, secrets=secrets)
+        previous_level = source_logger.level
+        previous_propagate = source_logger.propagate
+        source_logger.addHandler(bridge)
+        source_logger.setLevel(BRIDGED_LEVEL)
+        source_logger.propagate = False
+        try:
+            yield
+        finally:
+            source_logger.removeHandler(bridge)
+            source_logger.setLevel(previous_level)
+            source_logger.propagate = previous_propagate
 
 
 def _runtime() -> tuple[str, ProductProjection]:

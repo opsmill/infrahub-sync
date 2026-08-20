@@ -54,7 +54,7 @@ from infrahub_sync.orchestration.flow import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from prefect.client.schemas.objects import FlowRun
     from prefect.states import State
@@ -694,17 +694,27 @@ class _InjectedEngine:
     so the bridged-record scan has real records to scan.
     """
 
-    def __init__(self, *, run_dir: Path, rows: list[dict[str, Any]], fault: BaseException | None) -> None:
+    def __init__(
+        self,
+        *,
+        run_dir: Path,
+        rows: list[dict[str, Any]],
+        fault: BaseException | None,
+        source_log_message: str | None = None,
+    ) -> None:
         self.run_dir = run_dir
         self.run_id = run_dir.name
         self.top_level = ["InfraDevice"]
         self.force_full_extract = False
         self.rows = rows
         self.fault = fault
+        self.source_log_message = source_log_message
 
     def load_both_sides(self) -> None:
         """Log a lifecycle line, then raise the injected fault if there is one."""
         logging.getLogger(CHILD_LOGGER_NAME).info("Load: Importing data from MockDB")
+        if self.source_log_message is not None:
+            logging.getLogger(CHILD_LOGGER_NAME).warning(self.source_log_message)
         if self.fault is not None:
             raise self.fault
 
@@ -731,18 +741,25 @@ class _InjectedFactory:
         cache_root: Path,
         rows: list[dict[str, Any]] | None = None,
         fault_factory: Any = None,  # noqa: ANN401 - Callable[[], BaseException] | None
+        source_log_message: str | None = None,
     ) -> None:
         self.calls: list[dict[str, object]] = []
         self.cache_root = cache_root
         self.rows = rows if rows is not None else []
         self.fault_factory = fault_factory
+        self.source_log_message = source_log_message
 
     def __call__(self, **kwargs: object) -> Any:  # noqa: ANN401 - a fake engine, not a real Potenda
         self.calls.append(kwargs)
         run_dir = self.cache_root / CANARY_RUN_ID
         run_dir.mkdir(parents=True, exist_ok=True)
         fault = self.fault_factory() if self.fault_factory is not None else None
-        return _InjectedEngine(run_dir=run_dir, rows=list(self.rows), fault=fault)
+        return _InjectedEngine(
+            run_dir=run_dir,
+            rows=list(self.rows),
+            fault=fault,
+            source_log_message=self.source_log_message,
+        )
 
 
 def _bind_seam(monkeypatch: pytest.MonkeyPatch, factory: _InjectedFactory) -> None:
@@ -786,6 +803,65 @@ def _assert_canary_free(surfaces: dict[str, str]) -> None:
 # --------------------------------------------------------------------------- #
 # T022 — canary redaction scan (DBA-008, SC-005)
 # --------------------------------------------------------------------------- #
+
+
+@pytest.mark.usefixtures("prefect_harness", "canary_environment")
+@pytest.mark.parametrize(
+    "fault_factory",
+    [
+        pytest.param(None, id="success"),
+        pytest.param(lambda: RuntimeError("injected failure"), id="failure"),
+    ],
+)
+def test_direct_flow_redacts_source_logs_and_owns_propagation(
+    monkeypatch: pytest.MonkeyPatch,
+    source_logger: logging.Logger,
+    tmp_path: Path,
+    fault_factory: Callable[[], BaseException] | None,
+) -> None:
+    """The direct flow is the sole, sanitized owner of source-log forwarding."""
+
+    class AmbientHandler(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.messages: list[str] = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            if record.name.startswith(SOURCE_LOGGER_NAME):
+                self.messages.append(record.getMessage())
+
+    source_log_message = (
+        f"credentials env={ENV_TOKEN_CANARY}/{ENV_PATTERN_CANARY} settings={SOURCE_TOKEN_CANARY}/{DEST_PASSWORD_CANARY}"
+    )
+    factory = _InjectedFactory(
+        cache_root=tmp_path / "cache" / CANARY_SYNC_NAME,
+        rows=[_plan_row("dev01")],
+        fault_factory=fault_factory,
+        source_log_message=source_log_message,
+    )
+    run_logger = _StubRunLogger()
+    monkeypatch.setattr("infrahub_sync.orchestration.flow.get_run_logger", lambda: run_logger)
+    _bind_seam(monkeypatch, factory)
+
+    ambient = AmbientHandler()
+    root_logger = logging.getLogger()
+    original_handlers = list(source_logger.handlers)
+    source_logger.setLevel(logging.CRITICAL)
+    monkeypatch.setattr(source_logger, "propagate", True)
+    root_logger.addHandler(ambient)
+    try:
+        state = infrahub_sync_run(CANARY_SYNC_NAME, "plan", return_state=True)  # ty: ignore[no-matching-overload] - TODO: ty cannot select prefect's ParamSpec return_state overload
+    finally:
+        root_logger.removeHandler(ambient)
+
+    assert state.is_failed() if fault_factory is not None else state.is_completed()
+    forwarded = "\n".join(run_logger.rendered)
+    assert f"{CHILD_LOGGER_NAME} | credentials env={REDACTED}/{REDACTED} settings={REDACTED}/{REDACTED}" in forwarded
+    _assert_canary_free({"forwarded log records": forwarded})
+    assert ambient.messages == []
+    assert source_logger.handlers == original_handlers
+    assert source_logger.level == logging.CRITICAL
+    assert source_logger.propagate is True
 
 
 @pytest.mark.usefixtures("prefect_harness", "canary_environment")

@@ -1,4 +1,4 @@
-# Implementation Plan: Prefect-Managed Remote Infrahub Sync Run (Developer Preview)
+# Implementation Plan: Prefect-Managed Remote Infrahub Sync Run
 
 **Branch**: `001-prefect-managed-remote-run-local-dp-001` | **Date**: 2026-07-30 | **Spec**: `dev/specs/archive/001-prefect-managed-remote-run/spec.md`
 
@@ -67,7 +67,7 @@ README caveat mandated by spec Constraints).
 **Project Type**: Single Python package with a Typer CLI + optional orchestration
 integration; examples under `examples/`.
 
-**Performance Goals**: None new — preview scope. The qualified demonstration is a
+**Performance Goals**: None new — feature scope. The qualified demonstration is a
 5-record fixture; remote runs pin today's CLI defaults (full extract, concurrent side
 load) with progress display disabled.
 
@@ -170,7 +170,7 @@ examples/
     ├── schemas/infra_device.yml#   loadable InfraDevice(name, type) schema (R-3 enabling work)
     └── requests/               #   documented REST bodies (create run, get state, get logs)
 
-docs/docs/                      # MODIFIED: one reference page for the optional Prefect preview
+docs/docs/                      # MODIFIED: one reference page for the optional Prefect feature
 
 tests/
 ├── test_execution_surface.py   # NEW: validation refusals (parametrized), RunResult schema,

@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from diffsync import Adapter, DiffSyncModel
+from diffsync.exceptions import ObjectNotFound
 from infrahub_sdk import (
     Config,
     InfrahubClientSync,
@@ -30,6 +31,7 @@ from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.generator import has_field
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.errors import (
+    NullRelationshipValueError,
     PeerAmbiguousError,
     PeerNotFoundError,
     SkippedDeleteOperation,
@@ -122,6 +124,16 @@ def resolve_peer_node(
     return peer_node
 
 
+def _relationship_input_data(peer_id: str | None, source: str | None, owner: str | None) -> dict[str, Any]:
+    """Build cardinality-many relationship input with optional attribution."""
+    data: dict[str, Any] = {"id": peer_id}
+    if source:
+        data["source"] = source
+    if owner:
+        data["owner"] = owner
+    return data
+
+
 def update_node(
     node: InfrahubNodeSync,
     attrs: Mapping[str, Any],
@@ -137,8 +149,8 @@ def update_node(
     Args:
         node: The node to update.
         attrs: The attributes and relationships to update.
-        source: Optional source ID to set on updated attributes.
-        owner: Optional owner ID to set on updated attributes.
+        source: Optional source ID to set on updated attributes and relationships.
+        owner: Optional owner ID to set on updated attributes and relationships.
     """
     schemas: Mapping[str, MainSchemaTypesAPI] = node._client.schema.all(branch=node._branch)
     for attr_name, attr_value in attrs.items():
@@ -169,7 +181,16 @@ def update_node(
                         if not peer_node:
                             logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, attr_value)
                             continue
+                        # Keep the peer object so the SDK can detect resource pools
+                        # and generate a ``from_pool`` allocation when required.
                         setattr(node, attr_name, peer_node)
+                        relationship: RelatedNodeSync = getattr(node, attr_name)
+                        # The SDK renders ``from_pool`` before relationship properties,
+                        # so source and owner do not reach resource-pool allocations.
+                        if source:
+                            relationship.source = source
+                        if owner:
+                            relationship.owner = owner
                     else:
                         # TODO: delete the old relationship data ?
                         pass
@@ -200,7 +221,7 @@ def update_node(
                         attr_manager.remove(existing_id)
 
                     for new_id in new_only:
-                        attr_manager.add(new_id)
+                        attr_manager.add(_relationship_input_data(new_id, source, owner))
 
     return node
 
@@ -484,7 +505,7 @@ class PeerResolver:
           specified remedy for a kind whose HFID does not cover its plan identity is the
           `<rel>__ids` fallback — resolve the reference component's own peer first,
           recursively through this same resolver, then filter `<rel>__ids=[<id>]` — which
-          this release does not implement; FR-024 already warns at plan time about exactly
+          planned apply does not implement; FR-024 already warns at plan time about exactly
           this condition, and this is its apply-time counterpart;
         - a kind that declares no usable HFID component at all falls back to the identity's
           own direct scalars as `<attr>__value` filters, which is the only thing the apply
@@ -705,10 +726,51 @@ class PeerIdentifierError(ValueError):
         super().__init__(msg)
 
 
+def _sdk_node_has_identifiers(node: object, identifiers: tuple[str, ...]) -> bool:
+    """Return whether an SDK node carries every DiffSync identifier value."""
+    schema = getattr(node, "_schema", None)
+    attributes = {attribute.name for attribute in getattr(schema, "attributes", ())}
+    relationships = {relationship.name: relationship for relationship in getattr(schema, "relationships", ())}
+    for identifier in identifiers:
+        if identifier in attributes:
+            attribute = getattr(node, identifier, None)
+            if attribute is None or getattr(attribute, "value", None) is None:
+                return False
+            continue
+
+        relationship = relationships.get(identifier)
+        # Fail closed for unknown fields and cardinality-many relationship
+        # identifiers instead of guessing an identity from an ambiguous value.
+        if relationship is None or relationship.cardinality != "one":
+            return False
+        related_node = getattr(node, identifier, None)
+        if related_node is None or getattr(related_node, "id", None) is None:
+            return False
+    return True
+
+
+def _unresolved_peer_identifiers(
+    peer_data: Mapping[str, Any],
+    identifiers: tuple[str, ...],
+    *,
+    verified_null_identifiers: frozenset[str],
+) -> tuple[str, ...]:
+    """Return identifiers absent from peer data or carrying an unverified null."""
+    return tuple(
+        identifier
+        for identifier in identifiers
+        if identifier not in peer_data
+        or (peer_data[identifier] is None and identifier not in verified_null_identifiers)
+    )
+
+
 class InfrahubAdapter(DiffSyncMixin, Adapter):
     type = "Infrahub"
 
     continue_on_error: bool = False
+    # Cache state: absent means hydration has not been attempted; None means
+    # one attempt was exhausted; a string is the resolved DiffSync identity.
+    _peer_unique_ids: dict[tuple[str, str], str | None]
 
     # AD078 — destination kinds whose rendered mutation has already been reported as
     # unkeyed. The report is once per kind, not once per operation, because
@@ -734,6 +796,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         super().__init__(*args, **kwargs)
         self.target = target
         self.config = config
+        self._peer_unique_ids = {}
 
         settings = adapter.settings or {}
         infrahub_url, infrahub_branch = resolved_endpoint(settings, branch)
@@ -863,7 +926,10 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         element = next((el for el in self.config.schema_mapping if el.name == model_name), None)
         if element:
             # Retrieve all nodes corresponding to model_name (list of InfrahubNodeSync)
-            nodes = self.client.all(kind=model_name, include=list(model._attributes), populate_store=True)
+            # Keep bulk loads attribute-only: bounded peer hydration verifies missing
+            # identifiers, while SYNC-68 tracks measured evaluation of bulk prefetch.
+            include = list(model._attributes)
+            nodes = self.client.all(kind=model_name, include=include, populate_store=True)
 
             # Transform the list of InfrahubNodeSync into a list of (node, dict) tuples
             node_dict_pairs = [(node, self.infrahub_node_to_diffsync(node=node)) for node in nodes]
@@ -922,9 +988,63 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             logger.warning("Unable to map '%s' with kind '%s' - Ignored", peer_node, peer_kind)
             return None
 
-        peer_data = self.infrahub_node_to_diffsync(peer_node)
+        peer_id = str(peer_node.id)
+        cache_key = (peer_kind, peer_id)
+        hydration_attempted = cache_key in self._peer_unique_ids
         identifiers = tuple(peer_model._identifiers)
-        missing = tuple(k for k in identifiers if k not in peer_data)
+        if hydration_attempted:
+            cached_unique_id = self._peer_unique_ids[cache_key]
+            if cached_unique_id is not None:
+                self._reconcile_peer_sdk_alias(
+                    peer_kind=peer_kind,
+                    peer_id=peer_id,
+                    unique_id=cached_unique_id,
+                    identifiers=identifiers,
+                )
+                return cached_unique_id
+
+        peer_data = self.infrahub_node_to_diffsync(peer_node)
+        verified_null_identifiers: frozenset[str] = frozenset()
+        missing = _unresolved_peer_identifiers(
+            peer_data,
+            identifiers,
+            verified_null_identifiers=verified_null_identifiers,
+        )
+        hydrated = False
+        if missing and not hydration_attempted:
+            try:
+                hydrated_peer = self.client.get(
+                    id=peer_node.id,
+                    kind=peer_kind,
+                    include=list(identifiers),
+                    populate_store=False,
+                )
+            except NodeNotFoundError:
+                hydrated_peer = None
+            if hydrated_peer is not None:
+                hydrated = True
+                hydrated_peer_data = self.infrahub_node_to_diffsync(hydrated_peer)
+                attribute_names = {attribute.name for attribute in getattr(hydrated_peer._schema, "attributes", ())}
+                # Top-level model loads are full fetches. Peer payloads may be shallow,
+                # so only this successful hydration can verify a nullable attribute.
+                verified_null_identifiers = frozenset(
+                    identifier
+                    for identifier in missing
+                    if identifier in attribute_names
+                    and identifier in hydrated_peer_data
+                    and hydrated_peer_data[identifier] is None
+                )
+                hydrated_identifiers = {
+                    identifier: hydrated_peer_data[identifier]
+                    for identifier in identifiers
+                    if hydrated_peer_data.get(identifier) is not None or identifier in verified_null_identifiers
+                }
+                peer_data = {**peer_data, **hydrated_identifiers}
+            missing = _unresolved_peer_identifiers(
+                peer_data,
+                identifiers,
+                verified_null_identifiers=verified_null_identifiers,
+            )
         if missing:
             err = PeerIdentifierError(
                 parent_kind=parent_node._schema.kind,
@@ -936,18 +1056,69 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 missing_keys=missing,
                 present_keys=tuple(peer_data.keys()),
             )
+            self._peer_unique_ids[cache_key] = None
             if self.continue_on_error:
-                logger.warning("Skipping peer relationship: %s", err)
+                if not hydration_attempted:
+                    logger.warning("Skipping peer relationship: %s", err)
                 return None
             raise err
 
         unique_id = peer_model.create_unique_id(**{k: peer_data[k] for k in identifiers})
-        peer_item = self.store.get(model=peer_kind, identifier=unique_id)
-        if not peer_item:
+        try:
+            peer_item = self.store.get(model=peer_kind, identifier=unique_id)
+        except ObjectNotFound:
             peer_item = peer_model(**peer_data)
             self.update_or_add_model_instance(peer_item)
-            self.client.store.set(key=unique_id, node=peer_node)
-        return peer_item.get_unique_id()
+
+        # Identifier-only hydration is deliberately adapter-local: inserting its
+        # narrow result into the shared SDK store can replace a fuller node that
+        # was loaded earlier. Reconciliation chooses only nodes that carry the
+        # complete DiffSync identity.
+        self._reconcile_peer_sdk_alias(
+            peer_kind=peer_kind,
+            peer_id=peer_id,
+            unique_id=unique_id,
+            identifiers=identifiers,
+            fallback_node=None if hydrated else peer_node,
+        )
+        resolved_unique_id = peer_item.get_unique_id()
+        self._peer_unique_ids[cache_key] = resolved_unique_id
+        if verified_null_identifiers:
+            logger.warning(
+                "Resolved peer %s[%s] with verified null attribute identifier(s): %s",
+                peer_kind,
+                peer_id,
+                sorted(verified_null_identifiers),
+            )
+        return resolved_unique_id
+
+    def _reconcile_peer_sdk_alias(
+        self,
+        *,
+        peer_kind: str,
+        peer_id: str,
+        unique_id: str,
+        identifiers: tuple[str, ...],
+        fallback_node: InfrahubNodeSync | None = None,
+    ) -> None:
+        """Point SDK UUID and identity lookups at a complete cached peer."""
+        sdk_peer_by_uuid = self.client.store.get(key=peer_id, kind=peer_kind, raise_when_missing=False)
+        sdk_peer_by_identity = self.client.store.get(key=unique_id, kind=peer_kind, raise_when_missing=False)
+        sdk_peer = next(
+            (
+                peer
+                for peer in (sdk_peer_by_uuid, sdk_peer_by_identity, fallback_node)
+                if peer is not None and _sdk_node_has_identifiers(peer, identifiers)
+            ),
+            None,
+        )
+        if sdk_peer is None:
+            # This is the hydration-only path: a non-hydrated success supplies
+            # an identity-complete fallback. Leave two shallow store entries untouched.
+            return
+        if sdk_peer_by_uuid is sdk_peer and sdk_peer_by_identity is sdk_peer:
+            return
+        self.client.store.set(key=unique_id, node=sdk_peer)
 
     def infrahub_node_to_diffsync(self, node: InfrahubNodeSync) -> dict[str, Any]:
         """
@@ -1052,7 +1223,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         - **a component crosses a relationship** — the render carries neither key today for a
           reason this outcome does not control (the SDK cannot form the `hfid` from a peer
           supplied as a resolved node id), so it **warns once per kind and proceeds**;
-          refusing would withdraw every relationship-bearing kind from what this release
+          refusing would withdraw every relationship-bearing kind from what planned apply
           delivers, and the destination's convergent write may still key server-side;
         - **no HFID declared at all** — unkeyed is a schema fact rather than a defect, and
           FR-024 explicitly permits such a kind and requires the run to survive it, so it
@@ -1151,13 +1322,15 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 destination kind is not accounted for by the payload and the operation.
             UnkeyedWriteRefusedError: the rendered mutation is unkeyed for a kind whose
                 human-friendly ID is all-direct.
+            NullRelationshipValueError: a mandatory cardinality-one relationship is null
+                in the planned payload.
             PeerNotFoundError: a peer identity matches no destination object.
             PeerAmbiguousError: a peer identity matches more than one.
         """
         if operation.action == "delete":
             msg = (
                 f"Operation {operation.operation_id!r} is a delete of a {operation.kind!r} object. "
-                "Applying deletes is out of scope for this release, so it was not executed and the "
+                "Applying deletes is not supported, so the delete was not executed and the "
                 "destination was not touched."
             )
             raise SkippedDeleteOperation(msg)
@@ -1168,8 +1341,49 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             raise TypeError(msg)
 
         # The payload is `keys` union `source_attrs`, so it already carries the identity
-        # components the convergent write keys on (AD042).
-        data: dict[str, Any] = dict(operation.payload or {})
+        # components the convergent write keys on (AD042). The v1 plan contract cannot
+        # distinguish an absent optional to-one relationship from an intended clear. Keep
+        # create's established omission behavior; on update, disclose that the null is a
+        # no-op rather than silently claiming convergence. A mandatory null is invalid and
+        # must stop here before the SDK can render it as a relationship id.
+        payload = operation.payload or {}
+        null_to_one_relationships = [
+            relationship
+            for relationship in node_schema.relationships
+            if relationship.cardinality == "one" and relationship.name in payload and payload[relationship.name] is None
+        ]
+        mandatory_null_fields = sorted(
+            relationship.name for relationship in null_to_one_relationships if not relationship.optional
+        )
+        if mandatory_null_fields:
+            fields = ", ".join(repr(field) for field in mandatory_null_fields)
+            msg = (
+                f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} carries "
+                f"null for mandatory cardinality-one relationship field(s) {fields}. The operation "
+                "was refused before SDK rendering and no destination write was attempted."
+            )
+            raise NullRelationshipValueError(msg)
+
+        optional_null_fields = sorted(
+            relationship.name for relationship in null_to_one_relationships if relationship.optional
+        )
+        if operation.action == "update" and optional_null_fields:
+            logger.warning(
+                "Planned update %s for destination kind %s carries null for optional cardinality-one "
+                "relationship field(s) %s. Plan format v1 cannot distinguish an absent relationship "
+                "from an intended clear, so the field is omitted and the destination relationship is "
+                "not cleared. Clear it directly at the destination, or use a plan format that represents "
+                "relationship clears, if the clear was intended.",
+                operation.operation_id,
+                operation.kind,
+                ", ".join(optional_null_fields),
+            )
+        omitted_null_relationships = set(optional_null_fields)
+        data: dict[str, Any] = {
+            field: value
+            for field, value in payload.items()
+            if value is not None or field not in omitted_null_relationships
+        }
         references = list(operation.relationships or ())
         for reference in references:
             peer_ids = [

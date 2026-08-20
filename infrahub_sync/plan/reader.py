@@ -279,8 +279,8 @@ def _parse_manifest(raw: RawPlanArtifact, run_id: str) -> tuple[PlanManifest, di
             found=f"a JSON {type(mapping).__name__}",
         )
 
-    # The version gate runs before the rest of the manifest is interpreted: a revision this
-    # release does not understand cannot have its remaining fields meaningfully read
+    # The version gate runs before the rest of the manifest is interpreted: an unsupported
+    # revision cannot have its remaining fields meaningfully read
     # (PD-006). A manifest with **no** `format_version` at all is incomplete, not
     # forward-dated, so it is torn rather than a version refusal.
     if "format_version" not in mapping:
@@ -293,7 +293,7 @@ def _parse_manifest(raw: RawPlanArtifact, run_id: str) -> tuple[PlanManifest, di
     found_version = mapping["format_version"]
     # The `isinstance` guard runs first: an unhashable hand-edited value like
     # `[2]` would raise `TypeError` from the frozenset membership test. A non-integer is a
-    # version this release does not support, so it takes the version refusal below.
+    # unsupported version, so it takes the version refusal below.
     if not isinstance(found_version, int) or found_version not in SUPPORTED_FORMAT_VERSIONS:
         msg = (
             f"The plan artifact of run {run_id!r} declares format version {found_version!r}, which "

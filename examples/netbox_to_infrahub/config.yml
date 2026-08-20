@@ -7,8 +7,8 @@
 #
 #   1. Auto-tiered write order. The `order:` list has been removed; the engine
 #      derives tiers from `schema_mapping[].fields[].reference` and groups
-#      kinds that can be written in parallel. Add `--parallel` to `sync` to
-#      enforce a hard barrier between tiers.
+#      kinds that can be written in parallel. Tiered parallel execution is the
+#      default; pass `--no-parallel` when you need serial execution.
 #
 #   2. Sidecar cache and the saved plan artifact. Every `diff` writes
 #      per-resource snapshots, a `plan.parquet` for querying, and a `plan/`
@@ -17,11 +17,13 @@
 #      pass it to `diff --from-plan` to review the plan, and to `apply` to
 #      apply it without re-extracting the source.
 #
-# Usage:
-#   uv run infrahub-sync diff --name from-netbox --directory sync-projects
-#   uv run infrahub-sync diff --name from-netbox --from-plan <run_id> --directory sync-projects
-#   uv run infrahub-sync apply --name from-netbox --run-id <run_id> --directory sync-projects
-#   uv run infrahub-sync sync --name from-netbox --directory sync-projects --parallel
+# Usage from this repository's root. If you copy the project elsewhere, replace
+# `examples` with the directory containing the copied project:
+#   uv run infrahub-sync diff --name from-netbox --directory examples
+#   uv run infrahub-sync diff --name from-netbox --from-plan <run_id> --directory examples
+#   uv run infrahub-sync apply --name from-netbox --run-id <run_id> --directory examples \
+#     --expected-checksum <plan_checksum_from_review>
+#   uv run infrahub-sync sync --name from-netbox --directory examples
 #
 # ---------------------------------------------------------------------------
 
@@ -314,7 +316,7 @@ schema_mapping:
       - name: mac_address
         mapping: mac_address
       - name: l2_mode
-        mapping: mode.value
+        mapping: l2_mode
       - name: mtu
         mapping: mtu
       - name: ip_addresses
@@ -334,6 +336,17 @@ schema_mapping:
         mapping: lag
         reference: InterfaceLag
       # TODO: many fields are not implemented in the schema (mgmt_only, type, duplex ...)
+    transforms:
+      # NetBox q-in-q is valid, but this destination schema exposes only
+      # access/trunk/trunk_all. The named undefined value makes StrictUndefined
+      # refuse q-in-q explicitly instead of applying a lossy translation;
+      # `or none` evaluates undefined results so every other unknown mode fails too.
+      - &netbox_l2_mode_transform
+        field: l2_mode
+        expression: >-
+          {{ ({'access': 'access', 'tagged': 'trunk', 'tagged-all': 'trunk_all',
+          'q-in-q': q_in_q_requires_destination_schema_support}[mode.value] or none)
+          if mode is defined and mode is not none else none }}
     filters: # Filters to only get the "physical interfaces"
       # NOTE: Netbox's `type` is a nested {value, label} object, not a plain
       # string — filtering on bare `type` compares against the dict itself
@@ -369,7 +382,7 @@ schema_mapping:
       - name: mac_address
         mapping: mac_address
       - name: l2_mode
-        mapping: mode.value
+        mapping: l2_mode
       - name: ip_addresses
         mapping: ip_addresses
         reference: IpamIPAddress
@@ -383,6 +396,8 @@ schema_mapping:
         mapping: device
         reference: DcimDevice
       # TODO: many fields are not implemented in the schema (mgmt_only, type, duplex ...)
+    transforms:
+      - *netbox_l2_mode_transform
     filters: # Filters to only get the "virtual interfaces"
       - field: type.value
         operation: "=="
@@ -406,7 +421,7 @@ schema_mapping:
       - name: mac_address
         mapping: mac_address
       - name: l2_mode
-        mapping: mode.value
+        mapping: l2_mode
       - name: ip_addresses
         mapping: ip_addresses
         reference: IpamIPAddress
@@ -428,6 +443,7 @@ schema_mapping:
         expression: |-
           {% set suffix = name[(name.rstrip('0123456789'))|length:] %}
           {{ suffix | int if suffix else None }}
+      - *netbox_l2_mode_transform
     filters: # Filters to only get the "lag interfaces"
       - field: type.value
         operation: "=="

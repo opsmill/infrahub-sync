@@ -77,9 +77,9 @@ infrahub-sync sync --name my_project --directory configs --diff --show-progress
 
 ### Unresolvable source references fail the run
 
-**This is a behavior change in this release.** Both `diff` and `sync` now derive a plan from the
-comparison before anything is written, and a source record referencing a peer the loaded source
-cannot resolve **fails the whole run** at that point:
+Both `diff` and `sync` derive a plan from the
+comparison before any destination data is written, and a source record referencing a peer the
+loaded source cannot resolve **fails the whole run** at that point:
 
 ```text
 ERROR | The peer 'leaf-99' referenced by field 'device' of kind 'InterfacePhysical' is not present
@@ -91,8 +91,8 @@ ERROR | The peer 'leaf-99' referenced by field 'device' of kind 'InterfacePhysic
 The run stops with that error and **nothing is written to the destination**. Previously the same
 source data completed: the destination write path logged `Unable to find … Ignored` for the
 unresolvable link and carried on, so the object was written with that relationship silently absent.
-A configuration that syncs today can therefore start failing on this release without the source or
-the configuration having changed.
+A configuration created for older behavior can therefore fail after upgrading even when the source
+and configuration have not changed.
 
 **`--continue-on-error` does not soften it.** That flag covers peer identifiers missing while a
 system is being *loaded*; a reference the source itself cannot resolve is fatal either way. The
@@ -134,8 +134,9 @@ infrahub-sync diff --name from-netbox --directory examples/
 # 2. Review the saved plan — reads the artifact, contacts nothing
 infrahub-sync diff --name from-netbox --directory examples/ --from-plan 20260518T1430-abc12345
 
-# 3. Apply the reviewed plan — no source extraction
-infrahub-sync apply --name from-netbox --run-id 20260518T1430-abc12345 --directory examples/
+# 3. Apply the reviewed plan — copy the checksum printed by step 2
+infrahub-sync apply --name from-netbox --run-id 20260518T1430-abc12345 --directory examples/ \
+  --expected-checksum 9b1c4f0a7e5d3268b4a17c90ef2d5813a6c04b7fe98213d5c6a0b74e1f83d2c9
 ```
 
 For the full on-disk layout of the plan artifact and the rest of the run directory, see the
@@ -244,7 +245,7 @@ count, and every delete the `--detail` listing shows is marked `(not executed)`:
 
 ```text
 NOTE  1 delete operation(s) are recorded in this plan and NONE will be executed against the
-      destination by this release. Applying this plan will complete successfully and record
+      destination. An apply of this plan that passes its checks and writes records
       1 skipped deletes on the run. Every delete record the --detail listing shows carries a
       "(not executed)" marker — a --kind filter may narrow the listing so that none of them
       are shown.
@@ -311,17 +312,18 @@ completed apply an operator must not have to go looking for. A delete-free apply
 line at `INFO` instead, which keeps `infrahub-sync --quiet apply ...` silent when there is nothing to
 disclose.
 
-**This is a designed limitation of this release, not a failure.** Applying deletes is out of scope
-here and is assigned to later work. An operator who runs this against a non-pristine destination —
-one holding objects the source no longer has — will meet a non-zero skipped-delete count on every
-apply, and should not read it as a broken run. The skipped identifiers are recorded on the run, so
-the difference between what you reviewed and what was written is always readable.
+**This is a designed limitation, not a failure.** Applying deletes is not supported. An operator
+who applies a plan holding delete records — derived from a full destination load against a
+destination holding objects the source no longer has — will meet a non-zero skipped-delete count,
+and should not read it as a broken run. (A plan derived from an incremental destination load may
+compute no deletes at all.) The skipped identifiers are recorded on the run, so the difference
+between what you reviewed and what was written is always readable.
 
 #### Convergence is not verified for relationship-keyed kinds
 
 For a destination kind whose convergence key crosses a relationship — a human-friendly ID with a
-component like `site__name__value` rather than a plain attribute — **convergence is not verified in
-this release**. The client cannot render that key from a peer supplied as a resolved node id, so the
+component like `site__name__value` rather than a plain attribute — **convergence is not verified**.
+The client cannot render that key from a peer supplied as a resolved node id, so the
 apply warns once per kind — as it renders the mutation, before issuing it — and issues the write
 anyway:
 
@@ -334,16 +336,16 @@ WARNING | Planned write: the mutation rendered for destination kind InfraInterfa
 ```
 
 The destination may still key the write server-side, in which case re-applying converges normally.
-But if it does not, **a duplicate object of that kind is the recorded limitation of this release**,
+But if it does not, **a duplicate object of that kind is a known limitation**,
 not something you did wrong. Watch for the warning, and check that kind at the destination before
 re-applying the same plan. A kind that declares no human-friendly ID at all warns on the same terms.
 
 **What this limits, stated plainly.** Safe re-application — apply the same plan twice, converge on
-the same objects — is a property this release establishes for kinds whose convergence key is made of
-plain attributes. It is **not established** for a kind whose key crosses a relationship. Whether such
+the same objects — is established for kinds whose convergence key is made of plain attributes. It is
+**not established** for a kind whose key crosses a relationship. Whether such
 a write converges depends on the uniqueness constraints of the destination schema, not on anything the
-plan or the apply controls, so it holds for some schemas and not for others and this release does not
-tell the two apart. Treat every kind that warns as one where a second apply may duplicate rather than
+plan or the apply controls, so it holds for some schemas and not for others. Infrahub Sync does not
+distinguish the two cases. Treat every kind that warns as one where a second apply may duplicate rather than
 converge: the safe move is to inspect that kind at the destination between applies rather than to
 re-apply and check afterwards. `diff` also warns about these kinds by name as it writes the plan, so
 which kinds are affected is knowable before an apply rather than only from the output of `apply`.
@@ -374,14 +376,14 @@ destination half-written. Every refusal names its next action.
 | No run is stored with that identifier | The run id does not exist. The message lists the most recent stored run identifiers for the sync — or states plainly that the sync has no stored runs. Nothing is created for the named id. |
 | The run holds no plan artifact | The run directory has no `plan/` directory: it predates the saved plan format, or its plan was never written or has been removed — a run directory archived or copied without `plan/` reads the same way. Re-run `diff` to produce a current-format plan. |
 | The artifact is torn | The plan is present but incomplete or inconsistent — a missing manifest, or a line count disagreeing with the recorded operation count. Re-run `diff` to rebuild it. |
-| Unsupported format version | The artifact was written by a version this release does not understand. The remaining checks are not evaluated, and the message says so. Rebuild the plan, or apply it with the version that wrote it. |
+| Unsupported format version | The artifact was written in a format this version of Infrahub Sync does not understand. The remaining checks are not evaluated, and the message says so. Rebuild the plan, or apply it with the version that wrote it. |
 | The plan checksum does not match | The artifact changed after it was written, so it is not the plan that was reviewed. Re-run `diff`. |
 | The stored plan is not the plan this apply approved | `--expected-checksum` was passed and the stored plan hashes to something else. Nothing is written and no destination is contacted. Review the stored plan and approve its checksum, or apply the run whose checksum you approved. |
 | The source snapshot no longer matches | A snapshot the plan was computed against is absent or has changed. Re-run `diff`. |
 | The configuration version does not match | The configuration changed since the plan was derived, so the plan is no longer what this configuration would do. Re-run `diff`. |
 | The plan is bound to a different destination | The live destination endpoint or branch — environment variables included — differs from the one the plan was computed against. Re-run `diff` against this destination, or pass `--allow-destination-change` to deliberately apply the plan across environments. Plans written before this field existed skip the check. |
 | The destination adapter cannot apply a saved plan | The adapter does not implement the planned-write surface. Use `infrahub-sync sync` for that destination instead. |
-| An operation's action is unrecognized | The plan holds an operation this release cannot interpret. It is refused while the artifact is read — before any destination write. |
+| An operation's action is unrecognized | The plan holds an operation this version of Infrahub Sync cannot interpret. It is refused while the artifact is read — before any destination write. |
 
 A review (`diff --from-plan`) is deliberately more forgiving: a plan whose checksum does not verify
 is **rendered anyway**, with `checksum: FAILED` in the header and the explanation beneath it.

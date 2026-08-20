@@ -9,7 +9,7 @@ modifies nothing in the run directory, and never mutates run state (FR-008, AD02
 A plan that would fail apply verification is **rendered anyway**, with a verification note
 saying why — and with `checksum_ok` false when the failing check is the checksum itself; a
 plan bound to a torn source snapshot checksums clean and is disclosed by the note alone
-(FR-010). The one bound is an operation whose `action` this release cannot interpret, which
+(FR-010). The one bound is an operation whose `action` this version cannot interpret, which
 is refused while reading (AD031, AD055).
 
 Two obligations sit on the **renderer**, not here: turning an empty `operations(kind=…)`

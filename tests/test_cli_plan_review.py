@@ -46,6 +46,7 @@ from infrahub_sync.plan.config_version import default_config_version
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
     DuplicateOperationIdError,
+    NullRelationshipValueError,
     OperationApplyFailedError,
     PeerAmbiguousError,
     PeerNotFoundError,
@@ -1137,6 +1138,9 @@ TAXONOMY_CASES: dict[str, Callable[[], PlanArtifactError]] = {
     "peer_ambiguous": lambda: PeerAmbiguousError("Peer 'p' of kind 'K' matches 2 destination objects."),
     "unaccounted_identity_component": lambda: UnaccountedIdentityComponentError("Kind 'K' omits component 'c'."),
     "unkeyed_write_refused": lambda: UnkeyedWriteRefusedError("The rendered mutation for 'K' carries no key."),
+    "null_relationship_value": lambda: NullRelationshipValueError(
+        "Operation 'o' carries null for mandatory relationship 'r'."
+    ),
     "plan_verification": lambda: PlanVerificationError("The plan artifact of run 'r' cannot be applied."),
     "operation_apply_failed": lambda: OperationApplyFailedError(
         "Applying operation 'o' failed.", apply_record=ApplyRecord()
@@ -1594,7 +1598,7 @@ def _case_run_binding_mismatch(tmp_path: Path) -> tuple[str, ...]:
 
 
 def _case_unsupported_format_version(tmp_path: Path) -> tuple[str, ...]:
-    """SC-018: a manifest revision this release cannot interpret.
+    """SC-018: a manifest revision this version cannot interpret.
 
     Reported by the verifier's **gate**, which runs before the reader on this path (T097), so
     the operator also learns that the remaining four checks were not evaluated and why — the

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
@@ -18,11 +19,21 @@ from prefect.states import Cancelling
 
 MANAGED_FLOW_NAME = "infrahub-sync-managed"
 MANAGED_DEPLOYMENT_NAME = "run"
+# The entrypoint is the absolute path of the flow file in THIS installation,
+# resolved at import time. Without it the applied deployment carries no
+# entrypoint at all (the deployment library invents no defaults), and a Prefect
+# process worker refuses the flow run with "does not have an entrypoint and can
+# not be run". An absolute path also encodes the documented contract that the
+# API, the deployment apply, and the workers share one installation's
+# filesystem view; re-applying from a different installation reconciles it.
+_MANAGED_FLOW_ENTRYPOINT = f"{Path(__file__).with_name('flow.py')}:managed_sync_run"
+
 MANAGED_DEFINITION = WorkflowDefinition(
     flow_name=MANAGED_FLOW_NAME,
     deployment_name=MANAGED_DEPLOYMENT_NAME,
     module="infrahub_sync.managed.flow",
     function="managed_sync_run",
+    entrypoint=_MANAGED_FLOW_ENTRYPOINT,
     tags=("infrahub-sync", "managed"),
 )
 

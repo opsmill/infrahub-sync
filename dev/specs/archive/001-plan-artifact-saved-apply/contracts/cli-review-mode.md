@@ -101,7 +101,7 @@ By action     create 21   update 12   delete 4
 By kind       BuiltinTag 3   DcimDevice 8   InterfacePhysical 14   IpamPrefix 6   LocationSite 6
 
 NOTE  4 delete operations are recorded in this plan and NONE will be executed against the
-      destination by this release. Applying this plan will complete successfully and record
+      destination by the saved-plan apply path. Applying this plan will complete successfully and record
       4 skipped deletes on the run.
 ```
 
@@ -154,7 +154,7 @@ One record per operation, at minimum the operation identifier, the action, the d
 the destination identity (AD020) — the review-side source SC-005 compares against the apply result:
 
 ```text
-NOTE  4 delete operations below will NOT be executed against the destination by this release.
+NOTE  4 delete operations below will NOT be executed against the destination by the saved-plan apply path.
 
 op_3f2a1c9d0e4b6a58  create  BuiltinTag        name=prod
 op_9b1d77c204e3af10  update  LocationRack      name=dc1-rack-a

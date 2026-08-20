@@ -8,23 +8,28 @@ identity, and delegates execution to a separate Prefect deployment. Sync owns th
 authorization, plan, result, artifact, audit, and idempotency contracts. Prefect owns live
 execution state, workers, retries, logs, and cancellation.
 
-The existing [Prefect remote run developer preview](./prefect-remote-run.mdx) remains a
+The [direct Prefect remote run](./prefect-remote-run.mdx) remains a
 separate four-parameter deployment. Use the managed API when a trusted automation client
 needs reviewed-plan apply, durable results, artifact retrieval, or actor-scoped mutation
 control.
 
 ## Install the managed profile
 
-The managed profile requires Python 3.11 or later. Install it on the API host and every
-worker that can run its deployment:
+The managed profile requires Python 3.11 or later. No published package carries this
+profile yet, so install from a repository checkout on the API host and every worker
+that can run its deployment:
 
 ```bash
-pip install 'infrahub-sync[managed]'
+uv sync --extra dev --extra prefect --extra managed
 ```
 
-The profile directly installs FastAPI, HTTPX, Uvicorn, Prefect 3.8.1, and OpsMill Prefect
-Extras from commit `84688eb8d8db7e17770413640a66481ccdc3e725`. The base installation does
-not import these packages. Ordinary CLI and Python API imports remain Prefect-free.
+Once a release with the managed profile is published, `pip install
+'infrahub-sync[managed]'` becomes the deployment path.
+
+The profile directly installs FastAPI, HTTPX, Uvicorn, and Prefect 3.8.1. The OpsMill
+Prefect Extras integration ships with the package itself as a vendored copy of upstream
+commit `97465e75137f6121d0377cd637383cfb3530d734`. The base installation does not import
+any of these modules. Ordinary CLI and Python API imports remain Prefect-free.
 
 You also need:
 
@@ -66,16 +71,20 @@ refusal records secret-safe actor, reason, and outcome evidence.
 
 ## Deploy the managed flow
 
-Set the work pool name, then apply the managed deployment:
+Set the work pool name and the absolute directory managed flow runs execute from —
+relative paths in Sync configurations resolve against it — then apply the managed
+deployment:
 
 ```bash
 export PREFECT_API_URL="http://127.0.0.1:4200/api"
 export INFRAHUB_SYNC_MANAGED_WORK_POOL="sync-process-pool"
+export INFRAHUB_SYNC_MANAGED_FLOW_WORKING_DIRECTORY="/path/to/checkout"
 python -m infrahub_sync.managed.deploy
 ```
 
 The command validates and applies `infrahub-sync-managed/run` through OpsMill Prefect
-Extras. It does not create a work pool or start a worker.
+Extras, then records the declared working directory as the deployment's only pull step.
+It does not create a work pool or start a worker.
 
 Configure the worker environment before it starts:
 
@@ -117,6 +126,9 @@ python -m infrahub_sync.managed.serve
 The server listens on port `8000`. Its host defaults to `127.0.0.1`. Put TLS and any
 network access controls at your ingress boundary. The bearer-token provider is the MVP
 application authentication boundary, not a replacement for transport security.
+
+Open `http://127.0.0.1:8000/docs`, select **Authorize**, and enter the configured token
+without the `Bearer` prefix; Swagger UI adds the complete `Authorization` header.
 
 ## Routes
 
@@ -256,4 +268,4 @@ recovery state machine, or overlap policy.
 
 - [Durable product records](./durable-product-records.mdx)
 - [Saved-plan review and apply](../running-a-sync.mdx)
-- [Prefect remote run developer preview](./prefect-remote-run.mdx)
+- [Prefect remote run](./prefect-remote-run.mdx)

@@ -1,4 +1,4 @@
-# Run Infrahub Sync remotely with Prefect (developer preview)
+# Run Infrahub Sync remotely with Prefect
 
 This example starts a Prefect server, serves the packaged `infrahub-sync` flow, and
 invokes a **plan** (read-only) and then a **confirmed sync** (writes) over Prefect's
@@ -10,8 +10,8 @@ read any package source to follow it.
 
 > **Trusted development environment only.** The default self-hosted Prefect server has
 > no authentication. Bind it to localhost and never expose it to the public internet.
-> This is a developer preview: run it on a machine and against an Infrahub instance you
-> are willing to experiment with.
+> Run this example on a machine and against an Infrahub instance you are willing to
+> modify.
 
 ## What you end up with
 
@@ -24,8 +24,9 @@ read any package source to follow it.
 
 ## Prerequisites
 
-1. **Python 3.10–3.13.** The preview was exercised on 3.12.
-2. **This repository checked out**, on the branch carrying the preview.
+1. **Python 3.10–3.13.**
+2. **This repository checked out.** The commands and request fixtures must come from the
+   same checkout.
 3. **Working directory: the repository root.** Every command below — and the serve
    process in particular — starts from the root of this repository. The sync project's
    `config.yml` uses `./`-relative paths, and they are resolved against the working
@@ -47,10 +48,8 @@ read any package source to follow it.
 
 ## 1. Install the optional Prefect integration
 
-The Prefect integration is an optional extra. Install it **from this repository
-checkout** — the preview is not published to PyPI, so `pip install
-'infrahub-sync[prefect]'` would install a released version that does not contain it.
-Use the local path (this is deliberate; please do not "correct" it to the PyPI form):
+The Prefect integration is an optional extra. Install it from this repository checkout so
+the package, example files, and request fixtures use the same source:
 
 ```bash
 # from the repository root
@@ -398,8 +397,8 @@ curl -s -H "X-INFRAHUB-KEY: $INFRAHUB_API_TOKEN" -H "Content-Type: application/j
 
 Submit the plan from step 6 once more and it converges: `status=no-change`,
 `changed=False`, `summary=create:0,update:0,delete:0`. Run the plan, the sync, and the
-follow-up plan strictly one at a time — the preview makes no guarantees about
-overlapping runs of the same configuration.
+follow-up plan strictly one at a time. The direct deployment adds no overlap policy beyond
+the sync engine's per-configuration lock on one runner host.
 
 An `operation` outside `plan` and `sync` is rejected when the run is created:
 

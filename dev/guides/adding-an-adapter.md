@@ -161,8 +161,9 @@ If you do implement it, the method must:
   in each `operation.relationships` entry; it returns one node id per identity, and
   cardinality is your concern, not its.
 - **Decline a `delete` rather than executing one** — raise `SkippedDeleteOperation`
-  (`infrahub_sync.plan.errors`) and touch nothing. Applying deletes is out of scope for this
-  release. In practice your method will not see one: the engine recognizes a `delete` in its
+  (`infrahub_sync.plan.errors`) and touch nothing. Applying deletes is not supported and
+  remains outside the planned-write contract. In practice your method will not see one:
+  the engine recognizes a `delete` in its
   own apply loop, records its identifier and never dispatches it to the write surface. Raise
   it anyway — it is the defensive half of the contract, for any caller that is not the
   engine. Either way the run applies every non-delete in the same plan and ends `applied`

@@ -4,8 +4,13 @@ The `from-netbox` configuration maps the public NetBox demo into the Infrahub
 schema library. Before running it, follow the
 [NetBox demo tutorial](../../docs/docs/tutorials/netbox-demo-to-infrahub.mdx)
 through **Generate the sync code**. The tutorial is the setup authority for the
-schema-library revision, a current `nbt_...` token, and the required `pynetbox`
+exact schema-library source revision, a current `nbt_...` token, and the required `pynetbox`
 adapter dependency.
+
+The configuration does not target the similarly named
+`models/examples/netbox/netbox.yml` file in the Infrahub source repository. That file
+defines different destination kinds, so `generate` correctly reports `LocationSite`,
+`DcimDevice`, `IpamPrefix`, and related mapped kinds as missing when it is loaded instead.
 
 Use a fresh Infrahub instance for the tutorial schema. Loading the schema library
 over another schema, including `demo-fabric`, can fail when existing kinds define
@@ -24,7 +29,8 @@ Then generate, plan, review, and apply with the NetBox example:
 uv run infrahub-sync generate --name from-netbox --directory examples/
 uv run infrahub-sync diff --name from-netbox --directory examples/
 uv run infrahub-sync diff --name from-netbox --directory examples/ --from-plan <run-id>
-uv run infrahub-sync apply --name from-netbox --directory examples/ --run-id <run-id>
+uv run infrahub-sync apply --name from-netbox --directory examples/ --run-id <run-id> \
+  --expected-checksum <plan-checksum-from-review>
 ```
 
 ## Current limitations
@@ -38,6 +44,11 @@ uv run infrahub-sync apply --name from-netbox --directory examples/ --run-id <ru
 - `LocationRack` uses `name` plus `site` in this configuration, while the current
   destination schema keys racks by `name` alone. Reapplying or replanning racks
   is not convergent when different sites contain racks with the same name.
+- After a write creates physical interfaces bundled into a LAG, a later `diff` against
+  the same branch can fail while loading the destination. The
+  [NetBox tutorial troubleshooting section](../../docs/docs/tutorials/netbox-demo-to-infrahub.mdx#diff-fails-after-a-sync-that-wrote-interfaces)
+  records the error, cause, and recovery procedure. This destination-loading defect is
+  not specific to NetBox.
 
 For the bounded NetBox acceptance path, run
 `tests/integration/test_saved_plan_apply_integration.py`. It derives a ten-kind

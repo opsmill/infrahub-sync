@@ -17,6 +17,7 @@ classifiers = [
 dependencies = [
     "infrahub-sdk[all]>=1.17,<2",
     "structlog>=25.1,<26.0",
+    "typing-extensions>=4.0",
     # The `[redis]` extra is deliberately dropped: it caps `redis<5.0`, which is
     # unsatisfiable next to the optional `prefect` extra below
     # (prefect>=3.6 -> pydocket -> redis>=5). diffsync's cap is stale rather than
@@ -30,6 +31,13 @@ dependencies = [
     # consumer that still requires `diffsync[redis]` keeps resolving, at redis 4.6.0.
     "redis>=4.3,<9",
     "netutils>=1.9,<2.0",
+    # Runtime (not only dev) dependency: `generate` formats its rendered Python with
+    # `ruff format` so regeneration is byte-stable. A range, not an exact pin: an
+    # exact pin would make this package unresolvable next to any project holding a
+    # different ruff version. One minor series is Ruff's formatter-stability
+    # boundary (style changes ship in minors, not patches), and the byte-identity
+    # test enforces the contract against the locked version.
+    "ruff>=0.15.5,<0.16",
     "tqdm>=4.67",
     "pyarrow>=17,<22",
     "fsspec>=2024.6",
@@ -53,10 +61,13 @@ prefect = [
 # Managed HTTP service and worker profile (Python 3.11-3.13). Every runtime
 # imported directly by `infrahub_sync.managed` is declared here; the reusable
 # Prefect integration is pinned to the reviewed DB-102/103/104 stack exactly.
+# The previous `opsmill-prefect-extras` private Git pin is vendored instead: the
+# package ships from this repository at `opsmill_prefect_extras/`, byte-identical to
+# upstream commit 97465e75137f6121d0377cd637383cfb3530d734. See
+# `opsmill_prefect_extras/VENDORED.md` for the freeze and re-adoption rules.
 managed = [
     "fastapi>=0.115,<1; python_version >= '3.11'",
     "httpx>=0.27,<1; python_version >= '3.11'",
-    "opsmill-prefect-extras @ git+https://github.com/opsmill/prefect-extras.git@84688eb8d8db7e17770413640a66481ccdc3e725 ; python_version >= '3.11'",
     "prefect==3.8.1; python_version >= '3.11'",
     "uvicorn>=0.34,<1; python_version >= '3.11'",
 ]
@@ -87,7 +98,10 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["infrahub_sync"]
+# `opsmill_prefect_extras` is a vendored copy of the private upstream package,
+# byte-identical at its original import name so nothing in this repository or its
+# tests rewrites imports; see `opsmill_prefect_extras/VENDORED.md`.
+packages = ["infrahub_sync", "opsmill_prefect_extras"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -161,6 +175,7 @@ testpaths = [
 ]
 markers = [
     "integration: tests that require a running Infrahub instance. Skipped by default; opt in with -m integration and INFRAHUB_ADDRESS + INFRAHUB_API_TOKEN set. The remote-run test additionally needs a live Prefect server (PREFECT_API_URL) and a separately started served deployment (`python -m infrahub_sync.orchestration.serve`, from the repository root).",
+    "preview: end-to-end smoke tests against a running preview environment (`invoke preview.up`). Opt in with -m preview; each test skips when the environment is not reachable.",
 ]
 filterwarnings = [
     "ignore:Module already imported so cannot be rewritten",
@@ -181,6 +196,12 @@ exclude = [
     "build",
     "dist",
     "examples",
+    # Vendored byte-identical upstream code and its upstream tests; the freeze rule in
+    # opsmill_prefect_extras/VENDORED.md forbids local rewrites, so Ruff must not
+    # reformat or lint them to this repository's profile. ty still checks the vendored
+    # package; only the vendored tests are excluded from ty (see [tool.ty.src]).
+    "opsmill_prefect_extras",
+    "tests/vendored_prefect_extras",
 ]
 
 
@@ -207,6 +228,9 @@ line-ending = "auto"
 
 [tool.ruff.lint.isort]
 known-first-party = ["infrahub"]
+# The vendored package keeps its upstream (third-party) import classification so
+# consumer import blocks stay byte-stable across vendoring and later re-adoption.
+known-third-party = ["opsmill_prefect_extras"]
 
 [tool.ruff.lint.pycodestyle]
 max-line-length = 150
@@ -344,7 +368,11 @@ max-complexity = 33
 [tool.ty]
 
 [tool.ty.src]
-exclude = ["examples/**"]
+# tests/vendored_prefect_extras is frozen byte-identical upstream test code (see
+# opsmill_prefect_extras/VENDORED.md) and is not held to this repository's checks;
+# the vendored package itself stays type-checked. Configured here so every ty
+# entry point — local, invoke, and CI's inlined commands — agrees.
+exclude = ["examples/**", "tests/vendored_prefect_extras/**"]
 
 [tool.ty.environment]
 python-version = "3.10"

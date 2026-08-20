@@ -1,4 +1,4 @@
-# Specification Quality Checklist: Prefect-Managed Remote Infrahub Sync Run (Developer Preview)
+# Specification Quality Checklist: Prefect-Managed Remote Infrahub Sync Run
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-07-30
@@ -9,7 +9,7 @@
 
 - [x] No implementation details (languages, frameworks, APIs) — PASS (qualified). The spec names Prefect, the CLI, Infrahub, the `RunResult` field types, and the exception names `RunValidationError`/`RunExecutionError` only because brief DB-001 fixes them as product scope and contract; no implementation detail beyond what the brief mandates (no module layout, no internal design) appears. Internal module layout is explicitly deferred to planning.
 - [x] Focused on user value and business needs — PASS. The spec is organized around the product question (remote, observable Sync runs from a default installation) and developer outcomes.
-- [x] Written for non-technical stakeholders — PASS (qualified). The feature's stakeholders are developers by definition of the Developer Preview; prose stays at the level of what a developer experiences, not how the code is structured.
+- [x] Written for non-technical stakeholders — PASS (qualified). The feature's stakeholders are developers by definition; prose stays at the level of what a developer experiences, not how the code is structured.
 - [x] All mandatory sections completed — PASS. User Scenarios & Testing, Requirements, Success Criteria, and Assumptions are all present and filled.
 
 ## Requirement Completeness
