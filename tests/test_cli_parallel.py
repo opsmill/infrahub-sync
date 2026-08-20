@@ -123,8 +123,9 @@ def test_serial_sync_does_not_present_unrelated_value_error_as_refusal(
     run_dir = tmp_path / "from-netbox" / "test-run"
     run_dir.mkdir(parents=True, exist_ok=True)
     fake_ptd = _make_fake_potenda(tiers=None, run_dir=run_dir)
+    fake_ptd.diff.return_value.has_diffs.return_value = True
     unrelated_error = ValueError("unexpected diff failure")
-    fake_ptd.diff.side_effect = unrelated_error
+    fake_ptd.sync.side_effect = unrelated_error
     runner = CliRunner()
 
     with (
