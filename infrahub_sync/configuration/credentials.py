@@ -113,7 +113,7 @@ def _validate_all_reference_nodes(
                 raise CredentialConfigurationError(msg)
             return
         for key, item in value.items():
-            escaped = str(key).replace("~", "~0").replace("/", "~1")
+            escaped = safe_pointer_component(key)
             _validate_all_reference_nodes(item, package, location=f"{location}/{escaped}")
     elif isinstance(value, list):
         for index, item in enumerate(value):

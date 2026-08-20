@@ -845,6 +845,45 @@ def test_reserved_reference_node_is_validated_outside_known_credential_paths() -
         validate_package_credentials(package)
 
 
+@pytest.mark.parametrize(
+    ("reference_node", "expected_detail"),
+    [
+        pytest.param(
+            {"$credential": "missing-reference"},
+            "names unknown credential reference 'missing-reference'",
+            id="missing-reference",
+        ),
+        pytest.param(
+            {"$credential": "netbox-token", "fallback": "malformed-reference-value-canary"},
+            "contains a malformed credential reference",
+            id="malformed-reference",
+        ),
+    ],
+)
+def test_nested_reference_errors_render_hostile_setting_paths_safely(
+    reference_node: dict[str, object],
+    expected_detail: str,
+) -> None:
+    canaries = ("unsupported-setting-value-canary", "malformed-reference-value-canary")
+    hostile_setting = "bad\n\x85\\setting~/"
+    hostile_nested_key = "nested\r\x9f\\node~/"
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["settings"][hostile_setting] = {
+        "other": canaries[0],
+        hostile_nested_key: reference_node,
+    }
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    message = str(caught.value)
+    pointer = r"/configuration/source/settings/bad\n\u0085\\setting~0~1/nested\r\u009f\\node~0~1"
+    assert message == f"{pointer} {expected_detail}"
+    assert all(ord(character) >= 32 and not 127 <= ord(character) <= 159 for character in message)
+    assert all(canary not in message for canary in canaries)
+
+
 def test_reserved_reference_node_is_validated_in_schema_mapping_static_value() -> None:
     data = _package().model_dump(mode="json")
     data["configuration"]["schema_mapping"] = [
