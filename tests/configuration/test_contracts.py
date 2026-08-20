@@ -419,6 +419,22 @@ def test_generic_rest_api_custom_headers_are_refused_without_echoing_values() ->
             "slurpit-splat-inline-canary",
             id="slurpit-splat",
         ),
+        *(
+            pytest.param(
+                adapter_name,
+                setting,
+                [canary],
+                canary,
+                id=f"{adapter_name}-{setting}",
+            )
+            for adapter_name in ("genericrestapi", "peeringmanager")
+            for setting, canary in (
+                ("url_env_vars", "url-selector-inline-canary"),
+                ("token_env_vars", "token-selector-inline-canary"),
+                ("username_env_vars", "username-selector-inline-canary"),
+                ("password_env_vars", "password-selector-inline-canary"),
+            )
+        ),
     ],
 )
 def test_unproved_adapter_settings_are_refused_without_echoing_values(
@@ -444,6 +460,56 @@ def test_unproved_adapter_settings_are_refused_without_echoing_values(
     assert canary not in str(caught.value)
 
 
+@pytest.mark.parametrize("adapter_name", ["genericrestapi", "peeringmanager"])
+@pytest.mark.parametrize(
+    ("mapping", "canary"),
+    [
+        pytest.param("https://absolute-inline-canary.example/devices", "absolute-inline-canary", id="absolute"),
+        pytest.param(
+            "//user:userinfo-inline-canary@other.example/devices",
+            "userinfo-inline-canary",
+            id="userinfo",
+        ),
+        pytest.param("devices?api_key=query-inline-canary", "query-inline-canary", id="query"),
+        pytest.param("devices#fragment-inline-canary", "fragment-inline-canary", id="fragment"),
+    ],
+)
+def test_generic_rest_schema_mapping_endpoints_are_secret_safe(
+    adapter_name: str,
+    mapping: str,
+    canary: str,
+) -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"] = {
+        "name": adapter_name,
+        "settings": {"url": "https://source.example", "auth_method": "none"},
+    }
+    data["configuration"]["schema_mapping"] = [{"name": "Device", "mapping": mapping}]
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    assert "/configuration/schema_mapping/0/mapping" in str(caught.value)
+    assert "relative request path" in str(caught.value)
+    assert canary not in str(caught.value)
+
+
+@pytest.mark.parametrize("adapter_name", ["genericrestapi", "peeringmanager"])
+def test_generic_rest_schema_mapping_accepts_relative_resource_paths(adapter_name: str) -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"] = {
+        "name": adapter_name,
+        "settings": {"url": "https://source.example", "auth_method": "none"},
+    }
+    data["configuration"]["schema_mapping"] = [
+        {"name": "Device", "mapping": "api/v1/devices"},
+        {"name": "Interface", "mapping": "/api/v1/interfaces"},
+    ]
+
+    validate_package_credentials(ConfigurationPackage.model_validate(data))
+
+
 def test_closed_registered_settings_do_not_change_legacy_sync_config() -> None:
     inline_value = "legacy-inline-value"
     configuration = SyncConfig.model_validate(
@@ -451,13 +517,23 @@ def test_closed_registered_settings_do_not_change_legacy_sync_config() -> None:
             "name": "legacy-rest",
             "source": {
                 "name": "genericrestapi",
-                "settings": {"params": {"api_key": inline_value}, "client_secret": inline_value},
+                "settings": {
+                    "params": {"api_key": inline_value},
+                    "client_secret": inline_value,
+                    "token_env_vars": ["CUSTOM_TOKEN"],
+                },
             },
             "destination": {"name": "infrahub", "settings": {}},
+            "schema_mapping": [{"name": "Device", "mapping": f"devices?api_key={inline_value}"}],
         }
     )
 
-    assert configuration.source.settings == {"params": {"api_key": inline_value}, "client_secret": inline_value}
+    assert configuration.source.settings == {
+        "params": {"api_key": inline_value},
+        "client_secret": inline_value,
+        "token_env_vars": ["CUSTOM_TOKEN"],
+    }
+    assert configuration.schema_mapping[0].mapping == f"devices?api_key={inline_value}"
 
 
 @pytest.mark.parametrize(
@@ -707,15 +783,11 @@ def test_bundled_capabilities_close_the_supported_setting_surface() -> None:
             "api_endpoint",
             "auth_method",
             "password",
-            "password_env_vars",
             "response_key_pattern",
             "timeout",
             "token",
-            "token_env_vars",
             "url",
-            "url_env_vars",
             "username",
-            "username_env_vars",
             "verify_ssl",
         },
         "infrahub": {"branch", "owner", "source", "token", "url", "verify_ssl"},
@@ -726,15 +798,11 @@ def test_bundled_capabilities_close_the_supported_setting_surface() -> None:
             "api_endpoint",
             "auth_method",
             "password",
-            "password_env_vars",
             "response_key_pattern",
             "timeout",
             "token",
-            "token_env_vars",
             "url",
-            "url_env_vars",
             "username",
-            "username_env_vars",
             "verify_ssl",
         },
         "prometheus": {
@@ -766,14 +834,10 @@ def test_all_bundled_supported_setting_shapes_validate(capability: AdapterConfig
     credential_node = {"$credential": "adapter-credential"}
     generic_rest_settings: dict[str, object] = {
         "url": "https://api.example",
-        "url_env_vars": ["API_URL"],
         "api_endpoint": "/api/v1",
         "auth_method": "basic",
-        "token_env_vars": ["API_TOKEN"],
         "token": credential_node,
-        "username_env_vars": ["API_USERNAME"],
         "username": credential_node,
-        "password_env_vars": ["API_PASSWORD"],
         "password": credential_node,
         "timeout": 30,
         "verify_ssl": True,

@@ -50,9 +50,12 @@ store settings; its URLs, usernames, and passwords follow the same credential-re
 rule as adapter settings. Registered version-1 packages also refuse adapter settings
 outside each bundled declaration, including custom HTTP headers and request parameters
 on Prometheus, GenericRESTAPI, and its PeeringManager subclass. Declared URLs, base URLs,
-and endpoint paths cannot contain user information, query parameters, or fragments. Use
-the declared credential-reference settings instead. These restrictions apply to the
-registered package contract without changing the legacy `SyncConfig` runtime surface.
+and endpoint paths cannot contain user information, query parameters, or fragments.
+GenericRESTAPI and PeeringManager packages cannot select alternate URL or credential
+environment variables; their schema-mapping request endpoints must be relative paths
+without authority, user information, queries, or fragments. Use the declared
+credential-reference settings instead. These restrictions apply to the registered
+package contract without changing the legacy `SyncConfig` runtime surface.
 
 The declaration is intentionally narrower than the complete adapter conformance profile.
 It provides the durable seam configuration validation needs without claiming that every

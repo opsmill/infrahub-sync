@@ -7,6 +7,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
+from urllib.parse import urlsplit
 
 from .models import ConfigurationPackage, ValidationFinding
 
@@ -91,18 +92,45 @@ _GENERIC_REST_SETTINGS = frozenset(
         "api_endpoint",
         "auth_method",
         "password",
-        "password_env_vars",
         "response_key_pattern",
         "timeout",
         "token",
-        "token_env_vars",
         "url",
-        "url_env_vars",
         "username",
-        "username_env_vars",
         "verify_ssl",
     }
 )
+
+
+def _validate_relative_rest_mapping_endpoints(
+    package: ConfigurationPackage,
+    role: AdapterRole,
+) -> tuple[ValidationFinding, ...]:
+    """Refuse schema mappings that can carry request authority or inline query values."""
+    adapter = package.configuration.source if role == "source" else package.configuration.destination
+    findings = []
+    for index, mapping in enumerate(package.configuration.schema_mapping):
+        endpoint = mapping.mapping
+        if not endpoint:
+            continue
+        try:
+            parsed = urlsplit(endpoint)
+        except ValueError:
+            parsed = None
+        if parsed is not None and not (parsed.scheme or parsed.netloc or parsed.query or parsed.fragment):
+            continue
+        findings.append(
+            ValidationFinding(
+                code="unsafe-rest-request-endpoint",
+                severity="error",
+                location=f"/configuration/schema_mapping/{index}/mapping",
+                message=(
+                    f"{adapter.name} schema mapping endpoints must be a relative request path without authority, "
+                    "user information, query parameters, or fragments"
+                ),
+            )
+        )
+    return tuple(findings)
 
 
 BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
@@ -118,6 +146,7 @@ BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
             roles=_SOURCE_ONLY,
             allowed_settings=_GENERIC_REST_SETTINGS,
             credential_setting_paths=("token", "username", "password"),
+            validator=_validate_relative_rest_mapping_endpoints,
         ),
         "infrahub": AdapterConfigurationCapabilities(
             adapter_name="infrahub",
@@ -151,6 +180,7 @@ BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
             allowed_settings=_GENERIC_REST_SETTINGS,
             credential_setting_paths=("token", "username", "password"),
             supported_destination_write_operations=_CREATE_UPDATE,
+            validator=_validate_relative_rest_mapping_endpoints,
         ),
         "prometheus": AdapterConfigurationCapabilities(
             adapter_name="prometheus",
