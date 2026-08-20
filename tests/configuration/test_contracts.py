@@ -11,6 +11,7 @@ from typing import Any, cast
 import pytest
 from pydantic import ValidationError
 
+from infrahub_sync import SyncConfig
 from infrahub_sync.configuration import (
     BUILTIN_ADAPTER_CAPABILITIES,
     AdapterConfigurationCapabilities,
@@ -350,7 +351,7 @@ def test_prometheus_custom_headers_are_refused_without_echoing_values() -> None:
     with pytest.raises(CredentialConfigurationError) as caught:
         validate_package_credentials(package)
 
-    assert "custom headers" in str(caught.value)
+    assert "unsupported declared settings" in str(caught.value)
     assert canary not in str(caught.value)
 
 
@@ -369,7 +370,156 @@ def test_generic_rest_api_custom_headers_are_refused_without_echoing_values() ->
     with pytest.raises(CredentialConfigurationError) as caught:
         validate_package_credentials(package)
 
-    assert "custom headers" in str(caught.value)
+    assert "unsupported declared settings" in str(caught.value)
+    assert canary not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("adapter_name", "setting", "value", "canary"),
+    [
+        pytest.param(
+            "netbox",
+            "client_secret",
+            "netbox-inline-canary",
+            "netbox-inline-canary",
+            id="undeclared-client-secret",
+        ),
+        pytest.param(
+            "prometheus",
+            "params",
+            {"api_key": "prometheus-params-inline-canary"},
+            "prometheus-params-inline-canary",
+            id="prometheus-params",
+        ),
+        pytest.param(
+            "genericrestapi",
+            "params",
+            {"api_key": "generic-rest-params-inline-canary"},
+            "generic-rest-params-inline-canary",
+            id="generic-rest-params",
+        ),
+        pytest.param(
+            "peeringmanager",
+            "headers",
+            {"Authorization": "Bearer peering-manager-header-inline-canary"},
+            "peering-manager-header-inline-canary",
+            id="peering-manager-inherited-headers",
+        ),
+        pytest.param(
+            "peeringmanager",
+            "params",
+            {"api_key": "peering-manager-params-inline-canary"},
+            "peering-manager-params-inline-canary",
+            id="peering-manager-inherited-params",
+        ),
+        pytest.param(
+            "slurpitsync",
+            "client_secret",
+            "slurpit-splat-inline-canary",
+            "slurpit-splat-inline-canary",
+            id="slurpit-splat",
+        ),
+    ],
+)
+def test_unproved_adapter_settings_are_refused_without_echoing_values(
+    adapter_name: str,
+    setting: str,
+    value: object,
+    canary: str,
+) -> None:
+    data = _package().model_dump(mode="json")
+    settings = {"url": "https://source.example", setting: value}
+    if setting == "base_url":
+        settings.pop("url")
+    data["configuration"]["source"] = {
+        "name": adapter_name,
+        "settings": settings,
+    }
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    assert "unsupported declared settings" in str(caught.value)
+    assert canary not in str(caught.value)
+
+
+def test_closed_registered_settings_do_not_change_legacy_sync_config() -> None:
+    inline_value = "legacy-inline-value"
+    configuration = SyncConfig.model_validate(
+        {
+            "name": "legacy-rest",
+            "source": {
+                "name": "genericrestapi",
+                "settings": {"params": {"api_key": inline_value}, "client_secret": inline_value},
+            },
+            "destination": {"name": "infrahub", "settings": {}},
+        }
+    )
+
+    assert configuration.source.settings == {"params": {"api_key": inline_value}, "client_secret": inline_value}
+
+
+@pytest.mark.parametrize(
+    ("adapter_name", "setting", "value", "canary"),
+    [
+        pytest.param(
+            "netbox",
+            "url",
+            "https://user:netbox-url-inline-canary@netbox.example",
+            "netbox-url-inline-canary",
+            id="url-userinfo",
+        ),
+        pytest.param(
+            "genericrestapi",
+            "url",
+            "https://api.example?api_key=generic-rest-query-inline-canary",
+            "generic-rest-query-inline-canary",
+            id="url-query",
+        ),
+        pytest.param(
+            "ipfabricsync",
+            "base_url",
+            "https://ipfabric.example#ipfabric-fragment-inline-canary",
+            "ipfabric-fragment-inline-canary",
+            id="base-url-fragment",
+        ),
+        pytest.param(
+            "prometheus",
+            "endpoint",
+            "/metrics?token=prometheus-endpoint-inline-canary",
+            "prometheus-endpoint-inline-canary",
+            id="endpoint-query",
+        ),
+        pytest.param(
+            "peeringmanager",
+            "api_endpoint",
+            "/api#peering-manager-endpoint-inline-canary",
+            "peering-manager-endpoint-inline-canary",
+            id="inherited-endpoint-fragment",
+        ),
+    ],
+)
+def test_url_settings_refuse_credential_bearing_forms_without_echo(
+    adapter_name: str,
+    setting: str,
+    value: str,
+    canary: str,
+) -> None:
+    data = _package().model_dump(mode="json")
+    settings = {"url": "https://source.example", setting: value}
+    if setting == "base_url":
+        settings.pop("url")
+    data["configuration"]["source"] = {
+        "name": adapter_name,
+        "settings": settings,
+    }
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    assert "cannot contain user information, query parameters, or fragments" in str(caught.value)
     assert canary not in str(caught.value)
 
 
@@ -550,6 +700,135 @@ def test_all_bundled_adapter_modules_have_static_declarations() -> None:
     }
 
 
+def test_bundled_capabilities_close_the_supported_setting_surface() -> None:
+    expected = {
+        "aci": {"api_endpoint", "password", "url", "username", "verify"},
+        "genericrestapi": {
+            "api_endpoint",
+            "auth_method",
+            "password",
+            "password_env_vars",
+            "response_key_pattern",
+            "timeout",
+            "token",
+            "token_env_vars",
+            "url",
+            "url_env_vars",
+            "username",
+            "username_env_vars",
+            "verify_ssl",
+        },
+        "infrahub": {"branch", "owner", "source", "token", "url", "verify_ssl"},
+        "ipfabricsync": {"auth", "base_url", "verify_ssl"},
+        "nautobot": {"token", "url", "verify_ssl"},
+        "netbox": {"token", "url", "verify_ssl"},
+        "peeringmanager": {
+            "api_endpoint",
+            "auth_method",
+            "password",
+            "password_env_vars",
+            "response_key_pattern",
+            "timeout",
+            "token",
+            "token_env_vars",
+            "url",
+            "url_env_vars",
+            "username",
+            "username_env_vars",
+            "verify_ssl",
+        },
+        "prometheus": {
+            "auth_method",
+            "endpoint",
+            "mode",
+            "password",
+            "promql",
+            "timeout",
+            "token",
+            "url",
+            "username",
+            "verify_ssl",
+        },
+        "slurpitsync": {"api_key", "token", "url", "verify_ssl"},
+    }
+
+    assert {
+        name: set(capability.allowed_settings) for name, capability in BUILTIN_ADAPTER_CAPABILITIES.items()
+    } == expected
+    assert all(
+        {path.partition(".")[0] for path in capability.credential_setting_paths} <= capability.allowed_settings
+        for capability in BUILTIN_ADAPTER_CAPABILITIES.values()
+    )
+
+
+@pytest.mark.parametrize("capability", BUILTIN_ADAPTER_CAPABILITIES.values(), ids=lambda item: item.adapter_name)
+def test_all_bundled_supported_setting_shapes_validate(capability: AdapterConfigurationCapabilities) -> None:
+    credential_node = {"$credential": "adapter-credential"}
+    generic_rest_settings: dict[str, object] = {
+        "url": "https://api.example",
+        "url_env_vars": ["API_URL"],
+        "api_endpoint": "/api/v1",
+        "auth_method": "basic",
+        "token_env_vars": ["API_TOKEN"],
+        "token": credential_node,
+        "username_env_vars": ["API_USERNAME"],
+        "username": credential_node,
+        "password_env_vars": ["API_PASSWORD"],
+        "password": credential_node,
+        "timeout": 30,
+        "verify_ssl": True,
+        "response_key_pattern": "results",
+    }
+    settings_by_adapter: dict[str, dict[str, object]] = {
+        "aci": {
+            "url": "https://aci.example",
+            "username": credential_node,
+            "password": credential_node,
+            "verify": True,
+            "api_endpoint": "api",
+        },
+        "genericrestapi": generic_rest_settings,
+        "infrahub": {
+            "url": "https://infrahub.example",
+            "token": credential_node,
+            "verify_ssl": True,
+            "branch": "main",
+            "source": "network-source",
+            "owner": "network-owner",
+        },
+        "ipfabricsync": {"base_url": "https://ipfabric.example", "auth": credential_node, "verify_ssl": True},
+        "nautobot": {"url": "https://nautobot.example", "token": credential_node, "verify_ssl": True},
+        "netbox": {"url": "https://netbox.example", "token": credential_node, "verify_ssl": True},
+        "peeringmanager": generic_rest_settings,
+        "prometheus": {
+            "mode": "api",
+            "url": "https://prometheus.example",
+            "endpoint": "/api/v1/query",
+            "timeout": 10,
+            "verify_ssl": True,
+            "auth_method": "bearer",
+            "username": credential_node,
+            "password": credential_node,
+            "token": credential_node,
+            "promql": {"resources": {"node_info": "node_uname_info"}},
+        },
+        "slurpitsync": {
+            "url": "https://slurpit.example",
+            "api_key": credential_node,
+            "token": credential_node,
+            "verify_ssl": True,
+        },
+    }
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"] = {
+        "name": capability.adapter_name,
+        "settings": settings_by_adapter[capability.adapter_name],
+    }
+    data["credentials"]["adapter-credential"] = {"provider": "env", "identifier": "ADAPTER_CREDENTIAL"}
+
+    validate_package_credentials(ConfigurationPackage.model_validate(data))
+
+
 def test_capability_lookup_is_case_insensitive_but_unknown_is_refused() -> None:
     assert get_adapter_capabilities("NetBox").adapter_name == "netbox"
     with pytest.raises(UnknownAdapterCapabilitiesError, match="no configuration capability declaration"):
@@ -567,22 +846,36 @@ def test_source_only_capability_cannot_claim_destination_writes() -> None:
 
 def test_capability_collections_are_normalized_and_immutable() -> None:
     roles = {"source"}
+    allowed_settings = {"token"}
     paths = ["token"]
     writes: set[str] = set()
     capability = AdapterConfigurationCapabilities(
         adapter_name="example",
         roles=cast("Any", roles),
+        allowed_settings=cast("Any", allowed_settings),
         credential_setting_paths=cast("Any", paths),
         supported_destination_write_operations=cast("Any", writes),
     )
 
     roles.add("destination")
+    allowed_settings.add("password")
     paths.append("password")
     writes.add("create")
 
     assert capability.roles == frozenset({"source"})
+    assert capability.allowed_settings == frozenset({"token"})
     assert capability.credential_setting_paths == ("token",)
     assert capability.supported_destination_write_operations == frozenset()
+
+
+def test_capability_credential_paths_must_be_allowed_settings() -> None:
+    with pytest.raises(ValueError, match="credential paths outside allowed settings"):
+        AdapterConfigurationCapabilities(
+            adapter_name="example",
+            roles=frozenset({"source"}),
+            allowed_settings=frozenset({"url"}),
+            credential_setting_paths=("client_secret",),
+        )
 
 
 @pytest.mark.parametrize(

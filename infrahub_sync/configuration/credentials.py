@@ -6,6 +6,7 @@ import os
 import re
 from collections.abc import Mapping
 from typing import Protocol, cast
+from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
@@ -19,6 +20,7 @@ _STORE_CREDENTIAL_SETTING_PATHS = {
 _STORE_SETTING_PATHS = {
     "redis": frozenset({"db", "host", "password", "port", "store_id", "url", "username"}),
 }
+_URL_SETTING_NAMES = frozenset({"api_endpoint", "base_url", "endpoint", "url"})
 
 
 class CredentialConfigurationError(ValueError):
@@ -122,6 +124,27 @@ def _validate_adapter_credentials(
     if role not in capabilities.roles:
         msg = f"adapter {capabilities.adapter_name!r} does not support the {role} role"
         raise CredentialConfigurationError(msg)
+    if set(settings) - capabilities.allowed_settings:
+        msg = f"adapter {capabilities.adapter_name!r} contains unsupported declared settings for the {role} role"
+        raise CredentialConfigurationError(msg)
+    for setting_name in capabilities.allowed_settings & _URL_SETTING_NAMES:
+        value = settings.get(setting_name)
+        if value is None:
+            continue
+        try:
+            parsed = urlsplit(value) if isinstance(value, str) else None
+        except ValueError:
+            parsed = None
+        if (
+            parsed is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            location = f"/configuration/{role}/settings/{setting_name}"
+            msg = f"{location} cannot contain user information, query parameters, or fragments"
+            raise CredentialConfigurationError(msg)
     if capabilities.validator is not None:
         findings = sort_findings(capabilities.validator(package, role))
         if error := next((finding for finding in findings if finding.severity == "error"), None):

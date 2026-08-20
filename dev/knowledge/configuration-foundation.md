@@ -31,9 +31,10 @@ credentials:
 
 Every adapter accepted by the registry needs an
 `AdapterConfigurationCapabilities` record. The declaration is connection-free: it names
-the adapter's allowed roles, credential-bearing setting paths, qualified destination
-write operations, schema-validation availability, and an optional bounded configuration
-validator. It must never contain clients, connections, credentials, or orchestration
+the adapter's allowed roles, closed set of allowed settings, credential-bearing setting
+paths, qualified destination write operations, schema-validation availability, and an
+optional bounded configuration validator. Credential paths must be inside the allowed
+setting set. It must never contain clients, connections, credentials, or orchestration
 objects.
 
 Bundled declarations live in `infrahub_sync.configuration.capabilities`. Package
@@ -46,9 +47,12 @@ The version-1 envelope refuses `adapters_path` and per-role `adapter` overrides.
 fields select machine-local or arbitrary adapter code whose credential-bearing settings
 cannot be proven by a bundled capability declaration. Redis accepts only its declared
 store settings; its URLs, usernames, and passwords follow the same credential-reference
-rule as adapter settings. Version 1 also refuses Prometheus and GenericRESTAPI custom
-headers because their arbitrary values cannot be proven free of inline credentials; use
-the declared token, username, and password reference settings instead.
+rule as adapter settings. Registered version-1 packages also refuse adapter settings
+outside each bundled declaration, including custom HTTP headers and request parameters
+on Prometheus, GenericRESTAPI, and its PeeringManager subclass. Declared URLs, base URLs,
+and endpoint paths cannot contain user information, query parameters, or fragments. Use
+the declared credential-reference settings instead. These restrictions apply to the
+registered package contract without changing the legacy `SyncConfig` runtime surface.
 
 The declaration is intentionally narrower than the complete adapter conformance profile.
 It provides the durable seam configuration validation needs without claiming that every
