@@ -10,7 +10,7 @@ import sys
 import textwrap
 from collections.abc import Callable, ItemsView, Iterator, Mapping
 from datetime import datetime, timezone
-from typing import Any, ClassVar, Literal, TypeVar, cast
+from typing import Any, ClassVar, Literal, NewType, TypeVar, cast
 
 import pytest
 from pydantic import BaseModel, ValidationError, create_model, model_serializer
@@ -418,6 +418,44 @@ def test_strict_configuration_guard_fails_closed_for_an_unresolved_recursive_typ
     message = str(caught.value)
     assert "ForwardExpressionValueCanary" not in message
     assert "unresolved-alias-input-value-canary" not in message
+
+
+def test_strict_configuration_guard_detects_a_future_nested_model_behind_new_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FutureNestedConfiguration(BaseModel):
+        known: str
+
+    future_nested_type = NewType("future_nested_type", FutureNestedConfiguration)
+    future_sync_config = create_model(
+        "FutureSyncConfig",
+        __base__=SyncConfig,
+        future_nested=(future_nested_type, None),
+    )
+    configuration = {
+        "name": "future-sync",
+        "source": {"name": "source"},
+        "destination": {"name": "destination"},
+        "future_nested": {
+            "known": "retained",
+            "unexpected": "new-type-input-value-canary",
+        },
+    }
+
+    parsed = future_sync_config.model_validate(configuration)
+    nested = cast("Any", parsed).future_nested
+    assert isinstance(nested, FutureNestedConfiguration)
+    assert nested.model_dump() == {"known": "retained"}
+
+    monkeypatch.setitem(
+        SyncConfig.model_fields,
+        "future_nested",
+        future_sync_config.model_fields["future_nested"],
+    )
+    with pytest.raises(RuntimeError, match=r"SyncConfig\.future_nested") as caught:
+        configuration_models._require_strict_configuration(configuration)  # pylint: disable=protected-access
+
+    assert "new-type-input-value-canary" not in str(caught.value)
 
 
 def test_pydantic_model_walker_follows_parameterized_backport_type_aliases() -> None:

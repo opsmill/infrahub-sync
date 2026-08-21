@@ -129,6 +129,8 @@ def _pydantic_models_in_annotation(
     if _is_type_alias(annotation):
         alias_target = cast("Any", annotation).__value__
         return _pydantic_models_in_annotation(alias_target, _visited=visited)
+    if isinstance(annotation, typing.NewType):
+        return _pydantic_models_in_annotation(annotation.__supertype__, _visited=visited)
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
         return frozenset({annotation})
     models: set[type[BaseModel]] = set()
