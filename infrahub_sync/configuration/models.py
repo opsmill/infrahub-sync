@@ -34,6 +34,22 @@ _UNSUPPORTED_DECLARED_FIELDS_ERROR = "unsupported_declared_fields"
 _INVALID_UNICODE_SURROGATE_ERROR = "invalid_unicode_surrogate"
 _INVALID_JSON_VALUE_ERROR = "invalid_json_value"
 _INVALID_DIFFSYNC_FLAG_NAME_ERROR = "invalid_diffsync_flag_name"
+_INVALID_CREDENTIAL_REFERENCE_NAME_ERROR = "invalid_credential_reference_name"
+_SAFE_PYDANTIC_FAILURE_REASONS = {
+    "missing": "required field is missing",
+    "literal_error": "unsupported value",
+    "extra_forbidden": "unsupported declared field",
+    "string_pattern_mismatch": "does not match required pattern",
+    "string_too_short": "value is too short",
+    "string_too_long": "value is too long",
+    "string_type": "wrong type",
+    "model_type": "wrong type",
+    "dict_type": "wrong type",
+    "tuple_type": "wrong type",
+    "int_type": "wrong type",
+    "int_parsing": "wrong type",
+    "int_from_float": "wrong type",
+}
 _DIFFSYNC_FLAG_FAILURE_REASONS = frozenset(
     {
         "diffsync flag name must be a string",
@@ -407,10 +423,13 @@ class ConfigurationPackage(BaseModel):
     @field_validator("credentials")
     @classmethod
     def _validate_reference_names(cls, value: Mapping[str, CredentialReference]) -> Mapping[str, CredentialReference]:
-        invalid = sorted(name for name in value if _REFERENCE_NAME_RE.fullmatch(name) is None)
+        invalid = tuple(sorted(name for name in value if _REFERENCE_NAME_RE.fullmatch(name) is None))
         if invalid:
-            msg = f"credential reference names are invalid: {', '.join(invalid)}"
-            raise ValueError(msg)
+            raise PydanticCustomError(
+                _INVALID_CREDENTIAL_REFERENCE_NAME_ERROR,
+                "invalid credential reference name",
+                {"field_names": invalid},
+            )
         return MappingProxyType(dict(value))
 
     @field_serializer("credentials")
@@ -455,7 +474,17 @@ def safe_pointer_component(value: object) -> str:
 
 def _safe_validation_location(error: Mapping[str, Any]) -> str:
     """Return one JSON-Pointer-like validation location without input values."""
-    components = [safe_pointer_component(component) for component in error.get("loc", ())]
+    if type(error) is not dict:  # pylint: disable=unidiomatic-typecheck  # Never execute mapping subclasses.
+        return "/"
+    raw_location = error.get("loc")
+    if type(raw_location) is not tuple:  # pylint: disable=unidiomatic-typecheck  # Never execute tuple subclasses.
+        return "/"
+    if any(
+        type(component) is not str and type(component) is not int  # pylint: disable=unidiomatic-typecheck
+        for component in raw_location
+    ):
+        return "/"
+    components = [safe_pointer_component(component) for component in raw_location]
     return "/" + "/".join(components) if components else "/"
 
 
@@ -523,16 +552,54 @@ def _safe_unsupported_field_failures(error: Mapping[str, Any]) -> tuple[tuple[st
     return tuple(failures)
 
 
+def _safe_credential_reference_name_failures(error: Mapping[str, Any]) -> tuple[tuple[str, str], ...] | None:
+    """Return item-level failures only for an authenticated credential-name error."""
+    if error.get("type") != _INVALID_CREDENTIAL_REFERENCE_NAME_ERROR:
+        return None
+    location = _safe_validation_location(error)
+    raw_location = error.get("loc")
+    if not (
+        type(raw_location) is tuple  # pylint: disable=unidiomatic-typecheck  # Exact internal metadata only.
+        and len(raw_location) == 1
+        and type(raw_location[0]) is str  # pylint: disable=unidiomatic-typecheck  # Reject executable subclasses.
+        and raw_location[0] == "credentials"
+    ):
+        return ((location, "invalid credential reference name"),)
+    context = error.get("ctx")
+    if type(context) is not dict:  # pylint: disable=unidiomatic-typecheck  # Exact Pydantic context only.
+        return ((location, "invalid credential reference name"),)
+    field_names = context.get("field_names")
+    if (
+        type(field_names) is not tuple  # pylint: disable=unidiomatic-typecheck  # Fixed structured context only.
+        or not field_names
+        or any(type(field_name) is not str for field_name in field_names)  # pylint: disable=unidiomatic-typecheck
+    ):
+        return ((location, "invalid credential reference name"),)
+    return tuple(
+        (f"/credentials/{safe_pointer_component(field_name)}", "invalid credential reference name")
+        for field_name in sorted(field_names)
+    )
+
+
 def _safe_validation_failures(error: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
     """Return actionable validation details assembled only from safe error metadata."""
+    if type(error) is not dict:  # pylint: disable=unidiomatic-typecheck  # Never execute mapping subclasses.
+        return (("/", "invalid value"),)
+    error_type = error.get("type")
+    if type(error_type) is not str:  # pylint: disable=unidiomatic-typecheck  # Fixed Pydantic codes only.
+        return (("/", "invalid value"),)
     for resolver in (
         _safe_native_validation_failure,
         _safe_diffsync_flag_failure,
         _safe_unsupported_field_failures,
+        _safe_credential_reference_name_failures,
     ):
         failures = resolver(error)
         if failures is not None:
             return failures
+    safe_reason = _SAFE_PYDANTIC_FAILURE_REASONS.get(error_type)
+    if safe_reason is not None:
+        return ((_safe_validation_location(error), safe_reason),)
     return ((_safe_validation_location(error), "invalid value"),)
 
 
