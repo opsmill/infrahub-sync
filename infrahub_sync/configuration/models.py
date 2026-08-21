@@ -474,7 +474,7 @@ def _safe_validation_failures(error: Mapping[str, Any]) -> tuple[tuple[str, str]
 
 def parse_configuration_package(value: object) -> ConfigurationPackage:
     """Parse declared package content without exposing rejected input in errors."""
-    if isinstance(value, ConfigurationPackage):
+    if type(value) is not dict:  # pylint: disable=unidiomatic-typecheck  # Exact JSON object roots only.
         msg = "configuration package is invalid at /: non-JSON value"
         raise ConfigurationPackageParseError(msg)
     try:

@@ -248,6 +248,18 @@ class _ExplosiveConstructedValue:
         raise AssertionError(msg)
 
 
+class _SpoofedClassValue:
+    """Object whose spoofed class property records unsafe inspection."""
+
+    callback_called = False
+
+    @property
+    def __class__(self) -> type[object]:
+        type(self).callback_called = True
+        msg = "class-callback-secret-canary"
+        raise RuntimeError(msg)
+
+
 class _ExecutableConfigurationPackage(ConfigurationPackage):
     """Package subclass whose serializer must not run at the parse boundary."""
 
@@ -503,34 +515,33 @@ def test_safe_parse_preserves_locations_for_non_json_failures(failure_kind: str,
     location_canary = "invalid\n\u202e~/"
     visible_location = r"invalid\n\u202e~0~1"
     type_name_canary = "RejectedTypeNameCanary"
+    data = _package().model_dump(mode="json")
+    settings = data["configuration"]["source"]["settings"]
+    expected_location = f"/configuration/source/settings/{visible_location}"
 
     if failure_kind == "excessive-depth":
         value: object = "leaf"
         for _ in range(66):
             value = [value]
-        data: object = value
-        expected_location = "/0" * 65
+        settings[location_canary] = value
+        expected_location += "/0" * 61
+    elif failure_kind == "non-finite-float":
+        settings[location_canary] = float("nan")
+    elif failure_kind == "recursive-list":
+        recursive_list: list[object] = []
+        recursive_list.append(recursive_list)
+        settings[location_canary] = recursive_list
+        expected_location += "/0"
+    elif failure_kind == "recursive-mapping":
+        recursive_mapping: dict[str, object] = {}
+        recursive_mapping["self"] = recursive_mapping
+        settings[location_canary] = recursive_mapping
+        expected_location += "/self"
+    elif failure_kind == "non-string-key":
+        hostile_key = type(type_name_canary, (), {})()
+        settings[location_canary] = {hostile_key: "rejected-value-canary"}
     else:
-        data = _package().model_dump(mode="json")
-        settings = data["configuration"]["source"]["settings"]
-        expected_location = f"/configuration/source/settings/{visible_location}"
-        if failure_kind == "non-finite-float":
-            settings[location_canary] = float("nan")
-        elif failure_kind == "recursive-list":
-            recursive_list: list[object] = []
-            recursive_list.append(recursive_list)
-            settings[location_canary] = recursive_list
-            expected_location += "/0"
-        elif failure_kind == "recursive-mapping":
-            recursive_mapping: dict[str, object] = {}
-            recursive_mapping["self"] = recursive_mapping
-            settings[location_canary] = recursive_mapping
-            expected_location += "/self"
-        elif failure_kind == "non-string-key":
-            hostile_key = type(type_name_canary, (), {})()
-            settings[location_canary] = {hostile_key: "rejected-value-canary"}
-        else:
-            settings[location_canary] = type(type_name_canary, (), {})()
+        settings[location_canary] = type(type_name_canary, (), {})()
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
         parse_configuration_package(data)
@@ -621,11 +632,41 @@ def test_safe_parse_rejects_native_subclasses_without_callbacks(value: object) -
     assert type(value).__name__ not in message
 
 
-@pytest.mark.parametrize("package_kind", ["constructed", "subclass", "valid"])
-def test_safe_parse_rejects_package_instances_without_callbacks(package_kind: str) -> None:
+@pytest.mark.parametrize(
+    "root_kind",
+    [
+        "spoofed-class",
+        "none",
+        "list",
+        "string",
+        "int",
+        "float",
+        "dict-subclass",
+        "constructed-package",
+        "package-subclass",
+        "valid-package",
+    ],
+)
+def test_safe_parse_rejects_non_dict_roots_without_callbacks(root_kind: str) -> None:
+    _SpoofedClassValue.callback_called = False
+    _ExecutableDict.callback_called = False
     _ExplosiveConstructedValue.callback_called = False
     _ExecutableConfigurationPackage.serializer_called = False
-    if package_kind == "constructed":
+    if root_kind == "spoofed-class":
+        value: object = _SpoofedClassValue()
+    elif root_kind == "none":
+        value = None
+    elif root_kind == "list":
+        value = []
+    elif root_kind == "string":
+        value = "root-string-canary"
+    elif root_kind == "int":
+        value = 7
+    elif root_kind == "float":
+        value = 1.5
+    elif root_kind == "dict-subclass":
+        value = _ExecutableDict()
+    elif root_kind == "constructed-package":
         explosive = _ExplosiveConstructedValue()
         value = ConfigurationPackage.model_construct(
             format_version=999,
@@ -633,7 +674,7 @@ def test_safe_parse_rejects_package_instances_without_callbacks(package_kind: st
             package_metadata=explosive,
             credentials=explosive,
         )
-    elif package_kind == "subclass":
+    elif root_kind == "package-subclass":
         value = _ExecutableConfigurationPackage.model_construct(
             format_version=1,
             configuration="not-json",
@@ -648,6 +689,8 @@ def test_safe_parse_rejects_package_instances_without_callbacks(package_kind: st
 
     message = str(caught.value)
     assert message == "configuration package is invalid at /: non-JSON value"
+    assert not _SpoofedClassValue.callback_called
+    assert not _ExecutableDict.callback_called
     assert not _ExplosiveConstructedValue.callback_called
     assert not _ExecutableConfigurationPackage.serializer_called
     assert len(message.splitlines()) == 1
