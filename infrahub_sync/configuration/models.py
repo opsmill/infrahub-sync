@@ -7,7 +7,7 @@ import re
 from collections.abc import Mapping, Sequence
 from hashlib import sha256
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Any, Literal, cast, get_args
 
 from diffsync.enum import DiffSyncFlags
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_serializer, field_validator, model_validator
@@ -28,11 +28,18 @@ from infrahub_sync.plan.canonical import canonical_json_bytes
 _REFERENCE_NAME_PATTERN = r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
 _PROVIDER_NAME_PATTERN = r"^[a-z][a-z0-9-]{0,63}$"
 _REFERENCE_NAME_RE = re.compile(_REFERENCE_NAME_PATTERN)
+_SAFE_POINTER_RE = re.compile(r"^(/(?:[^~/]|~[01])*)*$")
 _MAX_DECLARATION_DEPTH = 64
 _UNSUPPORTED_DECLARED_FIELDS_ERROR = "unsupported_declared_fields"
 _INVALID_UNICODE_SURROGATE_ERROR = "invalid_unicode_surrogate"
 _INVALID_JSON_VALUE_ERROR = "invalid_json_value"
 _INVALID_DIFFSYNC_FLAG_NAME_ERROR = "invalid_diffsync_flag_name"
+_DIFFSYNC_FLAG_FAILURE_REASONS = frozenset(
+    {
+        "diffsync flag name must be a string",
+        "unknown diffsync flag name",
+    }
+)
 _JSON_NATIVE_FAILURE_REASONS = frozenset(
     {
         "maximum declared-content depth exceeded",
@@ -77,50 +84,92 @@ def _require_known_fields(value: Any, model: type[BaseModel], *, location: str) 
         _raise_unsupported_declared_fields(location=location, fields=unknown)
 
 
-def _require_strict_configuration(value: Any) -> None:
-    """Apply extra-forbid semantics throughout the legacy configuration shape."""
+_STRICT_CONFIGURATION_CHILDREN: dict[type[BaseModel], dict[str, tuple[type[BaseModel], bool]]] = {
+    SyncConfig: {
+        "store": (SyncStore, False),
+        "source": (SyncAdapter, False),
+        "destination": (SyncAdapter, False),
+        "schema_mapping": (SchemaMappingModel, True),
+        "incremental": (IncrementalConfig, False),
+    },
+    SchemaMappingModel: {
+        "filters": (SchemaMappingFilter, True),
+        "transforms": (SchemaMappingTransform, True),
+        "fields": (SchemaMappingField, True),
+    },
+}
+
+
+def _pydantic_models_in_annotation(annotation: object) -> frozenset[type[BaseModel]]:
+    """Return every Pydantic model nested in one field annotation."""
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return frozenset({annotation})
+    models: set[type[BaseModel]] = set()
+    for argument in get_args(annotation):
+        models.update(_pydantic_models_in_annotation(argument))
+    return frozenset(models)
+
+
+def _require_complete_strict_configuration_walk() -> None:
+    """Fail if the strict walker omits a nested model reachable from SyncConfig."""
+    discovered: set[tuple[type[BaseModel], str, type[BaseModel]]] = set()
+    pending: list[type[BaseModel]] = [SyncConfig]
+    visited: set[type[BaseModel]] = set()
+    while pending:
+        model = pending.pop()
+        if model in visited:
+            continue
+        visited.add(model)
+        for field_name, field in model.model_fields.items():
+            for child_model in _pydantic_models_in_annotation(field.annotation):
+                discovered.add((model, field_name, child_model))
+                pending.append(child_model)
+
+    walked = {
+        (model, field_name, child_model)
+        for model, children in _STRICT_CONFIGURATION_CHILDREN.items()
+        for field_name, (child_model, _many) in children.items()
+    }
+    if discovered == walked:
+        return
+    missing = sorted(
+        f"{model.__name__}.{field_name} -> {child_model.__name__}"
+        for model, field_name, child_model in discovered - walked
+    )
+    stale = sorted(
+        f"{model.__name__}.{field_name} -> {child_model.__name__}"
+        for model, field_name, child_model in walked - discovered
+    )
+    details = "; ".join([*(f"missing {item}" for item in missing), *(f"stale {item}" for item in stale)])
+    msg = f"strict configuration walker is incomplete: {details}"
+    raise RuntimeError(msg)
+
+
+def _require_strict_model(value: Any, model: type[BaseModel], *, location: str) -> None:
+    """Apply extra-forbid semantics to one registered legacy model node."""
     if not isinstance(value, Mapping):
         return
-    _require_known_fields(value, SyncConfig, location="configuration")
-    if value.get("adapters_path") is not None:
-        _raise_unsupported_declared_fields(
-            location="configuration",
-            fields=("adapters_path",),
-        )
-    for role in ("source", "destination"):
-        adapter = value.get(role)
-        _require_known_fields(adapter, SyncAdapter, location=f"configuration.{role}")
-        if isinstance(adapter, Mapping) and adapter.get("adapter") is not None:
-            _raise_unsupported_declared_fields(
-                location=f"configuration.{role}",
-                fields=("adapter",),
-            )
-    _require_known_fields(value.get("store"), SyncStore, location="configuration.store")
-    _require_known_fields(value.get("incremental"), IncrementalConfig, location="configuration.incremental")
-    mappings = value.get("schema_mapping")
-    if not isinstance(mappings, list):
-        return
-    for index, mapping in enumerate(mappings):
-        prefix = f"configuration.schema_mapping[{index}]"
-        _require_known_fields(mapping, SchemaMappingModel, location=prefix)
-        if not isinstance(mapping, Mapping):
+    _require_known_fields(value, model, location=location)
+    if model is SyncConfig and value.get("adapters_path") is not None:
+        _raise_unsupported_declared_fields(location=location, fields=("adapters_path",))
+    if model is SyncAdapter and value.get("adapter") is not None:
+        _raise_unsupported_declared_fields(location=location, fields=("adapter",))
+    for field_name, (child_model, many) in _STRICT_CONFIGURATION_CHILDREN.get(model, {}).items():
+        child = value.get(field_name)
+        child_location = f"{location}.{field_name}"
+        if not many:
+            _require_strict_model(child, child_model, location=child_location)
             continue
-        declared_mapping = cast("Mapping[str, object]", mapping)
-        nested_models = (
-            ("filters", SchemaMappingFilter),
-            ("transforms", SchemaMappingTransform),
-            ("fields", SchemaMappingField),
-        )
-        for field_name, model in nested_models:
-            members = declared_mapping.get(field_name)
-            if not isinstance(members, list):
-                continue
-            for member_index, member in enumerate(members):
-                _require_known_fields(
-                    member,
-                    model,
-                    location=f"{prefix}.{field_name}[{member_index}]",
-                )
+        if not isinstance(child, list):
+            continue
+        for index, member in enumerate(child):
+            _require_strict_model(member, child_model, location=f"{child_location}[{index}]")
+
+
+def _require_strict_configuration(value: Any) -> None:
+    """Apply extra-forbid semantics throughout the legacy configuration shape."""
+    _require_complete_strict_configuration_walk()
+    _require_strict_model(value, SyncConfig, location="configuration")
 
 
 def _require_unicode_scalars(value: str, *, location: str) -> None:
@@ -312,11 +361,22 @@ class _ImmutableSyncConfig(SyncConfig):
     @classmethod
     def _require_named_diffsync_flags(cls, value: Any) -> Any:
         # pylint: disable=unidiomatic-typecheck
-        if type(value) is list and any(type(item) is not str for item in value):
-            raise PydanticCustomError(
-                _INVALID_DIFFSYNC_FLAG_NAME_ERROR,
-                "diffsync flags must be declared by name",
-            )
+        if type(value) is list:
+            for index, item in enumerate(value):
+                if type(item) is not str:
+                    reason = "diffsync flag name must be a string"
+                    raise PydanticCustomError(
+                        _INVALID_DIFFSYNC_FLAG_NAME_ERROR,
+                        reason,
+                        {"index": index, "reason": reason},
+                    )
+                if item not in DiffSyncFlags.__members__:
+                    reason = "unknown diffsync flag name"
+                    raise PydanticCustomError(
+                        _INVALID_DIFFSYNC_FLAG_NAME_ERROR,
+                        reason,
+                        {"index": index, "reason": reason},
+                    )
         # pylint: enable=unidiomatic-typecheck
         return value
 
@@ -445,51 +505,95 @@ def _safe_validation_location(error: Mapping[str, Any]) -> str:
     return "/" + "/".join(components) if components else "/"
 
 
+def _safe_context_pointer(value: object) -> str | None:
+    """Accept only printable, well-formed JSON pointers from internal error context."""
+    if type(value) is not str:  # pylint: disable=unidiomatic-typecheck  # Never invoke subclass callbacks.
+        return None
+    if not value.startswith("/"):
+        return None
+    if _SAFE_POINTER_RE.fullmatch(value) is None or not all(character.isprintable() for character in value):
+        return None
+    return value
+
+
 def _safe_native_validation_failure(error: Mapping[str, Any]) -> tuple[tuple[str, str], ...] | None:
     """Return safe structured JSON-native failure details when available."""
     if error.get("type") == _INVALID_JSON_VALUE_ERROR:
         context = error.get("ctx")
         pointer = context.get("pointer") if isinstance(context, Mapping) else None
         reason = context.get("reason") if isinstance(context, Mapping) else None
-        if isinstance(pointer, str) and reason in _JSON_NATIVE_FAILURE_REASONS:
-            return ((pointer, cast("str", reason)),)
+        safe_pointer = _safe_context_pointer(pointer)
+        if safe_pointer is not None and reason in _JSON_NATIVE_FAILURE_REASONS:
+            return ((safe_pointer, cast("str", reason)),)
         return ((_safe_validation_location(error), "invalid JSON value"),)
     if error.get("type") == _INVALID_UNICODE_SURROGATE_ERROR:
         context = error.get("ctx")
         pointer = context.get("pointer") if isinstance(context, Mapping) else None
-        location = pointer if isinstance(pointer, str) else _safe_validation_location(error)
+        location = _safe_context_pointer(pointer) or _safe_validation_location(error)
         return ((location, "invalid Unicode surrogate"),)
     return None
 
 
-def _safe_validation_failures(error: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
-    """Return actionable validation details assembled only from safe error metadata."""
-    native_failure = _safe_native_validation_failure(error)
-    if native_failure is not None:
-        return native_failure
+def _safe_diffsync_flag_failure(error: Mapping[str, Any]) -> tuple[tuple[str, str], ...] | None:
+    """Return safe structured DiffSync flag failure details when available."""
+    if error.get("type") == _INVALID_DIFFSYNC_FLAG_NAME_ERROR:
+        context = error.get("ctx")
+        index = context.get("index") if isinstance(context, Mapping) else None
+        reason = context.get("reason") if isinstance(context, Mapping) else None
+        # Exact integers only: booleans and subclasses are not trusted error context.
+        if type(index) is int and index >= 0 and reason in _DIFFSYNC_FLAG_FAILURE_REASONS:  # pylint: disable=unidiomatic-typecheck
+            location = f"{_safe_validation_location(error)}/{index}"
+            return ((location, cast("str", reason)),)
+        return ((_safe_validation_location(error), "invalid diffsync flag name"),)
+    return None
+
+
+def _safe_unsupported_field_failures(error: Mapping[str, Any]) -> tuple[tuple[str, str], ...] | None:
+    """Return safe structured unsupported-field details when available."""
     if error.get("type") != _UNSUPPORTED_DECLARED_FIELDS_ERROR:
-        return ((_safe_validation_location(error), str(error.get("type", "invalid-value"))),)
+        return None
     context = error.get("ctx")
     if not isinstance(context, Mapping):
         return ((_safe_validation_location(error), "unsupported declared field"),)
     pointer = context.get("pointer")
     field_names = context.get("field_names")
-    if not isinstance(pointer, str) or not isinstance(field_names, tuple):
+    safe_pointer = _safe_context_pointer(pointer)
+    if safe_pointer is None or not isinstance(field_names, tuple):
         return ((_safe_validation_location(error), "unsupported declared field"),)
     failures = []
     for field_name in field_names:
         if not isinstance(field_name, str):
             return ((_safe_validation_location(error), "unsupported declared field"),)
         escaped = safe_pointer_component(field_name)
-        failures.append((f"{pointer}/{escaped}", "unsupported declared field"))
+        failures.append((f"{safe_pointer}/{escaped}", "unsupported declared field"))
     return tuple(failures)
+
+
+def _safe_validation_failures(error: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
+    """Return actionable validation details assembled only from safe error metadata."""
+    for resolver in (
+        _safe_native_validation_failure,
+        _safe_diffsync_flag_failure,
+        _safe_unsupported_field_failures,
+    ):
+        failures = resolver(error)
+        if failures is not None:
+            return failures
+    return ((_safe_validation_location(error), "invalid value"),)
+
+
+def _configuration_package_parse_error(
+    failures: Sequence[tuple[str, str]],
+) -> ConfigurationPackageParseError:
+    """Format one public parse error from value-free failure details."""
+    details = "; ".join(f"{location}: {reason}" for location, reason in failures)
+    return ConfigurationPackageParseError(f"configuration package is invalid at {details}")
 
 
 def parse_configuration_package(value: object) -> ConfigurationPackage:
     """Parse declared package content without exposing rejected input in errors."""
     if type(value) is not dict:  # pylint: disable=unidiomatic-typecheck  # Exact JSON object roots only.
-        msg = "configuration package is invalid at /: non-JSON value"
-        raise ConfigurationPackageParseError(msg)
+        raise _configuration_package_parse_error((("/", "non-JSON value"),))
     try:
         return ConfigurationPackage.model_validate(value)
     except ValidationError as exc:
@@ -500,9 +604,7 @@ def parse_configuration_package(value: object) -> ConfigurationPackage:
                 for failure in _safe_validation_failures(error)
             }
         )
-        details = "; ".join(f"{location}: {reason}" for location, reason in failures)
-        msg = f"configuration package is invalid at {details}"
-        raise ConfigurationPackageParseError(msg) from None
+        raise _configuration_package_parse_error(failures) from None
 
 
 def sort_findings(findings: Sequence[ValidationFinding]) -> tuple[ValidationFinding, ...]:

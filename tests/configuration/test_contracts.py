@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, ClassVar, Literal, cast
 
 import pytest
-from pydantic import ValidationError, model_serializer
+from pydantic import BaseModel, ValidationError, model_serializer
 from pydantic_core import PydanticCustomError
 
 from infrahub_sync import SyncConfig
@@ -320,8 +320,46 @@ def test_safe_parse_requires_diffsync_flag_names_without_changing_legacy_behavio
         parse_configuration_package(data)
 
     assert str(caught.value) == (
-        "configuration package is invalid at /configuration/diffsync_flags: invalid_diffsync_flag_name"
+        "configuration package is invalid at /configuration/diffsync_flags/0: diffsync flag name must be a string"
     )
+
+
+@pytest.mark.parametrize("flag_name", ["NOPE", "skip_unmatched_dst"], ids=["unknown", "wrong-case"])
+def test_safe_parse_reports_unknown_diffsync_flag_at_item_without_echo(flag_name: str) -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["diffsync_flags"] = [flag_name]
+
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(data)
+
+    message = str(caught.value)
+    assert message == (
+        "configuration package is invalid at /configuration/diffsync_flags/0: unknown diffsync flag name"
+    )
+    assert flag_name not in message
+
+
+def test_strict_configuration_guard_detects_a_future_unwalked_nested_model_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FutureNestedConfiguration(BaseModel):
+        known: str
+
+    class FutureSyncConfig(SyncConfig):
+        future_nested: FutureNestedConfiguration | None = None
+
+    monkeypatch.setitem(
+        SyncConfig.model_fields,
+        "future_nested",
+        FutureSyncConfig.model_fields["future_nested"],
+    )
+
+    with pytest.raises(RuntimeError, match=r"SyncConfig\.future_nested") as caught:
+        configuration_models._require_strict_configuration(  # pylint: disable=protected-access
+            {"future_nested": {"unexpected": "future-nested-value-canary"}}
+        )
+
+    assert "future-nested-value-canary" not in str(caught.value)
 
 
 def test_package_credentials_cannot_mutate_after_validation() -> None:
@@ -584,6 +622,74 @@ def test_safe_parse_preserves_locations_for_non_json_failures(failure_kind: str,
     assert "\u202e" not in message
     assert type_name_canary not in message
     assert "rejected-value-canary" not in message
+
+
+@pytest.mark.parametrize(
+    ("error_type", "context", "safe_reason"),
+    [
+        pytest.param(
+            "invalid_json_value",
+            {"pointer": "/hostile\npointer-value-canary", "reason": "non-JSON value"},
+            "invalid JSON value",
+            id="json-control",
+        ),
+        pytest.param(
+            "invalid_json_value",
+            {"pointer": "/hostile~2pointer-value-canary", "reason": "non-JSON value"},
+            "invalid JSON value",
+            id="json-invalid-escape",
+        ),
+        pytest.param(
+            "invalid_unicode_surrogate",
+            {"pointer": "/hostile\npointer-value-canary"},
+            "invalid Unicode surrogate",
+            id="unicode-control",
+        ),
+    ],
+)
+def test_native_validation_failure_rejects_unsafe_context_pointers(
+    error_type: str,
+    context: dict[str, object],
+    safe_reason: str,
+) -> None:
+    failure = configuration_models._safe_native_validation_failure(  # pylint: disable=protected-access
+        {
+            "type": error_type,
+            "loc": ("configuration", "source"),
+            "ctx": context,
+        }
+    )
+
+    assert failure == (("/configuration/source", safe_reason),)
+    assert "canary" not in repr(failure)
+
+
+def test_native_validation_failure_rejects_pointer_string_subclasses_without_callbacks() -> None:
+    class ExecutablePointer(str):  # noqa: FURB189 - exact built-in strings are the trust boundary.
+        __slots__ = ()
+        callback_called = False
+
+        def startswith(  # ty: ignore[invalid-method-override]  # Hostile test probe.
+            self,
+            prefix: str | tuple[str, ...],
+            start: int = 0,
+            end: int | None = None,
+        ) -> bool:
+            type(self).callback_called = True
+            return super().startswith(prefix, start, len(self) if end is None else end)
+
+    pointer = ExecutablePointer("/hostile-pointer-value-canary")
+    failure = configuration_models._safe_native_validation_failure(  # pylint: disable=protected-access
+        {
+            "type": "invalid_json_value",
+            "loc": ("configuration", "source"),
+            "ctx": {"pointer": pointer, "reason": "non-JSON value"},
+        }
+    )
+
+    assert failure == (("/configuration/source", "invalid JSON value"),)
+    assert not pointer.callback_called
+    assert "canary" not in repr(failure)
 
 
 @pytest.mark.parametrize(
