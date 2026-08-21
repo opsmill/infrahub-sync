@@ -381,6 +381,63 @@ def test_safe_parse_rejects_surrogate_string_values_without_echo(codepoint: int)
     assert canary not in message
 
 
+@pytest.mark.parametrize(
+    ("failure_kind", "reason"),
+    [
+        pytest.param("excessive-depth", "maximum declared-content depth exceeded", id="excessive-depth"),
+        pytest.param("non-finite-float", "non-finite float", id="non-finite-float"),
+        pytest.param("recursive-list", "recursive list", id="recursive-list"),
+        pytest.param("recursive-mapping", "recursive mapping", id="recursive-mapping"),
+        pytest.param("non-string-key", "non-string mapping key", id="non-string-key"),
+        pytest.param("non-json-value", "non-JSON value", id="non-json-value"),
+    ],
+)
+def test_safe_parse_preserves_locations_for_non_json_failures(failure_kind: str, reason: str) -> None:
+    location_canary = "invalid\n\u202e~/"
+    visible_location = r"invalid\n\u202e~0~1"
+    type_name_canary = "RejectedTypeNameCanary"
+
+    if failure_kind == "excessive-depth":
+        value: object = "leaf"
+        for _ in range(66):
+            value = [value]
+        data: object = value
+        expected_location = "/0" * 65
+    else:
+        data = _package().model_dump(mode="json")
+        settings = data["configuration"]["source"]["settings"]
+        expected_location = f"/configuration/source/settings/{visible_location}"
+        if failure_kind == "non-finite-float":
+            settings[location_canary] = float("nan")
+        elif failure_kind == "recursive-list":
+            recursive_list: list[object] = []
+            recursive_list.append(recursive_list)
+            settings[location_canary] = recursive_list
+            expected_location += "/0"
+        elif failure_kind == "recursive-mapping":
+            recursive_mapping: dict[str, object] = {}
+            recursive_mapping["self"] = recursive_mapping
+            settings[location_canary] = recursive_mapping
+            expected_location += "/self"
+        elif failure_kind == "non-string-key":
+            hostile_key = type(type_name_canary, (), {})()
+            settings[location_canary] = {hostile_key: "rejected-value-canary"}
+        else:
+            settings[location_canary] = type(type_name_canary, (), {})()
+
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(data)
+
+    message = str(caught.value)
+    assert message == f"configuration package is invalid at {expected_location}: {reason}"
+    assert len(message.splitlines()) == 1
+    assert all(character.isprintable() for character in message)
+    assert "\n" not in message
+    assert "\u202e" not in message
+    assert type_name_canary not in message
+    assert "rejected-value-canary" not in message
+
+
 def test_safe_parse_names_unknown_adapter_field_without_echoing_its_value() -> None:
     canaries = (
         "adapter-field-value-canary",

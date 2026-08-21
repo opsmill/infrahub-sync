@@ -31,6 +31,17 @@ _REFERENCE_NAME_RE = re.compile(_REFERENCE_NAME_PATTERN)
 _MAX_DECLARATION_DEPTH = 64
 _UNSUPPORTED_DECLARED_FIELDS_ERROR = "unsupported_declared_fields"
 _INVALID_UNICODE_SURROGATE_ERROR = "invalid_unicode_surrogate"
+_INVALID_JSON_VALUE_ERROR = "invalid_json_value"
+_JSON_NATIVE_FAILURE_REASONS = frozenset(
+    {
+        "maximum declared-content depth exceeded",
+        "non-finite float",
+        "non-JSON value",
+        "non-string mapping key",
+        "recursive list",
+        "recursive mapping",
+    }
+)
 
 
 class ConfigurationPackageParseError(ValueError):
@@ -122,6 +133,16 @@ def _require_unicode_scalars(value: str, *, location: str) -> None:
         )
 
 
+def _raise_invalid_json_value(*, location: str, reason: str) -> None:
+    """Raise one structured, value-free error for invalid JSON-native content."""
+    pointer = location.removeprefix("$") or "/"
+    raise PydanticCustomError(
+        _INVALID_JSON_VALUE_ERROR,
+        "{location}: {reason}",  # noqa: RUF027
+        {"location": location, "pointer": pointer, "reason": reason},
+    )
+
+
 def _require_json_native(
     value: Any,
     *,
@@ -131,8 +152,7 @@ def _require_json_native(
 ) -> None:
     """Reject values outside JSON's native data model before Pydantic coercion."""
     if _depth > _MAX_DECLARATION_DEPTH:
-        msg = f"{location} exceeds the maximum declared-content depth"
-        raise ValueError(msg)
+        _raise_invalid_json_value(location=location, reason="maximum declared-content depth exceeded")
     if isinstance(value, str):
         _require_unicode_scalars(value, location=location)
         return
@@ -140,32 +160,27 @@ def _require_json_native(
         return
     if isinstance(value, float):
         if not math.isfinite(value):
-            msg = f"{location} contains a non-finite float"
-            raise ValueError(msg)
+            _raise_invalid_json_value(location=location, reason="non-finite float")
         return
     if isinstance(value, list):
         if id(value) in _containers:
-            msg = f"{location} contains a recursive list"
-            raise ValueError(msg)
+            _raise_invalid_json_value(location=location, reason="recursive list")
         containers = _containers | {id(value)}
         for index, item in enumerate(value):
             _require_json_native(item, location=f"{location}/{index}", _containers=containers, _depth=_depth + 1)
         return
     if isinstance(value, Mapping):
         if id(value) in _containers:
-            msg = f"{location} contains a recursive mapping"
-            raise ValueError(msg)
+            _raise_invalid_json_value(location=location, reason="recursive mapping")
         containers = _containers | {id(value)}
         for key, item in value.items():
             if not isinstance(key, str):
-                msg = f"{location} contains a non-string mapping key"
-                raise ValueError(msg)  # noqa: TRY004 - Pydantic input errors use one ValidationError surface.
+                _raise_invalid_json_value(location=location, reason="non-string mapping key")
             item_location = f"{location}/{safe_pointer_component(key)}"
             _require_unicode_scalars(key, location=item_location)
             _require_json_native(item, location=item_location, _containers=containers, _depth=_depth + 1)
         return
-    msg = f"{location} contains non-JSON value type {type(value).__name__!r}"
-    raise ValueError(msg)
+    _raise_invalid_json_value(location=location, reason="non-JSON value")
 
 
 def _freeze_json(value: Any) -> Any:
@@ -416,13 +431,28 @@ def _safe_validation_location(error: Mapping[str, Any]) -> str:
     return "/" + "/".join(components) if components else "/"
 
 
-def _safe_validation_failures(error: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
-    """Return actionable validation details assembled only from safe error metadata."""
+def _safe_native_validation_failure(error: Mapping[str, Any]) -> tuple[tuple[str, str], ...] | None:
+    """Return safe structured JSON-native failure details when available."""
+    if error.get("type") == _INVALID_JSON_VALUE_ERROR:
+        context = error.get("ctx")
+        pointer = context.get("pointer") if isinstance(context, Mapping) else None
+        reason = context.get("reason") if isinstance(context, Mapping) else None
+        if isinstance(pointer, str) and reason in _JSON_NATIVE_FAILURE_REASONS:
+            return ((pointer, cast("str", reason)),)
+        return ((_safe_validation_location(error), "invalid JSON value"),)
     if error.get("type") == _INVALID_UNICODE_SURROGATE_ERROR:
         context = error.get("ctx")
         pointer = context.get("pointer") if isinstance(context, Mapping) else None
         location = pointer if isinstance(pointer, str) else _safe_validation_location(error)
         return ((location, "invalid Unicode surrogate"),)
+    return None
+
+
+def _safe_validation_failures(error: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
+    """Return actionable validation details assembled only from safe error metadata."""
+    native_failure = _safe_native_validation_failure(error)
+    if native_failure is not None:
+        return native_failure
     if error.get("type") != _UNSUPPORTED_DECLARED_FIELDS_ERROR:
         return ((_safe_validation_location(error), str(error.get("type", "invalid-value"))),)
     context = error.get("ctx")
