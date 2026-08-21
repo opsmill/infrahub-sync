@@ -10,10 +10,10 @@ import sys
 import textwrap
 from collections.abc import Callable, ItemsView, Iterator, Mapping
 from datetime import datetime, timezone
-from typing import Any, Literal, cast
+from typing import Any, ClassVar, Literal, cast
 
 import pytest
-from pydantic import ValidationError
+from pydantic import ValidationError, model_serializer
 from pydantic_core import PydanticCustomError
 
 from infrahub_sync import SyncConfig
@@ -234,6 +234,29 @@ class _ExecutableFloat(float):
     def __float__(self) -> float:
         type(self).callback_called = True
         msg = "float-callback-canary"
+        raise AssertionError(msg)
+
+
+class _ExplosiveConstructedValue:
+    """Invalid constructed field value that records attribute access."""
+
+    callback_called = False
+
+    def __getattribute__(self, name: str) -> object:
+        type(self).callback_called = True
+        msg = "constructed-value-callback-canary"
+        raise AssertionError(msg)
+
+
+class _ExecutableConfigurationPackage(ConfigurationPackage):
+    """Package subclass whose serializer must not run at the parse boundary."""
+
+    serializer_called: ClassVar[bool] = False
+
+    @model_serializer
+    def _serialize(self) -> dict[str, object]:
+        type(self).serializer_called = True
+        msg = "package-serializer-callback-canary"
         raise AssertionError(msg)
 
 
@@ -542,7 +565,7 @@ def test_safe_parse_rejects_forged_custom_error_context(
     error_type: Literal["invalid_json_value", "invalid_unicode_surrogate", "unsupported_declared_fields"],
     trusted_context: dict[str, object],
 ) -> None:
-    # Recover the vulnerable revision's marker; the corrected revision deliberately has none.
+    # Overlaid on vulnerable 419ad716, these names recover its marker; corrected revisions expose neither.
     marker_key = getattr(
         configuration_models,
         "_INTERNAL_ERROR_CONTEXT_MARKER_KEY",
@@ -596,6 +619,40 @@ def test_safe_parse_rejects_native_subclasses_without_callbacks(value: object) -
     assert all(character.isprintable() for character in message)
     assert "canary" not in message
     assert type(value).__name__ not in message
+
+
+@pytest.mark.parametrize("package_kind", ["constructed", "subclass", "valid"])
+def test_safe_parse_rejects_package_instances_without_callbacks(package_kind: str) -> None:
+    _ExplosiveConstructedValue.callback_called = False
+    _ExecutableConfigurationPackage.serializer_called = False
+    if package_kind == "constructed":
+        explosive = _ExplosiveConstructedValue()
+        value = ConfigurationPackage.model_construct(
+            format_version=999,
+            configuration=explosive,
+            package_metadata=explosive,
+            credentials=explosive,
+        )
+    elif package_kind == "subclass":
+        value = _ExecutableConfigurationPackage.model_construct(
+            format_version=1,
+            configuration="not-json",
+            package_metadata=None,
+            credentials=None,
+        )
+    else:
+        value = _package()
+
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(value)
+
+    message = str(caught.value)
+    assert message == "configuration package is invalid at /: non-JSON value"
+    assert not _ExplosiveConstructedValue.callback_called
+    assert not _ExecutableConfigurationPackage.serializer_called
+    assert len(message.splitlines()) == 1
+    assert all(character.isprintable() for character in message)
+    assert "canary" not in message
 
 
 def test_safe_parse_names_unknown_adapter_field_without_echoing_its_value() -> None:

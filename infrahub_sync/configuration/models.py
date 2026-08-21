@@ -474,6 +474,9 @@ def _safe_validation_failures(error: Mapping[str, Any]) -> tuple[tuple[str, str]
 
 def parse_configuration_package(value: object) -> ConfigurationPackage:
     """Parse declared package content without exposing rejected input in errors."""
+    if isinstance(value, ConfigurationPackage):
+        msg = "configuration package is invalid at /: non-JSON value"
+        raise ConfigurationPackageParseError(msg)
     try:
         return ConfigurationPackage.model_validate(value)
     except ValidationError as exc:
