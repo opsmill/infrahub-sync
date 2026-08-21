@@ -8,13 +8,15 @@ import os
 import subprocess  # noqa: S404 - fixed interpreter runs an in-repository determinism probe.
 import sys
 import textwrap
+import typing
 from collections.abc import Callable, ItemsView, Iterator, Mapping
 from datetime import datetime, timezone
+from types import UnionType
 from typing import Any, ClassVar, Literal, cast
 
 import pytest
 from diffsync.enum import DiffSyncFlags
-from pydantic import ValidationError, model_serializer
+from pydantic import BaseModel, RootModel, ValidationError, model_serializer
 from pydantic_core import PydanticCustomError
 
 from infrahub_sync import (
@@ -349,6 +351,52 @@ def test_safe_parse_reports_unknown_diffsync_flag_at_item_without_echo(flag_name
     assert flag_name not in message
 
 
+_KNOWN_STRICT_SCALAR_ANNOTATIONS = frozenset(
+    {
+        str,
+        int,
+        str | None,
+        list[str],
+        list[str] | None,
+        dict[str, Any] | None,
+        list[str | DiffSyncFlags] | None,
+        Any | None,
+    }
+)
+
+
+def _strict_graph_edge_for_annotation(
+    annotation: object,
+    *,
+    parent: type[BaseModel],
+    field_name: str,
+) -> tuple[type[BaseModel], bool] | None:
+    """Derive one supported legacy-model edge or fail closed for an unknown shape."""
+    if annotation in _KNOWN_STRICT_SCALAR_ANNOTATIONS:
+        return None
+    origin = typing.get_origin(annotation)
+    if origin in {typing.Union, UnionType}:
+        alternatives = tuple(argument for argument in typing.get_args(annotation) if argument is not type(None))
+        if len(alternatives) != 1:
+            pytest.fail(f"review/update graph contract: unsupported annotation at {parent.__name__}.{field_name}")
+        annotation = alternatives[0]
+        origin = typing.get_origin(annotation)
+
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel) and not issubclass(annotation, RootModel):
+        return annotation, False
+    if origin is list:
+        arguments = typing.get_args(annotation)
+        if len(arguments) == 1:
+            child_model = arguments[0]
+            if (
+                isinstance(child_model, type)
+                and issubclass(child_model, BaseModel)
+                and not issubclass(child_model, RootModel)
+            ):
+                return child_model, True
+    pytest.fail(f"review/update graph contract: unsupported annotation at {parent.__name__}.{field_name}")
+
+
 def test_strict_legacy_model_graph_contract() -> None:
     expected_fields: dict[type[Any], dict[str, object]] = {
         SyncConfig: {
@@ -401,22 +449,24 @@ def test_strict_legacy_model_graph_contract() -> None:
         for model in expected_fields
     }
 
-    expected_children = {
-        SyncConfig: {
-            "store": (SyncStore, False),
-            "source": (SyncAdapter, False),
-            "destination": (SyncAdapter, False),
-            "schema_mapping": (SchemaMappingModel, True),
-            "incremental": (IncrementalConfig, False),
-        },
-        SchemaMappingModel: {
-            "filters": (SchemaMappingFilter, True),
-            "transforms": (SchemaMappingTransform, True),
-            "fields": (SchemaMappingField, True),
-        },
-    }
     assert actual_fields == expected_fields
-    assert expected_children == configuration_models._STRICT_CONFIGURATION_CHILDREN  # pylint: disable=protected-access
+    actual_edges = {
+        (parent, field_name, child_model, many)
+        for parent, fields in actual_fields.items()
+        for field_name, annotation in fields.items()
+        if (edge := _strict_graph_edge_for_annotation(annotation, parent=parent, field_name=field_name)) is not None
+        for child_model, many in (edge,)
+    }
+    reachable_models = {SyncConfig, *(child_model for _parent, _field, child_model, _many in actual_edges)}
+    assert set(actual_fields) == reachable_models, (
+        "review/update graph contract: snapshot must cover every reachable model"
+    )
+    walked_edges = {
+        (parent, field_name, child_model, many)
+        for parent, children in configuration_models._STRICT_CONFIGURATION_CHILDREN.items()  # pylint: disable=protected-access
+        for field_name, (child_model, many) in children.items()
+    }
+    assert actual_edges == walked_edges, "review/update graph contract: actual nested model edges do not match walker"
 
 
 @pytest.mark.parametrize(
