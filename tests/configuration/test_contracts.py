@@ -10,11 +10,12 @@ import sys
 import textwrap
 from collections.abc import Callable, ItemsView, Iterator, Mapping
 from datetime import datetime, timezone
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, ClassVar, Literal, TypeVar, cast
 
 import pytest
-from pydantic import BaseModel, ValidationError, model_serializer
+from pydantic import BaseModel, ValidationError, create_model, model_serializer
 from pydantic_core import PydanticCustomError
+from typing_extensions import TypeAliasType
 
 from infrahub_sync import SyncConfig
 from infrahub_sync.configuration import (
@@ -360,6 +361,122 @@ def test_strict_configuration_guard_detects_a_future_unwalked_nested_model_field
         )
 
     assert "future-nested-value-canary" not in str(caught.value)
+
+
+def test_strict_configuration_guard_detects_a_future_nested_model_behind_a_type_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FutureNestedConfiguration(BaseModel):
+        known: str
+
+    future_nested_alias = TypeAliasType(
+        "future_nested_alias",
+        FutureNestedConfiguration | None,
+    )
+    future_sync_config = create_model(
+        "FutureSyncConfig",
+        __base__=SyncConfig,
+        future_nested=(future_nested_alias, None),
+    )
+    monkeypatch.setitem(
+        SyncConfig.model_fields,
+        "future_nested",
+        future_sync_config.model_fields["future_nested"],
+    )
+
+    with pytest.raises(RuntimeError, match=r"SyncConfig\.future_nested") as caught:
+        configuration_models._require_strict_configuration(  # pylint: disable=protected-access
+            {"future_nested": {"unexpected": "future-alias-value-canary"}}
+        )
+
+    assert "future-alias-value-canary" not in str(caught.value)
+
+
+def test_strict_configuration_guard_fails_closed_for_an_unresolved_recursive_type_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recursive_alias = TypeAliasType(
+        "recursive_alias",
+        "FutureNestedConfiguration | list[recursive_alias] | ForwardExpressionValueCanary",  # noqa: F821  # ty: ignore[unresolved-reference] - intentionally unresolved alias target.
+    )
+    future_sync_config = create_model(
+        "FutureSyncConfig",
+        __base__=SyncConfig,
+        future_nested=(recursive_alias, None),
+    )
+    monkeypatch.setitem(
+        SyncConfig.model_fields,
+        "future_nested",
+        future_sync_config.model_fields["future_nested"],
+    )
+
+    with pytest.raises(RuntimeError, match=r"SyncConfig\.future_nested") as caught:
+        configuration_models._require_strict_configuration(  # pylint: disable=protected-access
+            {"future_nested": {"unexpected": "unresolved-alias-input-value-canary"}}
+        )
+
+    message = str(caught.value)
+    assert "ForwardExpressionValueCanary" not in message
+    assert "unresolved-alias-input-value-canary" not in message
+
+
+def test_pydantic_model_walker_follows_parameterized_backport_type_aliases() -> None:
+    class AliasValueConfiguration(BaseModel):
+        known: str
+
+    class AliasArgumentConfiguration(BaseModel):
+        known: str
+
+    parameter = TypeVar("parameter")
+    generic_alias = TypeAliasType(
+        "generic_alias",
+        tuple[parameter, AliasValueConfiguration],
+        type_params=(parameter,),
+    )
+
+    discovered = configuration_models._pydantic_models_in_annotation(  # pylint: disable=protected-access
+        generic_alias[AliasArgumentConfiguration]
+    )
+
+    assert discovered == frozenset({AliasValueConfiguration, AliasArgumentConfiguration})
+
+
+def _native_type_alias_annotations(model: type[BaseModel]) -> dict[str, object]:
+    """Create native PEP 695 aliases without making this module Python 3.12-only."""
+    namespace: dict[str, object] = {"FutureNestedConfiguration": model}
+    exec(  # noqa: S102 - version-gated syntax probe cannot appear directly in a Python 3.10 module.
+        """
+type NativeDirect = FutureNestedConfiguration
+type NativeContainer = list[FutureNestedConfiguration]
+type NativeInner = FutureNestedConfiguration | None
+type NativeNested = dict[str, NativeInner]
+type NativeRecursive = FutureNestedConfiguration | list[NativeRecursive]
+type NativeGeneric[Parameter] = tuple[Parameter, FutureNestedConfiguration]
+""",
+        namespace,
+    )
+    native_generic = cast("Any", namespace["NativeGeneric"])
+    namespace["NativeParameterized"] = native_generic[int]
+    return namespace
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="native PEP 695 aliases require Python 3.12+")
+@pytest.mark.parametrize(
+    "alias_name",
+    ["NativeDirect", "NativeContainer", "NativeNested", "NativeRecursive", "NativeParameterized"],
+    ids=["direct", "container", "nested", "recursive", "parameterized"],
+)
+def test_pydantic_model_walker_follows_native_type_aliases(alias_name: str) -> None:
+    class FutureNestedConfiguration(BaseModel):
+        known: str
+
+    annotation = _native_type_alias_annotations(FutureNestedConfiguration)[alias_name]
+
+    discovered = configuration_models._pydantic_models_in_annotation(  # pylint: disable=protected-access
+        annotation
+    )
+
+    assert discovered == frozenset({FutureNestedConfiguration})
 
 
 def test_package_credentials_cannot_mutate_after_validation() -> None:

@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import math
 import re
+import typing
 from collections.abc import Mapping, Sequence
 from hashlib import sha256
 from types import MappingProxyType
-from typing import Any, Literal, cast, get_args
+from typing import Any, Literal, cast, get_args, get_origin
 
 from diffsync.enum import DiffSyncFlags
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_serializer, field_validator, model_validator
 from pydantic_core import PydanticCustomError
+from typing_extensions import TypeAliasType
 
 from infrahub_sync import (
     IncrementalConfig,
@@ -50,6 +52,10 @@ _JSON_NATIVE_FAILURE_REASONS = frozenset(
         "recursive mapping",
     }
 )
+
+
+class _UninspectableAnnotationError(RuntimeError):
+    """A model annotation cannot be traversed without evaluating source text."""
 
 
 class ConfigurationPackageParseError(ValueError):
@@ -100,13 +106,37 @@ _STRICT_CONFIGURATION_CHILDREN: dict[type[BaseModel], dict[str, tuple[type[BaseM
 }
 
 
-def _pydantic_models_in_annotation(annotation: object) -> frozenset[type[BaseModel]]:
+def _is_type_alias(annotation: object) -> bool:
+    """Return whether an annotation is a backport or native PEP 695 alias."""
+    if isinstance(annotation, TypeAliasType):
+        return True
+    native_type_alias_type = getattr(typing, "TypeAliasType", None)
+    return isinstance(native_type_alias_type, type) and isinstance(annotation, native_type_alias_type)
+
+
+def _pydantic_models_in_annotation(
+    annotation: object,
+    *,
+    _visited: frozenset[int] = frozenset(),
+) -> frozenset[type[BaseModel]]:
     """Return every Pydantic model nested in one field annotation."""
+    if isinstance(annotation, (str, typing.ForwardRef)):
+        raise _UninspectableAnnotationError
+    identity = id(annotation)
+    if identity in _visited:
+        return frozenset()
+    visited = _visited | {identity}
+    if _is_type_alias(annotation):
+        alias_target = cast("Any", annotation).__value__
+        return _pydantic_models_in_annotation(alias_target, _visited=visited)
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
         return frozenset({annotation})
     models: set[type[BaseModel]] = set()
+    origin = get_origin(annotation)
+    if origin is not None:
+        models.update(_pydantic_models_in_annotation(origin, _visited=visited))
     for argument in get_args(annotation):
-        models.update(_pydantic_models_in_annotation(argument))
+        models.update(_pydantic_models_in_annotation(argument, _visited=visited))
     return frozenset(models)
 
 
@@ -121,7 +151,14 @@ def _require_complete_strict_configuration_walk() -> None:
             continue
         visited.add(model)
         for field_name, field in model.model_fields.items():
-            for child_model in _pydantic_models_in_annotation(field.annotation):
+            try:
+                child_models = _pydantic_models_in_annotation(field.annotation)
+            except _UninspectableAnnotationError:
+                msg = (
+                    f"strict configuration walker cannot inspect unresolved annotation at {model.__name__}.{field_name}"
+                )
+                raise RuntimeError(msg) from None
+            for child_model in child_models:
                 discovered.add((model, field_name, child_model))
                 pending.append(child_model)
 
