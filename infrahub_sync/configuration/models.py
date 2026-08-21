@@ -32,6 +32,7 @@ _MAX_DECLARATION_DEPTH = 64
 _UNSUPPORTED_DECLARED_FIELDS_ERROR = "unsupported_declared_fields"
 _INVALID_UNICODE_SURROGATE_ERROR = "invalid_unicode_surrogate"
 _INVALID_JSON_VALUE_ERROR = "invalid_json_value"
+_INVALID_DIFFSYNC_FLAG_NAME_ERROR = "invalid_diffsync_flag_name"
 _JSON_NATIVE_FAILURE_REASONS = frozenset(
     {
         "maximum declared-content depth exceeded",
@@ -307,6 +308,18 @@ class _ImmutableSyncConfig(SyncConfig):
     diffsync_flags: tuple[str | DiffSyncFlags, ...] | None = ()
     incremental: _ImmutableIncrementalConfig | None = None
 
+    @field_validator("diffsync_flags", mode="before")
+    @classmethod
+    def _require_named_diffsync_flags(cls, value: Any) -> Any:
+        # pylint: disable=unidiomatic-typecheck
+        if type(value) is list and any(type(item) is not str for item in value):
+            raise PydanticCustomError(
+                _INVALID_DIFFSYNC_FLAG_NAME_ERROR,
+                "diffsync flags must be declared by name",
+            )
+        # pylint: enable=unidiomatic-typecheck
+        return value
+
     @field_serializer("adapters_path", "order", "schema_mapping")
     def _serialize_collections(self, value: tuple[Any, ...] | None) -> list[Any] | None:
         return None if value is None else list(value)
@@ -315,8 +328,8 @@ class _ImmutableSyncConfig(SyncConfig):
     def _serialize_diffsync_flags(
         self,
         value: tuple[str | DiffSyncFlags, ...] | None,
-    ) -> list[str | int] | None:
-        return None if value is None else [item.value if isinstance(item, DiffSyncFlags) else item for item in value]
+    ) -> list[str] | None:
+        return None if value is None else [item.name if isinstance(item, DiffSyncFlags) else item for item in value]
 
 
 class CredentialReference(BaseModel):

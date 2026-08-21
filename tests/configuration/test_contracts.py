@@ -294,6 +294,36 @@ def test_checksum_changes_with_declared_credential_identifier() -> None:
     assert ConfigurationPackage.model_validate(changed).checksum() != baseline.checksum()
 
 
+@pytest.mark.parametrize("flag_name", ["SKIP_UNMATCHED_DST", "SKIP_UNMATCHED_BOTH", "NONE"])
+def test_diffsync_flags_are_declared_and_hashed_by_stable_name(flag_name: str) -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["diffsync_flags"] = [flag_name]
+    package = ConfigurationPackage.model_validate(data)
+
+    declared_content = package.declared_content()
+
+    assert declared_content["configuration"]["diffsync_flags"] == [flag_name]
+    reparsed = ConfigurationPackage.model_validate(declared_content)
+    assert reparsed.declared_content() == declared_content
+    assert reparsed.checksum() == package.checksum()
+
+
+@pytest.mark.parametrize("numeric_flag", [4, 3], ids=["named-value", "unnamed-composite"])
+def test_safe_parse_requires_diffsync_flag_names_without_changing_legacy_behavior(numeric_flag: int) -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["diffsync_flags"] = [numeric_flag]
+
+    legacy = SyncConfig.model_validate(data["configuration"])
+    assert json.loads(legacy.model_dump_json())["diffsync_flags"] == [numeric_flag]
+
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(data)
+
+    assert str(caught.value) == (
+        "configuration package is invalid at /configuration/diffsync_flags: invalid_diffsync_flag_name"
+    )
+
+
 def test_package_credentials_cannot_mutate_after_validation() -> None:
     package = _package()
     checksum = package.checksum()
