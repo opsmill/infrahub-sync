@@ -32,8 +32,6 @@ _MAX_DECLARATION_DEPTH = 64
 _UNSUPPORTED_DECLARED_FIELDS_ERROR = "unsupported_declared_fields"
 _INVALID_UNICODE_SURROGATE_ERROR = "invalid_unicode_surrogate"
 _INVALID_JSON_VALUE_ERROR = "invalid_json_value"
-_INTERNAL_ERROR_CONTEXT_MARKER = object()
-_INTERNAL_ERROR_CONTEXT_MARKER_KEY = "_infrahub_sync_internal_error_context"
 _JSON_NATIVE_FAILURE_REASONS = frozenset(
     {
         "maximum declared-content depth exceeded",
@@ -61,7 +59,6 @@ def _raise_unsupported_declared_fields(
         _UNSUPPORTED_DECLARED_FIELDS_ERROR,
         "{location} contains unsupported declared fields: {fields}",  # noqa: RUF027
         {
-            _INTERNAL_ERROR_CONTEXT_MARKER_KEY: _INTERNAL_ERROR_CONTEXT_MARKER,
             "location": location,
             "pointer": pointer,
             "fields": ", ".join(fields),
@@ -132,11 +129,7 @@ def _require_unicode_scalars(value: str, *, location: str) -> None:
         raise PydanticCustomError(
             _INVALID_UNICODE_SURROGATE_ERROR,
             "{location} contains an invalid Unicode surrogate",  # noqa: RUF027
-            {
-                _INTERNAL_ERROR_CONTEXT_MARKER_KEY: _INTERNAL_ERROR_CONTEXT_MARKER,
-                "location": location,
-                "pointer": pointer,
-            },
+            {"location": location, "pointer": pointer},
         )
 
 
@@ -146,12 +139,7 @@ def _raise_invalid_json_value(*, location: str, reason: str) -> None:
     raise PydanticCustomError(
         _INVALID_JSON_VALUE_ERROR,
         "{location}: {reason}",  # noqa: RUF027
-        {
-            _INTERNAL_ERROR_CONTEXT_MARKER_KEY: _INTERNAL_ERROR_CONTEXT_MARKER,
-            "location": location,
-            "pointer": pointer,
-            "reason": reason,
-        },
+        {"location": location, "pointer": pointer, "reason": reason},
     )
 
 
@@ -165,28 +153,29 @@ def _require_json_native(
     """Reject values outside JSON's native data model before Pydantic coercion."""
     if _depth > _MAX_DECLARATION_DEPTH:
         _raise_invalid_json_value(location=location, reason="maximum declared-content depth exceeded")
-    if isinstance(value, str):
+    value_type = type(value)
+    if value_type is str:
         _require_unicode_scalars(value, location=location)
         return
-    if value is None or isinstance(value, (bool, int)):
+    if value is None or value_type is bool or value_type is int:
         return
-    if isinstance(value, float):
+    if value_type is float:
         if not math.isfinite(value):
             _raise_invalid_json_value(location=location, reason="non-finite float")
         return
-    if isinstance(value, list):
+    if value_type is list:
         if id(value) in _containers:
             _raise_invalid_json_value(location=location, reason="recursive list")
         containers = _containers | {id(value)}
         for index, item in enumerate(value):
             _require_json_native(item, location=f"{location}/{index}", _containers=containers, _depth=_depth + 1)
         return
-    if isinstance(value, Mapping):
+    if value_type is dict:
         if id(value) in _containers:
             _raise_invalid_json_value(location=location, reason="recursive mapping")
         containers = _containers | {id(value)}
         for key, item in value.items():
-            if not isinstance(key, str):
+            if type(key) is not str:  # pylint: disable=unidiomatic-typecheck  # Exact JSON strings only.
                 _raise_invalid_json_value(location=location, reason="non-string mapping key")
             item_location = f"{location}/{safe_pointer_component(key)}"
             _require_unicode_scalars(key, location=item_location)
@@ -443,27 +432,17 @@ def _safe_validation_location(error: Mapping[str, Any]) -> str:
     return "/" + "/".join(components) if components else "/"
 
 
-def _trusted_error_context(error: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    """Return context only when it came from this module's validation helpers."""
-    context = error.get("ctx")
-    if not isinstance(context, Mapping):
-        return None
-    if context.get(_INTERNAL_ERROR_CONTEXT_MARKER_KEY) is not _INTERNAL_ERROR_CONTEXT_MARKER:
-        return None
-    return context
-
-
 def _safe_native_validation_failure(error: Mapping[str, Any]) -> tuple[tuple[str, str], ...] | None:
     """Return safe structured JSON-native failure details when available."""
     if error.get("type") == _INVALID_JSON_VALUE_ERROR:
-        context = _trusted_error_context(error)
+        context = error.get("ctx")
         pointer = context.get("pointer") if isinstance(context, Mapping) else None
         reason = context.get("reason") if isinstance(context, Mapping) else None
         if isinstance(pointer, str) and reason in _JSON_NATIVE_FAILURE_REASONS:
             return ((pointer, cast("str", reason)),)
         return ((_safe_validation_location(error), "invalid JSON value"),)
     if error.get("type") == _INVALID_UNICODE_SURROGATE_ERROR:
-        context = _trusted_error_context(error)
+        context = error.get("ctx")
         pointer = context.get("pointer") if isinstance(context, Mapping) else None
         location = pointer if isinstance(pointer, str) else _safe_validation_location(error)
         return ((location, "invalid Unicode surrogate"),)
@@ -477,8 +456,8 @@ def _safe_validation_failures(error: Mapping[str, Any]) -> tuple[tuple[str, str]
         return native_failure
     if error.get("type") != _UNSUPPORTED_DECLARED_FIELDS_ERROR:
         return ((_safe_validation_location(error), str(error.get("type", "invalid-value"))),)
-    context = _trusted_error_context(error)
-    if context is None:
+    context = error.get("ctx")
+    if not isinstance(context, Mapping):
         return ((_safe_validation_location(error), "unsupported declared field"),)
     pointer = context.get("pointer")
     field_names = context.get("field_names")

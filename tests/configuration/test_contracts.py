@@ -32,6 +32,7 @@ from infrahub_sync.configuration import (
     sort_findings,
     validate_package_credentials,
 )
+from infrahub_sync.configuration import models as configuration_models
 from infrahub_sync.configuration.models import safe_pointer_component
 
 
@@ -164,6 +165,7 @@ class _ForgedValidationContext(Mapping[str, object]):
     ) -> None:
         self._error_type = error_type
         self._context = context
+        self.items_called = False
 
     def __getitem__(self, key: str) -> object:
         raise KeyError(key)
@@ -175,7 +177,64 @@ class _ForgedValidationContext(Mapping[str, object]):
         return 0
 
     def items(self) -> ItemsView[str, object]:
+        self.items_called = True
         raise PydanticCustomError(self._error_type, "{message}", self._context)
+
+
+class _ExecutableDict(dict[str, object]):  # noqa: FURB189 - exact dict subclasses are the contract boundary.
+    """Dictionary subclass that records unsafe traversal."""
+
+    callback_called = False
+
+    def items(self) -> ItemsView[str, object]:  # ty: ignore[invalid-method-override]  # Hostile test probe.
+        type(self).callback_called = True
+        msg = "dict-callback-canary"
+        raise AssertionError(msg)
+
+
+class _ExecutableList(list[object]):  # noqa: FURB189 - exact list subclasses are the contract boundary.
+    """List subclass that records unsafe traversal."""
+
+    callback_called = False
+
+    def __iter__(self) -> Iterator[object]:
+        type(self).callback_called = True
+        msg = "list-callback-canary"
+        raise AssertionError(msg)
+
+
+class _ExecutableStr(str):  # noqa: FURB189 - exact string subclasses are the contract boundary.
+    """String subclass that records unsafe traversal."""
+
+    __slots__ = ()
+    callback_called = False
+
+    def __iter__(self) -> Iterator[str]:  # ty: ignore[invalid-method-override]  # Hostile test probe.
+        type(self).callback_called = True
+        msg = "str-callback-canary"
+        raise AssertionError(msg)
+
+
+class _ExecutableInt(int):
+    """Integer subclass that records unsafe coercion."""
+
+    callback_called = False
+
+    def __int__(self) -> int:
+        type(self).callback_called = True
+        msg = "int-callback-canary"
+        raise AssertionError(msg)
+
+
+class _ExecutableFloat(float):
+    """Float subclass that records unsafe coercion."""
+
+    callback_called = False
+
+    def __float__(self) -> float:
+        type(self).callback_called = True
+        msg = "float-callback-canary"
+        raise AssertionError(msg)
 
 
 def test_checksum_is_stable_across_mapping_order() -> None:
@@ -464,19 +523,17 @@ def test_safe_parse_preserves_locations_for_non_json_failures(failure_kind: str,
 
 
 @pytest.mark.parametrize(
-    ("error_type", "trusted_context", "reason"),
+    ("error_type", "trusted_context"),
     [
         pytest.param(
             "invalid_json_value",
             {"reason": "non-JSON value"},
-            "invalid JSON value",
             id="json-value",
         ),
-        pytest.param("invalid_unicode_surrogate", {}, "invalid Unicode surrogate", id="unicode-surrogate"),
+        pytest.param("invalid_unicode_surrogate", {}, id="unicode-surrogate"),
         pytest.param(
             "unsupported_declared_fields",
             {"field_names": ("forged-field-name-canary",)},
-            "unsupported declared field",
             id="unsupported-fields",
         ),
     ],
@@ -484,24 +541,61 @@ def test_safe_parse_preserves_locations_for_non_json_failures(failure_kind: str,
 def test_safe_parse_rejects_forged_custom_error_context(
     error_type: Literal["invalid_json_value", "invalid_unicode_surrogate", "unsupported_declared_fields"],
     trusted_context: dict[str, object],
-    reason: str,
 ) -> None:
+    # Recover the vulnerable revision's marker; the corrected revision deliberately has none.
+    marker_key = getattr(
+        configuration_models,
+        "_INTERNAL_ERROR_CONTEXT_MARKER_KEY",
+        "_removed_internal_error_context_marker",
+    )
+    marker = getattr(configuration_models, "_INTERNAL_ERROR_CONTEXT_MARKER", object())
     context = {
+        marker_key: marker,
         "pointer": "/forged\npointer-value-canary",
         "message": "pydantic-message-canary\nsecond-line-canary",
         **trusted_context,
     }
+    forged_mapping = _ForgedValidationContext(error_type, context)
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
-        parse_configuration_package(_ForgedValidationContext(error_type, context))
+        parse_configuration_package(forged_mapping)
 
     message = str(caught.value)
-    assert message == f"configuration package is invalid at /: {reason}"
+    assert message == "configuration package is invalid at /: non-JSON value"
+    assert not forged_mapping.items_called
     assert len(message.splitlines()) == 1
     assert all(character.isprintable() for character in message)
     assert "canary" not in message
     assert "_ForgedValidationContext" not in message
     assert error_type not in message
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(_ExecutableDict(), id="dict-subclass"),
+        pytest.param(_ExecutableList(), id="list-subclass"),
+        pytest.param(_ExecutableStr("string-value-canary"), id="str-subclass"),
+        pytest.param(_ExecutableInt(7), id="int-subclass"),
+        pytest.param(_ExecutableFloat(1.5), id="float-subclass"),
+    ],
+)
+def test_safe_parse_rejects_native_subclasses_without_callbacks(value: object) -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["settings"]["hostile\n\u202e~/"] = value
+
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(data)
+
+    message = str(caught.value)
+    assert message == (
+        r"configuration package is invalid at /configuration/source/settings/hostile\n\u202e~0~1: non-JSON value"
+    )
+    assert not cast("Any", value).callback_called
+    assert len(message.splitlines()) == 1
+    assert all(character.isprintable() for character in message)
+    assert "canary" not in message
+    assert type(value).__name__ not in message
 
 
 def test_safe_parse_names_unknown_adapter_field_without_echoing_its_value() -> None:
