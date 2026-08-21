@@ -802,225 +802,6 @@ def test_safe_parse_rejects_credential_name_string_subclasses_without_callbacks(
     assert "canary" not in message
 
 
-def test_safe_validation_failures_keep_unknown_types_closed() -> None:
-    failure = configuration_models._safe_validation_failures(  # pylint: disable=protected-access
-        {
-            "type": "future_validation_error_canary",
-            "loc": ("credentials", "netbox-token", "identifier"),
-        }
-    )
-
-    assert failure == (("/credentials/netbox-token/identifier", "invalid value"),)
-    assert "canary" not in repr(failure)
-
-
-@pytest.mark.parametrize(
-    ("hostile_metadata", "expected_failure"),
-    [
-        pytest.param("error-type", (("/", "invalid value"),), id="error-type-subclass"),
-        pytest.param(
-            "location-tuple",
-            (("/", "invalid credential reference name"),),
-            id="location-tuple-subclass",
-        ),
-        pytest.param(
-            "location-component",
-            (("/", "invalid credential reference name"),),
-            id="location-component-subclass",
-        ),
-    ],
-)
-def test_safe_validation_failures_reject_hostile_metadata_without_callbacks(
-    hostile_metadata: str,
-    expected_failure: tuple[tuple[str, str], ...],
-) -> None:
-    class ExecutableErrorType(str):  # noqa: FURB189 - exact built-in strings are the trust boundary.
-        __slots__ = ()
-        __hash__ = str.__hash__
-        callback_called = False
-
-        def __eq__(self, other: object) -> bool:
-            type(self).callback_called = True
-            msg = "error-type-callback-canary"
-            raise AssertionError(msg)
-
-    class ExecutableLocation(tuple[str, ...]):
-        __slots__ = ()
-        callback_called = False
-
-        def __iter__(self) -> Iterator[str]:
-            type(self).callback_called = True
-            msg = "location-tuple-callback-canary"
-            raise AssertionError(msg)
-
-    class ExecutableLocationComponent(str):  # noqa: FURB189 - exact strings are the trust boundary.
-        __slots__ = ()
-        callback_called = False
-
-        def __str__(self) -> str:
-            type(self).callback_called = True
-            msg = "location-component-callback-canary"
-            raise AssertionError(msg)
-
-    if hostile_metadata == "error-type":
-        probe = ExecutableErrorType("invalid_credential_reference_name")
-        error = {"type": probe, "loc": ("credentials",), "ctx": {"field_names": ("bad-name",)}}
-    elif hostile_metadata == "location-tuple":
-        probe = ExecutableLocation(("credentials",))
-        error = {
-            "type": "invalid_credential_reference_name",
-            "loc": probe,
-            "ctx": {"field_names": ("bad-name",)},
-        }
-    else:
-        probe = ExecutableLocationComponent("credentials")
-        error = {
-            "type": "invalid_credential_reference_name",
-            "loc": (probe,),
-            "ctx": {"field_names": ("bad-name",)},
-        }
-
-    failure = configuration_models._safe_validation_failures(error)  # pylint: disable=protected-access
-
-    assert failure == expected_failure
-    assert not probe.callback_called
-    assert "canary" not in repr(failure)
-
-
-def _credential_reference_name_failures(
-    error: Mapping[str, Any],
-) -> tuple[tuple[str, str], ...] | None:
-    resolver = getattr(configuration_models, "_safe_credential_reference_name_failures", None)
-    if not callable(resolver):
-        return None
-    return cast("tuple[tuple[str, str], ...] | None", resolver(error))
-
-
-@pytest.mark.parametrize(
-    "context",
-    [
-        pytest.param(None, id="absent"),
-        pytest.param({}, id="missing-names"),
-        pytest.param({"field_names": ["bad-name"]}, id="names-not-tuple"),
-        pytest.param({"field_names": ("bad-name", 1)}, id="name-not-string"),
-    ],
-)
-def test_credential_name_failure_rejects_malformed_context(context: object) -> None:
-    failure = _credential_reference_name_failures(
-        {
-            "type": "invalid_credential_reference_name",
-            "loc": ("credentials",),
-            "ctx": context,
-        }
-    )
-
-    assert failure == (("/credentials", "invalid credential reference name"),)
-
-
-def test_credential_name_failure_requires_exact_type_and_credentials_location() -> None:
-    wrong_location = {
-        "type": "invalid_credential_reference_name",
-        "loc": ("configuration",),
-        "ctx": {"field_names": ("bad-name",)},
-    }
-    wrong_type = {
-        "type": "value_error",
-        "loc": ("credentials",),
-        "ctx": {"field_names": ("bad-name",)},
-    }
-
-    assert _credential_reference_name_failures(wrong_location) == (
-        ("/configuration", "invalid credential reference name"),
-    )
-    assert _credential_reference_name_failures(wrong_type) is None
-    assert configuration_models._safe_validation_failures(  # pylint: disable=protected-access
-        wrong_type
-    ) == (("/credentials", "invalid value"),)
-
-
-def test_credential_name_failure_sorts_and_escapes_multiple_names() -> None:
-    failure = _credential_reference_name_failures(
-        {
-            "type": "invalid_credential_reference_name",
-            "loc": ("credentials",),
-            "ctx": {"field_names": ("z/name", "a~name")},
-        }
-    )
-
-    assert failure == (
-        ("/credentials/a~0name", "invalid credential reference name"),
-        ("/credentials/z~1name", "invalid credential reference name"),
-    )
-
-
-def test_credential_name_failure_distinguishes_controls_from_literal_escape_text() -> None:
-    control_name = "bad\n\u202ename~/"
-    literal_name = r"bad\n\u202ename~/"
-    failure = _credential_reference_name_failures(
-        {
-            "type": "invalid_credential_reference_name",
-            "loc": ("credentials",),
-            "ctx": {"field_names": (literal_name, control_name)},
-        }
-    )
-
-    assert failure == (
-        (r"/credentials/bad\n\u202ename~0~1", "invalid credential reference name"),
-        (r"/credentials/bad\\n\\u202ename~0~1", "invalid credential reference name"),
-    )
-    assert failure[0][0] != failure[1][0]
-    assert all(len(location.splitlines()) == 1 for location, _reason in failure)
-    assert all(character.isprintable() for location, _reason in failure for character in location)
-
-
-def test_credential_name_failure_never_uses_messages_inputs_or_credential_values() -> None:
-    canaries = (
-        "pydantic-message-canary",
-        "credential-provider-canary",
-        "credential-identifier-canary",
-    )
-    failure = _credential_reference_name_failures(
-        {
-            "type": "invalid_credential_reference_name",
-            "loc": ("credentials",),
-            "msg": canaries[0],
-            "input": {
-                "bad-name": {
-                    "provider": canaries[1],
-                    "identifier": canaries[2],
-                }
-            },
-            "ctx": {"field_names": ("bad-name",)},
-        }
-    )
-
-    assert failure == (("/credentials/bad-name", "invalid credential reference name"),)
-    assert all(canary not in repr(failure) for canary in canaries)
-
-
-def test_credential_name_failure_rejects_string_subclasses_without_callbacks() -> None:
-    class ExecutableCredentialName(str):  # noqa: FURB189 - exact built-in strings are the trust boundary.
-        __slots__ = ()
-        callback_called = False
-
-        def __str__(self) -> str:
-            type(self).callback_called = True
-            msg = "credential-name-callback-canary"
-            raise AssertionError(msg)
-
-    hostile_name = ExecutableCredentialName("bad-name")
-    failure = _credential_reference_name_failures(
-        {
-            "type": "invalid_credential_reference_name",
-            "loc": ("credentials",),
-            "ctx": {"field_names": (hostile_name,)},
-        }
-    )
-
-    assert failure == (("/credentials", "invalid credential reference name"),)
-    assert not hostile_name.callback_called
-
-
 @pytest.mark.parametrize(
     ("surrogate", "reference_node", "visible_surrogate"),
     [
@@ -1154,23 +935,26 @@ def test_safe_parse_preserves_locations_for_non_json_failures(failure_kind: str,
     ],
 )
 def test_native_validation_failure_rejects_unsafe_context_pointers(
+    monkeypatch: pytest.MonkeyPatch,
     error_type: str,
     context: dict[str, object],
     safe_reason: str,
 ) -> None:
-    failure = configuration_models._safe_native_validation_failure(  # pylint: disable=protected-access
-        {
-            "type": error_type,
-            "loc": ("configuration", "source"),
-            "ctx": context,
-        }
-    )
+    errors = [{"type": error_type, "loc": ("configuration", "source"), "ctx": context}]
+    monkeypatch.setattr(ValidationError, "errors", lambda _error, **_kwargs: errors)
+    data = _package().model_dump(mode="json")
+    del data["configuration"]["name"]
 
-    assert failure == (("/configuration/source", safe_reason),)
-    assert "canary" not in repr(failure)
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(data)
+
+    assert str(caught.value) == f"configuration package is invalid at /configuration/source: {safe_reason}"
+    assert "canary" not in str(caught.value)
 
 
-def test_native_validation_failure_rejects_pointer_string_subclasses_without_callbacks() -> None:
+def test_native_validation_failure_rejects_pointer_string_subclasses_without_callbacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class ExecutablePointer(str):  # noqa: FURB189 - exact built-in strings are the trust boundary.
         __slots__ = ()
         callback_called = False
@@ -1185,17 +969,23 @@ def test_native_validation_failure_rejects_pointer_string_subclasses_without_cal
             return super().startswith(prefix, start, len(self) if end is None else end)
 
     pointer = ExecutablePointer("/hostile-pointer-value-canary")
-    failure = configuration_models._safe_native_validation_failure(  # pylint: disable=protected-access
+    errors = [
         {
             "type": "invalid_json_value",
             "loc": ("configuration", "source"),
             "ctx": {"pointer": pointer, "reason": "non-JSON value"},
         }
-    )
+    ]
+    monkeypatch.setattr(ValidationError, "errors", lambda _error, **_kwargs: errors)
+    data = _package().model_dump(mode="json")
+    del data["configuration"]["name"]
 
-    assert failure == (("/configuration/source", "invalid JSON value"),)
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(data)
+
+    assert str(caught.value) == "configuration package is invalid at /configuration/source: invalid JSON value"
     assert not pointer.callback_called
-    assert "canary" not in repr(failure)
+    assert "canary" not in str(caught.value)
 
 
 @pytest.mark.parametrize(

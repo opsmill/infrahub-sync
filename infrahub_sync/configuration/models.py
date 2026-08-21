@@ -7,10 +7,20 @@ import re
 from collections.abc import Mapping, Sequence
 from hashlib import sha256
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
+from unicodedata import category
 
 from diffsync.enum import DiffSyncFlags
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_serializer, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 from pydantic_core import PydanticCustomError
 
 from infrahub_sync import (
@@ -27,14 +37,24 @@ from infrahub_sync.plan.canonical import canonical_json_bytes
 
 _REFERENCE_NAME_PATTERN = r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
 _PROVIDER_NAME_PATTERN = r"^[a-z][a-z0-9-]{0,63}$"
-_REFERENCE_NAME_RE = re.compile(_REFERENCE_NAME_PATTERN)
 _SAFE_POINTER_RE = re.compile(r"^(/(?:[^~/]|~[01])*)*$")
 _MAX_DECLARATION_DEPTH = 64
+_MAX_VALIDATION_ERRORS = 256
+_MAX_FINAL_FAILURES = 256
+_MAX_ERROR_RECORD_ENTRIES = 16
+_MAX_METADATA_KEY_LENGTH = 64
+_MAX_ERROR_TYPE_LENGTH = 128
+_MAX_LOCATION_MEMBERS = 64
+_MAX_LOCATION_STRING_LENGTH = 256
+_MAX_CONTEXT_POINTER_LENGTH = 4096
+_MAX_CONTEXT_ENTRIES = 16
+_MAX_CONTEXT_COLLECTION_MEMBERS = 128
+_MAX_CONTEXT_STRING_LENGTH = 256
+_MAX_CONTEXT_INTEGER = 2**63 - 1
 _UNSUPPORTED_DECLARED_FIELDS_ERROR = "unsupported_declared_fields"
 _INVALID_UNICODE_SURROGATE_ERROR = "invalid_unicode_surrogate"
 _INVALID_JSON_VALUE_ERROR = "invalid_json_value"
 _INVALID_DIFFSYNC_FLAG_NAME_ERROR = "invalid_diffsync_flag_name"
-_INVALID_CREDENTIAL_REFERENCE_NAME_ERROR = "invalid_credential_reference_name"
 _SAFE_PYDANTIC_FAILURE_REASONS = {
     "missing": "required field is missing",
     "literal_error": "unsupported value",
@@ -49,6 +69,7 @@ _SAFE_PYDANTIC_FAILURE_REASONS = {
     "int_type": "wrong type",
     "int_parsing": "wrong type",
     "int_from_float": "wrong type",
+    "int_parsing_size": "number is outside supported range",
 }
 _DIFFSYNC_FLAG_FAILURE_REASONS = frozenset(
     {
@@ -371,6 +392,9 @@ class CredentialReference(BaseModel):
     identifier: str = Field(min_length=1, max_length=256)
 
 
+CredentialReferenceName = Annotated[str, StringConstraints(pattern=_REFERENCE_NAME_PATTERN)]
+
+
 class CredentialReferenceNode(BaseModel):
     """Exact reference node accepted at a credential-bearing setting path."""
 
@@ -406,7 +430,9 @@ class ConfigurationPackage(BaseModel):
     format_version: Literal[1] = 1
     configuration: _ImmutableSyncConfig
     package_metadata: ConfigurationPackageMetadata = Field(default_factory=ConfigurationPackageMetadata)
-    credentials: Mapping[str, CredentialReference] = Field(default_factory=dict, validate_default=True)
+    credentials: Mapping[CredentialReferenceName, CredentialReference] = Field(
+        default_factory=dict, validate_default=True
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -422,14 +448,10 @@ class ConfigurationPackage(BaseModel):
 
     @field_validator("credentials")
     @classmethod
-    def _validate_reference_names(cls, value: Mapping[str, CredentialReference]) -> Mapping[str, CredentialReference]:
-        invalid = tuple(sorted(name for name in value if _REFERENCE_NAME_RE.fullmatch(name) is None))
-        if invalid:
-            raise PydanticCustomError(
-                _INVALID_CREDENTIAL_REFERENCE_NAME_ERROR,
-                "invalid credential reference name",
-                {"field_names": invalid},
-            )
+    def _freeze_credentials(
+        cls, value: Mapping[CredentialReferenceName, CredentialReference]
+    ) -> Mapping[CredentialReferenceName, CredentialReference]:
+        """Freeze credentials after Pydantic validates every key and value."""
         return MappingProxyType(dict(value))
 
     @field_serializer("credentials")
@@ -456,6 +478,10 @@ def safe_pointer_component(value: object) -> str:
             components.append(r"\r")
         elif character == "\t":
             components.append(r"\t")
+        elif character == ":":
+            components.append(r"\u003a")
+        elif character == ";":
+            components.append(r"\u003b")
         elif not character.isprintable():
             if codepoint <= 0xFFFF:
                 components.append(f"\\u{codepoint:04x}")
@@ -472,135 +498,204 @@ def safe_pointer_component(value: object) -> str:
     return "".join(components)
 
 
-def _safe_validation_location(error: Mapping[str, Any]) -> str:
-    """Return one JSON-Pointer-like validation location without input values."""
-    if type(error) is not dict:  # pylint: disable=unidiomatic-typecheck  # Never execute mapping subclasses.
-        return "/"
-    raw_location = error.get("loc")
-    if type(raw_location) is not tuple:  # pylint: disable=unidiomatic-typecheck  # Never execute tuple subclasses.
-        return "/"
-    if any(
-        type(component) is not str and type(component) is not int  # pylint: disable=unidiomatic-typecheck
-        for component in raw_location
-    ):
-        return "/"
-    components = [safe_pointer_component(component) for component in raw_location]
-    return "/" + "/".join(components) if components else "/"
+def _has_closed_metadata_shape(value: object, *, max_entries: int) -> bool:
+    """Return whether metadata is a bounded exact dict with inert exact-string keys."""
+    if type(value) is not dict:  # pylint: disable=unidiomatic-typecheck
+        return False
+    if len(value) > max_entries:
+        return False
+    return all(
+        type(key) is str and len(key) <= _MAX_METADATA_KEY_LENGTH  # pylint: disable=unidiomatic-typecheck
+        for key in value
+    )
+
+
+def _safe_validation_location(raw_location: object) -> tuple[str, bool]:
+    """Decode a bounded location and report whether every component was valid."""
+    if type(raw_location) is not tuple:  # pylint: disable=unidiomatic-typecheck
+        return "/", False
+    if len(raw_location) > _MAX_LOCATION_MEMBERS:
+        return "/", False
+    components: list[str] = []
+    complete = True
+    for component in raw_location:
+        if type(component) is str:  # pylint: disable=unidiomatic-typecheck
+            if len(component) > _MAX_LOCATION_STRING_LENGTH:
+                complete = False
+                break
+            components.append(safe_pointer_component(component))
+        elif type(component) is int:  # pylint: disable=unidiomatic-typecheck
+            if not 0 <= component <= _MAX_CONTEXT_INTEGER:
+                complete = False
+                break
+            components.append(str(component))
+        else:
+            complete = False
+            break
+    location = "/" + "/".join(components) if components else "/"
+    return location, complete
+
+
+def _render_context_pointer(pointer: str) -> str:
+    """Encode diagnostic delimiters in an already-valid RFC 6901 pointer."""
+    return pointer.replace(":", r"\u003a").replace(";", r"\u003b")
 
 
 def _safe_context_pointer(value: object) -> str | None:
-    """Accept only printable, well-formed JSON pointers from internal error context."""
-    if type(value) is not str:  # pylint: disable=unidiomatic-typecheck  # Never invoke subclass callbacks.
+    """Decode one bounded absolute RFC 6901 pointer without executable values."""
+    if type(value) is not str:  # pylint: disable=unidiomatic-typecheck
         return None
-    if not value.startswith("/"):
+    if len(value) > _MAX_CONTEXT_POINTER_LENGTH or not value.startswith("/"):
         return None
-    if _SAFE_POINTER_RE.fullmatch(value) is None or not all(character.isprintable() for character in value):
+    if _SAFE_POINTER_RE.fullmatch(value) is None:
+        return None
+    if any(category(character) in {"Cc", "Cf", "Cs", "Zl", "Zp"} for character in value):
+        return None
+    return _render_context_pointer(value)
+
+
+def _closed_context(record: dict[object, object]) -> dict[object, object] | None:
+    """Return a custom context only after its complete dictionary shape is safe."""
+    context = record.get("ctx")
+    if not _has_closed_metadata_shape(context, max_entries=_MAX_CONTEXT_ENTRIES):
+        return None
+    assert type(context) is dict  # pylint: disable=unidiomatic-typecheck  # Narrow after the exact-type gate.
+    return cast("dict[object, object]", context)
+
+
+def _safe_context_string(value: object) -> str | None:
+    """Return one bounded exact custom-context string."""
+    if type(value) is not str or len(value) > _MAX_CONTEXT_STRING_LENGTH:  # pylint: disable=unidiomatic-typecheck
         return None
     return value
 
 
-def _safe_native_validation_failure(error: Mapping[str, Any]) -> tuple[tuple[str, str], ...] | None:
-    """Return safe structured JSON-native failure details when available."""
-    if error.get("type") == _INVALID_JSON_VALUE_ERROR:
-        context = error.get("ctx")
-        pointer = context.get("pointer") if isinstance(context, Mapping) else None
-        reason = context.get("reason") if isinstance(context, Mapping) else None
-        safe_pointer = _safe_context_pointer(pointer)
-        if safe_pointer is not None and reason in _JSON_NATIVE_FAILURE_REASONS:
-            return ((safe_pointer, cast("str", reason)),)
-        return ((_safe_validation_location(error), "invalid JSON value"),)
-    if error.get("type") == _INVALID_UNICODE_SURROGATE_ERROR:
-        context = error.get("ctx")
-        pointer = context.get("pointer") if isinstance(context, Mapping) else None
-        location = _safe_context_pointer(pointer) or _safe_validation_location(error)
-        return ((location, "invalid Unicode surrogate"),)
-    return None
-
-
-def _safe_diffsync_flag_failure(error: Mapping[str, Any]) -> tuple[tuple[str, str], ...] | None:
-    """Return safe structured DiffSync flag failure details when available."""
-    if error.get("type") == _INVALID_DIFFSYNC_FLAG_NAME_ERROR:
-        context = error.get("ctx")
-        index = context.get("index") if isinstance(context, Mapping) else None
-        reason = context.get("reason") if isinstance(context, Mapping) else None
-        # Exact integers only: booleans and subclasses are not trusted error context.
-        if type(index) is int and index >= 0 and reason in _DIFFSYNC_FLAG_FAILURE_REASONS:  # pylint: disable=unidiomatic-typecheck
-            location = f"{_safe_validation_location(error)}/{index}"
-            return ((location, cast("str", reason)),)
-        return ((_safe_validation_location(error), "invalid diffsync flag name"),)
-    return None
-
-
-def _safe_unsupported_field_failures(error: Mapping[str, Any]) -> tuple[tuple[str, str], ...] | None:
-    """Return safe structured unsupported-field details when available."""
-    if error.get("type") != _UNSUPPORTED_DECLARED_FIELDS_ERROR:
+def _credential_key_failure(error_type: str, raw_location: object) -> tuple[str, str] | None:
+    """Normalize Pydantic's versioned constrained-mapping-key location marker."""
+    if error_type != "string_pattern_mismatch" or type(raw_location) is not tuple:  # pylint: disable=unidiomatic-typecheck
         return None
-    context = error.get("ctx")
-    if not isinstance(context, Mapping):
-        return ((_safe_validation_location(error), "unsupported declared field"),)
-    pointer = context.get("pointer")
-    field_names = context.get("field_names")
-    safe_pointer = _safe_context_pointer(pointer)
-    if safe_pointer is None or not isinstance(field_names, tuple):
-        return ((_safe_validation_location(error), "unsupported declared field"),)
-    failures = []
-    for field_name in field_names:
-        if not isinstance(field_name, str):
-            return ((_safe_validation_location(error), "unsupported declared field"),)
-        escaped = safe_pointer_component(field_name)
-        failures.append((f"{safe_pointer}/{escaped}", "unsupported declared field"))
-    return tuple(failures)
-
-
-def _safe_credential_reference_name_failures(error: Mapping[str, Any]) -> tuple[tuple[str, str], ...] | None:
-    """Return item-level failures only for an authenticated credential-name error."""
-    if error.get("type") != _INVALID_CREDENTIAL_REFERENCE_NAME_ERROR:
+    if len(raw_location) != 3:
         return None
-    location = _safe_validation_location(error)
-    raw_location = error.get("loc")
+    container, name, marker = raw_location
     if not (
-        type(raw_location) is tuple  # pylint: disable=unidiomatic-typecheck  # Exact internal metadata only.
-        and len(raw_location) == 1
-        and type(raw_location[0]) is str  # pylint: disable=unidiomatic-typecheck  # Reject executable subclasses.
-        and raw_location[0] == "credentials"
+        type(container) is str  # pylint: disable=unidiomatic-typecheck
+        and container == "credentials"
+        and type(name) is str  # pylint: disable=unidiomatic-typecheck
+        and type(marker) is str  # pylint: disable=unidiomatic-typecheck
+        and marker == "[key]"
     ):
-        return ((location, "invalid credential reference name"),)
-    context = error.get("ctx")
-    if type(context) is not dict:  # pylint: disable=unidiomatic-typecheck  # Exact Pydantic context only.
-        return ((location, "invalid credential reference name"),)
-    field_names = context.get("field_names")
-    if (
-        type(field_names) is not tuple  # pylint: disable=unidiomatic-typecheck  # Fixed structured context only.
-        or not field_names
-        or any(type(field_name) is not str for field_name in field_names)  # pylint: disable=unidiomatic-typecheck
+        return None
+    location = "/credentials"
+    if len(name) <= _MAX_LOCATION_STRING_LENGTH:
+        location = f"{location}/{safe_pointer_component(name)}"
+    return location, "invalid credential reference name"
+
+
+def _is_oversized_credential_location(raw_location: object) -> bool:
+    """Recognize child errors whose constrained credential key exceeds the display bound."""
+    if type(raw_location) is not tuple or not 2 <= len(raw_location) <= _MAX_LOCATION_MEMBERS:  # pylint: disable=unidiomatic-typecheck
+        return False
+    container, name, *children = raw_location
+    if not (
+        type(container) is str  # pylint: disable=unidiomatic-typecheck
+        and container == "credentials"
+        and type(name) is str  # pylint: disable=unidiomatic-typecheck
+        and len(name) > _MAX_LOCATION_STRING_LENGTH
     ):
-        return ((location, "invalid credential reference name"),)
-    return tuple(
-        (f"/credentials/{safe_pointer_component(field_name)}", "invalid credential reference name")
-        for field_name in sorted(field_names)
+        return False
+    return all(
+        (type(child) is str and len(child) <= _MAX_LOCATION_STRING_LENGTH)  # pylint: disable=unidiomatic-typecheck
+        or (type(child) is int and 0 <= child <= _MAX_CONTEXT_INTEGER)  # pylint: disable=unidiomatic-typecheck
+        for child in children
     )
 
 
-def _safe_validation_failures(error: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
-    """Return actionable validation details assembled only from safe error metadata."""
-    if type(error) is not dict:  # pylint: disable=unidiomatic-typecheck  # Never execute mapping subclasses.
+def _decode_validation_record(record: object) -> tuple[tuple[str, str], ...]:  # noqa: PLR0911
+    """Decode one record through the closed diagnostic grammar."""
+    if not _has_closed_metadata_shape(record, max_entries=_MAX_ERROR_RECORD_ENTRIES):
         return (("/", "invalid value"),)
-    error_type = error.get("type")
-    if type(error_type) is not str:  # pylint: disable=unidiomatic-typecheck  # Fixed Pydantic codes only.
+    assert type(record) is dict  # pylint: disable=unidiomatic-typecheck  # Narrow after the exact-type gate.
+    safe_record = cast("dict[object, object]", record)
+    error_type = safe_record.get("type")
+    if type(error_type) is not str or len(error_type) > _MAX_ERROR_TYPE_LENGTH:  # pylint: disable=unidiomatic-typecheck
         return (("/", "invalid value"),)
-    for resolver in (
-        _safe_native_validation_failure,
-        _safe_diffsync_flag_failure,
-        _safe_unsupported_field_failures,
-        _safe_credential_reference_name_failures,
-    ):
-        failures = resolver(error)
-        if failures is not None:
-            return failures
-    safe_reason = _SAFE_PYDANTIC_FAILURE_REASONS.get(error_type)
-    if safe_reason is not None:
-        return ((_safe_validation_location(error), safe_reason),)
-    return ((_safe_validation_location(error), "invalid value"),)
+    raw_location = safe_record.get("loc")
+    location, valid_location = _safe_validation_location(raw_location)
+
+    credential_failure = _credential_key_failure(error_type, raw_location)
+    if credential_failure is not None:
+        return (credential_failure,)
+    if not valid_location and _is_oversized_credential_location(raw_location):
+        location = "/credentials"
+        valid_location = True
+    if not valid_location:
+        return ((location, "invalid value"),)
+
+    if error_type == _INVALID_JSON_VALUE_ERROR:
+        context = _closed_context(safe_record)
+        if context is not None:
+            pointer = _safe_context_pointer(context.get("pointer"))
+            reason = _safe_context_string(context.get("reason"))
+            if pointer is not None and reason in _JSON_NATIVE_FAILURE_REASONS:
+                return ((pointer, reason),)
+        return ((location, "invalid JSON value"),)
+
+    if error_type == _INVALID_UNICODE_SURROGATE_ERROR:
+        context = _closed_context(safe_record)
+        if context is not None:
+            pointer = _safe_context_pointer(context.get("pointer"))
+            if pointer is not None:
+                return ((pointer, "invalid Unicode surrogate"),)
+        return ((location, "invalid Unicode surrogate"),)
+
+    if error_type == _UNSUPPORTED_DECLARED_FIELDS_ERROR:
+        context = _closed_context(safe_record)
+        if context is None:
+            return ((location, "unsupported declared field"),)
+        pointer = _safe_context_pointer(context.get("pointer"))
+        field_names = context.get("field_names")
+        if (
+            pointer is None
+            or type(field_names) is not tuple  # pylint: disable=unidiomatic-typecheck
+            or not 1 <= len(field_names) <= _MAX_CONTEXT_COLLECTION_MEMBERS
+            or any(
+                type(field_name) is not str or len(field_name) > _MAX_CONTEXT_STRING_LENGTH  # pylint: disable=unidiomatic-typecheck
+                for field_name in field_names
+            )
+        ):
+            return ((location, "unsupported declared field"),)
+        return tuple(
+            (f"{pointer}/{safe_pointer_component(field_name)}", "unsupported declared field")
+            for field_name in field_names
+        )
+
+    if error_type == _INVALID_DIFFSYNC_FLAG_NAME_ERROR:
+        context = _closed_context(safe_record)
+        if context is not None:
+            index = context.get("index")
+            reason = _safe_context_string(context.get("reason"))
+            if (
+                type(index) is int  # pylint: disable=unidiomatic-typecheck
+                and 0 <= index <= _MAX_CONTEXT_INTEGER
+                and reason in _DIFFSYNC_FLAG_FAILURE_REASONS
+            ):
+                return ((f"{location}/{index}", reason),)
+        return ((location, "invalid diffsync flag name"),)
+
+    reason = _SAFE_PYDANTIC_FAILURE_REASONS.get(error_type, "invalid value")
+    return ((location, reason),)
+
+
+def _decode_validation_errors(errors: object) -> tuple[tuple[str, str], ...]:
+    """Decode returned Pydantic metadata with bounded total output."""
+    if type(errors) is not list or not 1 <= len(errors) <= _MAX_VALIDATION_ERRORS:  # pylint: disable=unidiomatic-typecheck
+        return (("/", "invalid value"),)
+    failures: set[tuple[str, str]] = set()
+    for record in errors:
+        failures.update(_decode_validation_record(record))
+        if len(failures) > _MAX_FINAL_FAILURES:
+            return (("/", "invalid value"),)
+    return tuple(sorted(failures))
 
 
 def _configuration_package_parse_error(
@@ -615,17 +710,13 @@ def parse_configuration_package(value: object) -> ConfigurationPackage:
     """Parse declared package content without exposing rejected input in errors."""
     if type(value) is not dict:  # pylint: disable=unidiomatic-typecheck  # Exact JSON object roots only.
         raise _configuration_package_parse_error((("/", "non-JSON value"),))
+    validation_errors: object | None = None
     try:
         return ConfigurationPackage.model_validate(value)
     except ValidationError as exc:
-        failures = sorted(
-            {
-                failure
-                for error in exc.errors(include_input=False, include_context=True, include_url=False)
-                for failure in _safe_validation_failures(error)
-            }
-        )
-        raise _configuration_package_parse_error(failures) from None
+        validation_errors = exc.errors(include_input=False, include_context=True, include_url=False)
+    failures = _decode_validation_errors(validation_errors)
+    raise _configuration_package_parse_error(failures)
 
 
 def sort_findings(findings: Sequence[ValidationFinding]) -> tuple[ValidationFinding, ...]:
