@@ -10,14 +10,23 @@ import sys
 import textwrap
 from collections.abc import Callable, ItemsView, Iterator, Mapping
 from datetime import datetime, timezone
-from typing import Any, ClassVar, Literal, NewType, TypeVar, cast
+from typing import Any, ClassVar, Literal, cast
 
 import pytest
-from pydantic import BaseModel, ValidationError, create_model, model_serializer
+from diffsync.enum import DiffSyncFlags
+from pydantic import ValidationError, model_serializer
 from pydantic_core import PydanticCustomError
-from typing_extensions import TypeAliasType
 
-from infrahub_sync import SyncConfig
+from infrahub_sync import (
+    IncrementalConfig,
+    SchemaMappingField,
+    SchemaMappingFilter,
+    SchemaMappingModel,
+    SchemaMappingTransform,
+    SyncAdapter,
+    SyncConfig,
+    SyncStore,
+)
 from infrahub_sync.configuration import (
     BUILTIN_ADAPTER_CAPABILITIES,
     AdapterConfigurationCapabilities,
@@ -340,181 +349,127 @@ def test_safe_parse_reports_unknown_diffsync_flag_at_item_without_echo(flag_name
     assert flag_name not in message
 
 
-def test_strict_configuration_guard_detects_a_future_unwalked_nested_model_field(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FutureNestedConfiguration(BaseModel):
-        known: str
-
-    class FutureSyncConfig(SyncConfig):
-        future_nested: FutureNestedConfiguration | None = None
-
-    monkeypatch.setitem(
-        SyncConfig.model_fields,
-        "future_nested",
-        FutureSyncConfig.model_fields["future_nested"],
-    )
-
-    with pytest.raises(RuntimeError, match=r"SyncConfig\.future_nested") as caught:
-        configuration_models._require_strict_configuration(  # pylint: disable=protected-access
-            {"future_nested": {"unexpected": "future-nested-value-canary"}}
-        )
-
-    assert "future-nested-value-canary" not in str(caught.value)
-
-
-def test_strict_configuration_guard_detects_a_future_nested_model_behind_a_type_alias(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FutureNestedConfiguration(BaseModel):
-        known: str
-
-    future_nested_alias = TypeAliasType(
-        "future_nested_alias",
-        FutureNestedConfiguration | None,
-    )
-    future_sync_config = create_model(
-        "FutureSyncConfig",
-        __base__=SyncConfig,
-        future_nested=(future_nested_alias, None),
-    )
-    monkeypatch.setitem(
-        SyncConfig.model_fields,
-        "future_nested",
-        future_sync_config.model_fields["future_nested"],
-    )
-
-    with pytest.raises(RuntimeError, match=r"SyncConfig\.future_nested") as caught:
-        configuration_models._require_strict_configuration(  # pylint: disable=protected-access
-            {"future_nested": {"unexpected": "future-alias-value-canary"}}
-        )
-
-    assert "future-alias-value-canary" not in str(caught.value)
-
-
-def test_strict_configuration_guard_fails_closed_for_an_unresolved_recursive_type_alias(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    recursive_alias = TypeAliasType(
-        "recursive_alias",
-        "FutureNestedConfiguration | list[recursive_alias] | ForwardExpressionValueCanary",  # noqa: F821  # ty: ignore[unresolved-reference] - intentionally unresolved alias target.
-    )
-    future_sync_config = create_model(
-        "FutureSyncConfig",
-        __base__=SyncConfig,
-        future_nested=(recursive_alias, None),
-    )
-    monkeypatch.setitem(
-        SyncConfig.model_fields,
-        "future_nested",
-        future_sync_config.model_fields["future_nested"],
-    )
-
-    with pytest.raises(RuntimeError, match=r"SyncConfig\.future_nested") as caught:
-        configuration_models._require_strict_configuration(  # pylint: disable=protected-access
-            {"future_nested": {"unexpected": "unresolved-alias-input-value-canary"}}
-        )
-
-    message = str(caught.value)
-    assert "ForwardExpressionValueCanary" not in message
-    assert "unresolved-alias-input-value-canary" not in message
-
-
-def test_strict_configuration_guard_detects_a_future_nested_model_behind_new_type(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FutureNestedConfiguration(BaseModel):
-        known: str
-
-    future_nested_type = NewType("future_nested_type", FutureNestedConfiguration)
-    future_sync_config = create_model(
-        "FutureSyncConfig",
-        __base__=SyncConfig,
-        future_nested=(future_nested_type, None),
-    )
-    configuration = {
-        "name": "future-sync",
-        "source": {"name": "source"},
-        "destination": {"name": "destination"},
-        "future_nested": {
-            "known": "retained",
-            "unexpected": "new-type-input-value-canary",
+def test_strict_legacy_model_graph_contract() -> None:
+    expected_fields: dict[type[Any], dict[str, object]] = {
+        SyncConfig: {
+            "name": str,
+            "store": SyncStore | None,
+            "source": SyncAdapter,
+            "destination": SyncAdapter,
+            "adapters_path": list[str] | None,
+            "order": list[str],
+            "schema_mapping": list[SchemaMappingModel],
+            "diffsync_flags": list[str | DiffSyncFlags] | None,
+            "incremental": IncrementalConfig | None,
+        },
+        SyncAdapter: {
+            "name": str,
+            "adapter": str | None,
+            "settings": dict[str, Any] | None,
+        },
+        SyncStore: {
+            "type": str,
+            "settings": dict[str, Any] | None,
+        },
+        IncrementalConfig: {"full_resync_every": int},
+        SchemaMappingModel: {
+            "name": str,
+            "mapping": str | None,
+            "identifiers": list[str] | None,
+            "filters": list[SchemaMappingFilter] | None,
+            "transforms": list[SchemaMappingTransform] | None,
+            "fields": list[SchemaMappingField],
+        },
+        SchemaMappingFilter: {
+            "field": str,
+            "operation": str,
+            "value": Any | None,
+        },
+        SchemaMappingTransform: {
+            "field": str,
+            "expression": str,
+        },
+        SchemaMappingField: {
+            "name": str,
+            "mapping": str | None,
+            "static": Any | None,
+            "reference": str | None,
         },
     }
+    actual_fields = {
+        model: {field_name: field.annotation for field_name, field in model.model_fields.items()}
+        for model in expected_fields
+    }
 
-    parsed = future_sync_config.model_validate(configuration)
-    nested = cast("Any", parsed).future_nested
-    assert isinstance(nested, FutureNestedConfiguration)
-    assert nested.model_dump() == {"known": "retained"}
-
-    monkeypatch.setitem(
-        SyncConfig.model_fields,
-        "future_nested",
-        future_sync_config.model_fields["future_nested"],
-    )
-    with pytest.raises(RuntimeError, match=r"SyncConfig\.future_nested") as caught:
-        configuration_models._require_strict_configuration(configuration)  # pylint: disable=protected-access
-
-    assert "new-type-input-value-canary" not in str(caught.value)
-
-
-def test_pydantic_model_walker_follows_parameterized_backport_type_aliases() -> None:
-    class AliasValueConfiguration(BaseModel):
-        known: str
-
-    class AliasArgumentConfiguration(BaseModel):
-        known: str
-
-    parameter = TypeVar("parameter")
-    generic_alias = TypeAliasType(
-        "generic_alias",
-        tuple[parameter, AliasValueConfiguration],
-        type_params=(parameter,),
-    )
-
-    discovered = configuration_models._pydantic_models_in_annotation(  # pylint: disable=protected-access
-        generic_alias[AliasArgumentConfiguration]
-    )
-
-    assert discovered == frozenset({AliasValueConfiguration, AliasArgumentConfiguration})
+    expected_children = {
+        SyncConfig: {
+            "store": (SyncStore, False),
+            "source": (SyncAdapter, False),
+            "destination": (SyncAdapter, False),
+            "schema_mapping": (SchemaMappingModel, True),
+            "incremental": (IncrementalConfig, False),
+        },
+        SchemaMappingModel: {
+            "filters": (SchemaMappingFilter, True),
+            "transforms": (SchemaMappingTransform, True),
+            "fields": (SchemaMappingField, True),
+        },
+    }
+    assert actual_fields == expected_fields
+    assert expected_children == configuration_models._STRICT_CONFIGURATION_CHILDREN  # pylint: disable=protected-access
 
 
-def _native_type_alias_annotations(model: type[BaseModel]) -> dict[str, object]:
-    """Create native PEP 695 aliases without making this module Python 3.12-only."""
-    namespace: dict[str, object] = {"FutureNestedConfiguration": model}
-    exec(  # noqa: S102 - version-gated syntax probe cannot appear directly in a Python 3.10 module.
-        """
-type NativeDirect = FutureNestedConfiguration
-type NativeContainer = list[FutureNestedConfiguration]
-type NativeInner = FutureNestedConfiguration | None
-type NativeNested = dict[str, NativeInner]
-type NativeRecursive = FutureNestedConfiguration | list[NativeRecursive]
-type NativeGeneric[Parameter] = tuple[Parameter, FutureNestedConfiguration]
-""",
-        namespace,
-    )
-    native_generic = cast("Any", namespace["NativeGeneric"])
-    namespace["NativeParameterized"] = native_generic[int]
-    return namespace
-
-
-@pytest.mark.skipif(sys.version_info < (3, 12), reason="native PEP 695 aliases require Python 3.12+")
 @pytest.mark.parametrize(
-    "alias_name",
-    ["NativeDirect", "NativeContainer", "NativeNested", "NativeRecursive", "NativeParameterized"],
-    ids=["direct", "container", "nested", "recursive", "parameterized"],
+    ("path", "location"),
+    [
+        pytest.param(("configuration",), "configuration", id="sync-config"),
+        pytest.param(("configuration", "source"), "configuration.source", id="source-adapter"),
+        pytest.param(("configuration", "destination"), "configuration.destination", id="destination-adapter"),
+        pytest.param(("configuration", "store"), "configuration.store", id="store"),
+        pytest.param(("configuration", "incremental"), "configuration.incremental", id="incremental"),
+        pytest.param(
+            ("configuration", "schema_mapping", 0),
+            "configuration.schema_mapping[0]",
+            id="schema-mapping",
+        ),
+        pytest.param(
+            ("configuration", "schema_mapping", 0, "filters", 0),
+            "configuration.schema_mapping[0].filters[0]",
+            id="schema-filter",
+        ),
+        pytest.param(
+            ("configuration", "schema_mapping", 0, "transforms", 0),
+            "configuration.schema_mapping[0].transforms[0]",
+            id="schema-transform",
+        ),
+        pytest.param(
+            ("configuration", "schema_mapping", 0, "fields", 0),
+            "configuration.schema_mapping[0].fields[0]",
+            id="schema-field",
+        ),
+    ],
 )
-def test_pydantic_model_walker_follows_native_type_aliases(alias_name: str) -> None:
-    class FutureNestedConfiguration(BaseModel):
-        known: str
+def test_strict_legacy_model_walker_rejects_unknown_fields_at_every_registered_path(
+    path: tuple[str | int, ...],
+    location: str,
+) -> None:
+    data = _package_with_nested_declared_content().model_dump(mode="json")
+    data["configuration"]["incremental"] = {"full_resync_every": 10}
+    target: object = data
+    for component in path:
+        if isinstance(component, int):
+            assert isinstance(target, list)
+        else:
+            assert isinstance(target, dict)
+        target = target[component]
+    cast("dict[str, object]", target)["unexpected"] = "strict-walker-value-canary"
 
-    annotation = _native_type_alias_annotations(FutureNestedConfiguration)[alias_name]
+    with pytest.raises(ValidationError) as caught:
+        ConfigurationPackage.model_validate(data)
 
-    discovered = configuration_models._pydantic_models_in_annotation(  # pylint: disable=protected-access
-        annotation
-    )
-
-    assert discovered == frozenset({FutureNestedConfiguration})
+    message = str(caught.value)
+    assert f"{location} contains unsupported declared fields: unexpected" in message
+    assert "strict-walker-value-canary" not in message
 
 
 def test_package_credentials_cannot_mutate_after_validation() -> None:
