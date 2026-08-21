@@ -8,12 +8,13 @@ import os
 import subprocess  # noqa: S404 - fixed interpreter runs an in-repository determinism probe.
 import sys
 import textwrap
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, ItemsView, Iterator, Mapping
 from datetime import datetime, timezone
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 from pydantic import ValidationError
+from pydantic_core import PydanticCustomError
 
 from infrahub_sync import SyncConfig
 from infrahub_sync.configuration import (
@@ -151,6 +152,30 @@ def _assert_json_containers(value: object) -> None:
         assert value is None or type(value) in {str, int, float, bool}
         if type(value) is float:
             assert math.isfinite(value)
+
+
+class _ForgedValidationContext(Mapping[str, object]):
+    """Mapping whose traversal counterfeits one package validation error."""
+
+    def __init__(
+        self,
+        error_type: Literal["invalid_json_value", "invalid_unicode_surrogate", "unsupported_declared_fields"],
+        context: dict[str, object],
+    ) -> None:
+        self._error_type = error_type
+        self._context = context
+
+    def __getitem__(self, key: str) -> object:
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(())
+
+    def __len__(self) -> int:
+        return 0
+
+    def items(self) -> ItemsView[str, object]:
+        raise PydanticCustomError(self._error_type, "{message}", self._context)
 
 
 def test_checksum_is_stable_across_mapping_order() -> None:
@@ -436,6 +461,47 @@ def test_safe_parse_preserves_locations_for_non_json_failures(failure_kind: str,
     assert "\u202e" not in message
     assert type_name_canary not in message
     assert "rejected-value-canary" not in message
+
+
+@pytest.mark.parametrize(
+    ("error_type", "trusted_context", "reason"),
+    [
+        pytest.param(
+            "invalid_json_value",
+            {"reason": "non-JSON value"},
+            "invalid JSON value",
+            id="json-value",
+        ),
+        pytest.param("invalid_unicode_surrogate", {}, "invalid Unicode surrogate", id="unicode-surrogate"),
+        pytest.param(
+            "unsupported_declared_fields",
+            {"field_names": ("forged-field-name-canary",)},
+            "unsupported declared field",
+            id="unsupported-fields",
+        ),
+    ],
+)
+def test_safe_parse_rejects_forged_custom_error_context(
+    error_type: Literal["invalid_json_value", "invalid_unicode_surrogate", "unsupported_declared_fields"],
+    trusted_context: dict[str, object],
+    reason: str,
+) -> None:
+    context = {
+        "pointer": "/forged\npointer-value-canary",
+        "message": "pydantic-message-canary\nsecond-line-canary",
+        **trusted_context,
+    }
+
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(_ForgedValidationContext(error_type, context))
+
+    message = str(caught.value)
+    assert message == f"configuration package is invalid at /: {reason}"
+    assert len(message.splitlines()) == 1
+    assert all(character.isprintable() for character in message)
+    assert "canary" not in message
+    assert "_ForgedValidationContext" not in message
+    assert error_type not in message
 
 
 def test_safe_parse_names_unknown_adapter_field_without_echoing_its_value() -> None:
