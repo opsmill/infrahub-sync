@@ -112,7 +112,13 @@ def test_unicode_corpora_cover_controls_collisions_and_valid_scalars() -> None:
         "tilde",
         "raw-astral-vs-literal-escape",
     }
-    assert {ord(case.value) for case in valid_scalars} >= {0xD7FF, 0xE000, 0x1F600, 0x10FFFF}
+    assert {ord(case.value) for case in valid_scalars if len(case.value) == 1} >= {
+        0xD7FF,
+        0xE000,
+        0x1F600,
+        0x10FFFF,
+    }
+    assert any(case.value == "café-東京-😀" for case in valid_scalars)
 
 
 def test_every_lone_surrogate_is_available_without_expanding_the_default_corpus() -> None:
@@ -139,3 +145,5 @@ def test_endpoint_cases_include_unsafe_forms_and_accepted_controls() -> None:
     assert any(case.outcome is BoundaryOutcome.ACCEPT and case.form == "absolute" for case in cases)
     assert any(case.outcome is BoundaryOutcome.ACCEPT and case.form == "relative" for case in cases)
     assert all(case.canary is None or case.canary in case.value for case in cases)
+    assert all(case.expected_error is None for case in cases if case.outcome is BoundaryOutcome.ACCEPT)
+    assert all(case.expected_error is not None for case in cases if case.outcome is BoundaryOutcome.REJECT)

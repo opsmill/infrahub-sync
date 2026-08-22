@@ -140,8 +140,10 @@ class EndpointCase:
     id: str
     value: str = field(repr=False)
     form: str
+    setting_name: str
     outcome: BoundaryOutcome
     canary: str | None = None
+    expected_error: str | None = None
 
 
 def _plain_boundary_case(case_id: str, value: object, outcome: BoundaryOutcome) -> BoundaryCase:
@@ -226,6 +228,8 @@ def hostile_builtin_cases() -> tuple[BoundaryCase, ...]:
 
     class _HostileStr(str):  # noqa: FURB189 - hostile exact-type boundary probe.
         __slots__ = ()
+
+        __hash__ = str.__hash__
 
         def __iter__(self) -> Iterator[str]:  # ty: ignore[invalid-method-override]  # Deliberate probe.
             return str_tripwire.trip("str.iter")
@@ -666,12 +670,13 @@ def iter_lone_surrogates() -> Iterator[UnicodeCase]:
 
 
 def valid_unicode_scalar_cases() -> tuple[UnicodeCase, ...]:
-    """Return valid scalars adjacent to surrogates plus representative Unicode."""
+    """Return valid scalars plus representative mixed printable Unicode."""
     return (
         UnicodeCase("before-surrogates", "\ud7ff", r"\ud7ff", "valid"),
         UnicodeCase("after-surrogates", "\ue000", r"\ue000", "valid"),
         UnicodeCase("emoji", "😀", "😀", "valid"),
         UnicodeCase("maximum-scalar", "\U0010ffff", r"\U0010ffff", "valid"),
+        UnicodeCase("mixed-printable", "café-東京-😀", "café-東京-😀", "valid"),
     )
 
 
@@ -679,7 +684,51 @@ def unicode_collision_cases() -> tuple[UnicodeCollisionCase, ...]:
     """Return raw/literal pairs that unsafe escaping can collapse."""
     return (
         UnicodeCollisionCase("raw-lf-vs-literal-escape", "\n", r"\n", r"\n", r"\\n"),
+        UnicodeCollisionCase("raw-cr-vs-literal-escape", "\r", r"\r", r"\r", r"\\r"),
+        UnicodeCollisionCase("raw-tab-vs-literal-escape", "\t", r"\t", r"\t", r"\\t"),
         UnicodeCollisionCase("raw-esc-vs-literal-escape", "\x1b", r"\u001b", r"\u001b", r"\\u001b"),
+        UnicodeCollisionCase(
+            "raw-line-separator-vs-literal-escape",
+            "\u2028",
+            r"\u2028",
+            r"\u2028",
+            r"\\u2028",
+        ),
+        UnicodeCollisionCase(
+            "raw-paragraph-separator-vs-literal-escape",
+            "\u2029",
+            r"\u2029",
+            r"\u2029",
+            r"\\u2029",
+        ),
+        UnicodeCollisionCase(
+            "raw-rtl-override-vs-literal-escape",
+            "\u202e",
+            r"\u202e",
+            r"\u202e",
+            r"\\u202e",
+        ),
+        UnicodeCollisionCase(
+            "raw-zero-width-space-vs-literal-escape",
+            "\u200b",
+            r"\u200b",
+            r"\u200b",
+            r"\\u200b",
+        ),
+        UnicodeCollisionCase(
+            "raw-left-to-right-isolate-vs-literal-escape",
+            "\u2066",
+            r"\u2066",
+            r"\u2066",
+            r"\\u2066",
+        ),
+        UnicodeCollisionCase(
+            "raw-zero-width-no-break-space-vs-literal-escape",
+            "\ufeff",
+            r"\ufeff",
+            r"\ufeff",
+            r"\\ufeff",
+        ),
         UnicodeCollisionCase("backslash", "\\", r"\\", r"\\", r"\\\\"),
         UnicodeCollisionCase("slash", "/", "~1", "~1", "~01"),
         UnicodeCollisionCase("tilde", "~", "~0", "~0", "~00"),
@@ -696,35 +745,62 @@ def unicode_collision_cases() -> tuple[UnicodeCollisionCase, ...]:
 def endpoint_cases() -> tuple[EndpointCase, ...]:
     """Return accepted controls and hostile URL/endpoint forms."""
     return (
-        EndpointCase("ordinary-absolute", "https://service.example/api", "absolute", BoundaryOutcome.ACCEPT),
-        EndpointCase("ordinary-authority", "//service.example/api", "authority", BoundaryOutcome.ACCEPT),
-        EndpointCase("ordinary-relative", "/api/v1/items", "relative", BoundaryOutcome.ACCEPT),
+        EndpointCase(
+            "ordinary-absolute",
+            "https://service.example/api",
+            "absolute",
+            "url",
+            BoundaryOutcome.ACCEPT,
+        ),
+        EndpointCase(
+            "ordinary-authority",
+            "//service.example/api",
+            "authority",
+            "api_endpoint",
+            BoundaryOutcome.REJECT,
+            expected_error="must be a relative request path without a scheme or authority",
+        ),
+        EndpointCase(
+            "ordinary-relative",
+            "/api/v1/items",
+            "relative",
+            "api_endpoint",
+            BoundaryOutcome.ACCEPT,
+        ),
         EndpointCase(
             "userinfo",
             "https://probe:url-userinfo-canary@service.example/api",
             "userinfo",
+            "url",
             BoundaryOutcome.REJECT,
             "url-userinfo-canary",
+            "cannot contain user information, query parameters, or fragments",
         ),
         EndpointCase(
             "query",
             "https://service.example/api?probe=url-query-canary",
             "query",
+            "url",
             BoundaryOutcome.REJECT,
             "url-query-canary",
+            "cannot contain user information, query parameters, or fragments",
         ),
         EndpointCase(
             "fragment",
             "https://service.example/api#url-fragment-canary",
             "fragment",
+            "url",
             BoundaryOutcome.REJECT,
             "url-fragment-canary",
+            "cannot contain user information, query parameters, or fragments",
         ),
         EndpointCase(
             "malformed-authority",
             "https://[url-authority-canary",
             "malformed-authority",
+            "url",
             BoundaryOutcome.REJECT,
             "url-authority-canary",
+            "cannot contain user information, query parameters, or fragments",
         ),
     )
