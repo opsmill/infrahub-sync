@@ -38,7 +38,8 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
     def _create_slurpit_client(self, adapter: SyncAdapter) -> slurpit.api:
         settings = adapter.settings or {}
         # The registered setting surface is forwarded without establishing the optional
-        # client's accepted signature here; that conformance is tracked by INFP-654.
+        # client's accepted signature here. The local boundary is guarded by
+        # tests/configuration/test_adapter_setting_conformance.py.
         client = slurpit.api(**settings)
         try:
             self.run_async(client.device.get_devices())

@@ -1780,9 +1780,7 @@ def test_reserved_reference_node_is_refused_outside_known_credential_paths() -> 
     with pytest.raises(CredentialConfigurationError) as caught:
         validate_package_credentials(package)
 
-    assert str(caught.value) == (
-        "/configuration/source/settings/verify_ssl is not a credential-bearing setting"
-    )
+    assert str(caught.value) == ("/configuration/source/settings/verify_ssl is not a credential-bearing setting")
 
 
 def test_reserved_reference_node_on_unsupported_setting_reports_the_setting() -> None:
@@ -1794,7 +1792,7 @@ def test_reserved_reference_node_on_unsupported_setting_reports_the_setting() ->
         validate_package_credentials(package)
 
     assert str(caught.value) == (
-        'adapter \'netbox\' contains unsupported declared settings for the source role: ["headers"]'
+        "adapter 'netbox' contains unsupported declared settings for the source role: [\"headers\"]"
     )
 
 
@@ -1867,9 +1865,7 @@ def test_reserved_reference_node_is_refused_in_schema_mapping_static_value() -> 
     with pytest.raises(CredentialConfigurationError) as caught:
         validate_package_credentials(package)
 
-    assert str(caught.value) == (
-        "/configuration/schema_mapping/0/fields/0/static is not a credential-bearing setting"
-    )
+    assert str(caught.value) == ("/configuration/schema_mapping/0/fields/0/static is not a credential-bearing setting")
 
 
 def test_store_inline_credential_is_refused_without_echoing_value() -> None:
@@ -1934,9 +1930,7 @@ def test_reserved_reference_node_is_refused_in_store_settings() -> None:
     with pytest.raises(CredentialConfigurationError) as caught:
         validate_package_credentials(package)
 
-    assert str(caught.value) == (
-        'store type \'redis\' contains unsupported declared settings: ["token"]'
-    )
+    assert str(caught.value) == ("store type 'redis' contains unsupported declared settings: [\"token\"]")
 
 
 def test_declared_references_validate_without_resolving_environment() -> None:
@@ -2185,15 +2179,24 @@ def test_wrong_adapter_role_is_refused() -> None:
 
 def test_findings_use_deterministic_interface_order() -> None:
     findings = [
-        ValidationFinding(code="optional-field", severity="warning", location="/z", message="optional"),
+        ValidationFinding(code="optional-field", severity="error", location="/z", message="optional"),
         ValidationFinding(code="missing-field", severity="error", location="/a", message="missing"),
         ValidationFinding(code="another-error", severity="error", location="/a", message="another"),
-        ValidationFinding(code="warning-first", severity="warning", location="/a", message="warning"),
     ]
 
     assert [finding.code for finding in sort_findings(findings)] == [
         "another-error",
         "missing-field",
-        "warning-first",
         "optional-field",
     ]
+
+
+def test_finding_severity_has_no_channel_beyond_error() -> None:
+    # A severity nothing reports would let a capability author write into silence.
+    with pytest.raises(ValidationError):
+        ValidationFinding(
+            code="optional-field",
+            severity=cast("Any", "warning"),
+            location="/a",
+            message="optional",
+        )

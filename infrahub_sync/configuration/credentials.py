@@ -221,13 +221,7 @@ def _validate_url_setting(value: object, *, setting_name: str, location: str) ->
         parsed = urlsplit(value)
     except ValueError:
         parsed = None
-    if (
-        parsed is None
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
-    ):
+    if parsed is None or parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment:
         msg = f"{location} cannot contain user information, query parameters, or fragments"
         raise CredentialConfigurationError(msg)
     if setting_name in _ABSOLUTE_URL_SETTING_NAMES:
@@ -267,8 +261,8 @@ def _validate_adapter_credentials(
         )
     if capabilities.validator is not None:
         findings = sort_findings(capabilities.validator(package, role))
-        if error := next((finding for finding in findings if finding.severity == "error"), None):
-            msg = f"{error.location}: {error.message}"
+        if findings:
+            msg = "; ".join(f"{_bounded_location(finding.location)}: {finding.message}" for finding in findings)
             raise CredentialConfigurationError(msg)
     for path in capabilities.credential_setting_paths:
         present, value = _setting_at_path(settings, path)

@@ -438,7 +438,9 @@ class ValidationFinding(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     code: str = Field(pattern=r"^[a-z][a-z0-9-]*$")
-    severity: Literal["error", "warning"]
+    # Only "error" has a channel: validate_package_credentials raises. Re-add "warning" with
+    # the surface that reports it, so a capability author cannot write one into silence.
+    severity: Literal["error"]
     location: str = Field(pattern=r"^(/(?:[^~/]|~[01])*)*$")
     message: str = Field(min_length=1)
 
@@ -764,5 +766,5 @@ def parse_configuration_package(value: object) -> ConfigurationPackage:
 
 def sort_findings(findings: Sequence[ValidationFinding]) -> tuple[ValidationFinding, ...]:
     """Return findings in the stable cross-interface order."""
-    severity_order = {"error": 0, "warning": 1}
+    severity_order = {"error": 0}
     return tuple(sorted(findings, key=lambda item: (item.location, severity_order[item.severity], item.code)))
