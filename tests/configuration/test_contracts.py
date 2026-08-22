@@ -618,6 +618,15 @@ def test_package_rejects_machine_local_directory() -> None:
         ConfigurationPackage.model_validate(data)
 
 
+def test_always_null_legacy_fields_stay_out_of_package_identity() -> None:
+    # Both are refused when non-null, so hashing a constant only makes removal a rehash later.
+    declared_content = _package().declared_content()
+
+    assert "adapters_path" not in declared_content["configuration"]
+    for role in ("source", "destination"):
+        assert "adapter" not in declared_content["configuration"][role]
+
+
 def test_package_rejects_machine_local_adapter_path() -> None:
     data = _package().model_dump(mode="json")
     data["configuration"]["adapters_path"] = ["/home/alice/custom-adapters"]
@@ -2084,10 +2093,22 @@ def test_all_bundled_supported_setting_shapes_validate(capability: AdapterConfig
     validate_package_credentials(ConfigurationPackage.model_validate(data))
 
 
-def test_capability_lookup_is_case_insensitive_but_unknown_is_refused() -> None:
-    assert get_adapter_capabilities("NetBox").adapter_name == "netbox"
+def test_capability_lookup_is_exact_and_unknown_is_refused() -> None:
+    assert get_adapter_capabilities("netbox").adapter_name == "netbox"
+    for unregistered in ("NetBox", "NETBOX", "netbox ", "custom"):
+        with pytest.raises(UnknownAdapterCapabilitiesError, match="no configuration capability declaration"):
+            get_adapter_capabilities(unregistered)
+
+
+def test_case_variant_adapter_name_cannot_split_package_identity() -> None:
+    # A folded match would let two packages validate identically under different checksums.
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["name"] = "NetBox"
+    package = ConfigurationPackage.model_validate(data)
+
+    assert package.checksum() != _package().checksum()
     with pytest.raises(UnknownAdapterCapabilitiesError, match="no configuration capability declaration"):
-        get_adapter_capabilities("custom")
+        validate_package_credentials(package)
 
 
 def test_source_only_capability_cannot_claim_destination_writes() -> None:

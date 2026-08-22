@@ -216,9 +216,12 @@ class UnknownAdapterCapabilitiesError(ValueError):
 
 
 def get_adapter_capabilities(name: str) -> AdapterConfigurationCapabilities:
-    """Return the bundled declaration for an exact normalized adapter name."""
+    """Return the bundled declaration for an exact registered adapter name."""
+    # Exact, not case-folded: every consumer resolves the name verbatim (module import,
+    # PluginLoader camelization, the destination check in the CLI), and the declared name is
+    # hashed as written, so a folded match would admit names that split package identity.
     try:
-        return BUILTIN_ADAPTER_CAPABILITIES[name.casefold()]
+        return BUILTIN_ADAPTER_CAPABILITIES[name]
     except KeyError:
         msg = f"adapter {name!r} has no configuration capability declaration"
         raise UnknownAdapterCapabilitiesError(msg) from None

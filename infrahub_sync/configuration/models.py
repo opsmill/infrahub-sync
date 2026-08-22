@@ -310,6 +310,9 @@ class _ImmutableSyncAdapter(SyncAdapter):
 
     model_config = ConfigDict(frozen=True)
 
+    # Refused when non-null by _require_strict_model; see adapters_path on _ImmutableSyncConfig.
+    adapter: str | None = Field(default=None, exclude=True)
+
     settings: Mapping[str, Any] | None = Field(default_factory=dict, validate_default=True)
 
     @field_validator("settings")
@@ -353,10 +356,12 @@ class _ImmutableSyncConfig(SyncConfig):
     store: _ImmutableSyncStore | None = None
     source: _ImmutableSyncAdapter
     destination: _ImmutableSyncAdapter
-    adapters_path: tuple[str, ...] | None = None
+    # Refused when non-null by _require_strict_model, so the value is always null. Excluded
+    # from the dump: carrying a constant into the checksum makes removing it a rehash later.
+    adapters_path: tuple[str, ...] | None = Field(default=None, exclude=True)
     order: tuple[str, ...] = ()
     schema_mapping: tuple[_ImmutableSchemaMappingModel, ...] = ()
-    diffsync_flags: tuple[str | DiffSyncFlags, ...] | None = ()
+    diffsync_flags: tuple[str | DiffSyncFlags, ...] = ()
     incremental: _ImmutableIncrementalConfig | None = None
 
     @field_validator("diffsync_flags", mode="before")
@@ -390,16 +395,13 @@ class _ImmutableSyncConfig(SyncConfig):
         # pylint: enable=unidiomatic-typecheck
         return value
 
-    @field_serializer("adapters_path", "order", "schema_mapping")
+    @field_serializer("order", "schema_mapping")
     def _serialize_collections(self, value: tuple[Any, ...] | None) -> list[Any] | None:
         return None if value is None else list(value)
 
     @field_serializer("diffsync_flags")
-    def _serialize_diffsync_flags(
-        self,
-        value: tuple[str | DiffSyncFlags, ...] | None,
-    ) -> list[str] | None:
-        return None if value is None else [item.name if isinstance(item, DiffSyncFlags) else item for item in value]
+    def _serialize_diffsync_flags(self, value: tuple[str | DiffSyncFlags, ...]) -> list[str]:
+        return [item.name if isinstance(item, DiffSyncFlags) else item for item in value]
 
 
 class CredentialReference(BaseModel):
