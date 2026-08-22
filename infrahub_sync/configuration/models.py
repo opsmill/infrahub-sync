@@ -51,6 +51,8 @@ _MAX_CONTEXT_ENTRIES = 16
 _MAX_CONTEXT_COLLECTION_MEMBERS = 128
 _MAX_CONTEXT_STRING_LENGTH = 256
 _MAX_CONTEXT_INTEGER = 2**63 - 1
+# Findings are rendered straight into a raised message, so they carry the same bound.
+_MAX_FINDING_TEXT_LENGTH = 256
 _UNSUPPORTED_DECLARED_FIELDS_ERROR = "unsupported_declared_fields"
 _INVALID_UNICODE_SURROGATE_ERROR = "invalid_unicode_surrogate"
 _INVALID_JSON_VALUE_ERROR = "invalid_json_value"
@@ -437,12 +439,12 @@ class ValidationFinding(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    code: str = Field(pattern=r"^[a-z][a-z0-9-]*$")
+    code: str = Field(pattern=r"^[a-z][a-z0-9-]*$", max_length=_MAX_FINDING_TEXT_LENGTH)
     # Only "error" has a channel: validate_package_credentials raises. Re-add "warning" with
     # the surface that reports it, so a capability author cannot write one into silence.
     severity: Literal["error"]
-    location: str = Field(pattern=r"^(/(?:[^~/]|~[01])*)*$")
-    message: str = Field(min_length=1)
+    location: str = Field(pattern=r"^(/(?:[^~/]|~[01])*)*$", max_length=_MAX_FINDING_TEXT_LENGTH)
+    message: str = Field(min_length=1, max_length=_MAX_FINDING_TEXT_LENGTH)
 
 
 class ConfigurationPackage(BaseModel):

@@ -19,6 +19,7 @@ from diffsync.enum import DiffSyncFlags
 from pydantic import BaseModel, RootModel, ValidationError, model_serializer
 from pydantic_core import PydanticCustomError
 
+import infrahub_sync.configuration.credentials as configuration_credentials
 from infrahub_sync import (
     IncrementalConfig,
     SchemaMappingField,
@@ -2200,3 +2201,140 @@ def test_finding_severity_has_no_channel_beyond_error() -> None:
             location="/a",
             message="optional",
         )
+
+
+@pytest.mark.parametrize(
+    ("setting_name", "value", "expected"),
+    [
+        pytest.param("url", "file:///etc/passwd", "must be an absolute http or https URL", id="url-file-scheme"),
+        pytest.param("url", "nb.example", "must be an absolute http or https URL", id="url-no-scheme"),
+        pytest.param("url", "//nb.example", "must be an absolute http or https URL", id="url-scheme-relative"),
+        pytest.param(
+            "api_endpoint",
+            "https://evil.example/api",
+            "must be a relative request path without a scheme or authority",
+            id="endpoint-absolute",
+        ),
+        pytest.param(
+            "api_endpoint",
+            "//evil.example/api",
+            "must be a relative request path without a scheme or authority",
+            id="endpoint-authority",
+        ),
+    ],
+)
+def test_endpoint_settings_separate_absolute_bases_from_relative_paths(
+    setting_name: str,
+    value: str,
+    expected: str,
+) -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"] = {
+        "name": "genericrestapi",
+        "settings": {"url": "https://api.example", "token": {"$credential": "netbox-token"}, setting_name: value},
+    }
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    assert str(caught.value) == f"/configuration/source/settings/{setting_name} {expected}"
+
+
+@pytest.mark.parametrize("endpoint", ["/api/v1", "api", "api/v1/", ""], ids=["rooted", "bare", "trailing", "empty"])
+def test_relative_endpoint_forms_remain_accepted(endpoint: str) -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"] = {
+        "name": "genericrestapi",
+        "settings": {
+            "url": "https://api.example",
+            "api_endpoint": endpoint,
+            "token": {"$credential": "netbox-token"},
+        },
+    }
+
+    validate_package_credentials(ConfigurationPackage.model_validate(data))
+
+
+def test_unknown_store_type_with_settings_is_refused_not_a_key_error() -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["store"] = {"type": "mystery", "settings": {"url": "redis://localhost"}}
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    assert str(caught.value) == "store type 'mystery' has no configuration capability declaration"
+
+
+def test_store_declaration_cannot_be_half_declared() -> None:
+    # One record per type: credential paths cannot name a setting the type does not allow.
+    with pytest.raises(ValueError, match="outside allowed settings"):
+        configuration_credentials._StoreCapabilities(
+            allowed_settings=frozenset({"host"}),
+            credential_setting_paths=("password",),
+        )
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["creds.sub/key", "creds.Sub", "creds.", "creds..sub", "creds." + "t" * 65],
+    ids=["slash", "uppercase", "trailing-dot", "empty-component", "over-length"],
+)
+def test_credential_paths_must_render_identically_wherever_they_are_built(path: str) -> None:
+    # The allowed-location set and the declared-content walk build the same pointer only while
+    # every component survives escaping and bounding unchanged.
+    with pytest.raises(ValueError, match="invalid credential path"):
+        AdapterConfigurationCapabilities(
+            adapter_name="example",
+            roles=frozenset({"source"}),
+            allowed_settings=frozenset({"creds"}),
+            credential_setting_paths=(path,),
+        )
+
+
+def test_credential_validation_diagnostics_are_bounded_like_the_parse_boundary() -> None:
+    hostile = "k" * 5000
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["settings"][hostile] = 1
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    message = str(caught.value)
+    assert len(message) < 512
+    assert hostile not in message
+    assert len(message.splitlines()) == 1
+
+
+def test_bounded_setting_name_list_reports_what_it_omitted() -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["settings"].update({f"bad{index:02}": 1 for index in range(40)})
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    message = str(caught.value)
+    assert message.endswith("and 24 more")
+    assert len(message) < 512
+
+
+def test_truncated_pointers_cannot_be_forged_by_a_declared_key() -> None:
+    # ~2 is unreachable from safe_pointer_component, which emits only ~0 and ~1.
+    truncated = configuration_credentials._bounded_component("a" * 70)
+    literal = configuration_credentials._bounded_component("a~2")
+
+    assert truncated.endswith("~2")
+    assert literal == "a~02"
+    assert not literal.endswith("~2")
+
+
+@pytest.mark.parametrize("field_name", ["message", "location", "code"], ids=["message", "location", "code"])
+def test_finding_text_is_bounded_because_it_is_rendered_into_a_raised_message(field_name: str) -> None:
+    fields: dict[str, str] = {"code": "example", "severity": "error", "location": "/a", "message": "example"}
+    fields[field_name] = ("/a" * 200) if field_name == "location" else ("m" * 400)
+
+    with pytest.raises(ValidationError):
+        ValidationFinding(**cast("Any", fields))

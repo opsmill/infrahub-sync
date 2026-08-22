@@ -12,7 +12,12 @@ from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
-from .capabilities import AdapterConfigurationCapabilities, AdapterRole, get_adapter_capabilities
+from .capabilities import (
+    AdapterConfigurationCapabilities,
+    AdapterRole,
+    get_adapter_capabilities,
+    is_renderable_setting_path,
+)
 from .models import (
     ConfigurationPackage,
     CredentialReference,
@@ -32,14 +37,17 @@ class _StoreCapabilities:
     credential_setting_paths: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        invalid = sorted(path for path in self.credential_setting_paths if not is_renderable_setting_path(path))
+        if invalid:
+            msg = f"store credential paths are not renderable setting paths: {invalid!r}"
+            raise ValueError(msg)
         outside = sorted(set(self.credential_setting_paths) - self.allowed_settings)
         if outside:
             msg = f"store credential paths outside allowed settings: {outside!r}"
             raise ValueError(msg)
 
 
-# One entry per store type. Two parallel tables let a new type be added to only one of them,
-# which surfaces as an uncaught KeyError rather than a refusal.
+# One entry per store type, so a new type cannot be declared half-way.
 _STORE_CAPABILITIES: dict[str, _StoreCapabilities] = {
     "redis": _StoreCapabilities(
         allowed_settings=frozenset({"db", "host", "password", "port", "store_id", "url", "username"}),
@@ -57,7 +65,9 @@ _ALLOWED_URL_SCHEMES = frozenset({"http", "https"})
 _MAX_DIAGNOSTIC_COMPONENT_LENGTH = 64
 _MAX_DIAGNOSTIC_LOCATION_LENGTH = 256
 _MAX_DIAGNOSTIC_NAME_ENTRIES = 16
-_TRUNCATION_MARKER = "..."
+# safe_pointer_component only ever emits ~0 and ~1, so ~2 cannot collide with escaped
+# content: a literal "~2" in a declared key renders as "~02".
+_TRUNCATION_MARKER = "~2"
 
 
 class CredentialConfigurationError(ValueError):
@@ -153,6 +163,11 @@ def _reference_name(value: object, *, location: str) -> str:
     return node.reference_name
 
 
+def _settings_pointer(prefix: str, path: str) -> str:
+    """Build one settings pointer the same way the declared-content walk builds it."""
+    return prefix + "".join(f"/{_bounded_component(component)}" for component in path.split("."))
+
+
 def _allowed_reference_locations(
     package: ConfigurationPackage,
     source_capabilities: AdapterConfigurationCapabilities,
@@ -160,7 +175,7 @@ def _allowed_reference_locations(
 ) -> frozenset[str]:
     """Return every pointer at which a declared credential reference is resolved at run time."""
     allowed = {
-        f"/configuration/{role}/settings/{path.replace('.', '/')}"
+        _settings_pointer(f"/configuration/{role}/settings", path)
         for role, capabilities in (("source", source_capabilities), ("destination", destination_capabilities))
         for path in capabilities.credential_setting_paths
     }
@@ -168,7 +183,7 @@ def _allowed_reference_locations(
     store_capabilities = None if store is None else _STORE_CAPABILITIES.get(store.type)
     if store_capabilities is not None:
         allowed.update(
-            f"/configuration/store/settings/{path.replace('.', '/')}"
+            _settings_pointer("/configuration/store/settings", path)
             for path in store_capabilities.credential_setting_paths
         )
     return frozenset(allowed)
@@ -268,7 +283,7 @@ def _validate_adapter_credentials(
         present, value = _setting_at_path(settings, path)
         if not present or value is None:
             continue
-        location = f"/configuration/{role}/settings/{path.replace('.', '/')}"
+        location = _settings_pointer(f"/configuration/{role}/settings", path)
         reference_name = _reference_name(value, location=location)
         if reference_name not in package.credentials:
             msg = f"{location} names unknown credential reference {reference_name!r}"
@@ -299,7 +314,7 @@ def _validate_store_credentials(package: ConfigurationPackage) -> None:
         present, value = _setting_at_path(settings, path)
         if not present or value is None:
             continue
-        location = f"/configuration/store/settings/{path.replace('.', '/')}"
+        location = _settings_pointer("/configuration/store/settings", path)
         reference_name = _reference_name(value, location=location)
         if reference_name not in package.credentials:
             msg = f"{location} names unknown credential reference {reference_name!r}"

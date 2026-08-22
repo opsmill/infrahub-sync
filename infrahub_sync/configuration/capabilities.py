@@ -18,6 +18,19 @@ _ADAPTER_NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
 _ADAPTER_ROLES: frozenset[AdapterRole] = frozenset({"source", "destination"})
 _WRITE_OPERATIONS: frozenset[WriteOperation] = frozenset({"create", "update", "delete"})
 _SETTING_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+# A declared path component must survive pointer rendering unchanged, so the pointer built
+# from the declaration and the pointer built while walking a package cannot disagree.
+_MAX_SETTING_PATH_COMPONENT_LENGTH = 64
+
+
+def is_renderable_setting_path(path: str) -> bool:
+    """Return whether every dotted component is an exact, bounded setting name."""
+    if not path or path.startswith(".") or path.endswith("."):
+        return False
+    return all(
+        _SETTING_NAME.fullmatch(component) is not None and len(component) <= _MAX_SETTING_PATH_COMPONENT_LENGTH
+        for component in path.split(".")
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +84,7 @@ class AdapterConfigurationCapabilities:
         ):
             msg = f"adapter {self.adapter_name!r} contains an invalid allowed setting"
             raise ValueError(msg)
-        if any(not path or path.startswith(".") or path.endswith(".") for path in credential_setting_paths):
+        if any(not is_renderable_setting_path(path) for path in credential_setting_paths):
             msg = f"adapter {self.adapter_name!r} contains an invalid credential path"
             raise ValueError(msg)
         unsupported_credential_paths = sorted(
