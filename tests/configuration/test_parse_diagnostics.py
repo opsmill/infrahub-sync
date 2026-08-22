@@ -1088,6 +1088,37 @@ def test_public_parse_bounds_native_credential_key_findings(name_count: int) -> 
         }
 
 
+def test_public_parse_checks_natural_error_count_before_materializing_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = _package_data()
+    names = tuple(f"bad/name-{index:03}" for index in range(257))
+    data["credentials"] = {name: {"provider": "env", "identifier": "TOKEN"} for name in names}
+    real_errors = ValidationError.errors
+    errors_calls = 0
+
+    def observed_errors(
+        error: ValidationError,
+        *,
+        include_url: bool = True,
+        include_context: bool = True,
+        include_input: bool = True,
+    ) -> object:
+        nonlocal errors_calls
+        errors_calls += 1
+        return real_errors(
+            error,
+            include_url=include_url,
+            include_context=include_context,
+            include_input=include_input,
+        )
+
+    monkeypatch.setattr(ValidationError, "errors", observed_errors)
+
+    assert _parse_failure(data) == _PREFIX + "/: invalid value"
+    assert errors_calls == 0
+
+
 @pytest.mark.parametrize(
     ("errors", "expected"),
     [

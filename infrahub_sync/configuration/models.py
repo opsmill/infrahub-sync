@@ -716,7 +716,8 @@ def parse_configuration_package(value: object) -> ConfigurationPackage:
     try:
         return ConfigurationPackage.model_validate(value)
     except ValidationError as exc:
-        validation_errors = exc.errors(include_input=False, include_context=True, include_url=False)
+        if exc.error_count() <= _MAX_VALIDATION_ERRORS:
+            validation_errors = exc.errors(include_input=False, include_context=True, include_url=False)
     failures = _decode_validation_errors(validation_errors)
     raise _configuration_package_parse_error(failures)
 
