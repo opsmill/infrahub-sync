@@ -27,6 +27,12 @@ credentials:
     identifier: NETBOX_TOKEN
 ```
 
+A `$credential` node is only accepted where a credential is actually resolved: the
+credential setting paths of the adapter filling that role, and those of the declared
+store. The same node anywhere else — a non-credential setting, a schema-mapping static
+value — is refused, because nothing would resolve it and the adapter would receive the
+node itself.
+
 ## Declaring adapter configuration capabilities
 
 Every adapter accepted by the registry needs an
@@ -45,12 +51,18 @@ contract version 1 and the exact credential-reference rules.
 
 The version-1 envelope refuses `adapters_path` and per-role `adapter` overrides. Those
 fields select machine-local or arbitrary adapter code whose credential-bearing settings
-cannot be proven by a bundled capability declaration. Redis accepts only its declared
+cannot be proven by a bundled capability declaration. Because they are always absent from
+an accepted package, they are excluded from the declared content the checksum covers.
+Adapter names match the registered declaration exactly: a case variant is refused rather
+than folded, because the name is hashed as declared and every consumer resolves it
+verbatim. Redis accepts only its declared
 store settings; its URLs, usernames, and passwords follow the same credential-reference
 rule as adapter settings. Registered version-1 packages also refuse adapter settings
 outside each bundled declaration, including custom HTTP headers and request parameters
 on Prometheus, GenericRESTAPI, and its PeeringManager subclass. Declared URLs, base URLs,
 and endpoint paths cannot contain user information, query parameters, or fragments.
+Declared `url` and `base_url` must be absolute `http` or `https` URLs; `api_endpoint` and
+`endpoint` must be relative paths carrying neither scheme nor authority.
 GenericRESTAPI and PeeringManager packages cannot select alternate URL or credential
 environment variables; their schema-mapping request endpoints must be relative paths
 without authority, user information, queries, or fragments. Use the declared
