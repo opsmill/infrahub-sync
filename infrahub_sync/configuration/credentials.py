@@ -6,6 +6,7 @@ import json
 import os
 import re
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from typing import Protocol, cast
 from urllib.parse import urlsplit
 
@@ -21,23 +22,70 @@ from .models import (
 )
 
 _ENV_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_STORE_CREDENTIAL_SETTING_PATHS = {
-    "redis": ("url", "username", "password"),
+
+
+@dataclass(frozen=True, slots=True)
+class _StoreCapabilities:
+    """Connection-free configuration facts for one bundled store type."""
+
+    allowed_settings: frozenset[str]
+    credential_setting_paths: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        outside = sorted(set(self.credential_setting_paths) - self.allowed_settings)
+        if outside:
+            msg = f"store credential paths outside allowed settings: {outside!r}"
+            raise ValueError(msg)
+
+
+# One entry per store type. Two parallel tables let a new type be added to only one of them,
+# which surfaces as an uncaught KeyError rather than a refusal.
+_STORE_CAPABILITIES: dict[str, _StoreCapabilities] = {
+    "redis": _StoreCapabilities(
+        allowed_settings=frozenset({"db", "host", "password", "port", "store_id", "url", "username"}),
+        credential_setting_paths=("url", "username", "password"),
+    ),
 }
-_STORE_SETTING_PATHS = {
-    "redis": frozenset({"db", "host", "password", "port", "store_id", "url", "username"}),
-}
-_URL_SETTING_NAMES = frozenset({"api_endpoint", "base_url", "endpoint", "url"})
+# Absolute settings name where to connect; relative ones name a path beneath it. Applying one
+# rule to both would refuse every legitimate relative endpoint.
+_ABSOLUTE_URL_SETTING_NAMES = frozenset({"base_url", "url"})
+_RELATIVE_PATH_SETTING_NAMES = frozenset({"api_endpoint", "endpoint"})
+_URL_SETTING_NAMES = _ABSOLUTE_URL_SETTING_NAMES | _RELATIVE_PATH_SETTING_NAMES
+_ALLOWED_URL_SCHEMES = frozenset({"http", "https"})
+# Diagnostics are rendered from declared keys, so they inherit the declaration's size unless
+# bounded here the way models.py bounds its own parse diagnostics.
+_MAX_DIAGNOSTIC_COMPONENT_LENGTH = 64
+_MAX_DIAGNOSTIC_LOCATION_LENGTH = 256
+_MAX_DIAGNOSTIC_NAME_ENTRIES = 16
+_TRUNCATION_MARKER = "..."
 
 
 class CredentialConfigurationError(ValueError):
     """A declared package contains an unsafe or unresolved credential shape."""
 
 
+def _bounded_component(name: object) -> str:
+    """Escape one declared key for display, bounded independently of the declaration."""
+    text = str(name)
+    if len(text) > _MAX_DIAGNOSTIC_COMPONENT_LENGTH:
+        return safe_pointer_component(text[:_MAX_DIAGNOSTIC_COMPONENT_LENGTH]) + _TRUNCATION_MARKER
+    return safe_pointer_component(text)
+
+
+def _bounded_location(location: str) -> str:
+    """Bound one accumulated pointer so nesting depth cannot grow the message."""
+    if len(location) <= _MAX_DIAGNOSTIC_LOCATION_LENGTH:
+        return location
+    return location[:_MAX_DIAGNOSTIC_LOCATION_LENGTH] + _TRUNCATION_MARKER
+
+
 def _render_setting_name_list(names: Iterable[str]) -> str:
-    """Render escaped setting names with unambiguous, JSON-decodable boundaries."""
-    escaped_names = sorted(safe_pointer_component(name) for name in names)
-    return json.dumps(escaped_names, ensure_ascii=True)
+    """Render bounded escaped setting names with unambiguous, JSON-decodable boundaries."""
+    escaped_names = sorted(_bounded_component(name) for name in names)
+    listed = escaped_names[:_MAX_DIAGNOSTIC_NAME_ENTRIES]
+    rendered = json.dumps(listed, ensure_ascii=True)
+    omitted = len(escaped_names) - len(listed)
+    return f"{rendered} and {omitted} more" if omitted else rendered
 
 
 class CredentialProvider(Protocol):
@@ -114,17 +162,45 @@ def _validate_all_reference_nodes(
     """Validate every use of the reserved ``$credential`` key without echoing values."""
     if isinstance(value, Mapping):
         if "$credential" in value:
-            reference_name = _reference_name(value, location=location)
+            bounded = _bounded_location(location)
+            reference_name = _reference_name(value, location=bounded)
             if reference_name not in package.credentials:
-                msg = f"{location} names unknown credential reference {reference_name!r}"
+                msg = f"{bounded} names unknown credential reference {reference_name!r}"
                 raise CredentialConfigurationError(msg)
             return
         for key, item in value.items():
-            escaped = safe_pointer_component(key)
+            escaped = _bounded_component(key)
             _validate_all_reference_nodes(item, package, location=f"{location}/{escaped}")
     elif isinstance(value, list):
         for index, item in enumerate(value):
             _validate_all_reference_nodes(item, package, location=f"{location}/{index}")
+
+
+def _validate_url_setting(value: object, *, setting_name: str, location: str) -> None:
+    """Prove one declared endpoint setting carries no credential material and no scheme surprise."""
+    if not isinstance(value, str):
+        msg = f"{location} must be declared as a string"
+        raise CredentialConfigurationError(msg)
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        parsed = None
+    if (
+        parsed is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        msg = f"{location} cannot contain user information, query parameters, or fragments"
+        raise CredentialConfigurationError(msg)
+    if setting_name in _ABSOLUTE_URL_SETTING_NAMES:
+        if parsed.scheme not in _ALLOWED_URL_SCHEMES or not parsed.netloc:
+            msg = f"{location} must be an absolute http or https URL"
+            raise CredentialConfigurationError(msg)
+    elif parsed.scheme or parsed.netloc:
+        msg = f"{location} must be a relative request path without a scheme or authority"
+        raise CredentialConfigurationError(msg)
 
 
 def _validate_adapter_credentials(
@@ -148,23 +224,11 @@ def _validate_adapter_credentials(
         value = settings.get(setting_name)
         if value is None:
             continue
-        location = f"/configuration/{role}/settings/{setting_name}"
-        if not isinstance(value, str):
-            msg = f"{location} must be declared as a string"
-            raise CredentialConfigurationError(msg)
-        try:
-            parsed = urlsplit(value)
-        except ValueError:
-            parsed = None
-        if (
-            parsed is None
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.query
-            or parsed.fragment
-        ):
-            msg = f"{location} cannot contain user information, query parameters, or fragments"
-            raise CredentialConfigurationError(msg)
+        _validate_url_setting(
+            value,
+            setting_name=setting_name,
+            location=f"/configuration/{role}/settings/{setting_name}",
+        )
     if capabilities.validator is not None:
         findings = sort_findings(capabilities.validator(package, role))
         if error := next((finding for finding in findings if finding.severity == "error"), None):
@@ -187,14 +251,14 @@ def _validate_store_credentials(package: ConfigurationPackage) -> None:
     if store is None:
         return
     settings = store.settings or {}
-    try:
-        credential_paths = _STORE_CREDENTIAL_SETTING_PATHS[store.type]
-    except KeyError:
+    capabilities = _STORE_CAPABILITIES.get(store.type)
+    if capabilities is None:
         if settings:
             msg = f"store type {store.type!r} has no configuration capability declaration"
-            raise CredentialConfigurationError(msg) from None
+            raise CredentialConfigurationError(msg)
         return
-    unsupported_settings = set(settings) - _STORE_SETTING_PATHS[store.type]
+    credential_paths = capabilities.credential_setting_paths
+    unsupported_settings = set(settings) - capabilities.allowed_settings
     if unsupported_settings:
         msg = (
             f"store type {store.type!r} contains unsupported declared settings: "
