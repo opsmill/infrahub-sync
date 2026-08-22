@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from hashlib import sha256
 from types import MappingProxyType
 from typing import Annotated, Any, Literal, cast
@@ -87,6 +87,16 @@ _JSON_NATIVE_FAILURE_REASONS = frozenset(
         "recursive mapping",
     }
 )
+_POINTER_CHARACTER_ESCAPES = {
+    "\n": r"\n",
+    "\r": r"\r",
+    "\t": r"\t",
+    ":": r"\u003a",
+    ";": r"\u003b",
+    "~": "~0",
+    "/": "~1",
+    "\\": r"\\",
+}
 
 
 class ConfigurationPackageParseError(ValueError):
@@ -467,35 +477,20 @@ class ConfigurationPackage(BaseModel):
         return sha256(canonical_json_bytes(self.declared_content(), kind="configuration-package")).hexdigest()
 
 
+def _escape_pointer_character(character: str) -> str:
+    """Escape one already-bounded exact character for visible diagnostics."""
+    escaped = _POINTER_CHARACTER_ESCAPES.get(character)
+    if escaped is not None:
+        return escaped
+    if character.isprintable():
+        return character
+    codepoint = ord(character)
+    return f"\\u{codepoint:04x}" if codepoint <= 0xFFFF else f"\\U{codepoint:08x}"
+
+
 def safe_pointer_component(value: object) -> str:
     """Escape one validation path component for visible, single-line display."""
-    components = []
-    for character in str(value):
-        codepoint = ord(character)
-        if character == "\n":
-            components.append(r"\n")
-        elif character == "\r":
-            components.append(r"\r")
-        elif character == "\t":
-            components.append(r"\t")
-        elif character == ":":
-            components.append(r"\u003a")
-        elif character == ";":
-            components.append(r"\u003b")
-        elif not character.isprintable():
-            if codepoint <= 0xFFFF:
-                components.append(f"\\u{codepoint:04x}")
-            else:
-                components.append(f"\\U{codepoint:08x}")
-        elif character == "~":
-            components.append("~0")
-        elif character == "/":
-            components.append("~1")
-        elif character == "\\":
-            components.append(r"\\")
-        else:
-            components.append(character)
-    return "".join(components)
+    return "".join(_escape_pointer_character(character) for character in str(value))
 
 
 def _has_closed_metadata_shape(value: object, *, max_entries: int) -> bool:
@@ -612,17 +607,95 @@ def _is_oversized_credential_location(raw_location: object) -> bool:
     )
 
 
-def _decode_validation_record(record: object) -> tuple[tuple[str, str], ...]:  # noqa: PLR0911
-    """Decode one record through the closed diagnostic grammar."""
+def _validation_record_header(
+    record: object,
+) -> tuple[dict[object, object], str, object, str, bool] | None:
+    """Validate and return the bounded fields shared by every diagnostic record."""
     if not _has_closed_metadata_shape(record, max_entries=_MAX_ERROR_RECORD_ENTRIES):
-        return (("/", "invalid value"),)
+        return None
     assert type(record) is dict  # pylint: disable=unidiomatic-typecheck  # Narrow after the exact-type gate.
     safe_record = cast("dict[object, object]", record)
     error_type = safe_record.get("type")
     if type(error_type) is not str or len(error_type) > _MAX_ERROR_TYPE_LENGTH:  # pylint: disable=unidiomatic-typecheck
-        return (("/", "invalid value"),)
+        return None
     raw_location = safe_record.get("loc")
     location, valid_location = _safe_validation_location(raw_location)
+    return safe_record, error_type, raw_location, location, valid_location
+
+
+def _decode_json_failure(record: dict[object, object], location: str) -> tuple[tuple[str, str], ...]:
+    """Decode one closed JSON-native custom error context."""
+    context = _closed_context(record)
+    if context is not None:
+        pointer = _safe_context_pointer(context.get("pointer"))
+        reason = _safe_context_string(context.get("reason"))
+        if pointer is not None and reason in _JSON_NATIVE_FAILURE_REASONS:
+            return ((pointer, reason),)
+    return ((location, "invalid JSON value"),)
+
+
+def _decode_unicode_failure(record: dict[object, object], location: str) -> tuple[tuple[str, str], ...]:
+    """Decode one closed Unicode-surrogate custom error context."""
+    context = _closed_context(record)
+    if context is not None:
+        pointer = _safe_context_pointer(context.get("pointer"))
+        if pointer is not None:
+            return ((pointer, "invalid Unicode surrogate"),)
+    return ((location, "invalid Unicode surrogate"),)
+
+
+def _decode_unsupported_field_failures(record: dict[object, object], location: str) -> tuple[tuple[str, str], ...]:
+    """Decode one closed unsupported-field custom error context."""
+    context = _closed_context(record)
+    if context is None:
+        return ((location, "unsupported declared field"),)
+    pointer = _safe_context_pointer(context.get("pointer"))
+    field_names = context.get("field_names")
+    if (
+        pointer is None
+        or type(field_names) is not tuple  # pylint: disable=unidiomatic-typecheck
+        or not 1 <= len(field_names) <= _MAX_CONTEXT_COLLECTION_MEMBERS
+        or any(
+            type(field_name) is not str or len(field_name) > _MAX_CONTEXT_STRING_LENGTH  # pylint: disable=unidiomatic-typecheck
+            for field_name in field_names
+        )
+    ):
+        return ((location, "unsupported declared field"),)
+    return tuple(
+        (f"{pointer}/{safe_pointer_component(field_name)}", "unsupported declared field") for field_name in field_names
+    )
+
+
+def _decode_diffsync_failure(record: dict[object, object], location: str) -> tuple[tuple[str, str], ...]:
+    """Decode one closed DiffSync custom error context."""
+    context = _closed_context(record)
+    if context is not None:
+        index = context.get("index")
+        reason = _safe_context_string(context.get("reason"))
+        if (
+            type(index) is int  # pylint: disable=unidiomatic-typecheck
+            and 0 <= index <= _MAX_CONTEXT_INTEGER
+            and reason in _DIFFSYNC_FLAG_FAILURE_REASONS
+        ):
+            return ((f"{location}/{index}", reason),)
+    return ((location, "invalid diffsync flag name"),)
+
+
+_CustomFailureDecoder = Callable[[dict[object, object], str], tuple[tuple[str, str], ...]]
+_CUSTOM_FAILURE_DECODERS: dict[str, _CustomFailureDecoder] = {
+    _INVALID_JSON_VALUE_ERROR: _decode_json_failure,
+    _INVALID_UNICODE_SURROGATE_ERROR: _decode_unicode_failure,
+    _UNSUPPORTED_DECLARED_FIELDS_ERROR: _decode_unsupported_field_failures,
+    _INVALID_DIFFSYNC_FLAG_NAME_ERROR: _decode_diffsync_failure,
+}
+
+
+def _decode_validation_record(record: object) -> tuple[tuple[str, str], ...]:
+    """Decode one record through the closed diagnostic grammar."""
+    header = _validation_record_header(record)
+    if header is None:
+        return (("/", "invalid value"),)
+    safe_record, error_type, raw_location, location, valid_location = header
 
     credential_failure = _credential_key_failure(error_type, raw_location)
     if credential_failure is not None:
@@ -633,56 +706,9 @@ def _decode_validation_record(record: object) -> tuple[tuple[str, str], ...]:  #
     if not valid_location:
         return ((location, "invalid value"),)
 
-    if error_type == _INVALID_JSON_VALUE_ERROR:
-        context = _closed_context(safe_record)
-        if context is not None:
-            pointer = _safe_context_pointer(context.get("pointer"))
-            reason = _safe_context_string(context.get("reason"))
-            if pointer is not None and reason in _JSON_NATIVE_FAILURE_REASONS:
-                return ((pointer, reason),)
-        return ((location, "invalid JSON value"),)
-
-    if error_type == _INVALID_UNICODE_SURROGATE_ERROR:
-        context = _closed_context(safe_record)
-        if context is not None:
-            pointer = _safe_context_pointer(context.get("pointer"))
-            if pointer is not None:
-                return ((pointer, "invalid Unicode surrogate"),)
-        return ((location, "invalid Unicode surrogate"),)
-
-    if error_type == _UNSUPPORTED_DECLARED_FIELDS_ERROR:
-        context = _closed_context(safe_record)
-        if context is None:
-            return ((location, "unsupported declared field"),)
-        pointer = _safe_context_pointer(context.get("pointer"))
-        field_names = context.get("field_names")
-        if (
-            pointer is None
-            or type(field_names) is not tuple  # pylint: disable=unidiomatic-typecheck
-            or not 1 <= len(field_names) <= _MAX_CONTEXT_COLLECTION_MEMBERS
-            or any(
-                type(field_name) is not str or len(field_name) > _MAX_CONTEXT_STRING_LENGTH  # pylint: disable=unidiomatic-typecheck
-                for field_name in field_names
-            )
-        ):
-            return ((location, "unsupported declared field"),)
-        return tuple(
-            (f"{pointer}/{safe_pointer_component(field_name)}", "unsupported declared field")
-            for field_name in field_names
-        )
-
-    if error_type == _INVALID_DIFFSYNC_FLAG_NAME_ERROR:
-        context = _closed_context(safe_record)
-        if context is not None:
-            index = context.get("index")
-            reason = _safe_context_string(context.get("reason"))
-            if (
-                type(index) is int  # pylint: disable=unidiomatic-typecheck
-                and 0 <= index <= _MAX_CONTEXT_INTEGER
-                and reason in _DIFFSYNC_FLAG_FAILURE_REASONS
-            ):
-                return ((f"{location}/{index}", reason),)
-        return ((location, "invalid diffsync flag name"),)
+    custom_decoder = _CUSTOM_FAILURE_DECODERS.get(error_type)
+    if custom_decoder is not None:
+        return custom_decoder(safe_record, location)
 
     reason = _SAFE_PYDANTIC_FAILURE_REASONS.get(error_type, "invalid value")
     return ((location, reason),)
