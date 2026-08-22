@@ -572,6 +572,15 @@ _CUSTOM_CONTEXT_FAMILIES = [
         ),
         id="diffsync",
     ),
+    pytest.param(
+        (
+            "invalid_diffsync_flag_name",
+            {"reason": "diffsync flags must be declared as a list"},
+            "/configuration/source: diffsync flags must be declared as a list",
+            "invalid diffsync flag name",
+        ),
+        id="diffsync-container",
+    ),
 ]
 
 
@@ -731,6 +740,11 @@ def _malformed_diffsync_context(case: str) -> dict[str, object]:  # noqa: PLR091
         context["index"] = 2**63
     elif case == "hostile-index":
         context["index"] = _ExplodingInt(0)
+    elif case == "container-reason-with-index":
+        context["reason"] = "diffsync flags must be declared as a list"
+    elif case == "member-reason-without-index":
+        del context["index"]
+        context["reason"] = "diffsync flag name must be a string"
     else:
         raise AssertionError(case)
     return context
@@ -751,6 +765,8 @@ def _malformed_diffsync_context(case: str) -> dict[str, object]:  # noqa: PLR091
         "negative-index",
         "large-index",
         "hostile-index",
+        "container-reason-with-index",
+        "member-reason-without-index",
     ],
 )
 def test_public_parse_rejects_malformed_diffsync_context(monkeypatch: pytest.MonkeyPatch, case: str) -> None:

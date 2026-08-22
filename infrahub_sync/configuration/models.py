@@ -71,7 +71,8 @@ _SAFE_PYDANTIC_FAILURE_REASONS = {
     "int_from_float": "wrong type",
     "int_parsing_size": "number is outside supported range",
 }
-_DIFFSYNC_FLAG_FAILURE_REASONS = frozenset(
+_DIFFSYNC_FLAG_CONTAINER_REASONS = frozenset({"diffsync flags must be declared as a list"})
+_DIFFSYNC_FLAG_MEMBER_REASONS = frozenset(
     {
         "diffsync flag name must be a string",
         "unknown diffsync flag name",
@@ -362,22 +363,30 @@ class _ImmutableSyncConfig(SyncConfig):
     @classmethod
     def _require_named_diffsync_flags(cls, value: Any) -> Any:
         # pylint: disable=unidiomatic-typecheck
-        if type(value) is list:
-            for index, item in enumerate(value):
-                if type(item) is not str:
-                    reason = "diffsync flag name must be a string"
-                    raise PydanticCustomError(
-                        _INVALID_DIFFSYNC_FLAG_NAME_ERROR,
-                        reason,
-                        {"index": index, "reason": reason},
-                    )
-                if item not in DiffSyncFlags.__members__:
-                    reason = "unknown diffsync flag name"
-                    raise PydanticCustomError(
-                        _INVALID_DIFFSYNC_FLAG_NAME_ERROR,
-                        reason,
-                        {"index": index, "reason": reason},
-                    )
+        if type(value) is not list:
+            # The legacy validator raises TypeError here, which Pydantic does not convert
+            # into a ValidationError; refuse the container shape before it runs.
+            reason = "diffsync flags must be declared as a list"
+            raise PydanticCustomError(
+                _INVALID_DIFFSYNC_FLAG_NAME_ERROR,
+                reason,
+                {"reason": reason},
+            )
+        for index, item in enumerate(value):
+            if type(item) is not str:
+                reason = "diffsync flag name must be a string"
+                raise PydanticCustomError(
+                    _INVALID_DIFFSYNC_FLAG_NAME_ERROR,
+                    reason,
+                    {"index": index, "reason": reason},
+                )
+            if item not in DiffSyncFlags.__members__:
+                reason = "unknown diffsync flag name"
+                raise PydanticCustomError(
+                    _INVALID_DIFFSYNC_FLAG_NAME_ERROR,
+                    reason,
+                    {"index": index, "reason": reason},
+                )
         # pylint: enable=unidiomatic-typecheck
         return value
 
@@ -672,10 +681,13 @@ def _decode_diffsync_failure(record: dict[object, object], location: str) -> tup
     if context is not None:
         index = context.get("index")
         reason = _safe_context_string(context.get("reason"))
+        # A container-shaped failure carries no member index; a member failure requires one.
+        if index is None and reason in _DIFFSYNC_FLAG_CONTAINER_REASONS:
+            return ((location, reason),)
         if (
             type(index) is int  # pylint: disable=unidiomatic-typecheck
             and 0 <= index <= _MAX_CONTEXT_INTEGER
-            and reason in _DIFFSYNC_FLAG_FAILURE_REASONS
+            and reason in _DIFFSYNC_FLAG_MEMBER_REASONS
         ):
             return ((f"{location}/{index}", reason),)
     return ((location, "invalid diffsync flag name"),)

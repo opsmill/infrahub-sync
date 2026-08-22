@@ -336,6 +336,32 @@ def test_safe_parse_requires_diffsync_flag_names_without_changing_legacy_behavio
     )
 
 
+@pytest.mark.parametrize(
+    "container",
+    [
+        pytest.param("SKIP_UNMATCHED_DST", id="string"),
+        pytest.param({"SKIP_UNMATCHED_DST": True}, id="mapping"),
+        pytest.param(None, id="null"),
+        pytest.param(4, id="integer"),
+    ],
+)
+def test_safe_parse_refuses_non_list_diffsync_flags_at_the_public_boundary(container: object) -> None:
+    # The legacy validator raises TypeError for these, which Pydantic does not convert into a
+    # ValidationError; the boundary must still fail with its own error type.
+    data = _package().model_dump(mode="json")
+    data["configuration"]["diffsync_flags"] = container
+
+    with pytest.raises(TypeError):
+        SyncConfig.model_validate(data["configuration"])
+
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(data)
+
+    assert str(caught.value) == (
+        "configuration package is invalid at /configuration/diffsync_flags: diffsync flags must be declared as a list"
+    )
+
+
 @pytest.mark.parametrize("flag_name", ["NOPE", "skip_unmatched_dst"], ids=["unknown", "wrong-case"])
 def test_safe_parse_reports_unknown_diffsync_flag_at_item_without_echo(flag_name: str) -> None:
     data = _package().model_dump(mode="json")
