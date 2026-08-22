@@ -153,16 +153,42 @@ def _reference_name(value: object, *, location: str) -> str:
     return node.reference_name
 
 
+def _allowed_reference_locations(
+    package: ConfigurationPackage,
+    source_capabilities: AdapterConfigurationCapabilities,
+    destination_capabilities: AdapterConfigurationCapabilities,
+) -> frozenset[str]:
+    """Return every pointer at which a declared credential reference is resolved at run time."""
+    allowed = {
+        f"/configuration/{role}/settings/{path.replace('.', '/')}"
+        for role, capabilities in (("source", source_capabilities), ("destination", destination_capabilities))
+        for path in capabilities.credential_setting_paths
+    }
+    store = package.configuration.store
+    store_capabilities = None if store is None else _STORE_CAPABILITIES.get(store.type)
+    if store_capabilities is not None:
+        allowed.update(
+            f"/configuration/store/settings/{path.replace('.', '/')}"
+            for path in store_capabilities.credential_setting_paths
+        )
+    return frozenset(allowed)
+
+
 def _validate_all_reference_nodes(
     value: object,
     package: ConfigurationPackage,
     *,
     location: str,
+    allowed_locations: frozenset[str],
 ) -> None:
     """Validate every use of the reserved ``$credential`` key without echoing values."""
     if isinstance(value, Mapping):
         if "$credential" in value:
             bounded = _bounded_location(location)
+            if location not in allowed_locations:
+                # Nothing resolves a reference here, so the adapter would receive the node itself.
+                msg = f"{bounded} is not a credential-bearing setting"
+                raise CredentialConfigurationError(msg)
             reference_name = _reference_name(value, location=bounded)
             if reference_name not in package.credentials:
                 msg = f"{bounded} names unknown credential reference {reference_name!r}"
@@ -170,10 +196,20 @@ def _validate_all_reference_nodes(
             return
         for key, item in value.items():
             escaped = _bounded_component(key)
-            _validate_all_reference_nodes(item, package, location=f"{location}/{escaped}")
+            _validate_all_reference_nodes(
+                item,
+                package,
+                location=f"{location}/{escaped}",
+                allowed_locations=allowed_locations,
+            )
     elif isinstance(value, list):
         for index, item in enumerate(value):
-            _validate_all_reference_nodes(item, package, location=f"{location}/{index}")
+            _validate_all_reference_nodes(
+                item,
+                package,
+                location=f"{location}/{index}",
+                allowed_locations=allowed_locations,
+            )
 
 
 def _validate_url_setting(value: object, *, setting_name: str, location: str) -> None:
@@ -281,19 +317,28 @@ def validate_package_credentials(package: ConfigurationPackage) -> None:
     _validate_reference_declarations(package)
     source = package.configuration.source
     destination = package.configuration.destination
-    _validate_all_reference_nodes(package.declared_content(), package, location="")
     _validate_store_credentials(package)
+    source_capabilities = get_adapter_capabilities(source.name)
     _validate_adapter_credentials(
         package,
-        get_adapter_capabilities(source.name),
+        source_capabilities,
         role="source",
         settings=source.settings or {},
     )
+    destination_capabilities = get_adapter_capabilities(destination.name)
     _validate_adapter_credentials(
         package,
-        get_adapter_capabilities(destination.name),
+        destination_capabilities,
         role="destination",
         settings=destination.settings or {},
+    )
+    # Last: the surface checks above give a more precise reason for a node on an unsupported
+    # setting than "not credential-bearing" would.
+    _validate_all_reference_nodes(
+        package.declared_content(),
+        package,
+        location="",
+        allowed_locations=_allowed_reference_locations(package, source_capabilities, destination_capabilities),
     )
 
 

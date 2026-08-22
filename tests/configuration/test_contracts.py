@@ -1762,34 +1762,48 @@ def test_unknown_named_reference_is_refused() -> None:
         validate_package_credentials(package)
 
 
-def test_reserved_reference_node_is_validated_outside_known_credential_paths() -> None:
+def test_reserved_reference_node_is_refused_outside_known_credential_paths() -> None:
+    # verify_ssl is a supported setting, so only the positional rule can refuse a node here.
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["settings"]["verify_ssl"] = {"$credential": "netbox-token"}
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    assert str(caught.value) == (
+        "/configuration/source/settings/verify_ssl is not a credential-bearing setting"
+    )
+
+
+def test_reserved_reference_node_on_unsupported_setting_reports_the_setting() -> None:
     data = _package().model_dump(mode="json")
     data["configuration"]["source"]["settings"]["headers"] = {"authorization": {"$credential": "missing-header"}}
     package = ConfigurationPackage.model_validate(data)
 
-    with pytest.raises(CredentialConfigurationError, match="unknown credential reference 'missing-header'"):
+    with pytest.raises(CredentialConfigurationError) as caught:
         validate_package_credentials(package)
+
+    assert str(caught.value) == (
+        'adapter \'netbox\' contains unsupported declared settings for the source role: ["headers"]'
+    )
 
 
 @pytest.mark.parametrize(
-    ("reference_node", "expected_detail"),
+    "reference_node",
     [
-        pytest.param(
-            {"$credential": "missing-reference"},
-            "names unknown credential reference 'missing-reference'",
-            id="missing-reference",
-        ),
+        pytest.param({"$credential": "missing-reference"}, id="missing-reference"),
         pytest.param(
             {"$credential": "netbox-token", "fallback": "malformed-reference-value-canary"},
-            "contains a malformed credential reference",
             id="malformed-reference",
         ),
     ],
 )
 def test_nested_reference_errors_render_hostile_setting_paths_safely(
     reference_node: dict[str, object],
-    expected_detail: str,
 ) -> None:
+    # Nested under verify_ssl: a supported setting, so the walk is reached. Both node shapes
+    # give the positional reason, proving position is decided before the node is inspected.
     canaries = ("unsupported-setting-value-canary", "malformed-reference-value-canary")
     hostile_components = (
         "bad\n\x85\u2028\u202e\u200b\U000e0001\\setting~/",
@@ -1800,11 +1814,10 @@ def test_nested_reference_errors_render_hostile_setting_paths_safely(
         r"nested\r\u009f\u2029\u2066\ufeff\node~/",
     )
     messages = []
-    for setting_name, nested_key in (hostile_components, literal_components):
+    for outer_key, nested_key in (hostile_components, literal_components):
         data = _package().model_dump(mode="json")
-        data["configuration"]["source"]["settings"][setting_name] = {
-            "other": canaries[0],
-            nested_key: reference_node,
+        data["configuration"]["source"]["settings"]["verify_ssl"] = {
+            outer_key: {"other": canaries[0], nested_key: reference_node},
         }
         package = ConfigurationPackage.model_validate(data)
 
@@ -1812,12 +1825,15 @@ def test_nested_reference_errors_render_hostile_setting_paths_safely(
             validate_package_credentials(package)
         messages.append(str(caught.value))
 
+    expected_detail = "is not a credential-bearing setting"
     hostile_pointer = (
-        r"/configuration/source/settings/bad\n\u0085\u2028\u202e\u200b\U000e0001\\setting~0~1/"
+        r"/configuration/source/settings/verify_ssl/"
+        r"bad\n\u0085\u2028\u202e\u200b\U000e0001\\setting~0~1/"
         r"nested\r\u009f\u2029\u2066\ufeff\\node~0~1"
     )
     literal_pointer = (
-        r"/configuration/source/settings/bad\\n\\u0085\\u2028\\u202e\\u200b\\U000e0001\\setting~0~1/"
+        r"/configuration/source/settings/verify_ssl/"
+        r"bad\\n\\u0085\\u2028\\u202e\\u200b\\U000e0001\\setting~0~1/"
         r"nested\\r\\u009f\\u2029\\u2066\\ufeff\\node~0~1"
     )
     assert messages == [f"{hostile_pointer} {expected_detail}", f"{literal_pointer} {expected_detail}"]
@@ -1828,18 +1844,23 @@ def test_nested_reference_errors_render_hostile_setting_paths_safely(
     assert all(canary not in message for canary in canaries for message in messages)
 
 
-def test_reserved_reference_node_is_validated_in_schema_mapping_static_value() -> None:
+def test_reserved_reference_node_is_refused_in_schema_mapping_static_value() -> None:
+    # A static write value is never resolved, so the adapter would receive the node itself.
     data = _package().model_dump(mode="json")
     data["configuration"]["schema_mapping"] = [
         {
             "name": "Device",
-            "fields": [{"name": "token", "static": {"$credential": "missing-static"}}],
+            "fields": [{"name": "token", "static": {"$credential": "netbox-token"}}],
         }
     ]
     package = ConfigurationPackage.model_validate(data)
 
-    with pytest.raises(CredentialConfigurationError, match="unknown credential reference 'missing-static'"):
+    with pytest.raises(CredentialConfigurationError) as caught:
         validate_package_credentials(package)
+
+    assert str(caught.value) == (
+        "/configuration/schema_mapping/0/fields/0/static is not a credential-bearing setting"
+    )
 
 
 def test_store_inline_credential_is_refused_without_echoing_value() -> None:
@@ -1893,7 +1914,7 @@ def test_redis_store_renders_unsupported_control_name_safely_without_echoing_val
     assert canary not in message
 
 
-def test_reserved_reference_node_is_validated_in_store_settings() -> None:
+def test_reserved_reference_node_is_refused_in_store_settings() -> None:
     data = _package().model_dump(mode="json")
     data["configuration"]["store"] = {
         "type": "redis",
@@ -1901,8 +1922,12 @@ def test_reserved_reference_node_is_validated_in_store_settings() -> None:
     }
     package = ConfigurationPackage.model_validate(data)
 
-    with pytest.raises(CredentialConfigurationError, match="unknown credential reference 'missing-store'"):
+    with pytest.raises(CredentialConfigurationError) as caught:
         validate_package_credentials(package)
+
+    assert str(caught.value) == (
+        'store type \'redis\' contains unsupported declared settings: ["token"]'
+    )
 
 
 def test_declared_references_validate_without_resolving_environment() -> None:
