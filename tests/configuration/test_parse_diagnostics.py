@@ -262,7 +262,7 @@ def test_public_parse_preserves_lone_surrogate_credential_key_diagnostic() -> No
 
     error = _caught_failure(data)
 
-    assert str(error) == _PREFIX + r"/credentials/bad\ud800key: invalid Unicode surrogate"
+    assert str(error) == _PREFIX + r"/credentials/bad\\ud800key: invalid Unicode surrogate"
     assert "invalid credential reference name" not in str(error)
     assert _REJECTED_CANARY not in str(error)
 
@@ -844,6 +844,52 @@ def test_public_parse_accepts_and_encodes_safe_context_pointer(monkeypatch: pyte
     assert _parse_with_errors(monkeypatch, errors) == _PREFIX + (
         r"/valid~0tilde/valid~1slash/bad\u003a forged\u003b next: non-JSON value"
     )
+
+
+def test_public_parse_keeps_context_pointer_delimiter_encoding_collision_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    errors = [
+        {
+            "type": "invalid_json_value",
+            "loc": ("configuration",),
+            "ctx": {"pointer": "/bad:field", "reason": "non-JSON value"},
+        },
+        {
+            "type": "invalid_json_value",
+            "loc": ("configuration",),
+            "ctx": {"pointer": r"/bad\u003afield", "reason": "non-JSON value"},
+        },
+    ]
+
+    assert _parse_with_errors(monkeypatch, errors) == _PREFIX + (
+        r"/bad\\u003afield: non-JSON value; /bad\u003afield: non-JSON value"
+    )
+
+
+@pytest.mark.parametrize(
+    "character",
+    [
+        pytest.param("\u00a0", id="non-breaking-space"),
+        pytest.param("\u0378", id="unassigned-scalar"),
+    ],
+)
+def test_public_parse_rejects_non_printable_context_pointer_scalars(
+    monkeypatch: pytest.MonkeyPatch,
+    character: str,
+) -> None:
+    errors = [
+        {
+            "type": "invalid_json_value",
+            "loc": ("configuration", "source"),
+            "ctx": {"pointer": f"/bad{character}field", "reason": "non-JSON value"},
+        }
+    ]
+
+    message = _parse_with_errors(monkeypatch, errors)
+
+    assert message == _PREFIX + "/configuration/source: invalid JSON value"
+    assert all(rendered.isprintable() for rendered in message)
 
 
 def test_public_parse_keeps_escaped_locations_collision_free(monkeypatch: pytest.MonkeyPatch) -> None:

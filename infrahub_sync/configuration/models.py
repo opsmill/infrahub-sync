@@ -538,7 +538,7 @@ def _safe_validation_location(raw_location: object) -> tuple[str, bool]:
 
 def _render_context_pointer(pointer: str) -> str:
     """Encode diagnostic delimiters in an already-valid RFC 6901 pointer."""
-    return pointer.replace(":", r"\u003a").replace(";", r"\u003b")
+    return pointer.replace("\\", r"\\").replace(":", r"\u003a").replace(";", r"\u003b")
 
 
 def _safe_context_pointer(value: object) -> str | None:
@@ -548,6 +548,8 @@ def _safe_context_pointer(value: object) -> str | None:
     if len(value) > _MAX_CONTEXT_POINTER_LENGTH or not value.startswith("/"):
         return None
     if _SAFE_POINTER_RE.fullmatch(value) is None:
+        return None
+    if not all(character.isprintable() for character in value):
         return None
     if any(category(character) in {"Cc", "Cf", "Cs", "Zl", "Zp"} for character in value):
         return None

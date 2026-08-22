@@ -805,11 +805,11 @@ def test_safe_parse_rejects_credential_name_string_subclasses_without_callbacks(
 @pytest.mark.parametrize(
     ("surrogate", "reference_node", "visible_surrogate"),
     [
-        pytest.param("\ud800", {"$credential": "missing-reference-canary"}, r"\ud800", id="missing-reference"),
+        pytest.param("\ud800", {"$credential": "missing-reference-canary"}, r"\\ud800", id="missing-reference"),
         pytest.param(
             "\ud801",
             {"$credential": "netbox-token", "fallback": "malformed-reference-value-canary"},
-            r"\ud801",
+            r"\\ud801",
             id="malformed-reference",
         ),
     ],
@@ -868,7 +868,7 @@ def test_safe_parse_rejects_surrogate_string_values_without_echo(codepoint: int)
 )
 def test_safe_parse_preserves_locations_for_non_json_failures(failure_kind: str, reason: str) -> None:
     location_canary = "invalid\n\u202e~/"
-    visible_location = r"invalid\n\u202e~0~1"
+    visible_location = r"invalid\\n\\u202e~0~1"
     type_name_canary = "RejectedTypeNameCanary"
     data = _package().model_dump(mode="json")
     settings = data["configuration"]["source"]["settings"]
@@ -1055,7 +1055,7 @@ def test_safe_parse_rejects_native_subclasses_without_callbacks(value: object) -
 
     message = str(caught.value)
     assert message == (
-        r"configuration package is invalid at /configuration/source/settings/hostile\n\u202e~0~1: non-JSON value"
+        r"configuration package is invalid at /configuration/source/settings/hostile\\n\\u202e~0~1: non-JSON value"
     )
     assert not cast("Any", value).callback_called
     assert len(message.splitlines()) == 1
