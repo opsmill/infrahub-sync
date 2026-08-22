@@ -33,6 +33,14 @@ store. The same node anywhere else — a non-credential setting, a schema-mappin
 value — is refused, because nothing would resolve it and the adapter would receive the
 node itself.
 
+Exactly one function turns a declared setting path into a pointer: `_settings_pointer` in
+`credentials.py`. The declared-content walk builds the same pointer incrementally through
+the same component escaping. This is a contract, not a tidiness preference: the
+allowed-location set and the walk must produce byte-identical strings, or a reference is
+accepted by the per-path check and then refused by the walk as not credential-bearing.
+Any further component that renders these pointers — registry persistence, an API
+response, a CLI diff — calls that function rather than formatting its own.
+
 ## Declaring adapter configuration capabilities
 
 Every adapter accepted by the registry needs an

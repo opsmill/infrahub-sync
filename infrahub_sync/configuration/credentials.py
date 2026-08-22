@@ -66,7 +66,10 @@ _MAX_DIAGNOSTIC_COMPONENT_LENGTH = 64
 _MAX_DIAGNOSTIC_LOCATION_LENGTH = 256
 _MAX_DIAGNOSTIC_NAME_ENTRIES = 16
 # safe_pointer_component only ever emits ~0 and ~1, so ~2 cannot collide with escaped
-# content: a literal "~2" in a declared key renders as "~02".
+# content: a literal "~2" in a declared key renders as "~02". This is what makes a truncated
+# pointer unforgeable — declared components are capped at 64, so an over-length package key
+# always carries the marker and can never truncate onto a legitimately declared pointer.
+# Changing the marker to something escaping can produce reopens that.
 _TRUNCATION_MARKER = "~2"
 
 
@@ -164,7 +167,12 @@ def _reference_name(value: object, *, location: str) -> str:
 
 
 def _settings_pointer(prefix: str, path: str) -> str:
-    """Build one settings pointer the same way the declared-content walk builds it."""
+    """Build one settings pointer the same way the declared-content walk builds it.
+
+    The only place a declared setting path becomes a pointer. The allowed-location set and
+    the walk must produce byte-identical strings, or a reference is accepted by one check
+    and refused by the next; a second formatter is how that divergence gets reintroduced.
+    """
     return prefix + "".join(f"/{_bounded_component(component)}" for component in path.split("."))
 
 
@@ -272,7 +280,7 @@ def _validate_adapter_credentials(
         _validate_url_setting(
             value,
             setting_name=setting_name,
-            location=f"/configuration/{role}/settings/{setting_name}",
+            location=_settings_pointer(f"/configuration/{role}/settings", setting_name),
         )
     if capabilities.validator is not None:
         findings = sort_findings(capabilities.validator(package, role))
