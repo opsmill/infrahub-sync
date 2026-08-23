@@ -312,12 +312,14 @@ class _RelationalRunStore:
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             cursor.execute(statement)
+                    self._migrate_product_runs_columns(connection, cursor)
                     connection.commit()
                 except Exception as exc:  # pylint: disable=broad-exception-caught
-                    # Synchronous DB-API drivers do not share a common error base;
-                    # retry only documented PostgreSQL duplicate-catalog SQLSTATEs.
+                    # Synchronous DB-API drivers do not share a common error base; retry only
+                    # documented PostgreSQL duplicate-catalog SQLSTATEs and duplicate-column
+                    # races from a concurrent ALTER TABLE ADD COLUMN on either backend.
                     connection.rollback()
-                    if _sqlstate(exc) not in self._schema_conflict_codes:
+                    if _sqlstate(exc) not in self._schema_conflict_codes and not _is_duplicate_column_error(exc):
                         raise
                     if attempt + 1 == _SCHEMA_INITIALIZATION_ATTEMPTS:
                         raise
@@ -327,6 +329,39 @@ class _RelationalRunStore:
                     cursor.close()
             finally:
                 connection.close()
+
+    def _read_product_run_columns(self, connection: DBAPIConnection) -> tuple[frozenset[str], bool]:
+        """Return existing ``product_runs`` columns and whether the backend is SQLite-flavored.
+
+        Tries SQLite's introspection pragma first. Real PostgreSQL rejects ``PRAGMA`` as a
+        syntax error, so a failure there safely selects the ``information_schema`` fallback;
+        a genuine SQLite connection never reaches the fallback.
+        """
+        cursor = connection.cursor()
+        try:
+            cursor.execute("PRAGMA table_info(product_runs)")
+            return frozenset(str(row[1]) for row in cursor.fetchall()), True
+        except Exception:  # noqa: BLE001, S110 - pragma is SQLite-only; any failure selects the fallback below.
+            pass  # pylint: disable=broad-exception-caught
+        finally:
+            cursor.close()
+        connection.rollback()
+        cursor = connection.cursor()
+        try:
+            cursor.execute(
+                self._sql("SELECT column_name FROM information_schema.columns WHERE table_name = ?"),
+                ("product_runs",),
+            )
+            return frozenset(str(row[0]) for row in cursor.fetchall()), False
+        finally:
+            cursor.close()
+
+    def _migrate_product_runs_columns(self, connection: DBAPIConnection, cursor: _Cursor) -> None:
+        """Additively bring a pre-existing ``product_runs`` table up to the current column set."""
+        existing, _is_sqlite = self._read_product_run_columns(connection)
+        for column, sql_type in _CONFIGURATION_BINDING_COLUMNS:
+            if column not in existing:
+                cursor.execute(f"ALTER TABLE product_runs ADD COLUMN {column} {sql_type}")
 
     def create(self, run: ProductRun) -> None:
         connection = self._connect()
@@ -1682,6 +1717,13 @@ def _sqlstate(exc: BaseException) -> str | None:
     diagnostic = getattr(exc, "diag", None)
     value = getattr(diagnostic, "sqlstate", None)
     return value if isinstance(value, str) else None
+
+
+def _is_duplicate_column_error(exc: BaseException) -> bool:
+    """Recognize a concurrent ``ALTER TABLE ADD COLUMN`` race, not a genuine schema failure."""
+    if isinstance(exc, sqlite3.OperationalError):
+        return "duplicate column name" in str(exc).lower()
+    return _sqlstate(exc) == _POSTGRESQL_DUPLICATE_COLUMN_CODE
 
 
 def _require_publication_marked(cursor: _Cursor, reference: ArtifactReference) -> None:

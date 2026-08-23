@@ -1775,3 +1775,162 @@ def test_concurrent_identical_checksums_deduplicate_to_exactly_one_row_on_both_p
     versions = {version.config_version for version, _ in results}
     assert versions == {2}
     assert len(provider.list_configuration_versions(first.config_id)) == 2
+
+
+# --- Run-to-configuration binding columns (inert this slice) ---------------------------------
+
+_LEGACY_PRODUCT_RUNS_TABLE = """
+CREATE TABLE product_runs (
+    run_id TEXT PRIMARY KEY, operation TEXT NOT NULL, configuration_reference TEXT NOT NULL,
+    actor TEXT, audit_links TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
+    phase TEXT NOT NULL, outcome TEXT, summary TEXT NOT NULL, results TEXT NOT NULL
+);
+"""
+_CONFIGURATION_BINDING_COLUMN_NAMES = ("config_id", "config_version", "package_checksum")
+
+
+def test_fresh_sqlite_database_gains_the_nullable_binding_columns(tmp_path: Path) -> None:
+    database = tmp_path / "records.sqlite3"
+    SQLiteRunStore(database)
+
+    with sqlite3.connect(database) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(product_runs)")}
+
+    assert set(_CONFIGURATION_BINDING_COLUMN_NAMES) <= columns
+
+
+def test_product_run_model_declares_no_configuration_binding_fields() -> None:
+    assert not set(_CONFIGURATION_BINDING_COLUMN_NAMES) & set(ProductRun.model_fields)
+
+
+def test_preexisting_database_is_migrated_forward_and_keeps_its_legacy_row(tmp_path: Path) -> None:
+    database = tmp_path / "legacy.sqlite3"
+    legacy_started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    with sqlite3.connect(database) as connection:
+        connection.execute(_LEGACY_PRODUCT_RUNS_TABLE)
+        connection.execute(
+            "INSERT INTO product_runs (run_id, operation, configuration_reference, actor, audit_links, "
+            "started_at, finished_at, phase, outcome, summary, results) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "legacy-run-001",
+                "plan",
+                "sha256:legacy",
+                None,
+                "[]",
+                legacy_started_at.isoformat(),
+                None,
+                "planning",
+                None,
+                "{}",
+                "{}",
+            ),
+        )
+
+    store = SQLiteRunStore(database)
+
+    with sqlite3.connect(database) as connection:
+        columns = {row[1]: row for row in connection.execute("PRAGMA table_info(product_runs)")}
+        row = connection.execute(
+            "SELECT config_id, config_version, package_checksum FROM product_runs WHERE run_id = ?",
+            ("legacy-run-001",),
+        ).fetchone()
+
+    assert set(_CONFIGURATION_BINDING_COLUMN_NAMES) <= set(columns)
+    assert row == (None, None, None)
+    loaded = store.lookup("legacy-run-001")
+    assert loaded.available
+    assert loaded.value is not None
+    assert loaded.value.operation == "plan"
+    assert loaded.value.configuration_reference == "sha256:legacy"
+
+
+def test_migration_is_idempotent_across_repeated_store_construction(tmp_path: Path) -> None:
+    database = tmp_path / "records.sqlite3"
+    SQLiteRunStore(database)
+    SQLiteRunStore(database)
+    SQLiteRunStore(database)
+
+    with sqlite3.connect(database) as connection:
+        columns = [row[1] for row in connection.execute("PRAGMA table_info(product_runs)")]
+
+    for name in _CONFIGURATION_BINDING_COLUMN_NAMES:
+        assert columns.count(name) == 1
+
+
+def test_existing_run_lifecycle_is_unaffected_by_the_new_binding_columns(provider: ProductProjection) -> None:
+    provider.create_run(_run())
+    provider.add_prefect_execution("run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1))
+    provider.publish_artifact("run-001", artifact_id="plan", kind="plan", media_type="application/json", data=b"{}")
+
+    provider.finish_run("run-001", phase="planned", outcome="succeeded", summary={"create": 1}, results={})
+
+    loaded = provider.lookup_run("run-001").value
+    assert loaded is not None
+    assert loaded.phase == "planned"
+    assert loaded.outcome == "succeeded"
+    assert "config_id" not in ProductRun.model_fields
+
+
+class _PostgresLikeCursor:
+    """Fake cursor that rejects SQLite's introspection pragma like real PostgreSQL does."""
+
+    def __init__(self, connection: _PostgresLikeConnection) -> None:
+        self._connection = connection
+        self._rows: tuple[tuple[Any, ...], ...] = ()
+
+    def execute(self, operation: str, parameters: tuple[Any, ...] = ()) -> _PostgresLikeCursor:  # noqa: ARG002
+        if "PRAGMA" in operation:
+            raise _FakeDriverError(sqlstate="42601")
+        if "information_schema.columns" in operation:
+            self._connection.information_schema_queries += 1
+            self._rows = tuple((name,) for name in self._connection.columns)
+        else:
+            self._rows = ()
+        return self
+
+    @property
+    def rowcount(self) -> int:
+        return len(self._rows)
+
+    def fetchone(self) -> tuple[Any, ...] | None:
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self) -> tuple[tuple[Any, ...], ...]:
+        return self._rows
+
+    def close(self) -> None:
+        pass
+
+
+class _PostgresLikeConnection:
+    """Fake DB-API connection standing in for a real PostgreSQL driver's dialect."""
+
+    def __init__(self, columns: tuple[str, ...]) -> None:
+        self.columns = columns
+        self.information_schema_queries = 0
+        self.rollback_calls = 0
+
+    def cursor(self) -> _PostgresLikeCursor:
+        return _PostgresLikeCursor(self)
+
+    def commit(self) -> None:
+        pass
+
+    def rollback(self) -> None:
+        self.rollback_calls += 1
+
+    def close(self) -> None:
+        pass
+
+
+def test_column_introspection_falls_back_to_information_schema_when_pragma_is_rejected() -> None:
+    store = object.__new__(PostgreSQLRunStore)
+    store._placeholder = "%s"
+    connection = _PostgresLikeConnection(columns=("run_id", "operation", "config_id"))
+
+    columns, is_sqlite = store._read_product_run_columns(connection)
+
+    assert is_sqlite is False
+    assert columns == frozenset(connection.columns)
+    assert connection.information_schema_queries == 1
+    assert connection.rollback_calls == 1
