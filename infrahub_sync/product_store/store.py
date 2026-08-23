@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import secrets
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
@@ -229,7 +228,7 @@ class DBAPIConnection(Protocol):
     def close(self) -> None: ...
 
 
-class _RunStore(Protocol):
+class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def create(self, run: ProductRun) -> None: ...
 
     def lookup(self, run_id: str) -> LookupResult[ProductRun]: ...
@@ -306,7 +305,7 @@ class _RunStore(Protocol):
     ) -> None: ...
 
 
-class _RelationalRunStore:
+class _RelationalRunStore:  # pylint: disable=too-many-public-methods
     """Small SQL implementation shared by the SQLite and PostgreSQL profiles."""
 
     def __init__(
@@ -364,8 +363,8 @@ class _RelationalRunStore:
         try:
             cursor.execute("PRAGMA table_info(product_runs)")
             return frozenset(str(row[1]) for row in cursor.fetchall()), True
-        except Exception:  # noqa: BLE001, S110 - pragma is SQLite-only; any failure selects the fallback below.
-            pass  # pylint: disable=broad-exception-caught
+        except Exception:  # noqa: BLE001, S110 - pylint: disable=broad-exception-caught
+            pass  # pragma is SQLite-only; any failure here safely selects the fallback below.
         finally:
             cursor.close()
         connection.rollback()
@@ -1695,8 +1694,10 @@ def _generate_config_id() -> str:
     Mirrors ``infrahub_sync.cache.paths.generate_run_id``'s exact scheme and alphabet:
     ``YYYYMMDDTHHMM-<8 hex>``, so the registry does not introduce a second ID format.
     """
+    import secrets as _secrets  # pylint: disable=import-outside-toplevel
+
     now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M")
-    return f"{now}-{secrets.token_hex(4)}"
+    return f"{now}-{_secrets.token_hex(4)}"
 
 
 def _configuration_version_from_row(row: Sequence[Any]) -> ConfigurationVersion:

@@ -324,7 +324,7 @@ def _receipt(  # noqa: PLR0913 - receipt factory exposes contract dimensions.
 
 
 def _configuration_declaration(**settings_overrides: object) -> dict[str, Any]:
-    settings = {
+    settings: dict[str, object] = {
         "url": "https://demo.netbox.dev",
         "token": {"$credential": "netbox-token"},
     }
@@ -1879,6 +1879,7 @@ class _PostgresLikeCursor:
         self._rows: tuple[tuple[Any, ...], ...] = ()
 
     def execute(self, operation: str, parameters: tuple[Any, ...] = ()) -> _PostgresLikeCursor:  # noqa: ARG002
+        self._connection.executed.append(operation)
         if "PRAGMA" in operation:
             raise _FakeDriverError(sqlstate="42601")
         if "information_schema.columns" in operation:
@@ -1909,6 +1910,7 @@ class _PostgresLikeConnection:
         self.columns = columns
         self.information_schema_queries = 0
         self.rollback_calls = 0
+        self.executed: list[str] = []
 
     def cursor(self) -> _PostgresLikeCursor:
         return _PostgresLikeCursor(self)
@@ -2035,28 +2037,11 @@ def test_partial_configuration_binding_is_refused_on_update_too(tmp_path: Path) 
     assert unchanged == (None, None, None)
 
 
-class _RecordingPostgresLikeConnection(_PostgresLikeConnection):
-    """Fake PostgreSQL-flavored connection that records every executed statement."""
-
-    def __init__(self, columns: tuple[str, ...]) -> None:
-        super().__init__(columns)
-        self.executed: list[str] = []
-
-    def cursor(self) -> _RecordingPostgresLikeCursor:
-        return _RecordingPostgresLikeCursor(self)
-
-
-class _RecordingPostgresLikeCursor(_PostgresLikeCursor):
-    def execute(self, operation: str, parameters: tuple[Any, ...] = ()) -> _RecordingPostgresLikeCursor:
-        self._connection.executed.append(operation)  # type: ignore[attr-defined]
-        return super().execute(operation, parameters)
-
-
 def test_postgresql_dialect_binding_constraint_uses_a_check_constraint_not_a_trigger() -> None:
     store = object.__new__(PostgreSQLRunStore)
     store._placeholder = "%s"
     store._schema_conflict_codes = product_store_store._POSTGRESQL_SCHEMA_CONFLICT_CODES
-    connection = _RecordingPostgresLikeConnection(columns=("run_id", "operation"))
+    connection = _PostgresLikeConnection(columns=("run_id", "operation"))
     store._connect = lambda: connection
 
     store._initialize()
