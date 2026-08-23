@@ -12,7 +12,7 @@ from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from tempfile import mkdtemp
 from time import sleep
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 from pydantic import TypeAdapter
 
@@ -86,11 +86,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS configuration_versions_checksum
 # Nullable run-to-configuration binding columns on ``product_runs``. Added by an
 # introspection-guarded ALTER (see ``_migrate_product_runs_columns``) rather than baked into
 # the ``product_runs`` definition above, so a pre-existing deployment's table is migrated the
-# same way a brand-new one is initialized. Deliberately inert for this slice: no ``ProductRun``
-# field reads or writes them, and nothing allocates a run into a registered configuration yet.
-# A later slice owns that behavior; this one only carries the invariant that a row's three
-# binding columns are either all NULL (unregistered) or all NOT NULL (registered) so that a
-# future writer inherits an already-enforced constraint rather than introducing one.
+# same way a brand-new one is initialized. Deliberately inert so far: no ``ProductRun`` field
+# reads or writes them, and nothing allocates a run into a registered configuration yet — only
+# the invariant that a row's three binding columns are either all NULL (unregistered) or all
+# NOT NULL (registered), so that a future writer inherits an already-enforced constraint
+# rather than introducing one.
 _CONFIGURATION_BINDING_COLUMNS: tuple[tuple[str, str], ...] = (
     ("config_id", "TEXT"),
     ("registry_version", "INTEGER"),
@@ -101,8 +101,9 @@ _CONFIGURATION_BINDING_CHECK_EXPRESSION = (
     "(config_id IS NULL AND registry_version IS NULL AND package_checksum IS NULL) "
     "OR (config_id IS NOT NULL AND registry_version IS NOT NULL AND package_checksum IS NOT NULL)"
 )
-_SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER = """
-CREATE TRIGGER IF NOT EXISTS product_runs_configuration_binding_insert
+_SQLITE_CONFIGURATION_BINDING_TRIGGER_NAME = "product_runs_configuration_binding_insert"
+_SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER = f"""
+CREATE TRIGGER IF NOT EXISTS {_SQLITE_CONFIGURATION_BINDING_TRIGGER_NAME}
 BEFORE INSERT ON product_runs
 WHEN NOT (
     (NEW.config_id IS NULL AND NEW.registry_version IS NULL AND NEW.package_checksum IS NULL)
@@ -313,10 +314,12 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         connect: Callable[[], DBAPIConnection],
         *,
         placeholder: str,
+        dialect: Literal["sqlite", "postgresql"],
         schema_conflict_codes: frozenset[str] = frozenset(),
     ) -> None:
         self._connect = connect
         self._placeholder = placeholder
+        self._dialect = dialect
         self._schema_conflict_codes = schema_conflict_codes
         self._initialize()
 
@@ -333,8 +336,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             cursor.execute(statement)
-                    is_sqlite = self._migrate_product_runs_columns(connection, cursor)
-                    self._ensure_configuration_binding_constraint(cursor, is_sqlite=is_sqlite)
+                    self._migrate_product_runs_columns(cursor)
+                    self._ensure_configuration_binding_constraint(cursor)
                     connection.commit()
                 except Exception as exc:  # pylint: disable=broad-exception-caught
                     # Synchronous DB-API drivers do not share a common error base; retry only
@@ -352,49 +355,67 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             finally:
                 connection.close()
 
-    def _read_product_run_columns(self, connection: DBAPIConnection) -> tuple[frozenset[str], bool]:
-        """Return existing ``product_runs`` columns and whether the backend is SQLite-flavored.
+    def _read_product_run_columns(self, cursor: _Cursor) -> frozenset[str]:
+        """Return the existing columns on ``product_runs`` for this store's own dialect.
 
-        Tries SQLite's introspection pragma first. Real PostgreSQL rejects ``PRAGMA`` as a
-        syntax error, so a failure there safely selects the ``information_schema`` fallback;
-        a genuine SQLite connection never reaches the fallback.
+        The statement is selected from ``self._dialect``, never discovered by running a
+        statement to see whether it fails: on PostgreSQL, a probe-driven failure would abort
+        the surrounding transaction and force a ``rollback()`` that discards every other
+        uncommitted ``CREATE TABLE`` this same call still needs to commit.
         """
-        cursor = connection.cursor()
-        try:
+        if self._dialect == "sqlite":
             cursor.execute("PRAGMA table_info(product_runs)")
-            return frozenset(str(row[1]) for row in cursor.fetchall()), True
-        except Exception:  # noqa: BLE001, S110 - pylint: disable=broad-exception-caught
-            pass  # pragma is SQLite-only; any failure here safely selects the fallback below.
-        finally:
-            cursor.close()
-        connection.rollback()
-        cursor = connection.cursor()
-        try:
-            cursor.execute(
-                self._sql("SELECT column_name FROM information_schema.columns WHERE table_name = ?"),
-                ("product_runs",),
-            )
-            return frozenset(str(row[0]) for row in cursor.fetchall()), False
-        finally:
-            cursor.close()
+            return frozenset(str(row[1]) for row in cursor.fetchall())
+        cursor.execute(
+            self._sql(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = ? AND table_schema = current_schema()"
+            ),
+            ("product_runs",),
+        )
+        return frozenset(str(row[0]) for row in cursor.fetchall())
 
-    def _migrate_product_runs_columns(self, connection: DBAPIConnection, cursor: _Cursor) -> bool:
+    def _migrate_product_runs_columns(self, cursor: _Cursor) -> None:
         """Additively bring a pre-existing ``product_runs`` table up to the current column set."""
-        existing, is_sqlite = self._read_product_run_columns(connection)
+        existing = self._read_product_run_columns(cursor)
         for column, sql_type in _CONFIGURATION_BINDING_COLUMNS:
             if column not in existing:
                 cursor.execute(f"ALTER TABLE product_runs ADD COLUMN {column} {sql_type}")
-        return is_sqlite
 
-    def _ensure_configuration_binding_constraint(self, cursor: _Cursor, *, is_sqlite: bool) -> None:
+    def _configuration_binding_constraint_exists(self, cursor: _Cursor) -> bool:
+        """Check for the binding safeguard by name instead of attempting and hoping.
+
+        PostgreSQL has no ``ADD CONSTRAINT IF NOT EXISTS``, and a retry loop that tolerates
+        the resulting ``42710`` only buys another attempt, not success: it re-raises once
+        attempts run out, so a repeated construction over an already-migrated database would
+        still fail without this check.
+        """
+        if self._dialect == "sqlite":
+            cursor.execute(
+                self._sql("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?"),
+                (_SQLITE_CONFIGURATION_BINDING_TRIGGER_NAME,),
+            )
+        else:
+            cursor.execute(
+                self._sql(
+                    "SELECT 1 FROM information_schema.table_constraints WHERE table_name = ? AND constraint_name = ?"
+                ),
+                ("product_runs", _CONFIGURATION_BINDING_CONSTRAINT),
+            )
+        return cursor.fetchone() is not None
+
+    def _ensure_configuration_binding_constraint(self, cursor: _Cursor) -> None:
         """Refuse a partially bound run row before any writer exists to produce one.
 
-        SQLite has no ``ALTER TABLE ... ADD CONSTRAINT``, so its enforcement is a pair of
-        ``BEFORE INSERT``/``BEFORE UPDATE`` triggers; PostgreSQL adds a genuine multi-column
-        ``CHECK`` constraint, tolerated as already-exists by the surrounding retry loop
-        (``42710`` is in ``_POSTGRESQL_SCHEMA_CONFLICT_CODES``).
+        SQLite's enforcement is a pair of ``BEFORE INSERT``/``BEFORE UPDATE`` triggers;
+        PostgreSQL's is a genuine multi-column ``CHECK`` constraint. Both are created only
+        after ``_configuration_binding_constraint_exists`` reports they are still missing, so
+        repeated construction over the same database is idempotent on both backends without
+        depending on either an already-exists error or the surrounding retry loop.
         """
-        if is_sqlite:
+        if self._configuration_binding_constraint_exists(cursor):
+            return
+        if self._dialect == "sqlite":
             cursor.execute(_SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER)
             cursor.execute(_SQLITE_CONFIGURATION_BINDING_UPDATE_TRIGGER)
         else:
@@ -1138,7 +1159,7 @@ class SQLiteRunStore(_RelationalRunStore):
             connection.execute("PRAGMA foreign_keys = ON")
             return cast("DBAPIConnection", connection)
 
-        super().__init__(connect, placeholder="?")
+        super().__init__(connect, placeholder="?", dialect="sqlite")
 
 
 class PostgreSQLRunStore(_RelationalRunStore):
@@ -1148,6 +1169,7 @@ class PostgreSQLRunStore(_RelationalRunStore):
         super().__init__(
             connect,
             placeholder="%s",
+            dialect="postgresql",
             schema_conflict_codes=_POSTGRESQL_SCHEMA_CONFLICT_CODES,
         )
 

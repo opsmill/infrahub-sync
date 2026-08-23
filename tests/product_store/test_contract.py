@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
+import re
 import sqlite3
 import subprocess  # noqa: S404 - fixed local interpreter probes restart durability.
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -63,22 +65,65 @@ EXPECTED_PUBLIC_NAMES = {
 }
 
 
+_POSTGRESQL_EMULATION_CONSTRAINTS_TABLE = "_fake_postgresql_constraints"
+
+
 class _CursorAdapter:
+    """DB-API cursor over a literal SQLite file for the ``%s``-placeholder "production" profile.
+
+    Genuine CRUD statements pass straight through with ``%s`` translated to ``?``, so every
+    contract test below still exercises a real database engine. SQLite has neither
+    ``information_schema`` nor ``ALTER TABLE ... ADD CONSTRAINT``, so this adapter emulates
+    only those two PostgreSQL-only statements the store's dialect-specific schema bootstrap
+    issues; it does not model transactional DDL or abort-on-error (see
+    ``_FakePostgreSQLDatabase`` for the fake that does, used to prove the bootstrap fix itself).
+    """
+
     def __init__(self, cursor: sqlite3.Cursor) -> None:
         self._cursor = cursor
+        self._fake_rows: tuple[tuple[Any, ...], ...] | None = None
 
-    def execute(self, operation: str, parameters=()):
-        self._cursor.execute(operation.replace("%s", "?"), parameters)
+    def execute(self, operation: str, parameters: Sequence[Any] = ()):
+        self._fake_rows = None
+        stripped = operation.strip()
+        if "information_schema.columns" in stripped:
+            self._cursor.execute("PRAGMA table_info(product_runs)")
+            self._fake_rows = tuple((str(row[1]),) for row in self._cursor.fetchall())
+            return self
+        if "information_schema.table_constraints" in stripped:
+            self._cursor.execute(
+                f"SELECT 1 FROM {_POSTGRESQL_EMULATION_CONSTRAINTS_TABLE} WHERE constraint_name = ?",  # noqa: S608
+                (parameters[-1],),
+            )
+            self._fake_rows = tuple(self._cursor.fetchall())
+            return self
+        if "ADD CONSTRAINT" in stripped:
+            constraint_name = stripped.split("ADD CONSTRAINT", 1)[1].split()[0]
+            try:
+                self._cursor.execute(
+                    f"INSERT INTO {_POSTGRESQL_EMULATION_CONSTRAINTS_TABLE} (constraint_name) VALUES (?)",  # noqa: S608
+                    (constraint_name,),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise _FakeDriverError(sqlstate="42710") from exc
+            return self
+        self._cursor.execute(stripped.replace("%s", "?"), parameters)
         return self
 
     @property
     def rowcount(self) -> int:
+        if self._fake_rows is not None:
+            return len(self._fake_rows)
         return self._cursor.rowcount
 
     def fetchone(self):
+        if self._fake_rows is not None:
+            return self._fake_rows[0] if self._fake_rows else None
         return self._cursor.fetchone()
 
     def fetchall(self):
+        if self._fake_rows is not None:
+            return self._fake_rows
         return self._cursor.fetchall()
 
     def close(self) -> None:
@@ -89,6 +134,10 @@ class _ConnectionAdapter:
     def __init__(self, path: Path) -> None:
         self._connection = sqlite3.connect(path)
         self._connection.execute("PRAGMA foreign_keys = ON")
+        self._connection.execute(
+            f"CREATE TABLE IF NOT EXISTS {_POSTGRESQL_EMULATION_CONSTRAINTS_TABLE} (constraint_name TEXT PRIMARY KEY)"
+        )
+        self._connection.commit()
 
     def cursor(self) -> _CursorAdapter:
         return _CursorAdapter(self._connection.cursor())
@@ -1894,23 +1943,116 @@ def test_existing_run_lifecycle_is_unaffected_by_the_new_binding_columns(provide
     assert "config_id" not in ProductRun.model_fields
 
 
-class _PostgresLikeCursor:
-    """Fake cursor that rejects SQLite's introspection pragma like real PostgreSQL does."""
+class _FakePostgreSQLDatabase:
+    """In-memory PostgreSQL catalog modelling the three semantics a literal SQLite file
+    cannot: transactional DDL, transaction abort on error, and ``ADD CONSTRAINT`` raising
+    ``42710`` when the named constraint already exists. This is what proves the schema
+    bootstrap fix itself; the general CRUD tests above use the real-SQLite-backed
+    ``_ConnectionAdapter`` instead, which does not model those three semantics.
+    """
 
-    def __init__(self, connection: _PostgresLikeConnection) -> None:
+    def __init__(
+        self,
+        *,
+        tables: frozenset[str] = frozenset(),
+        columns: dict[str, frozenset[str]] | None = None,
+    ) -> None:
+        self.tables: set[str] = set(tables)
+        self.columns: dict[str, set[str]] = {name: set(cols) for name, cols in (columns or {}).items()}
+        self.constraints: set[str] = set()
+
+    def connect(self) -> _FakePostgreSQLConnection:
+        return _FakePostgreSQLConnection(self)
+
+
+class _FakePostgreSQLConnection:
+    def __init__(self, database: _FakePostgreSQLDatabase) -> None:
+        self.database = database
+        self.pending_tables: set[str] = set()
+        self.pending_columns: dict[str, set[str]] = {}
+        self.pending_constraints: set[str] = set()
+        self.aborted = False
+
+    def cursor(self) -> _FakePostgreSQLCursor:
+        return _FakePostgreSQLCursor(self)
+
+    def commit(self) -> None:
+        self.database.tables |= self.pending_tables
+        for table, added in self.pending_columns.items():
+            self.database.columns.setdefault(table, set()).update(added)
+        self.database.constraints |= self.pending_constraints
+        self._discard_pending()
+
+    def rollback(self) -> None:
+        self._discard_pending()
+
+    def _discard_pending(self) -> None:
+        self.pending_tables = set()
+        self.pending_columns = {}
+        self.pending_constraints = set()
+        self.aborted = False
+
+    def close(self) -> None:
+        pass
+
+
+_FAKE_CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)")
+_FAKE_ALTER_ADD_COLUMN = re.compile(r"^ALTER TABLE (\w+) ADD COLUMN (\w+)")
+_FAKE_ALTER_ADD_CONSTRAINT = re.compile(r"^ALTER TABLE \w+ ADD CONSTRAINT (\w+)")
+
+
+class _FakePostgreSQLCursor:
+    """Cursor covering only the statements ``_initialize()`` issues against this fake."""
+
+    def __init__(self, connection: _FakePostgreSQLConnection) -> None:
         self._connection = connection
         self._rows: tuple[tuple[Any, ...], ...] = ()
 
-    def execute(self, operation: str, parameters: tuple[Any, ...] = ()) -> _PostgresLikeCursor:  # noqa: ARG002
-        self._connection.executed.append(operation)
-        if "PRAGMA" in operation:
-            raise _FakeDriverError(sqlstate="42601")
-        if "information_schema.columns" in operation:
-            self._connection.information_schema_queries += 1
-            self._rows = tuple((name,) for name in self._connection.columns)
-        else:
-            self._rows = ()
+    def execute(self, operation: str, parameters: Sequence[Any] = ()) -> _FakePostgreSQLCursor:
+        connection = self._connection
+        if connection.aborted:
+            raise _FakeDriverError(sqlstate="25P02")  # current transaction is aborted
+        try:
+            self._rows = self._dispatch(operation.strip(), parameters)
+        except _FakeDriverError:
+            connection.aborted = True
+            raise
         return self
+
+    def _dispatch(self, operation: str, parameters: Sequence[Any]) -> tuple[tuple[Any, ...], ...]:
+        connection = self._connection
+        database = connection.database
+        if match := _FAKE_CREATE_TABLE.match(operation):
+            table = match.group(1)
+            if table not in database.tables:
+                connection.pending_tables.add(table)
+            return ()
+        if operation.startswith(("CREATE UNIQUE INDEX IF NOT EXISTS", "CREATE INDEX IF NOT EXISTS")):
+            return ()
+        if "information_schema.columns" in operation:
+            table = parameters[0]
+            visible = database.columns.get(table, set()) | connection.pending_columns.get(table, set())
+            return tuple((name,) for name in sorted(visible))
+        if match := _FAKE_ALTER_ADD_COLUMN.match(operation):
+            table, column = match.groups()
+            if table not in (database.tables | connection.pending_tables):
+                raise _FakeDriverError(sqlstate="42P01")  # relation "{table}" does not exist
+            connection.pending_columns.setdefault(table, set()).add(column)
+            return ()
+        if "information_schema.table_constraints" in operation:
+            name = parameters[-1]
+            visible = database.constraints | connection.pending_constraints
+            return ((1,),) if name in visible else ()
+        if match := _FAKE_ALTER_ADD_CONSTRAINT.match(operation):
+            name = match.group(1)
+            visible = database.constraints | connection.pending_constraints
+            if name in visible:
+                msg = f'constraint "{name}" for relation "product_runs" already exists'
+                raise _FakeDriverError(sqlstate="42710")
+            connection.pending_constraints.add(name)
+            return ()
+        msg = f"the fake PostgreSQL database does not model this statement: {operation!r}"
+        raise AssertionError(msg)
 
     @property
     def rowcount(self) -> int:
@@ -1926,39 +2068,191 @@ class _PostgresLikeCursor:
         pass
 
 
-class _PostgresLikeConnection:
-    """Fake DB-API connection standing in for a real PostgreSQL driver's dialect."""
-
-    def __init__(self, columns: tuple[str, ...]) -> None:
-        self.columns = columns
-        self.information_schema_queries = 0
-        self.rollback_calls = 0
-        self.executed: list[str] = []
-
-    def cursor(self) -> _PostgresLikeCursor:
-        return _PostgresLikeCursor(self)
-
-    def commit(self) -> None:
-        pass
-
-    def rollback(self) -> None:
-        self.rollback_calls += 1
-
-    def close(self) -> None:
-        pass
+_PARENT_PRODUCT_RUNS_COLUMNS = frozenset(
+    {
+        "run_id",
+        "operation",
+        "configuration_reference",
+        "actor",
+        "audit_links",
+        "started_at",
+        "finished_at",
+        "phase",
+        "outcome",
+        "summary",
+        "results",
+    }
+)
+_PARENT_TABLES = frozenset(
+    {"product_runs", "artifact_refs", "prefect_executions", "mutation_receipts", "write_admissions", "audit_events"}
+)
 
 
-def test_column_introspection_falls_back_to_information_schema_when_pragma_is_rejected() -> None:
+def test_postgresql_initialize_succeeds_twice_on_a_fresh_catalog() -> None:
+    database = _FakePostgreSQLDatabase()
+
+    PostgreSQLRunStore(database.connect)
+    assert {"configurations", "configuration_versions"} <= database.tables
+
+    PostgreSQLRunStore(database.connect)
+    assert {"configurations", "configuration_versions"} <= database.tables
+
+
+def test_postgresql_initialize_succeeds_twice_on_a_prepopulated_parent_catalog() -> None:
+    """The realistic upgrade path: every parent table already exists, the two registry tables
+    do not yet. Regression coverage for the silent partial-initialization defect, where the old
+    probe-and-rollback introspection wiped the uncommitted ``CREATE TABLE`` for both new tables
+    before they ever committed, while ``_initialize()`` still reported success.
+    """
+    database = _FakePostgreSQLDatabase(
+        tables=_PARENT_TABLES,
+        columns={"product_runs": _PARENT_PRODUCT_RUNS_COLUMNS},
+    )
+
+    PostgreSQLRunStore(database.connect)
+    assert {"configurations", "configuration_versions"} <= database.tables
+
+    PostgreSQLRunStore(database.connect)
+    assert {"configurations", "configuration_versions"} <= database.tables
+
+
+def test_postgresql_dialect_reads_columns_via_information_schema_without_probing_pragma() -> None:
+    database = _FakePostgreSQLDatabase(
+        tables=frozenset({"product_runs"}),
+        columns={"product_runs": frozenset({"run_id", "operation"})},
+    )
     store = object.__new__(PostgreSQLRunStore)
     store._placeholder = "%s"
-    connection = _PostgresLikeConnection(columns=("run_id", "operation", "config_id"))
+    store._dialect = "postgresql"
+    cursor = database.connect().cursor()
 
-    columns, is_sqlite = store._read_product_run_columns(connection)
+    columns = store._read_product_run_columns(cursor)
 
-    assert is_sqlite is False
-    assert columns == frozenset(connection.columns)
-    assert connection.information_schema_queries == 1
-    assert connection.rollback_calls == 1
+    assert columns == frozenset({"run_id", "operation"})
+
+
+def test_postgresql_dialect_binding_constraint_checks_existence_before_creating() -> None:
+    database = _FakePostgreSQLDatabase(tables=frozenset({"product_runs"}))
+    store = object.__new__(PostgreSQLRunStore)
+    store._placeholder = "%s"
+    store._dialect = "postgresql"
+
+    first_connection = database.connect()
+    store._ensure_configuration_binding_constraint(first_connection.cursor())
+    first_connection.commit()
+
+    assert product_store_store._CONFIGURATION_BINDING_CONSTRAINT in database.constraints
+
+    # A second pass over the same catalog must check existence first, not attempt-and-catch:
+    # a blind re-attempt would raise 42710 here.
+    second_connection = database.connect()
+    store._ensure_configuration_binding_constraint(second_connection.cursor())
+    second_connection.commit()
+
+
+def test_postgresql_schema_bootstrap_propagates_a_non_duplicate_alter_failure() -> None:
+    """``_is_duplicate_column_error`` must not swallow a genuine ALTER failure."""
+    connection = MagicMock()
+    connection.cursor.return_value.fetchall.return_value = []
+    connection.cursor.return_value.fetchone.return_value = None
+
+    def side_effect(operation: str, parameters: tuple[Any, ...] = ()) -> MagicMock:  # noqa: ARG001
+        # pylint: disable=unused-argument
+        if operation.strip().startswith("ALTER TABLE product_runs ADD COLUMN"):
+            raise _FakeDriverError(sqlstate="42501")
+        return connection.cursor.return_value
+
+    connection.cursor.return_value.execute.side_effect = side_effect
+
+    with pytest.raises(_FakeDriverError):
+        PostgreSQLRunStore(lambda: connection)
+
+    connection.rollback.assert_called_once_with()
+    connection.close.assert_called_once_with()
+
+
+def _reachable_postgresql_dsn() -> str | None:
+    """Return a reachable PostgreSQL DSN from ``PRODUCT_STORE_TEST_POSTGRESQL_DSN``, or None.
+
+    ``psycopg`` is not a project dependency (see the docstring on the real-server test below),
+    so its absence is also a reason to skip, not a collection-time error.
+    """
+    dsn = os.environ.get("PRODUCT_STORE_TEST_POSTGRESQL_DSN")
+    if not dsn:
+        return None
+    try:
+        import psycopg  # ty: ignore[unresolved-import]  # optional dep; pylint: disable=import-outside-toplevel,import-error
+    except ImportError:
+        return None
+    try:
+        with psycopg.connect(dsn, connect_timeout=2) as connection:
+            connection.execute("SELECT 1")
+    except Exception:  # noqa: BLE001 - pylint: disable=broad-exception-caught
+        return None  # any connectivity or driver failure means "skip".
+    return dsn
+
+
+@pytest.mark.integration
+def test_postgresql_run_store_initializes_against_a_real_server() -> None:
+    """Real-server confirmation of the schema-bootstrap fix.
+
+    Opt in with ``-m integration`` and a reachable ``PRODUCT_STORE_TEST_POSTGRESQL_DSN``, e.g.::
+
+        docker run -d --rm --name cf002-pg-fix -e POSTGRES_PASSWORD=probe -e POSTGRES_DB=probe \\
+            -p 55432:5432 postgres:18-alpine
+        PRODUCT_STORE_TEST_POSTGRESQL_DSN="host=127.0.0.1 port=55432 user=postgres password=probe dbname=probe" \\
+            uv run --with 'psycopg[binary]' python -m pytest -m integration \\
+            tests/product_store/test_contract.py::test_postgresql_run_store_initializes_against_a_real_server
+
+    Covers the same three constructions the in-memory fake proves above, now against a real
+    server: a fresh catalog (twice consecutively), and the pre-populated parent-tables upgrade
+    path (twice consecutively).
+    """
+    dsn = _reachable_postgresql_dsn()
+    if dsn is None:
+        pytest.skip("psycopg is not installed, or PRODUCT_STORE_TEST_POSTGRESQL_DSN is unset/unreachable")
+    import psycopg  # ty: ignore[unresolved-import]  # optional dep; pylint: disable=import-outside-toplevel,import-error
+
+    def connect() -> psycopg.Connection:
+        return psycopg.connect(dsn)
+
+    def reset_schema() -> None:
+        with psycopg.connect(dsn) as admin:
+            admin.execute("DROP SCHEMA public CASCADE")
+            admin.execute("CREATE SCHEMA public")
+            admin.commit()
+
+    def committed_tables() -> set[str]:
+        with psycopg.connect(dsn) as admin:
+            rows = admin.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+            ).fetchall()
+        return {row[0] for row in rows}
+
+    registry_tables = {"configurations", "configuration_versions"}
+
+    # A fresh catalog, twice consecutively.
+    reset_schema()
+    PostgreSQLRunStore(connect)
+    assert registry_tables <= committed_tables()
+    PostgreSQLRunStore(connect)
+    assert registry_tables <= committed_tables()
+
+    # The realistic upgrade path: every parent table pre-exists, the two registry tables do not.
+    reset_schema()
+    parent_statements = [
+        statement.strip()
+        for statement in product_store_store._SCHEMA.split(";")
+        if statement.strip() and not any(table in statement for table in registry_tables)
+    ]
+    with psycopg.connect(dsn) as admin:
+        for statement in parent_statements:
+            admin.execute(statement)
+        admin.commit()
+    PostgreSQLRunStore(connect)
+    assert registry_tables <= committed_tables()
+    PostgreSQLRunStore(connect)
+    assert registry_tables <= committed_tables()
 
 
 def _raw_insert_product_run(
@@ -2061,13 +2355,8 @@ def test_partial_configuration_binding_is_refused_on_update_too(tmp_path: Path) 
 
 
 def test_postgresql_dialect_binding_constraint_uses_a_check_constraint_not_a_trigger() -> None:
-    store = object.__new__(PostgreSQLRunStore)
-    store._placeholder = "%s"
-    store._schema_conflict_codes = product_store_store._POSTGRESQL_SCHEMA_CONFLICT_CODES
-    connection = _PostgresLikeConnection(columns=("run_id", "operation"))
-    store._connect = lambda: connection
+    database = _FakePostgreSQLDatabase()
 
-    store._initialize()
+    PostgreSQLRunStore(database.connect)
 
-    assert any("ADD CONSTRAINT" in statement and "CHECK" in statement for statement in connection.executed)
-    assert not any("CREATE TRIGGER" in statement for statement in connection.executed)
+    assert product_store_store._CONFIGURATION_BINDING_CONSTRAINT in database.constraints
