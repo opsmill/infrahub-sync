@@ -1,14 +1,19 @@
+# pylint: disable=duplicate-code
+# EXPECTED_PUBLIC_NAMES below intentionally mirrors infrahub_sync/product_store/__init__.py's
+# __all__ as a hand-maintained, independent list; pylint's similarity checker flags that overlap.
 from __future__ import annotations
 
+import os
+import re
 import sqlite3
 import subprocess  # noqa: S404 - fixed local interpreter probes restart durability.
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, local
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -17,11 +22,17 @@ import pytest
 from pydantic import ValidationError
 
 from infrahub_sync import product_store
+from infrahub_sync.configuration import ConfigurationPackage, CredentialConfigurationError
 from infrahub_sync.product_store import (
     ArtifactReference,
     ArtifactUnavailableError,
     AuditEvent,
+    ConfigurationNotFoundError,
+    ConfigurationSummary,
+    ConfigurationVersion,
+    ConfigurationVersionAllocationError,
     DuplicateArtifactError,
+    DuplicateConfigurationError,
     DuplicatePrefectExecutionError,
     DuplicateRunError,
     MutationReceipt,
@@ -35,12 +46,19 @@ from infrahub_sync.product_store import (
 from infrahub_sync.product_store import store as product_store_store
 from infrahub_sync.product_store.store import FileArtifactStore, PostgreSQLRunStore, S3ArtifactStore, SQLiteRunStore
 
+# This intentionally mirrors infrahub_sync/product_store/__init__.py's __all__, hand-maintained
+# so a change to the module's exports has to touch this list too.
 EXPECTED_PUBLIC_NAMES = {
     "ArtifactReference",
     "ArtifactUnavailableError",
     "AuditEvent",
+    "ConfigurationNotFoundError",
+    "ConfigurationSummary",
+    "ConfigurationVersion",
+    "ConfigurationVersionAllocationError",
     "DBAPIConnection",
     "DuplicateArtifactError",
+    "DuplicateConfigurationError",
     "DuplicatePrefectExecutionError",
     "DuplicateRunError",
     "LookupResult",
@@ -56,22 +74,65 @@ EXPECTED_PUBLIC_NAMES = {
 }
 
 
+_POSTGRESQL_EMULATION_CONSTRAINTS_TABLE = "_fake_postgresql_constraints"
+
+
 class _CursorAdapter:
+    """DB-API cursor over a literal SQLite file for the ``%s``-placeholder "production" profile.
+
+    Genuine CRUD statements pass straight through with ``%s`` translated to ``?``, so every
+    contract test below still exercises a real database engine. SQLite has neither
+    ``information_schema`` nor ``ALTER TABLE ... ADD CONSTRAINT``, so this adapter emulates
+    only those two PostgreSQL-only statements the store's dialect-specific schema bootstrap
+    issues; it does not model transactional DDL or abort-on-error (see
+    ``_FakePostgreSQLDatabase`` for the fake that does, used to prove the bootstrap fix itself).
+    """
+
     def __init__(self, cursor: sqlite3.Cursor) -> None:
         self._cursor = cursor
+        self._fake_rows: tuple[tuple[Any, ...], ...] | None = None
 
-    def execute(self, operation: str, parameters=()):
-        self._cursor.execute(operation.replace("%s", "?"), parameters)
+    def execute(self, operation: str, parameters: Sequence[Any] = ()):
+        self._fake_rows = None
+        stripped = operation.strip()
+        if "information_schema.columns" in stripped:
+            self._cursor.execute("PRAGMA table_info(product_runs)")
+            self._fake_rows = tuple((str(row[1]),) for row in self._cursor.fetchall())
+            return self
+        if "information_schema.table_constraints" in stripped:
+            self._cursor.execute(
+                f"SELECT 1 FROM {_POSTGRESQL_EMULATION_CONSTRAINTS_TABLE} WHERE constraint_name = ?",  # noqa: S608
+                (parameters[-1],),
+            )
+            self._fake_rows = tuple(self._cursor.fetchall())
+            return self
+        if "ADD CONSTRAINT" in stripped:
+            constraint_name = stripped.split("ADD CONSTRAINT", 1)[1].split()[0]
+            try:
+                self._cursor.execute(
+                    f"INSERT INTO {_POSTGRESQL_EMULATION_CONSTRAINTS_TABLE} (constraint_name) VALUES (?)",  # noqa: S608
+                    (constraint_name,),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise _FakeDriverError(sqlstate="42710") from exc
+            return self
+        self._cursor.execute(stripped.replace("%s", "?"), parameters)
         return self
 
     @property
     def rowcount(self) -> int:
+        if self._fake_rows is not None:
+            return len(self._fake_rows)
         return self._cursor.rowcount
 
     def fetchone(self):
+        if self._fake_rows is not None:
+            return self._fake_rows[0] if self._fake_rows else None
         return self._cursor.fetchone()
 
     def fetchall(self):
+        if self._fake_rows is not None:
+            return self._fake_rows
         return self._cursor.fetchall()
 
     def close(self) -> None:
@@ -82,6 +143,10 @@ class _ConnectionAdapter:
     def __init__(self, path: Path) -> None:
         self._connection = sqlite3.connect(path)
         self._connection.execute("PRAGMA foreign_keys = ON")
+        self._connection.execute(
+            f"CREATE TABLE IF NOT EXISTS {_POSTGRESQL_EMULATION_CONSTRAINTS_TABLE} (constraint_name TEXT PRIMARY KEY)"
+        )
+        self._connection.commit()
 
     def cursor(self) -> _CursorAdapter:
         return _CursorAdapter(self._connection.cursor())
@@ -190,6 +255,42 @@ class _ChildConflictSQLiteStore(SQLiteRunStore):
         error = _FakeSQLiteIntegrityError("synthetic child uniqueness failure")
         error.sqlite_errorcode = 2067
         raise error
+
+
+class _AlwaysConflictingConfigurationVersionStore(SQLiteRunStore):
+    """Forces every configuration-version insert to lose the race, deterministically
+    exhausting ``_CONFIGURATION_VERSION_ATTEMPTS`` without needing real concurrency."""
+
+    def _insert_configuration_version_row(self, cursor, version):  # noqa: ARG002, PLR6301
+        error = _FakeSQLiteIntegrityError("synthetic version race")
+        error.sqlite_errorcode = 2067
+        raise error
+
+
+class _RoundCountingSQLiteStore(SQLiteRunStore):
+    """Records, per calling thread, how many insert attempts the current
+    ``add_configuration_version`` call has made -- the observable a mutant that retries
+    before re-querying by checksum inflates without changing any other observable."""
+
+    def __init__(self, database: Path) -> None:
+        self.version_insert_rounds = local()
+        super().__init__(database)
+
+    def _insert_configuration_version_row(self, cursor, version) -> None:
+        self.version_insert_rounds.count = getattr(self.version_insert_rounds, "count", 0) + 1
+        super()._insert_configuration_version_row(cursor, version)
+
+
+class _RoundCountingPostgreSQLRunStore(PostgreSQLRunStore):
+    """PostgreSQL-profile counterpart of ``_RoundCountingSQLiteStore``."""
+
+    def __init__(self, connect) -> None:
+        self.version_insert_rounds = local()
+        super().__init__(connect)
+
+    def _insert_configuration_version_row(self, cursor, version) -> None:
+        self.version_insert_rounds.count = getattr(self.version_insert_rounds, "count", 0) + 1
+        super()._insert_configuration_version_row(cursor, version)
 
 
 class _DeleteBeforeFinishSQLiteStore(SQLiteRunStore):
@@ -316,8 +417,49 @@ def _receipt(  # noqa: PLR0913 - receipt factory exposes contract dimensions.
     )
 
 
+def _configuration_declaration(**settings_overrides: object) -> dict[str, Any]:
+    settings: dict[str, object] = {
+        "url": "https://demo.netbox.dev",
+        "token": {"$credential": "netbox-token"},
+    }
+    settings.update(settings_overrides)
+    return {
+        "format_version": 1,
+        "configuration": {
+            "name": "from-netbox",
+            "source": {"name": "netbox", "settings": settings},
+            "destination": {
+                "name": "infrahub",
+                "settings": {"url": "http://localhost:8000", "token": {"$credential": "infrahub-token"}},
+            },
+            "order": [],
+            "schema_mapping": [],
+            "diffsync_flags": [],
+            "incremental": None,
+        },
+        "package_metadata": {"adapter_api_version": 1},
+        "credentials": {
+            "netbox-token": {"provider": "env", "identifier": "NETBOX_TOKEN"},
+            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"},
+        },
+    }
+
+
+def _configuration_package(**settings_overrides: object) -> ConfigurationPackage:
+    return ConfigurationPackage.model_validate(_configuration_declaration(**settings_overrides))
+
+
 def test_public_surface_is_exactly_the_supported_contract() -> None:
     assert set(product_store.__all__) == EXPECTED_PUBLIC_NAMES
+
+
+def test_generate_config_id_shares_the_run_id_generator(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The registry must not maintain a second, independently-drifting implementation of the
+    run ID scheme: it delegates to ``generate_run_id`` so a change to the shared scheme is
+    automatically reflected here too, instead of a docstring claim nothing enforces."""
+    monkeypatch.setattr(product_store_store, "generate_run_id", lambda: "sentinel-generated-id")
+
+    assert product_store_store._generate_config_id() == "sentinel-generated-id"
 
 
 @pytest.mark.parametrize(
@@ -363,6 +505,36 @@ def test_postgresql_schema_bootstrap_does_not_swallow_other_ddl_failures() -> No
     connection.rollback.assert_called_once_with()
     connection.cursor.return_value.close.assert_called_once_with()
     connection.close.assert_called_once_with()
+
+
+def test_postgresql_duplicate_column_race_is_recognized() -> None:
+    assert product_store_store._is_duplicate_column_error(_FakeDriverError(sqlstate="42701"))
+
+
+@pytest.mark.parametrize("sqlstate", ["42501", "23505"])
+def test_postgresql_non_duplicate_column_errors_are_not_recognized(sqlstate: str) -> None:
+    assert not product_store_store._is_duplicate_column_error(_FakeDriverError(sqlstate=sqlstate))
+
+
+def test_sqlite_duplicate_column_race_is_recognized() -> None:
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.execute("CREATE TABLE example (existing TEXT)")
+        with pytest.raises(sqlite3.OperationalError) as exc_info:
+            connection.execute("ALTER TABLE example ADD COLUMN existing TEXT")
+        assert product_store_store._is_duplicate_column_error(exc_info.value)
+    finally:
+        connection.close()
+
+
+def test_sqlite_other_operational_errors_are_not_duplicate_columns() -> None:
+    connection = sqlite3.connect(":memory:")
+    try:
+        with pytest.raises(sqlite3.OperationalError) as exc_info:
+            connection.execute("ALTER TABLE table_that_does_not_exist ADD COLUMN extra TEXT")
+        assert not product_store_store._is_duplicate_column_error(exc_info.value)
+    finally:
+        connection.close()
 
 
 @pytest.mark.parametrize(
@@ -580,6 +752,18 @@ def test_sqlite_foreign_key_failure_passes_through_as_integrity_error(tmp_path: 
             "missing-run",
             PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1),
         )
+
+
+def test_configuration_version_foreign_key_is_enforced(tmp_path: Path) -> None:
+    """``configuration_versions.config_id`` must be refused for a configuration that was never
+    registered. ``add_configuration_version`` on the raw store issues no existence check of its
+    own (only ``ProductProjection.add_configuration_version`` does, before delegating) -- so the
+    ``configurations`` foreign key is the only thing standing between a nonexistent config_id and
+    a durably orphaned version row."""
+    store = SQLiteRunStore(tmp_path / "records.sqlite3")
+
+    with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY constraint failed"):
+        store.add_configuration_version("missing-configuration", _configuration_package())
 
 
 def test_child_insert_uniqueness_is_not_misreported_as_a_duplicate_run(tmp_path: Path) -> None:
@@ -1568,3 +1752,1095 @@ def test_provider_profile_survives_reconstruction(profile: str, tmp_path: Path) 
 def test_local_profile_rejects_a_cwd_relative_cache_location() -> None:
     with pytest.raises(ValueError, match="cache_location must be absolute"):
         local_product_projection(Path("relative-cache"))
+
+
+# --- Configuration registry -------------------------------------------------------------------
+
+
+def test_configuration_version_requires_timezone() -> None:
+    with pytest.raises(ValidationError, match="configuration-version timestamps must include a timezone"):
+        ConfigurationVersion(
+            config_id="20260808T1200-aaaaaaaa",
+            registry_version=1,
+            package_checksum="a" * 64,
+            declared_content={},
+            created_at=datetime(2026, 8, 8),  # noqa: DTZ001 - deliberate naive-value validation case.
+        )
+
+
+def test_configuration_summary_requires_timezone() -> None:
+    with pytest.raises(ValidationError, match="configuration timestamps must include a timezone"):
+        ConfigurationSummary(
+            config_id="20260808T1200-aaaaaaaa",
+            created_at=datetime(2026, 8, 8),  # noqa: DTZ001 - deliberate naive-value validation case.
+        )
+
+
+@pytest.mark.parametrize("registry_version", [0, -1])
+def test_configuration_version_rejects_a_non_positive_registry_version(registry_version: int) -> None:
+    with pytest.raises(ValidationError, match="greater than or equal to 1"):
+        ConfigurationVersion(
+            config_id="20260808T1200-aaaaaaaa",
+            registry_version=registry_version,
+            package_checksum="a" * 64,
+            declared_content={},
+            created_at=datetime.now(timezone.utc),
+        )
+
+
+def test_configuration_version_is_frozen() -> None:
+    version = ConfigurationVersion(
+        config_id="20260808T1200-aaaaaaaa",
+        registry_version=1,
+        package_checksum="a" * 64,
+        declared_content={},
+        created_at=datetime.now(timezone.utc),
+    )
+
+    with pytest.raises(ValidationError, match="frozen"):
+        version.registry_version = 2  # type: ignore[misc]
+
+
+_ALLOWED_STORE_CONFIGURATION_METHODS = frozenset(
+    {
+        "configuration_exists",
+        "create_configuration",
+        "add_configuration_version",
+        "lookup_configuration",
+        "lookup_configuration_version",
+        "list_configuration_versions",
+    }
+)
+_ALLOWED_PROJECTION_CONFIGURATION_METHODS = frozenset(
+    {
+        "create_configuration",
+        "add_configuration_version",
+        "lookup_configuration",
+        "lookup_configuration_version",
+        "list_configuration_versions",
+    }
+)
+
+
+def test_no_public_configuration_method_deletes_or_updates_a_version() -> None:
+    """Configuration versions are append-only. Pins the exact set of public
+    configuration-facing methods on ``ProductProjection`` and both relational stores,
+    structurally, rather than by name-guessing for words like "delete": a future
+    ``delete_configuration_version()`` or ``update_configuration_version()`` would sail
+    through ``test_public_surface_is_exactly_the_supported_contract`` undetected, since that
+    test pins only the module's ``__all__``, not method names on these classes.
+    """
+    for cls, allowed in (
+        (SQLiteRunStore, _ALLOWED_STORE_CONFIGURATION_METHODS),
+        (PostgreSQLRunStore, _ALLOWED_STORE_CONFIGURATION_METHODS),
+        (ProductProjection, _ALLOWED_PROJECTION_CONFIGURATION_METHODS),
+    ):
+        public = {
+            name
+            for name in dir(cls)
+            if not name.startswith("_") and "configuration" in name.lower() and callable(getattr(cls, name))
+        }
+        assert public == allowed, f"{cls.__name__} exposes unexpected configuration methods: {public - allowed}"
+
+    # Belt-and-suspenders directly on the SQL surface: no statement anywhere in the store
+    # module issues a DELETE or UPDATE against the append-only configuration_versions table.
+    source = Path(product_store_store.__file__).read_text(encoding="utf-8")
+    assert not re.search(r"\b(DELETE\s+FROM|UPDATE)\s+configuration_versions\b", source, re.IGNORECASE)
+
+
+def test_created_configuration_round_trips_its_first_version(provider: ProductProjection) -> None:
+    package = _configuration_package()
+
+    version = provider.create_configuration(package)
+
+    assert version.registry_version == 1
+    assert version.package_checksum == package.checksum()
+    assert version.declared_content == package.declared_content()
+    summary = provider.lookup_configuration(version.config_id)
+    assert summary.available
+    assert summary.value is not None
+    assert summary.value.config_id == version.config_id
+    assert provider.lookup_configuration_version(version.config_id, 1).value == version
+    assert provider.list_configuration_versions(version.config_id) == (version,)
+
+
+def test_insert_configuration_version_row_rejects_a_checksum_content_mismatch(tmp_path: Path) -> None:
+    """The store trusts ``package.checksum()`` and separately persists
+    ``package.declared_content()``; nothing else checks they correspond, and an append-only
+    table gets no later chance to catch drift between the two."""
+    store = SQLiteRunStore(tmp_path / "records.sqlite3")
+    first = store.create_configuration(_configuration_package())
+    mismatched = ConfigurationVersion(
+        config_id=first.config_id,
+        registry_version=2,
+        package_checksum="a" * 64,
+        declared_content={"does": "not-match-the-checksum-above"},
+        created_at=datetime.now(timezone.utc),
+    )
+
+    connection = store._connect()
+    try:
+        cursor = connection.cursor()
+        with pytest.raises(AssertionError, match="does not digest"):
+            store._insert_configuration_version_row(cursor, mismatched)
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("profile", ["local", "production"])
+def test_configuration_registry_survives_store_reconstruction(profile: str, tmp_path: Path) -> None:
+    fake_s3 = _FakeS3()
+
+    def build() -> ProductProjection:
+        if profile == "local":
+            return local_product_projection(tmp_path / "cache")
+        return ProductProjection(
+            PostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3")),
+            S3ArtifactStore(fake_s3, bucket="artifacts"),
+        )
+
+    before_restart = build()
+    first = before_restart.create_configuration(_configuration_package())
+    second, _ = before_restart.add_configuration_version(first.config_id, _configuration_package(verify_ssl=False))
+
+    after_restart = build()
+
+    assert after_restart.lookup_configuration(first.config_id).available
+    assert after_restart.list_configuration_versions(first.config_id) == (first, second)
+    assert after_restart.lookup_configuration_version(first.config_id, 2) == product_store.LookupResult(value=second)
+
+
+def test_distinct_configurations_may_share_identical_package_content(provider: ProductProjection) -> None:
+    package = _configuration_package()
+
+    first = provider.create_configuration(package)
+    second = provider.create_configuration(package)
+
+    assert first.config_id != second.config_id
+    assert first.package_checksum == second.package_checksum
+    assert first.registry_version == second.registry_version == 1
+
+
+def test_configuration_reads_are_scoped_to_their_own_configuration_with_two_in_one_store(
+    provider: ProductProjection,
+) -> None:
+    """Every scoped read must stay scoped even when a second configuration exists in the same
+    store and happens to share a registry_version number or a package checksum with the first --
+    a predicate that also matched every row would be indistinguishable from a correctly scoped
+    one until two configurations with overlapping numbers are actually present together.
+    """
+    package_a = _configuration_package()
+    package_b = _configuration_package(url="https://demo.netbox.dev/tenant-b")
+    config_a = provider.create_configuration(package_a)
+    config_b = provider.create_configuration(package_b)
+    config_a_v2, _ = provider.add_configuration_version(config_a.config_id, _configuration_package(verify_ssl=False))
+    # config_b's second version shares its checksum with config_a's first version -- a checksum
+    # that has never been registered under config_b before, so this is a plain new-checksum
+    # insert, not yet the dedup path exercised below.
+    config_b_v2, created = provider.add_configuration_version(config_b.config_id, package_a)
+    assert created is True
+    assert config_b_v2.config_id == config_b.config_id
+
+    # list_configuration_versions: config_a's own two rows, none of config_b's.
+    assert provider.list_configuration_versions(config_a.config_id) == (config_a, config_a_v2)
+    assert provider.list_configuration_versions(config_b.config_id) == (config_b, config_b_v2)
+
+    # lookup_configuration_version: both configurations have a registry_version 1; a lookup for
+    # one must resolve to its own row, never the other's.
+    looked_up_a = provider.lookup_configuration_version(config_a.config_id, 1)
+    looked_up_b = provider.lookup_configuration_version(config_b.config_id, 1)
+    assert looked_up_a.value == config_a
+    assert looked_up_b.value == config_b
+
+    # lookup_configuration: a nonexistent ID must be unavailable even though real configurations
+    # exist in the same store.
+    missing = provider.lookup_configuration("nonexistent-configuration")
+    assert not missing.available
+    assert missing.reason == "configuration-not-found"
+
+    # The checksum-dedup path: config_b now already has a version with config_a's checksum
+    # (config_b_v2, above). Registering that same content again must resolve to config_b's own
+    # row, not config_a's, even though config_a also has a version with that checksum.
+    replay, replay_created = provider.add_configuration_version(config_b.config_id, package_a)
+    assert replay_created is False
+    assert replay == config_b_v2
+
+
+def test_adding_a_version_with_a_new_checksum_allocates_the_next_integer(provider: ProductProjection) -> None:
+    first = provider.create_configuration(_configuration_package())
+
+    version, created = provider.add_configuration_version(first.config_id, _configuration_package(verify_ssl=False))
+
+    assert created is True
+    assert version.registry_version == 2
+    assert provider.list_configuration_versions(first.config_id) == (first, version)
+
+
+def test_adding_a_version_with_a_known_checksum_returns_the_existing_version_and_creates_no_row(
+    provider: ProductProjection,
+) -> None:
+    package = _configuration_package()
+    first = provider.create_configuration(package)
+
+    replay, created = provider.add_configuration_version(first.config_id, package)
+
+    assert created is False
+    assert replay == first
+    assert provider.list_configuration_versions(first.config_id) == (first,)
+
+
+def test_create_configuration_raises_a_typed_error_on_a_config_id_collision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``config_id`` uniqueness violation must not let the raw driver ``IntegrityError``
+    escape a public API, like every sibling method (``DuplicateRunError``,
+    ``DuplicateArtifactError``, ``DuplicatePrefectExecutionError``)."""
+    store = SQLiteRunStore(tmp_path / "records.sqlite3")
+    first = store.create_configuration(_configuration_package())
+    monkeypatch.setattr(product_store_store, "_generate_config_id", lambda: first.config_id)
+
+    with pytest.raises(DuplicateConfigurationError, match=re.escape(first.config_id)):
+        store.create_configuration(_configuration_package(verify_ssl=False))
+
+
+def test_add_configuration_version_on_unknown_configuration_is_refused(provider: ProductProjection) -> None:
+    with pytest.raises(ConfigurationNotFoundError, match="unavailable"):
+        provider.add_configuration_version("missing-configuration", _configuration_package())
+
+
+def test_unknown_configuration_lookup_and_list_are_explicit(provider: ProductProjection) -> None:
+    missing = provider.lookup_configuration("missing-configuration")
+    assert not missing.available
+    assert missing.reason == "configuration-not-found"
+    assert provider.list_configuration_versions("missing-configuration") == ()
+    assert provider.lookup_configuration_version("missing-configuration", 1).reason == "configuration-version-not-found"
+
+
+def test_registration_rejects_an_inline_credential_value_before_any_persistence(tmp_path: Path) -> None:
+    database = tmp_path / "local.sqlite3"
+    projection = ProductProjection(SQLiteRunStore(database), FileArtifactStore(tmp_path / "objects"))
+    canary = "inline-credential-canary-649"
+    hostile = ConfigurationPackage.model_validate(_configuration_declaration(token=canary))
+
+    with pytest.raises(CredentialConfigurationError):
+        projection.create_configuration(hostile)
+
+    assert canary.encode() not in database.read_bytes()
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM configurations").fetchone() == (0,)
+
+
+def test_registration_rejects_an_inline_credential_value_on_an_existing_configuration(
+    provider: ProductProjection,
+) -> None:
+    first = provider.create_configuration(_configuration_package())
+    canary = "inline-credential-canary-existing-649"
+    hostile = ConfigurationPackage.model_validate(_configuration_declaration(token=canary))
+
+    with pytest.raises(CredentialConfigurationError):
+        provider.add_configuration_version(first.config_id, hostile)
+
+    assert provider.list_configuration_versions(first.config_id) == (first,)
+
+
+def test_concurrent_new_checksums_allocate_distinct_sequential_versions_on_both_profiles(
+    provider: ProductProjection,
+) -> None:
+    first = provider.create_configuration(_configuration_package())
+
+    def add(position: int) -> ConfigurationVersion:
+        version, _ = provider.add_configuration_version(
+            first.config_id, _configuration_package(url=f"https://demo.netbox.dev/{position}")
+        )
+        return version
+
+    # Two racers is enough to exercise sequential allocation cheaply; the higher fan-out
+    # this budget is actually measured to support is covered separately below.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(add, position) for position in range(2, 4)]
+        results = [future.result(timeout=30) for future in futures]
+
+    versions = sorted(version.registry_version for version in results)
+    assert versions == [2, 3]
+    assert len(provider.list_configuration_versions(first.config_id)) == 3
+
+
+def test_concurrent_new_checksums_allocate_distinct_versions_at_eight_writers_on_both_profiles(
+    provider: ProductProjection,
+) -> None:
+    """The measured, supported concurrency degree for ``add_configuration_version``: 8
+    concurrent distinct-checksum callers (see the comment on
+    ``_CONFIGURATION_VERSION_ATTEMPTS``). Runs reliably; not flaky across repeated runs.
+    """
+    first = provider.create_configuration(_configuration_package())
+
+    def add(position: int) -> ConfigurationVersion:
+        version, _ = provider.add_configuration_version(
+            first.config_id, _configuration_package(url=f"https://demo.netbox.dev/{position}")
+        )
+        return version
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(add, position) for position in range(2, 10)]
+        results = [future.result(timeout=30) for future in futures]
+
+    versions = sorted(version.registry_version for version in results)
+    assert versions == list(range(2, 10))
+    assert len(provider.list_configuration_versions(first.config_id)) == 9
+
+
+def test_configuration_version_allocation_exhaustion_raises_a_typed_error(tmp_path: Path) -> None:
+    """Exhausting every allocation attempt raises a ``ValueError`` subclass, consistent with
+    the store's ``DuplicateRunError`` / ``WriteAdmissionConflictError`` idiom, not a bare
+    ``RuntimeError`` that a caller catching ``ValueError`` would not see."""
+    database = tmp_path / "records.sqlite3"
+    first = SQLiteRunStore(database).create_configuration(_configuration_package())
+    store = _AlwaysConflictingConfigurationVersionStore(database)
+
+    with pytest.raises(ConfigurationVersionAllocationError):
+        store.add_configuration_version(first.config_id, _configuration_package(verify_ssl=False))
+
+
+@pytest.mark.parametrize("profile", ["local", "production"])
+def test_concurrent_identical_checksums_deduplicate_to_exactly_one_row_on_both_profiles(
+    profile: str, tmp_path: Path
+) -> None:
+    """Every caller -- winner and losers alike -- must resolve in exactly one
+    unique-violation round. A mutant that retries the insert loop before re-querying by
+    checksum reaches the same outcome (one row, correct dedup) at three times the
+    database work; only the round count distinguishes it, so that is what this asserts.
+    """
+    if profile == "local":
+        records: _RoundCountingSQLiteStore | _RoundCountingPostgreSQLRunStore = _RoundCountingSQLiteStore(
+            tmp_path / "records.sqlite3"
+        )
+        artifacts = FileArtifactStore(tmp_path / "objects")
+    else:
+        records = _RoundCountingPostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3"))
+        artifacts = S3ArtifactStore(_FakeS3(), bucket="artifacts")
+    provider = ProductProjection(records, artifacts)
+    first = provider.create_configuration(_configuration_package())
+    package = _configuration_package(verify_ssl=False)
+
+    def add(_: int) -> tuple[ConfigurationVersion, bool, int]:
+        records.version_insert_rounds.count = 0
+        version, created = provider.add_configuration_version(first.config_id, package)
+        return version, created, records.version_insert_rounds.count
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(add, position) for position in range(8)]
+        results = [future.result(timeout=30) for future in futures]
+
+    assert sum(created for _, created, _ in results) == 1
+    versions = {version.registry_version for version, _, _ in results}
+    assert versions == {2}
+    assert len(provider.list_configuration_versions(first.config_id)) == 2
+    rounds = [rounds for _, _, rounds in results]
+    assert rounds == [1] * 8, f"expected every caller to resolve in exactly one round, got {rounds}"
+
+
+# --- Run-to-configuration binding columns (deliberately inert so far) -------------------------
+
+_LEGACY_PRODUCT_RUNS_TABLE = """
+CREATE TABLE product_runs (
+    run_id TEXT PRIMARY KEY, operation TEXT NOT NULL, configuration_reference TEXT NOT NULL,
+    actor TEXT, audit_links TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
+    phase TEXT NOT NULL, outcome TEXT, summary TEXT NOT NULL, results TEXT NOT NULL
+);
+"""
+_CONFIGURATION_BINDING_COLUMN_NAMES = ("config_id", "registry_version", "package_checksum")
+
+
+def test_fresh_sqlite_database_gains_the_nullable_binding_columns(tmp_path: Path) -> None:
+    database = tmp_path / "records.sqlite3"
+    SQLiteRunStore(database)
+
+    with sqlite3.connect(database) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(product_runs)")}
+
+    assert set(_CONFIGURATION_BINDING_COLUMN_NAMES) <= columns
+
+
+def test_product_run_model_declares_no_configuration_binding_fields() -> None:
+    assert not set(_CONFIGURATION_BINDING_COLUMN_NAMES) & set(ProductRun.model_fields)
+
+
+def test_preexisting_database_is_migrated_forward_and_keeps_its_legacy_row(tmp_path: Path) -> None:
+    database = tmp_path / "legacy.sqlite3"
+    legacy_started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    with sqlite3.connect(database) as connection:
+        connection.execute(_LEGACY_PRODUCT_RUNS_TABLE)
+        connection.execute(
+            "INSERT INTO product_runs (run_id, operation, configuration_reference, actor, audit_links, "
+            "started_at, finished_at, phase, outcome, summary, results) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "legacy-run-001",
+                "plan",
+                "sha256:legacy",
+                None,
+                "[]",
+                legacy_started_at.isoformat(),
+                None,
+                "planning",
+                None,
+                "{}",
+                "{}",
+            ),
+        )
+
+    store = SQLiteRunStore(database)
+
+    with sqlite3.connect(database) as connection:
+        columns = {row[1]: row for row in connection.execute("PRAGMA table_info(product_runs)")}
+        row = connection.execute(
+            "SELECT config_id, registry_version, package_checksum FROM product_runs WHERE run_id = ?",
+            ("legacy-run-001",),
+        ).fetchone()
+
+    assert set(_CONFIGURATION_BINDING_COLUMN_NAMES) <= set(columns)
+    assert row == (None, None, None)
+    loaded = store.lookup("legacy-run-001")
+    assert loaded.available
+    assert loaded.value is not None
+    assert loaded.value.operation == "plan"
+    assert loaded.value.configuration_reference == "sha256:legacy"
+
+
+def test_migration_is_idempotent_across_repeated_store_construction(tmp_path: Path) -> None:
+    database = tmp_path / "records.sqlite3"
+    SQLiteRunStore(database)
+    SQLiteRunStore(database)
+    SQLiteRunStore(database)
+
+    with sqlite3.connect(database) as connection:
+        columns = [row[1] for row in connection.execute("PRAGMA table_info(product_runs)")]
+
+    for name in _CONFIGURATION_BINDING_COLUMN_NAMES:
+        assert columns.count(name) == 1
+
+
+def test_existing_run_lifecycle_is_unaffected_by_the_new_binding_columns(provider: ProductProjection) -> None:
+    provider.create_run(_run())
+    provider.add_prefect_execution("run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1))
+    provider.publish_artifact("run-001", artifact_id="plan", kind="plan", media_type="application/json", data=b"{}")
+
+    provider.finish_run("run-001", phase="planned", outcome="succeeded", summary={"create": 1}, results={})
+
+    loaded = provider.lookup_run("run-001").value
+    assert loaded is not None
+    assert loaded.phase == "planned"
+    assert loaded.outcome == "succeeded"
+    assert "config_id" not in ProductRun.model_fields
+
+
+class _FakePostgreSQLDatabase:
+    """In-memory PostgreSQL catalog modelling the three semantics a literal SQLite file
+    cannot: transactional DDL, transaction abort on error, and ``ADD CONSTRAINT`` raising
+    ``42710`` when the named constraint already exists. This is what proves the schema
+    bootstrap fix itself; the general CRUD tests above use the real-SQLite-backed
+    ``_ConnectionAdapter`` instead, which does not model those three semantics.
+    """
+
+    def __init__(
+        self,
+        *,
+        tables: frozenset[str] = frozenset(),
+        columns: dict[str, frozenset[str]] | None = None,
+    ) -> None:
+        self.tables: set[str] = set(tables)
+        self.columns: dict[str, set[str]] = {name: set(cols) for name, cols in (columns or {}).items()}
+        self.constraints: set[str] = set()
+
+    def connect(self) -> _FakePostgreSQLConnection:
+        return _FakePostgreSQLConnection(self)
+
+
+class _FakePostgreSQLConnection:
+    def __init__(self, database: _FakePostgreSQLDatabase) -> None:
+        self.database = database
+        self.pending_tables: set[str] = set()
+        self.pending_columns: dict[str, set[str]] = {}
+        self.pending_constraints: set[str] = set()
+        self.aborted = False
+
+    def cursor(self) -> _FakePostgreSQLCursor:
+        return _FakePostgreSQLCursor(self)
+
+    def commit(self) -> None:
+        self.database.tables |= self.pending_tables
+        for table, added in self.pending_columns.items():
+            self.database.columns.setdefault(table, set()).update(added)
+        self.database.constraints |= self.pending_constraints
+        self._discard_pending()
+
+    def rollback(self) -> None:
+        self._discard_pending()
+
+    def _discard_pending(self) -> None:
+        self.pending_tables = set()
+        self.pending_columns = {}
+        self.pending_constraints = set()
+        self.aborted = False
+
+    def close(self) -> None:
+        pass
+
+
+_FAKE_CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)")
+_FAKE_ALTER_ADD_COLUMN = re.compile(r"^ALTER TABLE (\w+) ADD COLUMN (\w+)")
+_FAKE_ALTER_ADD_CONSTRAINT = re.compile(r"^ALTER TABLE \w+ ADD CONSTRAINT (\w+)")
+
+
+class _FakePostgreSQLCursor:
+    """Cursor covering only the statements ``_initialize()`` issues against this fake."""
+
+    def __init__(self, connection: _FakePostgreSQLConnection) -> None:
+        self._connection = connection
+        self._rows: tuple[tuple[Any, ...], ...] = ()
+
+    def execute(self, operation: str, parameters: Sequence[Any] = ()) -> _FakePostgreSQLCursor:
+        connection = self._connection
+        if connection.aborted:
+            raise _FakeDriverError(sqlstate="25P02")  # current transaction is aborted
+        try:
+            self._rows = self._dispatch(operation.strip(), parameters)
+        except _FakeDriverError:
+            connection.aborted = True
+            raise
+        return self
+
+    def _dispatch(self, operation: str, parameters: Sequence[Any]) -> tuple[tuple[Any, ...], ...]:
+        connection = self._connection
+        database = connection.database
+        if match := _FAKE_CREATE_TABLE.match(operation):
+            table = match.group(1)
+            if table not in database.tables:
+                connection.pending_tables.add(table)
+            return ()
+        if operation.startswith(("CREATE UNIQUE INDEX IF NOT EXISTS", "CREATE INDEX IF NOT EXISTS")):
+            return ()
+        if "information_schema.columns" in operation:
+            table = parameters[0]
+            visible = database.columns.get(table, set()) | connection.pending_columns.get(table, set())
+            return tuple((name,) for name in sorted(visible))
+        if match := _FAKE_ALTER_ADD_COLUMN.match(operation):
+            table, column = match.groups()
+            if table not in (database.tables | connection.pending_tables):
+                raise _FakeDriverError(sqlstate="42P01")  # relation "{table}" does not exist
+            connection.pending_columns.setdefault(table, set()).add(column)
+            return ()
+        if "information_schema.table_constraints" in operation:
+            name = parameters[-1]
+            visible = database.constraints | connection.pending_constraints
+            return ((1,),) if name in visible else ()
+        if match := _FAKE_ALTER_ADD_CONSTRAINT.match(operation):
+            name = match.group(1)
+            visible = database.constraints | connection.pending_constraints
+            if name in visible:
+                msg = f'constraint "{name}" for relation "product_runs" already exists'
+                raise _FakeDriverError(sqlstate="42710")
+            connection.pending_constraints.add(name)
+            return ()
+        msg = f"the fake PostgreSQL database does not model this statement: {operation!r}"
+        raise AssertionError(msg)
+
+    @property
+    def rowcount(self) -> int:
+        return len(self._rows)
+
+    def fetchone(self) -> tuple[Any, ...] | None:
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self) -> tuple[tuple[Any, ...], ...]:
+        return self._rows
+
+    def close(self) -> None:
+        pass
+
+
+_PARENT_PRODUCT_RUNS_COLUMNS = frozenset(
+    {
+        "run_id",
+        "operation",
+        "configuration_reference",
+        "actor",
+        "audit_links",
+        "started_at",
+        "finished_at",
+        "phase",
+        "outcome",
+        "summary",
+        "results",
+    }
+)
+_PARENT_TABLES = frozenset(
+    {"product_runs", "artifact_refs", "prefect_executions", "mutation_receipts", "write_admissions", "audit_events"}
+)
+
+
+def test_postgresql_initialize_succeeds_twice_on_a_fresh_catalog() -> None:
+    database = _FakePostgreSQLDatabase()
+
+    PostgreSQLRunStore(database.connect)
+    assert {"configurations", "configuration_versions"} <= database.tables
+
+    PostgreSQLRunStore(database.connect)
+    assert {"configurations", "configuration_versions"} <= database.tables
+
+
+def test_postgresql_initialize_succeeds_twice_on_a_prepopulated_parent_catalog() -> None:
+    """The realistic upgrade path: every parent table already exists, the two registry tables
+    do not yet. Regression coverage for the silent partial-initialization defect, where the old
+    probe-and-rollback introspection wiped the uncommitted ``CREATE TABLE`` for both new tables
+    before they ever committed, while ``_initialize()`` still reported success.
+    """
+    database = _FakePostgreSQLDatabase(
+        tables=_PARENT_TABLES,
+        columns={"product_runs": _PARENT_PRODUCT_RUNS_COLUMNS},
+    )
+
+    PostgreSQLRunStore(database.connect)
+    assert {"configurations", "configuration_versions"} <= database.tables
+
+    PostgreSQLRunStore(database.connect)
+    assert {"configurations", "configuration_versions"} <= database.tables
+
+
+def test_postgresql_dialect_reads_columns_via_information_schema_without_probing_pragma() -> None:
+    database = _FakePostgreSQLDatabase(
+        tables=frozenset({"product_runs"}),
+        columns={"product_runs": frozenset({"run_id", "operation"})},
+    )
+    store = object.__new__(PostgreSQLRunStore)
+    store._placeholder = "%s"
+    store._dialect = "postgresql"
+    cursor = database.connect().cursor()
+
+    columns = store._read_product_run_columns(cursor)
+
+    assert columns == frozenset({"run_id", "operation"})
+
+
+def test_postgresql_dialect_binding_constraint_checks_existence_before_creating() -> None:
+    database = _FakePostgreSQLDatabase(tables=frozenset({"product_runs"}))
+    store = object.__new__(PostgreSQLRunStore)
+    store._placeholder = "%s"
+    store._dialect = "postgresql"
+
+    first_connection = database.connect()
+    store._ensure_configuration_binding_constraint(first_connection.cursor())
+    first_connection.commit()
+
+    assert product_store_store._CONFIGURATION_BINDING_CONSTRAINT in database.constraints
+
+    # A second pass over the same catalog must check existence first, not attempt-and-catch:
+    # a blind re-attempt would raise 42710 here.
+    second_connection = database.connect()
+    store._ensure_configuration_binding_constraint(second_connection.cursor())
+    second_connection.commit()
+
+
+def test_postgresql_schema_bootstrap_propagates_a_non_duplicate_alter_failure() -> None:
+    """``_is_duplicate_column_error`` must not swallow a genuine ALTER failure."""
+    connection = MagicMock()
+    connection.cursor.return_value.fetchall.return_value = []
+    connection.cursor.return_value.fetchone.return_value = None
+
+    def side_effect(operation: str, parameters: tuple[Any, ...] = ()) -> MagicMock:  # noqa: ARG001
+        # pylint: disable=unused-argument
+        if operation.strip().startswith("ALTER TABLE product_runs ADD COLUMN"):
+            raise _FakeDriverError(sqlstate="42501")
+        return connection.cursor.return_value
+
+    connection.cursor.return_value.execute.side_effect = side_effect
+
+    with pytest.raises(_FakeDriverError):
+        PostgreSQLRunStore(lambda: connection)
+
+    connection.rollback.assert_called_once_with()
+    connection.close.assert_called_once_with()
+
+
+def _reachable_postgresql_dsn() -> str | None:
+    """Return a reachable PostgreSQL DSN from ``PRODUCT_STORE_TEST_POSTGRESQL_DSN``, or None.
+
+    ``psycopg`` is not a project dependency (see the docstring on the real-server test below),
+    so its absence is also a reason to skip, not a collection-time error.
+    """
+    dsn = os.environ.get("PRODUCT_STORE_TEST_POSTGRESQL_DSN")
+    if not dsn:
+        return None
+    try:
+        import psycopg  # ty: ignore[unresolved-import]  # optional dep; pylint: disable=import-outside-toplevel,import-error
+    except ImportError:
+        return None
+    try:
+        with psycopg.connect(dsn, connect_timeout=2) as connection:
+            connection.execute("SELECT 1")
+    except Exception:  # noqa: BLE001 - pylint: disable=broad-exception-caught
+        return None  # any connectivity or driver failure means "skip".
+    return dsn
+
+
+@pytest.mark.integration
+def test_postgresql_run_store_initializes_against_a_real_server() -> None:
+    """Real-server confirmation of the schema-bootstrap fix, and of the run-to-configuration
+    binding columns and CHECK constraint that were otherwise only verified by hand.
+
+    WARNING: this test runs ``DROP SCHEMA public CASCADE`` against whatever database the DSN
+    points at, which destroys every table in that database's ``public`` schema. Point the DSN
+    only at a disposable, single-purpose database (e.g. the throwaway container below) — never
+    at a shared or persistent development database.
+
+    Opt in with ``-m integration`` and a reachable ``PRODUCT_STORE_TEST_POSTGRESQL_DSN``, e.g.::
+
+        docker run -d --rm --name cf002-pg-fix -e POSTGRES_PASSWORD=probe -e POSTGRES_DB=probe \\
+            -p 55432:5432 postgres:18-alpine
+        PRODUCT_STORE_TEST_POSTGRESQL_DSN="host=127.0.0.1 port=55432 user=postgres password=probe dbname=probe" \\
+            uv run --with 'psycopg[binary]' python -m pytest -m integration \\
+            tests/product_store/test_contract.py::test_postgresql_run_store_initializes_against_a_real_server
+
+    Covers the same three constructions the in-memory fake proves above, now against a real
+    server: a fresh catalog (twice consecutively), and the pre-populated parent-tables upgrade
+    path (twice consecutively). Also asserts, against the real server, that construction leaves
+    ``product_runs`` with its three binding columns and the binding CHECK constraint in place.
+    """
+    dsn = _reachable_postgresql_dsn()
+    if dsn is None:
+        pytest.skip("psycopg is not installed, or PRODUCT_STORE_TEST_POSTGRESQL_DSN is unset/unreachable")
+    import psycopg  # ty: ignore[unresolved-import]  # optional dep; pylint: disable=import-outside-toplevel,import-error
+
+    def connect() -> psycopg.Connection:
+        return psycopg.connect(dsn)
+
+    def reset_schema() -> None:
+        with psycopg.connect(dsn) as admin:
+            admin.execute("DROP SCHEMA public CASCADE")
+            admin.execute("CREATE SCHEMA public")
+            admin.commit()
+
+    def committed_tables() -> set[str]:
+        with psycopg.connect(dsn) as admin:
+            rows = admin.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+            ).fetchall()
+        return {row[0] for row in rows}
+
+    def product_runs_columns() -> set[str]:
+        with psycopg.connect(dsn) as admin:
+            rows = admin.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'product_runs' AND table_schema = current_schema()"
+            ).fetchall()
+        return {row[0] for row in rows}
+
+    def binding_constraint_exists() -> bool:
+        with psycopg.connect(dsn) as admin:
+            row = admin.execute(
+                "SELECT 1 FROM information_schema.table_constraints "
+                "WHERE table_name = 'product_runs' AND constraint_name = %s AND table_schema = current_schema()",
+                (product_store_store._CONFIGURATION_BINDING_CONSTRAINT,),
+            ).fetchone()
+        return row is not None
+
+    registry_tables = {"configurations", "configuration_versions"}
+    binding_columns = {"config_id", "registry_version", "package_checksum"}
+
+    # A fresh catalog, twice consecutively.
+    reset_schema()
+    PostgreSQLRunStore(connect)
+    assert registry_tables <= committed_tables()
+    assert binding_columns <= product_runs_columns()
+    assert binding_constraint_exists()
+    PostgreSQLRunStore(connect)
+    assert registry_tables <= committed_tables()
+    assert binding_columns <= product_runs_columns()
+    assert binding_constraint_exists()
+
+    # The realistic upgrade path: every parent table pre-exists, the two registry tables do not.
+    reset_schema()
+    parent_statements = [
+        statement.strip()
+        for statement in product_store_store._SCHEMA.split(";")
+        if statement.strip() and not any(table in statement for table in registry_tables)
+    ]
+    with psycopg.connect(dsn) as admin:
+        for statement in parent_statements:
+            admin.execute(statement)
+        admin.commit()
+    PostgreSQLRunStore(connect)
+    assert registry_tables <= committed_tables()
+    assert binding_columns <= product_runs_columns()
+    assert binding_constraint_exists()
+    PostgreSQLRunStore(connect)
+    assert registry_tables <= committed_tables()
+    assert binding_columns <= product_runs_columns()
+    assert binding_constraint_exists()
+
+    # The CHECK constraint must actually enforce the binding invariant against a real server,
+    # not merely exist by name.
+    _assert_real_postgresql_refuses_partial_configuration_binding(dsn)
+
+
+def _assert_real_postgresql_refuses_partial_configuration_binding(dsn: str) -> None:
+    """Attempt every partial-binding combination on INSERT, then a partial UPDATE, against a
+    real PostgreSQL server, and confirm the two legal (fully-unbound and fully-bound) states are
+    still accepted. Factored out of the test above only to keep that test's statement count
+    reasonable; it has exactly one caller.
+    """
+    import psycopg  # ty: ignore[unresolved-import]  # optional dep; pylint: disable=import-outside-toplevel,import-error
+
+    def raw_insert(
+        run_id: str, *, config_id: str | None, registry_version: int | None, package_checksum: str | None
+    ) -> None:
+        with psycopg.connect(dsn) as admin:
+            admin.execute(
+                "INSERT INTO product_runs (run_id, operation, configuration_reference, actor, audit_links, "
+                "started_at, finished_at, phase, outcome, summary, results, config_id, registry_version, "
+                "package_checksum) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    run_id,
+                    "plan",
+                    "sha256:raw",
+                    None,
+                    "[]",
+                    datetime.now(timezone.utc).isoformat(),
+                    None,
+                    "planning",
+                    None,
+                    "{}",
+                    "{}",
+                    config_id,
+                    registry_version,
+                    package_checksum,
+                ),
+            )
+
+    for index, (config_id, registry_version, package_checksum) in enumerate(_PARTIAL_CONFIGURATION_BINDING_TUPLES):
+        with pytest.raises(psycopg.Error):
+            raw_insert(
+                f"raw-partial-{index}",
+                config_id=config_id,
+                registry_version=registry_version,
+                package_checksum=package_checksum,
+            )
+
+    raw_insert("raw-unbound", config_id=None, registry_version=None, package_checksum=None)
+    raw_insert("raw-bound", config_id="20260101T0000-aaaaaaaa", registry_version=1, package_checksum="a" * 64)
+    with psycopg.connect(dsn) as admin:
+        accepted = {
+            row[0]
+            for row in admin.execute(
+                "SELECT run_id FROM product_runs WHERE run_id IN (%s, %s)", ("raw-unbound", "raw-bound")
+            ).fetchall()
+        }
+    assert accepted == {"raw-unbound", "raw-bound"}
+
+    with pytest.raises(psycopg.Error), psycopg.connect(dsn) as admin:
+        admin.execute(
+            "UPDATE product_runs SET config_id = %s WHERE run_id = %s",
+            ("20260101T0000-bbbbbbbb", "raw-unbound"),
+        )
+
+    with psycopg.connect(dsn) as admin:
+        unchanged = admin.execute(
+            "SELECT config_id, registry_version, package_checksum FROM product_runs WHERE run_id = %s",
+            ("raw-unbound",),
+        ).fetchone()
+    assert unchanged == (None, None, None)
+
+
+_PARTIAL_CONFIGURATION_BINDING_TUPLES: list[tuple[str | None, int | None, str | None]] = [
+    ("20260101T0000-aaaaaaaa", None, None),
+    (None, 1, None),
+    (None, None, "a" * 64),
+    ("20260101T0000-aaaaaaaa", 1, None),
+    ("20260101T0000-aaaaaaaa", None, "a" * 64),
+    (None, 1, "a" * 64),
+]
+
+
+def _raw_insert_product_run(
+    connection: sqlite3.Connection,
+    run_id: str,
+    *,
+    config_id: str | None,
+    registry_version: int | None,
+    package_checksum: str | None,
+) -> None:
+    connection.execute(
+        "INSERT INTO product_runs (run_id, operation, configuration_reference, actor, audit_links, started_at, "
+        "finished_at, phase, outcome, summary, results, config_id, registry_version, package_checksum) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            run_id,
+            "plan",
+            "sha256:raw",
+            None,
+            "[]",
+            datetime.now(timezone.utc).isoformat(),
+            None,
+            "planning",
+            None,
+            "{}",
+            "{}",
+            config_id,
+            registry_version,
+            package_checksum,
+        ),
+    )
+    connection.commit()
+
+
+_PARTIAL_CONFIGURATION_BINDING_COMBINATIONS = [
+    pytest.param("20260101T0000-aaaaaaaa", None, None, id="only-config-id"),
+    pytest.param(None, 1, None, id="only-registry-version"),
+    pytest.param(None, None, "a" * 64, id="only-package-checksum"),
+    pytest.param("20260101T0000-aaaaaaaa", 1, None, id="missing-package-checksum"),
+    pytest.param("20260101T0000-aaaaaaaa", None, "a" * 64, id="missing-registry-version"),
+    pytest.param(None, 1, "a" * 64, id="missing-config-id"),
+]
+
+
+@pytest.mark.parametrize(
+    ("config_id", "registry_version", "package_checksum"), _PARTIAL_CONFIGURATION_BINDING_COMBINATIONS
+)
+def test_every_partial_configuration_binding_combination_is_refused_at_insert(
+    config_id: str | None, registry_version: int | None, package_checksum: str | None, tmp_path: Path
+) -> None:
+    database = tmp_path / "records.sqlite3"
+    SQLiteRunStore(database)
+
+    with sqlite3.connect(database) as connection, pytest.raises(sqlite3.IntegrityError, match="configuration-binding"):
+        _raw_insert_product_run(
+            connection,
+            "raw-run-001",
+            config_id=config_id,
+            registry_version=registry_version,
+            package_checksum=package_checksum,
+        )
+
+
+def test_fully_unbound_and_fully_bound_rows_are_both_accepted(tmp_path: Path) -> None:
+    database = tmp_path / "records.sqlite3"
+    SQLiteRunStore(database)
+
+    with sqlite3.connect(database) as connection:
+        _raw_insert_product_run(connection, "unbound-run", config_id=None, registry_version=None, package_checksum=None)
+        _raw_insert_product_run(
+            connection,
+            "bound-run",
+            config_id="20260101T0000-aaaaaaaa",
+            registry_version=1,
+            package_checksum="a" * 64,
+        )
+        rows = connection.execute("SELECT run_id FROM product_runs ORDER BY run_id").fetchall()
+
+    assert [row[0] for row in rows] == ["bound-run", "unbound-run"]
+
+
+def test_partial_configuration_binding_is_refused_on_update_too(tmp_path: Path) -> None:
+    database = tmp_path / "records.sqlite3"
+    store = SQLiteRunStore(database)
+    store.create(_run("update-target"))
+
+    with sqlite3.connect(database) as connection:
+        with pytest.raises(sqlite3.IntegrityError, match="configuration-binding"):
+            connection.execute(
+                "UPDATE product_runs SET config_id = ? WHERE run_id = ?",
+                ("20260101T0000-aaaaaaaa", "update-target"),
+            )
+        connection.rollback()
+        unchanged = connection.execute(
+            "SELECT config_id, registry_version, package_checksum FROM product_runs WHERE run_id = ?",
+            ("update-target",),
+        ).fetchone()
+
+    assert unchanged == (None, None, None)
+
+
+def test_reconstructing_the_store_restores_a_dropped_update_trigger(tmp_path: Path) -> None:
+    """Regression test: SQLite enforcement is a pair of triggers, and the existence check that
+    guards recreating them must require both by name, not just the BEFORE INSERT one.
+
+    Drop only the BEFORE UPDATE trigger, reconstruct the store, and confirm a partial UPDATE is
+    still refused. Before the fix, the existence check saw the surviving INSERT trigger, reported
+    the constraint as already present, and left the UPDATE trigger missing — silently accepting a
+    partial UPDATE it should have refused.
+    """
+    database = tmp_path / "records.sqlite3"
+    store = SQLiteRunStore(database)
+    store.create(_run("update-target"))
+
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TRIGGER product_runs_configuration_binding_update")
+        connection.commit()
+
+    SQLiteRunStore(database)
+
+    with sqlite3.connect(database) as connection:
+        with pytest.raises(sqlite3.IntegrityError, match="configuration-binding"):
+            connection.execute(
+                "UPDATE product_runs SET config_id = ? WHERE run_id = ?",
+                ("20260101T0000-aaaaaaaa", "update-target"),
+            )
+        connection.rollback()
+        unchanged = connection.execute(
+            "SELECT config_id, registry_version, package_checksum FROM product_runs WHERE run_id = ?",
+            ("update-target",),
+        ).fetchone()
+
+    assert unchanged == (None, None, None)
+
+
+def test_postgresql_dialect_binding_constraint_uses_a_check_constraint_not_a_trigger() -> None:
+    database = _FakePostgreSQLDatabase()
+
+    PostgreSQLRunStore(database.connect)
+
+    assert product_store_store._CONFIGURATION_BINDING_CONSTRAINT in database.constraints
+
+
+_CONFIGURATION_BINDING_COMBINATIONS_AND_LEGALITY = [
+    pytest.param(None, None, None, True, id="fully-unbound"),
+    pytest.param("20260101T0000-aaaaaaaa", 1, "a" * 64, True, id="fully-bound"),
+    pytest.param("20260101T0000-aaaaaaaa", None, None, False, id="only-config-id"),
+    pytest.param(None, 1, None, False, id="only-registry-version"),
+    pytest.param(None, None, "a" * 64, False, id="only-package-checksum"),
+    pytest.param("20260101T0000-aaaaaaaa", 1, None, False, id="missing-package-checksum"),
+    pytest.param("20260101T0000-aaaaaaaa", None, "a" * 64, False, id="missing-registry-version"),
+    pytest.param(None, 1, "a" * 64, False, id="missing-config-id"),
+]
+
+
+@pytest.mark.parametrize(
+    ("config_id", "registry_version", "package_checksum", "legal"),
+    _CONFIGURATION_BINDING_COMBINATIONS_AND_LEGALITY,
+)
+def test_configuration_binding_check_expression_permits_exactly_the_two_legal_states(
+    config_id: str | None,
+    registry_version: int | None,
+    package_checksum: str | None,
+    legal: bool,  # noqa: FBT001 - a parametrized case discriminator, not a caller-facing switch
+) -> None:
+    """Directly evaluate ``_CONFIGURATION_BINDING_CHECK_EXPRESSION`` -- the entire PostgreSQL
+    enforcement of the run-to-configuration binding invariant -- against all eight NULL/NOT-NULL
+    combinations of the three binding columns.
+
+    This does not go through a real PostgreSQL server, nor through SQLite's independent trigger
+    implementation of the same invariant (the triggers embed their own literal copy of this
+    logic, so they cannot catch a defect in this expression string). It evaluates the exact
+    string PostgreSQL's ``CHECK`` constraint is built from, in SQLite, by binding the three
+    candidate values as columns of a one-row subquery.
+    """
+    connection = sqlite3.connect(":memory:")
+    try:
+        row = connection.execute(
+            f"SELECT ({product_store_store._CONFIGURATION_BINDING_CHECK_EXPRESSION}) "  # noqa: S608
+            "FROM (SELECT ? AS config_id, ? AS registry_version, ? AS package_checksum)",
+            (config_id, registry_version, package_checksum),
+        ).fetchone()
+    finally:
+        connection.close()
+
+    assert bool(row[0]) is legal

@@ -12,15 +12,19 @@ from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from tempfile import mkdtemp
 from time import sleep
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 from pydantic import TypeAdapter
 
+from infrahub_sync.cache.paths import generate_run_id
+from infrahub_sync.configuration import ConfigurationPackage, validate_package_credentials
 from infrahub_sync.execution import REDACTED, redact
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store.models import (
     ArtifactReference,
     AuditEvent,
+    ConfigurationSummary,
+    ConfigurationVersion,
     LookupResult,
     MutationReceipt,
     PrefectExecutionLink,
@@ -67,16 +71,96 @@ CREATE TABLE IF NOT EXISTS audit_events (
 );
 CREATE INDEX IF NOT EXISTS audit_events_run_created
     ON audit_events (run_id, created_at);
+CREATE TABLE IF NOT EXISTS configurations (
+    config_id TEXT PRIMARY KEY, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS configuration_versions (
+    config_id TEXT NOT NULL, registry_version INTEGER NOT NULL, package_checksum TEXT NOT NULL,
+    declared_content TEXT NOT NULL, created_at TEXT NOT NULL,
+    PRIMARY KEY (config_id, registry_version),
+    FOREIGN KEY (config_id) REFERENCES configurations(config_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS configuration_versions_checksum
+    ON configuration_versions (config_id, package_checksum);
+"""
+
+# Nullable run-to-configuration binding columns on ``product_runs``. Added by an
+# introspection-guarded ALTER (see ``_migrate_product_runs_columns``) rather than baked into
+# the ``product_runs`` definition above, so a pre-existing deployment's table is migrated the
+# same way a brand-new one is initialized. Deliberately inert so far: no ``ProductRun`` field
+# reads or writes them, and nothing allocates a run into a registered configuration yet — only
+# the invariant that a row's three binding columns are either all NULL (unregistered) or all
+# NOT NULL (registered), so that a future writer inherits an already-enforced constraint
+# rather than introducing one.
+_CONFIGURATION_BINDING_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("config_id", "TEXT"),
+    ("registry_version", "INTEGER"),
+    ("package_checksum", "TEXT"),
+)
+_CONFIGURATION_BINDING_CONSTRAINT = "product_runs_configuration_binding_consistent"
+_CONFIGURATION_BINDING_CHECK_EXPRESSION = (
+    "(config_id IS NULL AND registry_version IS NULL AND package_checksum IS NULL) "
+    "OR (config_id IS NOT NULL AND registry_version IS NOT NULL AND package_checksum IS NOT NULL)"
+)
+_SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER_NAME = "product_runs_configuration_binding_insert"
+_SQLITE_CONFIGURATION_BINDING_UPDATE_TRIGGER_NAME = "product_runs_configuration_binding_update"
+# Both names must exist for the constraint to be considered present: SQLite enforcement is this
+# pair of triggers, not either one alone (see ``_configuration_binding_constraint_exists``).
+_SQLITE_CONFIGURATION_BINDING_TRIGGER_NAMES = (
+    _SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER_NAME,
+    _SQLITE_CONFIGURATION_BINDING_UPDATE_TRIGGER_NAME,
+)
+_SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER = f"""
+CREATE TRIGGER IF NOT EXISTS {_SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER_NAME}
+BEFORE INSERT ON product_runs
+WHEN NOT (
+    (NEW.config_id IS NULL AND NEW.registry_version IS NULL AND NEW.package_checksum IS NULL)
+    OR (NEW.config_id IS NOT NULL AND NEW.registry_version IS NOT NULL AND NEW.package_checksum IS NOT NULL)
+)
+BEGIN
+    SELECT RAISE(ABORT, 'product_runs configuration-binding columns must be all NULL or all NOT NULL');
+END
+"""
+_SQLITE_CONFIGURATION_BINDING_UPDATE_TRIGGER = f"""
+CREATE TRIGGER IF NOT EXISTS {_SQLITE_CONFIGURATION_BINDING_UPDATE_TRIGGER_NAME}
+BEFORE UPDATE ON product_runs
+WHEN NOT (
+    (NEW.config_id IS NULL AND NEW.registry_version IS NULL AND NEW.package_checksum IS NULL)
+    OR (NEW.config_id IS NOT NULL AND NEW.registry_version IS NOT NULL AND NEW.package_checksum IS NOT NULL)
+)
+BEGIN
+    SELECT RAISE(ABORT, 'product_runs configuration-binding columns must be all NULL or all NOT NULL');
+END
 """
 
 # Stable SQLite extended result codes. Python 3.10's sqlite3 module does not expose
 # their symbolic names even when an exception provides ``sqlite_errorcode``.
 _SQLITE_UNIQUE_CONSTRAINT_CODES = frozenset({1555, 2067})
 _POSTGRESQL_SCHEMA_CONFLICT_CODES = frozenset({"23505", "42P07", "42710"})
+_POSTGRESQL_DUPLICATE_COLUMN_CODE = "42701"
 _PREFECT_POSITION_ATTEMPTS = 3
 _RESULT_MERGE_ATTEMPTS = 5
 _SCHEMA_INITIALIZATION_ATTEMPTS = 2
+# Measured, not guessed: across roughly 4,800 trials of 8 concurrent distinct-checksum
+# add_configuration_version() callers against SQLite (the tightest case, single-writer
+# locking), the worst observed attempt count for any one caller was 5-7. This budget
+# supports up to 8 concurrent writers with margin above that observed worst case.
+_CONFIGURATION_VERSION_ATTEMPTS = 8
 _JSON_MAPPING_ADAPTER = TypeAdapter(dict[str, Any])
+
+_INSERT_CONFIGURATION = "INSERT INTO configurations (config_id, created_at) VALUES (?, ?)"
+_SELECT_CONFIGURATION = "SELECT config_id, created_at FROM configurations WHERE config_id = ?"
+_INSERT_CONFIGURATION_VERSION = """INSERT INTO configuration_versions (config_id, registry_version, package_checksum,
+declared_content, created_at) VALUES (?, ?, ?, ?, ?)"""
+_SELECT_CONFIGURATION_VERSION = """SELECT config_id, registry_version, package_checksum, declared_content, created_at
+FROM configuration_versions WHERE config_id = ? AND registry_version = ?"""
+_SELECT_CONFIGURATION_VERSION_BY_CHECKSUM = """SELECT config_id, registry_version, package_checksum, declared_content,
+created_at FROM configuration_versions WHERE config_id = ? AND package_checksum = ?"""
+_SELECT_CONFIGURATION_VERSIONS = """SELECT config_id, registry_version, package_checksum, declared_content, created_at
+FROM configuration_versions WHERE config_id = ? ORDER BY registry_version"""
+_SELECT_NEXT_CONFIGURATION_VERSION = (
+    "SELECT COALESCE(MAX(registry_version) + 1, 1) FROM configuration_versions WHERE config_id = ?"
+)
 
 _INSERT_PRODUCT_RUN = """INSERT INTO product_runs (run_id, operation, configuration_reference, actor, audit_links,
 started_at, finished_at, phase, outcome, summary, results) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
@@ -129,6 +213,18 @@ class RunNotFoundError(ValueError):
     """A requested mutation targets a Sync run ID that does not exist."""
 
 
+class ConfigurationNotFoundError(ValueError):
+    """A requested mutation targets a configuration ID that does not exist."""
+
+
+class ConfigurationVersionAllocationError(ValueError):
+    """Every allocation attempt for a new configuration version was exhausted by contention."""
+
+
+class DuplicateConfigurationError(ValueError):
+    """The generated configuration ID already exists."""
+
+
 class _Cursor(Protocol):
     rowcount: int
 
@@ -153,7 +249,7 @@ class DBAPIConnection(Protocol):
     def close(self) -> None: ...
 
 
-class _RunStore(Protocol):
+class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def create(self, run: ProductRun) -> None: ...
 
     def lookup(self, run_id: str) -> LookupResult[ProductRun]: ...
@@ -198,6 +294,22 @@ class _RunStore(Protocol):
 
     def audit_events(self, run_id: str | None = None) -> tuple[AuditEvent, ...]: ...
 
+    def configuration_exists(self, config_id: str) -> bool: ...
+
+    def create_configuration(self, package: ConfigurationPackage) -> ConfigurationVersion: ...
+
+    def add_configuration_version(
+        self, config_id: str, package: ConfigurationPackage
+    ) -> tuple[ConfigurationVersion, bool]: ...
+
+    def lookup_configuration(self, config_id: str) -> LookupResult[ConfigurationSummary]: ...
+
+    def lookup_configuration_version(
+        self, config_id: str, registry_version: int
+    ) -> LookupResult[ConfigurationVersion]: ...
+
+    def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]: ...
+
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
 
     def merge_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
@@ -214,7 +326,7 @@ class _RunStore(Protocol):
     ) -> None: ...
 
 
-class _RelationalRunStore:
+class _RelationalRunStore:  # pylint: disable=too-many-public-methods
     """Small SQL implementation shared by the SQLite and PostgreSQL profiles."""
 
     def __init__(
@@ -222,10 +334,12 @@ class _RelationalRunStore:
         connect: Callable[[], DBAPIConnection],
         *,
         placeholder: str,
+        dialect: Literal["sqlite", "postgresql"],
         schema_conflict_codes: frozenset[str] = frozenset(),
     ) -> None:
         self._connect = connect
         self._placeholder = placeholder
+        self._dialect = dialect
         self._schema_conflict_codes = schema_conflict_codes
         self._initialize()
 
@@ -242,12 +356,15 @@ class _RelationalRunStore:
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             cursor.execute(statement)
+                    self._migrate_product_runs_columns(cursor)
+                    self._ensure_configuration_binding_constraint(cursor)
                     connection.commit()
                 except Exception as exc:  # pylint: disable=broad-exception-caught
-                    # Synchronous DB-API drivers do not share a common error base;
-                    # retry only documented PostgreSQL duplicate-catalog SQLSTATEs.
+                    # Synchronous DB-API drivers do not share a common error base; retry only
+                    # documented PostgreSQL duplicate-catalog SQLSTATEs and duplicate-column
+                    # races from a concurrent ALTER TABLE ADD COLUMN on either backend.
                     connection.rollback()
-                    if _sqlstate(exc) not in self._schema_conflict_codes:
+                    if _sqlstate(exc) not in self._schema_conflict_codes and not _is_duplicate_column_error(exc):
                         raise
                     if attempt + 1 == _SCHEMA_INITIALIZATION_ATTEMPTS:
                         raise
@@ -257,6 +374,86 @@ class _RelationalRunStore:
                     cursor.close()
             finally:
                 connection.close()
+
+    def _read_product_run_columns(self, cursor: _Cursor) -> frozenset[str]:
+        """Return the existing columns on ``product_runs`` for this store's own dialect.
+
+        The statement is selected from ``self._dialect``, never discovered by running a
+        statement to see whether it fails: on PostgreSQL, a probe-driven failure would abort
+        the surrounding transaction and force a ``rollback()`` that discards every other
+        uncommitted ``CREATE TABLE`` this same call still needs to commit.
+        """
+        if self._dialect == "sqlite":
+            cursor.execute("PRAGMA table_info(product_runs)")
+            return frozenset(str(row[1]) for row in cursor.fetchall())
+        cursor.execute(
+            self._sql(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = ? AND table_schema = current_schema()"
+            ),
+            ("product_runs",),
+        )
+        return frozenset(str(row[0]) for row in cursor.fetchall())
+
+    def _migrate_product_runs_columns(self, cursor: _Cursor) -> None:
+        """Additively bring a pre-existing ``product_runs`` table up to the current column set."""
+        existing = self._read_product_run_columns(cursor)
+        for column, sql_type in _CONFIGURATION_BINDING_COLUMNS:
+            if column not in existing:
+                cursor.execute(f"ALTER TABLE product_runs ADD COLUMN {column} {sql_type}")
+
+    def _configuration_binding_constraint_exists(self, cursor: _Cursor) -> bool:
+        """Check for the binding safeguard by name instead of attempting and hoping.
+
+        PostgreSQL has no ``ADD CONSTRAINT IF NOT EXISTS``, and a retry loop that tolerates
+        the resulting ``42710`` only buys another attempt, not success: it re-raises once
+        attempts run out, so a repeated construction over an already-migrated database would
+        still fail without this check.
+
+        SQLite's enforcement is a *pair* of triggers (``BEFORE INSERT`` and ``BEFORE UPDATE``):
+        both names must be present for the constraint to count as existing. Reporting existence
+        from only one would let the other stay missing forever once construction is repeated,
+        since a later construction would see the survivor and skip recreating the pair.
+
+        The PostgreSQL query is schema-qualified for the same reason ``_read_product_run_columns``
+        is: without ``table_schema = current_schema()``, a same-named constraint in another schema
+        would satisfy this check and leave the current schema's table unguarded.
+        """
+        if self._dialect == "sqlite":
+            cursor.execute(
+                self._sql("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN (?, ?)"),
+                _SQLITE_CONFIGURATION_BINDING_TRIGGER_NAMES,
+            )
+            found = {str(row[0]) for row in cursor.fetchall()}
+            return found >= set(_SQLITE_CONFIGURATION_BINDING_TRIGGER_NAMES)
+        cursor.execute(
+            self._sql(
+                "SELECT 1 FROM information_schema.table_constraints "
+                "WHERE table_name = ? AND constraint_name = ? AND table_schema = current_schema()"
+            ),
+            ("product_runs", _CONFIGURATION_BINDING_CONSTRAINT),
+        )
+        return cursor.fetchone() is not None
+
+    def _ensure_configuration_binding_constraint(self, cursor: _Cursor) -> None:
+        """Refuse a partially bound run row before any writer exists to produce one.
+
+        SQLite's enforcement is a pair of ``BEFORE INSERT``/``BEFORE UPDATE`` triggers;
+        PostgreSQL's is a genuine multi-column ``CHECK`` constraint. Both are created only
+        after ``_configuration_binding_constraint_exists`` reports they are still missing, so
+        repeated construction over the same database is idempotent on both backends without
+        depending on either an already-exists error or the surrounding retry loop.
+        """
+        if self._configuration_binding_constraint_exists(cursor):
+            return
+        if self._dialect == "sqlite":
+            cursor.execute(_SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER)
+            cursor.execute(_SQLITE_CONFIGURATION_BINDING_UPDATE_TRIGGER)
+        else:
+            cursor.execute(
+                f"ALTER TABLE product_runs ADD CONSTRAINT {_CONFIGURATION_BINDING_CONSTRAINT} "
+                f"CHECK ({_CONFIGURATION_BINDING_CHECK_EXPRESSION})"
+            )
 
     def create(self, run: ProductRun) -> None:
         connection = self._connect()
@@ -722,6 +919,165 @@ class _RelationalRunStore:
             connection.close()
         return tuple(_audit_from_row(row) for row in rows)
 
+    def configuration_exists(self, config_id: str) -> bool:
+        """Return configuration existence without hydrating its versions."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_SELECT_CONFIGURATION), (config_id,))
+                return cursor.fetchone() is not None
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def create_configuration(self, package: ConfigurationPackage) -> ConfigurationVersion:
+        """Durably register a brand-new configuration and its first version."""
+        config_id = _generate_config_id()
+        version = ConfigurationVersion(
+            config_id=config_id,
+            registry_version=1,
+            package_checksum=package.checksum(),
+            declared_content=package.declared_content(),
+            created_at=datetime.now(timezone.utc),
+        )
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_INSERT_CONFIGURATION), (config_id, version.created_at.isoformat()))
+                self._insert_configuration_version_row(cursor, version)
+                connection.commit()
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                # DB-API drivers do not share an integrity-error base class;
+                # inspect only documented SQLite/PostgreSQL uniqueness markers.
+                connection.rollback()
+                if _is_unique_violation(exc):
+                    msg = f"Configuration ID {config_id!r} already exists"
+                    raise DuplicateConfigurationError(msg) from exc
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return version
+
+    def _insert_configuration_version_row(self, cursor: _Cursor, version: ConfigurationVersion) -> None:
+        _require_checksum_digests_content(version.package_checksum, version.declared_content)
+        cursor.execute(
+            self._sql(_INSERT_CONFIGURATION_VERSION),
+            (
+                version.config_id,
+                version.registry_version,
+                version.package_checksum,
+                _json(version.declared_content),
+                version.created_at.isoformat(),
+            ),
+        )
+
+    def add_configuration_version(
+        self, config_id: str, package: ConfigurationPackage
+    ) -> tuple[ConfigurationVersion, bool]:
+        """Atomically allocate the next version, or return the existing one for a known checksum."""
+        checksum = package.checksum()
+        last_conflict: BaseException | None = None
+        for attempt in range(_CONFIGURATION_VERSION_ATTEMPTS):
+            connection = self._connect()
+            try:
+                cursor = connection.cursor()
+                try:
+                    cursor.execute(self._sql(_SELECT_NEXT_CONFIGURATION_VERSION), (config_id,))
+                    next_row = cursor.fetchone()
+                    next_version = int(next_row[0]) if next_row is not None else 1
+                    version = ConfigurationVersion(
+                        config_id=config_id,
+                        registry_version=next_version,
+                        package_checksum=checksum,
+                        declared_content=package.declared_content(),
+                        created_at=datetime.now(timezone.utc),
+                    )
+                    self._insert_configuration_version_row(cursor, version)
+                    connection.commit()
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    # DB-API drivers do not share an integrity-error base class;
+                    # inspect only documented SQLite/PostgreSQL uniqueness markers.
+                    connection.rollback()
+                    if not _is_unique_violation(exc):
+                        raise
+                    last_conflict = exc
+                else:
+                    return version, True
+                finally:
+                    cursor.close()
+            finally:
+                connection.close()
+
+            existing = self._lookup_configuration_version_by_checksum(config_id, checksum)
+            if existing is not None:
+                return existing, False
+            if attempt + 1 == _CONFIGURATION_VERSION_ATTEMPTS:
+                msg = f"Could not allocate a configuration version for {config_id!r}"
+                raise ConfigurationVersionAllocationError(msg) from last_conflict
+        msg = "Configuration version allocation loop exited unexpectedly"
+        raise AssertionError(msg)
+
+    def _lookup_configuration_version_by_checksum(self, config_id: str, checksum: str) -> ConfigurationVersion | None:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_SELECT_CONFIGURATION_VERSION_BY_CHECKSUM), (config_id, checksum))
+                row = cursor.fetchone()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return None if row is None else _configuration_version_from_row(row)
+
+    def lookup_configuration(self, config_id: str) -> LookupResult[ConfigurationSummary]:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_SELECT_CONFIGURATION), (config_id,))
+                row = cursor.fetchone()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        if row is None:
+            return LookupResult(value=None, reason="configuration-not-found")
+        return LookupResult(value=ConfigurationSummary(config_id=row[0], created_at=row[1]))
+
+    def lookup_configuration_version(self, config_id: str, registry_version: int) -> LookupResult[ConfigurationVersion]:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_SELECT_CONFIGURATION_VERSION), (config_id, registry_version))
+                row = cursor.fetchone()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        if row is None:
+            return LookupResult(value=None, reason="configuration-version-not-found")
+        return LookupResult(value=_configuration_version_from_row(row))
+
+    def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_SELECT_CONFIGURATION_VERSIONS), (config_id,))
+                rows = cursor.fetchall()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return tuple(_configuration_version_from_row(row) for row in rows)
+
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None:
         connection = self._connect()
         try:
@@ -840,7 +1196,7 @@ class SQLiteRunStore(_RelationalRunStore):
             connection.execute("PRAGMA foreign_keys = ON")
             return cast("DBAPIConnection", connection)
 
-        super().__init__(connect, placeholder="?")
+        super().__init__(connect, placeholder="?", dialect="sqlite")
 
 
 class PostgreSQLRunStore(_RelationalRunStore):
@@ -850,6 +1206,7 @@ class PostgreSQLRunStore(_RelationalRunStore):
         super().__init__(
             connect,
             placeholder="%s",
+            dialect="postgresql",
             schema_conflict_codes=_POSTGRESQL_SCHEMA_CONFLICT_CODES,
         )
 
@@ -1107,6 +1464,33 @@ class ProductProjection:
         """Return all audit evidence, optionally narrowed to one Sync run."""
         return self._records.audit_events(run_id)
 
+    def create_configuration(self, package: ConfigurationPackage) -> ConfigurationVersion:
+        """Validate, then durably register a brand-new configuration's first version."""
+        validate_package_credentials(package)
+        return self._records.create_configuration(package)
+
+    def add_configuration_version(
+        self, config_id: str, package: ConfigurationPackage
+    ) -> tuple[ConfigurationVersion, bool]:
+        """Validate, then atomically add a version to an existing configuration."""
+        validate_package_credentials(package)
+        if not self._records.configuration_exists(config_id):
+            msg = f"Cannot add a version to unavailable configuration ID {config_id!r}"
+            raise ConfigurationNotFoundError(msg)
+        return self._records.add_configuration_version(config_id, package)
+
+    def lookup_configuration(self, config_id: str) -> LookupResult[ConfigurationSummary]:
+        """Look up a configuration's registry identity by its server-generated ID."""
+        return self._records.lookup_configuration(config_id)
+
+    def lookup_configuration_version(self, config_id: str, registry_version: int) -> LookupResult[ConfigurationVersion]:
+        """Look up one immutable configuration version by its integer ordinal."""
+        return self._records.lookup_configuration_version(config_id, registry_version)
+
+    def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]:
+        """Return every registered version of one configuration, oldest first."""
+        return self._records.list_configuration_versions(config_id)
+
     def record_results(
         self,
         run_id: str,
@@ -1363,6 +1747,28 @@ def _audit_from_row(row: Sequence[Any]) -> AuditEvent:
     )
 
 
+def _generate_config_id() -> str:
+    """Return a sortable, low-collision configuration identifier.
+
+    Delegates to ``infrahub_sync.cache.paths.generate_run_id`` so the registry shares one
+    identifier scheme and implementation with run IDs, rather than maintaining a second one
+    that a docstring claims mirrors it but nothing enforces.
+    """
+    return generate_run_id()
+
+
+def _configuration_version_from_row(row: Sequence[Any]) -> ConfigurationVersion:
+    return ConfigurationVersion.model_validate(
+        {
+            "config_id": row[0],
+            "registry_version": row[1],
+            "package_checksum": row[2],
+            "declared_content": json.loads(row[3]),
+            "created_at": row[4],
+        }
+    )
+
+
 def _reference_from_row(row: Sequence[Any]) -> ArtifactReference:
     return ArtifactReference.model_validate(
         {
@@ -1410,6 +1816,28 @@ def _sqlstate(exc: BaseException) -> str | None:
     diagnostic = getattr(exc, "diag", None)
     value = getattr(diagnostic, "sqlstate", None)
     return value if isinstance(value, str) else None
+
+
+def _is_duplicate_column_error(exc: BaseException) -> bool:
+    """Recognize a concurrent ``ALTER TABLE ADD COLUMN`` race, not a genuine schema failure."""
+    if isinstance(exc, sqlite3.OperationalError):
+        return "duplicate column name" in str(exc).lower()
+    return _sqlstate(exc) == _POSTGRESQL_DUPLICATE_COLUMN_CODE
+
+
+def _require_checksum_digests_content(checksum: str, declared_content: Mapping[str, Any]) -> None:
+    """Refuse to persist a configuration version whose checksum does not digest its own
+    declared content.
+
+    ``create_configuration``/``add_configuration_version`` trust ``package.checksum()`` and
+    separately persist ``package.declared_content()``; nothing else checks the two
+    correspond, and ``configuration_versions`` is append-only, so any future drift between
+    them would write a permanently mismatched row with no later chance to catch it.
+    """
+    expected = sha256(canonical_json_bytes(declared_content, kind="configuration-package")).hexdigest()
+    if checksum != expected:
+        msg = f"package checksum {checksum!r} does not digest its own declared content"
+        raise AssertionError(msg)
 
 
 def _require_publication_marked(cursor: _Cursor, reference: ArtifactReference) -> None:

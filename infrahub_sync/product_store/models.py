@@ -158,6 +158,43 @@ class MutationReceipt(BaseModel):
         return self
 
 
+class ConfigurationSummary(BaseModel):
+    """Registry identity for one configuration's version lineage."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    created_at: datetime
+
+    @field_validator("created_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            msg = "configuration timestamps must include a timezone"
+            raise ValueError(msg)
+        return value
+
+
+class ConfigurationVersion(BaseModel):
+    """One immutable, checksum-identified declared configuration version."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    registry_version: int = Field(ge=1)
+    package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    declared_content: dict[str, Any]
+    created_at: datetime
+
+    @field_validator("created_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            msg = "configuration-version timestamps must include a timezone"
+            raise ValueError(msg)
+        return value
+
+
 class AuditEvent(BaseModel):
     """Secret-safe durable evidence for one managed API decision."""
 
