@@ -100,10 +100,15 @@ class ForgedDiagnosticCase:
     error_type: ForgedErrorType
     context: dict[str, object] = field(repr=False)
     tripwire: CallbackTripwire = field(repr=False)
+    _probe: Callable[[], object] = field(repr=False)
     expected_callbacks: tuple[str, ...] = ()
 
     def __repr__(self) -> str:
         return f"ForgedDiagnosticCase(id={self.id!r})"
+
+    def probe_forged_error(self) -> object:
+        """Execute the hostile callback to prove its forged error is live."""
+        return self._probe()
 
     def assert_expected_callbacks(self) -> None:
         """Assert the boundary did not traverse the forged mapping."""
@@ -605,7 +610,8 @@ def _forged_diagnostic_case(
                     context,
                 ) from None
 
-    return ForgedDiagnosticCase(case_id, _ForgedMapping(), error_type, context, tripwire)
+    value = _ForgedMapping()
+    return ForgedDiagnosticCase(case_id, value, error_type, context, tripwire, value.items)
 
 
 def forged_diagnostic_cases() -> tuple[ForgedDiagnosticCase, ...]:

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import pytest
 from pydantic import BaseModel, ConfigDict
+from pydantic_core import PydanticCustomError
 
 from tests.hostile_inputs import (
     BoundaryCase,
     BoundaryOutcome,
+    ForgedDiagnosticCase,
     diagnostic_unicode_cases,
     endpoint_cases,
     forged_diagnostic_cases,
@@ -87,6 +89,19 @@ def test_forged_diagnostic_cases_cover_trusted_shapes_without_private_markers() 
     }
     assert all("marker" not in key for case in cases for key in case.context)
     assert all(case.expected_callbacks == () for case in cases)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [pytest.param(case, id=case.id) for case in forged_diagnostic_cases()],
+)
+def test_forged_diagnostic_callbacks_raise_the_declared_error(case: ForgedDiagnosticCase) -> None:
+    with pytest.raises(PydanticCustomError) as caught:
+        case.probe_forged_error()
+
+    assert caught.value.type == case.error_type
+    assert caught.value.context == case.context
+    assert case.tripwire.calls == ("forged-mapping.items",)
 
 
 def test_unicode_corpora_cover_controls_collisions_and_valid_scalars() -> None:
