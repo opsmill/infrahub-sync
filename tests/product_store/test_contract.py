@@ -1660,6 +1660,29 @@ def test_created_configuration_round_trips_its_first_version(provider: ProductPr
     assert provider.list_configuration_versions(version.config_id) == (version,)
 
 
+@pytest.mark.parametrize("profile", ["local", "production"])
+def test_configuration_registry_survives_store_reconstruction(profile: str, tmp_path: Path) -> None:
+    fake_s3 = _FakeS3()
+
+    def build() -> ProductProjection:
+        if profile == "local":
+            return local_product_projection(tmp_path / "cache")
+        return ProductProjection(
+            PostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3")),
+            S3ArtifactStore(fake_s3, bucket="artifacts"),
+        )
+
+    before_restart = build()
+    first = before_restart.create_configuration(_configuration_package())
+    second, _ = before_restart.add_configuration_version(first.config_id, _configuration_package(verify_ssl=False))
+
+    after_restart = build()
+
+    assert after_restart.lookup_configuration(first.config_id).available
+    assert after_restart.list_configuration_versions(first.config_id) == (first, second)
+    assert after_restart.lookup_configuration_version(first.config_id, 2) == product_store.LookupResult(value=second)
+
+
 def test_distinct_configurations_may_share_identical_package_content(provider: ProductProjection) -> None:
     package = _configuration_package()
 
