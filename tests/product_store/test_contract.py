@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, local
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -263,6 +263,32 @@ class _AlwaysConflictingConfigurationVersionStore(SQLiteRunStore):
         error = _FakeSQLiteIntegrityError("synthetic version race")
         error.sqlite_errorcode = 2067
         raise error
+
+
+class _RoundCountingSQLiteStore(SQLiteRunStore):
+    """Records, per calling thread, how many insert attempts the current
+    ``add_configuration_version`` call has made -- the observable a mutant that retries
+    before re-querying by checksum inflates without changing any other observable."""
+
+    def __init__(self, database: Path) -> None:
+        self.version_insert_rounds = local()
+        super().__init__(database)
+
+    def _insert_configuration_version_row(self, cursor, version) -> None:
+        self.version_insert_rounds.count = getattr(self.version_insert_rounds, "count", 0) + 1
+        super()._insert_configuration_version_row(cursor, version)
+
+
+class _RoundCountingPostgreSQLRunStore(PostgreSQLRunStore):
+    """PostgreSQL-profile counterpart of ``_RoundCountingSQLiteStore``."""
+
+    def __init__(self, connect) -> None:
+        self.version_insert_rounds = local()
+        super().__init__(connect)
+
+    def _insert_configuration_version_row(self, cursor, version) -> None:
+        self.version_insert_rounds.count = getattr(self.version_insert_rounds, "count", 0) + 1
+        super()._insert_configuration_version_row(cursor, version)
 
 
 class _DeleteBeforeFinishSQLiteStore(SQLiteRunStore):
@@ -1881,23 +1907,42 @@ def test_configuration_version_allocation_exhaustion_raises_a_typed_error(tmp_pa
         store.add_configuration_version(first.config_id, _configuration_package(verify_ssl=False))
 
 
+@pytest.mark.parametrize("profile", ["local", "production"])
 def test_concurrent_identical_checksums_deduplicate_to_exactly_one_row_on_both_profiles(
-    provider: ProductProjection,
+    profile: str, tmp_path: Path
 ) -> None:
+    """Every caller -- winner and losers alike -- must resolve in exactly one
+    unique-violation round. A mutant that retries the insert loop before re-querying by
+    checksum reaches the same outcome (one row, correct dedup) at three times the
+    database work; only the round count distinguishes it, so that is what this asserts.
+    """
+    if profile == "local":
+        records: _RoundCountingSQLiteStore | _RoundCountingPostgreSQLRunStore = _RoundCountingSQLiteStore(
+            tmp_path / "records.sqlite3"
+        )
+        artifacts = FileArtifactStore(tmp_path / "objects")
+    else:
+        records = _RoundCountingPostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3"))
+        artifacts = S3ArtifactStore(_FakeS3(), bucket="artifacts")
+    provider = ProductProjection(records, artifacts)
     first = provider.create_configuration(_configuration_package())
     package = _configuration_package(verify_ssl=False)
 
-    def add(_: int) -> tuple[ConfigurationVersion, bool]:
-        return provider.add_configuration_version(first.config_id, package)
+    def add(_: int) -> tuple[ConfigurationVersion, bool, int]:
+        records.version_insert_rounds.count = 0
+        version, created = provider.add_configuration_version(first.config_id, package)
+        return version, created, records.version_insert_rounds.count
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         futures = [pool.submit(add, position) for position in range(8)]
         results = [future.result(timeout=30) for future in futures]
 
-    assert sum(created for _, created in results) == 1
-    versions = {version.registry_version for version, _ in results}
+    assert sum(created for _, created, _ in results) == 1
+    versions = {version.registry_version for version, _, _ in results}
     assert versions == {2}
     assert len(provider.list_configuration_versions(first.config_id)) == 2
+    rounds = [rounds for _, _, rounds in results]
+    assert rounds == [1] * 8, f"expected every caller to resolve in exactly one round, got {rounds}"
 
 
 # --- Run-to-configuration binding columns (deliberately inert so far) -------------------------
