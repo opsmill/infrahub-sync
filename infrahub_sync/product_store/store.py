@@ -414,6 +414,10 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         both names must be present for the constraint to count as existing. Reporting existence
         from only one would let the other stay missing forever once construction is repeated,
         since a later construction would see the survivor and skip recreating the pair.
+
+        The PostgreSQL query is schema-qualified for the same reason ``_read_product_run_columns``
+        is: without ``table_schema = current_schema()``, a same-named constraint in another schema
+        would satisfy this check and leave the current schema's table unguarded.
         """
         if self._dialect == "sqlite":
             cursor.execute(
@@ -424,7 +428,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             return found >= set(_SQLITE_CONFIGURATION_BINDING_TRIGGER_NAMES)
         cursor.execute(
             self._sql(
-                "SELECT 1 FROM information_schema.table_constraints WHERE table_name = ? AND constraint_name = ?"
+                "SELECT 1 FROM information_schema.table_constraints "
+                "WHERE table_name = ? AND constraint_name = ? AND table_schema = current_schema()"
             ),
             ("product_runs", _CONFIGURATION_BINDING_CONSTRAINT),
         )
