@@ -2694,10 +2694,10 @@ def _raw_insert_product_run(
 
 _PARTIAL_CONFIGURATION_BINDING_COMBINATIONS = [
     pytest.param("20260101T0000-aaaaaaaa", None, None, id="only-config-id"),
-    pytest.param(None, 1, None, id="only-config-version"),
+    pytest.param(None, 1, None, id="only-registry-version"),
     pytest.param(None, None, "a" * 64, id="only-package-checksum"),
     pytest.param("20260101T0000-aaaaaaaa", 1, None, id="missing-package-checksum"),
-    pytest.param("20260101T0000-aaaaaaaa", None, "a" * 64, id="missing-config-version"),
+    pytest.param("20260101T0000-aaaaaaaa", None, "a" * 64, id="missing-registry-version"),
     pytest.param(None, 1, "a" * 64, id="missing-config-id"),
 ]
 
@@ -2805,10 +2805,10 @@ _CONFIGURATION_BINDING_COMBINATIONS_AND_LEGALITY = [
     pytest.param(None, None, None, True, id="fully-unbound"),
     pytest.param("20260101T0000-aaaaaaaa", 1, "a" * 64, True, id="fully-bound"),
     pytest.param("20260101T0000-aaaaaaaa", None, None, False, id="only-config-id"),
-    pytest.param(None, 1, None, False, id="only-config-version"),
+    pytest.param(None, 1, None, False, id="only-registry-version"),
     pytest.param(None, None, "a" * 64, False, id="only-package-checksum"),
     pytest.param("20260101T0000-aaaaaaaa", 1, None, False, id="missing-package-checksum"),
-    pytest.param("20260101T0000-aaaaaaaa", None, "a" * 64, False, id="missing-config-version"),
+    pytest.param("20260101T0000-aaaaaaaa", None, "a" * 64, False, id="missing-registry-version"),
     pytest.param(None, 1, "a" * 64, False, id="missing-config-id"),
 ]
 
