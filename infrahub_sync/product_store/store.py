@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
@@ -16,11 +17,14 @@ from typing import Any, Protocol, cast
 
 from pydantic import TypeAdapter
 
+from infrahub_sync.configuration import ConfigurationPackage, validate_package_credentials
 from infrahub_sync.execution import REDACTED, redact
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store.models import (
     ArtifactReference,
     AuditEvent,
+    ConfigurationSummary,
+    ConfigurationVersion,
     LookupResult,
     MutationReceipt,
     PrefectExecutionLink,
@@ -67,16 +71,62 @@ CREATE TABLE IF NOT EXISTS audit_events (
 );
 CREATE INDEX IF NOT EXISTS audit_events_run_created
     ON audit_events (run_id, created_at);
+CREATE TABLE IF NOT EXISTS configurations (
+    config_id TEXT PRIMARY KEY, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS configuration_versions (
+    config_id TEXT NOT NULL, config_version INTEGER NOT NULL, package_checksum TEXT NOT NULL,
+    declared_content TEXT NOT NULL, created_at TEXT NOT NULL,
+    PRIMARY KEY (config_id, config_version),
+    FOREIGN KEY (config_id) REFERENCES configurations(config_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS configuration_versions_checksum
+    ON configuration_versions (config_id, package_checksum);
 """
+
+# Nullable run-to-configuration binding columns on ``product_runs``. Added by an
+# introspection-guarded ALTER (see ``_migrate_product_runs_columns``) rather than baked into
+# the ``product_runs`` definition above, so a pre-existing deployment's table is migrated the
+# same way a brand-new one is initialized. Deliberately inert for this slice: no ``ProductRun``
+# field reads or writes them, and nothing allocates a run into a registered configuration yet.
+# A later slice owns that behavior; this one only carries the invariant that a row's three
+# binding columns are either all NULL (unregistered) or all NOT NULL (registered) so that a
+# future writer inherits an already-enforced constraint rather than introducing one.
+_CONFIGURATION_BINDING_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("config_id", "TEXT"),
+    ("config_version", "INTEGER"),
+    ("package_checksum", "TEXT"),
+)
+_CONFIGURATION_BINDING_CONSTRAINT = "product_runs_configuration_binding_consistent"
+_CONFIGURATION_BINDING_CHECK_EXPRESSION = (
+    "(config_id IS NULL AND config_version IS NULL AND package_checksum IS NULL) "
+    "OR (config_id IS NOT NULL AND config_version IS NOT NULL AND package_checksum IS NOT NULL)"
+)
 
 # Stable SQLite extended result codes. Python 3.10's sqlite3 module does not expose
 # their symbolic names even when an exception provides ``sqlite_errorcode``.
 _SQLITE_UNIQUE_CONSTRAINT_CODES = frozenset({1555, 2067})
 _POSTGRESQL_SCHEMA_CONFLICT_CODES = frozenset({"23505", "42P07", "42710"})
+_POSTGRESQL_DUPLICATE_COLUMN_CODE = "42701"
 _PREFECT_POSITION_ATTEMPTS = 3
 _RESULT_MERGE_ATTEMPTS = 5
 _SCHEMA_INITIALIZATION_ATTEMPTS = 2
+_CONFIGURATION_VERSION_ATTEMPTS = 3
 _JSON_MAPPING_ADAPTER = TypeAdapter(dict[str, Any])
+
+_INSERT_CONFIGURATION = "INSERT INTO configurations (config_id, created_at) VALUES (?, ?)"
+_SELECT_CONFIGURATION = "SELECT config_id, created_at FROM configurations WHERE config_id = ?"
+_INSERT_CONFIGURATION_VERSION = """INSERT INTO configuration_versions (config_id, config_version, package_checksum,
+declared_content, created_at) VALUES (?, ?, ?, ?, ?)"""
+_SELECT_CONFIGURATION_VERSION = """SELECT config_id, config_version, package_checksum, declared_content, created_at
+FROM configuration_versions WHERE config_id = ? AND config_version = ?"""
+_SELECT_CONFIGURATION_VERSION_BY_CHECKSUM = """SELECT config_id, config_version, package_checksum, declared_content,
+created_at FROM configuration_versions WHERE config_id = ? AND package_checksum = ?"""
+_SELECT_CONFIGURATION_VERSIONS = """SELECT config_id, config_version, package_checksum, declared_content, created_at
+FROM configuration_versions WHERE config_id = ? ORDER BY config_version"""
+_SELECT_NEXT_CONFIGURATION_VERSION = (
+    "SELECT COALESCE(MAX(config_version) + 1, 1) FROM configuration_versions WHERE config_id = ?"
+)
 
 _INSERT_PRODUCT_RUN = """INSERT INTO product_runs (run_id, operation, configuration_reference, actor, audit_links,
 started_at, finished_at, phase, outcome, summary, results) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
@@ -127,6 +177,10 @@ class ArtifactUnavailableError(RuntimeError):
 
 class RunNotFoundError(ValueError):
     """A requested mutation targets a Sync run ID that does not exist."""
+
+
+class ConfigurationNotFoundError(ValueError):
+    """A requested mutation targets a configuration ID that does not exist."""
 
 
 class _Cursor(Protocol):
@@ -197,6 +251,22 @@ class _RunStore(Protocol):
     def record_audit(self, event: AuditEvent) -> None: ...
 
     def audit_events(self, run_id: str | None = None) -> tuple[AuditEvent, ...]: ...
+
+    def configuration_exists(self, config_id: str) -> bool: ...
+
+    def create_configuration(self, package: ConfigurationPackage) -> ConfigurationVersion: ...
+
+    def add_configuration_version(
+        self, config_id: str, package: ConfigurationPackage
+    ) -> tuple[ConfigurationVersion, bool]: ...
+
+    def lookup_configuration(self, config_id: str) -> LookupResult[ConfigurationSummary]: ...
+
+    def lookup_configuration_version(
+        self, config_id: str, config_version: int
+    ) -> LookupResult[ConfigurationVersion]: ...
+
+    def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]: ...
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
 
@@ -722,6 +792,159 @@ class _RelationalRunStore:
             connection.close()
         return tuple(_audit_from_row(row) for row in rows)
 
+    def configuration_exists(self, config_id: str) -> bool:
+        """Return configuration existence without hydrating its versions."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_SELECT_CONFIGURATION), (config_id,))
+                return cursor.fetchone() is not None
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def create_configuration(self, package: ConfigurationPackage) -> ConfigurationVersion:
+        """Durably register a brand-new configuration and its first version."""
+        config_id = _generate_config_id()
+        version = ConfigurationVersion(
+            config_id=config_id,
+            config_version=1,
+            package_checksum=package.checksum(),
+            declared_content=package.declared_content(),
+            created_at=datetime.now(timezone.utc),
+        )
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_INSERT_CONFIGURATION), (config_id, version.created_at.isoformat()))
+                self._insert_configuration_version_row(cursor, version)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return version
+
+    def _insert_configuration_version_row(self, cursor: _Cursor, version: ConfigurationVersion) -> None:
+        cursor.execute(
+            self._sql(_INSERT_CONFIGURATION_VERSION),
+            (
+                version.config_id,
+                version.config_version,
+                version.package_checksum,
+                _json(version.declared_content),
+                version.created_at.isoformat(),
+            ),
+        )
+
+    def add_configuration_version(
+        self, config_id: str, package: ConfigurationPackage
+    ) -> tuple[ConfigurationVersion, bool]:
+        """Atomically allocate the next version, or return the existing one for a known checksum."""
+        checksum = package.checksum()
+        last_conflict: BaseException | None = None
+        for attempt in range(_CONFIGURATION_VERSION_ATTEMPTS):
+            connection = self._connect()
+            try:
+                cursor = connection.cursor()
+                try:
+                    cursor.execute(self._sql(_SELECT_NEXT_CONFIGURATION_VERSION), (config_id,))
+                    next_row = cursor.fetchone()
+                    next_version = int(next_row[0]) if next_row is not None else 1
+                    version = ConfigurationVersion(
+                        config_id=config_id,
+                        config_version=next_version,
+                        package_checksum=checksum,
+                        declared_content=package.declared_content(),
+                        created_at=datetime.now(timezone.utc),
+                    )
+                    self._insert_configuration_version_row(cursor, version)
+                    connection.commit()
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    # DB-API drivers do not share an integrity-error base class;
+                    # inspect only documented SQLite/PostgreSQL uniqueness markers.
+                    connection.rollback()
+                    if not _is_unique_violation(exc):
+                        raise
+                    last_conflict = exc
+                else:
+                    return version, True
+                finally:
+                    cursor.close()
+            finally:
+                connection.close()
+
+            existing = self._lookup_configuration_version_by_checksum(config_id, checksum)
+            if existing is not None:
+                return existing, False
+            if attempt + 1 == _CONFIGURATION_VERSION_ATTEMPTS:
+                msg = f"Could not allocate a configuration version for {config_id!r}"
+                raise RuntimeError(msg) from last_conflict
+        msg = "Configuration version allocation loop exited unexpectedly"
+        raise AssertionError(msg)
+
+    def _lookup_configuration_version_by_checksum(self, config_id: str, checksum: str) -> ConfigurationVersion | None:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_SELECT_CONFIGURATION_VERSION_BY_CHECKSUM), (config_id, checksum))
+                row = cursor.fetchone()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return None if row is None else _configuration_version_from_row(row)
+
+    def lookup_configuration(self, config_id: str) -> LookupResult[ConfigurationSummary]:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_SELECT_CONFIGURATION), (config_id,))
+                row = cursor.fetchone()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        if row is None:
+            return LookupResult(value=None, reason="configuration-not-found")
+        return LookupResult(value=ConfigurationSummary(config_id=row[0], created_at=row[1]))
+
+    def lookup_configuration_version(self, config_id: str, config_version: int) -> LookupResult[ConfigurationVersion]:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_SELECT_CONFIGURATION_VERSION), (config_id, config_version))
+                row = cursor.fetchone()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        if row is None:
+            return LookupResult(value=None, reason="configuration-version-not-found")
+        return LookupResult(value=_configuration_version_from_row(row))
+
+    def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_SELECT_CONFIGURATION_VERSIONS), (config_id,))
+                rows = cursor.fetchall()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return tuple(_configuration_version_from_row(row) for row in rows)
+
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None:
         connection = self._connect()
         try:
@@ -1107,6 +1330,33 @@ class ProductProjection:
         """Return all audit evidence, optionally narrowed to one Sync run."""
         return self._records.audit_events(run_id)
 
+    def create_configuration(self, package: ConfigurationPackage) -> ConfigurationVersion:
+        """Validate, then durably register a brand-new configuration's first version."""
+        validate_package_credentials(package)
+        return self._records.create_configuration(package)
+
+    def add_configuration_version(
+        self, config_id: str, package: ConfigurationPackage
+    ) -> tuple[ConfigurationVersion, bool]:
+        """Validate, then atomically add a version to an existing configuration."""
+        validate_package_credentials(package)
+        if not self._records.configuration_exists(config_id):
+            msg = f"Cannot add a version to unavailable configuration ID {config_id!r}"
+            raise ConfigurationNotFoundError(msg)
+        return self._records.add_configuration_version(config_id, package)
+
+    def lookup_configuration(self, config_id: str) -> LookupResult[ConfigurationSummary]:
+        """Look up a configuration's registry identity by its server-generated ID."""
+        return self._records.lookup_configuration(config_id)
+
+    def lookup_configuration_version(self, config_id: str, config_version: int) -> LookupResult[ConfigurationVersion]:
+        """Look up one immutable configuration version by its integer ordinal."""
+        return self._records.lookup_configuration_version(config_id, config_version)
+
+    def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]:
+        """Return every registered version of one configuration, oldest first."""
+        return self._records.list_configuration_versions(config_id)
+
     def record_results(
         self,
         run_id: str,
@@ -1359,6 +1609,28 @@ def _audit_from_row(row: Sequence[Any]) -> AuditEvent:
             "reason": row[4],
             "outcome": row[5],
             "created_at": row[6],
+        }
+    )
+
+
+def _generate_config_id() -> str:
+    """Return a sortable, low-collision configuration identifier.
+
+    Mirrors ``infrahub_sync.cache.paths.generate_run_id``'s exact scheme and alphabet:
+    ``YYYYMMDDTHHMM-<8 hex>``, so the registry does not introduce a second ID format.
+    """
+    now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M")
+    return f"{now}-{secrets.token_hex(4)}"
+
+
+def _configuration_version_from_row(row: Sequence[Any]) -> ConfigurationVersion:
+    return ConfigurationVersion.model_validate(
+        {
+            "config_id": row[0],
+            "config_version": row[1],
+            "package_checksum": row[2],
+            "declared_content": json.loads(row[3]),
+            "created_at": row[4],
         }
     )
 

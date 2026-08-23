@@ -3,6 +3,8 @@
 from infrahub_sync.product_store.models import (
     ArtifactReference,
     AuditEvent,
+    ConfigurationSummary,
+    ConfigurationVersion,
     LookupResult,
     MutationReceipt,
     PrefectExecutionLink,
@@ -10,6 +12,7 @@ from infrahub_sync.product_store.models import (
 )
 from infrahub_sync.product_store.store import (
     ArtifactUnavailableError,
+    ConfigurationNotFoundError,
     DBAPIConnection,
     DuplicateArtifactError,
     DuplicatePrefectExecutionError,
@@ -26,6 +29,9 @@ __all__ = (
     "ArtifactReference",
     "ArtifactUnavailableError",
     "AuditEvent",
+    "ConfigurationNotFoundError",
+    "ConfigurationSummary",
+    "ConfigurationVersion",
     "DBAPIConnection",
     "DuplicateArtifactError",
     "DuplicatePrefectExecutionError",

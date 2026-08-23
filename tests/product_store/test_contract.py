@@ -17,10 +17,14 @@ import pytest
 from pydantic import ValidationError
 
 from infrahub_sync import product_store
+from infrahub_sync.configuration import ConfigurationPackage, CredentialConfigurationError
 from infrahub_sync.product_store import (
     ArtifactReference,
     ArtifactUnavailableError,
     AuditEvent,
+    ConfigurationNotFoundError,
+    ConfigurationSummary,
+    ConfigurationVersion,
     DuplicateArtifactError,
     DuplicatePrefectExecutionError,
     DuplicateRunError,
@@ -39,6 +43,9 @@ EXPECTED_PUBLIC_NAMES = {
     "ArtifactReference",
     "ArtifactUnavailableError",
     "AuditEvent",
+    "ConfigurationNotFoundError",
+    "ConfigurationSummary",
+    "ConfigurationVersion",
     "DBAPIConnection",
     "DuplicateArtifactError",
     "DuplicatePrefectExecutionError",
@@ -314,6 +321,38 @@ def _receipt(  # noqa: PLR0913 - receipt factory exposes contract dimensions.
         created_at=now,
         updated_at=now,
     )
+
+
+def _configuration_declaration(**settings_overrides: object) -> dict[str, Any]:
+    settings = {
+        "url": "https://demo.netbox.dev",
+        "token": {"$credential": "netbox-token"},
+    }
+    settings.update(settings_overrides)
+    return {
+        "format_version": 1,
+        "configuration": {
+            "name": "from-netbox",
+            "source": {"name": "netbox", "settings": settings},
+            "destination": {
+                "name": "infrahub",
+                "settings": {"url": "http://localhost:8000", "token": {"$credential": "infrahub-token"}},
+            },
+            "order": [],
+            "schema_mapping": [],
+            "diffsync_flags": [],
+            "incremental": None,
+        },
+        "package_metadata": {"adapter_api_version": 1},
+        "credentials": {
+            "netbox-token": {"provider": "env", "identifier": "NETBOX_TOKEN"},
+            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"},
+        },
+    }
+
+
+def _configuration_package(**settings_overrides: object) -> ConfigurationPackage:
+    return ConfigurationPackage.model_validate(_configuration_declaration(**settings_overrides))
 
 
 def test_public_surface_is_exactly_the_supported_contract() -> None:
@@ -1568,3 +1607,171 @@ def test_provider_profile_survives_reconstruction(profile: str, tmp_path: Path) 
 def test_local_profile_rejects_a_cwd_relative_cache_location() -> None:
     with pytest.raises(ValueError, match="cache_location must be absolute"):
         local_product_projection(Path("relative-cache"))
+
+
+# --- Configuration registry -------------------------------------------------------------------
+
+
+def test_configuration_version_requires_timezone() -> None:
+    with pytest.raises(ValidationError, match="configuration-version timestamps must include a timezone"):
+        ConfigurationVersion(
+            config_id="20260808T1200-aaaaaaaa",
+            config_version=1,
+            package_checksum="a" * 64,
+            declared_content={},
+            created_at=datetime(2026, 8, 8),  # noqa: DTZ001 - deliberate naive-value validation case.
+        )
+
+
+def test_configuration_summary_requires_timezone() -> None:
+    with pytest.raises(ValidationError, match="configuration timestamps must include a timezone"):
+        ConfigurationSummary(
+            config_id="20260808T1200-aaaaaaaa",
+            created_at=datetime(2026, 8, 8),  # noqa: DTZ001 - deliberate naive-value validation case.
+        )
+
+
+def test_configuration_version_is_frozen() -> None:
+    version = ConfigurationVersion(
+        config_id="20260808T1200-aaaaaaaa",
+        config_version=1,
+        package_checksum="a" * 64,
+        declared_content={},
+        created_at=datetime.now(timezone.utc),
+    )
+
+    with pytest.raises(ValidationError, match="frozen"):
+        version.config_version = 2  # type: ignore[misc]
+
+
+def test_created_configuration_round_trips_its_first_version(provider: ProductProjection) -> None:
+    package = _configuration_package()
+
+    version = provider.create_configuration(package)
+
+    assert version.config_version == 1
+    assert version.package_checksum == package.checksum()
+    assert version.declared_content == package.declared_content()
+    summary = provider.lookup_configuration(version.config_id)
+    assert summary.available
+    assert summary.value is not None
+    assert summary.value.config_id == version.config_id
+    assert provider.lookup_configuration_version(version.config_id, 1).value == version
+    assert provider.list_configuration_versions(version.config_id) == (version,)
+
+
+def test_distinct_configurations_may_share_identical_package_content(provider: ProductProjection) -> None:
+    package = _configuration_package()
+
+    first = provider.create_configuration(package)
+    second = provider.create_configuration(package)
+
+    assert first.config_id != second.config_id
+    assert first.package_checksum == second.package_checksum
+    assert first.config_version == second.config_version == 1
+
+
+def test_adding_a_version_with_a_new_checksum_allocates_the_next_integer(provider: ProductProjection) -> None:
+    first = provider.create_configuration(_configuration_package())
+
+    version, created = provider.add_configuration_version(first.config_id, _configuration_package(verify_ssl=False))
+
+    assert created is True
+    assert version.config_version == 2
+    assert provider.list_configuration_versions(first.config_id) == (first, version)
+
+
+def test_adding_a_version_with_a_known_checksum_returns_the_existing_version_and_creates_no_row(
+    provider: ProductProjection,
+) -> None:
+    package = _configuration_package()
+    first = provider.create_configuration(package)
+
+    replay, created = provider.add_configuration_version(first.config_id, package)
+
+    assert created is False
+    assert replay == first
+    assert provider.list_configuration_versions(first.config_id) == (first,)
+
+
+def test_add_configuration_version_on_unknown_configuration_is_refused(provider: ProductProjection) -> None:
+    with pytest.raises(ConfigurationNotFoundError, match="unavailable"):
+        provider.add_configuration_version("missing-configuration", _configuration_package())
+
+
+def test_unknown_configuration_lookup_and_list_are_explicit(provider: ProductProjection) -> None:
+    missing = provider.lookup_configuration("missing-configuration")
+    assert not missing.available
+    assert missing.reason == "configuration-not-found"
+    assert provider.list_configuration_versions("missing-configuration") == ()
+    assert provider.lookup_configuration_version("missing-configuration", 1).reason == "configuration-version-not-found"
+
+
+def test_registration_rejects_an_inline_credential_value_before_any_persistence(tmp_path: Path) -> None:
+    database = tmp_path / "local.sqlite3"
+    projection = ProductProjection(SQLiteRunStore(database), FileArtifactStore(tmp_path / "objects"))
+    canary = "inline-credential-canary-649"
+    hostile = ConfigurationPackage.model_validate(_configuration_declaration(token=canary))
+
+    with pytest.raises(CredentialConfigurationError):
+        projection.create_configuration(hostile)
+
+    assert canary.encode() not in database.read_bytes()
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM configurations").fetchone() == (0,)
+
+
+def test_registration_rejects_an_inline_credential_value_on_an_existing_configuration(
+    provider: ProductProjection,
+) -> None:
+    first = provider.create_configuration(_configuration_package())
+    canary = "inline-credential-canary-existing-649"
+    hostile = ConfigurationPackage.model_validate(_configuration_declaration(token=canary))
+
+    with pytest.raises(CredentialConfigurationError):
+        provider.add_configuration_version(first.config_id, hostile)
+
+    assert provider.list_configuration_versions(first.config_id) == (first,)
+
+
+def test_concurrent_new_checksums_allocate_distinct_sequential_versions_on_both_profiles(
+    provider: ProductProjection,
+) -> None:
+    first = provider.create_configuration(_configuration_package())
+
+    def add(position: int) -> ConfigurationVersion:
+        version, _ = provider.add_configuration_version(
+            first.config_id, _configuration_package(url=f"https://demo.netbox.dev/{position}")
+        )
+        return version
+
+    # Two racers, matching the bounded-retry idiom's own concurrency test
+    # (test_managed_prefect_attempt_ordinals_are_allocated_atomically): the shared
+    # allocation attempt budget is 3, so higher fan-out risks legitimate exhaustion
+    # under SQLite's single-writer locking rather than exercising the atomicity guarantee.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(add, position) for position in range(2, 4)]
+        results = [future.result(timeout=30) for future in futures]
+
+    versions = sorted(version.config_version for version in results)
+    assert versions == [2, 3]
+    assert len(provider.list_configuration_versions(first.config_id)) == 3
+
+
+def test_concurrent_identical_checksums_deduplicate_to_exactly_one_row_on_both_profiles(
+    provider: ProductProjection,
+) -> None:
+    first = provider.create_configuration(_configuration_package())
+    package = _configuration_package(verify_ssl=False)
+
+    def add(_: int) -> tuple[ConfigurationVersion, bool]:
+        return provider.add_configuration_version(first.config_id, package)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(add, position) for position in range(8)]
+        results = [future.result(timeout=30) for future in futures]
+
+    assert sum(created for _, created in results) == 1
+    versions = {version.config_version for version, _ in results}
+    assert versions == {2}
+    assert len(provider.list_configuration_versions(first.config_id)) == 2
