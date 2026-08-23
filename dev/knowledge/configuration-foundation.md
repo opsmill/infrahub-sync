@@ -41,6 +41,60 @@ accepted by the per-path check and then refused by the walk as not credential-be
 Any further component that renders these pointers — registry persistence, an API
 response, a CLI diff — calls that function rather than formatting its own.
 
+## Registry persistence and identity
+
+The product store owns an append-only registry. A configuration has a server-generated
+`config_id` and immutable versions numbered by an integer `registry_version` starting at 1 and
+scoped to that `config_id`. A version row also carries the `package_checksum` and the declared
+content that produced it. Nothing updates or deletes a version.
+
+`registry_version` is deliberately not called `config_version`. That name already belongs to the
+saved-plan value in `infrahub_sync/plan/config_version.py`: an opaque printable-ASCII string,
+compared for equality and never parsed, which `product_runs.configuration_reference` already
+stores. Runs and plans bind to `(config_id, registry_version, package_checksum)`; the saved-plan
+manifest keeps its own `config_version` field. Two names, two concepts, one table — keep them
+apart.
+
+Registering a checksum that already exists under a configuration returns the existing version and
+writes no row. A new checksum takes the next integer, allocated with the store's existing
+idiom: read `MAX + 1`, insert, catch the uniqueness violation, retry within a bounded budget,
+raise a typed error on exhaustion. Uniqueness is enforced by indexes on `(config_id,
+registry_version)` and `(config_id, package_checksum)`, so identical content under two different
+configurations is accepted — configurations are independent, not deduplicated against each other.
+Because a losing writer recomputes `MAX + 1` on a fresh connection and an exhausted one never
+commits, the sequence cannot develop gaps.
+
+Credential validation happens at the `ProductProjection` boundary, not in the store classes,
+matching where redaction already lives. A caller reaching for `SQLiteRunStore` or
+`PostgreSQLRunStore` directly bypasses it; neither is part of the package's public surface.
+
+### Schema migration and dialect
+
+Migration is additive: the store introspects the existing column set and emits
+`ALTER TABLE ADD COLUMN` only for what is missing. There is no schema version table, no rebuild,
+and no backfill. Construction is idempotent, so a process restart re-runs it safely.
+
+The store selects its introspection and constraint statements from an explicit `dialect` argument
+that each provider passes. Never infer the dialect from the placeholder string or by running a
+statement to see whether it fails: the test suite's PostgreSQL profile is a SQLite file behind a
+`%s`-to-`?` adapter, so a placeholder check misidentifies it, and provoking an error on a
+connection mid-DDL aborts the transaction and discards uncommitted `CREATE TABLE` statements.
+
+### The run-binding columns are inert on purpose
+
+`product_runs` carries nullable `config_id`, `registry_version`, and `package_checksum` columns
+that **no code path reads or writes**, and `ProductRun` has no matching fields. They are not dead
+code and not an oversight: the columns exist so the write-time constraint below can exist before
+any writer does. The later change that binds registered runs owns the model fields and the
+behavior.
+
+A run row is valid in exactly three states: all three binding columns NULL with a non-empty
+`configuration_reference` (pre-registry and unregistered rows), or all three non-NULL (a
+registered row). Partial binding is refused at write time — SQLite uses a pair of `BEFORE INSERT`
+and `BEFORE UPDATE` triggers, PostgreSQL a `CHECK` constraint. Refusing the partial state removes
+a whole family of later "which field wins" ambiguities. Both triggers must be present for SQLite
+enforcement to hold, so the existence check requires both before it skips recreation.
+
 ## Declaring adapter configuration capabilities
 
 Every adapter accepted by the registry needs an
