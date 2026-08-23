@@ -1,3 +1,6 @@
+# pylint: disable=duplicate-code
+# EXPECTED_PUBLIC_NAMES below intentionally mirrors infrahub_sync/product_store/__init__.py's
+# __all__ as a hand-maintained, independent list; pylint's similarity checker flags that overlap.
 from __future__ import annotations
 
 import os
@@ -27,6 +30,7 @@ from infrahub_sync.product_store import (
     ConfigurationNotFoundError,
     ConfigurationSummary,
     ConfigurationVersion,
+    ConfigurationVersionAllocationError,
     DuplicateArtifactError,
     DuplicatePrefectExecutionError,
     DuplicateRunError,
@@ -41,6 +45,8 @@ from infrahub_sync.product_store import (
 from infrahub_sync.product_store import store as product_store_store
 from infrahub_sync.product_store.store import FileArtifactStore, PostgreSQLRunStore, S3ArtifactStore, SQLiteRunStore
 
+# This intentionally mirrors infrahub_sync/product_store/__init__.py's __all__, hand-maintained
+# so a change to the module's exports has to touch this list too.
 EXPECTED_PUBLIC_NAMES = {
     "ArtifactReference",
     "ArtifactUnavailableError",
@@ -48,6 +54,7 @@ EXPECTED_PUBLIC_NAMES = {
     "ConfigurationNotFoundError",
     "ConfigurationSummary",
     "ConfigurationVersion",
+    "ConfigurationVersionAllocationError",
     "DBAPIConnection",
     "DuplicateArtifactError",
     "DuplicatePrefectExecutionError",
@@ -244,6 +251,16 @@ class _PositionConflictOnceSQLiteStore(SQLiteRunStore):
 class _ChildConflictSQLiteStore(SQLiteRunStore):
     def _insert_prefect_execution(self, cursor, run_id, link, position):  # noqa: ARG002, PLR6301
         error = _FakeSQLiteIntegrityError("synthetic child uniqueness failure")
+        error.sqlite_errorcode = 2067
+        raise error
+
+
+class _AlwaysConflictingConfigurationVersionStore(SQLiteRunStore):
+    """Forces every configuration-version insert to lose the race, deterministically
+    exhausting ``_CONFIGURATION_VERSION_ATTEMPTS`` without needing real concurrency."""
+
+    def _insert_configuration_version_row(self, cursor, version):  # noqa: ARG002, PLR6301
+        error = _FakeSQLiteIntegrityError("synthetic version race")
         error.sqlite_errorcode = 2067
         raise error
 
@@ -1817,10 +1834,8 @@ def test_concurrent_new_checksums_allocate_distinct_sequential_versions_on_both_
         )
         return version
 
-    # Two racers, matching the bounded-retry idiom's own concurrency test
-    # (test_managed_prefect_attempt_ordinals_are_allocated_atomically): the shared
-    # allocation attempt budget is 3, so higher fan-out risks legitimate exhaustion
-    # under SQLite's single-writer locking rather than exercising the atomicity guarantee.
+    # Two racers is enough to exercise sequential allocation cheaply; the higher fan-out
+    # this budget is actually measured to support is covered separately below.
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(add, position) for position in range(2, 4)]
         results = [future.result(timeout=30) for future in futures]
@@ -1828,6 +1843,42 @@ def test_concurrent_new_checksums_allocate_distinct_sequential_versions_on_both_
     versions = sorted(version.registry_version for version in results)
     assert versions == [2, 3]
     assert len(provider.list_configuration_versions(first.config_id)) == 3
+
+
+def test_concurrent_new_checksums_allocate_distinct_versions_at_eight_writers_on_both_profiles(
+    provider: ProductProjection,
+) -> None:
+    """The measured, supported concurrency degree for ``add_configuration_version``: 8
+    concurrent distinct-checksum callers (see the comment on
+    ``_CONFIGURATION_VERSION_ATTEMPTS``). Runs reliably; not flaky across repeated runs.
+    """
+    first = provider.create_configuration(_configuration_package())
+
+    def add(position: int) -> ConfigurationVersion:
+        version, _ = provider.add_configuration_version(
+            first.config_id, _configuration_package(url=f"https://demo.netbox.dev/{position}")
+        )
+        return version
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(add, position) for position in range(2, 10)]
+        results = [future.result(timeout=30) for future in futures]
+
+    versions = sorted(version.registry_version for version in results)
+    assert versions == list(range(2, 10))
+    assert len(provider.list_configuration_versions(first.config_id)) == 9
+
+
+def test_configuration_version_allocation_exhaustion_raises_a_typed_error(tmp_path: Path) -> None:
+    """Exhausting every allocation attempt raises a ``ValueError`` subclass, consistent with
+    the store's ``DuplicateRunError`` / ``WriteAdmissionConflictError`` idiom, not a bare
+    ``RuntimeError`` that a caller catching ``ValueError`` would not see."""
+    database = tmp_path / "records.sqlite3"
+    first = SQLiteRunStore(database).create_configuration(_configuration_package())
+    store = _AlwaysConflictingConfigurationVersionStore(database)
+
+    with pytest.raises(ConfigurationVersionAllocationError):
+        store.add_configuration_version(first.config_id, _configuration_package(verify_ssl=False))
 
 
 def test_concurrent_identical_checksums_deduplicate_to_exactly_one_row_on_both_profiles(
@@ -1849,7 +1900,7 @@ def test_concurrent_identical_checksums_deduplicate_to_exactly_one_row_on_both_p
     assert len(provider.list_configuration_versions(first.config_id)) == 2
 
 
-# --- Run-to-configuration binding columns (inert this slice) ---------------------------------
+# --- Run-to-configuration binding columns (deliberately inert so far) -------------------------
 
 _LEGACY_PRODUCT_RUNS_TABLE = """
 CREATE TABLE product_runs (

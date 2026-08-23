@@ -13,6 +13,7 @@ from infrahub_sync.product_store.models import (
 from infrahub_sync.product_store.store import (
     ArtifactUnavailableError,
     ConfigurationNotFoundError,
+    ConfigurationVersionAllocationError,
     DBAPIConnection,
     DuplicateArtifactError,
     DuplicatePrefectExecutionError,
@@ -32,6 +33,7 @@ __all__ = (
     "ConfigurationNotFoundError",
     "ConfigurationSummary",
     "ConfigurationVersion",
+    "ConfigurationVersionAllocationError",
     "DBAPIConnection",
     "DuplicateArtifactError",
     "DuplicatePrefectExecutionError",
