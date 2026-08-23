@@ -754,6 +754,18 @@ def test_sqlite_foreign_key_failure_passes_through_as_integrity_error(tmp_path: 
         )
 
 
+def test_configuration_version_foreign_key_is_enforced(tmp_path: Path) -> None:
+    """``configuration_versions.config_id`` must be refused for a configuration that was never
+    registered. ``add_configuration_version`` on the raw store issues no existence check of its
+    own (only ``ProductProjection.add_configuration_version`` does, before delegating) -- so the
+    ``configurations`` foreign key is the only thing standing between a nonexistent config_id and
+    a durably orphaned version row."""
+    store = SQLiteRunStore(tmp_path / "records.sqlite3")
+
+    with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY constraint failed"):
+        store.add_configuration_version("missing-configuration", _configuration_package())
+
+
 def test_child_insert_uniqueness_is_not_misreported_as_a_duplicate_run(tmp_path: Path) -> None:
     store = _ChildConflictSQLiteStore(tmp_path / "records.sqlite3")
     link = PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1)
