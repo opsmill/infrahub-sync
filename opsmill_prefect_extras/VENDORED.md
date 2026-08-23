@@ -39,3 +39,26 @@ restore the dependency in the `managed` extra, and drop the vendoring entries
 from the Ruff exclude list, `[tool.ty.src]` exclude, the isort
 `known-third-party` pin, and `.github/file-filters.yml`.
 `tests/test_vendoring_consistency.py` fails on any half-executed re-adoption.
+
+### CI authentication on re-adoption
+
+Restoring the dependency reintroduces a problem vendoring removed: `opsmill/prefect-extras`
+is a private repository, so CI can no longer install the `managed` extra with the default
+job token.
+
+Two approaches to this were written before vendoring was chosen, and both were dropped
+unmerged. They are kept because the second one is worth reusing rather than rediscovering:
+
+* Commit `cadc0ffe` on branch `feature/pr173-ci-auth-rejected` passes the credential to
+  `actions/checkout`, which makes it available to the whole clone for the rest of the job.
+* Tag `archive/pr173-ci-credential-scoping` replaces that with a git credential helper set
+  as `env` on the dependency-install step alone, so no other step can read the token. Run
+  `git show archive/pr173-ci-credential-scoping` for the exact change.
+
+Prefer the scoped form. Whichever is used, the workflows are reusable
+(`workflow_call`), so the credential must also be declared under their `secrets:` inputs —
+an undeclared secret resolves to an empty string and fails as a confusing authentication
+error rather than a missing-input error.
+
+Neither branch nor tag is live work. Do not merge them; treat them as a starting point for
+the re-adoption change.
