@@ -1777,6 +1777,53 @@ def test_configuration_version_is_frozen() -> None:
         version.registry_version = 2  # type: ignore[misc]
 
 
+_ALLOWED_STORE_CONFIGURATION_METHODS = frozenset(
+    {
+        "configuration_exists",
+        "create_configuration",
+        "add_configuration_version",
+        "lookup_configuration",
+        "lookup_configuration_version",
+        "list_configuration_versions",
+    }
+)
+_ALLOWED_PROJECTION_CONFIGURATION_METHODS = frozenset(
+    {
+        "create_configuration",
+        "add_configuration_version",
+        "lookup_configuration",
+        "lookup_configuration_version",
+        "list_configuration_versions",
+    }
+)
+
+
+def test_no_public_configuration_method_deletes_or_updates_a_version() -> None:
+    """Configuration versions are append-only. Pins the exact set of public
+    configuration-facing methods on ``ProductProjection`` and both relational stores,
+    structurally, rather than by name-guessing for words like "delete": a future
+    ``delete_configuration_version()`` or ``update_configuration_version()`` would sail
+    through ``test_public_surface_is_exactly_the_supported_contract`` undetected, since that
+    test pins only the module's ``__all__``, not method names on these classes.
+    """
+    for cls, allowed in (
+        (SQLiteRunStore, _ALLOWED_STORE_CONFIGURATION_METHODS),
+        (PostgreSQLRunStore, _ALLOWED_STORE_CONFIGURATION_METHODS),
+        (ProductProjection, _ALLOWED_PROJECTION_CONFIGURATION_METHODS),
+    ):
+        public = {
+            name
+            for name in dir(cls)
+            if not name.startswith("_") and "configuration" in name.lower() and callable(getattr(cls, name))
+        }
+        assert public == allowed, f"{cls.__name__} exposes unexpected configuration methods: {public - allowed}"
+
+    # Belt-and-suspenders directly on the SQL surface: no statement anywhere in the store
+    # module issues a DELETE or UPDATE against the append-only configuration_versions table.
+    source = Path(product_store_store.__file__).read_text(encoding="utf-8")
+    assert not re.search(r"\b(DELETE\s+FROM|UPDATE)\s+configuration_versions\b", source, re.IGNORECASE)
+
+
 def test_created_configuration_round_trips_its_first_version(provider: ProductProjection) -> None:
     package = _configuration_package()
 
