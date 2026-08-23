@@ -102,9 +102,16 @@ _CONFIGURATION_BINDING_CHECK_EXPRESSION = (
     "(config_id IS NULL AND registry_version IS NULL AND package_checksum IS NULL) "
     "OR (config_id IS NOT NULL AND registry_version IS NOT NULL AND package_checksum IS NOT NULL)"
 )
-_SQLITE_CONFIGURATION_BINDING_TRIGGER_NAME = "product_runs_configuration_binding_insert"
+_SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER_NAME = "product_runs_configuration_binding_insert"
+_SQLITE_CONFIGURATION_BINDING_UPDATE_TRIGGER_NAME = "product_runs_configuration_binding_update"
+# Both names must exist for the constraint to be considered present: SQLite enforcement is this
+# pair of triggers, not either one alone (see ``_configuration_binding_constraint_exists``).
+_SQLITE_CONFIGURATION_BINDING_TRIGGER_NAMES = (
+    _SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER_NAME,
+    _SQLITE_CONFIGURATION_BINDING_UPDATE_TRIGGER_NAME,
+)
 _SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER = f"""
-CREATE TRIGGER IF NOT EXISTS {_SQLITE_CONFIGURATION_BINDING_TRIGGER_NAME}
+CREATE TRIGGER IF NOT EXISTS {_SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER_NAME}
 BEFORE INSERT ON product_runs
 WHEN NOT (
     (NEW.config_id IS NULL AND NEW.registry_version IS NULL AND NEW.package_checksum IS NULL)
@@ -114,8 +121,8 @@ BEGIN
     SELECT RAISE(ABORT, 'product_runs configuration-binding columns must be all NULL or all NOT NULL');
 END
 """
-_SQLITE_CONFIGURATION_BINDING_UPDATE_TRIGGER = """
-CREATE TRIGGER IF NOT EXISTS product_runs_configuration_binding_update
+_SQLITE_CONFIGURATION_BINDING_UPDATE_TRIGGER = f"""
+CREATE TRIGGER IF NOT EXISTS {_SQLITE_CONFIGURATION_BINDING_UPDATE_TRIGGER_NAME}
 BEFORE UPDATE ON product_runs
 WHEN NOT (
     (NEW.config_id IS NULL AND NEW.registry_version IS NULL AND NEW.package_checksum IS NULL)
@@ -402,19 +409,25 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         the resulting ``42710`` only buys another attempt, not success: it re-raises once
         attempts run out, so a repeated construction over an already-migrated database would
         still fail without this check.
+
+        SQLite's enforcement is a *pair* of triggers (``BEFORE INSERT`` and ``BEFORE UPDATE``):
+        both names must be present for the constraint to count as existing. Reporting existence
+        from only one would let the other stay missing forever once construction is repeated,
+        since a later construction would see the survivor and skip recreating the pair.
         """
         if self._dialect == "sqlite":
             cursor.execute(
-                self._sql("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?"),
-                (_SQLITE_CONFIGURATION_BINDING_TRIGGER_NAME,),
+                self._sql("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN (?, ?)"),
+                _SQLITE_CONFIGURATION_BINDING_TRIGGER_NAMES,
             )
-        else:
-            cursor.execute(
-                self._sql(
-                    "SELECT 1 FROM information_schema.table_constraints WHERE table_name = ? AND constraint_name = ?"
-                ),
-                ("product_runs", _CONFIGURATION_BINDING_CONSTRAINT),
-            )
+            found = {str(row[0]) for row in cursor.fetchall()}
+            return found >= set(_SQLITE_CONFIGURATION_BINDING_TRIGGER_NAMES)
+        cursor.execute(
+            self._sql(
+                "SELECT 1 FROM information_schema.table_constraints WHERE table_name = ? AND constraint_name = ?"
+            ),
+            ("product_runs", _CONFIGURATION_BINDING_CONSTRAINT),
+        )
         return cursor.fetchone() is not None
 
     def _ensure_configuration_binding_constraint(self, cursor: _Cursor) -> None:

@@ -2528,6 +2528,40 @@ def test_partial_configuration_binding_is_refused_on_update_too(tmp_path: Path) 
     assert unchanged == (None, None, None)
 
 
+def test_reconstructing_the_store_restores_a_dropped_update_trigger(tmp_path: Path) -> None:
+    """Regression test: SQLite enforcement is a pair of triggers, and the existence check that
+    guards recreating them must require both by name, not just the BEFORE INSERT one.
+
+    Drop only the BEFORE UPDATE trigger, reconstruct the store, and confirm a partial UPDATE is
+    still refused. Before the fix, the existence check saw the surviving INSERT trigger, reported
+    the constraint as already present, and left the UPDATE trigger missing — silently accepting a
+    partial UPDATE it should have refused.
+    """
+    database = tmp_path / "records.sqlite3"
+    store = SQLiteRunStore(database)
+    store.create(_run("update-target"))
+
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TRIGGER product_runs_configuration_binding_update")
+        connection.commit()
+
+    SQLiteRunStore(database)
+
+    with sqlite3.connect(database) as connection:
+        with pytest.raises(sqlite3.IntegrityError, match="configuration-binding"):
+            connection.execute(
+                "UPDATE product_runs SET config_id = ? WHERE run_id = ?",
+                ("20260101T0000-aaaaaaaa", "update-target"),
+            )
+        connection.rollback()
+        unchanged = connection.execute(
+            "SELECT config_id, registry_version, package_checksum FROM product_runs WHERE run_id = ?",
+            ("update-target",),
+        ).fetchone()
+
+    assert unchanged == (None, None, None)
+
+
 def test_postgresql_dialect_binding_constraint_uses_a_check_constraint_not_a_trigger() -> None:
     database = _FakePostgreSQLDatabase()
 
