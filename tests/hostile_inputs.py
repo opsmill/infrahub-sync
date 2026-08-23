@@ -119,7 +119,7 @@ class ForgedDiagnosticCase:
 
 @dataclass(frozen=True)
 class UnicodeCase:
-    """One Unicode scalar and its safe visible form."""
+    """One Unicode test value and its safe visible form."""
 
     id: str
     value: str = field(repr=False)
@@ -194,7 +194,7 @@ def _hostile_dict_case() -> BoundaryCase:
 
 
 def hostile_builtin_cases() -> tuple[BoundaryCase, ...]:
-    """Return fresh hostile subclasses of every JSON-adjacent built-in type."""
+    """Return fresh hostile subclasses of each subclassable JSON built-in value type."""
     cases = [_hostile_dict_case()]
 
     list_tripwire = CallbackTripwire()
