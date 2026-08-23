@@ -181,7 +181,7 @@ class ConfigurationVersion(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
-    config_version: int = Field(ge=1)
+    registry_version: int = Field(ge=1)
     package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     declared_content: dict[str, Any]
     created_at: datetime

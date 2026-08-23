@@ -1616,7 +1616,7 @@ def test_configuration_version_requires_timezone() -> None:
     with pytest.raises(ValidationError, match="configuration-version timestamps must include a timezone"):
         ConfigurationVersion(
             config_id="20260808T1200-aaaaaaaa",
-            config_version=1,
+            registry_version=1,
             package_checksum="a" * 64,
             declared_content={},
             created_at=datetime(2026, 8, 8),  # noqa: DTZ001 - deliberate naive-value validation case.
@@ -1634,14 +1634,14 @@ def test_configuration_summary_requires_timezone() -> None:
 def test_configuration_version_is_frozen() -> None:
     version = ConfigurationVersion(
         config_id="20260808T1200-aaaaaaaa",
-        config_version=1,
+        registry_version=1,
         package_checksum="a" * 64,
         declared_content={},
         created_at=datetime.now(timezone.utc),
     )
 
     with pytest.raises(ValidationError, match="frozen"):
-        version.config_version = 2  # type: ignore[misc]
+        version.registry_version = 2  # type: ignore[misc]
 
 
 def test_created_configuration_round_trips_its_first_version(provider: ProductProjection) -> None:
@@ -1649,7 +1649,7 @@ def test_created_configuration_round_trips_its_first_version(provider: ProductPr
 
     version = provider.create_configuration(package)
 
-    assert version.config_version == 1
+    assert version.registry_version == 1
     assert version.package_checksum == package.checksum()
     assert version.declared_content == package.declared_content()
     summary = provider.lookup_configuration(version.config_id)
@@ -1691,7 +1691,7 @@ def test_distinct_configurations_may_share_identical_package_content(provider: P
 
     assert first.config_id != second.config_id
     assert first.package_checksum == second.package_checksum
-    assert first.config_version == second.config_version == 1
+    assert first.registry_version == second.registry_version == 1
 
 
 def test_adding_a_version_with_a_new_checksum_allocates_the_next_integer(provider: ProductProjection) -> None:
@@ -1700,7 +1700,7 @@ def test_adding_a_version_with_a_new_checksum_allocates_the_next_integer(provide
     version, created = provider.add_configuration_version(first.config_id, _configuration_package(verify_ssl=False))
 
     assert created is True
-    assert version.config_version == 2
+    assert version.registry_version == 2
     assert provider.list_configuration_versions(first.config_id) == (first, version)
 
 
@@ -1776,7 +1776,7 @@ def test_concurrent_new_checksums_allocate_distinct_sequential_versions_on_both_
         futures = [pool.submit(add, position) for position in range(2, 4)]
         results = [future.result(timeout=30) for future in futures]
 
-    versions = sorted(version.config_version for version in results)
+    versions = sorted(version.registry_version for version in results)
     assert versions == [2, 3]
     assert len(provider.list_configuration_versions(first.config_id)) == 3
 
@@ -1795,7 +1795,7 @@ def test_concurrent_identical_checksums_deduplicate_to_exactly_one_row_on_both_p
         results = [future.result(timeout=30) for future in futures]
 
     assert sum(created for _, created in results) == 1
-    versions = {version.config_version for version, _ in results}
+    versions = {version.registry_version for version, _ in results}
     assert versions == {2}
     assert len(provider.list_configuration_versions(first.config_id)) == 2
 
@@ -1809,7 +1809,7 @@ CREATE TABLE product_runs (
     phase TEXT NOT NULL, outcome TEXT, summary TEXT NOT NULL, results TEXT NOT NULL
 );
 """
-_CONFIGURATION_BINDING_COLUMN_NAMES = ("config_id", "config_version", "package_checksum")
+_CONFIGURATION_BINDING_COLUMN_NAMES = ("config_id", "registry_version", "package_checksum")
 
 
 def test_fresh_sqlite_database_gains_the_nullable_binding_columns(tmp_path: Path) -> None:
@@ -1854,7 +1854,7 @@ def test_preexisting_database_is_migrated_forward_and_keeps_its_legacy_row(tmp_p
     with sqlite3.connect(database) as connection:
         columns = {row[1]: row for row in connection.execute("PRAGMA table_info(product_runs)")}
         row = connection.execute(
-            "SELECT config_id, config_version, package_checksum FROM product_runs WHERE run_id = ?",
+            "SELECT config_id, registry_version, package_checksum FROM product_runs WHERE run_id = ?",
             ("legacy-run-001",),
         ).fetchone()
 
@@ -1966,12 +1966,12 @@ def _raw_insert_product_run(
     run_id: str,
     *,
     config_id: str | None,
-    config_version: int | None,
+    registry_version: int | None,
     package_checksum: str | None,
 ) -> None:
     connection.execute(
         "INSERT INTO product_runs (run_id, operation, configuration_reference, actor, audit_links, started_at, "
-        "finished_at, phase, outcome, summary, results, config_id, config_version, package_checksum) "
+        "finished_at, phase, outcome, summary, results, config_id, registry_version, package_checksum) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             run_id,
@@ -1986,7 +1986,7 @@ def _raw_insert_product_run(
             "{}",
             "{}",
             config_id,
-            config_version,
+            registry_version,
             package_checksum,
         ),
     )
@@ -2004,10 +2004,10 @@ _PARTIAL_CONFIGURATION_BINDING_COMBINATIONS = [
 
 
 @pytest.mark.parametrize(
-    ("config_id", "config_version", "package_checksum"), _PARTIAL_CONFIGURATION_BINDING_COMBINATIONS
+    ("config_id", "registry_version", "package_checksum"), _PARTIAL_CONFIGURATION_BINDING_COMBINATIONS
 )
 def test_every_partial_configuration_binding_combination_is_refused_at_insert(
-    config_id: str | None, config_version: int | None, package_checksum: str | None, tmp_path: Path
+    config_id: str | None, registry_version: int | None, package_checksum: str | None, tmp_path: Path
 ) -> None:
     database = tmp_path / "records.sqlite3"
     SQLiteRunStore(database)
@@ -2017,7 +2017,7 @@ def test_every_partial_configuration_binding_combination_is_refused_at_insert(
             connection,
             "raw-run-001",
             config_id=config_id,
-            config_version=config_version,
+            registry_version=registry_version,
             package_checksum=package_checksum,
         )
 
@@ -2027,12 +2027,12 @@ def test_fully_unbound_and_fully_bound_rows_are_both_accepted(tmp_path: Path) ->
     SQLiteRunStore(database)
 
     with sqlite3.connect(database) as connection:
-        _raw_insert_product_run(connection, "unbound-run", config_id=None, config_version=None, package_checksum=None)
+        _raw_insert_product_run(connection, "unbound-run", config_id=None, registry_version=None, package_checksum=None)
         _raw_insert_product_run(
             connection,
             "bound-run",
             config_id="20260101T0000-aaaaaaaa",
-            config_version=1,
+            registry_version=1,
             package_checksum="a" * 64,
         )
         rows = connection.execute("SELECT run_id FROM product_runs ORDER BY run_id").fetchall()
@@ -2053,7 +2053,7 @@ def test_partial_configuration_binding_is_refused_on_update_too(tmp_path: Path) 
             )
         connection.rollback()
         unchanged = connection.execute(
-            "SELECT config_id, config_version, package_checksum FROM product_runs WHERE run_id = ?",
+            "SELECT config_id, registry_version, package_checksum FROM product_runs WHERE run_id = ?",
             ("update-target",),
         ).fetchone()
 

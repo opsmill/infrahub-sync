@@ -74,9 +74,9 @@ CREATE TABLE IF NOT EXISTS configurations (
     config_id TEXT PRIMARY KEY, created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS configuration_versions (
-    config_id TEXT NOT NULL, config_version INTEGER NOT NULL, package_checksum TEXT NOT NULL,
+    config_id TEXT NOT NULL, registry_version INTEGER NOT NULL, package_checksum TEXT NOT NULL,
     declared_content TEXT NOT NULL, created_at TEXT NOT NULL,
-    PRIMARY KEY (config_id, config_version),
+    PRIMARY KEY (config_id, registry_version),
     FOREIGN KEY (config_id) REFERENCES configurations(config_id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS configuration_versions_checksum
@@ -93,20 +93,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS configuration_versions_checksum
 # future writer inherits an already-enforced constraint rather than introducing one.
 _CONFIGURATION_BINDING_COLUMNS: tuple[tuple[str, str], ...] = (
     ("config_id", "TEXT"),
-    ("config_version", "INTEGER"),
+    ("registry_version", "INTEGER"),
     ("package_checksum", "TEXT"),
 )
 _CONFIGURATION_BINDING_CONSTRAINT = "product_runs_configuration_binding_consistent"
 _CONFIGURATION_BINDING_CHECK_EXPRESSION = (
-    "(config_id IS NULL AND config_version IS NULL AND package_checksum IS NULL) "
-    "OR (config_id IS NOT NULL AND config_version IS NOT NULL AND package_checksum IS NOT NULL)"
+    "(config_id IS NULL AND registry_version IS NULL AND package_checksum IS NULL) "
+    "OR (config_id IS NOT NULL AND registry_version IS NOT NULL AND package_checksum IS NOT NULL)"
 )
 _SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER = """
 CREATE TRIGGER IF NOT EXISTS product_runs_configuration_binding_insert
 BEFORE INSERT ON product_runs
 WHEN NOT (
-    (NEW.config_id IS NULL AND NEW.config_version IS NULL AND NEW.package_checksum IS NULL)
-    OR (NEW.config_id IS NOT NULL AND NEW.config_version IS NOT NULL AND NEW.package_checksum IS NOT NULL)
+    (NEW.config_id IS NULL AND NEW.registry_version IS NULL AND NEW.package_checksum IS NULL)
+    OR (NEW.config_id IS NOT NULL AND NEW.registry_version IS NOT NULL AND NEW.package_checksum IS NOT NULL)
 )
 BEGIN
     SELECT RAISE(ABORT, 'product_runs configuration-binding columns must be all NULL or all NOT NULL');
@@ -116,8 +116,8 @@ _SQLITE_CONFIGURATION_BINDING_UPDATE_TRIGGER = """
 CREATE TRIGGER IF NOT EXISTS product_runs_configuration_binding_update
 BEFORE UPDATE ON product_runs
 WHEN NOT (
-    (NEW.config_id IS NULL AND NEW.config_version IS NULL AND NEW.package_checksum IS NULL)
-    OR (NEW.config_id IS NOT NULL AND NEW.config_version IS NOT NULL AND NEW.package_checksum IS NOT NULL)
+    (NEW.config_id IS NULL AND NEW.registry_version IS NULL AND NEW.package_checksum IS NULL)
+    OR (NEW.config_id IS NOT NULL AND NEW.registry_version IS NOT NULL AND NEW.package_checksum IS NOT NULL)
 )
 BEGIN
     SELECT RAISE(ABORT, 'product_runs configuration-binding columns must be all NULL or all NOT NULL');
@@ -137,16 +137,16 @@ _JSON_MAPPING_ADAPTER = TypeAdapter(dict[str, Any])
 
 _INSERT_CONFIGURATION = "INSERT INTO configurations (config_id, created_at) VALUES (?, ?)"
 _SELECT_CONFIGURATION = "SELECT config_id, created_at FROM configurations WHERE config_id = ?"
-_INSERT_CONFIGURATION_VERSION = """INSERT INTO configuration_versions (config_id, config_version, package_checksum,
+_INSERT_CONFIGURATION_VERSION = """INSERT INTO configuration_versions (config_id, registry_version, package_checksum,
 declared_content, created_at) VALUES (?, ?, ?, ?, ?)"""
-_SELECT_CONFIGURATION_VERSION = """SELECT config_id, config_version, package_checksum, declared_content, created_at
-FROM configuration_versions WHERE config_id = ? AND config_version = ?"""
-_SELECT_CONFIGURATION_VERSION_BY_CHECKSUM = """SELECT config_id, config_version, package_checksum, declared_content,
+_SELECT_CONFIGURATION_VERSION = """SELECT config_id, registry_version, package_checksum, declared_content, created_at
+FROM configuration_versions WHERE config_id = ? AND registry_version = ?"""
+_SELECT_CONFIGURATION_VERSION_BY_CHECKSUM = """SELECT config_id, registry_version, package_checksum, declared_content,
 created_at FROM configuration_versions WHERE config_id = ? AND package_checksum = ?"""
-_SELECT_CONFIGURATION_VERSIONS = """SELECT config_id, config_version, package_checksum, declared_content, created_at
-FROM configuration_versions WHERE config_id = ? ORDER BY config_version"""
+_SELECT_CONFIGURATION_VERSIONS = """SELECT config_id, registry_version, package_checksum, declared_content, created_at
+FROM configuration_versions WHERE config_id = ? ORDER BY registry_version"""
 _SELECT_NEXT_CONFIGURATION_VERSION = (
-    "SELECT COALESCE(MAX(config_version) + 1, 1) FROM configuration_versions WHERE config_id = ?"
+    "SELECT COALESCE(MAX(registry_version) + 1, 1) FROM configuration_versions WHERE config_id = ?"
 )
 
 _INSERT_PRODUCT_RUN = """INSERT INTO product_runs (run_id, operation, configuration_reference, actor, audit_links,
@@ -284,7 +284,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def lookup_configuration(self, config_id: str) -> LookupResult[ConfigurationSummary]: ...
 
     def lookup_configuration_version(
-        self, config_id: str, config_version: int
+        self, config_id: str, registry_version: int
     ) -> LookupResult[ConfigurationVersion]: ...
 
     def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]: ...
@@ -885,7 +885,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         config_id = _generate_config_id()
         version = ConfigurationVersion(
             config_id=config_id,
-            config_version=1,
+            registry_version=1,
             package_checksum=package.checksum(),
             declared_content=package.declared_content(),
             created_at=datetime.now(timezone.utc),
@@ -911,7 +911,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             self._sql(_INSERT_CONFIGURATION_VERSION),
             (
                 version.config_id,
-                version.config_version,
+                version.registry_version,
                 version.package_checksum,
                 _json(version.declared_content),
                 version.created_at.isoformat(),
@@ -934,7 +934,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     next_version = int(next_row[0]) if next_row is not None else 1
                     version = ConfigurationVersion(
                         config_id=config_id,
-                        config_version=next_version,
+                        registry_version=next_version,
                         package_checksum=checksum,
                         declared_content=package.declared_content(),
                         created_at=datetime.now(timezone.utc),
@@ -992,12 +992,12 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             return LookupResult(value=None, reason="configuration-not-found")
         return LookupResult(value=ConfigurationSummary(config_id=row[0], created_at=row[1]))
 
-    def lookup_configuration_version(self, config_id: str, config_version: int) -> LookupResult[ConfigurationVersion]:
+    def lookup_configuration_version(self, config_id: str, registry_version: int) -> LookupResult[ConfigurationVersion]:
         connection = self._connect()
         try:
             cursor = connection.cursor()
             try:
-                cursor.execute(self._sql(_SELECT_CONFIGURATION_VERSION), (config_id, config_version))
+                cursor.execute(self._sql(_SELECT_CONFIGURATION_VERSION), (config_id, registry_version))
                 row = cursor.fetchone()
             finally:
                 cursor.close()
@@ -1424,9 +1424,9 @@ class ProductProjection:
         """Look up a configuration's registry identity by its server-generated ID."""
         return self._records.lookup_configuration(config_id)
 
-    def lookup_configuration_version(self, config_id: str, config_version: int) -> LookupResult[ConfigurationVersion]:
+    def lookup_configuration_version(self, config_id: str, registry_version: int) -> LookupResult[ConfigurationVersion]:
         """Look up one immutable configuration version by its integer ordinal."""
-        return self._records.lookup_configuration_version(config_id, config_version)
+        return self._records.lookup_configuration_version(config_id, registry_version)
 
     def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]:
         """Return every registered version of one configuration, oldest first."""
@@ -1704,7 +1704,7 @@ def _configuration_version_from_row(row: Sequence[Any]) -> ConfigurationVersion:
     return ConfigurationVersion.model_validate(
         {
             "config_id": row[0],
-            "config_version": row[1],
+            "registry_version": row[1],
             "package_checksum": row[2],
             "declared_content": json.loads(row[3]),
             "created_at": row[4],
