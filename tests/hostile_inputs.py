@@ -531,6 +531,17 @@ def framework_root_cases(model_type: type[BaseModel], valid_model: BaseModel) ->
 
     subclass_tripwire = CallbackTripwire()
 
+    class _SubclassValue:
+        def __getattribute__(self, name: str) -> object:
+            del name
+            return subclass_tripwire.trip("model-subclass.attribute")
+
+        def __repr__(self) -> str:
+            return subclass_tripwire.trip("model-subclass.repr")
+
+        def __str__(self) -> str:
+            return subclass_tripwire.trip("model-subclass.str")
+
     @model_serializer
     def _serialize(self: BaseModel) -> dict[str, object]:
         del self
@@ -540,7 +551,8 @@ def framework_root_cases(model_type: type[BaseModel], valid_model: BaseModel) ->
         "type[BaseModel]",
         type("_HostileModel", (model_type,), {"__module__": __name__, "_serialize": _serialize}),
     )
-    subclass_fields: dict[str, Any] = dict.fromkeys(model_type.model_fields, constructed_value)
+    subclass_value = _SubclassValue()
+    subclass_fields: dict[str, Any] = dict.fromkeys(model_type.model_fields, subclass_value)
     subclass_model = hostile_model_type.model_construct(**subclass_fields)
     subclass_case = BoundaryCase(
         "model-subclass",
