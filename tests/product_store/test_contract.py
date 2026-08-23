@@ -2368,7 +2368,13 @@ def _reachable_postgresql_dsn() -> str | None:
 
 @pytest.mark.integration
 def test_postgresql_run_store_initializes_against_a_real_server() -> None:
-    """Real-server confirmation of the schema-bootstrap fix.
+    """Real-server confirmation of the schema-bootstrap fix, and of the run-to-configuration
+    binding columns and CHECK constraint that were otherwise only verified by hand.
+
+    WARNING: this test runs ``DROP SCHEMA public CASCADE`` against whatever database the DSN
+    points at, which destroys every table in that database's ``public`` schema. Point the DSN
+    only at a disposable, single-purpose database (e.g. the throwaway container below) — never
+    at a shared or persistent development database.
 
     Opt in with ``-m integration`` and a reachable ``PRODUCT_STORE_TEST_POSTGRESQL_DSN``, e.g.::
 
@@ -2380,7 +2386,8 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
 
     Covers the same three constructions the in-memory fake proves above, now against a real
     server: a fresh catalog (twice consecutively), and the pre-populated parent-tables upgrade
-    path (twice consecutively).
+    path (twice consecutively). Also asserts, against the real server, that construction leaves
+    ``product_runs`` with its three binding columns and the binding CHECK constraint in place.
     """
     dsn = _reachable_postgresql_dsn()
     if dsn is None:
@@ -2403,14 +2410,36 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
             ).fetchall()
         return {row[0] for row in rows}
 
+    def product_runs_columns() -> set[str]:
+        with psycopg.connect(dsn) as admin:
+            rows = admin.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'product_runs' AND table_schema = current_schema()"
+            ).fetchall()
+        return {row[0] for row in rows}
+
+    def binding_constraint_exists() -> bool:
+        with psycopg.connect(dsn) as admin:
+            row = admin.execute(
+                "SELECT 1 FROM information_schema.table_constraints "
+                "WHERE table_name = 'product_runs' AND constraint_name = %s AND table_schema = current_schema()",
+                (product_store_store._CONFIGURATION_BINDING_CONSTRAINT,),
+            ).fetchone()
+        return row is not None
+
     registry_tables = {"configurations", "configuration_versions"}
+    binding_columns = {"config_id", "registry_version", "package_checksum"}
 
     # A fresh catalog, twice consecutively.
     reset_schema()
     PostgreSQLRunStore(connect)
     assert registry_tables <= committed_tables()
+    assert binding_columns <= product_runs_columns()
+    assert binding_constraint_exists()
     PostgreSQLRunStore(connect)
     assert registry_tables <= committed_tables()
+    assert binding_columns <= product_runs_columns()
+    assert binding_constraint_exists()
 
     # The realistic upgrade path: every parent table pre-exists, the two registry tables do not.
     reset_schema()
@@ -2425,8 +2454,12 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
         admin.commit()
     PostgreSQLRunStore(connect)
     assert registry_tables <= committed_tables()
+    assert binding_columns <= product_runs_columns()
+    assert binding_constraint_exists()
     PostgreSQLRunStore(connect)
     assert registry_tables <= committed_tables()
+    assert binding_columns <= product_runs_columns()
+    assert binding_constraint_exists()
 
 
 def _raw_insert_product_run(
