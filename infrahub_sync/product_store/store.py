@@ -102,6 +102,28 @@ _CONFIGURATION_BINDING_CHECK_EXPRESSION = (
     "(config_id IS NULL AND config_version IS NULL AND package_checksum IS NULL) "
     "OR (config_id IS NOT NULL AND config_version IS NOT NULL AND package_checksum IS NOT NULL)"
 )
+_SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER = """
+CREATE TRIGGER IF NOT EXISTS product_runs_configuration_binding_insert
+BEFORE INSERT ON product_runs
+WHEN NOT (
+    (NEW.config_id IS NULL AND NEW.config_version IS NULL AND NEW.package_checksum IS NULL)
+    OR (NEW.config_id IS NOT NULL AND NEW.config_version IS NOT NULL AND NEW.package_checksum IS NOT NULL)
+)
+BEGIN
+    SELECT RAISE(ABORT, 'product_runs configuration-binding columns must be all NULL or all NOT NULL');
+END
+"""
+_SQLITE_CONFIGURATION_BINDING_UPDATE_TRIGGER = """
+CREATE TRIGGER IF NOT EXISTS product_runs_configuration_binding_update
+BEFORE UPDATE ON product_runs
+WHEN NOT (
+    (NEW.config_id IS NULL AND NEW.config_version IS NULL AND NEW.package_checksum IS NULL)
+    OR (NEW.config_id IS NOT NULL AND NEW.config_version IS NOT NULL AND NEW.package_checksum IS NOT NULL)
+)
+BEGIN
+    SELECT RAISE(ABORT, 'product_runs configuration-binding columns must be all NULL or all NOT NULL');
+END
+"""
 
 # Stable SQLite extended result codes. Python 3.10's sqlite3 module does not expose
 # their symbolic names even when an exception provides ``sqlite_errorcode``.
@@ -312,7 +334,8 @@ class _RelationalRunStore:
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             cursor.execute(statement)
-                    self._migrate_product_runs_columns(connection, cursor)
+                    is_sqlite = self._migrate_product_runs_columns(connection, cursor)
+                    self._ensure_configuration_binding_constraint(cursor, is_sqlite=is_sqlite)
                     connection.commit()
                 except Exception as exc:  # pylint: disable=broad-exception-caught
                     # Synchronous DB-API drivers do not share a common error base; retry only
@@ -356,12 +379,30 @@ class _RelationalRunStore:
         finally:
             cursor.close()
 
-    def _migrate_product_runs_columns(self, connection: DBAPIConnection, cursor: _Cursor) -> None:
+    def _migrate_product_runs_columns(self, connection: DBAPIConnection, cursor: _Cursor) -> bool:
         """Additively bring a pre-existing ``product_runs`` table up to the current column set."""
-        existing, _is_sqlite = self._read_product_run_columns(connection)
+        existing, is_sqlite = self._read_product_run_columns(connection)
         for column, sql_type in _CONFIGURATION_BINDING_COLUMNS:
             if column not in existing:
                 cursor.execute(f"ALTER TABLE product_runs ADD COLUMN {column} {sql_type}")
+        return is_sqlite
+
+    def _ensure_configuration_binding_constraint(self, cursor: _Cursor, *, is_sqlite: bool) -> None:
+        """Refuse a partially bound run row before any writer exists to produce one.
+
+        SQLite has no ``ALTER TABLE ... ADD CONSTRAINT``, so its enforcement is a pair of
+        ``BEFORE INSERT``/``BEFORE UPDATE`` triggers; PostgreSQL adds a genuine multi-column
+        ``CHECK`` constraint, tolerated as already-exists by the surrounding retry loop
+        (``42710`` is in ``_POSTGRESQL_SCHEMA_CONFLICT_CODES``).
+        """
+        if is_sqlite:
+            cursor.execute(_SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER)
+            cursor.execute(_SQLITE_CONFIGURATION_BINDING_UPDATE_TRIGGER)
+        else:
+            cursor.execute(
+                f"ALTER TABLE product_runs ADD CONSTRAINT {_CONFIGURATION_BINDING_CONSTRAINT} "
+                f"CHECK ({_CONFIGURATION_BINDING_CHECK_EXPRESSION})"
+            )
 
     def create(self, run: ProductRun) -> None:
         connection = self._connect()

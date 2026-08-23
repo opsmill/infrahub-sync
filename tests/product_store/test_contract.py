@@ -1934,3 +1934,132 @@ def test_column_introspection_falls_back_to_information_schema_when_pragma_is_re
     assert columns == frozenset(connection.columns)
     assert connection.information_schema_queries == 1
     assert connection.rollback_calls == 1
+
+
+def _raw_insert_product_run(
+    connection: sqlite3.Connection,
+    run_id: str,
+    *,
+    config_id: str | None,
+    config_version: int | None,
+    package_checksum: str | None,
+) -> None:
+    connection.execute(
+        "INSERT INTO product_runs (run_id, operation, configuration_reference, actor, audit_links, started_at, "
+        "finished_at, phase, outcome, summary, results, config_id, config_version, package_checksum) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            run_id,
+            "plan",
+            "sha256:raw",
+            None,
+            "[]",
+            datetime.now(timezone.utc).isoformat(),
+            None,
+            "planning",
+            None,
+            "{}",
+            "{}",
+            config_id,
+            config_version,
+            package_checksum,
+        ),
+    )
+    connection.commit()
+
+
+_PARTIAL_CONFIGURATION_BINDING_COMBINATIONS = [
+    pytest.param("20260101T0000-aaaaaaaa", None, None, id="only-config-id"),
+    pytest.param(None, 1, None, id="only-config-version"),
+    pytest.param(None, None, "a" * 64, id="only-package-checksum"),
+    pytest.param("20260101T0000-aaaaaaaa", 1, None, id="missing-package-checksum"),
+    pytest.param("20260101T0000-aaaaaaaa", None, "a" * 64, id="missing-config-version"),
+    pytest.param(None, 1, "a" * 64, id="missing-config-id"),
+]
+
+
+@pytest.mark.parametrize(
+    ("config_id", "config_version", "package_checksum"), _PARTIAL_CONFIGURATION_BINDING_COMBINATIONS
+)
+def test_every_partial_configuration_binding_combination_is_refused_at_insert(
+    config_id: str | None, config_version: int | None, package_checksum: str | None, tmp_path: Path
+) -> None:
+    database = tmp_path / "records.sqlite3"
+    SQLiteRunStore(database)
+
+    with sqlite3.connect(database) as connection, pytest.raises(sqlite3.IntegrityError, match="configuration-binding"):
+        _raw_insert_product_run(
+            connection,
+            "raw-run-001",
+            config_id=config_id,
+            config_version=config_version,
+            package_checksum=package_checksum,
+        )
+
+
+def test_fully_unbound_and_fully_bound_rows_are_both_accepted(tmp_path: Path) -> None:
+    database = tmp_path / "records.sqlite3"
+    SQLiteRunStore(database)
+
+    with sqlite3.connect(database) as connection:
+        _raw_insert_product_run(connection, "unbound-run", config_id=None, config_version=None, package_checksum=None)
+        _raw_insert_product_run(
+            connection,
+            "bound-run",
+            config_id="20260101T0000-aaaaaaaa",
+            config_version=1,
+            package_checksum="a" * 64,
+        )
+        rows = connection.execute("SELECT run_id FROM product_runs ORDER BY run_id").fetchall()
+
+    assert [row[0] for row in rows] == ["bound-run", "unbound-run"]
+
+
+def test_partial_configuration_binding_is_refused_on_update_too(tmp_path: Path) -> None:
+    database = tmp_path / "records.sqlite3"
+    store = SQLiteRunStore(database)
+    store.create(_run("update-target"))
+
+    with sqlite3.connect(database) as connection:
+        with pytest.raises(sqlite3.IntegrityError, match="configuration-binding"):
+            connection.execute(
+                "UPDATE product_runs SET config_id = ? WHERE run_id = ?",
+                ("20260101T0000-aaaaaaaa", "update-target"),
+            )
+        connection.rollback()
+        unchanged = connection.execute(
+            "SELECT config_id, config_version, package_checksum FROM product_runs WHERE run_id = ?",
+            ("update-target",),
+        ).fetchone()
+
+    assert unchanged == (None, None, None)
+
+
+class _RecordingPostgresLikeConnection(_PostgresLikeConnection):
+    """Fake PostgreSQL-flavored connection that records every executed statement."""
+
+    def __init__(self, columns: tuple[str, ...]) -> None:
+        super().__init__(columns)
+        self.executed: list[str] = []
+
+    def cursor(self) -> _RecordingPostgresLikeCursor:
+        return _RecordingPostgresLikeCursor(self)
+
+
+class _RecordingPostgresLikeCursor(_PostgresLikeCursor):
+    def execute(self, operation: str, parameters: tuple[Any, ...] = ()) -> _RecordingPostgresLikeCursor:
+        self._connection.executed.append(operation)  # type: ignore[attr-defined]
+        return super().execute(operation, parameters)
+
+
+def test_postgresql_dialect_binding_constraint_uses_a_check_constraint_not_a_trigger() -> None:
+    store = object.__new__(PostgreSQLRunStore)
+    store._placeholder = "%s"
+    store._schema_conflict_codes = product_store_store._POSTGRESQL_SCHEMA_CONFLICT_CODES
+    connection = _RecordingPostgresLikeConnection(columns=("run_id", "operation"))
+    store._connect = lambda: connection
+
+    store._initialize()
+
+    assert any("ADD CONSTRAINT" in statement and "CHECK" in statement for statement in connection.executed)
+    assert not any("CREATE TRIGGER" in statement for statement in connection.executed)
