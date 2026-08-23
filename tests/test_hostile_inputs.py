@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from pydantic import BaseModel, ConfigDict
-from pydantic_core import PydanticCustomError
+from pydantic_core import PydanticCustomError, PydanticSerializationError
 
 from tests.hostile_inputs import (
     BoundaryCase,
@@ -63,6 +63,22 @@ def test_root_factories_classify_exact_dict_and_framework_bypasses() -> None:
     assert outcomes["constructed-invalid-model"] is BoundaryOutcome.REJECT
     assert outcomes["model-subclass"] is BoundaryOutcome.REJECT
     assert all(case.expected_callbacks == () for case in cases)
+
+
+def _framework_callback_cases() -> tuple[BoundaryCase, ...]:
+    valid_model = _ExampleModel.model_validate({"value": 1})
+    return tuple(case for case in framework_root_cases(_ExampleModel, valid_model) if case.probed_callback is not None)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [pytest.param(case, id=case.id) for case in _framework_callback_cases()],
+)
+def test_framework_case_callback_probes_are_live(case: BoundaryCase) -> None:
+    with pytest.raises((AssertionError, PydanticSerializationError), match="hostile callback executed"):
+        case.probe_callback()
+
+    assert case.tripwire.calls == (case.probed_callback,)
 
 
 def test_invalid_json_cases_cover_every_required_graph_shape() -> None:

@@ -909,6 +909,16 @@ def test_native_validation_failure_rejects_pointer_string_subclasses_without_cal
     [pytest.param(case, id=case.id) for case in forged_diagnostic_cases()],
 )
 def test_safe_parse_rejects_forged_custom_error_context(case: ForgedDiagnosticCase) -> None:
+    # If a private marker is ever reinstated, prove an attacker who recovers it still cannot
+    # authenticate a callback-bearing root. The reusable harness itself stays marker-agnostic.
+    marker_key = getattr(
+        configuration_models,
+        "_INTERNAL_ERROR_CONTEXT_MARKER_KEY",
+        "_removed_internal_error_context_marker",
+    )
+    marker = getattr(configuration_models, "_INTERNAL_ERROR_CONTEXT_MARKER", object())
+    case.context[marker_key] = marker
+
     with pytest.raises(ConfigurationPackageParseError) as caught:
         parse_configuration_package(case.value)
 
