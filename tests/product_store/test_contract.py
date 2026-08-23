@@ -1776,6 +1776,18 @@ def test_configuration_summary_requires_timezone() -> None:
         )
 
 
+@pytest.mark.parametrize("registry_version", [0, -1])
+def test_configuration_version_rejects_a_non_positive_registry_version(registry_version: int) -> None:
+    with pytest.raises(ValidationError, match="greater than or equal to 1"):
+        ConfigurationVersion(
+            config_id="20260808T1200-aaaaaaaa",
+            registry_version=registry_version,
+            package_checksum="a" * 64,
+            declared_content={},
+            created_at=datetime.now(timezone.utc),
+        )
+
+
 def test_configuration_version_is_frozen() -> None:
     version = ConfigurationVersion(
         config_id="20260808T1200-aaaaaaaa",
