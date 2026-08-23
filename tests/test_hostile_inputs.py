@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 from pydantic import BaseModel, ConfigDict
 from pydantic_core import PydanticCustomError, PydanticSerializationError
@@ -74,7 +76,8 @@ def test_root_factories_classify_exact_dict_and_framework_bypasses() -> None:
         *framework_root_cases(_ExampleModel, valid_model),
     )
 
-    assert {case.id: case.outcome for case in cases} == {
+    by_id = {case.id: case for case in cases}
+    assert {case_id: case.outcome for case_id, case in by_id.items()} == {
         "exact-dict": BoundaryOutcome.ACCEPT,
         "none": BoundaryOutcome.REJECT,
         "list": BoundaryOutcome.REJECT,
@@ -87,6 +90,28 @@ def test_root_factories_classify_exact_dict_and_framework_bypasses() -> None:
         "constructed-invalid-model": BoundaryOutcome.REJECT,
         "model-subclass": BoundaryOutcome.REJECT,
     }
+    assert type(by_id["exact-dict"].value) is dict
+    assert by_id["exact-dict"].value == valid_mapping
+    assert by_id["none"].value is None
+    assert type(by_id["list"].value) is list
+    assert by_id["list"].value == []
+    assert type(by_id["string"].value) is str
+    assert by_id["string"].value == "root-string-canary"
+    assert type(by_id["int"].value) is int
+    assert by_id["int"].value == 7
+    assert type(by_id["float"].value) is float
+    assert cast("float", by_id["float"].value).as_integer_ratio() == (3, 2)
+    assert type(by_id["dict-subclass"].value).__name__ == "_HostileDict"
+    assert issubclass(type(by_id["dict-subclass"].value), dict)
+    hostile_dict = cast("dict[object, object]", by_id["dict-subclass"].value)
+    assert dict.__len__(hostile_dict) == 0  # noqa: PLC2801 - bypass hostile hooks.
+    assert type(by_id["spoofed-class"].value).__name__ == "_SpoofedClass"
+    assert by_id["valid-model"].value is valid_model
+    assert type(by_id["constructed-invalid-model"].value) is _ExampleModel
+    assert type(vars(by_id["constructed-invalid-model"].value)["value"]).__name__ == "_ConstructedValue"
+    assert type(by_id["model-subclass"].value).__name__ == "_HostileModel"
+    assert issubclass(type(by_id["model-subclass"].value), _ExampleModel)
+    assert type(vars(by_id["model-subclass"].value)["value"]).__name__ == "_SubclassValue"
     assert all(case.expected_callbacks == () for case in cases)
 
 
