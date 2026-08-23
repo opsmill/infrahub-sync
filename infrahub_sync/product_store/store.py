@@ -16,6 +16,7 @@ from typing import Any, Literal, Protocol, cast
 
 from pydantic import TypeAdapter
 
+from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.configuration import ConfigurationPackage, validate_package_credentials
 from infrahub_sync.execution import REDACTED, redact
 from infrahub_sync.plan.canonical import canonical_json_bytes
@@ -211,6 +212,10 @@ class ConfigurationNotFoundError(ValueError):
 
 class ConfigurationVersionAllocationError(ValueError):
     """Every allocation attempt for a new configuration version was exhausted by contention."""
+
+
+class DuplicateConfigurationError(ValueError):
+    """The generated configuration ID already exists."""
 
 
 class _Cursor(Protocol):
@@ -926,8 +931,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.execute(self._sql(_INSERT_CONFIGURATION), (config_id, version.created_at.isoformat()))
                 self._insert_configuration_version_row(cursor, version)
                 connection.commit()
-            except Exception:
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                # DB-API drivers do not share an integrity-error base class;
+                # inspect only documented SQLite/PostgreSQL uniqueness markers.
                 connection.rollback()
+                if _is_unique_violation(exc):
+                    msg = f"Configuration ID {config_id!r} already exists"
+                    raise DuplicateConfigurationError(msg) from exc
                 raise
             finally:
                 cursor.close()
@@ -936,6 +946,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         return version
 
     def _insert_configuration_version_row(self, cursor: _Cursor, version: ConfigurationVersion) -> None:
+        _require_checksum_digests_content(version.package_checksum, version.declared_content)
         cursor.execute(
             self._sql(_INSERT_CONFIGURATION_VERSION),
             (
@@ -1721,13 +1732,11 @@ def _audit_from_row(row: Sequence[Any]) -> AuditEvent:
 def _generate_config_id() -> str:
     """Return a sortable, low-collision configuration identifier.
 
-    Mirrors ``infrahub_sync.cache.paths.generate_run_id``'s exact scheme and alphabet:
-    ``YYYYMMDDTHHMM-<8 hex>``, so the registry does not introduce a second ID format.
+    Delegates to ``infrahub_sync.cache.paths.generate_run_id`` so the registry shares one
+    identifier scheme and implementation with run IDs, rather than maintaining a second one
+    that a docstring claims mirrors it but nothing enforces.
     """
-    import secrets as _secrets  # pylint: disable=import-outside-toplevel
-
-    now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M")
-    return f"{now}-{_secrets.token_hex(4)}"
+    return generate_run_id()
 
 
 def _configuration_version_from_row(row: Sequence[Any]) -> ConfigurationVersion:
@@ -1796,6 +1805,21 @@ def _is_duplicate_column_error(exc: BaseException) -> bool:
     if isinstance(exc, sqlite3.OperationalError):
         return "duplicate column name" in str(exc).lower()
     return _sqlstate(exc) == _POSTGRESQL_DUPLICATE_COLUMN_CODE
+
+
+def _require_checksum_digests_content(checksum: str, declared_content: Mapping[str, Any]) -> None:
+    """Refuse to persist a configuration version whose checksum does not digest its own
+    declared content.
+
+    ``create_configuration``/``add_configuration_version`` trust ``package.checksum()`` and
+    separately persist ``package.declared_content()``; nothing else checks the two
+    correspond, and ``configuration_versions`` is append-only, so any future drift between
+    them would write a permanently mismatched row with no later chance to catch it.
+    """
+    expected = sha256(canonical_json_bytes(declared_content, kind="configuration-package")).hexdigest()
+    if checksum != expected:
+        msg = f"package checksum {checksum!r} does not digest its own declared content"
+        raise AssertionError(msg)
 
 
 def _require_publication_marked(cursor: _Cursor, reference: ArtifactReference) -> None:

@@ -32,6 +32,7 @@ from infrahub_sync.product_store import (
     ConfigurationVersion,
     ConfigurationVersionAllocationError,
     DuplicateArtifactError,
+    DuplicateConfigurationError,
     DuplicatePrefectExecutionError,
     DuplicateRunError,
     MutationReceipt,
@@ -57,6 +58,7 @@ EXPECTED_PUBLIC_NAMES = {
     "ConfigurationVersionAllocationError",
     "DBAPIConnection",
     "DuplicateArtifactError",
+    "DuplicateConfigurationError",
     "DuplicatePrefectExecutionError",
     "DuplicateRunError",
     "LookupResult",
@@ -451,6 +453,15 @@ def test_public_surface_is_exactly_the_supported_contract() -> None:
     assert set(product_store.__all__) == EXPECTED_PUBLIC_NAMES
 
 
+def test_generate_config_id_shares_the_run_id_generator(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The registry must not maintain a second, independently-drifting implementation of the
+    run ID scheme: it delegates to ``generate_run_id`` so a change to the shared scheme is
+    automatically reflected here too, instead of a docstring claim nothing enforces."""
+    monkeypatch.setattr(product_store_store, "generate_run_id", lambda: "sentinel-generated-id")
+
+    assert product_store_store._generate_config_id() == "sentinel-generated-id"
+
+
 @pytest.mark.parametrize(
     "error",
     [
@@ -494,6 +505,36 @@ def test_postgresql_schema_bootstrap_does_not_swallow_other_ddl_failures() -> No
     connection.rollback.assert_called_once_with()
     connection.cursor.return_value.close.assert_called_once_with()
     connection.close.assert_called_once_with()
+
+
+def test_postgresql_duplicate_column_race_is_recognized() -> None:
+    assert product_store_store._is_duplicate_column_error(_FakeDriverError(sqlstate="42701"))
+
+
+@pytest.mark.parametrize("sqlstate", ["42501", "23505"])
+def test_postgresql_non_duplicate_column_errors_are_not_recognized(sqlstate: str) -> None:
+    assert not product_store_store._is_duplicate_column_error(_FakeDriverError(sqlstate=sqlstate))
+
+
+def test_sqlite_duplicate_column_race_is_recognized() -> None:
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.execute("CREATE TABLE example (existing TEXT)")
+        with pytest.raises(sqlite3.OperationalError) as exc_info:
+            connection.execute("ALTER TABLE example ADD COLUMN existing TEXT")
+        assert product_store_store._is_duplicate_column_error(exc_info.value)
+    finally:
+        connection.close()
+
+
+def test_sqlite_other_operational_errors_are_not_duplicate_columns() -> None:
+    connection = sqlite3.connect(":memory:")
+    try:
+        with pytest.raises(sqlite3.OperationalError) as exc_info:
+            connection.execute("ALTER TABLE table_that_does_not_exist ADD COLUMN extra TEXT")
+        assert not product_store_store._is_duplicate_column_error(exc_info.value)
+    finally:
+        connection.close()
 
 
 @pytest.mark.parametrize(
@@ -1752,6 +1793,29 @@ def test_created_configuration_round_trips_its_first_version(provider: ProductPr
     assert provider.list_configuration_versions(version.config_id) == (version,)
 
 
+def test_insert_configuration_version_row_rejects_a_checksum_content_mismatch(tmp_path: Path) -> None:
+    """The store trusts ``package.checksum()`` and separately persists
+    ``package.declared_content()``; nothing else checks they correspond, and an append-only
+    table gets no later chance to catch drift between the two."""
+    store = SQLiteRunStore(tmp_path / "records.sqlite3")
+    first = store.create_configuration(_configuration_package())
+    mismatched = ConfigurationVersion(
+        config_id=first.config_id,
+        registry_version=2,
+        package_checksum="a" * 64,
+        declared_content={"does": "not-match-the-checksum-above"},
+        created_at=datetime.now(timezone.utc),
+    )
+
+    connection = store._connect()
+    try:
+        cursor = connection.cursor()
+        with pytest.raises(AssertionError, match="does not digest"):
+            store._insert_configuration_version_row(cursor, mismatched)
+    finally:
+        connection.close()
+
+
 @pytest.mark.parametrize("profile", ["local", "production"])
 def test_configuration_registry_survives_store_reconstruction(profile: str, tmp_path: Path) -> None:
     fake_s3 = _FakeS3()
@@ -1807,6 +1871,20 @@ def test_adding_a_version_with_a_known_checksum_returns_the_existing_version_and
     assert created is False
     assert replay == first
     assert provider.list_configuration_versions(first.config_id) == (first,)
+
+
+def test_create_configuration_raises_a_typed_error_on_a_config_id_collision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``config_id`` uniqueness violation must not let the raw driver ``IntegrityError``
+    escape a public API, like every sibling method (``DuplicateRunError``,
+    ``DuplicateArtifactError``, ``DuplicatePrefectExecutionError``)."""
+    store = SQLiteRunStore(tmp_path / "records.sqlite3")
+    first = store.create_configuration(_configuration_package())
+    monkeypatch.setattr(product_store_store, "_generate_config_id", lambda: first.config_id)
+
+    with pytest.raises(DuplicateConfigurationError, match=re.escape(first.config_id)):
+        store.create_configuration(_configuration_package(verify_ssl=False))
 
 
 def test_add_configuration_version_on_unknown_configuration_is_refused(provider: ProductProjection) -> None:
