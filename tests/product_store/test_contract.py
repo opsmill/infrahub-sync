@@ -2461,6 +2461,88 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
     assert binding_columns <= product_runs_columns()
     assert binding_constraint_exists()
 
+    # The CHECK constraint must actually enforce the binding invariant against a real server,
+    # not merely exist by name.
+    _assert_real_postgresql_refuses_partial_configuration_binding(dsn)
+
+
+def _assert_real_postgresql_refuses_partial_configuration_binding(dsn: str) -> None:
+    """Attempt every partial-binding combination on INSERT, then a partial UPDATE, against a
+    real PostgreSQL server, and confirm the two legal (fully-unbound and fully-bound) states are
+    still accepted. Factored out of the test above only to keep that test's statement count
+    reasonable; it has exactly one caller.
+    """
+    import psycopg  # ty: ignore[unresolved-import]  # optional dep; pylint: disable=import-outside-toplevel,import-error
+
+    def raw_insert(
+        run_id: str, *, config_id: str | None, registry_version: int | None, package_checksum: str | None
+    ) -> None:
+        with psycopg.connect(dsn) as admin:
+            admin.execute(
+                "INSERT INTO product_runs (run_id, operation, configuration_reference, actor, audit_links, "
+                "started_at, finished_at, phase, outcome, summary, results, config_id, registry_version, "
+                "package_checksum) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    run_id,
+                    "plan",
+                    "sha256:raw",
+                    None,
+                    "[]",
+                    datetime.now(timezone.utc).isoformat(),
+                    None,
+                    "planning",
+                    None,
+                    "{}",
+                    "{}",
+                    config_id,
+                    registry_version,
+                    package_checksum,
+                ),
+            )
+
+    for index, (config_id, registry_version, package_checksum) in enumerate(_PARTIAL_CONFIGURATION_BINDING_TUPLES):
+        with pytest.raises(psycopg.Error):
+            raw_insert(
+                f"raw-partial-{index}",
+                config_id=config_id,
+                registry_version=registry_version,
+                package_checksum=package_checksum,
+            )
+
+    raw_insert("raw-unbound", config_id=None, registry_version=None, package_checksum=None)
+    raw_insert("raw-bound", config_id="20260101T0000-aaaaaaaa", registry_version=1, package_checksum="a" * 64)
+    with psycopg.connect(dsn) as admin:
+        accepted = {
+            row[0]
+            for row in admin.execute(
+                "SELECT run_id FROM product_runs WHERE run_id IN (%s, %s)", ("raw-unbound", "raw-bound")
+            ).fetchall()
+        }
+    assert accepted == {"raw-unbound", "raw-bound"}
+
+    with pytest.raises(psycopg.Error), psycopg.connect(dsn) as admin:
+        admin.execute(
+            "UPDATE product_runs SET config_id = %s WHERE run_id = %s",
+            ("20260101T0000-bbbbbbbb", "raw-unbound"),
+        )
+
+    with psycopg.connect(dsn) as admin:
+        unchanged = admin.execute(
+            "SELECT config_id, registry_version, package_checksum FROM product_runs WHERE run_id = %s",
+            ("raw-unbound",),
+        ).fetchone()
+    assert unchanged == (None, None, None)
+
+
+_PARTIAL_CONFIGURATION_BINDING_TUPLES: list[tuple[str | None, int | None, str | None]] = [
+    ("20260101T0000-aaaaaaaa", None, None),
+    (None, 1, None),
+    (None, None, "a" * 64),
+    ("20260101T0000-aaaaaaaa", 1, None),
+    ("20260101T0000-aaaaaaaa", None, "a" * 64),
+    (None, 1, "a" * 64),
+]
+
 
 def _raw_insert_product_run(
     connection: sqlite3.Connection,
@@ -2601,3 +2683,48 @@ def test_postgresql_dialect_binding_constraint_uses_a_check_constraint_not_a_tri
     PostgreSQLRunStore(database.connect)
 
     assert product_store_store._CONFIGURATION_BINDING_CONSTRAINT in database.constraints
+
+
+_CONFIGURATION_BINDING_COMBINATIONS_AND_LEGALITY = [
+    pytest.param(None, None, None, True, id="fully-unbound"),
+    pytest.param("20260101T0000-aaaaaaaa", 1, "a" * 64, True, id="fully-bound"),
+    pytest.param("20260101T0000-aaaaaaaa", None, None, False, id="only-config-id"),
+    pytest.param(None, 1, None, False, id="only-config-version"),
+    pytest.param(None, None, "a" * 64, False, id="only-package-checksum"),
+    pytest.param("20260101T0000-aaaaaaaa", 1, None, False, id="missing-package-checksum"),
+    pytest.param("20260101T0000-aaaaaaaa", None, "a" * 64, False, id="missing-config-version"),
+    pytest.param(None, 1, "a" * 64, False, id="missing-config-id"),
+]
+
+
+@pytest.mark.parametrize(
+    ("config_id", "registry_version", "package_checksum", "legal"),
+    _CONFIGURATION_BINDING_COMBINATIONS_AND_LEGALITY,
+)
+def test_configuration_binding_check_expression_permits_exactly_the_two_legal_states(
+    config_id: str | None,
+    registry_version: int | None,
+    package_checksum: str | None,
+    legal: bool,  # noqa: FBT001 - a parametrized case discriminator, not a caller-facing switch
+) -> None:
+    """Directly evaluate ``_CONFIGURATION_BINDING_CHECK_EXPRESSION`` -- the entire PostgreSQL
+    enforcement of the run-to-configuration binding invariant -- against all eight NULL/NOT-NULL
+    combinations of the three binding columns.
+
+    This does not go through a real PostgreSQL server, nor through SQLite's independent trigger
+    implementation of the same invariant (the triggers embed their own literal copy of this
+    logic, so they cannot catch a defect in this expression string). It evaluates the exact
+    string PostgreSQL's ``CHECK`` constraint is built from, in SQLite, by binding the three
+    candidate values as columns of a one-row subquery.
+    """
+    connection = sqlite3.connect(":memory:")
+    try:
+        row = connection.execute(
+            f"SELECT ({product_store_store._CONFIGURATION_BINDING_CHECK_EXPRESSION}) "  # noqa: S608
+            "FROM (SELECT ? AS config_id, ? AS registry_version, ? AS package_checksum)",
+            (config_id, registry_version, package_checksum),
+        ).fetchone()
+    finally:
+        connection.close()
+
+    assert bool(row[0]) is legal
