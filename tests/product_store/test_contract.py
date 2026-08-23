@@ -1850,6 +1850,51 @@ def test_distinct_configurations_may_share_identical_package_content(provider: P
     assert first.registry_version == second.registry_version == 1
 
 
+def test_configuration_reads_are_scoped_to_their_own_configuration_with_two_in_one_store(
+    provider: ProductProjection,
+) -> None:
+    """Every scoped read must stay scoped even when a second configuration exists in the same
+    store and happens to share a registry_version number or a package checksum with the first --
+    a predicate that also matched every row would be indistinguishable from a correctly scoped
+    one until two configurations with overlapping numbers are actually present together.
+    """
+    package_a = _configuration_package()
+    package_b = _configuration_package(url="https://demo.netbox.dev/tenant-b")
+    config_a = provider.create_configuration(package_a)
+    config_b = provider.create_configuration(package_b)
+    config_a_v2, _ = provider.add_configuration_version(config_a.config_id, _configuration_package(verify_ssl=False))
+    # config_b's second version shares its checksum with config_a's first version -- a checksum
+    # that has never been registered under config_b before, so this is a plain new-checksum
+    # insert, not yet the dedup path exercised below.
+    config_b_v2, created = provider.add_configuration_version(config_b.config_id, package_a)
+    assert created is True
+    assert config_b_v2.config_id == config_b.config_id
+
+    # list_configuration_versions: config_a's own two rows, none of config_b's.
+    assert provider.list_configuration_versions(config_a.config_id) == (config_a, config_a_v2)
+    assert provider.list_configuration_versions(config_b.config_id) == (config_b, config_b_v2)
+
+    # lookup_configuration_version: both configurations have a registry_version 1; a lookup for
+    # one must resolve to its own row, never the other's.
+    looked_up_a = provider.lookup_configuration_version(config_a.config_id, 1)
+    looked_up_b = provider.lookup_configuration_version(config_b.config_id, 1)
+    assert looked_up_a.value == config_a
+    assert looked_up_b.value == config_b
+
+    # lookup_configuration: a nonexistent ID must be unavailable even though real configurations
+    # exist in the same store.
+    missing = provider.lookup_configuration("nonexistent-configuration")
+    assert not missing.available
+    assert missing.reason == "configuration-not-found"
+
+    # The checksum-dedup path: config_b now already has a version with config_a's checksum
+    # (config_b_v2, above). Registering that same content again must resolve to config_b's own
+    # row, not config_a's, even though config_a also has a version with that checksum.
+    replay, replay_created = provider.add_configuration_version(config_b.config_id, package_a)
+    assert replay_created is False
+    assert replay == config_b_v2
+
+
 def test_adding_a_version_with_a_new_checksum_allocates_the_next_integer(provider: ProductProjection) -> None:
     first = provider.create_configuration(_configuration_package())
 
