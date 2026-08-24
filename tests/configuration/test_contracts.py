@@ -9,15 +9,14 @@ import subprocess  # noqa: S404 - fixed interpreter runs an in-repository determ
 import sys
 import textwrap
 import typing
-from collections.abc import Callable, ItemsView, Iterator, Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from types import UnionType
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, cast
 
 import pytest
 from diffsync.enum import DiffSyncFlags
-from pydantic import BaseModel, RootModel, ValidationError, model_serializer
-from pydantic_core import PydanticCustomError
+from pydantic import BaseModel, RootModel, ValidationError
 
 import infrahub_sync.configuration.credentials as configuration_credentials
 from infrahub_sync import (
@@ -47,6 +46,26 @@ from infrahub_sync.configuration import (
 )
 from infrahub_sync.configuration import models as configuration_models
 from infrahub_sync.configuration.models import safe_pointer_component
+from tests.hostile_inputs import (
+    BoundaryCase,
+    BoundaryOutcome,
+    EndpointCase,
+    ForgedDiagnosticCase,
+    InvalidJsonCase,
+    UnicodeCase,
+    UnicodeCollisionCase,
+    diagnostic_unicode_cases,
+    endpoint_cases,
+    forged_diagnostic_cases,
+    framework_root_cases,
+    hostile_builtin_cases,
+    invalid_json_cases,
+    iter_lone_surrogates,
+    protocol_object_cases,
+    root_value_cases,
+    unicode_collision_cases,
+    valid_unicode_scalar_cases,
+)
 
 
 def _package(**updates: object) -> ConfigurationPackage:
@@ -166,123 +185,6 @@ def _assert_json_containers(value: object) -> None:
         assert value is None or type(value) in {str, int, float, bool}
         if type(value) is float:
             assert math.isfinite(value)
-
-
-class _ForgedValidationContext(Mapping[str, object]):
-    """Mapping whose traversal counterfeits one package validation error."""
-
-    def __init__(
-        self,
-        error_type: Literal["invalid_json_value", "invalid_unicode_surrogate", "unsupported_declared_fields"],
-        context: dict[str, object],
-    ) -> None:
-        self._error_type = error_type
-        self._context = context
-        self.items_called = False
-
-    def __getitem__(self, key: str) -> object:
-        raise KeyError(key)
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(())
-
-    def __len__(self) -> int:
-        return 0
-
-    def items(self) -> ItemsView[str, object]:
-        self.items_called = True
-        raise PydanticCustomError(self._error_type, "{message}", self._context)
-
-
-class _ExecutableDict(dict[str, object]):  # noqa: FURB189 - exact dict subclasses are the contract boundary.
-    """Dictionary subclass that records unsafe traversal."""
-
-    callback_called = False
-
-    def items(self) -> ItemsView[str, object]:  # ty: ignore[invalid-method-override]  # Hostile test probe.
-        type(self).callback_called = True
-        msg = "dict-callback-canary"
-        raise AssertionError(msg)
-
-
-class _ExecutableList(list[object]):  # noqa: FURB189 - exact list subclasses are the contract boundary.
-    """List subclass that records unsafe traversal."""
-
-    callback_called = False
-
-    def __iter__(self) -> Iterator[object]:
-        type(self).callback_called = True
-        msg = "list-callback-canary"
-        raise AssertionError(msg)
-
-
-class _ExecutableStr(str):  # noqa: FURB189 - exact string subclasses are the contract boundary.
-    """String subclass that records unsafe traversal."""
-
-    __slots__ = ()
-    callback_called = False
-
-    def __iter__(self) -> Iterator[str]:  # ty: ignore[invalid-method-override]  # Hostile test probe.
-        type(self).callback_called = True
-        msg = "str-callback-canary"
-        raise AssertionError(msg)
-
-
-class _ExecutableInt(int):
-    """Integer subclass that records unsafe coercion."""
-
-    callback_called = False
-
-    def __int__(self) -> int:
-        type(self).callback_called = True
-        msg = "int-callback-canary"
-        raise AssertionError(msg)
-
-
-class _ExecutableFloat(float):
-    """Float subclass that records unsafe coercion."""
-
-    callback_called = False
-
-    def __float__(self) -> float:
-        type(self).callback_called = True
-        msg = "float-callback-canary"
-        raise AssertionError(msg)
-
-
-class _ExplosiveConstructedValue:
-    """Invalid constructed field value that records attribute access."""
-
-    callback_called = False
-
-    def __getattribute__(self, name: str) -> object:
-        type(self).callback_called = True
-        msg = "constructed-value-callback-canary"
-        raise AssertionError(msg)
-
-
-class _SpoofedClassValue:
-    """Object whose spoofed class property records unsafe inspection."""
-
-    callback_called = False
-
-    @property
-    def __class__(self) -> type[object]:
-        type(self).callback_called = True
-        msg = "class-callback-secret-canary"
-        raise RuntimeError(msg)
-
-
-class _ExecutableConfigurationPackage(ConfigurationPackage):
-    """Package subclass whose serializer must not run at the parse boundary."""
-
-    serializer_called: ClassVar[bool] = False
-
-    @model_serializer
-    def _serialize(self) -> dict[str, object]:
-        type(self).serializer_called = True
-        msg = "package-serializer-callback-canary"
-        raise AssertionError(msg)
 
 
 def test_checksum_is_stable_across_mapping_order() -> None:
@@ -821,9 +723,12 @@ def test_safe_parse_reports_invalid_credential_name_at_escaped_item_without_echo
     assert identifier_canary not in message
 
 
-def test_safe_parse_rejects_credential_name_string_subclasses_without_callbacks() -> None:
-    _ExecutableStr.callback_called = False
-    hostile_name = _ExecutableStr("hostile-credential-name-canary")
+@pytest.mark.parametrize(
+    "case",
+    [pytest.param(case, id=case.id) for case in hostile_builtin_cases() if case.id == "str-subclass"],
+)
+def test_safe_parse_rejects_credential_name_string_subclasses_without_callbacks(case: BoundaryCase) -> None:
+    hostile_name = case.value
     data = _package().model_dump(mode="json")
     data["credentials"] = {
         hostile_name: {"provider": "env", "identifier": "CREDENTIAL_IDENTIFIER_CANARY"},
@@ -834,7 +739,7 @@ def test_safe_parse_rejects_credential_name_string_subclasses_without_callbacks(
 
     message = str(caught.value)
     assert message == "configuration package is invalid at /credentials: non-string mapping key"
-    assert not hostile_name.callback_called
+    case.assert_expected_callbacks()
     assert "canary" not in message
 
 
@@ -873,12 +778,19 @@ def test_safe_parse_rejects_distinct_surrogate_keys_before_serialization(
     assert all(canary not in message for canary in canaries)
 
 
-@pytest.mark.parametrize("codepoint", [0xDC00, 0xDFFF], ids=["low-start", "low-end"])
-def test_safe_parse_rejects_surrogate_string_values_without_echo(codepoint: int) -> None:
+_LONE_SURROGATE_SAMPLES = tuple(
+    case for case in iter_lone_surrogates() if ord(case.value) in {0xD800, 0xDBFF, 0xDC00, 0xDFFF}
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [pytest.param(case, id=case.id) for case in _LONE_SURROGATE_SAMPLES],
+)
+def test_safe_parse_rejects_surrogate_string_values_without_echo(case: UnicodeCase) -> None:
     canary = "surrogate-value-canary"
-    surrogate = chr(codepoint)
     data = _package().model_dump(mode="json")
-    data["configuration"]["name"] = f"{canary}{surrogate}"
+    data["configuration"]["name"] = f"{canary}{case.value}"
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
         parse_configuration_package(data)
@@ -887,63 +799,31 @@ def test_safe_parse_rejects_surrogate_string_values_without_echo(codepoint: int)
     assert message == "configuration package is invalid at /configuration/name: invalid Unicode surrogate"
     assert len(message.splitlines()) == 1
     assert all(character.isprintable() for character in message)
-    assert surrogate not in message
+    assert case.value not in message
     assert canary not in message
 
 
 @pytest.mark.parametrize(
-    ("failure_kind", "reason"),
-    [
-        pytest.param("excessive-depth", "maximum declared-content depth exceeded", id="excessive-depth"),
-        pytest.param("non-finite-float", "non-finite float", id="non-finite-float"),
-        pytest.param("recursive-list", "recursive list", id="recursive-list"),
-        pytest.param("recursive-mapping", "recursive mapping", id="recursive-mapping"),
-        pytest.param("non-string-key", "non-string mapping key", id="non-string-key"),
-        pytest.param("non-json-value", "non-JSON value", id="non-json-value"),
-    ],
+    "case",
+    [pytest.param(case, id=case.id) for case in invalid_json_cases()],
 )
-def test_safe_parse_preserves_locations_for_non_json_failures(failure_kind: str, reason: str) -> None:
+def test_safe_parse_preserves_locations_for_non_json_failures(case: InvalidJsonCase) -> None:
     location_canary = "invalid\n\u202e~/"
     visible_location = r"invalid\\n\\u202e~0~1"
-    type_name_canary = "RejectedTypeNameCanary"
     data = _package().model_dump(mode="json")
     settings = data["configuration"]["source"]["settings"]
-    expected_location = f"/configuration/source/settings/{visible_location}"
-
-    if failure_kind == "excessive-depth":
-        value: object = "leaf"
-        for _ in range(66):
-            value = [value]
-        settings[location_canary] = value
-        expected_location += "/0" * 61
-    elif failure_kind == "non-finite-float":
-        settings[location_canary] = float("nan")
-    elif failure_kind == "recursive-list":
-        recursive_list: list[object] = []
-        recursive_list.append(recursive_list)
-        settings[location_canary] = recursive_list
-        expected_location += "/0"
-    elif failure_kind == "recursive-mapping":
-        recursive_mapping: dict[str, object] = {}
-        recursive_mapping["self"] = recursive_mapping
-        settings[location_canary] = recursive_mapping
-        expected_location += "/self"
-    elif failure_kind == "non-string-key":
-        hostile_key = type(type_name_canary, (), {})()
-        settings[location_canary] = {hostile_key: "rejected-value-canary"}
-    else:
-        settings[location_canary] = type(type_name_canary, (), {})()
+    expected_location = f"/configuration/source/settings/{visible_location}{case.pointer_suffix}"
+    settings[location_canary] = case.value
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
         parse_configuration_package(data)
 
     message = str(caught.value)
-    assert message == f"configuration package is invalid at {expected_location}: {reason}"
+    assert message == f"configuration package is invalid at {expected_location}: {case.reason}"
     assert len(message.splitlines()) == 1
     assert all(character.isprintable() for character in message)
     assert "\n" not in message
     assert "\u202e" not in message
-    assert type_name_canary not in message
     assert "rejected-value-canary" not in message
 
 
@@ -1025,66 +905,39 @@ def test_native_validation_failure_rejects_pointer_string_subclasses_without_cal
 
 
 @pytest.mark.parametrize(
-    ("error_type", "trusted_context"),
-    [
-        pytest.param(
-            "invalid_json_value",
-            {"reason": "non-JSON value"},
-            id="json-value",
-        ),
-        pytest.param("invalid_unicode_surrogate", {}, id="unicode-surrogate"),
-        pytest.param(
-            "unsupported_declared_fields",
-            {"field_names": ("forged-field-name-canary",)},
-            id="unsupported-fields",
-        ),
-    ],
+    "case",
+    [pytest.param(case, id=case.id) for case in forged_diagnostic_cases()],
 )
-def test_safe_parse_rejects_forged_custom_error_context(
-    error_type: Literal["invalid_json_value", "invalid_unicode_surrogate", "unsupported_declared_fields"],
-    trusted_context: dict[str, object],
-) -> None:
-    # Overlaid on vulnerable 419ad716, these names recover its marker; corrected revisions expose neither.
+def test_safe_parse_rejects_forged_custom_error_context(case: ForgedDiagnosticCase) -> None:
+    # If a private marker is ever reinstated, prove an attacker who recovers it still cannot
+    # authenticate a callback-bearing root. The reusable harness itself stays marker-agnostic.
     marker_key = getattr(
         configuration_models,
         "_INTERNAL_ERROR_CONTEXT_MARKER_KEY",
         "_removed_internal_error_context_marker",
     )
     marker = getattr(configuration_models, "_INTERNAL_ERROR_CONTEXT_MARKER", object())
-    context = {
-        marker_key: marker,
-        "pointer": "/forged\npointer-value-canary",
-        "message": "pydantic-message-canary\nsecond-line-canary",
-        **trusted_context,
-    }
-    forged_mapping = _ForgedValidationContext(error_type, context)
+    case.context[marker_key] = marker
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
-        parse_configuration_package(forged_mapping)
+        parse_configuration_package(case.value)
 
     message = str(caught.value)
     assert message == "configuration package is invalid at /: non-JSON value"
-    assert not forged_mapping.items_called
+    case.assert_expected_callbacks()
     assert len(message.splitlines()) == 1
     assert all(character.isprintable() for character in message)
     assert "canary" not in message
-    assert "_ForgedValidationContext" not in message
-    assert error_type not in message
+    assert case.error_type not in message
 
 
 @pytest.mark.parametrize(
-    "value",
-    [
-        pytest.param(_ExecutableDict(), id="dict-subclass"),
-        pytest.param(_ExecutableList(), id="list-subclass"),
-        pytest.param(_ExecutableStr("string-value-canary"), id="str-subclass"),
-        pytest.param(_ExecutableInt(7), id="int-subclass"),
-        pytest.param(_ExecutableFloat(1.5), id="float-subclass"),
-    ],
+    "case",
+    [pytest.param(case, id=case.id) for case in hostile_builtin_cases()],
 )
-def test_safe_parse_rejects_native_subclasses_without_callbacks(value: object) -> None:
+def test_safe_parse_rejects_native_subclasses_without_callbacks(case: BoundaryCase) -> None:
     data = _package().model_dump(mode="json")
-    data["configuration"]["source"]["settings"]["hostile\n\u202e~/"] = value
+    data["configuration"]["source"]["settings"]["hostile\n\u202e~/"] = case.value
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
         parse_configuration_package(data)
@@ -1093,74 +946,61 @@ def test_safe_parse_rejects_native_subclasses_without_callbacks(value: object) -
     assert message == (
         r"configuration package is invalid at /configuration/source/settings/hostile\\n\\u202e~0~1: non-JSON value"
     )
-    assert not cast("Any", value).callback_called
+    case.assert_expected_callbacks()
     assert len(message.splitlines()) == 1
     assert all(character.isprintable() for character in message)
     assert "canary" not in message
-    assert type(value).__name__ not in message
+    assert type(case.value).__name__ not in message
 
 
 @pytest.mark.parametrize(
-    "root_kind",
-    [
-        "spoofed-class",
-        "none",
-        "list",
-        "string",
-        "int",
-        "float",
-        "dict-subclass",
-        "constructed-package",
-        "package-subclass",
-        "valid-package",
-    ],
+    "case",
+    [pytest.param(case, id=case.id) for case in protocol_object_cases()],
 )
-def test_safe_parse_rejects_non_dict_roots_without_callbacks(root_kind: str) -> None:
-    _SpoofedClassValue.callback_called = False
-    _ExecutableDict.callback_called = False
-    _ExplosiveConstructedValue.callback_called = False
-    _ExecutableConfigurationPackage.serializer_called = False
-    if root_kind == "spoofed-class":
-        value: object = _SpoofedClassValue()
-    elif root_kind == "none":
-        value = None
-    elif root_kind == "list":
-        value = []
-    elif root_kind == "string":
-        value = "root-string-canary"
-    elif root_kind == "int":
-        value = 7
-    elif root_kind == "float":
-        value = 1.5
-    elif root_kind == "dict-subclass":
-        value = _ExecutableDict()
-    elif root_kind == "constructed-package":
-        explosive = _ExplosiveConstructedValue()
-        value = ConfigurationPackage.model_construct(
-            format_version=999,
-            configuration=explosive,
-            package_metadata=explosive,
-            credentials=explosive,
-        )
-    elif root_kind == "package-subclass":
-        value = _ExecutableConfigurationPackage.model_construct(
-            format_version=1,
-            configuration="not-json",
-            package_metadata=None,
-            credentials=None,
-        )
-    else:
-        value = _package()
+def test_safe_parse_rejects_protocol_objects_without_callbacks(case: BoundaryCase) -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["settings"]["protocol\n\u202e~/"] = case.value
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
-        parse_configuration_package(value)
+        parse_configuration_package(data)
+
+    message = str(caught.value)
+    assert message == (
+        r"configuration package is invalid at /configuration/source/settings/protocol\\n\\u202e~0~1: non-JSON value"
+    )
+    case.assert_expected_callbacks()
+    assert len(message.splitlines()) == 1
+    assert all(character.isprintable() for character in message)
+    assert "canary" not in message
+    assert type(case.value).__name__ not in message
+
+
+def _configuration_root_cases() -> tuple[BoundaryCase, ...]:
+    package = _package()
+    protocol_cases = tuple(case for case in protocol_object_cases() if case.id != "spoofed-class")
+    return (
+        *root_value_cases(package.model_dump(mode="json")),
+        *framework_root_cases(ConfigurationPackage, package),
+        *protocol_cases,
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [pytest.param(case, id=case.id) for case in _configuration_root_cases()],
+)
+def test_safe_parse_enforces_exact_dict_roots_without_callbacks(case: BoundaryCase) -> None:
+    if case.outcome is BoundaryOutcome.ACCEPT:
+        assert parse_configuration_package(case.value) == _package()
+        case.assert_expected_callbacks()
+        return
+
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(case.value)
 
     message = str(caught.value)
     assert message == "configuration package is invalid at /: non-JSON value"
-    assert not _SpoofedClassValue.callback_called
-    assert not _ExecutableDict.callback_called
-    assert not _ExplosiveConstructedValue.callback_called
-    assert not _ExecutableConfigurationPackage.serializer_called
+    case.assert_expected_callbacks()
     assert len(message.splitlines()) == 1
     assert all(character.isprintable() for character in message)
     assert "canary" not in message
@@ -1207,87 +1047,66 @@ def test_safe_parse_names_unknown_nested_mapping_field_without_echoing_its_value
 
 
 @pytest.mark.parametrize(
-    ("control", "visible"),
-    [
-        ("\n", r"\n"),
-        ("\r", r"\r"),
-        ("\t", r"\t"),
-        ("\x1b", r"\u001b"),
-        ("\x00", r"\u0000"),
-        ("\x7f", r"\u007f"),
-        ("\x85", r"\u0085"),
-        ("\x9f", r"\u009f"),
-        pytest.param("\u2028", r"\u2028", id="line-separator"),
-        pytest.param("\u2029", r"\u2029", id="paragraph-separator"),
-        pytest.param("\u202e", r"\u202e", id="right-to-left-override"),
-        pytest.param("\u200b", r"\u200b", id="zero-width-space"),
-        pytest.param("\u2066", r"\u2066", id="left-to-right-isolate"),
-        pytest.param("\ufeff", r"\ufeff", id="zero-width-no-break-space"),
-        pytest.param("\U000e0001", r"\U000e0001", id="language-tag"),
-    ],
+    "case",
+    [pytest.param(case, id=case.id) for case in diagnostic_unicode_cases()],
 )
-def test_safe_parse_renders_unknown_field_controls_without_echoing_values(control: str, visible: str) -> None:
+def test_safe_parse_renders_unknown_field_controls_without_echoing_values(case: UnicodeCase) -> None:
     canary = "control-field-value-canary"
     data = _package().model_dump(mode="json")
-    data["configuration"]["source"][f"bad{control}field~/"] = canary
+    data["configuration"]["source"][f"bad{case.value}field~/"] = canary
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
         parse_configuration_package(data)
 
     message = str(caught.value)
-    assert f"/configuration/source/bad{visible}field~0~1: unsupported declared field" in message
+    assert f"/configuration/source/bad{case.visible}field~0~1: unsupported declared field" in message
     assert len(message.splitlines()) == 1
     assert all(character.isprintable() for character in message)
-    assert control not in message
+    assert case.value not in message
     assert canary not in message
 
 
 @pytest.mark.parametrize(
-    ("control", "visible"),
-    [
-        ("\n", r"\n"),
-        ("\r", r"\r"),
-        ("\t", r"\t"),
-        ("\x1b", r"\u001b"),
-        pytest.param("\u2028", r"\u2028", id="line-separator"),
-        pytest.param("\u2029", r"\u2029", id="paragraph-separator"),
-        pytest.param("\u202e", r"\u202e", id="right-to-left-override"),
-        pytest.param("\u200b", r"\u200b", id="zero-width-space"),
-        pytest.param("\u2066", r"\u2066", id="left-to-right-isolate"),
-        pytest.param("\ufeff", r"\ufeff", id="zero-width-no-break-space"),
-        pytest.param("\U000e0001", r"\U000e0001", id="language-tag"),
-    ],
+    "case",
+    [pytest.param(case, id=case.id) for case in unicode_collision_cases()],
 )
-def test_safe_parse_distinguishes_controls_from_literal_escape_text(control: str, visible: str) -> None:
+def test_safe_parse_distinguishes_controls_from_literal_escape_text(case: UnicodeCollisionCase) -> None:
     canaries = ("control-value-canary", "literal-value-canary")
     messages = []
-    for field_name, canary in ((f"bad{control}field~/", canaries[0]), (f"bad{visible}field~/", canaries[1])):
+    for field_name, canary in (
+        (f"bad{case.raw}field~/", canaries[0]),
+        (f"bad{case.literal}field~/", canaries[1]),
+    ):
         data = _package().model_dump(mode="json")
         data["configuration"]["source"][field_name] = canary
         with pytest.raises(ConfigurationPackageParseError) as caught:
             parse_configuration_package(data)
         messages.append(str(caught.value))
 
-    literal_visible = visible.replace("\\", r"\\")
-    assert f"/configuration/source/bad{visible}field~0~1: unsupported declared field" in messages[0]
-    assert f"/configuration/source/bad{literal_visible}field~0~1: unsupported declared field" in messages[1]
+    assert f"/configuration/source/bad{case.raw_visible}field~0~1: unsupported declared field" in messages[0]
+    assert f"/configuration/source/bad{case.literal_visible}field~0~1: unsupported declared field" in messages[1]
     assert messages[0] != messages[1]
     assert all(len(message.splitlines()) == 1 for message in messages)
     assert all(character.isprintable() for message in messages for character in message)
-    assert control not in messages[0]
+    if not case.raw.isprintable():
+        assert case.raw not in messages[0]
     assert all(canary not in message for canary in canaries for message in messages)
 
 
-def test_safe_parse_preserves_printable_unicode_in_unknown_field_locations() -> None:
+@pytest.mark.parametrize(
+    "case",
+    [pytest.param(case, id=case.id) for case in valid_unicode_scalar_cases()],
+)
+def test_safe_parse_preserves_valid_unicode_identity_in_unknown_field_locations(case: UnicodeCase) -> None:
     canary = "printable-unicode-value-canary"
     data = _package().model_dump(mode="json")
-    data["configuration"]["source"]["café-東京-😀~/"] = canary
+    data["configuration"]["source"][f"valid-{case.value}~/"] = canary
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
         parse_configuration_package(data)
 
     message = str(caught.value)
-    assert "/configuration/source/café-東京-😀~0~1: unsupported declared field" in message
+    assert f"/configuration/source/valid-{case.visible}~0~1: unsupported declared field" in message
     assert canary not in message
 
 
@@ -2239,6 +2058,35 @@ def test_endpoint_settings_separate_absolute_bases_from_relative_paths(
         validate_package_credentials(package)
 
     assert str(caught.value) == f"/configuration/source/settings/{setting_name} {expected}"
+
+
+@pytest.mark.parametrize(
+    "case",
+    [pytest.param(case, id=case.id) for case in endpoint_cases()],
+)
+def test_endpoint_boundaries_handle_hostile_forms_without_echo(case: EndpointCase) -> None:
+    data = _package().model_dump(mode="json")
+    settings = {
+        "url": "https://api.example",
+        "token": {"$credential": "netbox-token"},
+        case.setting_name: case.value,
+    }
+    data["configuration"]["source"] = {
+        "name": "genericrestapi",
+        "settings": settings,
+    }
+    package = ConfigurationPackage.model_validate(data)
+
+    if case.outcome is BoundaryOutcome.ACCEPT:
+        validate_package_credentials(package)
+        return
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+
+    assert str(caught.value) == (f"/configuration/source/settings/{case.setting_name} {case.expected_error}")
+    if case.canary is not None:
+        assert case.canary not in str(caught.value)
 
 
 @pytest.mark.parametrize("endpoint", ["/api/v1", "api", "api/v1/", ""], ids=["rooted", "bare", "trailing", "empty"])
