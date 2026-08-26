@@ -20,14 +20,59 @@ reviewing a saved plan through `diff --from-plan`. The path must be absolute aft
 expansion, an unresolvable `~user` is rejected as invalid configuration, and every stage
 continuing a plan must use the same location.
 
-This is minimum product-projection configuration. It does not register or version a
-configuration package, select a new provider type, or add a release-management API.
+This is minimum product-projection configuration. It does not select a new provider type or
+add a release-management API.
 
 For configured direct `sync`, the immutable review artifact is published after the saved
 plan commits and before the first destination write, in both serial and tiered execution.
 If publication fails, synchronization stops before contacting the destination write
 surface and retains typed failure evidence on a terminal failed ProductRun. A reserved
 artifact remains unavailable until an exact publication retry completes it.
+
+## Configuration registry
+
+The product store holds an append-only registry of declared configuration packages. A
+package is a strict, JSON-native envelope containing declared content only: adapter names,
+settings, and *references* to credentials. It never contains a credential value.
+
+Registration validates before it persists, so an invalid package is refused and no version
+is written. `validate` re-reads a version that is already registered and checks it against
+the adapter declarations installed *now* — which is why a package accepted at registration
+can report findings later, after an adapter's declared setting surface changes.
+
+A package carrying several independent defects yields one finding per defect, not just the
+first. Each finding carries a stable machine-readable `code`, an `error` severity, a JSON
+Pointer `location` into the declared package, and a message.
+
+### Finding codes
+
+The `code` is the stable part of a finding. The message wording and the printed layout may
+change; the code will not. Fifteen codes are emitted. One location can report more than one
+of them — a credential declaration naming an uninstalled provider *and* an invalid identifier
+reports both at `/credentials/<name>` — but only ever from one check: when two checks reach
+the same pointer, the first to judge it is the one that reports.
+
+| Code | What it means | Where it points |
+| ---- | ------------- | --------------- |
+| `adapter-role-mismatch` | The adapter named for this role cannot serve it — most often a source-only adapter declared as the destination. | `/configuration/source` or `/configuration/destination` |
+| `adapter-validator-finding` | The adapter's own configuration check failed, or handed back something unusable. Nothing the adapter said is carried into the message, so read the adapter's own findings for detail. | `/configuration/<role>` |
+| `credential-path-not-declared` | A `$credential` reference sits somewhere that does not accept one. Usually a misspelled setting name, or a reference placed in `schema_mapping` or `order`. | the referencing node |
+| `endpoint-not-absolute` | A `url` or `base_url` setting is not an absolute `http` or `https` URL. | the setting |
+| `endpoint-not-relative` | An `api_endpoint` or `endpoint` setting carries a scheme or a host. It names a path beneath the absolute URL, not a second address. | the setting |
+| `finding-limit-reached` | The package carries more than 256 defects and the rest were not reported. It is reported first, not last, and it is counted as a finding: when it fires the reported set holds 257 items, not 256. | the whole package |
+| `inline-credential-value` | A credential-bearing setting holds a literal value instead of a `{"$credential": "<name>"}` reference. A package never contains a credential value. | the setting |
+| `malformed-credential-reference` | A credential declaration's environment identifier is not a valid variable name, or a `$credential` node carries keys beyond the reference itself. | the declaration or the node |
+| `missing-adapter` | No adapter is installed under the declared name — check the spelling and the case. That role's settings are not judged at all, because there is no declared surface to judge them against, so expect exactly one finding for the role. | `/configuration/<role>` |
+| `missing-store-capabilities` | The declared store `type` is unknown and carries settings. An unknown store type with no settings declares nothing unsafe and is accepted. | `/configuration/store` |
+| `setting-contains-credential-material` | An endpoint setting carries user information, a query string, or a fragment. Credentials belong in a reference, not in a URL. | the setting |
+| `setting-not-a-string` | An endpoint setting is declared as something other than a string. | the setting |
+| `undeclared-setting` | The adapter or store does not declare that setting name. One finding per name, each at its own pointer. | the setting |
+| `unknown-credential-provider` | A credential declaration names a provider that is not installed. `env` is the installed provider. | `/credentials/<name>` |
+| `unknown-credential-reference` | A `$credential` names a reference the package's own `credentials` block does not declare. | the referencing setting |
+
+An adapter's own configuration check keeps its own codes, which are outside this set —
+`unsafe-rest-request-endpoint` is the one shipped today. Two families are not emitted yet:
+destination schema mismatch, and unsupported destination write behavior.
 
 ## Provider profiles
 
