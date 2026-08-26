@@ -43,6 +43,36 @@ class StandaloneProductRecordError(Exception):
     """A configured standalone projection cannot continue the requested run."""
 
 
+class ProductCacheLocationError(StandaloneProductRecordError, ValueError):
+    """The declared product-cache location breaks the one rule every entry point shares.
+
+    It is a ``ValueError`` as well as a projection refusal so a Pydantic field validator can
+    let it propagate unchanged, which is how the Python API reaches the same rule as the CLI
+    instead of restating it (envelope OES-21).
+    """
+
+
+def resolve_product_cache_location(value: str | Path) -> Path:
+    """Return the absolute product-cache root for `value`, or refuse it.
+
+    The one rule, in one place: ``~`` is expanded, and what remains must be absolute. Every
+    entry point that accepts a product-cache location calls this — the CLI run commands
+    through :func:`execute_standalone`, the version 1 Python API through its request models,
+    and the ``configs`` service. Only absoluteness is shared: whether a *missing* location is
+    a refusal or a legacy fallback belongs to the caller, because the run commands treat
+    ``None`` as cache-only behavior while the registry has no meaning without a store.
+    """
+    try:
+        expanded = Path(value).expanduser()
+    except RuntimeError:
+        msg = f"product_cache_location has an unresolvable user home: {str(value)!r}"
+        raise ProductCacheLocationError(msg) from None
+    if not expanded.is_absolute():
+        msg = f"product_cache_location must be absolute after user expansion: {str(value)!r}"
+        raise ProductCacheLocationError(msg)
+    return expanded
+
+
 def _review_document(run_id: str, saved: SavedPlan) -> SavedPlanReviewArtifact:
     return SavedPlanReviewArtifact(
         run_id=run_id,
@@ -209,11 +239,10 @@ def _prepare_projection(
         msg = f"run_id is required for configured standalone operation={operation}"
         raise StandaloneProductRecordError(msg)
 
-    try:
-        cache_location = Path(product_cache_location).expanduser()
-    except RuntimeError:
-        msg = f"product cache path has an unresolvable user home: {str(product_cache_location)!r}"
-        raise StandaloneProductRecordError(msg) from None
+    # The one shared rule (envelope OES-21). Before this, the CLI reached absoluteness only
+    # through the projection constructor's own check and reported a different sentence than
+    # the Python API did for the same input.
+    cache_location = resolve_product_cache_location(product_cache_location)
     try:
         projection = local_product_projection(cache_location)
     except ValueError as exc:

@@ -2102,7 +2102,9 @@ def test_case_variant_adapter_name_cannot_split_package_identity() -> None:
     package = ConfigurationPackage.model_validate(data)
 
     assert package.checksum() != _package().checksum()
-    with pytest.raises(UnknownAdapterCapabilitiesError, match="no configuration capability declaration"):
+    # OES-15: every validation refusal is one exception type now. The narrow type still exists
+    # where it belongs, pinned by test_capability_lookup_is_exact_and_unknown_is_refused.
+    with pytest.raises(CredentialConfigurationError, match="no configuration capability declaration"):
         validate_package_credentials(package)
 
 
