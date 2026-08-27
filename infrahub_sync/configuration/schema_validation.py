@@ -5,15 +5,24 @@ untouched; this module owns the schema-path checks and their finding codes. Thre
 families live here, each behind its own ``_CODE_`` constant and frozen by this module's
 own exact-set and reachability tests (envelope AR8):
 
-* the destination-schema-mismatch family — declared mappings judged against a real
-  destination schema snapshot, plus the capability gate for an explicit request against a
-  destination that does not declare schema validation (a missing capability needed to
-  determine safety is an error, contract section 4);
+* the destination-schema-mismatch family — exactly four predicates judged against the
+  destination schema snapshot: a mapping kind the snapshot does not declare, a field name
+  that is neither an attribute nor a relationship of its kind, a relationship reference on
+  a name the schema declares as an attribute, and a declared static value whose shape
+  (list versus scalar) disagrees with the relationship's declared cardinality — plus the
+  capability gate for an explicit request against a destination that does not declare
+  schema validation (a missing capability needed to determine safety is an error, contract
+  section 4). Two further checkable predicates are deliberately out of this unit's scope
+  and recorded as parent-level follow-up: a static value's type against the attribute's
+  declared kind, and a reference against the relationship's declared peer kind;
 * the unsupported-destination-write family — the operations one configuration requests,
   derived through the one shared SYNC-78 effective-operation rule, judged against the
   destination's declared write operations;
-* the schema-read-failure family (envelope AR9) — a schema read that fails on the opt-in
-  path becomes a typed error finding, never a generic service-boundary refusal.
+* the schema-read-failure family (envelope AR9) — a schema read the accessor reports as
+  failed becomes a typed error finding rather than a generic service-boundary refusal.
+  The bundled accessor classifies SDK-raised errors, HTTP transport and status failures,
+  an unresolvable declared credential, and a declared client configuration the SDK
+  refuses; an exception outside the accessor contract is not intercepted here.
 
 Checks accumulate: a failed check never suppresses an independent one, and an unevaluable
 subtree — an unknown destination adapter, an unknown kind, an unknown field — suppresses

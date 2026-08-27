@@ -164,30 +164,17 @@ def _validate_relative_rest_mapping_endpoints(
     return tuple(findings)
 
 
-def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str) -> Mapping[str, Any]:
-    """Read one destination schema snapshot from a live Infrahub server.
+def _resolved_client_settings(package: ConfigurationPackage, branch: str) -> tuple[str, dict[str, Any]]:
+    """Resolve the declared destination settings one schema read needs.
 
-    The bundled accessor behind ``infrahub``'s schema-validation declaration. Only the
-    explicit validation opt-in calls it, so resolving the *declared* token credential
-    reference here is the sanctioned read (contract section 4); the branch arrives already
-    resolved from the declared setting and nothing ambient is consulted for it. Every
-    failure is classified into :class:`DestinationSchemaReadError` — the accessor contract
-    the schema checks handle — carrying exception type names, never third-party content.
+    Returns the declared url and the SDK configuration built from the declared settings,
+    refusing — as :class:`DestinationSchemaReadError` — a missing url and a declared token
+    credential that does not resolve.
     """
-    # Imported here, not at module load: this module stays connection-free to import, and
-    # the default validate path never touches a network client (envelope AR7).
-    # pylint: disable=import-outside-toplevel
-    import httpx
-    from infrahub_sdk import Config, InfrahubClientSync
-    from infrahub_sdk.exceptions import (
-        AuthenticationError,
-        ServerNotReachableError,
-        ServerNotResponsiveError,
-    )
-
+    # Imported here, not at module load, for the same reason as the client imports below.
+    # pylint: disable-next=import-outside-toplevel
     from .credentials import CredentialConfigurationError, resolve_reference
 
-    # pylint: enable=import-outside-toplevel
     settings = package.configuration.destination.settings or {}
     url = settings.get("url")
     if not isinstance(url, str) or not url:
@@ -206,6 +193,38 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
     verify_ssl = settings.get("verify_ssl")
     if verify_ssl is not None:
         sdk_config["tls_insecure"] = not verify_ssl
+    return url, sdk_config
+
+
+def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str) -> Mapping[str, Any]:
+    """Read one destination schema snapshot from a live Infrahub server.
+
+    The bundled accessor behind ``infrahub``'s schema-validation declaration. Only the
+    explicit validation opt-in calls it, so resolving the *declared* token credential
+    reference here is the sanctioned read (contract section 4); the branch arrives already
+    resolved from the declared setting and nothing ambient is consulted for it. Every
+    SDK-raised error (``infrahub_sdk.exceptions.Error`` and its subclasses), every HTTP
+    transport or status failure, an unresolvable declared credential, and a declared
+    client configuration the SDK refuses (``ValueError``, including pydantic's validation
+    error) is classified into :class:`DestinationSchemaReadError` — the accessor contract
+    the schema checks handle — carrying exception type names, never third-party content.
+    """
+    # Imported here, not at module load: this module stays connection-free to import, and
+    # the default validate path never touches a network client (envelope AR7).
+    # pylint: disable=import-outside-toplevel
+    import httpx
+    from infrahub_sdk import Config, InfrahubClientSync
+    from infrahub_sdk.exceptions import (
+        AuthenticationError,
+        ServerNotReachableError,
+        ServerNotResponsiveError,
+    )
+    from infrahub_sdk.exceptions import (
+        Error as InfrahubSdkError,
+    )
+
+    # pylint: enable=import-outside-toplevel
+    url, sdk_config = _resolved_client_settings(package, branch)
     try:
         client = InfrahubClientSync(address=url, config=Config(**sdk_config))
         schema = client.schema.all(branch=branch)
@@ -223,6 +242,17 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
     except (httpx.TransportError, ServerNotReachableError) as exc:
         msg = f"destination server could not be reached: {type(exc).__name__}"
         raise DestinationSchemaReadError(msg, reason="unreachable") from None
+    except InfrahubSdkError as exc:
+        # The SDK's own base error: everything it raises that the arms above did not
+        # classify (a missing branch, a GraphQL refusal, undecodable content) is still a
+        # read the destination rejected, never an untyped escape (review F1).
+        msg = f"destination rejected the schema read: {type(exc).__name__}"
+        raise DestinationSchemaReadError(msg, reason="rejected") from None
+    except ValueError as exc:
+        # Config(**sdk_config) refusing the declared settings: pydantic's ValidationError
+        # subclasses ValueError, so both land here as one unusable-configuration class.
+        msg = f"destination client could not be configured from the declared settings: {type(exc).__name__}"
+        raise DestinationSchemaReadError(msg, reason="unconfigured") from None
     return {
         kind: {
             "attributes": {attribute.name: attribute.kind for attribute in getattr(node, "attributes", ()) or ()},

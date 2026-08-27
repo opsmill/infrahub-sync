@@ -15,7 +15,10 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import httpx
+import pydantic
 import pytest
+from infrahub_sdk import exceptions as sdk_exceptions
 
 from infrahub_sync.cache import compute_schema_subhash
 from infrahub_sync.configuration import capabilities as capabilities_module
@@ -468,3 +471,162 @@ def test_every_frozen_schema_code_is_reachable_and_nothing_else_is_emitted(
 
     assert reached == FROZEN_SCHEMA_CODES
     assert severities == {"error"}
+
+
+# --- Correction round 1 (F1): the live accessor's classification arms, mocked client ----
+
+
+def _live_read_table() -> dict[str, AdapterConfigurationCapabilities]:
+    """The real live accessor, with an update-only write declaration.
+
+    Update-only makes the write-operations check report (creates are requested by
+    default), so every read-failure test also witnesses that an independent check
+    still reports alongside the typed finding.
+    """
+    table = dict(BUILTIN_ADAPTER_CAPABILITIES)
+    table["infrahub"] = replace(table["infrahub"], supported_destination_write_operations=frozenset({"update"}))
+    return table
+
+
+class _FakeSchemaEndpoint:
+    def __init__(self, exception: Exception) -> None:
+        self._exception = exception
+
+    def all(self, branch: str) -> None:
+        del branch
+        raise self._exception
+
+
+class _FakeClient:
+    def __init__(self, exception: Exception) -> None:
+        self.schema = _FakeSchemaEndpoint(exception)
+
+
+def _mock_schema_read_failure(monkeypatch: pytest.MonkeyPatch, exception: Exception) -> None:
+    _inject(monkeypatch, _live_read_table())
+    # The declared token reference must resolve, or the credentials arm reports before
+    # the mocked client is ever constructed.
+    monkeypatch.setenv("INFRAHUB_API_TOKEN", "test-token")
+
+    def _fake_client(address: str, config: object) -> _FakeClient:
+        del address, config
+        return _FakeClient(exception)
+
+    monkeypatch.setattr("infrahub_sdk.InfrahubClientSync", _fake_client)
+
+
+def _read_failure_and_write_findings(reason: str) -> None:
+    result = collect_destination_schema_findings(package(package_data()))
+
+    assert _codes_and_locations(result.findings) == [
+        ("destination-schema-read-failed", "/configuration/destination"),
+        ("unsupported-destination-write", "/configuration/destination"),
+    ]
+    assert reason in result.findings[0].message
+    assert result.schema_fingerprint is None
+
+
+def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("GET", "http://localhost:8000")
+    response = httpx.Response(status_code, request=request)
+    return httpx.HTTPStatusError("refused", request=request, response=response)
+
+
+@pytest.mark.parametrize(
+    ("exception", "reason"),
+    [
+        pytest.param(httpx.TimeoutException("timed out"), "timeout", id="httpx-timeout"),
+        pytest.param(
+            sdk_exceptions.ServerNotResponsiveError(url="http://localhost:8000"),
+            "timeout",
+            id="sdk-not-responsive",
+        ),
+        pytest.param(sdk_exceptions.AuthenticationError("denied"), "unauthorized", id="sdk-authentication"),
+        pytest.param(_http_status_error(401), "unauthorized", id="http-status-401"),
+        pytest.param(_http_status_error(403), "unauthorized", id="http-status-403"),
+        pytest.param(_http_status_error(500), "unreachable", id="http-status-500"),
+        pytest.param(httpx.ConnectError("refused"), "unreachable", id="httpx-transport"),
+        pytest.param(
+            sdk_exceptions.ServerNotReachableError(address="http://localhost:8000"),
+            "unreachable",
+            id="sdk-not-reachable",
+        ),
+        pytest.param(
+            sdk_exceptions.GraphQLError(errors=[{"message": "boom"}]),
+            "rejected",
+            id="sdk-error-graphql",
+        ),
+    ],
+)
+def test_every_live_accessor_classification_arm_lands_as_a_typed_finding(
+    monkeypatch: pytest.MonkeyPatch, exception: Exception, reason: str
+) -> None:
+    _mock_schema_read_failure(monkeypatch, exception)
+
+    _read_failure_and_write_findings(reason)
+
+
+def test_a_missing_branch_lands_as_a_typed_finding_not_a_boundary_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The review F1 reproduction: a typo'd declared branch makes the SDK raise
+    # BranchNotFoundError, which escaped the accessor untyped and surfaced as the
+    # generic service-boundary refusal.
+    _mock_schema_read_failure(monkeypatch, sdk_exceptions.BranchNotFoundError("no-such-branch"))
+
+    _read_failure_and_write_findings("rejected")
+
+
+def _pydantic_validation_error() -> pydantic.ValidationError:
+    try:
+        pydantic.TypeAdapter(int).validate_python("not-a-number")
+    except pydantic.ValidationError as exc:
+        return exc
+    raise AssertionError
+
+
+@pytest.mark.parametrize(
+    "exception",
+    [
+        pytest.param(ValueError("bad declared value"), id="value-error"),
+        pytest.param(_pydantic_validation_error(), id="pydantic-validation-error"),
+    ],
+)
+def test_an_unusable_declared_client_configuration_lands_as_a_typed_finding(
+    monkeypatch: pytest.MonkeyPatch, exception: Exception
+) -> None:
+    _inject(monkeypatch, _live_read_table())
+    monkeypatch.setenv("INFRAHUB_API_TOKEN", "test-token")
+
+    def _refusing_config(**kwargs: object) -> object:
+        del kwargs
+        raise exception
+
+    monkeypatch.setattr("infrahub_sdk.Config", _refusing_config)
+
+    _read_failure_and_write_findings("unconfigured")
+
+
+def test_an_unresolvable_declared_token_lands_as_a_typed_finding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _inject(monkeypatch, _live_read_table())
+    monkeypatch.delenv("INFRAHUB_API_TOKEN", raising=False)
+
+    _read_failure_and_write_findings("credentials")
+
+
+def test_a_missing_declared_url_lands_as_a_typed_finding(monkeypatch: pytest.MonkeyPatch) -> None:
+    _inject(monkeypatch, _live_read_table())
+    data = package_data()
+    del data["configuration"]["destination"]["settings"]["url"]
+    monkeypatch.setenv("INFRAHUB_API_TOKEN", "test-token")
+
+    result = collect_destination_schema_findings(package(data))
+
+    assert _codes_and_locations(result.findings) == [
+        ("destination-schema-read-failed", "/configuration/destination"),
+        ("unsupported-destination-write", "/configuration/destination"),
+    ]
+    assert "unconfigured" in result.findings[0].message
+    assert result.schema_fingerprint is None
