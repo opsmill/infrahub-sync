@@ -43,11 +43,16 @@ from infrahub_sync.configuration import (
     ValidationFinding,
     collect_findings,
     parse_configuration_package,
+    sort_findings,
 )
 from infrahub_sync.configuration.models import (
     _MAX_FINDING_TEXT_LENGTH,
     _POINTER_CHARACTER_ESCAPES,
     safe_pointer_component,
+)
+from infrahub_sync.configuration.schema_validation import (
+    DestinationSchemaOptions,
+    collect_destination_schema_findings,
 )
 from infrahub_sync.configuration.validation import _location_digest
 from infrahub_sync.execution import REDACTED, redact
@@ -520,12 +525,19 @@ class RegisteredVersion:
 
 @dataclass(frozen=True, slots=True)
 class ValidationReport:
-    """Every declared defect in one registered version, already in contract order."""
+    """Every declared defect in one registered version, already in contract order.
+
+    ``destination_schema_fingerprint`` is the identity of the destination schema snapshot
+    the schema checks judged — ``None`` whenever no snapshot was read: the default path,
+    a non-declaring destination, or a failed read. It is what makes "same package, same
+    schema snapshot, same report" auditable rather than asserted.
+    """
 
     config_id: str
     registry_version: int
     package_checksum: str
     findings: tuple[ValidationFinding, ...]
+    destination_schema_fingerprint: str | None = None
 
 
 @_service_boundary
@@ -793,15 +805,24 @@ def validate(
     config_id: str,
     registry_version: int,
     product_cache_location: str | Path | None,
+    destination_schema: DestinationSchemaOptions | None = None,
 ) -> ValidationReport:
     """Report every declared defect in one registered version, in contract order.
 
     The version is re-read from the registry and validated against the *current* adapter
     declarations, which is why a package that was accepted at registration can report
     findings later.
+
+    ``destination_schema`` is the explicit opt-in contract section 4 names ``validate``
+    the carrier of: ``None`` — the default — keeps the declared-content-only behavior
+    byte-identical, with zero schema reads and zero network I/O. An explicit options
+    object adds the destination schema checks, merges their findings under the same
+    ``sort_findings`` contract, and records the judged snapshot's fingerprint.
     """
     _require_argument_type(config_id, name="config_id", expected=str)
     _require_argument_type(registry_version, name="registry_version", expected=int)
+    if destination_schema is not None:
+        _require_argument_type(destination_schema, name="destination_schema", expected=DestinationSchemaOptions)
     projection = _projection(product_cache_location)
     lookup = projection.lookup_configuration_version(config_id, registry_version)
     stored = lookup.value
@@ -809,9 +830,16 @@ def validate(
         msg = f"configuration {config_id!r} has no registered version {registry_version} ({lookup.reason})"
         raise ConfigsNotFoundError(msg)
     parsed = _parse(stored.declared_content)
+    findings = collect_findings(parsed)
+    fingerprint: str | None = None
+    if destination_schema is not None:
+        schema_validation = collect_destination_schema_findings(parsed)
+        findings = sort_findings((*findings, *schema_validation.findings))
+        fingerprint = schema_validation.schema_fingerprint
     return ValidationReport(
         config_id=stored.config_id,
         registry_version=stored.registry_version,
         package_checksum=stored.package_checksum,
-        findings=collect_findings(parsed),
+        findings=findings,
+        destination_schema_fingerprint=fingerprint,
     )
