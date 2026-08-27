@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol
 
 import jinja2
 from infrahub_sdk.schema import (
-    AttributeSchema,
     NodeSchema,
     RelationshipKind,
-    RelationshipSchema,
 )
 
 if TYPE_CHECKING:
@@ -134,20 +132,17 @@ class _RelationshipLike(Protocol):
 
 def get_attribute_type_annotation(item: _AttributeLike) -> str:
     """Return type annotation of schema attribute for Diffsync model."""
-    annotation = "str"
-
-    attr = cast("AttributeSchema", item)
-    annotation = ATTRIBUTE_KIND_MAP.get(attr.kind, "str")
-    if attr.optional:
+    annotation = ATTRIBUTE_KIND_MAP.get(item.kind, "str")
+    if item.optional:
         annotation = f"{annotation} | None"
-        if attr.default_value is not None:
+        if item.default_value is not None:
             # Format the default value based on its type
-            if isinstance(attr.default_value, str):
-                annotation += f' = "{attr.default_value}"'
-            elif isinstance(attr.default_value, (int, float, bool)):
-                annotation += f" = {attr.default_value}"
+            if isinstance(item.default_value, str):
+                annotation += f' = "{item.default_value}"'
+            elif isinstance(item.default_value, (int, float, bool)):
+                annotation += f" = {item.default_value}"
             else:
-                annotation += f" = {attr.default_value!r}"
+                annotation += f" = {item.default_value!r}"
         else:
             annotation += " = None"
 
@@ -157,14 +152,13 @@ def get_attribute_type_annotation(item: _AttributeLike) -> str:
 def get_relationship_type_annotation(item: _RelationshipLike) -> str:
     """Return type annotation of schema relationship for Diffsync model."""
     annotation = "str"
-    rel = cast("RelationshipSchema", item)
-    if rel.cardinality == "one":
-        if rel.optional:
+    if item.cardinality == "one":
+        if item.optional:
             annotation = f"{annotation} | None = None"
 
-    elif rel.cardinality == "many":
+    elif item.cardinality == "many":
         annotation = "list[str]"
-        if rel.optional:
+        if item.optional:
             annotation = f"{annotation} | None"
         annotation += " = []"
 
