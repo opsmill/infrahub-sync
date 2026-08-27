@@ -141,14 +141,6 @@ class _RelationshipLike(Protocol):
 
 
 def get_kind(item: Union[_AttributeLike, _RelationshipLike]) -> str:
-    # Duck-typed on `cardinality` rather than `isinstance(item, (AttributeSchema,
-    # RelationshipSchema))`: the SDK's read-side schema objects returned by
-    # `client.schema.all()` (e.g. AttributeSchemaAPI/RelationshipSchemaAPI) are not
-    # guaranteed to subclass these write-side classes across infrahub-sdk versions
-    # -- that inheritance held at 1.18.1 but was removed by 1.23.0, which silently
-    # made every attribute/relationship fall through to the "str" default below.
-    # The parameter type reflects that: any object with the right shape works,
-    # not just AttributeSchema/RelationshipSchema instances.
     kind = "str"
     is_relationship = hasattr(item, "cardinality")
 
