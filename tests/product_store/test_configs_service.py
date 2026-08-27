@@ -11,6 +11,8 @@ import inspect
 import json
 import sqlite3
 import sys
+from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -22,6 +24,7 @@ from infrahub_sync.configuration.validation import collect_findings
 from infrahub_sync.execution import MIN_SECRET_LENGTH, REDACTED, collect_secret_values
 from infrahub_sync.product_store import configs as configs_service
 from infrahub_sync.product_store import local_product_projection
+from infrahub_sync.product_store import store as product_store_store
 from tests.configuration.validation_packages import package, package_data
 
 if TYPE_CHECKING:
@@ -219,6 +222,70 @@ def test_a_relative_store_location_is_refused() -> None:
         configs_service.validate(config_id="c", registry_version=1, product_cache_location="relative/product-cache")
 
 
+# --- Registry reads ---------------------------------------------------------------------
+#
+# The rows below are chosen so raw insertion order disagrees with the declared listing order
+# on both halves of the ORDER BY. ``created_at`` is server-generated, so on an append-only
+# table insertion order always equals timestamp order and a missing ORDER BY would pass
+# trivially: the clock is therefore controlled so two rows share one ``created_at`` (only the
+# ``config_id`` tiebreak separates them) and a third row is registered last with the earliest
+# timestamp (only ordering by ``created_at`` puts it first).
+_OUT_OF_ORDER_REGISTRATIONS: tuple[tuple[str, datetime], ...] = (
+    ("config-b", datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
+    ("config-a", datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
+    ("config-z", datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)),
+)
+
+
+def _register_out_of_order(location: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Register the rows above through the service, with generated IDs and clock pinned."""
+    ids = iter([config_id for config_id, _ in _OUT_OF_ORDER_REGISTRATIONS])
+    clock = iter([created_at for _, created_at in _OUT_OF_ORDER_REGISTRATIONS])
+    monkeypatch.setattr(product_store_store, "_generate_config_id", lambda: next(ids))
+    monkeypatch.setattr(product_store_store, "datetime", SimpleNamespace(now=lambda tz: next(clock)))  # noqa: ARG005
+    for _ in _OUT_OF_ORDER_REGISTRATIONS:
+        configs_service.register(package=package_data(), product_cache_location=location)
+
+
+def test_list_configs_returns_every_configuration_in_created_at_then_config_id_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every registered configuration exactly once, in the one declared deterministic order."""
+    location = _store(tmp_path)
+    _register_out_of_order(location, monkeypatch)
+
+    listed = configs_service.list_configs(product_cache_location=location)
+
+    assert [(summary.config_id, summary.created_at) for summary in listed] == [
+        ("config-z", datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)),
+        ("config-a", datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
+        ("config-b", datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
+    ]
+    # Order determinism: a re-read of the same store returns the identical sequence.
+    assert configs_service.list_configs(product_cache_location=location) == listed
+
+
+# The read entry points, each reached with a syntactically fine request, so the only thing a
+# raised refusal can be about is the store location (envelope OES-21's evidence pattern).
+_READ_ENTRY_POINTS: tuple[tuple[str, Callable[[str | None], object]], ...] = (
+    ("list_configs", lambda location: configs_service.list_configs(product_cache_location=location)),
+)
+
+
+@pytest.mark.parametrize("call", [pytest.param(call, id=name) for name, call in _READ_ENTRY_POINTS])
+def test_a_read_with_a_missing_store_location_is_a_refusal_rather_than_a_fallback(
+    call: Callable[[str | None], object],
+) -> None:
+    with pytest.raises(configs_service.ConfigsRequestError, match="product_cache_location is required"):
+        call(None)
+
+
+@pytest.mark.parametrize("call", [pytest.param(call, id=name) for name, call in _READ_ENTRY_POINTS])
+def test_a_read_with_a_relative_store_location_is_refused(call: Callable[[str | None], object]) -> None:
+    with pytest.raises(configs_service.ConfigsRequestError, match="must be absolute after user expansion"):
+        call("relative/product-cache")
+
+
 # A value of the wrong type entirely, annotated ``Any`` so the calls below type-check. That is
 # the only way it reaches the service: a caller's own defect that got past static checking.
 _WRONG_TYPED_VALUE: Any = object()
@@ -291,6 +358,7 @@ _ENTRY_POINTS: tuple[tuple[str, Callable[[str], object]], ...] = (
         "validate",
         lambda location: configs_service.validate(config_id="c", registry_version=1, product_cache_location=location),
     ),
+    ("list_configs", lambda location: configs_service.list_configs(product_cache_location=location)),
 )
 
 
@@ -481,6 +549,11 @@ _PUBLIC_OPERATIONS: tuple[tuple[str, Callable[[pytest.MonkeyPatch], None], Calla
             product_cache_location=_store(tmp_path),
         ),
     ),
+    (
+        "list_configs",
+        lambda patch: patch.setattr(configs_service, "local_product_projection", _raise_unforeseen),
+        lambda tmp_path: configs_service.list_configs(product_cache_location=_store(tmp_path)),
+    ),
 )
 
 
@@ -545,7 +618,7 @@ def test_every_public_service_operation_carries_the_error_boundary() -> None:
 
     assert guarded <= set(public)
     assert set(public) - guarded == _TEXT_HELPERS
-    assert guarded == {"create_version", "load_package_content", "register", "validate"}
+    assert guarded == {"create_version", "list_configs", "load_package_content", "register", "validate"}
 
 
 def _refusal_types(root: type[configs_service.ConfigsError]) -> set[type[configs_service.ConfigsError]]:

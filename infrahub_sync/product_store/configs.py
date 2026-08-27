@@ -692,6 +692,18 @@ def create_version(
 
 
 @_service_boundary
+def list_configs(*, product_cache_location: str | Path | None) -> tuple[ConfigurationSummary, ...]:
+    """Return every registered configuration exactly once, oldest first with an ID tiebreak.
+
+    The order is the store's own ``ORDER BY created_at, config_id`` — deterministic and total,
+    never a re-sort in this layer. An empty registry is a real answer here, unlike the scoped
+    reads: there is no identifier whose absence could make it a not-found.
+    """
+    projection = _projection(product_cache_location)
+    return projection.list_configurations()
+
+
+@_service_boundary
 def validate(
     *,
     config_id: str,
