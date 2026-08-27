@@ -265,10 +265,143 @@ def test_list_configs_returns_every_configuration_in_created_at_then_config_id_o
     assert configs_service.list_configs(product_cache_location=location) == listed
 
 
+def test_get_config_and_list_versions_return_one_configurations_own_records(tmp_path: Path) -> None:
+    """The summary and the full ascending version lineage, scoped to the requested ID.
+
+    A second, unrelated configuration is registered into the same store so an unscoped read
+    would be caught leaking its rows.
+    """
+    location = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), product_cache_location=location)
+    changed = package_data()
+    changed["configuration"]["source"]["settings"]["url"] = "https://second.netbox.test"
+    added = configs_service.create_version(
+        config_id=registered.version.config_id,
+        package=changed,
+        product_cache_location=location,
+    )
+    unrelated = configs_service.register(package=package_data(), product_cache_location=location)
+
+    summary = configs_service.get_config(
+        config_id=registered.version.config_id,
+        product_cache_location=location,
+    )
+    versions = configs_service.list_versions(
+        config_id=registered.version.config_id,
+        product_cache_location=location,
+    )
+
+    assert summary == registered.configuration
+    assert versions == (registered.version, added.version)
+    assert [version.registry_version for version in versions] == [1, 2]
+    assert unrelated.version.config_id not in {version.config_id for version in versions}
+
+
+def test_get_version_on_a_missing_configuration_names_the_configuration_as_absent(tmp_path: Path) -> None:
+    """The first half of the AR3 distinction: no such configuration at all."""
+    with pytest.raises(configs_service.ConfigsNotFoundError) as raised:
+        configs_service.get_version(
+            config_id="missing-configuration",
+            registry_version=1,
+            product_cache_location=_store(tmp_path),
+        )
+
+    assert raised.value.family == "not-found"
+    assert raised.value.reason == "configuration-not-found"
+
+
+def test_get_version_on_a_missing_version_is_distinct_from_a_missing_configuration(tmp_path: Path) -> None:
+    """The second half: the configuration exists and the version does not.
+
+    The store's own lookup blends both cases into one "configuration-version-not-found"
+    reason, so the service looks the configuration up first (deletion does not exist, so the
+    two-step read is race-safe) and the two absences surface as distinct machine-readable
+    values -- what service-boundary later maps to two different status codes.
+    """
+    location = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), product_cache_location=location)
+
+    with pytest.raises(configs_service.ConfigsNotFoundError) as missing_version:
+        configs_service.get_version(
+            config_id=registered.version.config_id,
+            registry_version=7,
+            product_cache_location=location,
+        )
+    with pytest.raises(configs_service.ConfigsNotFoundError) as missing_configuration:
+        configs_service.get_version(
+            config_id="missing-configuration",
+            registry_version=7,
+            product_cache_location=location,
+        )
+
+    assert missing_version.value.family == "not-found"
+    assert missing_version.value.reason == "configuration-version-not-found"
+    assert missing_version.value.reason != missing_configuration.value.reason
+
+
+# The two reads whose store queries return a tuple, so a missing configuration's natural
+# defect is a silent empty result -- indistinguishable from a real answer about a registered
+# configuration with no rows to show.
+_MISSING_CONFIGURATION_READS: tuple[tuple[str, Callable[[str], object]], ...] = (
+    (
+        "get_config",
+        lambda location: configs_service.get_config(
+            config_id="missing-configuration",
+            product_cache_location=location,
+        ),
+    ),
+    (
+        "list_versions",
+        lambda location: configs_service.list_versions(
+            config_id="missing-configuration",
+            product_cache_location=location,
+        ),
+    ),
+)
+
+
+@pytest.mark.parametrize("call", [pytest.param(call, id=name) for name, call in _MISSING_CONFIGURATION_READS])
+def test_a_read_of_a_missing_configuration_refuses_rather_than_answering_empty(
+    tmp_path: Path,
+    call: Callable[[str], object],
+) -> None:
+    with pytest.raises(configs_service.ConfigsNotFoundError) as raised:
+        call(_store(tmp_path))
+
+    assert raised.value.family == "not-found"
+    assert raised.value.reason == "configuration-not-found"
+
+
+def test_get_version_round_trips_the_registered_content_and_checksum(tmp_path: Path) -> None:
+    """A read returns exactly what registration reported -- field equality, not "no error"."""
+    location = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), product_cache_location=location)
+
+    stored = configs_service.get_version(
+        config_id=registered.version.config_id,
+        registry_version=1,
+        product_cache_location=location,
+    )
+
+    assert stored.declared_content == registered.version.declared_content
+    assert stored.package_checksum == registered.version.package_checksum
+    assert stored == registered.version
+
+
 # The read entry points, each reached with a syntactically fine request, so the only thing a
 # raised refusal can be about is the store location (envelope OES-21's evidence pattern).
 _READ_ENTRY_POINTS: tuple[tuple[str, Callable[[str | None], object]], ...] = (
     ("list_configs", lambda location: configs_service.list_configs(product_cache_location=location)),
+    ("get_config", lambda location: configs_service.get_config(config_id="c", product_cache_location=location)),
+    ("list_versions", lambda location: configs_service.list_versions(config_id="c", product_cache_location=location)),
+    (
+        "get_version",
+        lambda location: configs_service.get_version(
+            config_id="c",
+            registry_version=1,
+            product_cache_location=location,
+        ),
+    ),
 )
 
 
@@ -312,6 +445,36 @@ _WRONG_TYPED_CALLS: tuple[tuple[str, Callable[[str], object]], ...] = (
         lambda location: configs_service.create_version(
             config_id=_WRONG_TYPED_VALUE,
             package=package_data(),
+            product_cache_location=location,
+        ),
+    ),
+    (
+        "get-config-config-id",
+        lambda location: configs_service.get_config(
+            config_id=_WRONG_TYPED_VALUE,
+            product_cache_location=location,
+        ),
+    ),
+    (
+        "list-versions-config-id",
+        lambda location: configs_service.list_versions(
+            config_id=_WRONG_TYPED_VALUE,
+            product_cache_location=location,
+        ),
+    ),
+    (
+        "get-version-config-id",
+        lambda location: configs_service.get_version(
+            config_id=_WRONG_TYPED_VALUE,
+            registry_version=1,
+            product_cache_location=location,
+        ),
+    ),
+    (
+        "get-version-registry-version",
+        lambda location: configs_service.get_version(
+            config_id="c",
+            registry_version=_WRONG_TYPED_VALUE,
             product_cache_location=location,
         ),
     ),
@@ -359,6 +522,16 @@ _ENTRY_POINTS: tuple[tuple[str, Callable[[str], object]], ...] = (
         lambda location: configs_service.validate(config_id="c", registry_version=1, product_cache_location=location),
     ),
     ("list_configs", lambda location: configs_service.list_configs(product_cache_location=location)),
+    ("get_config", lambda location: configs_service.get_config(config_id="c", product_cache_location=location)),
+    ("list_versions", lambda location: configs_service.list_versions(config_id="c", product_cache_location=location)),
+    (
+        "get_version",
+        lambda location: configs_service.get_version(
+            config_id="c",
+            registry_version=1,
+            product_cache_location=location,
+        ),
+    ),
 )
 
 
@@ -554,6 +727,25 @@ _PUBLIC_OPERATIONS: tuple[tuple[str, Callable[[pytest.MonkeyPatch], None], Calla
         lambda patch: patch.setattr(configs_service, "local_product_projection", _raise_unforeseen),
         lambda tmp_path: configs_service.list_configs(product_cache_location=_store(tmp_path)),
     ),
+    (
+        "get_config",
+        lambda patch: patch.setattr(configs_service, "local_product_projection", _raise_unforeseen),
+        lambda tmp_path: configs_service.get_config(config_id="c", product_cache_location=_store(tmp_path)),
+    ),
+    (
+        "list_versions",
+        lambda patch: patch.setattr(configs_service, "local_product_projection", _raise_unforeseen),
+        lambda tmp_path: configs_service.list_versions(config_id="c", product_cache_location=_store(tmp_path)),
+    ),
+    (
+        "get_version",
+        lambda patch: patch.setattr(configs_service, "local_product_projection", _raise_unforeseen),
+        lambda tmp_path: configs_service.get_version(
+            config_id="c",
+            registry_version=1,
+            product_cache_location=_store(tmp_path),
+        ),
+    ),
 )
 
 
@@ -618,7 +810,16 @@ def test_every_public_service_operation_carries_the_error_boundary() -> None:
 
     assert guarded <= set(public)
     assert set(public) - guarded == _TEXT_HELPERS
-    assert guarded == {"create_version", "list_configs", "load_package_content", "register", "validate"}
+    assert guarded == {
+        "create_version",
+        "get_config",
+        "get_version",
+        "list_configs",
+        "list_versions",
+        "load_package_content",
+        "register",
+        "validate",
+    }
 
 
 def _refusal_types(root: type[configs_service.ConfigsError]) -> set[type[configs_service.ConfigsError]]:

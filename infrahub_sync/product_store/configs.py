@@ -96,9 +96,22 @@ class ConfigsValidationError(ConfigsError):
 
 
 class ConfigsNotFoundError(ConfigsError):
-    """The requested configuration or version is not in the registry."""
+    """The requested configuration or version is not in the registry.
+
+    ``reason`` is the machine-readable half of the refusal: a stable value naming *which*
+    absence this is, so service-boundary can map a missing configuration and a missing
+    version of an existing configuration to two different status codes without parsing the
+    message. The store's own version lookup blends the two cases into one reason, so the
+    distinction is made here, where the two-step read (configuration first, then version)
+    knows which step failed. It defaults to the family itself for refusals that predate the
+    distinction and have exactly one absence to name.
+    """
 
     family: ClassVar[str] = "not-found"
+
+    def __init__(self, message: str, *, reason: str = "not-found") -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 class ConfigsStorageError(ConfigsError):
@@ -610,6 +623,29 @@ def _projection(product_cache_location: str | Path | None) -> ProductProjection:
         raise ConfigsStorageError(msg) from None
 
 
+# The two machine-readable absence values the read operations distinguish (envelope AR3).
+# ``CONFIGURATION_NOT_FOUND_REASON`` matches the store's own lookup reason for the same
+# absence; the version value names the case the store cannot: the configuration exists and
+# the requested version does not.
+CONFIGURATION_NOT_FOUND_REASON = "configuration-not-found"
+CONFIGURATION_VERSION_NOT_FOUND_REASON = "configuration-version-not-found"
+
+
+def _require_configuration(projection: ProductProjection, config_id: str) -> ConfigurationSummary:
+    """Return one registered configuration's summary, refusing absence by name.
+
+    The first step of every scoped read: the store's version queries answer a missing
+    configuration and a missing version identically (an empty tuple, or one blended
+    not-found reason), so the configuration is resolved first and its absence gets its own
+    machine-readable value. Deletion does not exist, so the two-step read cannot race.
+    """
+    summary = projection.lookup_configuration(config_id).value
+    if summary is None:
+        msg = f"configuration {config_id!r} is not registered"
+        raise ConfigsNotFoundError(msg, reason=CONFIGURATION_NOT_FOUND_REASON)
+    return summary
+
+
 def _require_argument_type(value: object, *, name: str, expected: type) -> None:
     """Refuse a wrong-typed public argument as the caller's own input, before the store sees it.
 
@@ -701,6 +737,54 @@ def list_configs(*, product_cache_location: str | Path | None) -> tuple[Configur
     """
     projection = _projection(product_cache_location)
     return projection.list_configurations()
+
+
+@_service_boundary
+def get_config(*, config_id: str, product_cache_location: str | Path | None) -> ConfigurationSummary:
+    """Return one registered configuration's summary, refusing absence rather than guessing."""
+    _require_argument_type(config_id, name="config_id", expected=str)
+    projection = _projection(product_cache_location)
+    return _require_configuration(projection, config_id)
+
+
+@_service_boundary
+def list_versions(*, config_id: str, product_cache_location: str | Path | None) -> tuple[ConfigurationVersion, ...]:
+    """Return every version of one configuration, ordered by ``registry_version`` ascending.
+
+    A missing configuration refuses — never a silent empty tuple, which would be
+    indistinguishable from a real answer about a registered configuration. The order is the
+    store's own ``ORDER BY registry_version``, not a re-sort in this layer.
+    """
+    _require_argument_type(config_id, name="config_id", expected=str)
+    projection = _projection(product_cache_location)
+    _require_configuration(projection, config_id)
+    return projection.list_configuration_versions(config_id)
+
+
+@_service_boundary
+def get_version(
+    *,
+    config_id: str,
+    registry_version: int,
+    product_cache_location: str | Path | None,
+) -> ConfigurationVersion:
+    """Return one immutable registered version exactly as it was persisted.
+
+    Two lookups, so the two absences stay distinct (envelope AR3): the configuration first —
+    its absence refuses with :data:`CONFIGURATION_NOT_FOUND_REASON` — then the version, whose
+    absence on an existing configuration refuses with
+    :data:`CONFIGURATION_VERSION_NOT_FOUND_REASON`. Deletion does not exist, so the two steps
+    cannot race. The store's blended single-lookup reason is untouched; ``validate`` keeps it.
+    """
+    _require_argument_type(config_id, name="config_id", expected=str)
+    _require_argument_type(registry_version, name="registry_version", expected=int)
+    projection = _projection(product_cache_location)
+    _require_configuration(projection, config_id)
+    stored = projection.lookup_configuration_version(config_id, registry_version).value
+    if stored is None:
+        msg = f"configuration {config_id!r} has no registered version {registry_version}"
+        raise ConfigsNotFoundError(msg, reason=CONFIGURATION_VERSION_NOT_FOUND_REASON)
+    return stored
 
 
 @_service_boundary
