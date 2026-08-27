@@ -38,6 +38,7 @@ from .models import (
     safe_pointer_component,
     sort_findings,
 )
+from .warnings import accumulate_intentional_omissions
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -97,6 +98,7 @@ _LOCATION_DIGEST_LENGTH = 8
 _CHECK_CREDENTIALS = "credentials"
 _CHECK_STORE = "store"
 _CHECK_WALK = "walk"
+_CHECK_OMISSIONS = "omissions"
 
 # Where an adapter-owned validator has standing to report. Its own role's subtree, plus the
 # package content that belongs to no role: a schema mapping is declared once for the package
@@ -116,6 +118,11 @@ class _AccumulatedFinding:
 def _from_check(check: str, accumulated: list[_AccumulatedFinding]) -> list[_AccumulatedFinding]:
     """Name the check one group of findings came from, which is what precedence is decided on."""
     return [replace(item, check=check) for item in accumulated]
+
+
+def _from_module(check: str, findings: Iterable[ValidationFinding]) -> list[_AccumulatedFinding]:
+    """Adopt findings a sibling emission module built, each carrying its own message."""
+    return [_AccumulatedFinding(finding=finding, legacy_message=finding.message, check=check) for finding in findings]
 
 
 def _unbounded_component(name: object) -> str:
@@ -682,6 +689,11 @@ def _accumulate(package: ConfigurationPackage) -> tuple[_AccumulatedFinding, ...
         accumulated=walked,
     )
     accumulated.extend(_from_check(_CHECK_WALK, walked))
+    # Contract section 4's warning families run last, appended after the shipped execution
+    # order, so a package carrying any legacy defect keeps its shipped first-error message
+    # at the wrapper. Warnings before an error here are what the wrapper's first-*error*
+    # rule exists for.
+    accumulated.extend(_from_module(_CHECK_OMISSIONS, accumulate_intentional_omissions(package)))
     return tuple(accumulated)
 
 
