@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Union, cast
+from typing import TYPE_CHECKING, Any, Protocol, Union, cast
 
 import jinja2
 from infrahub_sdk.schema import (
@@ -117,13 +117,36 @@ def get_children(node: NodeSchema, config: SyncConfig) -> str | None:
     return "{" + ", ".join(children_list) + "}"
 
 
-def get_kind(item: Union[RelationshipSchema, AttributeSchema]) -> str:
+class _AttributeLike(Protocol):
+    """Structural shape get_kind() needs from an attribute-schema object.
+
+    `kind` is typed `Any` rather than `str`: real schema classes type it as
+    an `AttributeKind` str-enum, and Protocol attribute matching is invariant,
+    so a `str`-typed member here would reject them despite being usable as a
+    ATTRIBUTE_KIND_MAP lookup key.
+    """
+
+    kind: Any
+    optional: bool
+    default_value: Any
+
+
+class _RelationshipLike(Protocol):
+    """Structural shape get_kind() needs from a relationship-schema object."""
+
+    cardinality: str
+    optional: bool
+
+
+def get_kind(item: Union[_AttributeLike, _RelationshipLike]) -> str:
     # Duck-typed on `cardinality` rather than `isinstance(item, (AttributeSchema,
     # RelationshipSchema))`: the SDK's read-side schema objects returned by
     # `client.schema.all()` (e.g. AttributeSchemaAPI/RelationshipSchemaAPI) are not
     # guaranteed to subclass these write-side classes across infrahub-sdk versions
     # -- that inheritance held at 1.18.1 but was removed by 1.23.0, which silently
     # made every attribute/relationship fall through to the "str" default below.
+    # The parameter type reflects that: any object with the right shape works,
+    # not just AttributeSchema/RelationshipSchema instances.
     kind = "str"
     is_relationship = hasattr(item, "cardinality")
 
