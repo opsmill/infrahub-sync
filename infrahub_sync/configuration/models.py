@@ -452,6 +452,29 @@ class ConfigurationPackageMetadata(BaseModel):
     adapter_api_version: Literal[1] = 1
 
 
+# An omission reason reaches a finding message verbatim, so the bound is what keeps the
+# reason plus the fixed message template under _MAX_FINDING_TEXT_LENGTH: an over-long
+# reason is a registration-time refusal here, never a finding-construction crash.
+_MAX_OMISSION_REASON_LENGTH = 160
+
+_OmissionFieldName = Annotated[str, StringConstraints(min_length=1)]
+
+
+class _OmissionDeclaration(BaseModel):
+    """One declared intent: this destination content is intentionally not synchronized."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: str = Field(min_length=1)
+    # Omit the list to omit the whole kind; an empty list would declare nothing.
+    fields: tuple[_OmissionFieldName, ...] | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=_MAX_OMISSION_REASON_LENGTH)
+
+    @field_serializer("fields")
+    def _serialize_fields(self, value: tuple[str, ...] | None) -> list[str] | None:
+        return None if value is None else list(value)
+
+
 class ValidationFinding(BaseModel):
     """Stable, secret-safe result produced by configuration validation."""
 
@@ -479,6 +502,10 @@ class ConfigurationPackage(BaseModel):
     credentials: Mapping[CredentialReferenceName, CredentialReference] = Field(
         default_factory=dict, validate_default=True
     )
+    # Always serialized, the empty tuple included: omissions change the validation report a
+    # version produces, so they sit inside declared identity, and serializing the empty
+    # declaration keeps absent and empty from being two different byte streams.
+    omissions: tuple[_OmissionDeclaration, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -503,6 +530,10 @@ class ConfigurationPackage(BaseModel):
     @field_serializer("credentials")
     def _serialize_credentials(self, value: Mapping[str, CredentialReference]) -> dict[str, CredentialReference]:
         return dict(value)
+
+    @field_serializer("omissions")
+    def _serialize_omissions(self, value: tuple[_OmissionDeclaration, ...]) -> list[_OmissionDeclaration]:
+        return list(value)
 
     def declared_content(self) -> dict[str, Any]:
         """Return the exact JSON-native content covered by the package checksum."""

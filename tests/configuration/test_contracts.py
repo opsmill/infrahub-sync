@@ -307,6 +307,71 @@ def test_checksum_changes_with_declared_credential_identifier() -> None:
     assert ConfigurationPackage.model_validate(changed).checksum() != baseline.checksum()
 
 
+def test_omissions_are_declared_content_inside_package_identity() -> None:
+    # OPT-A, always-serialize: `omissions` is a top-level sibling of `configuration` and
+    # `credentials`, and the empty declaration serializes too, so absent and empty cannot
+    # be two different byte streams. Omissions change the validation report a version
+    # produces, so two packages differing only in omissions are two identities.
+    baseline = _package()
+    data = baseline.model_dump(mode="json")
+    data["omissions"] = [
+        {"kind": "InfraDevice", "fields": ["serial_number", "asset_tag"], "reason": "serials tracked in the CMDB"}
+    ]
+    declared = ConfigurationPackage.model_validate(data)
+
+    assert baseline.declared_content()["omissions"] == []
+    assert declared.declared_content()["omissions"] == [
+        {"kind": "InfraDevice", "fields": ["serial_number", "asset_tag"], "reason": "serials tracked in the CMDB"}
+    ]
+    assert declared.checksum() != baseline.checksum()
+    reparsed = ConfigurationPackage.model_validate(declared.declared_content())
+    assert reparsed.declared_content() == declared.declared_content()
+    assert reparsed.checksum() == declared.checksum()
+
+
+def test_a_whole_kind_omission_omits_the_field_list() -> None:
+    data = _package().model_dump(mode="json")
+    data["omissions"] = [{"kind": "InfraDevice"}]
+
+    declared = ConfigurationPackage.model_validate(data)
+
+    assert declared.declared_content()["omissions"] == [{"kind": "InfraDevice", "fields": None, "reason": None}]
+
+
+def test_an_omission_reason_at_the_bound_is_accepted_and_the_declaration_is_strict() -> None:
+    data = _package().model_dump(mode="json")
+    data["omissions"] = [{"kind": "InfraDevice", "reason": "r" * 160}]
+
+    declared = ConfigurationPackage.model_validate(data)
+
+    assert declared.omissions[0].reason == "r" * 160
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package({**data, "omissions": [{"kind": "InfraDevice", "note": "x"}]})
+    assert str(caught.value) == "configuration package is invalid at /omissions/0/note: unsupported declared field"
+
+
+def test_an_over_long_omission_reason_is_a_clean_registration_time_refusal() -> None:
+    # The 160-character bound plus the fixed message template stays under the 256 finding
+    # text bound, so an over-long reason is refused here and can never crash a finding.
+    data = _package().model_dump(mode="json")
+    data["omissions"] = [{"kind": "InfraDevice", "reason": "r" * 161}]
+
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(data)
+
+    assert str(caught.value) == "configuration package is invalid at /omissions/0/reason: value is too long"
+    assert "r" * 161 not in str(caught.value)
+
+
+def test_an_empty_omission_field_list_is_refused() -> None:
+    # Omitting the list omits the whole kind; an empty list would declare nothing.
+    data = _package().model_dump(mode="json")
+    data["omissions"] = [{"kind": "InfraDevice", "fields": []}]
+
+    with pytest.raises(ConfigurationPackageParseError):
+        parse_configuration_package(data)
+
+
 @pytest.mark.parametrize("flag_name", ["SKIP_UNMATCHED_DST", "SKIP_UNMATCHED_BOTH", "NONE"])
 def test_diffsync_flags_are_declared_and_hashed_by_stable_name(flag_name: str) -> None:
     data = _package().model_dump(mode="json")
