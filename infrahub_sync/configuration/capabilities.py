@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from .models import ConfigurationPackage, ValidationFinding
@@ -14,6 +14,12 @@ from .models import ConfigurationPackage, ValidationFinding
 AdapterRole = Literal["source", "destination"]
 WriteOperation = Literal["create", "update", "delete"]
 ConfigurationValidator = Callable[[ConfigurationPackage, AdapterRole], Sequence[ValidationFinding]]
+# The destination-schema accessor contract: (package, branch) -> one JSON-native schema
+# snapshot, mapping each kind name to its attributes (name -> attribute kind) and
+# relationships (name -> {"peer", "cardinality"}). Raises DestinationSchemaReadError and
+# nothing else for a read that fails; performs I/O only when called, never at import.
+DestinationSchemaAccessor = Callable[[ConfigurationPackage, str], Mapping[str, Any]]
+_SCHEMA_READ_REASON = re.compile(r"^[a-z]{1,32}$")
 _ADAPTER_NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
 _ADAPTER_ROLES: frozenset[AdapterRole] = frozenset({"source", "destination"})
 _WRITE_OPERATIONS: frozenset[WriteOperation] = frozenset({"create", "update", "delete"})
@@ -21,6 +27,23 @@ _SETTING_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 # A declared path component must survive pointer rendering unchanged, so the pointer built
 # from the declaration and the pointer built while walking a package cannot disagree.
 _MAX_SETTING_PATH_COMPONENT_LENGTH = 64
+
+
+class DestinationSchemaReadError(Exception):
+    """An accessor could not read the destination schema, classified by ``reason``.
+
+    ``reason`` is a short lowercase word naming the failure class ("timeout",
+    "unauthorized", "unreachable", ...) and is validated here so the finding a
+    failed read becomes can carry it verbatim. The message follows the module's
+    own rule for refusal text: exception type names, never third-party content.
+    """
+
+    def __init__(self, message: str, *, reason: str) -> None:
+        if _SCHEMA_READ_REASON.fullmatch(reason) is None:
+            msg = f"schema read failure reason {reason!r} is not a short lowercase word"
+            raise ValueError(msg)
+        super().__init__(message)
+        self.reason = reason
 
 
 def is_renderable_setting_path(path: str) -> bool:
@@ -43,6 +66,7 @@ class AdapterConfigurationCapabilities:
     credential_setting_paths: tuple[str, ...] = ()
     supported_destination_write_operations: frozenset[WriteOperation] = frozenset()
     destination_schema_validation: bool = False
+    destination_schema_accessor: DestinationSchemaAccessor | None = None
     validator: ConfigurationValidator | None = None
     contract_version: Literal[1] = 1
 
@@ -75,6 +99,14 @@ class AdapterConfigurationCapabilities:
             raise ValueError(msg)
         if "destination" not in roles and write_operations:
             msg = f"source-only adapter {self.adapter_name!r} cannot declare destination writes"
+            raise ValueError(msg)
+        if self.destination_schema_validation != (self.destination_schema_accessor is not None):
+            # The declaration and the accessor are one fact: declaring schema validation
+            # without a working accessor — or the reverse — is a registration-time error.
+            msg = (
+                f"adapter {self.adapter_name!r} must declare destination schema validation "
+                "together with its schema accessor"
+            )
             raise ValueError(msg)
         if len(credential_setting_paths) != len(set(credential_setting_paths)):
             msg = f"adapter {self.adapter_name!r} contains duplicate credential paths"
@@ -146,6 +178,77 @@ def _validate_relative_rest_mapping_endpoints(
     return tuple(findings)
 
 
+def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str) -> Mapping[str, Any]:
+    """Read one destination schema snapshot from a live Infrahub server.
+
+    The bundled accessor behind ``infrahub``'s schema-validation declaration. Only the
+    explicit validation opt-in calls it, so resolving the *declared* token credential
+    reference here is the sanctioned read (contract section 4); the branch arrives already
+    resolved from the declared setting and nothing ambient is consulted for it. Every
+    failure is classified into :class:`DestinationSchemaReadError` — the accessor contract
+    the schema checks handle — carrying exception type names, never third-party content.
+    """
+    # Imported here, not at module load: this module stays connection-free to import, and
+    # the default validate path never touches a network client (envelope AR7).
+    import httpx
+    from infrahub_sdk import Config, InfrahubClientSync
+    from infrahub_sdk.exceptions import (
+        AuthenticationError,
+        ServerNotReachableError,
+        ServerNotResponsiveError,
+    )
+
+    from .credentials import CredentialConfigurationError, resolve_reference
+
+    settings = package.configuration.destination.settings or {}
+    url = settings.get("url")
+    if not isinstance(url, str) or not url:
+        msg = "destination setting 'url' is required to read the destination schema"
+        raise DestinationSchemaReadError(msg, reason="unconfigured")
+    sdk_config: dict[str, Any] = {"timeout": 60, "default_branch": branch}
+    token = settings.get("token")
+    if isinstance(token, Mapping):
+        reference_name = token.get("$credential")
+        if isinstance(reference_name, str):
+            try:
+                sdk_config["api_token"] = resolve_reference(package, reference_name)
+            except CredentialConfigurationError as exc:
+                msg = f"destination token credential could not be resolved: {type(exc).__name__}"
+                raise DestinationSchemaReadError(msg, reason="credentials") from None
+    verify_ssl = settings.get("verify_ssl")
+    if verify_ssl is not None:
+        sdk_config["tls_insecure"] = not verify_ssl
+    try:
+        client = InfrahubClientSync(address=url, config=Config(**sdk_config))
+        schema = client.schema.all(branch=branch)
+    except (httpx.TimeoutException, ServerNotResponsiveError) as exc:
+        msg = f"destination schema read timed out: {type(exc).__name__}"
+        raise DestinationSchemaReadError(msg, reason="timeout") from None
+    except AuthenticationError as exc:
+        msg = f"destination refused the schema read credentials: {type(exc).__name__}"
+        raise DestinationSchemaReadError(msg, reason="unauthorized") from None
+    except httpx.HTTPStatusError as exc:
+        unauthorized = exc.response.status_code in {401, 403}
+        reason = "unauthorized" if unauthorized else "unreachable"
+        msg = f"destination refused the schema read: {type(exc).__name__}"
+        raise DestinationSchemaReadError(msg, reason=reason) from None
+    except (httpx.TransportError, ServerNotReachableError) as exc:
+        msg = f"destination server could not be reached: {type(exc).__name__}"
+        raise DestinationSchemaReadError(msg, reason="unreachable") from None
+    return {
+        kind: {
+            "attributes": {
+                attribute.name: attribute.kind for attribute in getattr(node, "attributes", ()) or ()
+            },
+            "relationships": {
+                relationship.name: {"peer": relationship.peer, "cardinality": relationship.cardinality}
+                for relationship in getattr(node, "relationships", ()) or ()
+            },
+        }
+        for kind, node in schema.items()
+    }
+
+
 BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
     {
         "aci": AdapterConfigurationCapabilities(
@@ -168,6 +271,7 @@ BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
             credential_setting_paths=("token",),
             supported_destination_write_operations=_CREATE_UPDATE,
             destination_schema_validation=True,
+            destination_schema_accessor=_read_infrahub_destination_schema,
         ),
         "ipfabricsync": AdapterConfigurationCapabilities(
             adapter_name="ipfabricsync",
