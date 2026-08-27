@@ -118,8 +118,16 @@ def get_children(node: NodeSchema, config: SyncConfig) -> str | None:
 
 
 def get_kind(item: Union[RelationshipSchema, AttributeSchema]) -> str:
+    # Duck-typed on `cardinality` rather than `isinstance(item, (AttributeSchema,
+    # RelationshipSchema))`: the SDK's read-side schema objects returned by
+    # `client.schema.all()` (e.g. AttributeSchemaAPI/RelationshipSchemaAPI) are not
+    # guaranteed to subclass these write-side classes across infrahub-sdk versions
+    # -- that inheritance held at 1.18.1 but was removed by 1.23.0, which silently
+    # made every attribute/relationship fall through to the "str" default below.
     kind = "str"
-    if isinstance(item, AttributeSchema):
+    is_relationship = hasattr(item, "cardinality")
+
+    if not is_relationship:
         kind = ATTRIBUTE_KIND_MAP.get(item.kind, "str")
         if item.optional:
             kind = f"{kind} | None"
@@ -134,11 +142,11 @@ def get_kind(item: Union[RelationshipSchema, AttributeSchema]) -> str:
             else:
                 kind += " = None"
 
-    elif isinstance(item, RelationshipSchema) and item.cardinality == "one":
+    elif item.cardinality == "one":
         if item.optional:
             kind = f"{kind} | None = None"
 
-    elif isinstance(item, RelationshipSchema) and item.cardinality == "many":
+    elif item.cardinality == "many":
         kind = "list[str]"
         if item.optional:
             kind = f"{kind} | None"
