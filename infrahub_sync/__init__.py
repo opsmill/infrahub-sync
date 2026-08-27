@@ -149,6 +149,27 @@ class SyncInstance(SyncConfig):
     directory: str
 
 
+def resolve_effective_diffsync_flags(
+    configured_flags: Iterable[str | DiffSyncFlags] | None,
+) -> DiffSyncFlags:
+    """Resolve the effective DiffSync flags for the supported live-sync profile.
+
+    The SYNC-78 rule: ``SKIP_UNMATCHED_DST`` is invariant — a destination-only
+    object is never turned into a delete action, no matter which unrelated flags
+    are configured. Configured flags are OR-combined on top of that invariant,
+    so no flags resolve to ``SKIP_UNMATCHED_DST`` alone and a set that already
+    contains it is unchanged. This is the one place that interprets flag
+    aggregation; consumers (the sync engine, the destination write-operations
+    capability check) call it rather than re-deriving the rule.
+
+    Raises ``KeyError`` for a flag name that ``DiffSyncFlags`` does not define.
+    """
+    flags = DiffSyncFlags.SKIP_UNMATCHED_DST
+    for flag in configured_flags or []:
+        flags |= flag if isinstance(flag, DiffSyncFlags) else DiffSyncFlags[flag]
+    return flags
+
+
 def is_ip_within_filter(ip: str, ip_compare: Union[str, list[str]]) -> bool:
     """Check if an IP address is within a given subnet."""
     return netutils_is_ip_within(ip=ip, ip_compare=ip_compare)

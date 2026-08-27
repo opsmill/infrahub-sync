@@ -4,8 +4,6 @@ import logging
 import sys
 from typing import TYPE_CHECKING, Any, cast
 
-from diffsync.enum import DiffSyncFlags
-
 # The destination SDK's error base, imported for the apply path's exception boundary below and
 # for nothing else. It is the one module-level import here that is not cheap, and it is
 # unavoidable: the boundary has to *name* the library whose rejections are operational, and
@@ -20,7 +18,7 @@ from infrahub_sdk.exceptions import (
 )
 from tqdm import tqdm
 
-from infrahub_sync import IncrementalConfig
+from infrahub_sync import IncrementalConfig, resolve_effective_diffsync_flags
 
 # Imported at module level, unlike this module's other `infrahub_sync` imports: these four
 # pull nothing beyond pydantic and the standard library — the write-surface protocol pulls
@@ -80,6 +78,7 @@ if TYPE_CHECKING:
 
     from diffsync import Adapter
     from diffsync.diff import Diff
+    from diffsync.enum import DiffSyncFlags
 
     from infrahub_sync import SyncInstance
     from infrahub_sync.plan.models import PlanManifest, VerificationFailure
@@ -194,16 +193,12 @@ class Potenda:
         if verbosity is not None:
             logging.getLogger("diffsync").setLevel(verbosity)
 
-        # Combine DiffSyncFlags from the configuration. `config` is typed as
-        # SyncInstance but tests pass None — guard explicitly.
-        self.flags: DiffSyncFlags = DiffSyncFlags.NONE
-        if self.config is not None:
-            for flag in self.config.diffsync_flags or []:
-                self.flags |= flag if isinstance(flag, DiffSyncFlags) else DiffSyncFlags[flag]
-
-        # Fallback to `SKIP_UNMATCHED_DST` if nothing is define
-        if self.flags == DiffSyncFlags.NONE:
-            self.flags = DiffSyncFlags.SKIP_UNMATCHED_DST
+        # Effective DiffSync flags come from the one shared SYNC-78 rule —
+        # never interpreted inline here. `config` is typed as SyncInstance but
+        # tests pass None — guard explicitly.
+        self.flags: DiffSyncFlags = resolve_effective_diffsync_flags(
+            self.config.diffsync_flags if self.config is not None else None
+        )
 
     @property
     def last_applied_plan_action_counts(self) -> dict[str, int] | None:
