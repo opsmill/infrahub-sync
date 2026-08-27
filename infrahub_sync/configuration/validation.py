@@ -413,9 +413,16 @@ def _revalidated_finding(item: ValidationFinding) -> ValidationFinding:
         # adapter may not put a raw control character into operator-facing text either.
         msg = "adapter finding carries an unprintable character"
         raise ValueError(msg)
+    if validated.severity != "error":
+        # The warning channel's emission rule is closed: only the two contract section 4
+        # families in the warnings module report warnings. The wrapper never raises on a
+        # warning, so an adapter allowed to return one could write a defect into the
+        # non-blocking channel; the caller contains this like any other unusable result.
+        msg = "adapter finding carries a severity the adapter has no standing to report"
+        raise ValueError(msg)
     return _finding(
         code=validated.code,
-        severity=validated.severity,
+        severity="error",
         location=_finding_location(validated.location),
         message=_finding_message(validated.message),
     )

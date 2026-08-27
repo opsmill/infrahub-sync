@@ -461,6 +461,32 @@ def test_a_finding_inside_the_validator_role_subtree_is_kept(
     assert _triples(package_data()) == [("adapter-note", location)]
 
 
+def test_an_adapter_validator_cannot_mint_a_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The emission rule is closed: only the two contract section 4 families in the warnings
+    # module report warnings. A warning is advice the wrapper never raises on, so a validator
+    # allowed to return one could write a defect into the non-blocking channel. It is contained
+    # to the existing contained-validator-failure error, exactly like any other unusable result.
+    def _validator(package_argument: ConfigurationPackage, role: AdapterRole) -> tuple[ValidationFinding, ...]:
+        del package_argument, role
+        return (
+            ValidationFinding(
+                code="adapter-note",
+                severity="warning",
+                location="/configuration/source",
+                message="Zq7",
+            ),
+        )
+
+    monkeypatch.setattr(validation, "BUILTIN_ADAPTER_CAPABILITIES", _capabilities_with(_validator, "netbox"))
+
+    findings = collect_findings(package(package_data()))
+
+    assert [(finding.code, finding.severity, finding.location) for finding in findings] == [
+        ("adapter-validator-finding", "error", "/configuration/source"),
+    ]
+    assert all("Zq7" not in finding.message for finding in findings)
+
+
 _ROLE_INDEPENDENT_POINTER = "/configuration/schema_mapping/0/mapping"
 
 
