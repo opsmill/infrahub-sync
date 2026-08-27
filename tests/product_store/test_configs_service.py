@@ -90,6 +90,34 @@ def test_register_refuses_an_invalid_package_and_persists_nothing(tmp_path: Path
     assert _registered_configuration_count(tmp_path / "product-cache") == 0
 
 
+def test_a_warning_only_package_registers_and_reports_its_warnings(tmp_path: Path) -> None:
+    # Errors prevent execution; warnings do not. A package whose only findings are
+    # warnings registers, versions, and validates error-free through the whole service.
+    location = _store(tmp_path)
+    data = package_data()
+    data["omissions"] = [{"kind": "InfraDevice", "fields": ["serial_number"]}]
+    changed = package_data()
+    changed["omissions"] = [{"kind": "InfraDevice"}]
+
+    registered = configs_service.register(package=data, product_cache_location=location)
+    versioned = configs_service.create_version(
+        config_id=registered.configuration.config_id,
+        package=changed,
+        product_cache_location=location,
+    )
+    report = configs_service.validate(
+        config_id=registered.configuration.config_id,
+        registry_version=registered.version.registry_version,
+        product_cache_location=location,
+    )
+
+    assert versioned.created
+    assert versioned.version.registry_version == 2
+    assert [(finding.code, finding.severity, finding.location) for finding in report.findings] == [
+        ("intentional-omission", "warning", "/omissions/0"),
+    ]
+
+
 def test_create_version_is_idempotent_for_an_identical_package(tmp_path: Path) -> None:
     location = _store(tmp_path)
     registered = configs_service.register(package=package_data(), product_cache_location=location)

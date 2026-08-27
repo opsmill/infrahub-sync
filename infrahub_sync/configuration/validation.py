@@ -747,7 +747,10 @@ def collect_findings(package: ConfigurationPackage) -> tuple[ValidationFinding, 
 def validate_package_credentials(package: ConfigurationPackage) -> None:
     """Prove bundled adapter settings contain references rather than credential values."""
     accumulated = _accumulate(package)
-    if accumulated:
-        # Element zero of the untruncated, execution-ordered accumulation: the defect the
-        # raise-first code reported, so the message is the one it produced.
-        raise CredentialConfigurationError(accumulated[0].legacy_message)
+    for item in accumulated:
+        # The first *error* of the untruncated, execution-ordered accumulation: the defect
+        # the raise-first code reported, so the message is the one it produced. Errors
+        # prevent execution and warnings do not, so a warning is never raised on — a
+        # warning-only package passes.
+        if item.finding.severity == "error":
+            raise CredentialConfigurationError(item.legacy_message)

@@ -277,6 +277,42 @@ def test_every_validation_refusal_raises_one_exception_type(
         validate_package_credentials(package(data))
 
 
+def test_a_warning_only_package_does_not_raise() -> None:
+    # Errors prevent execution; warnings do not. A package whose only findings are
+    # warnings validates with no wrapper raise, so registration cannot refuse it.
+    data = package_data()
+    data["omissions"] = [{"kind": "InfraDevice", "fields": ["serial_number"]}]
+
+    validate_package_credentials(package(data))
+
+
+def test_the_wrapper_raises_the_first_error_even_when_warnings_precede_it() -> None:
+    # The element-zero pin's one sanctioned re-reading: "the first finding" becomes "the
+    # first *error* in execution order". A warning accumulates ahead of this error, and
+    # the raised message is still the error's own.
+    data = package_data()
+    data["configuration"]["schema_mapping"] = [{"name": "InfraDevice", "mapping": "dcim.devices"}]
+    data["omissions"] = [{"kind": "InfraCircuit"}, {"kind": "InfraDevice"}]
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package(data))
+
+    assert str(caught.value) == "omission names content a schema mapping also maps"
+
+
+def test_a_legacy_defect_keeps_its_shipped_message_when_warnings_are_also_declared() -> None:
+    # The warning families run after the shipped execution order, so a package carrying a
+    # legacy defect raises the same message it raised before omissions existed.
+    data = package_data()
+    data["credentials"]["netbox-token"]["provider"] = "vault"
+    data["omissions"] = [{"kind": "InfraDevice"}]
+
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package(data))
+
+    assert str(caught.value) == "credential reference 'netbox-token' uses provider 'vault', which is not installed"
+
+
 def _two_defective_declarations(first_name: str, second_name: str) -> dict[str, Any]:
     data = package_data()
     declarations = {
