@@ -118,13 +118,7 @@ def get_children(node: NodeSchema, config: SyncConfig) -> str | None:
 
 
 class _AttributeLike(Protocol):
-    """Structural shape get_kind() needs from an attribute-schema object.
-
-    `kind` is typed `Any` rather than `str`: real schema classes type it as
-    an `AttributeKind` str-enum, and Protocol attribute matching is invariant,
-    so a `str`-typed member here would reject them despite being usable as a
-    ATTRIBUTE_KIND_MAP lookup key.
-    """
+    """Structural shape get_kind() needs from an attribute-schema object."""
 
     kind: Any
     optional: bool
