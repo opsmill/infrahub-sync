@@ -18,19 +18,19 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from infrahub_sync.cache import compute_schema_subhash
+from infrahub_sync.configuration import capabilities as capabilities_module
 from infrahub_sync.configuration import schema_validation
 from infrahub_sync.configuration import validation as validation_module
 from infrahub_sync.configuration.capabilities import (
     BUILTIN_ADAPTER_CAPABILITIES,
     AdapterConfigurationCapabilities,
     DestinationSchemaReadError,
-    _read_infrahub_destination_schema,
 )
+from infrahub_sync.configuration.credentials import CredentialConfigurationError
 from infrahub_sync.configuration.schema_validation import (
     collect_destination_schema_findings,
     resolve_declared_destination_branch,
 )
-from infrahub_sync.configuration.credentials import CredentialConfigurationError
 from infrahub_sync.configuration.validation import collect_findings, validate_package_credentials
 from tests.configuration.validation_packages import package, package_data
 
@@ -131,7 +131,7 @@ def test_an_accessor_without_the_declaration_is_a_registration_time_error() -> N
 def test_the_bundled_infrahub_declaration_binds_the_live_accessor() -> None:
     capabilities = BUILTIN_ADAPTER_CAPABILITIES["infrahub"]
     assert capabilities.destination_schema_validation is True
-    assert capabilities.destination_schema_accessor is _read_infrahub_destination_schema
+    assert capabilities.destination_schema_accessor is capabilities_module._read_infrahub_destination_schema
 
 
 def test_a_read_error_requires_a_short_lowercase_reason() -> None:
@@ -311,16 +311,12 @@ def test_an_unknown_destination_adapter_adds_no_schema_findings() -> None:
 
 
 @pytest.mark.parametrize("reason", ["timeout", "unauthorized", "unreachable"])
-def test_a_failed_schema_read_is_an_error_finding_not_a_raise(
-    monkeypatch: pytest.MonkeyPatch, reason: str
-) -> None:
+def test_a_failed_schema_read_is_an_error_finding_not_a_raise(monkeypatch: pytest.MonkeyPatch, reason: str) -> None:
     _inject(monkeypatch, _table_with_accessor(_raising_accessor(reason)))
 
     result = collect_destination_schema_findings(package(package_data()))
 
-    assert _codes_and_locations(result.findings) == [
-        ("destination-schema-read-failed", "/configuration/destination")
-    ]
+    assert _codes_and_locations(result.findings) == [("destination-schema-read-failed", "/configuration/destination")]
     assert reason in result.findings[0].message
     assert result.schema_fingerprint is None
 

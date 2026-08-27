@@ -37,6 +37,10 @@ from infrahub_sync.plan.canonical import canonical_json_bytes
 
 _REFERENCE_NAME_PATTERN = r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
 _PROVIDER_NAME_PATTERN = r"^[a-z][a-z0-9-]{0,63}$"
+_SETTING_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+# A declared path component must survive pointer rendering unchanged, so the pointer built
+# from the declaration and the pointer built while walking a package cannot disagree.
+_MAX_SETTING_PATH_COMPONENT_LENGTH = 64
 _SAFE_POINTER_RE = re.compile(r"^(/(?:[^~/]|~[01])*)*$")
 _MAX_DECLARATION_DEPTH = 64
 _MAX_VALIDATION_ERRORS = 256
@@ -104,6 +108,20 @@ _POINTER_CHARACTER_ESCAPES = {
 
 class ConfigurationPackageParseError(ValueError):
     """A declared package failed validation at a secret-safe public boundary."""
+
+
+def is_renderable_setting_path(path: str) -> bool:
+    """Return whether every dotted component is an exact, bounded setting name.
+
+    Declared here — beneath both the capability and the credential declarations that
+    check their setting paths against it — so neither module needs the other for it.
+    """
+    if not path or path.startswith(".") or path.endswith("."):
+        return False
+    return all(
+        _SETTING_NAME.fullmatch(component) is not None and len(component) <= _MAX_SETTING_PATH_COMPONENT_LENGTH
+        for component in path.split(".")
+    )
 
 
 def _raise_unsupported_declared_fields(

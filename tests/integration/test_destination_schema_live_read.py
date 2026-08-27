@@ -17,8 +17,8 @@ from typing import Any
 
 import pytest
 
+from infrahub_sync.configuration import capabilities as capabilities_module
 from infrahub_sync.configuration import parse_configuration_package
-from infrahub_sync.configuration.capabilities import _read_infrahub_destination_schema
 
 INFRAHUB_ADDRESS = os.environ.get("INFRAHUB_ADDRESS")
 INFRAHUB_API_TOKEN = os.environ.get("INFRAHUB_API_TOKEN")
@@ -50,7 +50,7 @@ def _live_package_data() -> dict[str, Any]:
 def test_the_live_accessor_returns_a_judgeable_snapshot() -> None:
     package = parse_configuration_package(_live_package_data())
 
-    snapshot = _read_infrahub_destination_schema(package, "main")
+    snapshot = capabilities_module._read_infrahub_destination_schema(package, "main")
 
     assert snapshot
     for entry in snapshot.values():

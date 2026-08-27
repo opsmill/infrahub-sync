@@ -130,8 +130,7 @@ def _schema_content_findings(
                         code=_CODE_DESTINATION_SCHEMA_MISMATCH,
                         location=f"{field_location}/name",
                         message=(
-                            f"destination kind {mapping.name!r} declares no attribute or "
-                            f"relationship {field.name!r}"
+                            f"destination kind {mapping.name!r} declares no attribute or relationship {field.name!r}"
                         ),
                     )
                 )
@@ -190,8 +189,7 @@ def collect_destination_schema_findings(package: ConfigurationPackage) -> Destin
                 code=_CODE_UNSUPPORTED_DESTINATION_WRITE,
                 location=_DESTINATION_LOCATION,
                 message=(
-                    f"adapter {destination.name!r} does not support requested destination "
-                    f"write operations: {rendered}"
+                    f"adapter {destination.name!r} does not support requested destination write operations: {rendered}"
                 ),
             )
         )

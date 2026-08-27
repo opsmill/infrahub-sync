@@ -13,7 +13,7 @@ import ast
 import socket
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -69,12 +69,16 @@ def _registered(tmp_path: Path, data: dict[str, Any] | None = None) -> tuple[str
     return registered.version.config_id, location
 
 
-def _validate(config_id: str, location: str, **kwargs: Any) -> configs_service.ValidationReport:
+def _validate(
+    config_id: str,
+    location: str,
+    destination_schema: DestinationSchemaOptions | None = None,
+) -> configs_service.ValidationReport:
     return configs_service.validate(
         config_id=config_id,
         registry_version=1,
         product_cache_location=location,
-        **kwargs,
+        destination_schema=destination_schema,
     )
 
 
@@ -142,12 +146,9 @@ def test_the_service_and_schema_modules_construct_no_adapters() -> None:
     # mechanism is reachable from the validate path, so no source adapter can be constructed.
     for module_path in _SERVICE_MODULES:
         tree = ast.parse(Path(module_path).read_text(encoding="utf-8"))
-        imported = {
-            name.name
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Import)
-            for name in node.names
-        } | {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
+        imported = {name.name for node in ast.walk(tree) if isinstance(node, ast.Import) for name in node.names} | {
+            node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module
+        }
         called = {
             node.func.id if isinstance(node.func, ast.Name) else node.func.attr
             for node in ast.walk(tree)
@@ -172,9 +173,7 @@ def test_the_opt_in_records_the_snapshot_fingerprint(tmp_path: Path, monkeypatch
     )
 
 
-def test_the_opt_in_report_is_identical_across_invocations(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_opt_in_report_is_identical_across_invocations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _inject_accessor(monkeypatch)
     config_id, location = _registered(tmp_path, _mapping_package_data("NopeKind"))
 
@@ -246,8 +245,9 @@ def test_a_failed_schema_read_returns_a_report_rather_than_a_refusal(
 def test_a_wrong_typed_opt_in_is_a_request_refusal(tmp_path: Path) -> None:
     config_id, location = _registered(tmp_path)
 
+    wrong_typed = cast("DestinationSchemaOptions", True)  # noqa: FBT003 - the wrong type is the fixture
     with pytest.raises(configs_service.ConfigsRequestError) as raised:
-        _validate(config_id, location, destination_schema=True)
+        _validate(config_id, location, destination_schema=wrong_typed)
 
     assert raised.value.family == "request"
 

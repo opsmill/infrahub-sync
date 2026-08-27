@@ -9,7 +9,7 @@ from types import MappingProxyType
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from .models import ConfigurationPackage, ValidationFinding
+from .models import _SETTING_NAME, ConfigurationPackage, ValidationFinding, is_renderable_setting_path
 
 AdapterRole = Literal["source", "destination"]
 WriteOperation = Literal["create", "update", "delete"]
@@ -23,10 +23,6 @@ _SCHEMA_READ_REASON = re.compile(r"^[a-z]{1,32}$")
 _ADAPTER_NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
 _ADAPTER_ROLES: frozenset[AdapterRole] = frozenset({"source", "destination"})
 _WRITE_OPERATIONS: frozenset[WriteOperation] = frozenset({"create", "update", "delete"})
-_SETTING_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
-# A declared path component must survive pointer rendering unchanged, so the pointer built
-# from the declaration and the pointer built while walking a package cannot disagree.
-_MAX_SETTING_PATH_COMPONENT_LENGTH = 64
 
 
 class DestinationSchemaReadError(Exception):
@@ -44,16 +40,6 @@ class DestinationSchemaReadError(Exception):
             raise ValueError(msg)
         super().__init__(message)
         self.reason = reason
-
-
-def is_renderable_setting_path(path: str) -> bool:
-    """Return whether every dotted component is an exact, bounded setting name."""
-    if not path or path.startswith(".") or path.endswith("."):
-        return False
-    return all(
-        _SETTING_NAME.fullmatch(component) is not None and len(component) <= _MAX_SETTING_PATH_COMPONENT_LENGTH
-        for component in path.split(".")
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +176,7 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
     """
     # Imported here, not at module load: this module stays connection-free to import, and
     # the default validate path never touches a network client (envelope AR7).
+    # pylint: disable=import-outside-toplevel
     import httpx
     from infrahub_sdk import Config, InfrahubClientSync
     from infrahub_sdk.exceptions import (
@@ -200,6 +187,7 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
 
     from .credentials import CredentialConfigurationError, resolve_reference
 
+    # pylint: enable=import-outside-toplevel
     settings = package.configuration.destination.settings or {}
     url = settings.get("url")
     if not isinstance(url, str) or not url:
@@ -237,9 +225,7 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
         raise DestinationSchemaReadError(msg, reason="unreachable") from None
     return {
         kind: {
-            "attributes": {
-                attribute.name: attribute.kind for attribute in getattr(node, "attributes", ()) or ()
-            },
+            "attributes": {attribute.name: attribute.kind for attribute in getattr(node, "attributes", ()) or ()},
             "relationships": {
                 relationship.name: {"peer": relationship.peer, "cardinality": relationship.cardinality}
                 for relationship in getattr(node, "relationships", ()) or ()

@@ -15,8 +15,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from .capabilities import is_renderable_setting_path
-from .models import safe_pointer_component
+from .models import is_renderable_setting_path, safe_pointer_component
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
