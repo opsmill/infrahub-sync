@@ -736,12 +736,18 @@ def collect_findings(package: ConfigurationPackage) -> tuple[ValidationFinding, 
     findings = sort_findings(_one_check_per_location(_accumulate(package)))
     if len(findings) <= _MAX_REPORTED_FINDINGS:
         return findings
-    suppressed = len(findings) - _MAX_REPORTED_FINDINGS
+    suppressed = findings[_MAX_REPORTED_FINDINGS:]
+    # The maximum severity among the *suppressed* findings: a suppressed error must not
+    # leave the presentation error-free, and warnings-only suppression must not turn an
+    # error-free package into a refused one.
+    sentinel_severity: Literal["error", "warning"] = (
+        "error" if any(item.severity == "error" for item in suppressed) else "warning"
+    )
     limit_reached = ValidationFinding(
         code=_CODE_FINDING_LIMIT_REACHED,
-        severity="error",
+        severity=sentinel_severity,
         location="",
-        message=f"{suppressed} further findings were not reported",
+        message=f"{len(suppressed)} further findings were not reported",
     )
     return sort_findings([limit_reached, *findings[:_MAX_REPORTED_FINDINGS]])
 

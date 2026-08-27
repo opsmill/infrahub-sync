@@ -760,6 +760,44 @@ def test_no_two_findings_share_a_location_severity_and_code_over_the_cap(declara
     assert len(set(keys)) == len(keys)
 
 
+def _many_omissions_package_data(*, contradiction_at: int | None = None) -> dict[str, Any]:
+    data = package_data()
+    if contradiction_at is not None:
+        data["configuration"]["schema_mapping"] = [{"name": f"Kind{contradiction_at:03}", "mapping": "x"}]
+    data["omissions"] = [{"kind": f"Kind{index:03}"} for index in range(_FINDING_CAP + 1)]
+    return data
+
+
+def test_a_warnings_only_suppression_yields_a_warning_sentinel_and_no_refusal() -> None:
+    # The sentinel's severity is the maximum severity among the *suppressed* findings.
+    # 257 warnings: the one cut is a warning, so the report stays error-free and the
+    # package still validates with no wrapper raise.
+    data = _many_omissions_package_data()
+
+    findings = collect_findings(package(data))
+
+    assert len(findings) == _FINDING_CAP + 1
+    assert findings[0].code == "finding-limit-reached"
+    assert findings[0].location == _LIMIT_POINTER
+    assert {finding.severity for finding in findings} == {"warning"}
+    validate_package_credentials(package(data))
+
+
+def test_one_suppressed_error_yields_an_error_sentinel() -> None:
+    # The contradiction error's pointer "/omissions/99" sorts lexicographically last among
+    # the 257 omission pointers, so warnings fill the cap and the one suppressed finding
+    # is the error: the sentinel says error even though every presented real finding is a
+    # warning — an error-free presentation would misreport a package that cannot register.
+    data = _many_omissions_package_data(contradiction_at=99)
+
+    findings = collect_findings(package(data))
+
+    assert len(findings) == _FINDING_CAP + 1
+    assert findings[0].code == "finding-limit-reached"
+    assert findings[0].severity == "error"
+    assert {finding.severity for finding in findings[1:]} == {"warning"}
+
+
 # Frozen by CF-004a's envelope. Two contract families are deliberately absent — destination
 # schema mismatch and unsupported destination write behaviour — so neither can be claimed
 # vacuously by a set comparison that only grows.
