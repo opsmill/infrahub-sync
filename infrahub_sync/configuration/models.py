@@ -458,9 +458,12 @@ class ValidationFinding(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     code: str = Field(pattern=r"^[a-z][a-z0-9-]*$", max_length=_MAX_FINDING_TEXT_LENGTH)
-    # Only "error" has a channel: validate_package_credentials raises. Re-add "warning" with
-    # the surface that reports it, so a capability author cannot write one into silence.
-    severity: Literal["error"]
+    # Exactly the two contract severities. "warning" is reported by the two contract
+    # section 4 families in configuration/warnings.py and nothing else — the core and the
+    # adapter containment boundary emit errors only, so a capability author still cannot
+    # write a severity into silence. A third severity has no reporting surface and is
+    # refused here.
+    severity: Literal["error", "warning"]
     location: str = Field(pattern=r"^(/(?:[^~/]|~[01])*)*$", max_length=_MAX_FINDING_TEXT_LENGTH)
     message: str = Field(min_length=1, max_length=_MAX_FINDING_TEXT_LENGTH)
 
@@ -786,5 +789,7 @@ def parse_configuration_package(value: object) -> ConfigurationPackage:
 
 def sort_findings(findings: Sequence[ValidationFinding]) -> tuple[ValidationFinding, ...]:
     """Return findings in the stable cross-interface order."""
-    severity_order = {"error": 0}
+    # Error before warning at one location: errors prevent execution, warnings do not.
+    # Deliberately still a KeyError on any third severity rather than a silent sort.
+    severity_order = {"error": 0, "warning": 1}
     return tuple(sorted(findings, key=lambda item: (item.location, severity_order[item.severity], item.code)))

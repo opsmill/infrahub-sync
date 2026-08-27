@@ -2194,15 +2194,59 @@ def test_findings_use_deterministic_interface_order() -> None:
     ]
 
 
-def test_finding_severity_has_no_channel_beyond_error() -> None:
-    # A severity nothing reports would let a capability author write into silence.
+def test_finding_severity_carries_exactly_the_two_contract_severities() -> None:
+    # OES-8 candidate A: "warning" exists now that the two contract section 4 families
+    # report into it. A third severity still has nothing that reports it, so it would let
+    # a capability author write into silence and is refused at the model.
+    warning = ValidationFinding(code="optional-field", severity="warning", location="/a", message="optional")
+
+    assert warning.severity == "warning"
     with pytest.raises(ValidationError):
         ValidationFinding(
             code="optional-field",
-            severity=cast("Any", "warning"),
+            severity=cast("Any", "info"),
             location="/a",
             message="optional",
         )
+
+
+def test_error_findings_sort_before_warnings_at_the_same_location() -> None:
+    # (location, severity, code): severity separates two findings at one location with one
+    # code, and error comes first because errors prevent execution and warnings do not.
+    findings = [
+        ValidationFinding(code="same-code", severity="warning", location="/a", message="warning"),
+        ValidationFinding(code="same-code", severity="error", location="/a", message="error"),
+    ]
+
+    assert [item.severity for item in sort_findings(findings)] == ["error", "warning"]
+
+
+def test_mixed_severity_ordering_is_deterministic_across_invocations() -> None:
+    findings = [
+        ValidationFinding(code="zulu-code", severity="warning", location="/a", message="w"),
+        ValidationFinding(code="alpha-code", severity="warning", location="/a", message="w"),
+        ValidationFinding(code="mid-code", severity="error", location="/b", message="e"),
+        ValidationFinding(code="alpha-code", severity="error", location="/a", message="e"),
+    ]
+
+    ordered = sort_findings(findings)
+
+    assert ordered == sort_findings(list(reversed(findings)))
+    assert [(item.location, item.severity, item.code) for item in ordered] == [
+        ("/a", "error", "alpha-code"),
+        ("/a", "warning", "alpha-code"),
+        ("/a", "warning", "zulu-code"),
+        ("/b", "error", "mid-code"),
+    ]
+
+
+def test_sort_findings_still_refuses_a_third_severity() -> None:
+    # The severity dict raises KeyError on a severity outside the declared vocabulary
+    # rather than sorting it somewhere silently; only the model widening was sanctioned.
+    smuggled = ValidationFinding.model_construct(code="smuggled-code", severity="info", location="/a", message="m")
+
+    with pytest.raises(KeyError):
+        sort_findings([cast("ValidationFinding", smuggled)])
 
 
 @pytest.mark.parametrize(
