@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any, Protocol
 
 import jinja2
 from infrahub_sdk.schema import (
-    AttributeSchema,
     NodeSchema,
     RelationshipKind,
-    RelationshipSchema,
 )
 
 if TYPE_CHECKING:
@@ -117,34 +115,54 @@ def get_children(node: NodeSchema, config: SyncConfig) -> str | None:
     return "{" + ", ".join(children_list) + "}"
 
 
-def get_kind(item: Union[RelationshipSchema, AttributeSchema]) -> str:
-    kind = "str"
-    if isinstance(item, AttributeSchema):
-        kind = ATTRIBUTE_KIND_MAP.get(item.kind, "str")
-        if item.optional:
-            kind = f"{kind} | None"
-            if item.default_value is not None:
-                # Format the default value based on its type
-                if isinstance(item.default_value, str):
-                    kind += f' = "{item.default_value}"'
-                elif isinstance(item.default_value, (int, float, bool)):
-                    kind += f" = {item.default_value}"
-                else:
-                    kind += f" = {item.default_value!r}"
+class _AttributeLike(Protocol):
+    """Structural shape get_attribute_type_annotation() needs from an attribute-schema object."""
+
+    kind: Any
+    optional: bool
+    default_value: Any
+
+
+class _RelationshipLike(Protocol):
+    """Structural shape get_relationship_type_annotation() needs from a relationship-schema object."""
+
+    cardinality: str
+    optional: bool
+
+
+def get_attribute_type_annotation(item: _AttributeLike) -> str:
+    """Return type annotation of schema attribute for Diffsync model."""
+    annotation = ATTRIBUTE_KIND_MAP.get(item.kind, "str")
+    if item.optional:
+        annotation = f"{annotation} | None"
+        if item.default_value is not None:
+            # Format the default value based on its type
+            if isinstance(item.default_value, str):
+                annotation += f' = "{item.default_value}"'
+            elif isinstance(item.default_value, (int, float, bool)):
+                annotation += f" = {item.default_value}"
             else:
-                kind += " = None"
+                annotation += f" = {item.default_value!r}"
+        else:
+            annotation += " = None"
 
-    elif isinstance(item, RelationshipSchema) and item.cardinality == "one":
+    return annotation
+
+
+def get_relationship_type_annotation(item: _RelationshipLike) -> str:
+    """Return type annotation of schema relationship for Diffsync model."""
+    annotation = "str"
+    if item.cardinality == "one":
         if item.optional:
-            kind = f"{kind} | None = None"
+            annotation = f"{annotation} | None = None"
 
-    elif isinstance(item, RelationshipSchema) and item.cardinality == "many":
-        kind = "list[str]"
+    elif item.cardinality == "many":
+        annotation = "list[str]"
         if item.optional:
-            kind = f"{kind} | None"
-        kind += " = []"
+            annotation = f"{annotation} | None"
+        annotation += " = []"
 
-    return kind
+    return annotation
 
 
 def has_children(node: NodeSchema, config: SyncConfig) -> bool:
@@ -165,7 +183,8 @@ def render_template(template_file: Path, output_dir: Path, output_file: Path, co
     template_env.filters["has_node"] = has_node
     template_env.filters["has_field"] = has_field
     template_env.filters["has_children"] = has_children
-    template_env.filters["get_kind"] = get_kind
+    template_env.filters["get_attribute_type_annotation"] = get_attribute_type_annotation
+    template_env.filters["get_relationship_type_annotation"] = get_relationship_type_annotation
 
     template = template_env.get_template(str(template_file))
 
