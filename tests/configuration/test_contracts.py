@@ -2311,7 +2311,7 @@ def test_sort_findings_still_refuses_a_third_severity() -> None:
     smuggled = ValidationFinding.model_construct(code="smuggled-code", severity="info", location="/a", message="m")
 
     with pytest.raises(KeyError):
-        sort_findings([cast("ValidationFinding", smuggled)])
+        sort_findings([smuggled])
 
 
 @pytest.mark.parametrize(
