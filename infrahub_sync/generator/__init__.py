@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import subprocess  # noqa: S404 -- fixed argv (sys.executable -m ruff), no shell, no user input
 import sys
-from typing import TYPE_CHECKING, Any, Protocol, Union, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import jinja2
 from infrahub_sdk.schema import (
@@ -120,7 +120,7 @@ def get_children(node: NodeSchema, config: SyncConfig) -> str | None:
 
 
 class _AttributeLike(Protocol):
-    """Structural shape get_kind() needs from an attribute-schema object."""
+    """Structural shape get_attribute_type_annotation() needs from an attribute-schema object."""
 
     kind: Any
     optional: bool
@@ -128,45 +128,49 @@ class _AttributeLike(Protocol):
 
 
 class _RelationshipLike(Protocol):
-    """Structural shape get_kind() needs from a relationship-schema object."""
+    """Structural shape get_relationship_type_annotation() needs from a relationship-schema object."""
 
     cardinality: str
     optional: bool
 
 
-def get_kind(item: Union[_AttributeLike, _RelationshipLike]) -> str:
-    kind = "str"
-    is_relationship = hasattr(item, "cardinality")
+def get_attribute_type_annotation(item: _AttributeLike) -> str:
+    """Return type annotation of schema attribute for Diffsync model."""
+    annotation = "str"
 
-    if not is_relationship:
-        attr = cast("AttributeSchema", item)
-        kind = ATTRIBUTE_KIND_MAP.get(attr.kind, "str")
-        if attr.optional:
-            kind = f"{kind} | None"
-            if attr.default_value is not None:
-                # Format the default value based on its type
-                if isinstance(attr.default_value, str):
-                    kind += f' = "{attr.default_value}"'
-                elif isinstance(attr.default_value, (int, float, bool)):
-                    kind += f" = {attr.default_value}"
-                else:
-                    kind += f" = {attr.default_value!r}"
+    attr = cast("AttributeSchema", item)
+    annotation = ATTRIBUTE_KIND_MAP.get(attr.kind, "str")
+    if attr.optional:
+        annotation = f"{annotation} | None"
+        if attr.default_value is not None:
+            # Format the default value based on its type
+            if isinstance(attr.default_value, str):
+                annotation += f' = "{attr.default_value}"'
+            elif isinstance(attr.default_value, (int, float, bool)):
+                annotation += f" = {attr.default_value}"
             else:
-                kind += " = None"
+                annotation += f" = {attr.default_value!r}"
+        else:
+            annotation += " = None"
 
-    else:
-        rel = cast("RelationshipSchema", item)
-        if rel.cardinality == "one":
-            if rel.optional:
-                kind = f"{kind} | None = None"
+    return annotation
 
-        elif rel.cardinality == "many":
-            kind = "list[str]"
-            if rel.optional:
-                kind = f"{kind} | None"
-            kind += " = []"
 
-    return kind
+def get_relationship_type_annotation(item: _RelationshipLike) -> str:
+    """Return type annotation of schema relationship for Diffsync model."""
+    annotation = "str"
+    rel = cast("RelationshipSchema", item)
+    if rel.cardinality == "one":
+        if rel.optional:
+            annotation = f"{annotation} | None = None"
+
+    elif rel.cardinality == "many":
+        annotation = "list[str]"
+        if rel.optional:
+            annotation = f"{annotation} | None"
+        annotation += " = []"
+
+    return annotation
 
 
 def has_children(node: NodeSchema, config: SyncConfig) -> bool:
@@ -187,7 +191,8 @@ def render_template(template_file: Path, output_dir: Path, output_file: Path, co
     template_env.filters["has_node"] = has_node
     template_env.filters["has_field"] = has_field
     template_env.filters["has_children"] = has_children
-    template_env.filters["get_kind"] = get_kind
+    template_env.filters["get_attribute_type_annotation"] = get_attribute_type_annotation
+    template_env.filters["get_relationship_type_annotation"] = get_relationship_type_annotation
 
     template = template_env.get_template(str(template_file))
 
