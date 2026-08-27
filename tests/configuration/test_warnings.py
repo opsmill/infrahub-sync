@@ -12,7 +12,13 @@ import re
 from pathlib import Path
 from typing import Any
 
-from infrahub_sync.configuration import collect_findings
+import pytest
+
+from infrahub_sync.configuration import (
+    CredentialConfigurationError,
+    collect_findings,
+    validate_package_credentials,
+)
 from infrahub_sync.configuration import warnings as configuration_warnings
 from tests.configuration.validation_packages import package, package_data
 
@@ -138,6 +144,35 @@ def test_an_unknown_source_adapter_reports_no_feature_warning() -> None:
     data["configuration"]["incremental"] = {"full_resync_every": 5}
 
     assert _triples(data) == [("missing-adapter", "error", "/configuration/source")]
+
+
+# --- Determinism across invocations and presentations -----------------------------------
+
+
+def test_mixed_severity_findings_are_deterministic_across_invocations_and_presentations() -> None:
+    # Same package bytes, same installed adapter set: byte-identical ordered findings,
+    # warnings included, on every invocation — and the wrapper still raises the shipped
+    # message of the first error in execution order, which the warning families follow.
+    data = package_data()
+    data["configuration"]["source"] = {"name": "prometheus", "settings": {"url": "https://prom.example", "bogus": 1}}
+    data["configuration"]["incremental"] = {"full_resync_every": 5}
+    data["configuration"]["schema_mapping"] = [{"name": "InfraDevice", "mapping": "dcim.devices"}]
+    data["omissions"] = [{"kind": "InfraCircuit"}, {"kind": "InfraDevice"}]
+
+    first = collect_findings(package(data))
+
+    assert first == collect_findings(package(data))
+    assert [(finding.code, finding.severity, finding.location) for finding in first] == [
+        ("optional-feature-unqualified", "warning", "/configuration/incremental"),
+        ("undeclared-setting", "error", "/configuration/source/settings/bogus"),
+        ("intentional-omission", "warning", "/omissions/0"),
+        ("omission-contradicts-mapping", "error", "/omissions/1"),
+    ]
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package(data))
+    assert str(caught.value) == (
+        "adapter 'prometheus' contains unsupported declared settings for the source role: [\"bogus\"]"
+    )
 
 
 # --- The warnings module's own exact-set and reachability guards ------------------------
