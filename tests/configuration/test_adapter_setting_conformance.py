@@ -148,7 +148,7 @@ def test_incremental_qualification_matches_the_runtime_overrides(adapter_name: s
     runtime_modules = _RUNTIME_MODULES[adapter_name]
     defined = frozenset().union(*(_defined_function_names(name) for name in runtime_modules))
 
-    assert capability.incremental_extraction == (_INCREMENTAL_OVERRIDES <= defined)
+    assert capability.incremental_extraction == (defined >= _INCREMENTAL_OVERRIDES)
 
 
 @pytest.mark.parametrize("adapter_name", BUILTIN_ADAPTER_CAPABILITIES)
