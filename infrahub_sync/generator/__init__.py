@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import subprocess  # noqa: S404 -- fixed argv (sys.executable -m ruff), no shell, no user input
 import sys
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any, Union, cast
 
 import jinja2
 from infrahub_sdk.schema import (
@@ -130,29 +130,32 @@ def get_kind(item: Union[RelationshipSchema, AttributeSchema]) -> str:
     is_relationship = hasattr(item, "cardinality")
 
     if not is_relationship:
-        kind = ATTRIBUTE_KIND_MAP.get(item.kind, "str")
-        if item.optional:
+        attr = cast("AttributeSchema", item)
+        kind = ATTRIBUTE_KIND_MAP.get(attr.kind, "str")
+        if attr.optional:
             kind = f"{kind} | None"
-            if item.default_value is not None:
+            if attr.default_value is not None:
                 # Format the default value based on its type
-                if isinstance(item.default_value, str):
-                    kind += f' = "{item.default_value}"'
-                elif isinstance(item.default_value, (int, float, bool)):
-                    kind += f" = {item.default_value}"
+                if isinstance(attr.default_value, str):
+                    kind += f' = "{attr.default_value}"'
+                elif isinstance(attr.default_value, (int, float, bool)):
+                    kind += f" = {attr.default_value}"
                 else:
-                    kind += f" = {item.default_value!r}"
+                    kind += f" = {attr.default_value!r}"
             else:
                 kind += " = None"
 
-    elif item.cardinality == "one":
-        if item.optional:
-            kind = f"{kind} | None = None"
+    else:
+        rel = cast("RelationshipSchema", item)
+        if rel.cardinality == "one":
+            if rel.optional:
+                kind = f"{kind} | None = None"
 
-    elif item.cardinality == "many":
-        kind = "list[str]"
-        if item.optional:
-            kind = f"{kind} | None"
-        kind += " = []"
+        elif rel.cardinality == "many":
+            kind = "list[str]"
+            if rel.optional:
+                kind = f"{kind} | None"
+            kind += " = []"
 
     return kind
 
