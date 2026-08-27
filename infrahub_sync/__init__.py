@@ -170,6 +170,30 @@ def resolve_effective_diffsync_flags(
     return flags
 
 
+def requested_destination_write_operations(
+    configured_flags: Iterable[str | DiffSyncFlags] | None,
+) -> frozenset[str]:
+    """Derive the destination write operations one configuration requests.
+
+    The operations-level sibling of :func:`resolve_effective_diffsync_flags`: the
+    effective flags come from that one shared rule, so ``SKIP_UNMATCHED_DST`` is
+    invariant and ``"delete"`` is never requested under the supported live-sync
+    profile. ``"update"`` is always requested for matched objects, and
+    ``"create"`` only while ``SKIP_UNMATCHED_SRC`` is not in effect. Consumers
+    (the destination write-operations capability check) import this symbol
+    rather than testing ``DiffSyncFlags`` bits themselves.
+
+    Raises ``KeyError`` for a flag name that ``DiffSyncFlags`` does not define.
+    """
+    effective = resolve_effective_diffsync_flags(configured_flags)
+    requested = {"update"}
+    if not effective & DiffSyncFlags.SKIP_UNMATCHED_SRC:
+        requested.add("create")
+    if not effective & DiffSyncFlags.SKIP_UNMATCHED_DST:
+        requested.add("delete")
+    return frozenset(requested)
+
+
 def is_ip_within_filter(ip: str, ip_compare: Union[str, list[str]]) -> bool:
     """Check if an IP address is within a given subnet."""
     return netutils_is_ip_within(ip=ip, ip_compare=ip_compare)

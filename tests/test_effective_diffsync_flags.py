@@ -14,7 +14,12 @@ import pytest
 from diffsync import Adapter, DiffSyncModel
 from diffsync.enum import DiffSyncFlags
 
-from infrahub_sync import SyncAdapter, SyncInstance, resolve_effective_diffsync_flags
+from infrahub_sync import (
+    SyncAdapter,
+    SyncInstance,
+    requested_destination_write_operations,
+    resolve_effective_diffsync_flags,
+)
 from infrahub_sync.potenda import Potenda
 
 _DST = DiffSyncFlags.SKIP_UNMATCHED_DST
@@ -184,3 +189,41 @@ def test_post_sync_destination_view_is_complete() -> None:
     engine, destination = _engine_with_destination_only_object(["SKIP_UNMATCHED_SRC"])
     engine.sync()
     assert [widget.get_unique_id() for widget in destination.get_all("widget")] == ["stale"]
+
+
+# --- The operations-level sibling: requested destination write operations (AR5) ---
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        # The supported live-sync default: matched objects update, source-only objects create.
+        pytest.param(None, frozenset({"create", "update"}), id="none"),
+        pytest.param([], frozenset({"create", "update"}), id="empty"),
+        pytest.param(["SKIP_UNMATCHED_DST"], frozenset({"create", "update"}), id="dst-only"),
+        # AR5 discriminating fixture: a nonzero flag set lacking SKIP_UNMATCHED_DST does not
+        # yield delete as a requested operation (SYNC-78's settled deletion rule).
+        pytest.param(["SKIP_UNMATCHED_SRC"], frozenset({"update"}), id="src-only"),
+        pytest.param(["CONTINUE_ON_FAILURE"], frozenset({"create", "update"}), id="continue-only"),
+        pytest.param(["SKIP_UNMATCHED_SRC", "SKIP_UNMATCHED_DST"], frozenset({"update"}), id="src-and-dst"),
+        pytest.param([DiffSyncFlags.CONTINUE_ON_FAILURE], frozenset({"create", "update"}), id="enum-member"),
+    ],
+)
+def test_requested_destination_write_operations(
+    configured: list[str | DiffSyncFlags] | None, expected: frozenset[str]
+) -> None:
+    assert requested_destination_write_operations(configured) == expected
+
+
+def test_requested_operations_never_include_delete_for_any_single_named_flag() -> None:
+    # The invariant restated at the operations level: no configured flag shape under the
+    # supported live-sync profile turns a destination-only object into a delete request.
+    for flag in DiffSyncFlags:
+        configured = None if flag == DiffSyncFlags.NONE else [flag]
+        assert "delete" not in requested_destination_write_operations(configured), flag
+
+
+def test_requested_operations_unknown_flag_name_raises_key_error() -> None:
+    # Same failure mode as the flags-level rule it consumes.
+    with pytest.raises(KeyError):
+        requested_destination_write_operations(["NOT_A_FLAG"])
