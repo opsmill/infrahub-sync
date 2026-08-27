@@ -38,7 +38,7 @@ from .models import (
     safe_pointer_component,
     sort_findings,
 )
-from .warnings import accumulate_intentional_omissions
+from .warnings import accumulate_intentional_omissions, accumulate_unqualified_optional_features
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -99,6 +99,7 @@ _CHECK_CREDENTIALS = "credentials"
 _CHECK_STORE = "store"
 _CHECK_WALK = "walk"
 _CHECK_OMISSIONS = "omissions"
+_CHECK_OPTIONAL_FEATURES = "features"
 
 # Where an adapter-owned validator has standing to report. Its own role's subtree, plus the
 # package content that belongs to no role: a schema mapping is declared once for the package
@@ -694,6 +695,7 @@ def _accumulate(package: ConfigurationPackage) -> tuple[_AccumulatedFinding, ...
     # at the wrapper. Warnings before an error here are what the wrapper's first-*error*
     # rule exists for.
     accumulated.extend(_from_module(_CHECK_OMISSIONS, accumulate_intentional_omissions(package)))
+    accumulated.extend(_from_module(_CHECK_OPTIONAL_FEATURES, accumulate_unqualified_optional_features(package)))
     return tuple(accumulated)
 
 

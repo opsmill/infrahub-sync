@@ -8,12 +8,19 @@ features, and nothing else — an adapter-returned warning is contained at the c
 revalidation boundary, and a missing capability needed to determine safety stays an
 error, never a warning.
 
-The one family here today is the declared omission: one ``intentional-omission`` warning
-per ``omissions`` entry, at the declaration itself, so the validation report states
-declared intent rather than silence. An omission that names content a schema mapping
-also maps is a package defect, not a preference — the ``omission-contradicts-mapping``
-**error** replaces the warning at that location, which keeps the omissions section from
-silently rotting as mappings evolve.
+The declared-omission family: one ``intentional-omission`` warning per ``omissions``
+entry, at the declaration itself, so the validation report states declared intent rather
+than silence. An omission that names content a schema mapping also maps is a package
+defect, not a preference — the ``omission-contradicts-mapping`` **error** replaces the
+warning at that location, which keeps the omissions section from silently rotting as
+mappings evolve.
+
+The unqualified-optional-feature family: a package declaring the optional ``incremental``
+feature against a source whose capability declaration does not qualify it silently runs
+full extraction, and ``optional-feature-unqualified`` names that declaration. A source
+with no capability declaration at all stays the core's own error — a missing capability
+needed to determine safety is an error, not a warning — so this family reports nothing
+where that error already owns the role.
 
 Messages are fixed templates. The only declared content that reaches one is the omission
 ``reason``, verbatim: its model bound keeps template plus reason inside the finding-text
@@ -26,6 +33,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .capabilities import BUILTIN_ADAPTER_CAPABILITIES
 from .models import ConfigurationPackage, ValidationFinding
 
 if TYPE_CHECKING:
@@ -35,9 +43,13 @@ if TYPE_CHECKING:
 
 _CODE_INTENTIONAL_OMISSION = "intentional-omission"
 _CODE_OMISSION_CONTRADICTS_MAPPING = "omission-contradicts-mapping"
+_CODE_OPTIONAL_FEATURE_UNQUALIFIED = "optional-feature-unqualified"
 
 _OMISSION_MESSAGE = "declared content is intentionally omitted from synchronization"
 _CONTRADICTION_MESSAGE = "omission names content a schema mapping also maps"
+_UNQUALIFIED_INCREMENTAL_MESSAGE = (
+    "incremental extraction is declared, but the source adapter does not declare support for it"
+)
 
 
 def _mapped_field_names(package: ConfigurationPackage) -> dict[str, frozenset[str]]:
@@ -90,3 +102,25 @@ def accumulate_intentional_omissions(package: ConfigurationPackage) -> tuple[Val
             )
         )
     return tuple(findings)
+
+
+def accumulate_unqualified_optional_features(package: ConfigurationPackage) -> tuple[ValidationFinding, ...]:
+    """Warn where a declared optional feature has no capability that qualifies it.
+
+    One optional feature exists today: ``incremental``. A source adapter with no
+    capability declaration reports nothing here — the core's missing-adapter error owns
+    that role and its subtree is unevaluable.
+    """
+    if package.configuration.incremental is None:
+        return ()
+    capabilities = BUILTIN_ADAPTER_CAPABILITIES.get(package.configuration.source.name)
+    if capabilities is None or capabilities.incremental_extraction:
+        return ()
+    return (
+        ValidationFinding(
+            code=_CODE_OPTIONAL_FEATURE_UNQUALIFIED,
+            severity="warning",
+            location="/configuration/incremental",
+            message=_UNQUALIFIED_INCREMENTAL_MESSAGE,
+        ),
+    )

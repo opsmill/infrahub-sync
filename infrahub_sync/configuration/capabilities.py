@@ -53,6 +53,11 @@ class AdapterConfigurationCapabilities:
     supported_destination_write_operations: frozenset[WriteOperation] = frozenset()
     destination_schema_validation: bool = False
     destination_schema_accessor: DestinationSchemaAccessor | None = None
+    # Whether this adapter implements incremental extraction (the cursor_tier_for /
+    # list_changed_since overrides). A package declaring `incremental:` against a source
+    # that does not is warned about the unqualified optional feature; the conformance
+    # tests hold this flag to the runtime overrides so it cannot drift.
+    incremental_extraction: bool = False
     validator: ConfigurationValidator | None = None
     contract_version: Literal[1] = 1
 
@@ -288,6 +293,7 @@ BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
             supported_destination_write_operations=_CREATE_UPDATE,
             destination_schema_validation=True,
             destination_schema_accessor=_read_infrahub_destination_schema,
+            incremental_extraction=True,
         ),
         "ipfabricsync": AdapterConfigurationCapabilities(
             adapter_name="ipfabricsync",
@@ -300,12 +306,14 @@ BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
             roles=_SOURCE_ONLY,
             allowed_settings=frozenset({"token", "url", "verify_ssl"}),
             credential_setting_paths=("token",),
+            incremental_extraction=True,
         ),
         "netbox": AdapterConfigurationCapabilities(
             adapter_name="netbox",
             roles=_SOURCE_ONLY,
             allowed_settings=frozenset({"token", "url", "verify_ssl"}),
             credential_setting_paths=("token",),
+            incremental_extraction=True,
         ),
         "peeringmanager": AdapterConfigurationCapabilities(
             adapter_name="peeringmanager",

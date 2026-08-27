@@ -103,6 +103,43 @@ def test_omitting_an_unmapped_kind_stays_a_warning() -> None:
     assert _triples(data) == [("intentional-omission", "warning", "/omissions/0")]
 
 
+# --- The unqualified-optional-feature family ---------------------------------------------
+
+
+def test_declaring_incremental_against_an_unqualified_source_yields_one_warning() -> None:
+    # `incremental:` is an optional feature only some sources implement; a source whose
+    # capability declaration does not qualify it silently runs full extraction today.
+    data = package_data()
+    data["configuration"]["source"] = {"name": "prometheus", "settings": {"url": "https://prom.example"}}
+    data["configuration"]["incremental"] = {"full_resync_every": 5}
+
+    assert _triples(data) == [("optional-feature-unqualified", "warning", "/configuration/incremental")]
+
+
+def test_declaring_incremental_against_a_qualified_source_yields_no_warning() -> None:
+    data = package_data()
+    data["configuration"]["incremental"] = {"full_resync_every": 5}
+
+    assert _triples(data) == []
+
+
+def test_an_undeclared_incremental_feature_yields_no_warning() -> None:
+    data = package_data()
+    data["configuration"]["source"] = {"name": "prometheus", "settings": {"url": "https://prom.example"}}
+
+    assert _triples(data) == []
+
+
+def test_an_unknown_source_adapter_reports_no_feature_warning() -> None:
+    # A missing capability needed to determine safety is an error, not a warning: the
+    # core's missing-adapter finding owns the role and its subtree is unevaluable.
+    data = package_data()
+    data["configuration"]["source"]["name"] = "mystery"
+    data["configuration"]["incremental"] = {"full_resync_every": 5}
+
+    assert _triples(data) == [("missing-adapter", "error", "/configuration/source")]
+
+
 # --- The warnings module's own exact-set and reachability guards ------------------------
 
 
@@ -110,10 +147,11 @@ FROZEN_WARNING_MODULE_CODES = frozenset(
     {
         "intentional-omission",
         "omission-contradicts-mapping",
+        "optional-feature-unqualified",
     }
 )
 # The closed emission rule: only the two contract section 4 families carry a warning.
-FROZEN_WARNING_SEVERITY_CODES = frozenset({"intentional-omission"})
+FROZEN_WARNING_SEVERITY_CODES = frozenset({"intentional-omission", "optional-feature-unqualified"})
 
 
 def _declared_codes(tree: ast.AST) -> set[str]:
@@ -151,6 +189,8 @@ def test_the_warnings_module_can_emit_exactly_the_frozen_code_enumeration() -> N
 
 def test_every_frozen_warning_module_code_is_reachable_and_nothing_else_is_emitted() -> None:
     data = package_data()
+    data["configuration"]["source"] = {"name": "prometheus", "settings": {"url": "https://prom.example"}}
+    data["configuration"]["incremental"] = {"full_resync_every": 5}
     data["configuration"]["schema_mapping"] = [{"name": "InfraDevice", "mapping": "dcim.devices"}]
     data["omissions"] = [
         {"kind": "InfraCircuit", "fields": ["provider"]},
