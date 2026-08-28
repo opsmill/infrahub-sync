@@ -20,6 +20,7 @@ import pydantic
 import pytest
 from infrahub_sdk import exceptions as sdk_exceptions
 
+import infrahub_sync
 from infrahub_sync.cache import compute_schema_subhash
 from infrahub_sync.configuration import capabilities as capabilities_module
 from infrahub_sync.configuration import schema_validation
@@ -685,3 +686,16 @@ def test_a_malformed_schema_response_lands_as_a_typed_finding(
     _mock_schema_read_response(monkeypatch, response)
 
     _read_failure_and_write_findings("rejected")
+
+
+# --- Pre-PR correction F5: the schema-module enumeration is documented ------------------
+
+
+def test_every_frozen_schema_code_is_documented_for_an_operator() -> None:
+    # The schema-path mirror of the core's documentation guard: a stable identifier an
+    # operator can meet - opt-in emission included - must be one they can look up.
+    reference = Path(infrahub_sync.__file__).parents[1] / "docs" / "docs" / "reference" / "durable-product-records.mdx"
+    documented = reference.read_text(encoding="utf-8")
+
+    assert "### Finding codes" in documented
+    assert {code for code in FROZEN_SCHEMA_CODES if f"`{code}`" not in documented} == set()

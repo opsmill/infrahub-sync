@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+import infrahub_sync
 from infrahub_sync.configuration import (
     ConfigurationPackageParseError,
     CredentialConfigurationError,
@@ -297,3 +298,17 @@ def test_warning_severity_is_written_only_in_the_warnings_module() -> None:
         }
         if module_path.name != "warnings.py":
             assert "warning" not in severities, f"{module_path.name} writes a warning severity"
+
+
+# --- Pre-PR correction F5: the warnings-module enumeration is documented ----------------
+
+
+def test_every_frozen_warning_module_code_is_documented_for_an_operator() -> None:
+    # The warnings-module mirror of the core's documentation guard: the warning channel's
+    # codes are stable identifiers an operator can meet, so each must be one they can
+    # look up.
+    reference = Path(infrahub_sync.__file__).parents[1] / "docs" / "docs" / "reference" / "durable-product-records.mdx"
+    documented = reference.read_text(encoding="utf-8")
+
+    assert "### Finding codes" in documented
+    assert {code for code in FROZEN_WARNING_MODULE_CODES if f"`{code}`" not in documented} == set()

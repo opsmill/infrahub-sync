@@ -41,16 +41,21 @@ the adapter declarations installed *now* — which is why a package accepted at 
 can report findings later, after an adapter's declared setting surface changes.
 
 A package carrying several independent defects yields one finding per defect, not just the
-first. Each finding carries a stable machine-readable `code`, an `error` severity, a JSON
-Pointer `location` into the declared package, and a message.
+first. Each finding carries a stable machine-readable `code`, a severity of `error` or
+`warning`, a JSON Pointer `location` into the declared package, and a message. An `error`
+prevents execution; a `warning` records declared intent or a qualification gap and does
+not.
 
 ### Finding codes
 
 The `code` is the stable part of a finding. The message wording and the printed layout may
-change; the code will not. Fifteen codes are emitted. One location can report more than one
-of them — a credential declaration naming an uninstalled provider *and* an invalid identifier
-reports both at `/credentials/<name>` — but only ever from one check: when two checks reach
-the same pointer, the first to judge it is the one that reports.
+change; the code will not. Three enumerations are emitted: the declared-content core's
+fifteen error codes below, the four destination-schema codes (emitted only when `validate`
+is given an explicit destination-schema opt-in), and the three warning-channel codes. One
+location can report more than one of them — a credential declaration naming an uninstalled
+provider *and* an invalid identifier reports both at `/credentials/<name>` — but only ever
+from one check: when two checks reach the same pointer, the first to judge it is the one
+that reports.
 
 | Code | What it means | Where it points |
 | ---- | ------------- | --------------- |
@@ -71,8 +76,32 @@ the same pointer, the first to judge it is the one that reports.
 | `unknown-credential-reference` | A `$credential` names a reference the package's own `credentials` block does not declare. | the referencing setting |
 
 An adapter's own configuration check keeps its own codes, which are outside this set —
-`unsafe-rest-request-endpoint` is the one shipped today. Two families are not emitted yet:
-destination schema mismatch, and unsupported destination write behavior.
+`unsafe-rest-request-endpoint` is the one shipped today.
+
+#### Destination schema validation codes
+
+These four codes are emitted **only on the explicit opt-in**: `validate` given a
+destination-schema options object. The default `validate` path judges declared content
+only, performs no schema read and no network I/O, and never emits them. All four carry an
+`error` severity.
+
+| Code | What it means | Where it points |
+| ---- | ------------- | --------------- |
+| `destination-schema-mismatch` | A declared schema mapping disagrees with the destination's schema snapshot: an undeclared kind, a field that is neither an attribute nor a relationship, a relationship reference on an attribute, or a static value whose shape disagrees with the relationship's cardinality. | the mapping entry, field, reference, or static value |
+| `destination-schema-read-failed` | The destination schema could not be read: a timeout, refused credentials, an unreachable server, a rejected or unusable response, an unresolvable declared token, or unusable declared client settings. The message names the failure class. | `/configuration/destination` |
+| `destination-schema-validation-unsupported` | Schema validation was explicitly requested against a destination adapter that does not declare it. A missing capability needed to determine safety is an error, not a warning. | `/configuration/destination` |
+| `unsupported-destination-write` | The configuration requests destination write operations the destination adapter does not declare support for. | `/configuration/destination` |
+
+#### Warning-channel codes
+
+The warning channel is closed: warnings are limited to intentional omissions and
+explicitly unqualified optional features, and nothing else.
+
+| Code | Severity | What it means | Where it points |
+| ---- | -------- | ------------- | --------------- |
+| `intentional-omission` | `warning` | An `omissions` entry declares that destination content is intentionally not synchronized. The declared reason, when present, is carried verbatim. | `/omissions/<index>` |
+| `omission-contradicts-mapping` | `error` | An omission names content a schema mapping also maps. A contradictory declaration is a package defect, not a preference; the error replaces the warning at that location. | `/omissions/<index>` |
+| `optional-feature-unqualified` | `warning` | The optional `incremental` feature is declared against a source adapter whose capability declaration does not qualify it, so extraction silently runs full. | `/configuration/incremental` |
 
 ## Provider profiles
 
