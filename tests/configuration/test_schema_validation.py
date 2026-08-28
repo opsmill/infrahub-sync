@@ -767,12 +767,14 @@ def test_every_normalization_failure_lands_as_a_typed_finding(
     _read_failure_and_write_findings("rejected")
 
 
-def test_a_normalization_refusal_carries_the_exception_type_name_only() -> None:
+def test_a_normalization_refusal_carries_the_fixed_message_only() -> None:
+    # The rejection reads nothing from the exception — not even its type name, whose
+    # read a hostile metaclass executes on — so the message is one fixed sentence.
     with pytest.raises(DestinationSchemaReadError) as caught:
         capabilities_module._normalized_schema_snapshot(_RaisingItemsSchema())
 
     message = str(caught.value)
-    assert "RuntimeError" in message
+    assert message == "destination returned an unusable schema response"
     assert "third-party secret text" not in message
     assert caught.value.reason == "rejected"
 

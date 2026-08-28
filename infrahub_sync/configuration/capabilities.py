@@ -213,7 +213,9 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
     client configuration the SDK refuses (``ValueError``, including pydantic's validation
     error), and a response the call accepted but that cannot be normalized into a schema
     snapshot is classified into :class:`DestinationSchemaReadError` — the accessor contract
-    the schema checks handle — carrying exception type names, never third-party content.
+    the schema checks handle. The SDK-call arms carry exception type names, never
+    third-party content; a normalization failure carries one fixed message
+    (:func:`_normalized_schema_snapshot`).
     """
     # Imported here, not at module load: this module stays connection-free to import, and
     # the default validate path never touches a network client (envelope AR7).
@@ -262,6 +264,12 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
     return _normalized_schema_snapshot(schema)
 
 
+# The one message every normalization failure carries. Fixed, so a hostile response puts
+# nothing into it: not an exception type name — a metaclass executes on that read — and
+# never third-party exception text.
+_UNUSABLE_SCHEMA_RESPONSE = "destination returned an unusable schema response"
+
+
 def _normalized_schema_snapshot(schema: object) -> Mapping[str, Any]:
     """Normalize one client schema response inside one total typed boundary.
 
@@ -270,30 +278,27 @@ def _normalized_schema_snapshot(schema: object) -> Mapping[str, Any]:
     members, reading their attribute and relationship shapes, and validating the built
     snapshot — runs under one rule: any ordinary ``Exception`` it raises (``items()``
     raising, a raising attribute property, raising iteration — whatever a third-party
-    response can do) becomes the typed :class:`DestinationSchemaReadError` carrying the
-    exception type name only, never third-party exception text, so nothing escapes as an
-    untyped error the service boundary can only report as internal. ``BaseException``
-    still propagates, and an inner ``DestinationSchemaReadError`` passes through untouched.
+    response can do) becomes one *new* :class:`DestinationSchemaReadError` carrying the
+    fixed message and ``reason="rejected"``. The rejection reads nothing from the
+    exception — not its type, whose ``__name__`` a hostile metaclass executes on — and a
+    ``DestinationSchemaReadError`` raised during normalization is rewrapped rather than
+    passed through, so untrusted response code cannot forge its own reason.
+    ``BaseException`` still propagates.
     """
     try:
         return _build_schema_snapshot(schema)
-    except DestinationSchemaReadError:
-        raise
-    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught  # The totality rule: re-raised typed, type name only.
-        msg = f"destination returned an unusable schema response: {type(exc).__name__}"
-        raise DestinationSchemaReadError(msg, reason="rejected") from None
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught  # The totality rule: re-raised typed, nothing read.
+        raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected") from None
 
 
 def _build_schema_snapshot(schema: object) -> dict[str, Any]:
     """Build the snapshot from a third-party response, inside the boundary above."""
     if not isinstance(schema, Mapping):
-        msg = f"destination returned an unusable schema response: {type(schema).__name__}"
-        raise DestinationSchemaReadError(msg, reason="rejected")
+        raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
     snapshot: dict[str, Any] = {}
     for kind, node in schema.items():
         if not isinstance(kind, str):
-            msg = f"destination returned an unusable schema member: {type(kind).__name__}"
-            raise DestinationSchemaReadError(msg, reason="rejected")
+            raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
         snapshot[kind] = {
             "attributes": {attribute.name: attribute.kind for attribute in getattr(node, "attributes", ()) or ()},
             "relationships": {

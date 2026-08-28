@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import socket
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -27,7 +28,7 @@ from infrahub_sync.product_store import configs as configs_service
 from tests.configuration.validation_packages import package, package_data
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import ItemsView, Iterator
 
     from infrahub_sync.configuration import ConfigurationPackage
 
@@ -266,3 +267,110 @@ def test_the_opt_in_against_a_non_declaring_destination_reports_both_gate_findin
         ("unsupported-destination-write", "/configuration/destination"),
     ]
     assert report.destination_schema_fingerprint is None
+
+
+# --- Reduction round: normalization reads nothing from a hostile schema response --------
+
+
+class _ReturningSchemaEndpoint:
+    def __init__(self, response: object) -> None:
+        self._response = response
+
+    def all(self, branch: str) -> object:
+        del branch
+        return self._response
+
+
+class _ReturningClient:
+    def __init__(self, response: object) -> None:
+        self.schema = _ReturningSchemaEndpoint(response)
+
+
+def _mock_live_schema_read(monkeypatch: pytest.MonkeyPatch, response: object) -> None:
+    """Route the real bundled accessor's client call to a canned hostile response.
+
+    No table injection: the built-in ``infrahub`` declaration already carries the real
+    accessor, so the whole normalization boundary runs under public ``validate()``.
+    """
+    monkeypatch.setenv("INFRAHUB_API_TOKEN", "test-token")
+
+    def _fake_client(address: str, config: object) -> _ReturningClient:
+        del address, config
+        return _ReturningClient(response)
+
+    monkeypatch.setattr("infrahub_sdk.InfrahubClientSync", _fake_client)
+
+
+def test_a_metaclass_raising_response_exception_lands_as_a_rejected_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Inspection is invocation, one level up: the normalization handler formatted
+    # type(exc).__name__, and a metaclass executes on that read — the probe escaped
+    # public validate() as ConfigsInternalError with the read recorded. The boundary
+    # now reads nothing from the exception: one fixed message, reason "rejected".
+    reads: list[str] = []
+
+    class _ExecutingMeta(type):
+        @property
+        def __name__(cls) -> str:  # noqa: PLW3201 - shadowing type's own descriptor is the fixture
+            reads.append("__name__")
+            msg = "metaclass executed on __name__ read"
+            raise RuntimeError(msg)
+
+    class _HostileError(Exception, metaclass=_ExecutingMeta):
+        """An ordinary exception whose class name read is executable behavior."""
+
+    class _RaisingItems(Mapping):
+        def __getitem__(self, key: str) -> object:
+            raise KeyError(key)
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(())
+
+        def __len__(self) -> int:
+            return 0
+
+        def items(self) -> ItemsView[str, object]:  # noqa: PLR6301 - protocol hook, self unused by design
+            msg = "items() exploded: third-party secret text"
+            raise _HostileError(msg)
+
+    _mock_live_schema_read(monkeypatch, _RaisingItems())
+    config_id, location = _registered(tmp_path)
+
+    report = _validate(config_id, location, destination_schema=DestinationSchemaOptions())
+
+    assert [(finding.code, finding.location) for finding in report.findings] == [
+        ("destination-schema-read-failed", "/configuration/destination")
+    ]
+    assert "rejected" in report.findings[0].message
+    assert "third-party secret text" not in report.findings[0].message
+    assert reads == []
+
+
+def test_a_response_cannot_forge_its_own_schema_read_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A DestinationSchemaReadError raised by the response's own property used to pass
+    # through normalization untouched, so a hostile response forged its own reason
+    # ("unauthorized") into the finding an operator reads. Normalization now rewraps
+    # every exception into one new fixed error with reason "rejected".
+    from infrahub_sync.configuration.capabilities import DestinationSchemaReadError
+
+    class _ForgingNode:
+        relationships: tuple[object, ...] = ()
+
+        @property
+        def attributes(self) -> tuple[object, ...]:
+            msg = "destination refused the schema read credentials: forged"
+            raise DestinationSchemaReadError(msg, reason="unauthorized")
+
+    _mock_live_schema_read(monkeypatch, {"InfraDevice": _ForgingNode()})
+    config_id, location = _registered(tmp_path)
+
+    report = _validate(config_id, location, destination_schema=DestinationSchemaOptions())
+
+    assert [(finding.code, finding.location) for finding in report.findings] == [
+        ("destination-schema-read-failed", "/configuration/destination")
+    ]
+    message = report.findings[0].message
+    assert "rejected" in message
+    assert "unauthorized" not in message
+    assert "forged" not in message
