@@ -674,21 +674,28 @@ def _require_argument_type(value: object, *, name: str, expected: type) -> None:
         raise ConfigsRequestError(msg)
 
 
+# The registry's whole allocatable range. Versions are allocated from 1 and stored as
+# SQLite INTEGER — a signed 64-bit value — so no stored version can ever exceed this.
+_MAX_REGISTRY_VERSION = 2**63 - 1
+
+
 def _require_registry_version(value: object) -> None:
     """Refuse a registry_version outside the domain the registry can ever allocate.
 
-    Exactly ``int`` — no subclass — and strictly positive, as the caller's own input rather
-    than the store's answer. ``bool`` is an ``int`` subclass, so an ``isinstance`` guard let
+    Exactly ``int`` — no subclass — and within ``1..=_MAX_REGISTRY_VERSION``, as the
+    caller's own input rather than the store's answer, so every integer is classified
+    before SQLite sees it. ``bool`` is an ``int`` subclass, so an ``isinstance`` guard let
     ``registry_version=True`` reach SQLite, compare equal to 1, and silently resolve version
-    1; and the registry allocates versions from 1, so ``0`` and ``-1`` are not versions that
+    1; the registry allocates versions from 1, so ``0`` and ``-1`` are not versions that
     happen to be absent — reporting them ``not-found`` claims the store answered a question
-    it can never be asked.
+    it can never be asked; and the store's INTEGER is signed 64-bit, so an integer above
+    the range is equally unaskable — it used to surface as SQLite's own ``OverflowError``.
     """
     if type(value) is not int:  # pylint: disable=unidiomatic-typecheck  # bool must not pass.
         msg = f"registry_version must be int, not {type(value).__name__}"
         raise ConfigsRequestError(msg)
-    if value <= 0:
-        msg = f"registry_version must be a positive integer, not {value}"
+    if not 1 <= value <= _MAX_REGISTRY_VERSION:
+        msg = f"registry_version must be in the registry's allocatable range 1..{_MAX_REGISTRY_VERSION}, not {value}"
         raise ConfigsRequestError(msg)
 
 

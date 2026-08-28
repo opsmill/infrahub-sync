@@ -1541,6 +1541,11 @@ _OUT_OF_DOMAIN_REGISTRY_VERSIONS: tuple[tuple[str, object], ...] = (
     ("zero", 0),
     ("negative", -1),
     ("int-subclass", _IntSubclass(1)),
+    # The storage domain has an upper edge too: SQLite INTEGER is signed 64-bit, so the
+    # registry can never allocate above 2**63 - 1. 2**63 passed the positive-int guard
+    # and surfaced as SQLite's own OverflowError - an internal error for caller input.
+    ("max-plus-one", 2**63),
+    ("far-beyond-the-domain", 2**200),
 )
 
 
@@ -1563,6 +1568,22 @@ def test_an_out_of_domain_registry_version_is_the_callers_input(
         )
 
     assert raised.value.family == "request"
+
+
+def test_the_domain_maximum_is_still_the_stores_own_answer(tmp_path: Path) -> None:
+    # The property's upper edge from the inside: 2**63 - 1 is the last version the
+    # registry could ever allocate, so it reaches the store and is its own not-found.
+    location = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), product_cache_location=location)
+
+    with pytest.raises(configs_service.ConfigsNotFoundError) as raised:
+        configs_service.get_version(
+            config_id=registered.configuration.config_id,
+            registry_version=2**63 - 1,
+            product_cache_location=location,
+        )
+
+    assert raised.value.reason == configs_service.CONFIGURATION_VERSION_NOT_FOUND_REASON
 
 
 def test_a_large_valid_registry_version_is_still_the_stores_own_answer(tmp_path: Path) -> None:
