@@ -29,13 +29,13 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, ParamSpec, TypeVar
 
 import yaml
+from pydantic_core import PydanticCustomError
 
 from infrahub_sync.configuration import (
     ConfigurationPackage,
@@ -49,6 +49,7 @@ from infrahub_sync.configuration import (
 from infrahub_sync.configuration.models import (
     _MAX_FINDING_TEXT_LENGTH,
     _POINTER_CHARACTER_ESCAPES,
+    _require_json_native,
     safe_pointer_component,
 )
 from infrahub_sync.configuration.schema_validation import (
@@ -67,7 +68,7 @@ from infrahub_sync.product_store.store import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from infrahub_sync.product_store.models import ConfigurationSummary, ConfigurationVersion
 
@@ -691,21 +692,46 @@ def _require_registry_version(value: object) -> None:
         raise ConfigsRequestError(msg)
 
 
-def _parse(package: Mapping[str, Any]) -> ConfigurationPackage:
-    """Parse declared JSON-native content, refusing any prebuilt package instance.
+def _require_json_native_package(package: object) -> None:
+    """Refuse anything but recursively exact JSON-native data, without invoking it.
 
-    The write boundary accepts declared content only and always routes it through
-    ``parse_configuration_package``, so what the store persists is exactly what the shared
-    parser validated. A prebuilt :class:`ConfigurationPackage` — the exact class included —
-    is refused as the caller's own input: an instance can carry behavior validation never
-    judged (a subclass overriding ``declared_content()`` can persist an inline secret whose
-    validated fields hold only references, and ``model_construct`` skips validation
-    entirely), and a caller holding an instance holds the declared content anyway.
+    The closed acceptance property of the write boundary: exact ``dict``/``list``
+    containers with exact ``str``/``int``/``float``/``bool``/``None`` leaves, judged by
+    ``type(...)`` identity before any protocol operation runs on the untrusted value — no
+    method call, no attribute read, no ``__class__`` consultation, no ``isinstance``
+    against an ABC. A subclass of any of these can override every hook the service would
+    otherwise invoke, so no subclass is in the domain. The recursive walk is the model
+    layer's own :func:`_require_json_native`, so the service's structural acceptance and
+    the parse boundary agree by construction; its refusals are value-free (location and
+    reason only), so nothing here echoes the object either.
     """
-    if isinstance(package, ConfigurationPackage):
-        msg = "package must be declared JSON-native content, not a prebuilt ConfigurationPackage instance"
+    package_type = type(package)
+    if package_type is not dict:
+        if ConfigurationPackage in package_type.__mro__:
+            # A prebuilt instance keeps its own refusal: it can carry behavior validation
+            # never judged (a subclass overriding ``declared_content()`` can persist an
+            # inline secret, ``model_construct`` skips validation entirely), and a caller
+            # holding an instance holds the declared content anyway.
+            msg = "package must be declared JSON-native content, not a prebuilt ConfigurationPackage instance"
+            raise ConfigsRequestError(msg)
+        msg = f"package must be a JSON-native dict, not {package_type.__name__}"
         raise ConfigsRequestError(msg)
-    _require_argument_type(package, name="package", expected=Mapping)
+    try:
+        _require_json_native(package)
+    except PydanticCustomError as exc:
+        msg = f"package must be recursively JSON-native declared content: {exc}"
+        raise ConfigsRequestError(msg) from None
+
+
+def _parse(package: Mapping[str, Any]) -> ConfigurationPackage:
+    """Parse declared JSON-native content, requiring exactly that shape before anything else.
+
+    Structural acceptance (:func:`_require_json_native_package`) runs first, so only a
+    recursively exact JSON-native ``dict`` ever reaches ``parse_configuration_package`` —
+    what the store persists is exactly what the shared parser validated, and a hostile or
+    merely non-native value is refused as the caller's own input without being invoked.
+    """
+    _require_json_native_package(package)
     try:
         return parse_configuration_package(dict(package))
     except ConfigurationPackageParseError as exc:

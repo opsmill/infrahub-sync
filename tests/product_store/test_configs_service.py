@@ -11,7 +11,9 @@ import inspect
 import json
 import sqlite3
 import sys
+from collections.abc import Iterator, Mapping
 from datetime import datetime, timezone
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -1402,8 +1404,124 @@ def test_a_hostile_declared_content_override_cannot_reach_the_store(tmp_path: Pa
 
 
 def test_a_non_mapping_package_is_the_callers_input_not_an_internal_error(tmp_path: Path) -> None:
-    with pytest.raises(configs_service.ConfigsRequestError, match="package must be Mapping"):
+    with pytest.raises(configs_service.ConfigsRequestError, match="package must be a JSON-native dict"):
         configs_service.register(package=_WRONG_TYPED_VALUE, product_cache_location=_store(tmp_path))
+
+
+# --- Property closure P1: the write boundary accepts exactly JSON-native data -----------
+
+
+class _MappingSubclassPackage(Mapping):
+    """A well-behaved ``Mapping`` that is not an exact ``dict``: outside the domain."""
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        self._data = data
+
+    def __getitem__(self, key: str) -> object:
+        return self._data[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+
+class _DictSubclassPackage(dict):  # noqa: FURB189 - the exact-dict boundary is the subject
+    """An exact-shape ``dict`` subclass: every protocol hook is overridable behavior."""
+
+
+class _RaisingClassPackage:
+    """A hostile argument whose ``__class__`` raises the moment anything consults it."""
+
+    @property
+    def __class__(self) -> type:
+        msg = "__class__ was consulted"
+        raise RuntimeError(msg)
+
+
+class _ProtocolRecordingPackage:
+    """Records every protocol consultation acceptance could make on the untrusted value."""
+
+    def __init__(self) -> None:
+        self.consulted: list[str] = []
+
+    @property
+    def __class__(self) -> type:
+        self.consulted.append("__class__")
+        return _ProtocolRecordingPackage
+
+    def keys(self) -> Iterator[object]:
+        self.consulted.append("keys")
+        return iter(())
+
+    def items(self) -> Iterator[object]:
+        self.consulted.append("items")
+        return iter(())
+
+    def __getitem__(self, key: object) -> object:
+        self.consulted.append("__getitem__")
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[object]:
+        self.consulted.append("__iter__")
+        return iter(())
+
+    def __len__(self) -> int:
+        self.consulted.append("__len__")
+        return 0
+
+    def __contains__(self, key: object) -> bool:
+        self.consulted.append("__contains__")
+        return False
+
+
+def _package_with_leaf(leaf: object) -> dict[str, Any]:
+    data = package_data()
+    data["configuration"]["source"]["settings"]["marker"] = leaf
+    return data
+
+
+def _non_json_native_packages() -> tuple[tuple[str, object], ...]:
+    return (
+        ("mapping-subclass", _MappingSubclassPackage(package_data())),
+        ("dict-subclass", _DictSubclassPackage(package_data())),
+        ("raising-class", _RaisingClassPackage()),
+        ("nested-set", _package_with_leaf({"a"})),
+        ("nested-decimal", _package_with_leaf(Decimal(1))),
+        ("nested-object", _package_with_leaf(object())),
+    )
+
+
+@pytest.mark.parametrize("value", [pytest.param(value, id=name) for name, value in _non_json_native_packages()])
+def test_only_recursively_exact_json_data_enters_the_write_boundary(tmp_path: Path, value: object) -> None:
+    # The closed acceptance property: a package is either recursively exact JSON-native
+    # data — exact dict/list containers, exact str/int/float/bool/None leaves — or it is
+    # the caller's own input, refused request-class before any protocol operation runs.
+    location = _store(tmp_path)
+
+    with pytest.raises(configs_service.ConfigsRequestError) as raised:
+        configs_service.register(package=cast("Any", value), product_cache_location=location)
+
+    assert raised.value.family == "request"
+    assert _registered_configuration_count(tmp_path / "product-cache") == 0
+
+
+def test_an_exact_dict_package_is_the_accepted_domain(tmp_path: Path) -> None:
+    registered = configs_service.register(package=package_data(), product_cache_location=_store(tmp_path))
+
+    assert registered.version.registry_version == 1
+
+
+def test_a_refused_package_is_never_invoked(tmp_path: Path) -> None:
+    # Structural acceptance judges type(...) identity alone: the sentinel records every
+    # protocol hook acceptance could consult — __class__ included — and none may fire.
+    sentinel = _ProtocolRecordingPackage()
+
+    with pytest.raises(configs_service.ConfigsRequestError):
+        configs_service.register(package=cast("Any", sentinel), product_cache_location=_store(tmp_path))
+
+    assert sentinel.consulted == []
 
 
 # --- Pre-PR correction F4: the registry_version domain is exactly positive int ----------
