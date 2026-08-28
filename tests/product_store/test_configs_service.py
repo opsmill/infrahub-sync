@@ -1407,3 +1407,60 @@ def test_a_hostile_declared_content_override_cannot_reach_the_store(tmp_path: Pa
 def test_a_non_mapping_package_is_the_callers_input_not_an_internal_error(tmp_path: Path) -> None:
     with pytest.raises(configs_service.ConfigsRequestError, match="package must be Mapping"):
         configs_service.register(package=_WRONG_TYPED_VALUE, product_cache_location=_store(tmp_path))
+
+
+# --- Pre-PR correction F4: the registry_version domain is exactly positive int ----------
+
+
+class _IntSubclass(int):
+    """An int subclass: well-behaved arithmetically, still not the declared domain."""
+
+
+_OUT_OF_DOMAIN_REGISTRY_VERSIONS: tuple[tuple[str, Any], ...] = (
+    # bool is an int subclass, so an isinstance guard let True reach SQLite, compare
+    # equal to 1, and silently resolve version 1 - a caller defect answered as data.
+    ("true", True),
+    ("false", False),
+    # The registry allocates from 1: 0 and -1 are not versions that happen to be absent,
+    # so reporting them not-found claimed the store answered an unaskable question.
+    ("zero", 0),
+    ("negative", -1),
+    ("int-subclass", _IntSubclass(1)),
+)
+
+
+@pytest.mark.parametrize(
+    "registry_version", [pytest.param(value, id=name) for name, value in _OUT_OF_DOMAIN_REGISTRY_VERSIONS]
+)
+@pytest.mark.parametrize("operation", ["get_version", "validate"])
+def test_an_out_of_domain_registry_version_is_the_callers_input(
+    tmp_path: Path, operation: str, registry_version: Any
+) -> None:
+    location = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), product_cache_location=location)
+    call = getattr(configs_service, operation)
+
+    with pytest.raises(configs_service.ConfigsRequestError) as raised:
+        call(
+            config_id=registered.configuration.config_id,
+            registry_version=registry_version,
+            product_cache_location=location,
+        )
+
+    assert raised.value.family == "request"
+
+
+def test_a_large_valid_registry_version_is_still_the_stores_own_answer(tmp_path: Path) -> None:
+    # The guard checks the domain and nothing else: a well-formed version the registry has
+    # not allocated is still absence, reported by the store's own not-found.
+    location = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), product_cache_location=location)
+
+    with pytest.raises(configs_service.ConfigsNotFoundError) as raised:
+        configs_service.get_version(
+            config_id=registered.configuration.config_id,
+            registry_version=10**12,
+            product_cache_location=location,
+        )
+
+    assert raised.value.reason == configs_service.CONFIGURATION_VERSION_NOT_FOUND_REASON

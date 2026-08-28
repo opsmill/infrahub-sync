@@ -673,6 +673,24 @@ def _require_argument_type(value: object, *, name: str, expected: type) -> None:
         raise ConfigsRequestError(msg)
 
 
+def _require_registry_version(value: object) -> None:
+    """Refuse a registry_version outside the domain the registry can ever allocate.
+
+    Exactly ``int`` — no subclass — and strictly positive, as the caller's own input rather
+    than the store's answer. ``bool`` is an ``int`` subclass, so an ``isinstance`` guard let
+    ``registry_version=True`` reach SQLite, compare equal to 1, and silently resolve version
+    1; and the registry allocates versions from 1, so ``0`` and ``-1`` are not versions that
+    happen to be absent — reporting them ``not-found`` claims the store answered a question
+    it can never be asked.
+    """
+    if type(value) is not int:
+        msg = f"registry_version must be int, not {type(value).__name__}"
+        raise ConfigsRequestError(msg)
+    if value <= 0:
+        msg = f"registry_version must be a positive integer, not {value}"
+        raise ConfigsRequestError(msg)
+
+
 def _parse(package: Mapping[str, Any]) -> ConfigurationPackage:
     """Parse declared JSON-native content, refusing any prebuilt package instance.
 
@@ -807,7 +825,7 @@ def get_version(
     cannot race. The store's blended single-lookup reason is untouched; ``validate`` keeps it.
     """
     _require_argument_type(config_id, name="config_id", expected=str)
-    _require_argument_type(registry_version, name="registry_version", expected=int)
+    _require_registry_version(registry_version)
     projection = _projection(product_cache_location)
     _require_configuration(projection, config_id)
     stored = projection.lookup_configuration_version(config_id, registry_version).value
@@ -838,7 +856,7 @@ def validate(
     ``sort_findings`` contract, and records the judged snapshot's fingerprint.
     """
     _require_argument_type(config_id, name="config_id", expected=str)
-    _require_argument_type(registry_version, name="registry_version", expected=int)
+    _require_registry_version(registry_version)
     if destination_schema is not None:
         _require_argument_type(destination_schema, name="destination_schema", expected=DestinationSchemaOptions)
     projection = _projection(product_cache_location)
