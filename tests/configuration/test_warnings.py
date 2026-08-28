@@ -9,14 +9,17 @@ from __future__ import annotations
 
 import ast
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from infrahub_sync.configuration import (
+    ConfigurationPackageParseError,
     CredentialConfigurationError,
     collect_findings,
+    parse_configuration_package,
     validate_package_credentials,
 )
 from infrahub_sync.configuration import warnings as configuration_warnings
@@ -144,6 +147,46 @@ def test_an_unknown_source_adapter_reports_no_feature_warning() -> None:
     data["configuration"]["incremental"] = {"full_resync_every": 5}
 
     assert _triples(data) == [("missing-adapter", "error", "/configuration/source")]
+
+
+# --- Pre-PR correction F2: an omission reason must be printable -------------------------
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        # One probe per refused category class: a line break (Cc) splits an operator-facing
+        # line, an ANSI escape (Cc) rewrites the terminal it is printed to, a bidi override
+        # (U+202E, Cf) reorders what the operator reads, and the Unicode line and paragraph
+        # separators (Zl, Zp) split a line the way a newline does. Each reached the finding
+        # message verbatim before the model refused them.
+        pytest.param("tracked\nelsewhere", id="newline"),
+        pytest.param("tracked\x1b[31melsewhere", id="ansi-escape"),
+        pytest.param("tracked \u202eelsewhere", id="bidi-override"),
+        pytest.param("tracked\u2028elsewhere", id="line-separator"),
+        pytest.param("tracked\u2029elsewhere", id="paragraph-separator"),
+    ],
+)
+def test_an_unprintable_omission_reason_is_refused_without_being_echoed(reason: str) -> None:
+    data = package_data()
+    data["omissions"] = [{"kind": "InfraDevice", "reason": reason}]
+
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(data)
+
+    message = str(caught.value)
+    assert "/omissions/0/reason" in message
+    # The refusal never echoes the raw value: no character of the probe class survives
+    # into the operator-facing parse error.
+    assert reason not in message
+    assert not any(unicodedata.category(character) in {"Cc", "Cf", "Cs", "Zl", "Zp"} for character in message)
+
+
+def test_a_reason_with_ordinary_spaces_stays_accepted() -> None:
+    data = package_data()
+    data["omissions"] = [{"kind": "InfraDevice", "reason": "serials tracked in the CMDB"}]
+
+    assert [finding.code for finding in collect_findings(package(data))] == ["intentional-omission"]
 
 
 # --- Determinism across invocations and presentations -----------------------------------
