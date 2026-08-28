@@ -1556,6 +1556,94 @@ def test_a_rejected_package_never_has_its_class_metadata_read(tmp_path: Path) ->
     assert _registered_configuration_count(tmp_path / "product-cache") == 0
 
 
+def _hostile_metadata_instance() -> tuple[object, list[str]]:
+    """An out-of-domain value whose class ``__name__`` read is recorded executable behavior."""
+    reads: list[str] = []
+
+    class _ExecutingMeta(type):
+        @property
+        def __name__(cls) -> str:  # noqa: PLW3201 - shadowing type's own descriptor is the fixture
+            reads.append("__name__")
+            msg = "metaclass executed on __name__ read"
+            raise RuntimeError(msg)
+
+    class _Probe(metaclass=_ExecutingMeta):
+        """A caller-supplied value whose class metadata is executable behavior."""
+
+    return _Probe(), reads
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(
+            lambda location, value: configs_service.get_config(config_id=value, product_cache_location=location),
+            id="config-id",
+        ),
+        pytest.param(
+            lambda location, value: configs_service.get_version(
+                config_id="c", registry_version=value, product_cache_location=location
+            ),
+            id="registry-version",
+        ),
+        pytest.param(
+            lambda location, value: configs_service.validate(
+                config_id="c",
+                registry_version=1,
+                product_cache_location=location,
+                destination_schema=value,
+            ),
+            id="destination-schema",
+        ),
+    ],
+)
+def test_a_wrong_typed_argument_never_has_its_class_metadata_read(
+    tmp_path: Path, call: Callable[[str, Any], object]
+) -> None:
+    # The package boundary's rule applied to every argument guard: the refusals
+    # formatted type(value).__name__, and a metaclass executes on that read — the
+    # probe escaped each public operation as ConfigsInternalError.
+    probe, reads = _hostile_metadata_instance()
+
+    with pytest.raises(configs_service.ConfigsRequestError) as raised:
+        call(_store(tmp_path), cast("Any", probe))
+
+    assert raised.value.family == "request"
+    assert reads == []
+
+
+def test_the_boundary_reads_nothing_from_an_exception_it_did_not_name(tmp_path: Path) -> None:
+    # The boundary's own refusal formatted type(exc).__name__ — but an exception a
+    # hostile caller argument constructs (here: a product_cache_location whose
+    # __str__ raises it) has an untrusted class, and the metaclass executing on that
+    # read escaped the module as a raw RuntimeError, outside the declared vocabulary
+    # entirely. The boundary reads nothing: family by isinstance, one fixed message.
+    del tmp_path
+    reads: list[str] = []
+
+    class _ExecutingMeta(type):
+        @property
+        def __name__(cls) -> str:  # noqa: PLW3201 - shadowing type's own descriptor is the fixture
+            reads.append("__name__")
+            msg = "metaclass executed on __name__ read"
+            raise RuntimeError(msg)
+
+    class _HostileError(Exception, metaclass=_ExecutingMeta):
+        """An exception whose class name read is executable behavior."""
+
+    class _RaisingLocation:
+        def __str__(self) -> str:
+            msg = "str() exploded: third-party secret text"
+            raise _HostileError(msg)
+
+    with pytest.raises(configs_service.ConfigsInternalError) as raised:
+        configs_service.list_configs(product_cache_location=cast("Any", _RaisingLocation()))
+
+    assert raised.value.family == "internal"
+    assert str(raised.value) == "configs list_configs failed"
+    assert reads == []
+
+
 # --- Pre-PR correction F4: the registry_version domain is exactly positive int ----------
 
 

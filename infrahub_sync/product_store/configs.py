@@ -164,15 +164,20 @@ _GUARDED_OPERATIONS: set[str] = set()
 def _boundary_refusal(operation: str, exc: Exception) -> ConfigsError:
     """Return the declared refusal one unnamed failure maps to.
 
-    Only the exception *type* reaches the text. A third-party message can quote a caller path
-    or third-party content, and every arm in this module carries the type alone for the same
-    reason. The family is what classifies the refusal, and both interfaces render it.
+    Nothing reaches the text from the exception — not even its type name. An exception no
+    arm named can have been constructed by a hostile caller argument (a
+    ``product_cache_location`` whose ``__str__`` raises it), so its class is untrusted and
+    a metaclass executes on the ``__name__`` read — which used to escape this module as a
+    raw untyped error. The family alone is inferred, by ``isinstance`` against the
+    declared table, which reads no attribute off the exception. The arms inside the
+    operations that do carry a type name do so only for exceptions trusted code
+    constructed. The family is what classifies the refusal, and both interfaces render it.
     """
     refusal = next(
         (family for types, family in _BOUNDARY_FAMILIES if isinstance(exc, types)),
         ConfigsInternalError,
     )
-    return refusal(f"configs {operation} failed: {type(exc).__name__}")
+    return refusal(f"configs {operation} failed")
 
 
 def _service_boundary(operation: Callable[_P, _R]) -> Callable[_P, _R]:
@@ -667,10 +672,12 @@ def _require_argument_type(value: object, *, name: str, expected: type) -> None:
     SQLite and comes back as ``sqlite3.ProgrammingError`` — which the boundary can only read as
     ``storage``, sending an operator to look at their disk for a defect in their own call. Type
     is all this checks: whether a well-typed identifier exists is the store's answer, and a
-    missing one is already ``not-found``.
+    missing one is already ``not-found``. The refusal reads nothing from the value — not its
+    class's ``__name__``, which a metaclass executes on; ``expected`` is this module's own
+    trusted type object, so naming it is safe.
     """
     if not isinstance(value, expected):
-        msg = f"{name} must be {expected.__name__}, not {type(value).__name__}"
+        msg = f"{name} must be {expected.__name__}"
         raise ConfigsRequestError(msg)
 
 
@@ -692,7 +699,8 @@ def _require_registry_version(value: object) -> None:
     the range is equally unaskable — it used to surface as SQLite's own ``OverflowError``.
     """
     if type(value) is not int:  # pylint: disable=unidiomatic-typecheck  # bool must not pass.
-        msg = f"registry_version must be int, not {type(value).__name__}"
+        # Fixed message: reading the class's __name__ executes a hostile metaclass.
+        msg = "registry_version must be int"
         raise ConfigsRequestError(msg)
     if not 1 <= value <= _MAX_REGISTRY_VERSION:
         msg = f"registry_version must be in the registry's allocatable range 1..{_MAX_REGISTRY_VERSION}, not {value}"
