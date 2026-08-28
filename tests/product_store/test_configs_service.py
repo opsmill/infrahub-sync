@@ -1612,6 +1612,55 @@ def test_a_wrong_typed_argument_never_has_its_class_metadata_read(
     assert reads == []
 
 
+def test_a_wrong_typed_argument_with_a_raising_class_property_is_the_callers_input(tmp_path: Path) -> None:
+    # isinstance() is itself inspection: it consults the instance's __class__, which a
+    # hostile property executes on, so this probe escaped get_config() as
+    # ConfigsInternalError. The guard matches type(value) identity alone and reads
+    # nothing off the instance.
+    reads: list[str] = []
+
+    class _RaisingClassProbe:
+        @property
+        def __class__(self) -> type:
+            reads.append("__class__")
+            msg = "__class__ was consulted"
+            raise RuntimeError(msg)
+
+    with pytest.raises(configs_service.ConfigsRequestError) as raised:
+        configs_service.get_config(config_id=cast("Any", _RaisingClassProbe()), product_cache_location=_store(tmp_path))
+
+    assert raised.value.family == "request"
+    assert reads == []
+
+
+def test_the_boundary_classifies_without_consulting_an_exceptions_class_property(tmp_path: Path) -> None:
+    # The boundary's isinstance classification consulted exc.__class__ — an instance
+    # read a hostile property executes on — so an exception a hostile caller argument
+    # constructs escaped list_configs() as a raw RuntimeError, outside the declared
+    # vocabulary. Except clauses match the actual type without touching the instance.
+    del tmp_path
+    reads: list[str] = []
+
+    class _HostileError(Exception):
+        @property
+        def __class__(self) -> type:
+            reads.append("__class__")
+            msg = "__class__ was consulted"
+            raise RuntimeError(msg)
+
+    class _RaisingLocation:
+        def __str__(self) -> str:
+            msg = "str() exploded: third-party secret text"
+            raise _HostileError(msg)
+
+    with pytest.raises(configs_service.ConfigsInternalError) as raised:
+        configs_service.list_configs(product_cache_location=cast("Any", _RaisingLocation()))
+
+    assert raised.value.family == "internal"
+    assert str(raised.value) == "configs list_configs failed"
+    assert reads == []
+
+
 def test_the_boundary_reads_nothing_from_an_exception_it_did_not_name(tmp_path: Path) -> None:
     # The boundary's own refusal formatted type(exc).__name__ — but an exception a
     # hostile caller argument constructs (here: a product_cache_location whose

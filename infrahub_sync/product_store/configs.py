@@ -139,18 +139,6 @@ class ConfigsInternalError(ConfigsError):
     family: ClassVar[str] = "internal"
 
 
-# The only two things the boundary infers from an exception no arm named, and it infers
-# nothing else. A filesystem or SQLite error can only have come from the store, and this
-# module parses no YAML but a caller's, so a parse error can only be about caller content.
-# A decode or a recursion error is deliberately *not* here: either can come from a defect in
-# this module as easily as from a caller's file, and guessing ``request`` for an unattributable
-# failure blames the operator's input for something they cannot fix. An arm that knows what it
-# was reading names those; whatever is left is unclassified and says so.
-_BOUNDARY_FAMILIES: tuple[tuple[tuple[type[Exception], ...], type[ConfigsError]], ...] = (
-    ((OSError, sqlite3.Error), ConfigsStorageError),
-    ((yaml.YAMLError,), ConfigsRequestError),
-)
-
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
@@ -159,25 +147,6 @@ _R = TypeVar("_R")
 # compare this against the module's public functions, so an operation added without the
 # boundary fails them.
 _GUARDED_OPERATIONS: set[str] = set()
-
-
-def _boundary_refusal(operation: str, exc: Exception) -> ConfigsError:
-    """Return the declared refusal one unnamed failure maps to.
-
-    Nothing reaches the text from the exception — not even its type name. An exception no
-    arm named can have been constructed by a hostile caller argument (a
-    ``product_cache_location`` whose ``__str__`` raises it), so its class is untrusted and
-    a metaclass executes on the ``__name__`` read — which used to escape this module as a
-    raw untyped error. The family alone is inferred, by ``isinstance`` against the
-    declared table, which reads no attribute off the exception. The arms inside the
-    operations that do carry a type name do so only for exceptions trusted code
-    constructed. The family is what classifies the refusal, and both interfaces render it.
-    """
-    refusal = next(
-        (family for types, family in _BOUNDARY_FAMILIES if isinstance(exc, types)),
-        ConfigsInternalError,
-    )
-    return refusal(f"configs {operation} failed")
 
 
 def _service_boundary(operation: Callable[_P, _R]) -> Callable[_P, _R]:
@@ -189,6 +158,23 @@ def _service_boundary(operation: Callable[_P, _R]) -> Callable[_P, _R]:
     raw traceback outside the one vocabulary both interfaces map. Enumerating exception types
     at each site is what this replaces: four escapes were found that way, one at a time, and
     each fix left the next one live.
+
+    Classification is by ``except`` clause only, which matches the exception's actual type
+    without touching the instance. ``isinstance`` is itself inspection — it consults the
+    instance's ``__class__``, a read a hostile property executes on — and an exception no
+    arm named can have been constructed by a hostile caller argument (a
+    ``product_cache_location`` whose ``__str__`` raises it), so a runtime classification
+    table used to escape this module as a raw untyped error. Nothing reaches the text from
+    the exception either: one fixed message per operation.
+
+    The boundary infers only two families from an exception no arm named, and nothing
+    else. A filesystem or SQLite error can only have come from the store, and this module
+    parses no YAML but a caller's, so a parse error can only be about caller content. A
+    decode or a recursion error is deliberately *not* inferred: either can come from a
+    defect in this module as easily as from a caller's file, and guessing ``request`` for
+    an unattributable failure blames the operator's input for something they cannot fix.
+    An arm that knows what it was reading names those; whatever is left is unclassified
+    and says so.
 
     Three rules it keeps:
 
@@ -204,6 +190,7 @@ def _service_boundary(operation: Callable[_P, _R]) -> Callable[_P, _R]:
     # plain module-level function, so the fallback never fires.
     name = getattr(operation, "__name__", "operation")
     _GUARDED_OPERATIONS.add(name)
+    refusal = f"configs {name} failed"
 
     @wraps(operation)
     def guarded(*args: _P.args, **kwargs: _P.kwargs) -> _R:
@@ -211,8 +198,12 @@ def _service_boundary(operation: Callable[_P, _R]) -> Callable[_P, _R]:
             return operation(*args, **kwargs)
         except ConfigsError:
             raise
-        except Exception as exc:  # noqa: BLE001 - boundary translation, always re-raised typed
-            raise _boundary_refusal(name, exc) from None
+        except (OSError, sqlite3.Error):
+            raise ConfigsStorageError(refusal) from None
+        except yaml.YAMLError:
+            raise ConfigsRequestError(refusal) from None
+        except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught  # The totality rule: re-raised typed, nothing read.
+            raise ConfigsInternalError(refusal) from None
 
     return guarded
 
@@ -672,11 +663,14 @@ def _require_argument_type(value: object, *, name: str, expected: type) -> None:
     SQLite and comes back as ``sqlite3.ProgrammingError`` — which the boundary can only read as
     ``storage``, sending an operator to look at their disk for a defect in their own call. Type
     is all this checks: whether a well-typed identifier exists is the store's answer, and a
-    missing one is already ``not-found``. The refusal reads nothing from the value — not its
-    class's ``__name__``, which a metaclass executes on; ``expected`` is this module's own
-    trusted type object, so naming it is safe.
+    missing one is already ``not-found``. The guard reads nothing from the value: it matches
+    ``type(value)`` identity alone — not ``isinstance``, which consults the instance's
+    ``__class__`` (a read a hostile property executes on) and would admit subclasses — and
+    its refusal names nothing about the value either, not its class's ``__name__``, which a
+    metaclass executes on. ``expected`` is this module's own trusted type object, so naming
+    it is safe.
     """
-    if not isinstance(value, expected):
+    if type(value) is not expected:  # pylint: disable=unidiomatic-typecheck  # Exact type; isinstance reads the instance.
         msg = f"{name} must be {expected.__name__}"
         raise ConfigsRequestError(msg)
 
