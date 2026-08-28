@@ -13,7 +13,7 @@ import sqlite3
 import sys
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from pydantic import ValidationError
@@ -1347,34 +1347,31 @@ def _prebuilt_instances() -> tuple[tuple[str, ConfigurationPackage], ...]:
     )
 
 
-@pytest.mark.parametrize(
-    "instance", [pytest.param(instance, id=name) for name, instance in _prebuilt_instances()]
-)
+@pytest.mark.parametrize("instance", [pytest.param(instance, id=name) for name, instance in _prebuilt_instances()])
 def test_register_refuses_a_prebuilt_package_instance(tmp_path: Path, instance: ConfigurationPackage) -> None:
     # Any instance — the exact class included — can carry behavior validation never judged:
     # a subclass overriding ``declared_content()``, or ``model_construct`` skipping
     # validation entirely. The boundary accepts declared JSON-native content only.
     location = _store(tmp_path)
+    # Typed away deliberately: the whole point is a call the signature no longer admits.
+    prebuilt = cast("Any", instance)
 
     with pytest.raises(configs_service.ConfigsRequestError, match="prebuilt ConfigurationPackage instance"):
-        configs_service.register(package=instance, product_cache_location=location)  # type: ignore[arg-type]
+        configs_service.register(package=prebuilt, product_cache_location=location)
 
     assert _registered_configuration_count(tmp_path / "product-cache") == 0
 
 
-@pytest.mark.parametrize(
-    "instance", [pytest.param(instance, id=name) for name, instance in _prebuilt_instances()]
-)
-def test_create_version_refuses_a_prebuilt_package_instance(
-    tmp_path: Path, instance: ConfigurationPackage
-) -> None:
+@pytest.mark.parametrize("instance", [pytest.param(instance, id=name) for name, instance in _prebuilt_instances()])
+def test_create_version_refuses_a_prebuilt_package_instance(tmp_path: Path, instance: ConfigurationPackage) -> None:
     location = _store(tmp_path)
     registered = configs_service.register(package=package_data(), product_cache_location=location)
+    prebuilt = cast("Any", instance)
 
     with pytest.raises(configs_service.ConfigsRequestError, match="prebuilt ConfigurationPackage instance"):
         configs_service.create_version(
             config_id=registered.configuration.config_id,
-            package=instance,  # type: ignore[arg-type]
+            package=prebuilt,
             product_cache_location=location,
         )
 
@@ -1392,10 +1389,10 @@ def test_a_hostile_declared_content_override_cannot_reach_the_store(tmp_path: Pa
     the caller's own input, and nothing is written.
     """
     location = _store(tmp_path)
-    hostile = _HostileDeclaredContent.model_validate(package_data())
+    hostile = cast("Any", _HostileDeclaredContent.model_validate(package_data()))
 
     with pytest.raises(configs_service.ConfigsRequestError):
-        configs_service.register(package=hostile, product_cache_location=location)  # type: ignore[arg-type]
+        configs_service.register(package=hostile, product_cache_location=location)
 
     root = tmp_path / "product-cache"
     assert _registered_configuration_count(root) == 0
@@ -1416,7 +1413,7 @@ class _IntSubclass(int):
     """An int subclass: well-behaved arithmetically, still not the declared domain."""
 
 
-_OUT_OF_DOMAIN_REGISTRY_VERSIONS: tuple[tuple[str, Any], ...] = (
+_OUT_OF_DOMAIN_REGISTRY_VERSIONS: tuple[tuple[str, object], ...] = (
     # bool is an int subclass, so an isinstance guard let True reach SQLite, compare
     # equal to 1, and silently resolve version 1 - a caller defect answered as data.
     ("true", True),
@@ -1434,7 +1431,7 @@ _OUT_OF_DOMAIN_REGISTRY_VERSIONS: tuple[tuple[str, Any], ...] = (
 )
 @pytest.mark.parametrize("operation", ["get_version", "validate"])
 def test_an_out_of_domain_registry_version_is_the_callers_input(
-    tmp_path: Path, operation: str, registry_version: Any
+    tmp_path: Path, operation: str, registry_version: object
 ) -> None:
     location = _store(tmp_path)
     registered = configs_service.register(package=package_data(), product_cache_location=location)

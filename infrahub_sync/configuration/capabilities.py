@@ -275,20 +275,23 @@ def _normalized_schema_snapshot(schema: object) -> Mapping[str, Any]:
     if not isinstance(schema, Mapping):
         msg = f"destination returned an unusable schema response: {type(schema).__name__}"
         raise DestinationSchemaReadError(msg, reason="rejected")
+    snapshot: dict[str, Any] = {}
     try:
-        return {
-            kind: {
+        for kind, node in schema.items():
+            if not isinstance(kind, str):
+                msg = f"destination returned an unusable schema member: {type(kind).__name__}"
+                raise DestinationSchemaReadError(msg, reason="rejected")
+            snapshot[kind] = {
                 "attributes": {attribute.name: attribute.kind for attribute in getattr(node, "attributes", ()) or ()},
                 "relationships": {
                     relationship.name: {"peer": relationship.peer, "cardinality": relationship.cardinality}
                     for relationship in getattr(node, "relationships", ()) or ()
                 },
             }
-            for kind, node in schema.items()
-        }
     except (AttributeError, TypeError) as exc:
         msg = f"destination returned an unusable schema member: {type(exc).__name__}"
         raise DestinationSchemaReadError(msg, reason="rejected") from None
+    return snapshot
 
 
 BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(

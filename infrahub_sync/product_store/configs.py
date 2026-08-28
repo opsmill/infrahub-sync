@@ -683,7 +683,7 @@ def _require_registry_version(value: object) -> None:
     happen to be absent — reporting them ``not-found`` claims the store answered a question
     it can never be asked.
     """
-    if type(value) is not int:
+    if type(value) is not int:  # pylint: disable=unidiomatic-typecheck  # bool must not pass.
         msg = f"registry_version must be int, not {type(value).__name__}"
         raise ConfigsRequestError(msg)
     if value <= 0:
