@@ -263,35 +263,69 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
 
 
 def _normalized_schema_snapshot(schema: object) -> Mapping[str, Any]:
-    """Normalize one client schema response inside the typed failure boundary.
+    """Normalize one client schema response inside one total typed boundary.
 
-    A response the client call accepted but that is not a usable schema — ``None`` or any
-    other non-mapping root, or a member whose nodes do not carry the attribute and
-    relationship shape the SDK contract promises — is still a read the destination
-    rejected. Classifying it here keeps the accessor contract total: a malformed response
-    becomes the typed ``destination-schema-read-failed`` finding rather than escaping as an
-    untyped ``AttributeError`` the service boundary can only report as internal.
+    A response the client call accepted but that is not a usable schema is still a read
+    the destination rejected. The entire normalization — the root check, iterating the
+    members, reading their attribute and relationship shapes, and validating the built
+    snapshot — runs under one rule: any ordinary ``Exception`` it raises (``items()``
+    raising, a raising attribute property, raising iteration — whatever a third-party
+    response can do) becomes the typed :class:`DestinationSchemaReadError` carrying the
+    exception type name only, never third-party exception text, so nothing escapes as an
+    untyped error the service boundary can only report as internal. ``BaseException``
+    still propagates, and an inner ``DestinationSchemaReadError`` passes through untouched.
     """
+    try:
+        return _build_schema_snapshot(schema)
+    except DestinationSchemaReadError:
+        raise
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught  # The totality rule: re-raised typed, type name only.
+        msg = f"destination returned an unusable schema response: {type(exc).__name__}"
+        raise DestinationSchemaReadError(msg, reason="rejected") from None
+
+
+def _build_schema_snapshot(schema: object) -> dict[str, Any]:
+    """Build the snapshot from a third-party response, inside the boundary above."""
     if not isinstance(schema, Mapping):
         msg = f"destination returned an unusable schema response: {type(schema).__name__}"
         raise DestinationSchemaReadError(msg, reason="rejected")
     snapshot: dict[str, Any] = {}
-    try:
-        for kind, node in schema.items():
-            if not isinstance(kind, str):
-                msg = f"destination returned an unusable schema member: {type(kind).__name__}"
-                raise DestinationSchemaReadError(msg, reason="rejected")
-            snapshot[kind] = {
-                "attributes": {attribute.name: attribute.kind for attribute in getattr(node, "attributes", ()) or ()},
-                "relationships": {
-                    relationship.name: {"peer": relationship.peer, "cardinality": relationship.cardinality}
-                    for relationship in getattr(node, "relationships", ()) or ()
-                },
-            }
-    except (AttributeError, TypeError) as exc:
-        msg = f"destination returned an unusable schema member: {type(exc).__name__}"
-        raise DestinationSchemaReadError(msg, reason="rejected") from None
+    for kind, node in schema.items():
+        if not isinstance(kind, str):
+            msg = f"destination returned an unusable schema member: {type(kind).__name__}"
+            raise DestinationSchemaReadError(msg, reason="rejected")
+        snapshot[kind] = {
+            "attributes": {attribute.name: attribute.kind for attribute in getattr(node, "attributes", ()) or ()},
+            "relationships": {
+                relationship.name: {"peer": relationship.peer, "cardinality": relationship.cardinality}
+                for relationship in getattr(node, "relationships", ()) or ()
+            },
+        }
+    _require_usable_snapshot(snapshot)
     return snapshot
+
+
+def _require_usable_snapshot(snapshot: Mapping[str, Any]) -> None:
+    """Refuse a built snapshot that is not the string shape the schema checks consume.
+
+    The last step inside the normalization boundary: the members were read without
+    raising and every kind is already a string, but the snapshot is usable only when
+    every attribute name and kind, relationship name, peer, and cardinality is a string
+    too — the shape the SDK contract promises and ``compute_schema_subhash`` and the
+    content checks rely on.
+    """
+    for entry in snapshot.values():
+        attributes: dict[str, Any] = entry["attributes"]
+        relationships: dict[str, Any] = entry["relationships"]
+        usable = all(isinstance(name, str) and isinstance(value, str) for name, value in attributes.items()) and all(
+            isinstance(name, str)
+            and isinstance(relationship["peer"], str)
+            and isinstance(relationship["cardinality"], str)
+            for name, relationship in relationships.items()
+        )
+        if not usable:
+            msg = "destination returned an unusable schema member shape"
+            raise DestinationSchemaReadError(msg, reason="rejected")
 
 
 BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(

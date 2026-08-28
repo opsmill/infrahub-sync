@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections.abc import ItemsView, Iterator, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -39,7 +40,7 @@ from infrahub_sync.configuration.validation import collect_findings, validate_pa
 from tests.configuration.validation_packages import package, package_data
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable
 
     from infrahub_sync.configuration import ConfigurationPackage
 
@@ -686,6 +687,94 @@ def test_a_malformed_schema_response_lands_as_a_typed_finding(
     _mock_schema_read_response(monkeypatch, response)
 
     _read_failure_and_write_findings("rejected")
+
+
+# --- Property closure P3: schema normalization is one total typed boundary --------------
+
+
+class _RaisingItemsSchema(Mapping):
+    """A real ``Mapping`` whose ``items()`` raises an arbitrary ordinary exception."""
+
+    def __getitem__(self, key: str) -> object:
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(())
+
+    def __len__(self) -> int:
+        return 0
+
+    def items(self) -> ItemsView[str, object]:  # noqa: PLR6301 - protocol hook, self unused by design
+        msg = "items() exploded: third-party secret text"
+        raise RuntimeError(msg)
+
+
+class _RaisingIterationSchema(Mapping):
+    """A real ``Mapping`` whose iteration raises once ``items()`` is consumed."""
+
+    def __getitem__(self, key: str) -> object:
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[str]:
+        msg = "iteration exploded"
+        raise RuntimeError(msg)
+
+    def __len__(self) -> int:
+        return 0
+
+
+class _RaisingAttributesNode:
+    """A member node whose ``attributes`` property raises a non-AttributeError."""
+
+    relationships: tuple[object, ...] = ()
+
+    @property
+    def attributes(self) -> tuple[object, ...]:
+        msg = "attributes exploded"
+        raise RuntimeError(msg)
+
+
+class _NonStringShapeNode:
+    """A member node the SDK contract does not promise: a non-string attribute kind."""
+
+    class _Attribute:
+        name = "hostname"
+        kind = 123
+
+    attributes = (_Attribute(),)
+    relationships: tuple[object, ...] = ()
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        # Every schema-read normalization failure is the same typed finding. Before the
+        # whole normalization ran inside one boundary, only enumerated exception types
+        # were classified: a RuntimeError from items(), from member iteration, or from a
+        # raising attribute property escaped validate() as ConfigsInternalError.
+        pytest.param(_RaisingItemsSchema(), id="raising-items"),
+        pytest.param(_RaisingIterationSchema(), id="raising-iteration"),
+        pytest.param({"InfraDevice": _RaisingAttributesNode()}, id="raising-attribute-property"),
+        pytest.param({"InfraDevice": _NonStringShapeNode()}, id="non-string-member-shape"),
+        pytest.param({1: _MalformedNode()}, id="non-string-kind"),
+    ],
+)
+def test_every_normalization_failure_lands_as_a_typed_finding(
+    monkeypatch: pytest.MonkeyPatch, response: object
+) -> None:
+    _mock_schema_read_response(monkeypatch, response)
+
+    _read_failure_and_write_findings("rejected")
+
+
+def test_a_normalization_refusal_carries_the_exception_type_name_only() -> None:
+    with pytest.raises(DestinationSchemaReadError) as caught:
+        capabilities_module._normalized_schema_snapshot(_RaisingItemsSchema())
+
+    message = str(caught.value)
+    assert "RuntimeError" in message
+    assert "third-party secret text" not in message
+    assert caught.value.reason == "rejected"
 
 
 # --- Pre-PR correction F5: the schema-module enumeration is documented ------------------
