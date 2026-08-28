@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from pydantic import ValidationError
 
-from infrahub_sync.configuration import BUILTIN_ADAPTER_CAPABILITIES, ValidationFinding
+from infrahub_sync.configuration import BUILTIN_ADAPTER_CAPABILITIES, ConfigurationPackage, ValidationFinding
 from infrahub_sync.configuration.models import safe_pointer_component
 from infrahub_sync.configuration.validation import collect_findings
 from infrahub_sync.execution import MIN_SECRET_LENGTH, REDACTED, collect_secret_values
@@ -1322,3 +1322,88 @@ def test_an_untouched_component_survives_redaction_of_its_neighbour_byte_for_byt
 
     assert redacted.startswith("/configuration/source/settings/a~01b~1c/***")
     assert _accepts(redacted)
+
+
+# --- Pre-PR correction F1: the write boundary refuses prebuilt package instances --------
+
+
+_INLINE_CANARY = "canary-inline-secret-0123456789"
+
+
+class _HostileDeclaredContent(ConfigurationPackage):
+    """Validated fields hold only references; the persisted dump smuggles an inline secret."""
+
+    def declared_content(self) -> dict[str, Any]:
+        content = super().declared_content()
+        content["configuration"]["source"]["settings"]["token"] = _INLINE_CANARY
+        return content
+
+
+def _prebuilt_instances() -> tuple[tuple[str, ConfigurationPackage], ...]:
+    return (
+        ("exact-class", ConfigurationPackage.model_validate(package_data())),
+        ("subclass", _HostileDeclaredContent.model_validate(package_data())),
+        ("model-construct", ConfigurationPackage.model_construct(**package_data())),
+    )
+
+
+@pytest.mark.parametrize(
+    "instance", [pytest.param(instance, id=name) for name, instance in _prebuilt_instances()]
+)
+def test_register_refuses_a_prebuilt_package_instance(tmp_path: Path, instance: ConfigurationPackage) -> None:
+    # Any instance — the exact class included — can carry behavior validation never judged:
+    # a subclass overriding ``declared_content()``, or ``model_construct`` skipping
+    # validation entirely. The boundary accepts declared JSON-native content only.
+    location = _store(tmp_path)
+
+    with pytest.raises(configs_service.ConfigsRequestError, match="prebuilt ConfigurationPackage instance"):
+        configs_service.register(package=instance, product_cache_location=location)  # type: ignore[arg-type]
+
+    assert _registered_configuration_count(tmp_path / "product-cache") == 0
+
+
+@pytest.mark.parametrize(
+    "instance", [pytest.param(instance, id=name) for name, instance in _prebuilt_instances()]
+)
+def test_create_version_refuses_a_prebuilt_package_instance(
+    tmp_path: Path, instance: ConfigurationPackage
+) -> None:
+    location = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), product_cache_location=location)
+
+    with pytest.raises(configs_service.ConfigsRequestError, match="prebuilt ConfigurationPackage instance"):
+        configs_service.create_version(
+            config_id=registered.configuration.config_id,
+            package=instance,  # type: ignore[arg-type]
+            product_cache_location=location,
+        )
+
+    versions = configs_service.list_versions(
+        config_id=registered.configuration.config_id, product_cache_location=location
+    )
+    assert [version.registry_version for version in versions] == [1]
+
+
+def test_a_hostile_declared_content_override_cannot_reach_the_store(tmp_path: Path) -> None:
+    """The pre-PR review reproduction, now failing safe.
+
+    Before the boundary refused instances, this subclass registered successfully and the
+    inline canary landed in the durable store row. Now the instance itself is refused as
+    the caller's own input, and nothing is written.
+    """
+    location = _store(tmp_path)
+    hostile = _HostileDeclaredContent.model_validate(package_data())
+
+    with pytest.raises(configs_service.ConfigsRequestError):
+        configs_service.register(package=hostile, product_cache_location=location)  # type: ignore[arg-type]
+
+    root = tmp_path / "product-cache"
+    assert _registered_configuration_count(root) == 0
+    database = root / "product-records.sqlite3"
+    if database.exists():
+        assert _INLINE_CANARY.encode() not in database.read_bytes()
+
+
+def test_a_non_mapping_package_is_the_callers_input_not_an_internal_error(tmp_path: Path) -> None:
+    with pytest.raises(configs_service.ConfigsRequestError, match="package must be Mapping"):
+        configs_service.register(package=_WRONG_TYPED_VALUE, product_cache_location=_store(tmp_path))

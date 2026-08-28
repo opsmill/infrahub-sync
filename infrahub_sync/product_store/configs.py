@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
@@ -66,7 +67,7 @@ from infrahub_sync.product_store.store import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Sequence
 
     from infrahub_sync.product_store.models import ConfigurationSummary, ConfigurationVersion
 
@@ -672,10 +673,21 @@ def _require_argument_type(value: object, *, name: str, expected: type) -> None:
         raise ConfigsRequestError(msg)
 
 
-def _parse(package: Mapping[str, Any] | ConfigurationPackage) -> ConfigurationPackage:
-    """Return the declared package, reporting a parse failure in the shared vocabulary."""
+def _parse(package: Mapping[str, Any]) -> ConfigurationPackage:
+    """Parse declared JSON-native content, refusing any prebuilt package instance.
+
+    The write boundary accepts declared content only and always routes it through
+    ``parse_configuration_package``, so what the store persists is exactly what the shared
+    parser validated. A prebuilt :class:`ConfigurationPackage` — the exact class included —
+    is refused as the caller's own input: an instance can carry behavior validation never
+    judged (a subclass overriding ``declared_content()`` can persist an inline secret whose
+    validated fields hold only references, and ``model_construct`` skips validation
+    entirely), and a caller holding an instance holds the declared content anyway.
+    """
     if isinstance(package, ConfigurationPackage):
-        return package
+        msg = "package must be declared JSON-native content, not a prebuilt ConfigurationPackage instance"
+        raise ConfigsRequestError(msg)
+    _require_argument_type(package, name="package", expected=Mapping)
     try:
         return parse_configuration_package(dict(package))
     except ConfigurationPackageParseError as exc:
@@ -694,13 +706,15 @@ def _validation_refusal(exc: CredentialConfigurationError, package: Configuratio
 @_service_boundary
 def register(
     *,
-    package: Mapping[str, Any] | ConfigurationPackage,
+    package: Mapping[str, Any],
     product_cache_location: str | Path | None,
 ) -> RegisteredConfiguration:
     """Register a brand-new declared configuration and return it with its first version.
 
-    Validation happens inside the store, before anything is persisted, so an invalid package
-    raises and is never registered. The findings surface is :func:`validate`.
+    ``package`` is declared JSON-native content; a prebuilt package instance is refused
+    (:func:`_parse`). Validation happens inside the store, before anything is persisted, so
+    an invalid package raises and is never registered. The findings surface is
+    :func:`validate`.
     """
     projection = _projection(product_cache_location)
     parsed = _parse(package)
@@ -721,10 +735,14 @@ def register(
 def create_version(
     *,
     config_id: str,
-    package: Mapping[str, Any] | ConfigurationPackage,
+    package: Mapping[str, Any],
     product_cache_location: str | Path | None,
 ) -> RegisteredVersion:
-    """Add one version to an existing configuration, or return the identical stored one."""
+    """Add one version to an existing configuration, or return the identical stored one.
+
+    ``package`` is declared JSON-native content; a prebuilt package instance is refused
+    (:func:`_parse`).
+    """
     _require_argument_type(config_id, name="config_id", expected=str)
     projection = _projection(product_cache_location)
     parsed = _parse(package)
