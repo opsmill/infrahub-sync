@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
 import infrahub_sync
 from infrahub_sync.configuration import (
@@ -23,6 +24,7 @@ from infrahub_sync.configuration import (
     parse_configuration_package,
     validate_package_credentials,
 )
+from infrahub_sync.configuration import models as configuration_models
 from infrahub_sync.configuration import warnings as configuration_warnings
 from tests.configuration.validation_packages import package, package_data
 
@@ -150,22 +152,26 @@ def test_an_unknown_source_adapter_reports_no_feature_warning() -> None:
     assert _triples(data) == [("missing-adapter", "error", "/configuration/source")]
 
 
-# --- Pre-PR correction F2: an omission reason must be printable -------------------------
+# --- Pre-PR correction F2, closed as property P2: acceptance is str.isprintable() -------
 
 
 @pytest.mark.parametrize(
     "reason",
     [
-        # One probe per refused category class: a line break (Cc) splits an operator-facing
+        # Probes across the refused categories: a line break (Cc) splits an operator-facing
         # line, an ANSI escape (Cc) rewrites the terminal it is printed to, a bidi override
-        # (U+202E, Cf) reorders what the operator reads, and the Unicode line and paragraph
-        # separators (Zl, Zp) split a line the way a newline does. Each reached the finding
+        # (U+202E, Cf) reorders what the operator reads, the Unicode line and paragraph
+        # separators (Zl, Zp) split a line the way a newline does, a no-break space
+        # (U+00A0, Zs but not the space character) and an unassigned code point (U+0378,
+        # Cn) are what the former category denylist let through. Each reached the finding
         # message verbatim before the model refused them.
         pytest.param("tracked\nelsewhere", id="newline"),
         pytest.param("tracked\x1b[31melsewhere", id="ansi-escape"),
         pytest.param("tracked \u202eelsewhere", id="bidi-override"),
         pytest.param("tracked\u2028elsewhere", id="line-separator"),
         pytest.param("tracked\u2029elsewhere", id="paragraph-separator"),
+        pytest.param("tracked\u00a0elsewhere", id="no-break-space"),
+        pytest.param("tracked\u0378elsewhere", id="unassigned"),
     ],
 )
 def test_an_unprintable_omission_reason_is_refused_without_being_echoed(reason: str) -> None:
@@ -188,6 +194,45 @@ def test_a_reason_with_ordinary_spaces_stays_accepted() -> None:
     data["omissions"] = [{"kind": "InfraDevice", "reason": "serials tracked in the CMDB"}]
 
     assert [finding.code for finding in collect_findings(package(data))] == ["intentional-omission"]
+
+
+def _omission_reason_accepted(reason: str) -> bool:
+    try:
+        configuration_models._OmissionDeclaration(kind="InfraDevice", reason=reason)
+    except PydanticValidationError:
+        return False
+    return True
+
+
+# One probe per category the property must decide: printable letters, the plain space
+# (Zs, and the one separator ``isprintable`` accepts), an emoji (So), punctuation, a
+# control character (Cc), a format character (Cf), a lone surrogate (Cs), a private-use
+# character (Co), line/paragraph separators (Zl, Zp), a no-break space (Zs, not
+# printable), and an unassigned code point (Cn).
+_CATEGORY_PROBES = (
+    "a",
+    "serials tracked in the CMDB",
+    " ",
+    "\U0001f642",
+    "!",
+    "\x07",
+    "\u202e",
+    "\ud800",
+    "\ue000",
+    "\u2028",
+    "\u2029",
+    "\u00a0",
+    "\u0378",
+)
+
+
+def test_omission_reason_acceptance_is_exactly_isprintable() -> None:
+    # The closed property: the validator's verdict equals str.isprintable(), for every
+    # category probe and for a generated sample of code points across the BMP and SMP.
+    sample = [chr(code_point) for code_point in range(0x20, 0x2FA20, 0x10F)]
+
+    for probe in (*_CATEGORY_PROBES, *sample):
+        assert _omission_reason_accepted(probe) == probe.isprintable(), hex(ord(probe[0]))
 
 
 # --- Determinism across invocations and presentations -----------------------------------

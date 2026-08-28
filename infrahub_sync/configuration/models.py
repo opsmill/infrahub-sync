@@ -456,12 +456,13 @@ class ConfigurationPackageMetadata(BaseModel):
 # reason plus the fixed message template under _MAX_FINDING_TEXT_LENGTH: an over-long
 # reason is a registration-time refusal here, never a finding-construction crash.
 _MAX_OMISSION_REASON_LENGTH = 160
-# The same categories the parse-diagnostic pointer guard refuses: control (Cc), format
-# (Cf, which carries the bidi overrides), surrogate (Cs), and the line/paragraph
-# separators (Zl, Zp). Ordinary spaces are Zs and stay legal. A reason reaches an
-# operator-facing finding message verbatim, so any of these would carry a newline, an
-# ANSI escape, or a bidi override straight into a rendered line.
-_UNPRINTABLE_REASON_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
+# Acceptance is exactly ``str.isprintable()``. A reason reaches an operator-facing
+# finding message verbatim, so every character a rendered line cannot carry — a control
+# character or ANSI escape (Cc), a format character such as a bidi override (Cf), a
+# surrogate (Cs), a private-use or unassigned code point (Co, Cn), a line or paragraph
+# separator (Zl, Zp), a non-space separator such as U+00A0 (Zs) — is refused by the one
+# closed property Python defines, not by a category list that has to enumerate them.
+# The ordinary space stays legal: ``' '.isprintable()`` is True.
 _UNPRINTABLE_OMISSION_REASON_ERROR = "unprintable_omission_reason"
 
 _OmissionFieldName = Annotated[str, StringConstraints(min_length=1)]
@@ -481,8 +482,8 @@ class _OmissionDeclaration(BaseModel):
     @classmethod
     def _require_printable_reason(cls, value: str | None) -> str | None:
         """Refuse a reason no rendered line can carry safely, without echoing it."""
-        if value is not None and any(category(character) in _UNPRINTABLE_REASON_CATEGORIES for character in value):
-            reason = "omission reason must not contain control or non-printable characters"
+        if value is not None and not value.isprintable():
+            reason = "omission reason must contain only printable characters"
             raise PydanticCustomError(_UNPRINTABLE_OMISSION_REASON_ERROR, reason, {"reason": reason})
         return value
 
