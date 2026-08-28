@@ -1358,7 +1358,7 @@ def test_register_refuses_a_prebuilt_package_instance(tmp_path: Path, instance: 
     # Typed away deliberately: the whole point is a call the signature no longer admits.
     prebuilt = cast("Any", instance)
 
-    with pytest.raises(configs_service.ConfigsRequestError, match="prebuilt ConfigurationPackage instance"):
+    with pytest.raises(configs_service.ConfigsRequestError, match="must be a JSON-native dict"):
         configs_service.register(package=prebuilt, product_cache_location=location)
 
     assert _registered_configuration_count(tmp_path / "product-cache") == 0
@@ -1370,7 +1370,7 @@ def test_create_version_refuses_a_prebuilt_package_instance(tmp_path: Path, inst
     registered = configs_service.register(package=package_data(), product_cache_location=location)
     prebuilt = cast("Any", instance)
 
-    with pytest.raises(configs_service.ConfigsRequestError, match="prebuilt ConfigurationPackage instance"):
+    with pytest.raises(configs_service.ConfigsRequestError, match="must be a JSON-native dict"):
         configs_service.create_version(
             config_id=registered.configuration.config_id,
             package=prebuilt,
@@ -1522,6 +1522,38 @@ def test_a_refused_package_is_never_invoked(tmp_path: Path) -> None:
         configs_service.register(package=cast("Any", sentinel), product_cache_location=_store(tmp_path))
 
     assert sentinel.consulted == []
+
+
+def test_a_rejected_package_never_has_its_class_metadata_read(tmp_path: Path) -> None:
+    # Inspection is invocation, class metadata included: the refusal used to read
+    # ``__mro__`` and ``__name__`` off the untrusted value's class, and a metaclass
+    # executes on those reads — the probe escaped register() as ConfigsInternalError
+    # with the read recorded. The refusal reads nothing: one fixed message.
+    reads: list[str] = []
+
+    class _ExecutingMeta(type):
+        @property
+        def __mro__(cls) -> tuple[type, ...]:  # noqa: PLW3201 - shadowing type's own descriptor is the fixture
+            reads.append("__mro__")
+            msg = "metaclass executed on __mro__ read"
+            raise RuntimeError(msg)
+
+        @property
+        def __name__(cls) -> str:  # noqa: PLW3201 - shadowing type's own descriptor is the fixture
+            reads.append("__name__")
+            msg = "metaclass executed on __name__ read"
+            raise RuntimeError(msg)
+
+    class _MetadataProbe(metaclass=_ExecutingMeta):
+        """An out-of-domain value whose class metadata is executable behavior."""
+
+    with pytest.raises(configs_service.ConfigsRequestError) as raised:
+        configs_service.register(package=cast("Any", _MetadataProbe()), product_cache_location=_store(tmp_path))
+
+    assert raised.value.family == "request"
+    assert "must be a JSON-native dict" in str(raised.value)
+    assert reads == []
+    assert _registered_configuration_count(tmp_path / "product-cache") == 0
 
 
 # --- Pre-PR correction F4: the registry_version domain is exactly positive int ----------

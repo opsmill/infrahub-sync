@@ -707,21 +707,16 @@ def _require_json_native_package(package: object) -> None:
     ``type(...)`` identity before any protocol operation runs on the untrusted value — no
     method call, no attribute read, no ``__class__`` consultation, no ``isinstance``
     against an ABC. A subclass of any of these can override every hook the service would
-    otherwise invoke, so no subclass is in the domain. The recursive walk is the model
+    otherwise invoke, so no subclass is in the domain. The refusal reads nothing either —
+    not the class's ``__mro__`` or ``__name__``, both of which a metaclass executes on —
+    so one fixed message covers every out-of-domain value, a prebuilt
+    :class:`ConfigurationPackage` instance included. The recursive walk is the model
     layer's own :func:`_require_json_native`, so the service's structural acceptance and
     the parse boundary agree by construction; its refusals are value-free (location and
     reason only), so nothing here echoes the object either.
     """
-    package_type = type(package)
-    if package_type is not dict:
-        if ConfigurationPackage in package_type.__mro__:
-            # A prebuilt instance keeps its own refusal: it can carry behavior validation
-            # never judged (a subclass overriding ``declared_content()`` can persist an
-            # inline secret, ``model_construct`` skips validation entirely), and a caller
-            # holding an instance holds the declared content anyway.
-            msg = "package must be declared JSON-native content, not a prebuilt ConfigurationPackage instance"
-            raise ConfigsRequestError(msg)
-        msg = f"package must be a JSON-native dict, not {package_type.__name__}"
+    if type(package) is not dict:  # pylint: disable=unidiomatic-typecheck  # Exact dict only; no subclass.
+        msg = "package must be a JSON-native dict of declared content"
         raise ConfigsRequestError(msg)
     try:
         _require_json_native(package)
