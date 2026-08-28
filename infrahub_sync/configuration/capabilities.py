@@ -209,9 +209,10 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
     reference here is the sanctioned read (contract section 4); the branch arrives already
     resolved from the declared setting and nothing ambient is consulted for it. Every
     SDK-raised error (``infrahub_sdk.exceptions.Error`` and its subclasses), every HTTP
-    transport or status failure, an unresolvable declared credential, and a declared
+    transport or status failure, an unresolvable declared credential, a declared
     client configuration the SDK refuses (``ValueError``, including pydantic's validation
-    error) is classified into :class:`DestinationSchemaReadError` — the accessor contract
+    error), and a response the call accepted but that cannot be normalized into a schema
+    snapshot is classified into :class:`DestinationSchemaReadError` — the accessor contract
     the schema checks handle — carrying exception type names, never third-party content.
     """
     # Imported here, not at module load: this module stays connection-free to import, and
@@ -258,16 +259,36 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
         # subclasses ValueError, so both land here as one unusable-configuration class.
         msg = f"destination client could not be configured from the declared settings: {type(exc).__name__}"
         raise DestinationSchemaReadError(msg, reason="unconfigured") from None
-    return {
-        kind: {
-            "attributes": {attribute.name: attribute.kind for attribute in getattr(node, "attributes", ()) or ()},
-            "relationships": {
-                relationship.name: {"peer": relationship.peer, "cardinality": relationship.cardinality}
-                for relationship in getattr(node, "relationships", ()) or ()
-            },
+    return _normalized_schema_snapshot(schema)
+
+
+def _normalized_schema_snapshot(schema: object) -> Mapping[str, Any]:
+    """Normalize one client schema response inside the typed failure boundary.
+
+    A response the client call accepted but that is not a usable schema — ``None`` or any
+    other non-mapping root, or a member whose nodes do not carry the attribute and
+    relationship shape the SDK contract promises — is still a read the destination
+    rejected. Classifying it here keeps the accessor contract total: a malformed response
+    becomes the typed ``destination-schema-read-failed`` finding rather than escaping as an
+    untyped ``AttributeError`` the service boundary can only report as internal.
+    """
+    if not isinstance(schema, Mapping):
+        msg = f"destination returned an unusable schema response: {type(schema).__name__}"
+        raise DestinationSchemaReadError(msg, reason="rejected")
+    try:
+        return {
+            kind: {
+                "attributes": {attribute.name: attribute.kind for attribute in getattr(node, "attributes", ()) or ()},
+                "relationships": {
+                    relationship.name: {"peer": relationship.peer, "cardinality": relationship.cardinality}
+                    for relationship in getattr(node, "relationships", ()) or ()
+                },
+            }
+            for kind, node in schema.items()
         }
-        for kind, node in schema.items()
-    }
+    except (AttributeError, TypeError) as exc:
+        msg = f"destination returned an unusable schema member: {type(exc).__name__}"
+        raise DestinationSchemaReadError(msg, reason="rejected") from None
 
 
 BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(

@@ -630,3 +630,58 @@ def test_a_missing_declared_url_lands_as_a_typed_finding(monkeypatch: pytest.Mon
     ]
     assert "unconfigured" in result.findings[0].message
     assert result.schema_fingerprint is None
+
+
+# --- Pre-PR correction F3: a malformed schema response is a typed read failure ----------
+
+
+class _ReturningSchemaEndpoint:
+    def __init__(self, response: object) -> None:
+        self._response = response
+
+    def all(self, branch: str) -> object:
+        del branch
+        return self._response
+
+
+class _ReturningClient:
+    def __init__(self, response: object) -> None:
+        self.schema = _ReturningSchemaEndpoint(response)
+
+
+def _mock_schema_read_response(monkeypatch: pytest.MonkeyPatch, response: object) -> None:
+    _inject(monkeypatch, _live_read_table())
+    monkeypatch.setenv("INFRAHUB_API_TOKEN", "test-token")
+
+    def _fake_client(address: str, config: object) -> _ReturningClient:
+        del address, config
+        return _ReturningClient(response)
+
+    monkeypatch.setattr("infrahub_sdk.InfrahubClientSync", _fake_client)
+
+
+class _MalformedNode:
+    """A node whose attributes are plain dicts rather than SDK attribute objects."""
+
+    attributes = ({"name": "hostname", "kind": "Text"},)
+    relationships = ()
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        # A read the client call accepted but that cannot be normalized into a snapshot.
+        # Before normalization moved inside the typed boundary, each escaped the accessor
+        # as an untyped AttributeError/TypeError the service boundary could only report
+        # as ConfigsInternalError.
+        pytest.param(None, id="none-root"),
+        pytest.param(["InfraDevice"], id="wrong-type-root"),
+        pytest.param({"InfraDevice": _MalformedNode()}, id="malformed-member"),
+    ],
+)
+def test_a_malformed_schema_response_lands_as_a_typed_finding(
+    monkeypatch: pytest.MonkeyPatch, response: object
+) -> None:
+    _mock_schema_read_response(monkeypatch, response)
+
+    _read_failure_and_write_findings("rejected")
