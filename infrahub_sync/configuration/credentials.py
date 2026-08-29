@@ -23,6 +23,20 @@ if TYPE_CHECKING:
     from .models import ConfigurationPackage, CredentialReference
 
 _ENV_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_REGISTERED_CONTEXT = "_infrahub_sync_registered_context"
+
+
+def select_runtime_credential(
+    settings: Mapping[str, object], setting_name: str, environment_names: tuple[str, ...]
+) -> object:
+    """Select a credential without ambient reads for a registered runtime package."""
+    if settings.get(_REGISTERED_CONTEXT) is True:
+        return settings.get(setting_name)
+    for environment_name in environment_names:
+        value = os.environ.get(environment_name)
+        if value:
+            return value
+    return settings.get(setting_name)
 
 
 @dataclass(frozen=True, slots=True)

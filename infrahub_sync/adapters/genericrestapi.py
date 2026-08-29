@@ -14,6 +14,7 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
+from infrahub_sync.configuration.credentials import select_runtime_credential
 
 from .rest_api_client import RestApiClient
 from .utils import derive_identifier_key, get_value
@@ -57,26 +58,13 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
         """
         # Get URL from multiple possible sources
         url_env_vars = settings.get("url_env_vars", ["URL", "ADDRESS"])
-        url = None
-        for env_var in url_env_vars:
-            url = os.environ.get(env_var)
-            if url:
-                break
-
-        if not url:
-            url = settings.get("url")
+        url = select_runtime_credential(settings, "url", tuple(url_env_vars))
 
         # Get settings with defaults
         api_endpoint = settings.get("api_endpoint", "/api/v0")
         auth_method = settings.get("auth_method", "token")
         token_env_vars = settings.get("token_env_vars", ["TOKEN"])
-        api_token = None
-        for env_var in token_env_vars:
-            api_token = os.environ.get(env_var)
-            if api_token:
-                break
-        if not api_token:
-            api_token = settings.get("token")
+        api_token = select_runtime_credential(settings, "token", tuple(token_env_vars))
         username_env_vars = settings.get("username_env_vars", ["USERNAME"])
         username = None
         for env_var in username_env_vars:

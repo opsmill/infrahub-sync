@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 from typing import Any
 
@@ -19,6 +18,7 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
+from infrahub_sync.configuration.credentials import select_runtime_credential
 
 logger = logging.getLogger(__name__)
 
@@ -379,13 +379,13 @@ class PrometheusAdapter(DiffSyncMixin, Adapter):
 
         # Auth (both modes)
         self.auth_method = settings.get("auth_method", "none")
-        self.username = os.environ.get("PROM_USERNAME") or settings.get("username")
-        self.password = os.environ.get("PROM_PASSWORD") or settings.get("password")
-        self.api_token = os.environ.get("PROM_TOKEN") or settings.get("token")
+        self.username = select_runtime_credential(settings, "username", ("PROM_USERNAME",))
+        self.password = select_runtime_credential(settings, "password", ("PROM_PASSWORD",))
+        self.api_token = select_runtime_credential(settings, "token", ("PROM_TOKEN",))
         self.headers = settings.get("headers", {})
 
         # URL/endpoint
-        self.url = os.environ.get("PROM_URL") or os.environ.get("PROM_ADDRESS") or settings.get("url")
+        self.url = select_runtime_credential(settings, "url", ("PROM_URL", "PROM_ADDRESS"))
         if not self.url:
             msg = "Prometheus 'url' must be specified in settings.url (or PROM_URL)."
             raise ValueError(msg)

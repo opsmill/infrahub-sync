@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from infrahub_sync import SyncInstance
 
-from .credentials import resolve_reference
+from .credentials import _REGISTERED_CONTEXT, resolve_reference
 
 if TYPE_CHECKING:
     from .models import ConfigurationPackage
@@ -26,4 +26,9 @@ def resolve_runtime_instance(package: ConfigurationPackage, *, directory: str) -
         return value
 
     resolved = resolve(package.configuration.model_dump(mode="json", by_alias=True))
-    return SyncInstance(**cast("dict[str, Any]", resolved), directory=directory)
+    runtime = cast("dict[str, Any]", resolved)
+    for side in ("source", "destination"):
+        adapter = runtime[side]
+        if type(adapter) is dict and type(adapter.get("settings")) is dict:
+            adapter["settings"][_REGISTERED_CONTEXT] = True
+    return SyncInstance(**runtime, directory=directory)
