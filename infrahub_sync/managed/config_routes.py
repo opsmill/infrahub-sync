@@ -127,13 +127,16 @@ class ConfigurationRoutes:
                 self._audit(actor, operation, reason, "replayed")
                 return stored.response_status, stored.response_body
         if operation == "register-config":
-            response = jsonable_encoder(self.register(package))
+            result = self.register(package)
+            response_status = 201
         else:
             config_id = resource_path.rsplit("/", 2)[1]
-            response = jsonable_encoder(self.create_version(config_id, package))
+            result = self.create_version(config_id, package)
+            response_status = 201 if result.created else 200
+        response = jsonable_encoder(result)
         completed = projection.complete_mutation(
             stored.receipt_id,
-            response_status=201,
+            response_status=response_status,
             response_body=response,
             flow_run_id=None,
             secrets=self._secrets,

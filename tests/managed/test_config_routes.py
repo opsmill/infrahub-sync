@@ -94,6 +94,42 @@ def test_configuration_mutation_replays_exact_response_and_rejects_changed_conte
     assert receipt.value.state == "accepted"
 
 
+def test_duplicate_configuration_version_checksum_returns_existing_version_without_a_second_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checksum already stored for a configuration is a 200 replay, not a new version."""
+    bearer = "admin-token-canary-0003"
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    projection = local_product_projection(tmp_path)
+    client = TestClient(
+        create_app(
+            ManagedRunService(projection, _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(tmp_path, secrets=resolver.secret_values),
+        )
+    )
+    package = package_data()
+    registration = client.post(
+        "/configs",
+        headers={"Authorization": f"Bearer {bearer}", "Idempotency-Key": "register-config"},
+        json={"package": package, "reason": "register"},
+    )
+    config_id = registration.json()["configuration"]["config_id"]
+    before = projection.list_configuration_versions(config_id)
+
+    response = client.post(
+        f"/configs/{config_id}/versions",
+        headers={"Authorization": f"Bearer {bearer}", "Idempotency-Key": "duplicate-version"},
+        json={"package": package, "reason": "duplicate checksum"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["version"]["registry_version"] == before[0].registry_version
+    assert projection.list_configuration_versions(config_id) == before
+    assert len(projection.list_configurations()) == 1
+
+
 def test_configuration_mutation_audits_accepted_replayed_and_refused_idempotency_without_secrets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
