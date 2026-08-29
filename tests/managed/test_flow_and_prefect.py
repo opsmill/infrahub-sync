@@ -42,6 +42,12 @@ if TYPE_CHECKING:
     from infrahub_sync.configuration import ConfigurationPackage
 
 
+@pytest.fixture(autouse=True)
+def _executor_only_claim_bypass(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These stage tests call ``.fn`` outside a Prefect worker process."""
+    monkeypatch.setattr(managed_flow, "_claim_current_execution", lambda _projection, _run_id: None)
+
+
 def _saved(run_id: str) -> SavedPlan:
     manifest = PlanManifest(
         format_version=2,

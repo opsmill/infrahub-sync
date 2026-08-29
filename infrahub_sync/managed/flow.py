@@ -11,6 +11,7 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Literal
+from uuid import UUID
 
 from prefect import flow, get_run_logger
 from prefect.exceptions import MissingContextError
@@ -57,6 +58,8 @@ _REGISTERED_PLAN_VERIFICATION_FAILED = "registered saved plan verification faile
 _WORKER_BINDING_PARAMETERS_INVALID = "managed worker configuration binding parameters must be all absent or all present"
 _LEGACY_RUN_IDENTITY_UNAVAILABLE = "legacy managed run identity is unavailable"
 _LEGACY_RUN_CONFIGURATION_MISMATCH = "legacy managed run configuration version does not match durable run"
+_WORKER_EXECUTION_REFUSED = "managed worker execution claim was refused"
+_WORKER_EXECUTION_ID_INVALID = "managed worker execution identity is invalid"
 
 
 def _run_logger() -> tuple[RunLogger, bool]:
@@ -187,9 +190,44 @@ def _worker_binding(
     return config_id, registry_version, package_checksum
 
 
-def _worker_execution_context(run_id: str, binding: tuple[str, int, str] | None) -> tuple[ProductProjection, Any, str]:
+def _canonical_uuid(value: object) -> str | None:
+    """Return an exact built-in canonical UUID string, never a permissive coercion."""
+    if type(value) is not str:
+        return None
+    try:
+        return value if str(UUID(value)) == value else None
+    except ValueError:
+        return None
+
+
+def _prefect_flow_run_id() -> str:
+    """Read the trusted flow-run UUID from Prefect's process-local runtime context."""
+    from prefect.runtime import flow_run
+
+    flow_run_id = _canonical_uuid(flow_run.id)
+    if flow_run_id is None:
+        raise RuntimeError(_WORKER_EXECUTION_ID_INVALID)
+    return flow_run_id
+
+
+def _claim_current_execution(projection: ProductProjection, run_id: str) -> None:
+    """Claim the exact Prefect execution before any configuration or adapter work begins."""
+    worker_id = _canonical_uuid(os.environ.get("PREFECT__WORKER_ID"))
+    flow_run_id = _prefect_flow_run_id()
+    if worker_id is None:
+        raise RuntimeError(_WORKER_EXECUTION_ID_INVALID)
+    if not projection.claim_execution(run_id, flow_run_id, worker_id=worker_id):
+        raise RuntimeError(_WORKER_EXECUTION_REFUSED)
+
+
+def _worker_execution_context(
+    run_id: str,
+    binding: tuple[str, int, str] | None,
+    *,
+    config_directory: str,
+    projection: ProductProjection,
+) -> tuple[ProductProjection, Any, str]:
     """Load the durable run and resolve its registered or legacy runtime."""
-    config_directory, projection = _runtime()
     stored = projection.lookup_run(run_id)
     if stored.value is None:
         msg = f"API-created Sync run {run_id!r} is unavailable"
@@ -232,10 +270,14 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     confirm_writes: bool,
     run_logger: RunLogger,
     secrets: list[str],
+    config_directory: str,
+    projection: ProductProjection,
 ) -> dict[str, Any]:
     """Resolve and execute one managed stage within the sanitized worker boundary."""
     parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
-    projection, instance, sync_name = _worker_execution_context(run_id, parameter_binding)
+    projection, instance, sync_name = _worker_execution_context(
+        run_id, parameter_binding, config_directory=config_directory, projection=projection
+    )
     if stage in ("apply", "sync") and not confirm_writes:
         msg = f"confirm_writes=true is required for managed stage={stage}"
         raise ValueError(msg)
@@ -416,8 +458,11 @@ def managed_sync_run(  # pylint: disable=too-many-positional-arguments
 ) -> dict[str, Any]:
     """Execute one API-reserved stage and publish its durable product data."""
     run_logger, prefect_context = _run_logger()
-    secrets = list(collect_secret_values())
+    secrets: list[str] = []
     failure: Exception | None = None
+    config_directory, projection = _runtime()
+    _claim_current_execution(projection, run_id)
+    secrets[:] = collect_secret_values()
     try:
         with _remote_log_bridge(run_logger, prefect_context=prefect_context, secrets=secrets):
             return _execute_stage(
@@ -431,6 +476,8 @@ def managed_sync_run(  # pylint: disable=too-many-positional-arguments
                 confirm_writes,
                 run_logger,
                 secrets,
+                config_directory,
+                projection,
             )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         # Rebuilt after the original exception context exits.
