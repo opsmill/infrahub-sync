@@ -302,9 +302,11 @@ def test_configuration_route_grammar_refuses_hostile_values_before_service_class
         ("post", "/configs", {"content": '{"package":{"nested":[NaN]},"reason":"valid"}'}),
         ("post", "/configs", {"json": {"package": package_data(), "reason": "invalid\nreason"}}),
         ("get", "/configs?offset=true", {}),
+        ("get", "/configs?offset=1.0", {}),
         ("get", "/configs?limit=257", {}),
         ("get", "/configs/not%20an%20id", {}),
         ("get", "/configs/good/versions/true", {}),
+        ("get", "/configs/good/versions/1.0", {}),
         ("get", "/configs/good/versions/0", {}),
         ("post", "/configs/good/versions/1/validate?limit=true", {}),
     ]

@@ -33,6 +33,16 @@ class ConfigurationAPIError(Exception):
         self.reason = reason
 
 
+def _strict_integer(value: str, *, minimum: int, maximum: int) -> int:
+    """Parse one bounded API integer without accepting FastAPI's coercions."""
+    if not value.isascii() or not value.isdecimal():
+        raise ManagedAPIError(422, "request-invalid", "the request does not match the API schema")
+    number = int(value)
+    if number < minimum or number > maximum:
+        raise ManagedAPIError(422, "request-invalid", "the request does not match the API schema")
+    return number
+
+
 class ConfigurationRoutes:
     """Bind configuration operations to this server's durable cache location."""
 
@@ -175,9 +185,9 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
     """Create the seven authenticated configuration resources."""
     router = APIRouter()
     config_id_parameter = APIPath(pattern=_CONFIG_ID_PATTERN)
-    registry_version_parameter = APIPath(ge=1, le=_MAX_REGISTRY_VERSION)
-    page_offset = Query(ge=0, le=_MAX_REGISTRY_VERSION)
-    page_limit = Query(ge=1, le=_MAX_PAGE_LIMIT)
+    registry_version_parameter = APIPath()
+    page_offset = Query()
+    page_limit = Query()
 
     @router.post("/configs", status_code=201)
     def register(
@@ -221,10 +231,13 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
     @router.get("/configs")
     def list_configs(
         _principal: Annotated[Principal, Depends(authenticate)],
-        offset: Annotated[int, page_offset] = 0,
-        limit: Annotated[int, page_limit] = _MAX_PAGE_LIMIT,
+        offset: Annotated[str, page_offset] = "0",
+        limit: Annotated[str, page_limit] = str(_MAX_PAGE_LIMIT),
     ) -> Any:
-        return routes.list_configs(offset=offset, limit=limit)
+        return routes.list_configs(
+            offset=_strict_integer(offset, minimum=0, maximum=_MAX_REGISTRY_VERSION),
+            limit=_strict_integer(limit, minimum=1, maximum=_MAX_PAGE_LIMIT),
+        )
 
     @router.get("/configs/{config_id}")
     def get_config(
@@ -236,27 +249,36 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
     def list_versions(
         config_id: Annotated[str, config_id_parameter],
         _principal: Annotated[Principal, Depends(authenticate)],
-        offset: Annotated[int, page_offset] = 0,
-        limit: Annotated[int, page_limit] = _MAX_PAGE_LIMIT,
+        offset: Annotated[str, page_offset] = "0",
+        limit: Annotated[str, page_limit] = str(_MAX_PAGE_LIMIT),
     ) -> Any:
-        return routes.list_versions(config_id, offset=offset, limit=limit)
+        return routes.list_versions(
+            config_id,
+            offset=_strict_integer(offset, minimum=0, maximum=_MAX_REGISTRY_VERSION),
+            limit=_strict_integer(limit, minimum=1, maximum=_MAX_PAGE_LIMIT),
+        )
 
     @router.get("/configs/{config_id}/versions/{registry_version}")
     def get_version(
         config_id: Annotated[str, config_id_parameter],
-        registry_version: Annotated[int, registry_version_parameter],
+        registry_version: Annotated[str, registry_version_parameter],
         _principal: Annotated[Principal, Depends(authenticate)],
     ) -> Any:
-        return routes.get_version(config_id, registry_version)
+        return routes.get_version(config_id, _strict_integer(registry_version, minimum=1, maximum=_MAX_REGISTRY_VERSION))
 
     @router.post("/configs/{config_id}/versions/{registry_version}/validate")
     def validate(
         config_id: Annotated[str, config_id_parameter],
-        registry_version: Annotated[int, registry_version_parameter],
+        registry_version: Annotated[str, registry_version_parameter],
         _principal: Annotated[Principal, Depends(authenticate)],
-        offset: Annotated[int, page_offset] = 0,
-        limit: Annotated[int, page_limit] = _MAX_PAGE_LIMIT,
+        offset: Annotated[str, page_offset] = "0",
+        limit: Annotated[str, page_limit] = str(_MAX_PAGE_LIMIT),
     ) -> Any:
-        return routes.validate(config_id, registry_version, offset=offset, limit=limit)
+        return routes.validate(
+            config_id,
+            _strict_integer(registry_version, minimum=1, maximum=_MAX_REGISTRY_VERSION),
+            offset=_strict_integer(offset, minimum=0, maximum=_MAX_REGISTRY_VERSION),
+            limit=_strict_integer(limit, minimum=1, maximum=_MAX_PAGE_LIMIT),
+        )
 
     return router
