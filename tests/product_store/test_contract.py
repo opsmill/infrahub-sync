@@ -2341,8 +2341,8 @@ def test_fresh_sqlite_database_gains_the_nullable_binding_columns(tmp_path: Path
     assert set(_CONFIGURATION_BINDING_COLUMN_NAMES) <= columns
 
 
-def test_product_run_model_declares_no_configuration_binding_fields() -> None:
-    assert not set(_CONFIGURATION_BINDING_COLUMN_NAMES) & set(ProductRun.model_fields)
+def test_product_run_model_declares_configuration_binding_fields() -> None:
+    assert set(_CONFIGURATION_BINDING_COLUMN_NAMES) <= set(ProductRun.model_fields)
 
 
 def test_preexisting_database_is_migrated_forward_and_keeps_its_legacy_row(tmp_path: Path) -> None:
@@ -2410,7 +2410,7 @@ def test_existing_run_lifecycle_is_unaffected_by_the_new_binding_columns(provide
     assert loaded is not None
     assert loaded.phase == "planned"
     assert loaded.outcome == "succeeded"
-    assert "config_id" not in ProductRun.model_fields
+    assert set(_CONFIGURATION_BINDING_COLUMN_NAMES) <= set(ProductRun.model_fields)
 
 
 class _FakePostgreSQLDatabase:

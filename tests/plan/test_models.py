@@ -115,9 +115,7 @@ def test_the_two_masks_are_deliberately_different() -> None:
 )
 def test_manifest_configuration_binding_is_all_absent_or_all_present(binding: dict[str, object]) -> None:
     manifest = PlanManifest(**_manifest(**binding))
-    assert manifest.configuration_binding == (
-        ("config-001", 1, "a" * 64) if binding else None
-    )
+    assert manifest.configuration_binding == (("config-001", 1, "a" * 64) if binding else None)
 
 
 @pytest.mark.parametrize(
@@ -128,7 +126,9 @@ def test_manifest_configuration_binding_is_all_absent_or_all_present(binding: di
         pytest.param({"package_checksum": "a" * 64}, id="checksum-only"),
         pytest.param({"config_id": "config-001", "registry_version": True, "package_checksum": "a" * 64}, id="bool"),
         pytest.param({"config_id": "config-001", "registry_version": "1", "package_checksum": "a" * 64}, id="string"),
-        pytest.param({"config_id": "config-001", "registry_version": 1, "package_checksum": "not-a-digest"}, id="digest"),
+        pytest.param(
+            {"config_id": "config-001", "registry_version": 1, "package_checksum": "not-a-digest"}, id="digest"
+        ),
     ],
 )
 def test_manifest_configuration_binding_refuses_partial_or_hostile_values(binding: dict[str, object]) -> None:

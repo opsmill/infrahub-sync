@@ -33,6 +33,7 @@ from infrahub_sync.plan.errors import OperationApplyFailedError
 from infrahub_sync.plan.models import ApplyRecord, PlanManifest
 from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.product_store import ProductRun, local_product_projection
+from tests.configuration.validation_packages import package
 
 if TYPE_CHECKING:
     from prefect.client.schemas.actions import DeploymentUpdate
@@ -53,8 +54,8 @@ def _saved(run_id: str) -> SavedPlan:
     return SavedPlan(manifest=manifest, operations=[], checksum_ok=True, verification_notes=[])
 
 
-def _instance(sync_name: str, *, directory: str) -> SimpleNamespace:  # noqa: ARG001 - resolver protocol fake.
-    return SimpleNamespace(name=sync_name)
+def _instance(configuration: object, *, directory: str) -> SimpleNamespace:  # noqa: ARG001 - resolver protocol fake.
+    return SimpleNamespace(name=configuration.configuration.name)
 
 
 class _RecordingRunLogger:
@@ -112,11 +113,15 @@ def _create_product_run(
     operation: Literal["plan", "sync", "verify", "apply"] = "plan",
 ):
     projection = local_product_projection(cache)
+    version = projection.create_configuration(package())
     projection.create_run(
         ProductRun(
             run_id=run_id,
             operation=operation,
-            configuration_reference="sha256:configuration",
+            configuration_reference=f"{version.config_id}@{version.registry_version}",
+            config_id=version.config_id,
+            registry_version=version.registry_version,
+            package_checksum=version.package_checksum,
             actor="owner",
             started_at=datetime.now(timezone.utc),
             phase="accepted",
@@ -124,6 +129,13 @@ def _create_product_run(
         )
     )
     return projection
+
+
+def _binding(projection, run_id: str) -> tuple[str, int, str]:
+    run = projection.lookup_run(run_id).value
+    assert run is not None
+    assert run.configuration_binding is not None
+    return run.configuration_binding
 
 
 def test_worker_rejects_missing_registered_package_before_runtime_construction(
@@ -388,11 +400,11 @@ def test_managed_flow_redacts_worker_logs_exception_chain_and_failed_state(
         failure_message = f"adapter rejected {configuration_canary}"
         raise ValueError(failure_message) from ConnectionError(cause_message)
 
-    monkeypatch.setattr(managed_flow, "resolve_sync_instance", resolve)
+    monkeypatch.setattr(managed_flow, "resolve_runtime_instance", resolve)
     monkeypatch.setattr(managed_flow, "_plan", fail_plan)
 
     with pytest.raises(RuntimeError) as exc_info:
-        managed_sync_run.fn(run_id, "inventory", "plan", "sha256:configuration")
+        managed_sync_run.fn(run_id, "plan", *_binding(projection, run_id))
 
     failure = exc_info.value
     failed_state = Failed(message=str(failure), data=failure)
@@ -428,8 +440,9 @@ def test_managed_apply_failure_retains_partial_write_evidence(
     partial = ApplyRecord(applied_operations=("op-applied",), failed_operation="op-failed")
     monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
-    monkeypatch.setattr(managed_flow, "resolve_sync_instance", _instance)
+    monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
+    monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
 
     def fail_apply(*_args: object, **_kwargs: object) -> NoReturn:
         msg = "destination rejected operation"
@@ -440,9 +453,8 @@ def test_managed_apply_failure_retains_partial_write_evidence(
     with pytest.raises(RuntimeError):
         managed_sync_run.fn(
             run_id,
-            "inventory",
             "apply",
-            "sha256:configuration",
+            *_binding(projection, run_id),
             expected_checksum="a" * 64,
             confirm_writes=True,
         )
@@ -469,9 +481,10 @@ def test_managed_confirmed_sync_retains_the_semantic_sync_operation(
     saved = _saved(run_id)
     monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
-    monkeypatch.setattr(managed_flow, "resolve_sync_instance", _instance)
+    monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "bounded_run_lock", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
 
     def core(_instance: object, *, operation: str, **_kwargs: object) -> SavedPlan | RunResult:
         if operation in {"plan", "verify"}:
@@ -490,9 +503,8 @@ def test_managed_confirmed_sync_retains_the_semantic_sync_operation(
 
     result = managed_sync_run.fn(
         run_id,
-        "inventory",
         "sync",
-        "sha256:configuration",
+        *_binding(projection, run_id),
         confirm_writes=True,
     )
 
@@ -512,8 +524,9 @@ def test_managed_plan_worker_updates_the_api_created_run_and_publishes_review(
     seen: list[str] = []
     monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
-    monkeypatch.setattr(managed_flow, "resolve_sync_instance", _instance)
+    monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
+    monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
 
     def plan(_instance, *, run_id: str, branch: str | None, composed_sync: bool):  # noqa: ARG001
         seen.append(run_id)
@@ -524,9 +537,8 @@ def test_managed_plan_worker_updates_the_api_created_run_and_publishes_review(
 
     result = managed_sync_run.fn(
         run_id,
-        "inventory",
         "plan",
-        "sha256:configuration",
+        *_binding(projection, run_id),
     )
 
     assert seen == [run_id]
@@ -544,15 +556,14 @@ def test_managed_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.M
     saved = _saved(run_id)
     monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
-    monkeypatch.setattr(managed_flow, "resolve_sync_instance", _instance)
+    monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "execute_run", lambda *_args, **_kwargs: saved)
 
     result = managed_sync_run.fn(
         run_id,
-        "inventory",
         "verify",
-        "sha256:configuration",
+        *_binding(projection, run_id),
     )
 
     assert result == {
@@ -580,8 +591,9 @@ def test_confirmed_managed_sync_calls_plan_verify_apply_in_order_on_one_run(
     monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
     monkeypatch.setattr(managed_flow, "bounded_run_lock", lambda *_args, **_kwargs: nullcontext())
-    monkeypatch.setattr(managed_flow, "resolve_sync_instance", _instance)
+    monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
+    monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
 
     def plan(_instance, *, run_id: str, branch: str | None, composed_sync: bool):  # noqa: ARG001
         calls.append(("plan", run_id))
@@ -610,9 +622,8 @@ def test_confirmed_managed_sync_calls_plan_verify_apply_in_order_on_one_run(
 
     managed_sync_run.fn(
         run_id,
-        "inventory",
         "sync",
-        "sha256:configuration",
+        *_binding(projection, run_id),
         confirm_writes=True,
     )
 
@@ -666,9 +677,10 @@ async def test_prefect_extras_executor_receives_opaque_key_unchanged() -> None:
     gateway = PrefectOrchestration(client)  # type: ignore[arg-type] - offline fake implements the protocol.
     parameters: dict[str, object] = {
         "run_id": "run-001",
-        "sync_name": "inventory",
         "stage": "plan",
-        "configuration_reference": "sha256:configuration",
+        "config_id": "config-001",
+        "registry_version": 1,
+        "package_checksum": "a" * 64,
         "branch": None,
         "expected_checksum": None,
         "confirm_writes": False,

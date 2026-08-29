@@ -336,7 +336,8 @@ class PlanManifest(BaseModel):
     @classmethod
     def _require_exact_registry_version(cls, value: object) -> object:
         """Refuse coercible values; a binding is an exact registry identity."""
-        if value is not None and type(value) is not int:
+        if value is not None and type(value) is not int:  # pylint: disable=unidiomatic-typecheck
+            # Exact identity excludes bool and int subclasses.
             msg = "registry_version must be int"
             raise ValueError(msg)
         return value

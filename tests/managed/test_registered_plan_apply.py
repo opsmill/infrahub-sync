@@ -50,7 +50,9 @@ def _registered_apply(
     )
     stored = projection.lookup_configuration_version(binding[0], binding[1]).value
     assert stored is not None
-    runtime = resolve_runtime_instance(ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path))
+    runtime = resolve_runtime_instance(
+        ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path)
+    )
     write_plan_artifact(
         run_dir=tmp_path / "runs" / runtime.name / run_id,
         run_id=run_id,
@@ -100,9 +102,7 @@ def test_bound_apply_refuses_nonmatching_manifest_before_destination(
     assert calls == []
 
 
-def test_bound_apply_accepts_an_exact_manifest_binding(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_bound_apply_accepts_an_exact_manifest_binding(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     run_id, binding, calls = _registered_apply(tmp_path, monkeypatch, manifest_binding="exact")
     managed_sync_run.fn(run_id, "apply", *binding, expected_checksum="a" * 64, confirm_writes=True)
     assert calls == ["execute-run"]
