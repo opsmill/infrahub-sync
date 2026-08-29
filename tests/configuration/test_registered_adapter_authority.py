@@ -5,7 +5,9 @@ from __future__ import annotations
 import importlib
 import sys
 import types
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any, cast
 
 import pytest
 
@@ -111,15 +113,15 @@ ROWS = (
 
 def _install_optional_sdk_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make optional imports deterministic before each dynamic adapter import."""
-    pynetbox = types.ModuleType("pynetbox")
-    pynetbox.api = lambda *_args, **_kwargs: types.SimpleNamespace()  # type: ignore[attr-defined]
-    pynautobot = types.ModuleType("pynautobot")
-    pynautobot.api = lambda **_kwargs: types.SimpleNamespace()  # type: ignore[attr-defined]
+    pynetbox = cast("Any", types.ModuleType("pynetbox"))
+    pynetbox.api = lambda *_args, **_kwargs: types.SimpleNamespace()
+    pynautobot = cast("Any", types.ModuleType("pynautobot"))
+    pynautobot.api = lambda **_kwargs: types.SimpleNamespace()
     core = types.ModuleType("pynautobot.core")
-    query = types.ModuleType("pynautobot.core.query")
-    query.RequestError = RuntimeError  # type: ignore[attr-defined]
-    ipfabric = types.ModuleType("ipfabric")
-    ipfabric.IPFClient = lambda **_kwargs: types.SimpleNamespace()  # type: ignore[attr-defined]
+    query = cast("Any", types.ModuleType("pynautobot.core.query"))
+    query.RequestError = RuntimeError
+    ipfabric = cast("Any", types.ModuleType("ipfabric"))
+    ipfabric.IPFClient = lambda **_kwargs: types.SimpleNamespace()
     for name, module in {
         "pynetbox": pynetbox,
         "pynautobot": pynautobot,
@@ -141,12 +143,12 @@ def _class_name(row: AdapterRow) -> str:
     return "".join(part.title() for part in row.name.split("_")) + "Adapter"
 
 
-def _instance(row: AdapterRow, settings: dict[str, str]) -> SyncInstance:
+def _instance(row: AdapterRow, settings: Mapping[str, object]) -> SyncInstance:
     return SyncInstance(
         name=f"ar5-{row.name}",
         directory="/registered-runtime",
-        source=SyncAdapter(name=row.name, settings=settings.copy()),
-        destination=SyncAdapter(name=row.name, settings=settings.copy()),
+        source=SyncAdapter(name=row.name, settings=dict(settings)),
+        destination=SyncAdapter(name=row.name, settings=dict(settings)),
     )
 
 
@@ -154,6 +156,7 @@ def _capture_client(
     monkeypatch: pytest.MonkeyPatch, row: AdapterRow, module: types.ModuleType
 ) -> list[dict[str, object]]:
     observed: list[dict[str, object]] = []
+    dynamic_module = cast("Any", module)
 
     def capture(**kwargs: object) -> object:
         observed.append(kwargs)
@@ -165,37 +168,37 @@ def _capture_client(
         return types.SimpleNamespace(get=lambda *_args, **_kwargs: types.SimpleNamespace(json=lambda: {"imdata": []}))
 
     if row.name == "aci":
-        monkeypatch.setattr(module, "AciApiClient", capture)
+        monkeypatch.setattr(dynamic_module, "AciApiClient", capture)
     elif row.name == "infrahub":
 
         class MissingNodeError(Exception):
             pass
 
-        monkeypatch.setattr(module, "NodeNotFoundError", MissingNodeError)
-        monkeypatch.setattr(module, "Config", lambda **kwargs: kwargs)
-        monkeypatch.setattr(module, "InfrahubClientSync", capture)
+        monkeypatch.setattr(dynamic_module, "NodeNotFoundError", MissingNodeError)
+        monkeypatch.setattr(dynamic_module, "Config", lambda **kwargs: kwargs)
+        monkeypatch.setattr(dynamic_module, "InfrahubClientSync", capture)
     elif row.name == "netbox":
-        monkeypatch.setattr(module.pynetbox, "api", lambda url, token: capture(url=url, token=token))
+        monkeypatch.setattr(dynamic_module.pynetbox, "api", lambda url, token: capture(url=url, token=token))
     elif row.name == "nautobot":
-        monkeypatch.setattr(module.pynautobot, "api", capture)
+        monkeypatch.setattr(dynamic_module.pynautobot, "api", capture)
     elif row.name == "prometheus":
-        monkeypatch.setattr(module, "PrometheusScrapeClient", capture)
+        monkeypatch.setattr(dynamic_module, "PrometheusScrapeClient", capture)
     elif row.name == "ipfabricsync":
-        monkeypatch.setattr(module, "IPFClient", capture)
+        monkeypatch.setattr(dynamic_module, "IPFClient", capture)
     else:
         monkeypatch.setattr(importlib.import_module("infrahub_sync.adapters.genericrestapi"), "RestApiClient", capture)
     return observed
 
 
-def _observed(row: AdapterRow, kwargs: dict[str, object]) -> dict[str, object]:
+def _observed(row: AdapterRow, kwargs: dict[str, Any]) -> dict[str, object]:
     if row.name == "aci":
         return {
             "url": kwargs["base_url"].removesuffix("/api/"),
             "username": kwargs["username"],
             "password": kwargs["password"],
-        }  # type: ignore[union-attr]
+        }
     if row.name == "infrahub":
-        return {"url": kwargs["address"], "token": kwargs["config"]["api_token"]}  # type: ignore[index]
+        return {"url": kwargs["address"], "token": kwargs["config"]["api_token"]}
     if row.name in {"netbox", "nautobot"}:
         return {"url": kwargs["url"], "token": kwargs["token"]}
     if row.name == "prometheus":
@@ -265,7 +268,7 @@ def test_apply_constructs_only_registered_destination(
     calls: list[str] = []
 
     def adapter_factory(**kwargs: object) -> type[object]:
-        calls.append(kwargs["adapter"].name)  # type: ignore[index]
+        calls.append(cast("SyncAdapter", kwargs["adapter"]).name)
         return getattr(module, _class_name(row))
 
     monkeypatch.setattr("infrahub_sync.utils.import_adapter", adapter_factory)
@@ -288,7 +291,8 @@ def test_registered_writebacks_never_copy_ambient_credentials(
     monkeypatch.setattr("infrahub_sync.utils.import_adapter", lambda **_kwargs: getattr(module, _class_name(row)))
     get_potenda_from_instance(instance, run_id="ar5-writeback")
     for adapter in (instance.source, instance.destination):
-        assert not any(value in row.ambient.values() for value in adapter.settings.values())  # type: ignore[union-attr]
+        assert adapter.settings is not None
+        assert not any(value in row.ambient.values() for value in adapter.settings.values())
 
 
 def test_peeringmanager_defaults_reach_genericrestapi_without_overriding_registered_values(
@@ -306,5 +310,6 @@ def test_peeringmanager_defaults_reach_genericrestapi_without_overriding_registe
     get_potenda_from_instance(instance, run_id="ar5-peering")
     assert [_observed(row, call) for call in observed] == [row.expected, row.expected]
     for adapter in (instance.source, instance.destination):
-        assert adapter.settings["url_env_vars"] == ["PEERING_MANAGER_ADDRESS", "PEERING_MANAGER_URL"]  # type: ignore[index]
-        assert adapter.settings["token_env_vars"] == ["PEERING_MANAGER_TOKEN"]  # type: ignore[index]
+        assert adapter.settings is not None
+        assert adapter.settings["url_env_vars"] == ["PEERING_MANAGER_ADDRESS", "PEERING_MANAGER_URL"]
+        assert adapter.settings["token_env_vars"] == ["PEERING_MANAGER_TOKEN"]

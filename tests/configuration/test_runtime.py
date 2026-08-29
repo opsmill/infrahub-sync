@@ -35,5 +35,7 @@ def test_runtime_instance_resolves_declared_credentials_without_ambient_lookup(m
     )
 
     instance = resolve_runtime_instance(package, directory="/registered")
+    assert instance.source.settings is not None
+    assert instance.destination.settings is not None
     assert instance.source.settings["token"] == registered
     assert instance.destination.settings["token"] == registered

@@ -37,9 +37,10 @@ def isolated_prefect_server(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
 async def test_same_opaque_key_creates_one_prefect_flow_run(isolated_prefect_server: None) -> None:  # noqa: ARG001
     parameters: dict[str, object] = {
         "run_id": "run-server-idempotency",
-        "sync_name": "inventory",
         "stage": "plan",
-        "configuration_reference": "sha256:configuration",
+        "config_id": "config-001",
+        "registry_version": 1,
+        "package_checksum": "a" * 64,
         "branch": None,
         "expected_checksum": None,
         "confirm_writes": False,

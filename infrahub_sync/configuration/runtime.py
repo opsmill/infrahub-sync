@@ -19,7 +19,7 @@ def resolve_runtime_instance(package: ConfigurationPackage, *, directory: str) -
         if type(value) is dict:  # pylint: disable=unidiomatic-typecheck
             mapping = cast("dict[str, object]", value)
             if set(mapping) == {"$credential"} and type(mapping["$credential"]) is str:  # pylint: disable=unidiomatic-typecheck
-                return resolve_reference(package, cast("str", mapping["$credential"]))
+                return resolve_reference(package, mapping["$credential"])
             return {key: resolve(child) for key, child in mapping.items()}
         if type(value) is list:  # pylint: disable=unidiomatic-typecheck
             return [resolve(child) for child in cast("list[object]", value)]
@@ -29,6 +29,10 @@ def resolve_runtime_instance(package: ConfigurationPackage, *, directory: str) -
     runtime = cast("dict[str, object]", resolved)
     for side in ("source", "destination"):
         adapter = runtime[side]
-        if type(adapter) is dict and type(adapter.get("settings")) is dict:  # pylint: disable=unidiomatic-typecheck
-            adapter["settings"][_REGISTERED_CONTEXT] = True
-    return SyncInstance(**runtime, directory=directory)
+        if type(adapter) is dict:  # pylint: disable=unidiomatic-typecheck
+            adapter_mapping = cast("dict[str, object]", adapter)
+            settings = adapter_mapping.get("settings")
+            if type(settings) is dict:  # pylint: disable=unidiomatic-typecheck
+                cast("dict[str, object]", settings)[_REGISTERED_CONTEXT] = True
+    runtime["directory"] = directory
+    return SyncInstance.model_validate(runtime)

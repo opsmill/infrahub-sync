@@ -6,7 +6,7 @@ from typing import Any
 
 import requests
 from diffsync import Adapter, DiffSyncModel
-from prometheus_client.parser import (  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
+from prometheus_client.parser import (
     text_string_to_metric_families,
 )
 from typing_extensions import Self

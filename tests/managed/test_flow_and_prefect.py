@@ -39,6 +39,8 @@ if TYPE_CHECKING:
     from prefect.client.schemas.actions import DeploymentUpdate
     from prefect.client.schemas.objects import State
 
+    from infrahub_sync.configuration import ConfigurationPackage
+
 
 def _saved(run_id: str) -> SavedPlan:
     manifest = PlanManifest(
@@ -54,7 +56,8 @@ def _saved(run_id: str) -> SavedPlan:
     return SavedPlan(manifest=manifest, operations=[], checksum_ok=True, verification_notes=[])
 
 
-def _instance(configuration: object, *, directory: str) -> SimpleNamespace:  # noqa: ARG001 - resolver protocol fake.
+def _instance(configuration: ConfigurationPackage, *, directory: str) -> SimpleNamespace:  # noqa: ARG001
+    """Build the flow's minimal runtime fake from a registered package."""
     return SimpleNamespace(name=configuration.configuration.name)
 
 

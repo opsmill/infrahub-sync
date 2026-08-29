@@ -28,15 +28,17 @@ _REGISTERED_CONTEXT = "_infrahub_sync_registered_context"
 
 def select_runtime_credential(
     settings: Mapping[str, object], setting_name: str, environment_names: tuple[str, ...]
-) -> object:
+) -> str | None:
     """Select a credential without ambient reads for a registered runtime package."""
     if settings.get(_REGISTERED_CONTEXT) is True:
-        return settings.get(setting_name)
+        value = settings.get(setting_name)
+        return value if isinstance(value, str) else None
     for environment_name in environment_names:
         value = os.environ.get(environment_name)
         if value:
             return value
-    return settings.get(setting_name)
+    value = settings.get(setting_name)
+    return value if isinstance(value, str) else None
 
 
 @dataclass(frozen=True, slots=True)
