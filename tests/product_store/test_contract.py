@@ -66,6 +66,7 @@ EXPECTED_PUBLIC_NAMES = {
     "MutationReceipt",
     "PrefectExecutionLink",
     "ProductProjection",
+    "ProductStoreProviderError",
     "ProductRun",
     "RunNotFoundError",
     "S3Client",
