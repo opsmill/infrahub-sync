@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime  # noqa: TC003 - dataclass fields are runtime records.
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol, cast
 from uuid import UUID
 
 import httpx
@@ -55,6 +56,26 @@ class Observation:
     reason: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PoolWorker:
+    """Internal, non-public worker liveness evidence from Prefect."""
+
+    worker_id: str
+    status: str
+    last_heartbeat: datetime | None
+    heartbeat_interval_seconds: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class PoolStatus:
+    """One value-free work-pool observation."""
+
+    detail_available: bool
+    queue_depth: int | None
+    observed_at: datetime | None
+    workers: tuple[PoolWorker, ...] = ()
+
+
 class ManagedOrchestration(Protocol):
     """Small orchestration boundary consumed by the HTTP service."""
 
@@ -62,7 +83,17 @@ class ManagedOrchestration(Protocol):
 
     async def observe(self, flow_run_id: str) -> Observation: ...
 
+    async def pool_status(self, work_pool_name: str, now: datetime) -> PoolStatus: ...
+
     async def cancel(self, flow_run_id: str) -> Observation: ...
+
+
+class _PoolClient(Protocol):
+    """Pinned Prefect client methods used only by the managed liveness adapter."""
+
+    async def read_workers_for_work_pool(self, work_pool_name: str) -> list[Any]: ...
+
+    async def get_scheduled_flow_runs_for_work_pool(self, work_pool_name: str) -> list[Any]: ...
 
 
 class PrefectOrchestration:
@@ -88,6 +119,26 @@ class PrefectOrchestration:
             return Observation(available=True, state="pending")
         state_name = state.name or state.type.value
         return Observation(available=True, state=state_name.lower())
+
+    async def pool_status(self, work_pool_name: str, now: datetime) -> PoolStatus:
+        """Read worker heartbeats and scheduled queue depth without exposing provider detail."""
+        try:
+            client = cast("_PoolClient", self._client)
+            workers = await client.read_workers_for_work_pool(work_pool_name)
+            scheduled = await client.get_scheduled_flow_runs_for_work_pool(work_pool_name)
+            parsed = tuple(
+                PoolWorker(
+                    worker_id=str(worker.id),
+                    status=str(worker.status).lower(),
+                    last_heartbeat=worker.last_heartbeat_time,
+                    heartbeat_interval_seconds=float(worker.heartbeat_interval_seconds),
+                )
+                for worker in workers
+            )
+            queue_depth = len(scheduled)
+        except (ObjectNotFound, httpx.HTTPError, AttributeError, TypeError, ValueError):
+            return PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
+        return PoolStatus(detail_available=True, queue_depth=queue_depth, observed_at=now, workers=parsed)
 
     async def cancel(self, flow_run_id: str) -> Observation:
         observed = await self.observe(flow_run_id)

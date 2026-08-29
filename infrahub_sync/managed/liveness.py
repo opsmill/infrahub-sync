@@ -4,8 +4,17 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Callable  # noqa: TC003 - constructor default is evaluated at runtime.
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+
+from infrahub_sync.product_store import (  # noqa: TC001 - runtime protocol boundary.
+    PrefectExecutionLink,
+    ProductProjection,
+)
+
+from .orchestration import ManagedOrchestration, PoolStatus  # noqa: TC001 - runtime protocol boundary.
 
 RUN_ADMISSION_TTL_ENV = "INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS"
 _POLICY_ERROR = "managed liveness settings are invalid"
@@ -39,3 +48,82 @@ class LivenessPolicy:
             raise ValueError(_POLICY_ERROR)
         threshold = max(float(query * 3), 30.0)
         return cls(ttl_value, threshold, max(0.25, min(5.0, threshold / 2)))
+
+
+def age(now: datetime, anchor: datetime) -> float:
+    """Return non-negative elapsed seconds; clock reversal cannot accelerate a verdict."""
+    return max(0.0, (now - anchor).total_seconds())
+
+
+class RunLivenessReconciler:
+    """Conservatively terminalize durable executions; never submit or replay work."""
+
+    def __init__(
+        self,
+        projection: ProductProjection,
+        orchestration: ManagedOrchestration,
+        policy: LivenessPolicy,
+        work_pool_name: str,
+        *,
+        clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    ) -> None:
+        self._projection = projection
+        self._orchestration = orchestration
+        self._policy = policy
+        self._work_pool_name = work_pool_name
+        self._clock = clock
+
+    @property
+    def cadence_seconds(self) -> float:
+        """Return the bounded background-loop cadence."""
+        return self._policy.cadence_seconds
+
+    async def reconcile_once(self) -> None:
+        """Apply one bounded snapshot to every non-terminal execution."""
+        now = self._clock()
+        pool = await self._orchestration.pool_status(self._work_pool_name, now)
+        for run_id, link in self._projection.pending_executions():
+            await self.reconcile_execution(run_id, link, pool, now)
+
+    async def reconcile_execution(
+        self, run_id: str, link: PrefectExecutionLink, pool: PoolStatus | None = None, now: datetime | None = None
+    ) -> None:
+        """Reconcile one link, suitable for request-time freshness before rendering."""
+        now = now or self._clock()
+        pool = pool or await self._orchestration.pool_status(self._work_pool_name, now)
+        observed = await self._orchestration.observe(link.flow_run_id)
+        if observed.available:
+            self._projection.observe_prefect_execution(run_id, link.flow_run_id, state=observed.state)
+        if link.claimed_at is None:
+            if link.submitted_at is not None and age(now, link.submitted_at) >= self._policy.admission_ttl_seconds:
+                self._projection.abandon_execution(run_id, link.flow_run_id, terminal_at=now)
+                return
+            if (
+                link.submitted_at is not None
+                and age(now, link.submitted_at) >= self._policy.stall_threshold_seconds
+                and pool.detail_available
+            ):
+                self._projection.mark_execution_stalled(run_id, link.flow_run_id, stalled_at=now)
+            return
+        if observed.available and observed.state in {"completed", "failed", "crashed", "cancelled"}:
+            self._projection.interrupt_execution(run_id, link.flow_run_id, terminal_at=now)
+            return
+        if link.claimed_at is None or age(now, link.claimed_at) < self._policy.stall_threshold_seconds:
+            return
+        if pool.detail_available and not _owner_is_fresh(link.claiming_worker_id, pool, now):
+            self._projection.interrupt_execution(run_id, link.flow_run_id, terminal_at=now)
+
+
+def _owner_is_fresh(worker_id: str | None, pool: PoolStatus, now: datetime) -> bool:
+    """Only the exact claiming UUID can keep a claimed execution alive."""
+    if worker_id is None:
+        return False
+    for worker in pool.workers:
+        if worker.worker_id != worker_id or worker.status != "online":
+            continue
+        if worker.last_heartbeat is None or worker.heartbeat_interval_seconds is None:
+            return False
+        if worker.heartbeat_interval_seconds <= 0:
+            return False
+        return age(now, worker.last_heartbeat) <= max(3 * worker.heartbeat_interval_seconds, 30)
+    return False

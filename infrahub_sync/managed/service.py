@@ -32,15 +32,51 @@ from .models import (
     PlanResource,
     ResultsResource,
     RunResource,
+    ServiceStatusResource,
     VerifyRunRequest,
+    WorkerStatusResource,
 )
-from .orchestration import ManagedOrchestration, Observation
+from .orchestration import ManagedOrchestration, Observation, PoolStatus
 
 if TYPE_CHECKING:
     from .auth import Principal
 
 PLAN_ARTIFACT_ID = "plan-review"
 TERMINAL_STATES = frozenset({"completed", "failed", "crashed", "cancelled"})
+
+
+def _service_status(snapshot: PoolStatus) -> ServiceStatusResource:
+    """Project internal pool evidence into the deliberately small public schema."""
+    if not snapshot.detail_available:
+        return ServiceStatusResource(
+            service="ready",
+            worker=WorkerStatusResource(
+                state="unavailable", detail_available=False, live_workers=None, queue_depth=None, observed_at=None
+            ),
+        )
+    assert snapshot.queue_depth is not None
+    assert snapshot.observed_at is not None
+    now = snapshot.observed_at
+    live = sum(
+        worker.status == "online"
+        and worker.last_heartbeat is not None
+        and worker.heartbeat_interval_seconds is not None
+        and worker.heartbeat_interval_seconds > 0
+        and max(0.0, (now - worker.last_heartbeat).total_seconds())
+        <= max(3 * worker.heartbeat_interval_seconds, 30)
+        for worker in snapshot.workers
+    )
+    state = "no-live-worker" if live == 0 else "busy" if snapshot.queue_depth > 0 else "ready"
+    return ServiceStatusResource(
+        service="ready",
+        worker=WorkerStatusResource(
+            state=state,
+            detail_available=True,
+            live_workers=live,
+            queue_depth=snapshot.queue_depth,
+            observed_at=snapshot.observed_at,
+        ),
+    )
 
 
 class ManagedAPIError(Exception):
@@ -408,6 +444,11 @@ class ManagedRunService:
                     secrets=self._secrets,
                 )
         return self._resource_with_observations(self._required_run(run_id), observations)
+
+    async def status(self, work_pool_name: str) -> ServiceStatusResource:
+        """Return lifecycle-safe pool state without exposing provider identifiers."""
+        snapshot = await self._orchestration.pool_status(work_pool_name, datetime.now(timezone.utc))
+        return _service_status(snapshot)
 
     def get_plan(self, run_id: str) -> PlanResource:
         """Return the retained review document."""

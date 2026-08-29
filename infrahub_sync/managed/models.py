@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime  # noqa: TC003 - Pydantic resolves response annotations at runtime.
 from math import isfinite
 from typing import Any, Literal, cast
 
@@ -78,6 +79,23 @@ class VersionResource(_StrictModel):
     server_version: str
     api_versions: tuple[Literal["v3-unstable"], ...]
     stability: Literal["unstable"]
+
+
+class WorkerStatusResource(_StrictModel):
+    """Publicly safe summary of managed worker availability."""
+
+    state: Literal["ready", "busy", "no-live-worker", "unavailable"]
+    detail_available: bool
+    live_workers: int | None
+    queue_depth: int | None
+    observed_at: datetime | None
+
+
+class ServiceStatusResource(_StrictModel):
+    """Unauthenticated lifecycle status without provider identifiers."""
+
+    service: Literal["ready"]
+    worker: WorkerStatusResource
 
 
 class RunResource(_StrictModel):

@@ -838,11 +838,12 @@ def test_confirmation_schema_errors_and_openapi_contract(
         "/runs/{run_id}/verify",
         "/runs/{run_id}/apply",
         "/runs/{run_id}/cancel",
+        "/status",
         "/version",
     }
     for path, route in paths.items():
         for operation in route.values():
-            if path == "/version":
+            if path in {"/status", "/version"}:
                 assert "security" not in operation
                 continue
             assert "401" in operation["responses"]

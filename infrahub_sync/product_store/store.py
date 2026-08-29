@@ -343,6 +343,8 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def interrupt_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool: ...
 
+    def pending_executions(self) -> tuple[tuple[str, PrefectExecutionLink], ...]: ...
+
     def reserve_mutation(
         self, receipt: MutationReceipt, run: ProductRun | None, *, admit_write: bool = False
     ) -> tuple[MutationReceipt, bool]: ...
@@ -959,6 +961,25 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             phase="interrupted",
             outcome="ambiguous",
         )
+
+    def pending_executions(self) -> tuple[tuple[str, PrefectExecutionLink], ...]:
+        """Return durable non-terminal execution links and their owning run IDs."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql("SELECT DISTINCT run_id FROM prefect_executions WHERE terminal_at IS NULL"))
+                run_ids = tuple(str(row[0]) for row in cursor.fetchall())
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        pending: list[tuple[str, PrefectExecutionLink]] = []
+        for run_id in run_ids:
+            run = self.lookup(run_id).value
+            if run is not None:
+                pending.extend((run_id, link) for link in run.prefect_executions if link.terminal_at is None)
+        return tuple(pending)
 
     def _execution_update(self, statement: str, values: tuple[Any, ...]) -> bool:
         connection = self._connect()
@@ -1781,6 +1802,10 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         return self._records.interrupt_execution(
             run_id, flow_run_id, terminal_at=terminal_at or datetime.now(timezone.utc)
         )
+
+    def pending_executions(self) -> tuple[tuple[str, PrefectExecutionLink], ...]:
+        """Return executions that have not received a Sync-owned terminal verdict."""
+        return self._records.pending_executions()
 
     def reserve_mutation(
         self,
