@@ -960,6 +960,15 @@ def test_every_prefect_link_field_and_multiple_attempts_round_trip(provider: Pro
     assert loaded.prefect_executions == links
 
 
+def test_execution_link_requires_complete_claim_and_terminal_verdicts() -> None:
+    """Liveness fields have exact all-or-none boundaries before persistence."""
+    now = datetime(2026, 8, 29, tzinfo=timezone.utc)
+    with pytest.raises(ValidationError, match="claim"):
+        PrefectExecutionLink(flow_run_id="flow", purpose="plan", attempt=1, submitted_at=now, claimed_at=now)
+    with pytest.raises(ValidationError, match="terminal"):
+        PrefectExecutionLink(flow_run_id="flow", purpose="plan", attempt=1, submitted_at=now, terminal_at=now)
+
+
 def test_duplicate_prefect_execution_is_rejected_when_appended(provider: ProductProjection) -> None:
     link = PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1)
     provider.create_run(_run())

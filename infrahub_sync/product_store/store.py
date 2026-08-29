@@ -45,7 +45,10 @@ CREATE TABLE IF NOT EXISTS artifact_refs (
 );
 CREATE TABLE IF NOT EXISTS prefect_executions (
     run_id TEXT NOT NULL, flow_run_id TEXT NOT NULL, deployment_id TEXT, purpose TEXT NOT NULL,
-    attempt INTEGER NOT NULL, last_observed_state TEXT, last_observed_at TEXT, position INTEGER NOT NULL,
+    attempt INTEGER NOT NULL, last_observed_state TEXT, last_observed_at TEXT, submitted_at TEXT,
+    claimed_at TEXT, claiming_worker_id TEXT, stalled_at TEXT, cancellation_requested_at TEXT,
+    cancellation_recovery_deadline_at TEXT, cancellation_receipt_id TEXT, cancellation_acknowledged_at TEXT,
+    terminal_at TEXT, terminal_state TEXT, terminal_outcome TEXT, position INTEGER NOT NULL,
     PRIMARY KEY (run_id, flow_run_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS prefect_executions_run_position
@@ -96,6 +99,19 @@ _CONFIGURATION_BINDING_COLUMNS: tuple[tuple[str, str], ...] = (
     ("config_id", "TEXT"),
     ("registry_version", "INTEGER"),
     ("package_checksum", "TEXT"),
+)
+_PREFECT_EXECUTION_LIVENESS_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("submitted_at", "TEXT"),
+    ("claimed_at", "TEXT"),
+    ("claiming_worker_id", "TEXT"),
+    ("stalled_at", "TEXT"),
+    ("cancellation_requested_at", "TEXT"),
+    ("cancellation_recovery_deadline_at", "TEXT"),
+    ("cancellation_receipt_id", "TEXT"),
+    ("cancellation_acknowledged_at", "TEXT"),
+    ("terminal_at", "TEXT"),
+    ("terminal_state", "TEXT"),
+    ("terminal_outcome", "TEXT"),
 )
 _CONFIGURATION_BINDING_CONSTRAINT = "product_runs_configuration_binding_consistent"
 _CONFIGURATION_BINDING_CHECK_EXPRESSION = (
@@ -205,9 +221,13 @@ manifest_key, created_at, expires_at, published FROM artifact_refs WHERE run_id 
 _INSERT_ARTIFACT_REFERENCE = """INSERT INTO artifact_refs (run_id, artifact_id, kind, media_type, digest, size,
 object_key, manifest_key, created_at, expires_at, published) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _SELECT_PREFECT_EXECUTIONS = """SELECT run_id, flow_run_id, deployment_id, purpose, attempt, last_observed_state,
-last_observed_at, position FROM prefect_executions WHERE run_id = ? ORDER BY position"""
+last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at, cancellation_requested_at,
+cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at, terminal_at, terminal_state,
+terminal_outcome, position FROM prefect_executions WHERE run_id = ? ORDER BY position"""
 _INSERT_PREFECT_EXECUTION = """INSERT INTO prefect_executions (run_id, flow_run_id, deployment_id, purpose, attempt,
-last_observed_state, last_observed_at, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"""
+last_observed_state, last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at,
+cancellation_requested_at, cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at,
+terminal_at, terminal_state, terminal_outcome, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _INSERT_MUTATION_RECEIPT = """INSERT INTO mutation_receipts (receipt_id, actor, key_digest, operation,
 target_run_id, request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body,
 flow_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
@@ -403,6 +423,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         if statement.strip():
                             cursor.execute(statement)
                     self._migrate_product_runs_columns(cursor)
+                    self._migrate_prefect_execution_columns(cursor)
                     self._migrate_mutation_receipts(cursor)
                     self._ensure_mutation_receipt_resource_constraint(cursor)
                     self._ensure_configuration_binding_constraint(cursor)
@@ -449,6 +470,24 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         for column, sql_type in _CONFIGURATION_BINDING_COLUMNS:
             if column not in existing:
                 cursor.execute(f"ALTER TABLE product_runs ADD COLUMN {column} {sql_type}")
+
+    def _migrate_prefect_execution_columns(self, cursor: _Cursor) -> None:
+        """Add liveness columns without fabricating timestamps for legacy links."""
+        if self._dialect == "sqlite":
+            cursor.execute("PRAGMA table_info(prefect_executions)")
+            existing = frozenset(str(row[1]) for row in cursor.fetchall())
+        else:
+            cursor.execute(
+                self._sql(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = ? "
+                    "AND table_schema = current_schema()"
+                ),
+                ("prefect_executions",),
+            )
+            existing = frozenset(str(row[0]) for row in cursor.fetchall())
+        for column, sql_type in _PREFECT_EXECUTION_LIVENESS_COLUMNS:
+            if column not in existing:
+                cursor.execute(f"ALTER TABLE prefect_executions ADD COLUMN {column} {sql_type}")
 
     def _migrate_mutation_receipts(self, cursor: _Cursor) -> None:
         """Add resource identity columns and preserve every legacy receipt in place."""
@@ -815,6 +854,17 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 link.attempt,
                 link.last_observed_state,
                 _iso(link.last_observed_at),
+                _iso(link.submitted_at),
+                _iso(link.claimed_at),
+                link.claiming_worker_id,
+                _iso(link.stalled_at),
+                _iso(link.cancellation_requested_at),
+                _iso(link.cancellation_recovery_deadline_at),
+                link.cancellation_receipt_id,
+                _iso(link.cancellation_acknowledged_at),
+                _iso(link.terminal_at),
+                link.terminal_state,
+                link.terminal_outcome,
                 position,
             ),
         )
@@ -1878,6 +1928,17 @@ def _run_from_rows(
                     "attempt": item[4],
                     "last_observed_state": item[5],
                     "last_observed_at": item[6],
+                    "submitted_at": item[7] if item[7] is not None else item[6],
+                    "claimed_at": item[8],
+                    "claiming_worker_id": item[9],
+                    "stalled_at": item[10],
+                    "cancellation_requested_at": item[11],
+                    "cancellation_recovery_deadline_at": item[12],
+                    "cancellation_receipt_id": item[13],
+                    "cancellation_acknowledged_at": item[14],
+                    "terminal_at": item[15],
+                    "terminal_state": item[16],
+                    "terminal_outcome": item[17],
                 }
                 for item in links
             ],
