@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime  # noqa: TC003 - dataclass fields are runtime records.
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol, cast
 from uuid import UUID
@@ -128,17 +128,43 @@ class PrefectOrchestration:
             scheduled = await client.get_scheduled_flow_runs_for_work_pool(work_pool_name)
             parsed = tuple(
                 PoolWorker(
-                    worker_id=str(worker.id),
-                    status=str(worker.status).lower(),
+                    worker_id=_canonical_uuid(worker.id),
+                    status=_status_value(worker.status),
                     last_heartbeat=worker.last_heartbeat_time,
                     heartbeat_interval_seconds=float(worker.heartbeat_interval_seconds),
                 )
                 for worker in workers
             )
+            if any(
+                worker.last_heartbeat is not None
+                and (not isinstance(worker.last_heartbeat, datetime) or worker.last_heartbeat.utcoffset() is None)
+                for worker in parsed
+            ):
+                return PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
+            if any(
+                worker.heartbeat_interval_seconds is None or worker.heartbeat_interval_seconds <= 0
+                for worker in parsed
+            ):
+                return PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
             queue_depth = len(scheduled)
         except (ObjectNotFound, httpx.HTTPError, AttributeError, TypeError, ValueError):
             return PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
         return PoolStatus(detail_available=True, queue_depth=queue_depth, observed_at=now, workers=parsed)
+
+
+def _canonical_uuid(value: object) -> str:
+    """Require the exact canonical UUID that Prefect assigned to the worker."""
+    if type(value) is not UUID:
+        raise ValueError
+    return str(value)
+
+
+def _status_value(value: object) -> str:
+    """Read Prefect's enum value without accepting arbitrary object stringification."""
+    raw = getattr(value, "value", value)
+    if type(raw) is not str:
+        raise ValueError
+    return raw.lower()
 
     async def cancel(self, flow_run_id: str) -> Observation:
         observed = await self.observe(flow_run_id)
