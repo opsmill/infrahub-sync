@@ -55,9 +55,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS prefect_executions_run_purpose_attempt
 CREATE TABLE IF NOT EXISTS mutation_receipts (
     receipt_id TEXT PRIMARY KEY, actor TEXT NOT NULL, key_digest TEXT NOT NULL,
     operation TEXT NOT NULL, target_run_id TEXT, request_fingerprint TEXT NOT NULL,
-    reason TEXT NOT NULL, run_id TEXT NOT NULL, prefect_key TEXT NOT NULL,
+    reason TEXT NOT NULL, resource TEXT NOT NULL DEFAULT 'run', run_id TEXT, prefect_key TEXT,
     state TEXT NOT NULL, response_status INTEGER, response_body TEXT, flow_run_id TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    CHECK (
+        (resource = 'run' AND run_id IS NOT NULL AND prefect_key IS NOT NULL)
+        OR (resource = 'configuration' AND run_id IS NULL AND prefect_key IS NULL AND target_run_id IS NULL AND flow_run_id IS NULL)
+    ),
     UNIQUE (actor, key_digest)
 );
 CREATE TABLE IF NOT EXISTS write_admissions (
@@ -180,10 +184,10 @@ last_observed_at, position FROM prefect_executions WHERE run_id = ? ORDER BY pos
 _INSERT_PREFECT_EXECUTION = """INSERT INTO prefect_executions (run_id, flow_run_id, deployment_id, purpose, attempt,
 last_observed_state, last_observed_at, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"""
 _INSERT_MUTATION_RECEIPT = """INSERT INTO mutation_receipts (receipt_id, actor, key_digest, operation,
-target_run_id, request_fingerprint, reason, run_id, prefect_key, state, response_status, response_body,
-flow_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+target_run_id, request_fingerprint, reason, resource, run_id, prefect_key, state, response_status, response_body,
+flow_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _SELECT_MUTATION_RECEIPT = """SELECT receipt_id, actor, key_digest, operation, target_run_id,
-request_fingerprint, reason, run_id, prefect_key, state, response_status, response_body, flow_run_id,
+request_fingerprint, reason, resource, run_id, prefect_key, state, response_status, response_body, flow_run_id,
 created_at, updated_at FROM mutation_receipts WHERE actor = ? AND key_digest = ?"""
 _INSERT_AUDIT_EVENT = """INSERT INTO audit_events (event_id, run_id, actor, operation, reason, outcome, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?)"""
@@ -362,6 +366,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         if statement.strip():
                             cursor.execute(statement)
                     self._migrate_product_runs_columns(cursor)
+                    self._migrate_mutation_receipts(cursor)
                     self._ensure_configuration_binding_constraint(cursor)
                     connection.commit()
                 except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -406,6 +411,59 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         for column, sql_type in _CONFIGURATION_BINDING_COLUMNS:
             if column not in existing:
                 cursor.execute(f"ALTER TABLE product_runs ADD COLUMN {column} {sql_type}")
+
+    def _migrate_mutation_receipts(self, cursor: _Cursor) -> None:
+        """Replace the legacy run-only receipt shape with the nullable resource-aware shape.
+
+        SQLite cannot relax ``NOT NULL`` columns in place.  The additive replacement preserves
+        each legacy row and its write admission, while backfilling ``resource = 'run'``.
+        PostgreSQL accepts the same portable DDL under the provider contract, avoiding a
+        divergent receipt layout between profiles.
+        """
+        if self._dialect == "sqlite":
+            cursor.execute("PRAGMA table_info(mutation_receipts)")
+            columns = frozenset(str(row[1]) for row in cursor.fetchall())
+        else:
+            cursor.execute(
+                self._sql(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = ? AND table_schema = current_schema()"
+                ),
+                ("mutation_receipts",),
+            )
+            columns = frozenset(str(row[0]) for row in cursor.fetchall())
+        if "resource" in columns:
+            return
+        cursor.execute("CREATE TABLE mutation_receipts_migration AS SELECT * FROM write_admissions")
+        cursor.execute("DROP TABLE write_admissions")
+        cursor.execute(
+            "CREATE TABLE mutation_receipts_replacement ("
+            "receipt_id TEXT PRIMARY KEY, actor TEXT NOT NULL, key_digest TEXT NOT NULL, "
+            "operation TEXT NOT NULL, target_run_id TEXT, request_fingerprint TEXT NOT NULL, "
+            "reason TEXT NOT NULL, resource TEXT NOT NULL, run_id TEXT, prefect_key TEXT, "
+            "state TEXT NOT NULL, response_status INTEGER, response_body TEXT, flow_run_id TEXT, "
+            "created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
+            "CHECK ((resource = 'run' AND run_id IS NOT NULL AND prefect_key IS NOT NULL) "
+            "OR (resource = 'configuration' AND run_id IS NULL AND prefect_key IS NULL "
+            "AND target_run_id IS NULL AND flow_run_id IS NULL)), UNIQUE (actor, key_digest))"
+        )
+        cursor.execute(
+            "INSERT INTO mutation_receipts_replacement "
+            "SELECT receipt_id, actor, key_digest, operation, target_run_id, request_fingerprint, reason, "
+            "'run', run_id, prefect_key, state, response_status, response_body, flow_run_id, created_at, updated_at "
+            "FROM mutation_receipts"
+        )
+        cursor.execute("DROP TABLE mutation_receipts")
+        cursor.execute("ALTER TABLE mutation_receipts_replacement RENAME TO mutation_receipts")
+        cursor.execute(
+            "CREATE TABLE write_admissions (run_id TEXT PRIMARY KEY, receipt_id TEXT NOT NULL UNIQUE, operation TEXT NOT NULL, "
+            "FOREIGN KEY (run_id) REFERENCES product_runs(run_id), "
+            "FOREIGN KEY (receipt_id) REFERENCES mutation_receipts(receipt_id))"
+        )
+        cursor.execute(
+            "INSERT INTO write_admissions SELECT run_id, receipt_id, operation FROM mutation_receipts_migration"
+        )
+        cursor.execute("DROP TABLE mutation_receipts_migration")
 
     def _configuration_binding_constraint_exists(self, cursor: _Cursor) -> bool:
         """Check for the binding safeguard by name instead of attempting and hoping.
@@ -864,7 +922,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.execute(
                     self._sql(
                         "SELECT receipt_id, actor, key_digest, operation, target_run_id, request_fingerprint, "
-                        "reason, run_id, prefect_key, state, response_status, response_body, flow_run_id, "
+                        "reason, resource, run_id, prefect_key, state, response_status, response_body, flow_run_id, "
                         "created_at, updated_at FROM mutation_receipts WHERE receipt_id = ?"
                     ),
                     (receipt_id,),
@@ -1723,6 +1781,7 @@ def _receipt_values(receipt: MutationReceipt) -> tuple[Any, ...]:
         receipt.target_run_id,
         receipt.request_fingerprint,
         receipt.reason,
+        receipt.resource,
         receipt.run_id,
         receipt.prefect_key,
         receipt.state,
@@ -1744,14 +1803,15 @@ def _receipt_from_row(row: Sequence[Any]) -> MutationReceipt:
             "target_run_id": row[4],
             "request_fingerprint": row[5],
             "reason": row[6],
-            "run_id": row[7],
-            "prefect_key": row[8],
-            "state": row[9],
-            "response_status": row[10],
-            "response_body": None if row[11] is None else json.loads(row[11]),
-            "flow_run_id": row[12],
-            "created_at": row[13],
-            "updated_at": row[14],
+            "resource": row[7],
+            "run_id": row[8],
+            "prefect_key": row[9],
+            "state": row[10],
+            "response_status": row[11],
+            "response_body": None if row[12] is None else json.loads(row[12]),
+            "flow_run_id": row[13],
+            "created_at": row[14],
+            "updated_at": row[15],
         }
     )
 

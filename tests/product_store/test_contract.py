@@ -116,6 +116,8 @@ class _CursorAdapter:
             except sqlite3.IntegrityError as exc:
                 raise _FakeDriverError(sqlstate="42710") from exc
             return self
+        if "ALTER COLUMN" in stripped and "DROP NOT NULL" in stripped:
+            return self
         self._cursor.execute(stripped.replace("%s", "?"), parameters)
         return self
 
@@ -610,6 +612,59 @@ def test_mutation_reservation_atomically_creates_one_run_and_replays_on_both_pro
     assert replay == first
     assert provider.lookup_run("run-001").value == _run()
     assert provider.lookup_run("run-never-created").reason == "run-not-found"
+
+
+@pytest.mark.parametrize("profile", ("sqlite", "postgresql"))
+def test_receipt_migration_backfills_legacy_runs_and_allows_configuration_receipts(
+    tmp_path: Path, profile: str
+) -> None:
+    """Receipt storage upgrades legacy run rows without inventing run identifiers for configs."""
+    database = tmp_path / f"{profile}.sqlite3"
+    legacy = sqlite3.connect(database)
+    try:
+        legacy.execute(
+            "CREATE TABLE mutation_receipts ("
+            "receipt_id TEXT PRIMARY KEY, actor TEXT NOT NULL, key_digest TEXT NOT NULL, "
+            "operation TEXT NOT NULL, target_run_id TEXT, request_fingerprint TEXT NOT NULL, "
+            "reason TEXT NOT NULL, run_id TEXT NOT NULL, prefect_key TEXT NOT NULL, "
+            "state TEXT NOT NULL, response_status INTEGER, response_body TEXT, flow_run_id TEXT, "
+            "created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (actor, key_digest))"
+        )
+        legacy_receipt = _receipt()
+        legacy_values = product_store_store._receipt_values(legacy_receipt)
+        legacy.execute(
+            "INSERT INTO mutation_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            legacy_values[:7] + legacy_values[8:],
+        )
+        legacy.commit()
+    finally:
+        legacy.close()
+
+    records = SQLiteRunStore(database) if profile == "sqlite" else PostgreSQLRunStore(_connect(database))
+    projection = ProductProjection(records, FileArtifactStore(tmp_path / f"{profile}-objects"))
+    restored = projection.lookup_mutation(legacy_receipt.actor, legacy_receipt.key_digest)
+    assert restored.value is not None
+    assert restored.value.resource == "run"
+    assert restored.value.run_id == legacy_receipt.run_id
+    assert restored.value.prefect_key == legacy_receipt.prefect_key
+
+    now = datetime(2026, 8, 10, 12, tzinfo=timezone.utc)
+    configuration_receipt = MutationReceipt(
+        receipt_id="configuration-mutation-001",
+        actor="operator@example.com",
+        key_digest=sha256(b"configuration-key").hexdigest(),
+        operation="register-config",
+        request_fingerprint=sha256(b"configuration-request").hexdigest(),
+        reason="operator registered a configuration",
+        resource="configuration",
+        created_at=now,
+        updated_at=now,
+    )
+    reserved, created = projection.reserve_mutation(configuration_receipt)
+    assert created is True
+    assert reserved.run_id is None
+    assert reserved.prefect_key is None
+    assert reserved.flow_run_id is None
 
 
 def test_sqlite_concurrent_mutation_reservation_creates_exactly_one_product_run(tmp_path: Path) -> None:
@@ -2352,6 +2407,8 @@ class _FakePostgreSQLCursor:
             table = match.group(1)
             if table not in database.tables:
                 connection.pending_tables.add(table)
+            if table == "mutation_receipts":
+                connection.pending_columns.setdefault(table, set()).add("resource")
             return ()
         if operation.startswith(("CREATE UNIQUE INDEX IF NOT EXISTS", "CREATE INDEX IF NOT EXISTS")):
             return ()
@@ -2364,6 +2421,8 @@ class _FakePostgreSQLCursor:
             if table not in (database.tables | connection.pending_tables):
                 raise _FakeDriverError(sqlstate="42P01")  # relation "{table}" does not exist
             connection.pending_columns.setdefault(table, set()).add(column)
+            return ()
+        if "ALTER COLUMN" in operation and "DROP NOT NULL" in operation:
             return ()
         if "information_schema.table_constraints" in operation:
             name = parameters[-1]

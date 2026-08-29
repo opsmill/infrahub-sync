@@ -129,8 +129,9 @@ class MutationReceipt(BaseModel):
     target_run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
     request_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     reason: str = Field(min_length=1)
-    run_id: str = Field(pattern=_IDENTIFIER_PATTERN)
-    prefect_key: str = Field(pattern=r"^[0-9a-f]{64}$")
+    resource: Literal["run", "configuration"] = "run"
+    run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
+    prefect_key: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     state: Literal["reserved", "accepted"] = "reserved"
     response_status: int | None = Field(default=None, ge=100, le=599)
     response_body: dict[str, Any] | None = None
@@ -149,7 +150,19 @@ class MutationReceipt(BaseModel):
     @model_validator(mode="after")
     def _require_accepted_response(self) -> MutationReceipt:
         accepted_values = (self.response_status, self.response_body, self.flow_run_id)
-        if self.state == "accepted" and any(value is None for value in accepted_values):
+        if self.resource == "run" and (self.run_id is None or self.prefect_key is None):
+            msg = "a run mutation receipt requires its run and Prefect identifiers"
+            raise ValueError(msg)
+        if self.resource == "configuration" and any(
+            value is not None for value in (self.run_id, self.prefect_key, self.flow_run_id, self.target_run_id)
+        ):
+            msg = "a configuration mutation receipt cannot carry run or Prefect identifiers"
+            raise ValueError(msg)
+        if self.state == "accepted" and (
+            self.response_status is None
+            or self.response_body is None
+            or (self.resource == "run" and self.flow_run_id is None)
+        ):
             msg = "an accepted mutation receipt requires its status, response, and Prefect flow-run ID"
             raise ValueError(msg)
         if self.state == "reserved" and any(value is not None for value in accepted_values):
