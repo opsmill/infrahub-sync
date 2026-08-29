@@ -833,9 +833,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     existing = self.lookup_mutation(receipt.actor, receipt.key_digest)
                     if existing.value is not None:
                         return existing.value, False
-                    if admit_write and self._write_admission_exists(receipt.run_id):
-                        msg = f"Sync run {receipt.run_id!r} already has a write-capable admission"
-                        raise WriteAdmissionConflictError(msg) from exc
+                    if admit_write:
+                        assert receipt.run_id is not None
+                        if self._write_admission_exists(receipt.run_id):
+                            msg = f"Sync run {receipt.run_id!r} already has a write-capable admission"
+                            raise WriteAdmissionConflictError(msg) from exc
                     if run is not None and self.exists(run.run_id):
                         msg = f"Sync run ID {run.run_id!r} already exists"
                         raise DuplicateRunError(msg) from exc
@@ -1519,7 +1521,7 @@ class ProductProjection:
         *,
         response_status: int,
         response_body: Mapping[str, Any],
-        flow_run_id: str,
+        flow_run_id: str | None,
         secrets: Sequence[str] = (),
     ) -> MutationReceipt:
         """Persist the exact accepted HTTP response and Prefect identity."""

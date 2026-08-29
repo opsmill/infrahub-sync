@@ -614,12 +614,12 @@ def test_mutation_reservation_atomically_creates_one_run_and_replays_on_both_pro
     assert provider.lookup_run("run-never-created").reason == "run-not-found"
 
 
-@pytest.mark.parametrize("profile", ("sqlite", "postgresql"))
+@pytest.mark.parametrize("profile", [("sqlite",), ("postgresql",)])
 def test_receipt_migration_backfills_legacy_runs_and_allows_configuration_receipts(
-    tmp_path: Path, profile: str
+    tmp_path: Path, profile: tuple[str]
 ) -> None:
     """Receipt storage upgrades legacy run rows without inventing run identifiers for configs."""
-    database = tmp_path / f"{profile}.sqlite3"
+    database = tmp_path / f"{profile[0]}.sqlite3"
     legacy = sqlite3.connect(database)
     try:
         legacy.execute(
@@ -640,8 +640,8 @@ def test_receipt_migration_backfills_legacy_runs_and_allows_configuration_receip
     finally:
         legacy.close()
 
-    records = SQLiteRunStore(database) if profile == "sqlite" else PostgreSQLRunStore(_connect(database))
-    projection = ProductProjection(records, FileArtifactStore(tmp_path / f"{profile}-objects"))
+    records = SQLiteRunStore(database) if profile[0] == "sqlite" else PostgreSQLRunStore(_connect(database))
+    projection = ProductProjection(records, FileArtifactStore(tmp_path / f"{profile[0]}-objects"))
     restored = projection.lookup_mutation(legacy_receipt.actor, legacy_receipt.key_digest)
     assert restored.value is not None
     assert restored.value.resource == "run"
@@ -680,7 +680,9 @@ def test_sqlite_concurrent_mutation_reservation_creates_exactly_one_product_run(
     assert sum(created for _, created in results) == 1
     winning_run_ids = {receipt.run_id for receipt, _ in results}
     assert len(winning_run_ids) == 1
-    assert projection.lookup_run(winning_run_ids.pop()).available
+    winning_run_id = winning_run_ids.pop()
+    assert winning_run_id is not None
+    assert projection.lookup_run(winning_run_id).available
 
 
 def test_write_capable_mutation_admission_is_atomic_on_both_profiles(provider: ProductProjection) -> None:
@@ -2400,7 +2402,7 @@ class _FakePostgreSQLCursor:
             raise
         return self
 
-    def _dispatch(self, operation: str, parameters: Sequence[Any]) -> tuple[tuple[Any, ...], ...]:
+    def _dispatch(self, operation: str, parameters: Sequence[Any]) -> tuple[tuple[Any, ...], ...]:  # noqa: PLR0911
         connection = self._connection
         database = connection.database
         if match := _FAKE_CREATE_TABLE.match(operation):

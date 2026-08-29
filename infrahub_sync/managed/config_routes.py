@@ -10,9 +10,8 @@ from fastapi import APIRouter, Depends
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
-from infrahub_sync.product_store import configs
-from infrahub_sync.product_store import AuditEvent, MutationReceipt, local_product_projection
 from infrahub_sync.plan.canonical import canonical_json_bytes
+from infrahub_sync.product_store import AuditEvent, MutationReceipt, configs, local_product_projection
 
 from .auth import Principal
 from .models import ConfigMutationRequest
@@ -116,7 +115,8 @@ class ConfigurationRoutes:
                     409, "idempotency-conflict", "Idempotency-Key was already used by this actor for different content"
                 )
             if stored.state == "accepted":
-                assert stored.response_status is not None and stored.response_body is not None
+                assert stored.response_status is not None
+                assert stored.response_body is not None
                 self._audit(actor, operation, reason, "replayed")
                 return stored.response_status, stored.response_body
         if operation == "register-config":
@@ -131,7 +131,8 @@ class ConfigurationRoutes:
             flow_run_id=None,
             secrets=self._secrets,
         )
-        assert completed.response_body is not None and completed.response_status is not None
+        assert completed.response_body is not None
+        assert completed.response_status is not None
         self._audit(actor, operation, reason, "accepted")
         return completed.response_status, completed.response_body
 

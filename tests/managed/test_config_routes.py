@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -86,8 +87,9 @@ def test_configuration_mutation_replays_exact_response_and_rejects_changed_conte
     assert replay.json() == first.json()
     assert changed.status_code == 409
     assert len(projection.list_configurations()) == 1
-    receipt = projection.lookup_mutation("admin", __import__("hashlib").sha256(b"register-once").hexdigest())
-    assert receipt.value is not None and receipt.value.state == "accepted"
+    receipt = projection.lookup_mutation("admin", sha256(b"register-once").hexdigest())
+    assert receipt.value is not None
+    assert receipt.value.state == "accepted"
 
 
 def test_configuration_mutation_refuses_unauthenticated_and_non_admin_calls(
