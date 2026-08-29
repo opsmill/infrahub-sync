@@ -6,6 +6,9 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
 
 import pytest
+
+pytest.importorskip("botocore")
+
 from botocore.exceptions import ClientError
 
 from infrahub_sync.product_store import DuplicateArtifactError

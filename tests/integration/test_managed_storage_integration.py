@@ -7,6 +7,9 @@ from datetime import datetime, timezone
 
 import pytest
 
+pytest.importorskip("boto3")
+pytest.importorskip("psycopg")
+
 from infrahub_sync.managed.storage import managed_product_projection
 from infrahub_sync.product_store import ProductRun
 from tests.configuration.validation_packages import package
