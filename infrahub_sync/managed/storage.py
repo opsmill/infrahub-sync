@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import TYPE_CHECKING, Any
 
 import boto3
@@ -27,6 +28,17 @@ S3_PREFIX_ENV = "INFRAHUB_SYNC_S3_PREFIX"
 S3_ENDPOINT_ENV = "INFRAHUB_SYNC_S3_ENDPOINT_URL"
 S3_REGION_ENV = "INFRAHUB_SYNC_S3_REGION"
 _HTTP_URL_ADAPTER = TypeAdapter(AnyHttpUrl)
+_PERCENT_ENCODED = r"%[0-9A-Fa-f]{2}"
+_UNRESERVED = r"[A-Za-z0-9._~-]"
+_SUB_DELIMS = r"[!$&'()*+,;=]"
+_REG_NAME = rf"(?:{_UNRESERVED}|{_SUB_DELIMS}|{_PERCENT_ENCODED})+"
+_IP_LITERAL = r"\[[0-9A-Fa-f:.]+\]"
+_HOST = rf"(?:{_IP_LITERAL}|{_REG_NAME})"
+_AUTHORITY = rf"{_HOST}(?::[0-9]+)?"
+_PCHAR = rf"(?:{_UNRESERVED}|{_SUB_DELIMS}|{_PERCENT_ENCODED}|[:@])"
+_ENDPOINT_URI = re.compile(
+    rf"(?i:https?)://{_AUTHORITY}(?:/{_PCHAR}*)*(?:\?(?:{_PCHAR}|[/?])*)?(?:#(?:{_PCHAR}|[/?])*)?"
+)
 
 
 class ManagedStorageStartupError(RuntimeError):
@@ -158,22 +170,17 @@ def _endpoint(values: Mapping[str, object]) -> str | None:
     endpoint = _optional_setting(values, S3_ENDPOINT_ENV)
     if endpoint is None:
         return None
+    if _ENDPOINT_URI.fullmatch(endpoint) is None:
+        msg = f"{S3_ENDPOINT_ENV} must be an absolute http or https URL"
+        raise ValueError(msg) from None
     try:
         parsed = _HTTP_URL_ADAPTER.validate_python(endpoint)
     except ValidationError:
         msg = f"{S3_ENDPOINT_ENV} must be an absolute http or https URL"
         raise ValueError(msg) from None
-    raw_scheme, delimiter, remainder = endpoint.partition("://")
-    raw_authority = remainder.partition("/")[0].partition("?")[0].partition("#")[0]
-    if (
-        delimiter != "://"
-        or raw_scheme.lower() not in {"http", "https"}
-        or not raw_authority
-        or parsed.username is not None
-        or parsed.password is not None
-    ):
+    if parsed.username is not None or parsed.password is not None:
         msg = f"{S3_ENDPOINT_ENV} must be an absolute http or https URL"
-        raise ValueError(msg)
+        raise ValueError(msg) from None
     return endpoint
 
 
