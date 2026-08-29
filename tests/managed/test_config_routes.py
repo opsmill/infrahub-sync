@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from fastapi.testclient import TestClient
 
+from infrahub_sync.configuration.models import ValidationFinding
 from infrahub_sync.managed.app import create_app
 from infrahub_sync.managed.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.managed.config_routes import ConfigurationAPIError, ConfigurationRoutes
@@ -19,6 +20,7 @@ from infrahub_sync.managed.serve import build_app
 from infrahub_sync.managed.service import ManagedRunService
 from infrahub_sync.product_store import configs as configs_service
 from infrahub_sync.product_store import local_product_projection
+from infrahub_sync.product_store.configs import ValidationReport
 from tests.configuration.validation_packages import package_data
 
 if TYPE_CHECKING:
@@ -153,6 +155,131 @@ def test_configuration_mutation_refuses_unauthenticated_and_non_admin_calls(
     )
     assert projection.list_configurations() == ()
     assert [event.outcome for event in projection.audit_events()] == ["refused-authentication", "refused-authorization"]
+
+
+def test_configuration_route_grammar_refuses_hostile_values_before_service_classification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Path, page, and body grammar failures use the fixed request envelope without a service call."""
+    token = "admin-token-canary-0003"
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": token, "administrator": True}}))
+    resolver = EnvironmentPrincipalResolver.from_environment()
+
+    class Service:
+        ConfigsRequestError = configs_service.ConfigsRequestError
+        ConfigsValidationError = configs_service.ConfigsValidationError
+        ConfigsNotFoundError = configs_service.ConfigsNotFoundError
+        ConfigsStorageError = configs_service.ConfigsStorageError
+        ConfigsInternalError = configs_service.ConfigsInternalError
+        ConfigsError = configs_service.ConfigsError
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def list_configs(self, **_kwargs: object) -> list[object]:
+            self.calls.append("list_configs")
+            return []
+
+        def list_versions(self, **_kwargs: object) -> list[object]:
+            self.calls.append("list_versions")
+            return []
+
+        def get_version(self, **_kwargs: object) -> object:
+            self.calls.append("get_version")
+            return {}
+
+        def validate(self, **_kwargs: object) -> object:
+            self.calls.append("validate")
+            return {}
+
+        def create_version(self, **_kwargs: object) -> object:
+            self.calls.append("create_version")
+            return {}
+
+        def register(self, **_kwargs: object) -> object:
+            self.calls.append("register")
+            return {}
+
+    service = Service()
+    client = TestClient(
+        create_app(
+            ManagedRunService(local_product_projection(tmp_path), _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(tmp_path, service=service, secrets=resolver.secret_values),
+        )
+    )
+    headers = {"Authorization": f"Bearer {token}", "Idempotency-Key": "grammar-key"}
+    probes = [
+        ("post", "/configs", {"json": {"package": package_data(), "reason": "valid", "extra": True}}),
+        ("get", "/configs?offset=true", {}),
+        ("get", "/configs?limit=257", {}),
+        ("get", "/configs/not%20an%20id", {}),
+        ("get", "/configs/good/versions/true", {}),
+        ("get", "/configs/good/versions/0", {}),
+        ("post", "/configs/good/versions/1/validate?limit=true", {}),
+    ]
+    for method, path, kwargs in probes:
+        response = getattr(client, method)(path, headers=headers, **kwargs)
+        assert response.status_code == 422
+        assert response.json() == {
+            "error": {
+                "code": "request-invalid",
+                "message": "the request does not match the API schema",
+                "status": 422,
+                "run_id": None,
+                "mutation_id": None,
+            }
+        }
+    assert service.calls == []
+
+
+def test_validation_pages_are_bounded_and_concatenate_to_the_single_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pages slice one ordered validation report without changing its snapshot fields."""
+    token = "admin-token-canary-0003"
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": token, "administrator": True}}))
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    findings = tuple(
+        ValidationFinding(code="synthetic", severity="error", location=f"/item{i}", message=f"finding {i}")
+        for i in range(600)
+    )
+
+    class Service:
+        ConfigsRequestError = configs_service.ConfigsRequestError
+        ConfigsValidationError = configs_service.ConfigsValidationError
+        ConfigsNotFoundError = configs_service.ConfigsNotFoundError
+        ConfigsStorageError = configs_service.ConfigsStorageError
+        ConfigsInternalError = configs_service.ConfigsInternalError
+        ConfigsError = configs_service.ConfigsError
+
+        @staticmethod
+        def validate(**_kwargs: object) -> ValidationReport:
+            return ValidationReport("cfg", 1, "a" * 64, findings, "b" * 64)
+
+    client = TestClient(
+        create_app(
+            ManagedRunService(local_product_projection(tmp_path), _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(tmp_path, service=Service(), secrets=resolver.secret_values),
+        )
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    pages = [
+        client.post(f"/configs/cfg/versions/1/validate?offset={offset}&limit=256", headers=headers).json()
+        for offset in range(0, 600, 256)
+    ]
+    assert all(len(page["findings"]) <= 256 for page in pages)
+    assert [page["findings"] for page in pages] == [
+        [finding.model_dump(mode="json") for finding in findings[:256]],
+        [finding.model_dump(mode="json") for finding in findings[256:512]],
+        [finding.model_dump(mode="json") for finding in findings[512:]],
+    ]
+    assert all(
+        {key: value for key, value in page.items() if key != "findings"}
+        == {"config_id": "cfg", "registry_version": 1, "package_checksum": "a" * 64, "destination_schema_fingerprint": "b" * 64}
+        for page in pages
+    )
 
 
 @pytest.mark.parametrize(

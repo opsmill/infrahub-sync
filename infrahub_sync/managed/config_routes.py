@@ -1,12 +1,13 @@
 """HTTP-only adapter for the shared configuration application service."""
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Path as APIPath, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
@@ -16,6 +17,11 @@ from infrahub_sync.product_store import AuditEvent, MutationReceipt, configs, lo
 from .auth import Principal
 from .models import ConfigMutationRequest
 from .service import ManagedAPIError
+
+
+_CONFIG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+_MAX_REGISTRY_VERSION = 2**63 - 1
+_MAX_PAGE_LIMIT = 256
 
 
 class ConfigurationAPIError(Exception):
@@ -60,19 +66,22 @@ class ConfigurationRoutes:
     def create_version(self, config_id: str, package: dict[str, Any]) -> Any:
         return self._call(self._service.create_version, config_id=config_id, package=package)
 
-    def list_configs(self) -> Any:
+    def list_configs(self, *, offset: int = 0, limit: int = _MAX_PAGE_LIMIT) -> Any:
+        del offset, limit
         return self._call(self._service.list_configs)
 
     def get_config(self, config_id: str) -> Any:
         return self._call(self._service.get_config, config_id=config_id)
 
-    def list_versions(self, config_id: str) -> Any:
+    def list_versions(self, config_id: str, *, offset: int = 0, limit: int = _MAX_PAGE_LIMIT) -> Any:
+        del offset, limit
         return self._call(self._service.list_versions, config_id=config_id)
 
     def get_version(self, config_id: str, registry_version: int) -> Any:
         return self._call(self._service.get_version, config_id=config_id, registry_version=registry_version)
 
-    def validate(self, config_id: str, registry_version: int) -> Any:
+    def validate(self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = _MAX_PAGE_LIMIT) -> Any:
+        del offset, limit
         return self._call(self._service.validate, config_id=config_id, registry_version=registry_version)
 
     def mutate(
@@ -158,6 +167,10 @@ class ConfigurationRoutes:
 def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempotency_key: Any) -> APIRouter:
     """Create the seven authenticated configuration resources."""
     router = APIRouter()
+    config_id_parameter = APIPath(pattern=_CONFIG_ID_PATTERN)
+    registry_version_parameter = APIPath(ge=1, le=_MAX_REGISTRY_VERSION)
+    page_offset = Query(ge=0, le=_MAX_REGISTRY_VERSION)
+    page_limit = Query(ge=1, le=_MAX_PAGE_LIMIT)
 
     @router.post("/configs", status_code=201)
     def register(
@@ -180,7 +193,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
 
     @router.post("/configs/{config_id}/versions", status_code=201)
     def create_version(
-        config_id: str,
+        config_id: Annotated[str, config_id_parameter],
         body: ConfigMutationRequest,
         principal: Annotated[Principal, Depends(authenticate)],
         key: Annotated[str, Depends(idempotency_key)],
@@ -199,25 +212,44 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         return JSONResponse(status_code=status, content=content)
 
     @router.get("/configs")
-    def list_configs(_principal: Annotated[Principal, Depends(authenticate)]) -> Any:
-        return routes.list_configs()
+    def list_configs(
+        _principal: Annotated[Principal, Depends(authenticate)],
+        offset: Annotated[int, page_offset] = 0,
+        limit: Annotated[int, page_limit] = _MAX_PAGE_LIMIT,
+    ) -> Any:
+        return routes.list_configs(offset=offset, limit=limit)
 
     @router.get("/configs/{config_id}")
-    def get_config(config_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> Any:
+    def get_config(
+        config_id: Annotated[str, config_id_parameter], _principal: Annotated[Principal, Depends(authenticate)]
+    ) -> Any:
         return routes.get_config(config_id)
 
     @router.get("/configs/{config_id}/versions")
-    def list_versions(config_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> Any:
-        return routes.list_versions(config_id)
+    def list_versions(
+        config_id: Annotated[str, config_id_parameter],
+        _principal: Annotated[Principal, Depends(authenticate)],
+        offset: Annotated[int, page_offset] = 0,
+        limit: Annotated[int, page_limit] = _MAX_PAGE_LIMIT,
+    ) -> Any:
+        return routes.list_versions(config_id, offset=offset, limit=limit)
 
     @router.get("/configs/{config_id}/versions/{registry_version}")
     def get_version(
-        config_id: str, registry_version: int, _principal: Annotated[Principal, Depends(authenticate)]
+        config_id: Annotated[str, config_id_parameter],
+        registry_version: Annotated[int, registry_version_parameter],
+        _principal: Annotated[Principal, Depends(authenticate)],
     ) -> Any:
         return routes.get_version(config_id, registry_version)
 
     @router.post("/configs/{config_id}/versions/{registry_version}/validate")
-    def validate(config_id: str, registry_version: int, _principal: Annotated[Principal, Depends(authenticate)]) -> Any:
-        return routes.validate(config_id, registry_version)
+    def validate(
+        config_id: Annotated[str, config_id_parameter],
+        registry_version: Annotated[int, registry_version_parameter],
+        _principal: Annotated[Principal, Depends(authenticate)],
+        offset: Annotated[int, page_offset] = 0,
+        limit: Annotated[int, page_limit] = _MAX_PAGE_LIMIT,
+    ) -> Any:
+        return routes.validate(config_id, registry_version, offset=offset, limit=limit)
 
     return router
