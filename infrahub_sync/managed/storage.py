@@ -32,7 +32,7 @@ _PERCENT_ENCODED = r"%[0-9A-Fa-f]{2}"
 _UNRESERVED = r"[A-Za-z0-9._~-]"
 _SUB_DELIMS = r"[!$&'()*+,;=]"
 _REG_NAME = rf"(?:{_UNRESERVED}|{_SUB_DELIMS}|{_PERCENT_ENCODED})+"
-_IPV_FUTURE = rf"v[0-9A-Fa-f]+\.(?:{_UNRESERVED}|{_SUB_DELIMS}|:)+"
+_IPV_FUTURE = rf"[Vv][0-9A-Fa-f]+\.(?:{_UNRESERVED}|{_SUB_DELIMS}|:)+"
 _HOST = rf"(?:\[(?P<ipvfuture>{_IPV_FUTURE})\]|\[(?P<ipv6>[0-9A-Fa-f:.]+)\]|(?P<reg_name>{_REG_NAME}))"
 _PCHAR = rf"(?:{_UNRESERVED}|{_SUB_DELIMS}|{_PERCENT_ENCODED}|[:@])"
 _ENDPOINT_URI = re.compile(

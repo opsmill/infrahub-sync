@@ -355,6 +355,7 @@ def test_managed_storage_endpoint_rejects_parser_invalid_syntax(endpoint: str) -
         "https://[::1]:9443",
         "HTTP://s3.example.test:9000/path%20with%20encoding?query=@value#fragment",
         "http://[v1.fe80]",
+        "HTTP://[V1.fe80]",
         "HTTP://[vF.a:b-c._~!$&'()*+,;=]:65535/path@segment?query=@value#fragment",
     ],
 )
