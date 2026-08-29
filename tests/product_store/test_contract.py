@@ -969,6 +969,65 @@ def test_execution_link_requires_complete_claim_and_terminal_verdicts() -> None:
         PrefectExecutionLink(flow_run_id="flow", purpose="plan", attempt=1, submitted_at=now, terminal_at=now)
 
 
+def test_execution_claim_stall_and_terminal_cas_contract(provider: ProductProjection) -> None:
+    """A stall is informational; claim and abandonment have mutually exclusive predicates."""
+    now = datetime(2026, 8, 29, tzinfo=timezone.utc)
+    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    )
+
+    assert provider.mark_execution_stalled("run-001", "flow-001", stalled_at=now)
+    assert provider.claim_execution("run-001", "flow-001", worker_id=worker_id, claimed_at=now)
+    assert not provider.abandon_execution("run-001", "flow-001", terminal_at=now)
+    loaded = provider.lookup_run("run-001").value
+    assert loaded is not None
+    link = loaded.prefect_executions[0]
+    assert link.stalled_at == now
+    assert link.claimed_at == now
+    assert link.claiming_worker_id == worker_id
+
+
+def test_claim_and_abandon_race_has_one_winner(tmp_path: Path) -> None:
+    """Separate SQLite connections converge through the row predicates alone."""
+    projection = local_product_projection(tmp_path)
+    now = datetime(2026, 8, 29, tzinfo=timezone.utc)
+    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+    projection.create_run(_run())
+    projection.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    )
+    barrier = Barrier(2)
+
+    def claim() -> bool:
+        barrier.wait()
+        return projection.claim_execution("run-001", "flow-001", worker_id=worker_id, claimed_at=now)
+
+    def abandon() -> bool:
+        barrier.wait()
+        return projection.abandon_execution("run-001", "flow-001", terminal_at=now)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = tuple(pool.map(lambda action: action(), (claim, abandon)))
+    assert outcomes.count(True) == 1
+
+
+def test_execution_claim_refuses_invalid_worker_identity_without_mutation(provider: ProductProjection) -> None:
+    now = datetime(2026, 8, 29, tzinfo=timezone.utc)
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    )
+
+    with pytest.raises(ValueError, match="managed worker identity is invalid"):
+        provider.claim_execution("run-001", "flow-001", worker_id="not-a-uuid", claimed_at=now)
+
+    loaded = provider.lookup_run("run-001").value
+    assert loaded is not None
+    assert loaded.prefect_executions[0].claimed_at is None
+
+
 def test_duplicate_prefect_execution_is_rejected_when_appended(provider: ProductProjection) -> None:
     link = PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1)
     provider.create_run(_run())

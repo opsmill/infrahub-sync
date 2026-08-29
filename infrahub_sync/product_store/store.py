@@ -190,6 +190,7 @@ _SCHEMA_INITIALIZATION_ATTEMPTS = 2
 # supports up to 8 concurrent writers with margin above that observed worst case.
 _CONFIGURATION_VERSION_ATTEMPTS = 8
 _JSON_MAPPING_ADAPTER = TypeAdapter(dict[str, Any])
+_INVALID_MANAGED_WORKER_ID = "managed worker identity is invalid"
 
 _INSERT_CONFIGURATION = "INSERT INTO configurations (config_id, created_at) VALUES (?, ?)"
 _SELECT_CONFIGURATION = "SELECT config_id, created_at FROM configurations WHERE config_id = ?"
@@ -333,6 +334,14 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def observe_prefect_execution(
         self, run_id: str, flow_run_id: str, *, state: str | None, observed_at: datetime
     ) -> None: ...
+
+    def claim_execution(self, run_id: str, flow_run_id: str, *, worker_id: str, claimed_at: datetime) -> bool: ...
+
+    def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime) -> bool: ...
+
+    def abandon_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool: ...
+
+    def interrupt_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool: ...
 
     def reserve_mutation(
         self, receipt: MutationReceipt, run: ProductRun | None, *, admit_write: bool = False
@@ -903,6 +912,114 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             except Exception:
                 connection.rollback()
                 raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def claim_execution(self, run_id: str, flow_run_id: str, *, worker_id: str, claimed_at: datetime) -> bool:
+        """Atomically assign an unclaimed, non-terminal execution to one worker."""
+        return self._execution_update(
+            "UPDATE prefect_executions SET claimed_at = ?, claiming_worker_id = ? "
+            "WHERE run_id = ? AND flow_run_id = ? AND claimed_at IS NULL AND terminal_at IS NULL "
+            "AND cancellation_requested_at IS NULL",
+            (claimed_at.isoformat(), worker_id, run_id, flow_run_id),
+        )
+
+    def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime) -> bool:
+        """Record the first informational stall without changing claim eligibility."""
+        return self._execution_update(
+            "UPDATE prefect_executions SET stalled_at = ? WHERE run_id = ? AND flow_run_id = ? "
+            "AND stalled_at IS NULL AND claimed_at IS NULL AND terminal_at IS NULL",
+            (stalled_at.isoformat(), run_id, flow_run_id),
+        )
+
+    def abandon_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool:
+        """Atomically terminalize an unclaimed execution and its owning product run."""
+        return self._terminalize_execution(
+            run_id,
+            flow_run_id,
+            terminal_at=terminal_at,
+            claimed=False,
+            terminal_state="abandoned",
+            terminal_outcome="abandoned",
+            phase="abandoned",
+            outcome="abandoned",
+        )
+
+    def interrupt_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool:
+        """Atomically terminalize an orphaned claimed execution and its product run."""
+        return self._terminalize_execution(
+            run_id,
+            flow_run_id,
+            terminal_at=terminal_at,
+            claimed=True,
+            terminal_state="interrupted",
+            terminal_outcome="ambiguous",
+            phase="interrupted",
+            outcome="ambiguous",
+        )
+
+    def _execution_update(self, statement: str, values: tuple[Any, ...]) -> bool:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(statement), values)
+                updated = cursor.rowcount == 1
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            else:
+                return updated
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def _terminalize_execution(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        terminal_at: datetime,
+        claimed: bool,
+        terminal_state: str,
+        terminal_outcome: str,
+        phase: str,
+        outcome: str,
+    ) -> bool:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                statement = (
+                    "UPDATE prefect_executions SET terminal_at = ?, terminal_state = ?, terminal_outcome = ? "
+                    "WHERE run_id = ? AND flow_run_id = ? AND claimed_at IS NOT NULL AND terminal_at IS NULL "
+                    "AND cancellation_requested_at IS NULL"
+                    if claimed
+                    else "UPDATE prefect_executions SET terminal_at = ?, terminal_state = ?, terminal_outcome = ? "
+                    "WHERE run_id = ? AND flow_run_id = ? AND claimed_at IS NULL AND terminal_at IS NULL "
+                    "AND cancellation_requested_at IS NULL"
+                )
+                cursor.execute(
+                    self._sql(statement),
+                    (terminal_at.isoformat(), terminal_state, terminal_outcome, run_id, flow_run_id),
+                )
+                if cursor.rowcount != 1:
+                    connection.commit()
+                    return False
+                cursor.execute(
+                    self._sql("UPDATE product_runs SET phase = ?, outcome = ?, finished_at = ? WHERE run_id = ?"),
+                    (phase, outcome, terminal_at.isoformat(), run_id),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            else:
+                return True
             finally:
                 cursor.close()
         finally:
@@ -1637,6 +1754,34 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             observed_at=datetime.now(timezone.utc),
         )
 
+    def claim_execution(
+        self, run_id: str, flow_run_id: str, *, worker_id: str, claimed_at: datetime | None = None
+    ) -> bool:
+        """Claim one pending execution; only a canonical Prefect worker UUID is accepted."""
+        if not _is_canonical_uuid(worker_id):
+            raise ValueError(_INVALID_MANAGED_WORKER_ID)
+        return self._records.claim_execution(
+            run_id, flow_run_id, worker_id=worker_id, claimed_at=claimed_at or datetime.now(timezone.utc)
+        )
+
+    def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime | None = None) -> bool:
+        """Set the first stall marker while leaving a pre-TTL execution claimable."""
+        return self._records.mark_execution_stalled(
+            run_id, flow_run_id, stalled_at=stalled_at or datetime.now(timezone.utc)
+        )
+
+    def abandon_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime | None = None) -> bool:
+        """CAS an unclaimed execution into the terminal abandoned verdict."""
+        return self._records.abandon_execution(
+            run_id, flow_run_id, terminal_at=terminal_at or datetime.now(timezone.utc)
+        )
+
+    def interrupt_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime | None = None) -> bool:
+        """CAS a claimed execution into the terminal interrupted/ambiguous verdict."""
+        return self._records.interrupt_execution(
+            run_id, flow_run_id, terminal_at=terminal_at or datetime.now(timezone.utc)
+        )
+
     def reserve_mutation(
         self,
         receipt: MutationReceipt,
@@ -1894,6 +2039,18 @@ def _json(value: Any) -> str:
 
 def _iso(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat()
+
+
+def _is_canonical_uuid(value: object) -> bool:
+    """Accept only an exact built-in canonical UUID string."""
+    if type(value) is not str:
+        return False
+    try:
+        from uuid import UUID
+
+        return str(UUID(value)) == value
+    except ValueError:
+        return False
 
 
 def _run_from_rows(
