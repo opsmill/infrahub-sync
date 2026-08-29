@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,8 +18,11 @@ pytest.importorskip("opsmill_prefect_extras")
 from infrahub_sync.execution import RunResult
 from infrahub_sync.managed import flow as managed_flow
 from infrahub_sync.managed.flow import managed_sync_run
+from infrahub_sync.plan.canonical import canonical_json_bytes
+from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.models import PlanManifest
 from infrahub_sync.plan.review import SavedPlan
+from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME, write_plan_artifact
 from infrahub_sync.product_store import ProductRun, local_product_projection
 
 
@@ -68,6 +72,7 @@ def test_all_absent_legacy_run_reaches_existing_local_worker_path(
     saved = _legacy_saved(run_id)
     resolved: list[tuple[str, str]] = []
     verified: list[tuple[str, object]] = []
+    parsed: list[object] = []
     instance = SimpleNamespace(name="legacy-inventory")
     monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
@@ -94,7 +99,7 @@ def test_all_absent_legacy_run_reaches_existing_local_worker_path(
         monkeypatch.setattr(
             managed_flow,
             "parse_plan_artifact",
-            lambda *_args, **_kwargs: pytest.fail("legacy verification must not parse a registered binding"),
+            lambda *_args, **_kwargs: (parsed.append(True), SimpleNamespace(manifest=saved.manifest))[1],
         )
 
     def execute(*_args: object, operation: str, **_kwargs: object) -> SavedPlan | RunResult:
@@ -118,6 +123,67 @@ def test_all_absent_legacy_run_reaches_existing_local_worker_path(
 
     assert resolved == [("legacy-inventory", str(tmp_path))]
     assert verified == ([(run_id, "legacy-config-version")] if stage == "apply" else [])
+    assert parsed == ([True] if stage == "apply" else [])
+
+
+@pytest.mark.parametrize(
+    ("manifest_binding", "expected_error"),
+    [
+        pytest.param(("registered-config", 1, "a" * 64), "registered saved plan binding", id="registered"),
+        pytest.param({"config_id": "registered-config"}, "configuration binding must be all absent", id="partial"),
+    ],
+)
+def test_legacy_apply_refuses_checksum_valid_nonlegacy_manifest_before_destination(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    manifest_binding: tuple[str, int, str] | dict[str, str],
+    expected_error: str,
+) -> None:
+    """A legacy run accepts only a fully legacy manifest before destination construction."""
+    run_id = "legacy-nonlegacy-manifest"
+    projection = _legacy_run(tmp_path / "product", run_id, "apply")
+    instance = SimpleNamespace(name="legacy-inventory")
+    run_dir = tmp_path / "runs" / instance.name / run_id
+    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
+    monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
+    monkeypatch.setattr(managed_flow, "resolve_sync_instance", lambda *_args, **_kwargs: instance, raising=False)
+    monkeypatch.setattr(managed_flow, "resolve_config_version", lambda _instance: "legacy-config-version")
+    monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
+    if isinstance(manifest_binding, tuple):
+        write_plan_artifact(
+            run_dir=run_dir,
+            run_id=run_id,
+            config_version="legacy-config-version",
+            source_snapshot=[],
+            deletes_computed=True,
+            operations=[],
+            configuration_binding=manifest_binding,
+        )
+    else:
+        write_plan_artifact(
+            run_dir=run_dir,
+            run_id=run_id,
+            config_version="legacy-config-version",
+            source_snapshot=[],
+            deletes_computed=True,
+            operations=[],
+        )
+        plan_dir = run_dir / PLAN_DIR_NAME
+        manifest_path = plan_dir / MANIFEST_FILE_NAME
+        manifest = json.loads(manifest_path.read_bytes())
+        manifest.update(manifest_binding)
+        manifest["plan_checksum"] = compute_plan_checksum(manifest, (plan_dir / OPERATIONS_FILE_NAME).read_bytes())
+        manifest_path.write_bytes(canonical_json_bytes(manifest))
+
+    def destination_construction_sentinel(*_args: object, **_kwargs: object) -> RunResult:
+        msg = "destination construction sentinel reached"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(managed_flow, "execute_run", destination_construction_sentinel)
+
+    with pytest.raises(RuntimeError, match=expected_error):
+        managed_sync_run.fn(run_id, "apply", expected_checksum="a" * 64, confirm_writes=True)
 
 
 def test_prefect_binding_carrier_is_optional_only_as_one_closed_group() -> None:

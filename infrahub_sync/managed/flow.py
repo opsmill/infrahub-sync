@@ -171,7 +171,8 @@ def _verify_registered_apply(*, instance: Any, run_id: str, binding: tuple[str, 
     artifact = read_plan_artifact_bytes(resolve_run_directory(instance.name, run_id))
     if verify_plan(artifact=artifact, run_id=run_id, config_version=resolve_config_version(instance)):
         raise ValueError(_REGISTERED_PLAN_VERIFICATION_FAILED)
-    if binding is not None and parse_plan_artifact(artifact, run_id=run_id).manifest.configuration_binding != binding:
+    manifest_binding = parse_plan_artifact(artifact, run_id=run_id).manifest.configuration_binding
+    if manifest_binding != binding:
         raise ValueError(_REGISTERED_PLAN_BINDING_MISMATCH)
 
 
