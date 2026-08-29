@@ -14,6 +14,7 @@ from infrahub_sync.product_store import local_product_projection
 from ._settings import PRODUCT_CACHE_ENV
 from .app import create_app
 from .auth import EnvironmentPrincipalResolver
+from .config_routes import ConfigurationRoutes
 from .orchestration import Observation, PrefectOrchestration, Submission
 from .service import ManagedRunService
 
@@ -47,7 +48,8 @@ def build_app() -> FastAPI:
     projection = local_product_projection(cache_location)
     resolver = EnvironmentPrincipalResolver.from_environment()
     service = ManagedRunService(projection, _ClientPerCallOrchestration(), secrets=resolver.secret_values)
-    return create_app(service, resolver)
+    configuration_routes = ConfigurationRoutes(cache_location, secrets=resolver.secret_values)
+    return create_app(service, resolver, configuration_routes)
 
 
 def main() -> None:

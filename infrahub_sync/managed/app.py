@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .auth import Principal, PrincipalResolver
+from .config_routes import ConfigurationRoutes, configuration_router
 from .models import (
     ApplyRunRequest,
     ArtifactListResource,
@@ -31,7 +32,9 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
-def create_app(service: ManagedRunService, resolver: PrincipalResolver) -> FastAPI:
+def create_app(
+    service: ManagedRunService, resolver: PrincipalResolver, configuration_routes: ConfigurationRoutes | None = None
+) -> FastAPI:
     """Create the managed application from explicit providers."""
     application = FastAPI(title="Infrahub Sync managed API", version="1.0.0")
     bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
@@ -163,5 +166,8 @@ def create_app(service: ManagedRunService, resolver: PrincipalResolver) -> FastA
     ) -> JSONResponse:
         status, content = await service.cancel_run(run_id, body, principal, key)
         return JSONResponse(status_code=status, content=content)
+
+    if configuration_routes is not None:
+        application.include_router(configuration_router(configuration_routes, authenticate))
 
     return application

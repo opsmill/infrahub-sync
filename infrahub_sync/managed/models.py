@@ -104,3 +104,24 @@ class ErrorEnvelope(_StrictModel):
     """Stable envelope used by every managed API error."""
 
     error: ErrorDetail
+
+
+class ConfigMutationRequest(_StrictModel):
+    """JSON package submitted for a configuration mutation."""
+
+    package: dict[str, Any]
+    reason: str = Field(min_length=1, max_length=512)
+
+
+class ConfigErrorDetail(_StrictModel):
+    """Secret-safe configuration service refusal."""
+
+    code: str
+    message: str
+    status: int
+    family: str
+    reason: str | None = None
+
+
+class ConfigErrorEnvelope(_StrictModel):
+    error: ConfigErrorDetail
