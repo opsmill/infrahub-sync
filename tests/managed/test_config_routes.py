@@ -5,13 +5,14 @@ from __future__ import annotations
 import ast
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from fastapi.testclient import TestClient
 
 from infrahub_sync.managed.app import create_app
 from infrahub_sync.managed.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
-from infrahub_sync.managed.config_routes import ConfigurationRoutes
+from infrahub_sync.managed.config_routes import ConfigurationAPIError, ConfigurationRoutes
 from infrahub_sync.managed.orchestration import Observation, Submission
 from infrahub_sync.managed.serve import build_app
 from infrahub_sync.managed.service import ManagedRunService
@@ -19,19 +20,22 @@ from infrahub_sync.product_store import configs as configs_service
 from infrahub_sync.product_store import local_product_projection
 from tests.configuration.validation_packages import package_data
 
+if TYPE_CHECKING:
+    from infrahub_sync.managed.auth import PrincipalResolver
+
 
 class _Orchestration:  # pylint: disable=too-few-public-methods
-    async def submit(self, _parameters: dict[str, object], *, _idempotency_key: str) -> Submission:  # noqa: PLR6301
+    async def submit(self, parameters: dict[str, object], *, idempotency_key: str) -> Submission:  # noqa: ARG002, PLR6301
         return Submission(flow_run_id="test-flow", state="pending")
 
-    async def observe(self, _flow_run_id: str) -> Observation:  # noqa: PLR6301
+    async def observe(self, flow_run_id: str) -> Observation:  # noqa: ARG002, PLR6301
         return Observation(available=True, state="running")
 
-    async def cancel(self, _flow_run_id: str) -> Observation:  # noqa: PLR6301
+    async def cancel(self, flow_run_id: str) -> Observation:  # noqa: ARG002, PLR6301
         return Observation(available=True, state="cancelled")
 
 
-def test_configuration_routes_register_then_read(tmp_path: Path, monkeypatch: object) -> None:
+def test_configuration_routes_register_then_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A configuration resource delegates registration and its scoped reads."""
     monkeypatch.setenv(
         PRINCIPALS_ENV, json.dumps({"admin": {"token": "admin-token-canary-0003", "administrator": True}})
@@ -134,7 +138,7 @@ def test_unknown_configs_subclass_uses_fixed_base_family(tmp_path: Path) -> None
             message = "do not disclose"
             raise Hostile(message)
 
-    with pytest.raises(Exception) as raised:
+    with pytest.raises(ConfigurationAPIError) as raised:
         ConfigurationRoutes(tmp_path, service=Service()).list_configs()
     assert raised.value.family == "configs"
 
@@ -176,7 +180,13 @@ def test_create_app_keeps_run_and_configuration_dependencies_separate(tmp_path: 
 
     runs = Runs()
     config_service = ConfigService()
-    client = TestClient(create_app(runs, Resolver(), ConfigurationRoutes(tmp_path, service=config_service)))
+    client = TestClient(
+        create_app(
+            cast("ManagedRunService", runs),
+            cast("PrincipalResolver", Resolver()),
+            ConfigurationRoutes(tmp_path, service=config_service),
+        )
+    )
     headers = {"Authorization": "Bearer accepted"}
     assert client.get("/runs/run-a/artifacts/one", headers=headers).status_code == 200
     assert client.get("/configs", headers=headers).status_code == 200
