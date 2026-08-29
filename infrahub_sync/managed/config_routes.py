@@ -11,7 +11,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from infrahub_sync.product_store import configs
-from infrahub_sync.product_store import MutationReceipt, local_product_projection
+from infrahub_sync.product_store import AuditEvent, MutationReceipt, local_product_projection
 from infrahub_sync.plan.canonical import canonical_json_bytes
 
 from .auth import Principal
@@ -111,11 +111,13 @@ class ConfigurationRoutes:
                 or stored.operation != receipt.operation
                 or stored.request_fingerprint != receipt.request_fingerprint
             ):
+                self._audit(actor, operation, reason, "refused-idempotency")
                 raise ManagedAPIError(
                     409, "idempotency-conflict", "Idempotency-Key was already used by this actor for different content"
                 )
             if stored.state == "accepted":
                 assert stored.response_status is not None and stored.response_body is not None
+                self._audit(actor, operation, reason, "replayed")
                 return stored.response_status, stored.response_body
         if operation == "register-config":
             response = jsonable_encoder(self.register(package))
@@ -130,7 +132,26 @@ class ConfigurationRoutes:
             secrets=self._secrets,
         )
         assert completed.response_body is not None and completed.response_status is not None
+        self._audit(actor, operation, reason, "accepted")
         return completed.response_status, completed.response_body
+
+    def audit_refusal(self, actor: str, operation: str, reason: str) -> None:
+        """Record a refused configuration mutation without reserving it."""
+        self._audit(actor, operation, reason, "refused-authorization")
+
+    def _audit(self, actor: str, operation: str, reason: str, outcome: str) -> None:
+        local_product_projection(self._location).record_audit(
+            AuditEvent(
+                event_id=f"a-{uuid4().hex}",
+                run_id=None,
+                actor=actor,
+                operation=operation,
+                reason=reason,
+                outcome=outcome,
+                created_at=datetime.now(timezone.utc),
+            ),
+            secrets=self._secrets,
+        )
 
 
 def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempotency_key: Any) -> APIRouter:
@@ -144,6 +165,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         key: Annotated[str, Depends(idempotency_key)],
     ) -> Any:
         if not principal.administrator:
+            routes.audit_refusal(principal.actor, "register-config", body.reason)
             raise ManagedAPIError(403, "forbidden", "administrator access is required")
         status, content = routes.mutate(
             actor=principal.actor,
@@ -163,6 +185,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         key: Annotated[str, Depends(idempotency_key)],
     ) -> Any:
         if not principal.administrator:
+            routes.audit_refusal(principal.actor, "create-config-version", body.reason)
             raise ManagedAPIError(403, "forbidden", "administrator access is required")
         status, content = routes.mutate(
             actor=principal.actor,

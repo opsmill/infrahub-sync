@@ -90,6 +90,42 @@ def test_configuration_mutation_replays_exact_response_and_rejects_changed_conte
     assert receipt.value is not None and receipt.value.state == "accepted"
 
 
+def test_configuration_mutation_refuses_unauthenticated_and_non_admin_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Authorization refusal occurs before configuration reservation or service invocation."""
+    monkeypatch.setenv(
+        PRINCIPALS_ENV,
+        json.dumps(
+            {
+                "admin": {"token": "admin-token-canary-0003", "administrator": True},
+                "reader": {"token": "reader-token-canary-0002", "administrator": False},
+            }
+        ),
+    )
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    projection = local_product_projection(tmp_path)
+    client = TestClient(
+        create_app(
+            ManagedRunService(projection, _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(tmp_path, secrets=resolver.secret_values),
+        )
+    )
+    body = {"package": package_data(), "reason": "register this package"}
+    assert client.post("/configs", headers={"Idempotency-Key": "missing-key"}, json=body).status_code == 401
+    assert (
+        client.post(
+            "/configs",
+            headers={"Authorization": "Bearer reader-token-canary-0002", "Idempotency-Key": "reader-key"},
+            json=body,
+        ).status_code
+        == 403
+    )
+    assert projection.list_configurations() == ()
+    assert [event.outcome for event in projection.audit_events()] == ["refused-authentication", "refused-authorization"]
+
+
 @pytest.mark.parametrize(
     ("failure", "status", "family", "reason"),
     [
