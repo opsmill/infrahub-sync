@@ -208,9 +208,15 @@ def test_configuration_route_grammar_refuses_hostile_values_before_service_class
             ConfigurationRoutes(tmp_path, service=service, secrets=resolver.secret_values),
         )
     )
-    headers = {"Authorization": f"Bearer {bearer}", "Idempotency-Key": "grammar-key"}
+    headers = {
+        "Authorization": f"Bearer {bearer}",
+        "Content-Type": "application/json",
+        "Idempotency-Key": "grammar-key",
+    }
     probes = [
         ("post", "/configs", {"json": {"package": package_data(), "reason": "valid", "extra": True}}),
+        ("post", "/configs", {"content": '{"package":{"nested":[NaN]},"reason":"valid"}'}),
+        ("post", "/configs", {"json": {"package": package_data(), "reason": "invalid\nreason"}}),
         ("get", "/configs?offset=true", {}),
         ("get", "/configs?limit=257", {}),
         ("get", "/configs/not%20an%20id", {}),
