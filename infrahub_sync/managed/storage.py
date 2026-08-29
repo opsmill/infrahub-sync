@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import boto3
@@ -17,6 +16,9 @@ from infrahub_sync.product_store import (
     ProductStoreProviderError,
     production_product_projection,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
 
 _CONDITIONAL_CONFLICT_ATTEMPTS = 3
 DATABASE_URL_ENV = "INFRAHUB_SYNC_DATABASE_URL"
@@ -174,7 +176,7 @@ def managed_product_projection(
     try:
         return projection_builder(connect=connect, s3_client=client, bucket=bucket, prefix=prefix)
     except ProductStoreProviderError:
-        raise ManagedStorageStartupError() from None
+        raise ManagedStorageStartupError from None
 
 
 def _error_code(error: ClientError) -> str | None:

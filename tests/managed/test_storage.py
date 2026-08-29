@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from botocore.exceptions import ClientError
 
 from infrahub_sync.product_store import DuplicateArtifactError
+
+if TYPE_CHECKING:
+    from typing import NoReturn
+
+    from infrahub_sync.product_store import ProductProjection
 
 
 def _client_error(code: str) -> ClientError:
@@ -34,12 +40,13 @@ class _SDK:
         self.put_calls.append(kwargs)
         if self.put_failure is not None:
             self.put_failure()
-        self.objects[(str(kwargs["Bucket"]), str(kwargs["Key"]))] = bytes(kwargs["Body"])
+        self.objects[str(kwargs["Bucket"]), str(kwargs["Key"])] = bytes(cast("bytes", kwargs["Body"]))
 
     def get_object(self, **kwargs: object) -> dict[str, object]:
         key = str(kwargs["Bucket"]), str(kwargs["Key"])
         if key not in self.objects:
-            raise _client_error("NoSuchKey")
+            code = "NoSuchKey"
+            raise _client_error(code)
         return {"Body": _Body(self.objects[key])}
 
     def copy_object(self, **kwargs: object) -> None:
@@ -67,7 +74,9 @@ def test_s3_client_preserves_the_small_object_protocol() -> None:
 
     client.copy(bucket="records", source="plain", destination="copied")
     client.delete(bucket="records", key="plain")
-    assert sdk.copy_calls == [{"Bucket": "records", "Key": "copied", "CopySource": {"Bucket": "records", "Key": "plain"}}]
+    assert sdk.copy_calls == [
+        {"Bucket": "records", "Key": "copied", "CopySource": {"Bucket": "records", "Key": "plain"}}
+    ]
     assert sdk.delete_calls == [{"Bucket": "records", "Key": "plain"}]
 
 
@@ -106,13 +115,16 @@ def test_managed_storage_factory_validates_settings_and_hides_startup_details() 
     }
     captured: dict[str, object] = {}
 
-    def projection(**kwargs: object) -> object:
+    def projection(**kwargs: object) -> ProductProjection:
         captured.update(kwargs)
+        return cast("ProductProjection", object())
+
+    def database_connect() -> object:
         return object()
 
     result = storage.managed_product_projection(
         environ={**required, "INFRAHUB_SYNC_S3_PREFIX": "/stable/", "INFRAHUB_SYNC_S3_ENDPOINT_URL": "https://s3.test"},
-        database_connect=lambda: object(),
+        database_connect=database_connect,
         s3_client_builder=lambda service, **kwargs: captured.setdefault("sdk", {"service": service, **kwargs}),
         projection_builder=projection,
     )
@@ -166,31 +178,46 @@ def test_psycopg_adapter_marks_cursor_transaction_and_cleanup_failures() -> None
     """Every DB-API operation exposed to the product store preserves the typed marker."""
     from infrahub_sync.managed import storage
 
+    cursor_message = "cursor-secret-canary"
+    fetch_message = "fetch-secret-canary"
+    fetchall_message = "fetchall-secret-canary"
+    close_message = "close-secret-canary"
+    commit_message = "commit-secret-canary"
+    rollback_message = "rollback-secret-canary"
+
     class Cursor:
-        def execute(self, *_args: object) -> NoReturn:
-            raise storage.psycopg.OperationalError("cursor-secret-canary")
+        @staticmethod
+        def execute(*_args: object) -> NoReturn:
+            raise storage.psycopg.OperationalError(cursor_message)
 
-        def fetchone(self) -> NoReturn:
-            raise storage.psycopg.OperationalError("fetch-secret-canary")
+        @staticmethod
+        def fetchone() -> NoReturn:
+            raise storage.psycopg.OperationalError(fetch_message)
 
-        def fetchall(self) -> NoReturn:
-            raise storage.psycopg.OperationalError("fetchall-secret-canary")
+        @staticmethod
+        def fetchall() -> NoReturn:
+            raise storage.psycopg.OperationalError(fetchall_message)
 
-        def close(self) -> NoReturn:
-            raise storage.psycopg.OperationalError("close-secret-canary")
+        @staticmethod
+        def close() -> NoReturn:
+            raise storage.psycopg.OperationalError(close_message)
 
     class Connection:
-        def cursor(self) -> Cursor:
+        @staticmethod
+        def cursor() -> Cursor:
             return Cursor()
 
-        def commit(self) -> NoReturn:
-            raise storage.psycopg.OperationalError("commit-secret-canary")
+        @staticmethod
+        def commit() -> NoReturn:
+            raise storage.psycopg.OperationalError(commit_message)
 
-        def rollback(self) -> NoReturn:
-            raise storage.psycopg.OperationalError("rollback-secret-canary")
+        @staticmethod
+        def rollback() -> NoReturn:
+            raise storage.psycopg.OperationalError(rollback_message)
 
-        def close(self) -> NoReturn:
-            raise storage.psycopg.OperationalError("close-secret-canary")
+        @staticmethod
+        def close() -> NoReturn:
+            raise storage.psycopg.OperationalError(close_message)
 
     connection = storage.PsycopgConnectionFactory(lambda _dsn: Connection())("postgresql://db/sync")
     cursor = connection.cursor()

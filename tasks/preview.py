@@ -105,8 +105,7 @@ def _runtime_env(values: dict[str, str]) -> dict[str, str]:
             "INFRAHUB_SYNC_CONFIG_DIRECTORY": str(REPO_ROOT / "examples"),
             "INFRAHUB_SYNC_CACHE_DIR": str(STATE_DIR / "sync-cache"),
             "INFRAHUB_SYNC_DATABASE_URL": (
-                "postgresql://postgres:postgres@127.0.0.1:"
-                f"{values['PREVIEW_STORAGE_POSTGRES_PORT']}/infrahub_sync"
+                f"postgresql://postgres:postgres@127.0.0.1:{values['PREVIEW_STORAGE_POSTGRES_PORT']}/infrahub_sync"
             ),
             "INFRAHUB_SYNC_S3_BUCKET": values["PREVIEW_S3_BUCKET"],
             "INFRAHUB_SYNC_S3_PREFIX": "infrahub-sync",

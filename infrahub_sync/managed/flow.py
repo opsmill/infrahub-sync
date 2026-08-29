@@ -40,6 +40,7 @@ from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_by
 from infrahub_sync.plan.review import SavedPlan, resolve_run_directory
 from infrahub_sync.plan.verify import verify_plan
 from infrahub_sync.product_store import ProductProjection
+
 from .models import PlanResource
 from .orchestration import MANAGED_FLOW_NAME
 from .service import PLAN_ARTIFACT_ID

@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from infrahub_sync.configuration.models import ConfigurationPackage
     from infrahub_sync.managed.auth import PrincipalResolver
     from infrahub_sync.product_store.models import ConfigurationVersion
+    from infrahub_sync.product_store.store import ProductProjection
 
 
 class _Orchestration:  # pylint: disable=too-few-public-methods
@@ -75,15 +76,16 @@ def test_configuration_routes_use_the_injected_projection_for_services_receipts_
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Configuration operations must not silently reopen a local product projection."""
-    import infrahub_sync.managed.config_routes as config_routes
+    from infrahub_sync.managed import config_routes
 
     bearer = "admin-token-canary-0003"
     monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
     resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection(tmp_path)
+    message = "configuration routes reopened a local product projection"
 
     def local_projection_forbidden(*_args: object, **_kwargs: object) -> NoReturn:
-        raise AssertionError("configuration routes reopened a local product projection")
+        raise AssertionError(message)
 
     monkeypatch.setattr(config_routes, "local_product_projection", local_projection_forbidden)
     client = TestClient(
@@ -109,10 +111,12 @@ def test_configuration_receipt_and_audit_provider_errors_are_storage_failures() 
     from infrahub_sync.product_store import ProductStoreProviderError
 
     class Projection:
-        def reserve_mutation(self, *_args: object, **_kwargs: object) -> NoReturn:
+        @staticmethod
+        def reserve_mutation(*_args: object, **_kwargs: object) -> NoReturn:
             raise ProductStoreProviderError(sqlstate="08006")
 
-        def record_audit(self, *_args: object, **_kwargs: object) -> NoReturn:
+        @staticmethod
+        def record_audit(*_args: object, **_kwargs: object) -> NoReturn:
             raise ProductStoreProviderError(sqlstate="08006")
 
     routes = ConfigurationRoutes(product_projection=cast("ProductProjection", Projection()))
@@ -897,11 +901,14 @@ def test_build_app_composes_one_managed_projection_for_runs_and_configurations()
         received.append("app")
         return object()
 
-    assert build_app(
-        projection_factory=storage_factory,
-        resolver_factory=Resolver,
-        run_service_factory=lambda value, *_args, **_kwargs: received.append(value) or object(),
-        configuration_routes_factory=routes_factory,
-        app_factory=app_factory,
-    ) is not None
+    assert (
+        build_app(
+            projection_factory=storage_factory,
+            resolver_factory=Resolver,
+            run_service_factory=lambda value, *_args, **_kwargs: received.append(value) or object(),
+            configuration_routes_factory=routes_factory,
+            app_factory=app_factory,
+        )
+        is not None
+    )
     assert received == ["storage", projection, "routes", "app"]
