@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import os
 import re
+from dataclasses import dataclass
+from ipaddress import AddressValueError, IPv6Address
 from typing import TYPE_CHECKING, Any
 
 import boto3
 import psycopg
 from botocore.exceptions import ClientError
-from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
 
 from infrahub_sync.product_store import (
     DuplicateArtifactError,
@@ -27,17 +28,16 @@ S3_BUCKET_ENV = "INFRAHUB_SYNC_S3_BUCKET"
 S3_PREFIX_ENV = "INFRAHUB_SYNC_S3_PREFIX"
 S3_ENDPOINT_ENV = "INFRAHUB_SYNC_S3_ENDPOINT_URL"
 S3_REGION_ENV = "INFRAHUB_SYNC_S3_REGION"
-_HTTP_URL_ADAPTER = TypeAdapter(AnyHttpUrl)
 _PERCENT_ENCODED = r"%[0-9A-Fa-f]{2}"
 _UNRESERVED = r"[A-Za-z0-9._~-]"
 _SUB_DELIMS = r"[!$&'()*+,;=]"
 _REG_NAME = rf"(?:{_UNRESERVED}|{_SUB_DELIMS}|{_PERCENT_ENCODED})+"
-_IP_LITERAL = r"\[[0-9A-Fa-f:.]+\]"
-_HOST = rf"(?:{_IP_LITERAL}|{_REG_NAME})"
-_AUTHORITY = rf"{_HOST}(?::[0-9]+)?"
+_IPV_FUTURE = rf"v[0-9A-Fa-f]+\.(?:{_UNRESERVED}|{_SUB_DELIMS}|:)+"
+_HOST = rf"(?:\[(?P<ipvfuture>{_IPV_FUTURE})\]|\[(?P<ipv6>[0-9A-Fa-f:.]+)\]|(?P<reg_name>{_REG_NAME}))"
 _PCHAR = rf"(?:{_UNRESERVED}|{_SUB_DELIMS}|{_PERCENT_ENCODED}|[:@])"
 _ENDPOINT_URI = re.compile(
-    rf"(?i:https?)://{_AUTHORITY}(?:/{_PCHAR}*)*(?:\?(?:{_PCHAR}|[/?])*)?(?:#(?:{_PCHAR}|[/?])*)?"
+    rf"(?P<scheme>(?i:http|https))://{_HOST}(?::(?P<port>[0-9]+))?"
+    rf"(?:/{_PCHAR}*)*(?:\?(?:{_PCHAR}|[/?])*)?(?:#(?:{_PCHAR}|[/?])*)?"
 )
 
 
@@ -53,6 +53,13 @@ class S3ProtocolError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("S3 get response body must return bytes")
+
+
+@dataclass(frozen=True)
+class _EndpointUri:
+    """One exact raw endpoint that passed the complete accepted URI construction."""
+
+    value: str
 
 
 class PsycopgConnectionFactory:
@@ -165,23 +172,38 @@ def _optional_setting(values: Mapping[str, object], name: str) -> str | None:
     return value
 
 
+def _valid_port(port: str | None) -> bool:
+    """Check a decimal port's range without an unbounded integer conversion."""
+    if port is None:
+        return True
+    significant_digits = port.lstrip("0") or "0"
+    return len(significant_digits) < 5 or (len(significant_digits) == 5 and significant_digits <= "65535")
+
+
+def _parse_endpoint(value: str) -> _EndpointUri | None:
+    """Construct one accepted endpoint from the complete raw RFC 3986 HTTP URI grammar."""
+    match = _ENDPOINT_URI.fullmatch(value)
+    if match is None or not _valid_port(match["port"]):
+        return None
+    ipv6 = match["ipv6"]
+    if ipv6 is not None:
+        try:
+            IPv6Address(ipv6)
+        except AddressValueError:
+            return None
+    return _EndpointUri(value)
+
+
 def _endpoint(values: Mapping[str, object]) -> str | None:
     """Validate the optional S3-compatible endpoint as an absolute HTTP URL."""
     endpoint = _optional_setting(values, S3_ENDPOINT_ENV)
     if endpoint is None:
         return None
-    if _ENDPOINT_URI.fullmatch(endpoint) is None:
+    parsed = _parse_endpoint(endpoint)
+    if parsed is None:
         msg = f"{S3_ENDPOINT_ENV} must be an absolute http or https URL"
         raise ValueError(msg) from None
-    try:
-        parsed = _HTTP_URL_ADAPTER.validate_python(endpoint)
-    except ValidationError:
-        msg = f"{S3_ENDPOINT_ENV} must be an absolute http or https URL"
-        raise ValueError(msg) from None
-    if parsed.username is not None or parsed.password is not None:
-        msg = f"{S3_ENDPOINT_ENV} must be an absolute http or https URL"
-        raise ValueError(msg) from None
-    return endpoint
+    return parsed.value
 
 
 def managed_product_projection(

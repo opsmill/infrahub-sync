@@ -318,6 +318,10 @@ def test_managed_storage_endpoint_rejects_invalid_authorities_before_constructio
         "http://s3%.example.test",
         "http://\x01s3.example.test",
         "http://s3.example.test/%zz",
+        "http://[v.fe80]",
+        "http://[::::]",
+        "http://user@s3.example.test",
+        "http://s3.example.test:65536",
     ],
 )
 def test_managed_storage_endpoint_rejects_parser_invalid_syntax(endpoint: str) -> None:
@@ -350,6 +354,8 @@ def test_managed_storage_endpoint_rejects_parser_invalid_syntax(endpoint: str) -
         "https://[::1]",
         "https://[::1]:9443",
         "HTTP://s3.example.test:9000/path%20with%20encoding?query=@value#fragment",
+        "http://[v1.fe80]",
+        "HTTP://[vF.a:b-c._~!$&'()*+,;=]:65535/path@segment?query=@value#fragment",
     ],
 )
 def test_managed_storage_endpoint_accepts_valid_authorities(endpoint: str) -> None:
