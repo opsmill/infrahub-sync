@@ -92,6 +92,33 @@ def test_configuration_mutation_replays_exact_response_and_rejects_changed_conte
     assert receipt.value.state == "accepted"
 
 
+def test_configuration_mutation_audits_accepted_replayed_and_refused_idempotency_without_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every mutation decision is durable evidence and contains no bearer secret."""
+    token = "admin-token-canary-0003"
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": token, "administrator": True}}))
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    projection = local_product_projection(tmp_path)
+    client = TestClient(
+        create_app(
+            ManagedRunService(projection, _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(tmp_path, secrets=resolver.secret_values),
+        )
+    )
+    headers = {"Authorization": f"Bearer {token}", "Idempotency-Key": "audit-once"}
+    body = {"package": package_data(), "reason": "register audit proof"}
+
+    assert client.post("/configs", headers=headers, json=body).status_code == 201
+    assert client.post("/configs", headers=headers, json=body).status_code == 201
+    assert client.post("/configs", headers=headers, json={**body, "reason": "changed audit proof"}).status_code == 409
+
+    events = projection.audit_events()
+    assert [event.outcome for event in events] == ["accepted", "replayed", "refused-idempotency"]
+    assert all(token not in event.model_dump_json() for event in events)
+
+
 def test_configuration_mutation_refuses_unauthenticated_and_non_admin_calls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
