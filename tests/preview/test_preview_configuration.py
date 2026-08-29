@@ -29,6 +29,34 @@ def test_preview_routes_prefect_ui_to_the_published_host_port() -> None:
     assert 'PREFECT_SERVER_UI_API_URL: "http://localhost:${PREVIEW_PREFECT_PORT:-4210}/api"' in compose
 
 
+def test_preview_declares_the_managed_postgresql_and_minio_storage_shape() -> None:
+    """Preview supplies the durable managed contract without the retired product cache."""
+    compose = (DEV_DIR / "docker-compose.preview.yml").read_text(encoding="utf-8")
+    environment = preview._runtime_env(
+        {
+            "INFRAHUB_INITIAL_ADMIN_TOKEN": "local-token",
+            "PREVIEW_BEARER_TOKENS": "{}",
+            "PREVIEW_INFRAHUB_PORT": "8080",
+            "PREVIEW_PREFECT_PORT": "4210",
+            "PREVIEW_SYNC_API_PORT": "8090",
+            "PREVIEW_STORAGE_POSTGRES_PORT": "5439",
+            "PREVIEW_MINIO_PORT": "9010",
+            "PREVIEW_S3_BUCKET": "infrahub-sync-preview",
+            "PREVIEW_WORK_POOL": "preview-pool",
+        }
+    )
+
+    assert "sync-postgres:" in compose
+    assert "sync-minio:" in compose
+    assert "sync-minio-bootstrap:" in compose
+    assert "mc mb --ignore-existing" in compose
+    assert environment["INFRAHUB_SYNC_DATABASE_URL"] == "postgresql://postgres:postgres@127.0.0.1:5439/infrahub_sync"
+    assert environment["INFRAHUB_SYNC_S3_BUCKET"] == "infrahub-sync-preview"
+    assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == "http://127.0.0.1:9010"
+    assert "INFRAHUB_SYNC_CACHE_DIR" in environment
+    assert "INFRAHUB_SYNC_MANAGED_CACHE_LOCATION" not in environment
+
+
 def test_compose_receives_merged_local_preview_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, dict[str, str], bool]] = []
     context = Context()
