@@ -67,22 +67,20 @@ class ConfigurationRoutes:
         return self._call(self._service.create_version, config_id=config_id, package=package)
 
     def list_configs(self, *, offset: int = 0, limit: int = _MAX_PAGE_LIMIT) -> Any:
-        del offset, limit
-        return self._call(self._service.list_configs)
+        return self._call(self._service.list_configs)[offset : offset + limit]
 
     def get_config(self, config_id: str) -> Any:
         return self._call(self._service.get_config, config_id=config_id)
 
     def list_versions(self, config_id: str, *, offset: int = 0, limit: int = _MAX_PAGE_LIMIT) -> Any:
-        del offset, limit
-        return self._call(self._service.list_versions, config_id=config_id)
+        return self._call(self._service.list_versions, config_id=config_id)[offset : offset + limit]
 
     def get_version(self, config_id: str, registry_version: int) -> Any:
         return self._call(self._service.get_version, config_id=config_id, registry_version=registry_version)
 
     def validate(self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = _MAX_PAGE_LIMIT) -> Any:
-        del offset, limit
-        return self._call(self._service.validate, config_id=config_id, registry_version=registry_version)
+        report = self._call(self._service.validate, config_id=config_id, registry_version=registry_version)
+        return replace(report, findings=report.findings[offset : offset + limit])
 
     def mutate(
         self,
