@@ -41,10 +41,86 @@ class PsycopgConnectionFactory:
 
     def __call__(self, database_url: str) -> Any:
         try:
-            return self._connector(database_url)
+            return _PsycopgConnection(self._connector(database_url))
         except psycopg.Error as error:
-            sqlstate = error.sqlstate if isinstance(error.sqlstate, str) else None
-            raise ProductStoreProviderError(sqlstate=sqlstate) from None
+            raise _provider_error(error) from None
+
+
+def _provider_error(error: psycopg.Error) -> ProductStoreProviderError:
+    """Discard driver details while retaining the documented SQLSTATE discriminator."""
+    sqlstate = error.sqlstate if isinstance(error.sqlstate, str) else None
+    return ProductStoreProviderError(sqlstate=sqlstate)
+
+
+class _PsycopgCursor:
+    """DB-API cursor boundary that marks only Psycopg failures."""
+
+    def __init__(self, cursor: Any) -> None:
+        self._cursor = cursor
+
+    def execute(self, statement: str, parameters: Any = None) -> Any:
+        try:
+            if parameters is None:
+                return self._cursor.execute(statement)
+            return self._cursor.execute(statement, parameters)
+        except psycopg.Error as error:
+            raise _provider_error(error) from None
+
+    def fetchone(self) -> Any:
+        try:
+            return self._cursor.fetchone()
+        except psycopg.Error as error:
+            raise _provider_error(error) from None
+
+    def fetchall(self) -> Any:
+        try:
+            return self._cursor.fetchall()
+        except psycopg.Error as error:
+            raise _provider_error(error) from None
+
+    @property
+    def rowcount(self) -> int:
+        try:
+            return self._cursor.rowcount
+        except psycopg.Error as error:
+            raise _provider_error(error) from None
+
+    def close(self) -> None:
+        try:
+            self._cursor.close()
+        except psycopg.Error as error:
+            raise _provider_error(error) from None
+
+
+class _PsycopgConnection:
+    """DB-API connection boundary that marks only Psycopg failures."""
+
+    def __init__(self, connection: Any) -> None:
+        self._connection = connection
+
+    def cursor(self) -> _PsycopgCursor:
+        try:
+            return _PsycopgCursor(self._connection.cursor())
+        except psycopg.Error as error:
+            raise _provider_error(error) from None
+
+    def commit(self) -> None:
+        try:
+            self._connection.commit()
+        except psycopg.Error as error:
+            raise _provider_error(error) from None
+
+    def rollback(self) -> None:
+        try:
+            self._connection.rollback()
+        except psycopg.Error as error:
+            raise _provider_error(error) from None
+
+    def close(self) -> None:
+        try:
+            self._connection.close()
+        except psycopg.Error as error:
+            raise _provider_error(error) from None
 
 
 def _required_setting(values: Mapping[str, object], name: str) -> str:

@@ -161,3 +161,48 @@ def test_psycopg_adapter_marks_only_driver_errors() -> None:
     factory = storage.PsycopgConnectionFactory(lambda _dsn: (_ for _ in ()).throw(failure))
     with pytest.raises(RuntimeError, match="product defect"):
         factory("postgresql://secret-canary@db/sync")
+
+
+def test_psycopg_adapter_marks_cursor_transaction_and_cleanup_failures() -> None:
+    """Every DB-API operation exposed to the product store preserves the typed marker."""
+    from infrahub_sync.managed import storage
+
+    class Cursor:
+        def execute(self, *_args: object) -> NoReturn:
+            raise storage.psycopg.OperationalError("cursor-secret-canary")
+
+        def fetchone(self) -> NoReturn:
+            raise storage.psycopg.OperationalError("fetch-secret-canary")
+
+        def fetchall(self) -> NoReturn:
+            raise storage.psycopg.OperationalError("fetchall-secret-canary")
+
+        def close(self) -> NoReturn:
+            raise storage.psycopg.OperationalError("close-secret-canary")
+
+    class Connection:
+        def cursor(self) -> Cursor:
+            return Cursor()
+
+        def commit(self) -> NoReturn:
+            raise storage.psycopg.OperationalError("commit-secret-canary")
+
+        def rollback(self) -> NoReturn:
+            raise storage.psycopg.OperationalError("rollback-secret-canary")
+
+        def close(self) -> NoReturn:
+            raise storage.psycopg.OperationalError("close-secret-canary")
+
+    connection = storage.PsycopgConnectionFactory(lambda _dsn: Connection())("postgresql://db/sync")
+    cursor = connection.cursor()
+    for operation in (
+        lambda: cursor.execute("SELECT 1"),
+        cursor.fetchone,
+        cursor.fetchall,
+        cursor.close,
+        connection.commit,
+        connection.rollback,
+        connection.close,
+    ):
+        with pytest.raises(storage.ProductStoreProviderError):
+            operation()
