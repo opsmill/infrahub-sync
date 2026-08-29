@@ -108,6 +108,38 @@ def test_s3_client_classifies_only_exact_conditional_responses() -> None:
     assert len(sdk.put_calls) == 1
 
 
+def test_s3_get_accepts_only_exact_bytes_and_only_exact_missing_object() -> None:
+    """Lookup must not turn malformed bodies or non-missing SDK failures into absence."""
+    from infrahub_sync.managed.storage import Boto3S3Client, S3ProtocolError
+
+    class Body:
+        def __init__(self, value: object) -> None:
+            self._value = value
+
+        def read(self) -> object:
+            return self._value
+
+    class SDK:
+        def __init__(self, result: object) -> None:
+            self._result = result
+
+        def get_object(self, **_kwargs: object) -> object:
+            if isinstance(self._result, BaseException):
+                raise self._result
+            return self._result
+
+    assert Boto3S3Client(SDK({"Body": Body(b"exact-bytes")})).get(bucket="records", key="object") == b"exact-bytes"
+    assert Boto3S3Client(SDK(_client_error("NoSuchKey"))).get(bucket="records", key="missing") is None
+
+    for failure in (_client_error("NoSuchBucket"), _client_error("AccessDenied"), _client_error("InternalError")):
+        with pytest.raises(ClientError):
+            Boto3S3Client(SDK(failure)).get(bucket="records", key="object")
+    for response in ({"Body": Body(bytearray(b"not-bytes"))}, {"Body": object()}, {}):
+        with pytest.raises(S3ProtocolError) as error:
+            Boto3S3Client(SDK(response)).get(bucket="records", key="object")
+        assert str(error.value) == "S3 get response body must return bytes"
+        assert error.value.__cause__ is None
+
 def test_managed_storage_factory_validates_settings_and_hides_startup_details() -> None:
     """The factory has one value-free environment contract and startup failure."""
     from infrahub_sync.managed import storage

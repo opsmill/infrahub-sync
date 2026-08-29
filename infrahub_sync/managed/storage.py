@@ -35,6 +35,13 @@ class ManagedStorageStartupError(RuntimeError):
         super().__init__("managed durable storage startup failed")
 
 
+class S3ProtocolError(RuntimeError):
+    """An S3 SDK response does not satisfy the product-store byte contract."""
+
+    def __init__(self) -> None:
+        super().__init__("S3 get response body must return bytes")
+
+
 class PsycopgConnectionFactory:
     """Convert exact Psycopg connection failures to the driver-neutral provider error."""
 
@@ -219,7 +226,13 @@ class Boto3S3Client:
             if _error_code(error) == "NoSuchKey":
                 return None
             raise
-        return response["Body"].read()
+        try:
+            result = response["Body"].read()
+        except (AttributeError, KeyError, TypeError):
+            raise S3ProtocolError() from None
+        if type(result) is not bytes:  # pylint: disable=unidiomatic-typecheck  # Exact protocol contract.
+            raise S3ProtocolError()
+        return result
 
     def copy(self, *, bucket: str, source: str, destination: str) -> None:
         """Copy exactly one object within the configured bucket."""
