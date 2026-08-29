@@ -2,13 +2,103 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import Callable, Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
+import boto3
+import psycopg
 from botocore.exceptions import ClientError
 
-from infrahub_sync.product_store import DuplicateArtifactError
+from infrahub_sync.product_store import (
+    DuplicateArtifactError,
+    ProductProjection,
+    ProductStoreProviderError,
+    production_product_projection,
+)
 
 _CONDITIONAL_CONFLICT_ATTEMPTS = 3
+DATABASE_URL_ENV = "INFRAHUB_SYNC_DATABASE_URL"
+S3_BUCKET_ENV = "INFRAHUB_SYNC_S3_BUCKET"
+S3_PREFIX_ENV = "INFRAHUB_SYNC_S3_PREFIX"
+S3_ENDPOINT_ENV = "INFRAHUB_SYNC_S3_ENDPOINT_URL"
+S3_REGION_ENV = "INFRAHUB_SYNC_S3_REGION"
+
+
+class ManagedStorageStartupError(RuntimeError):
+    """Managed durable storage could not initialize at process construction."""
+
+    def __init__(self) -> None:
+        super().__init__("managed durable storage startup failed")
+
+
+class PsycopgConnectionFactory:
+    """Convert exact Psycopg connection failures to the driver-neutral provider error."""
+
+    def __init__(self, connector: Callable[[str], Any] = psycopg.connect) -> None:
+        self._connector = connector
+
+    def __call__(self, database_url: str) -> Any:
+        try:
+            return self._connector(database_url)
+        except psycopg.Error as error:
+            sqlstate = error.sqlstate if isinstance(error.sqlstate, str) else None
+            raise ProductStoreProviderError(sqlstate=sqlstate) from None
+
+
+def _required_setting(values: Mapping[str, object], name: str) -> str:
+    """Return a non-empty string setting without reflecting its value."""
+    value = values.get(name)
+    if not isinstance(value, str) or not value.strip():
+        msg = f"{name} must be set"
+        raise ValueError(msg)
+    return value
+
+
+def _optional_setting(values: Mapping[str, object], name: str) -> str | None:
+    """Return one optional non-empty setting without accepting hostile values."""
+    value = values.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        msg = f"{name} must be a non-empty string when set"
+        raise ValueError(msg)
+    return value
+
+
+def _endpoint(values: Mapping[str, object]) -> str | None:
+    """Validate the optional S3-compatible endpoint as an absolute HTTP URL."""
+    endpoint = _optional_setting(values, S3_ENDPOINT_ENV)
+    if endpoint is None:
+        return None
+    parsed = urlsplit(endpoint)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        msg = f"{S3_ENDPOINT_ENV} must be an absolute http or https URL"
+        raise ValueError(msg)
+    return endpoint
+
+
+def managed_product_projection(
+    *,
+    environ: Mapping[str, object] | None = None,
+    database_connect: Callable[[], Any] | None = None,
+    s3_client_builder: Callable[..., Any] = boto3.client,
+    projection_builder: Callable[..., ProductProjection] = production_product_projection,
+) -> ProductProjection:
+    """Build the one PostgreSQL/S3 projection used by a managed process."""
+    values: Mapping[str, object] = os.environ if environ is None else environ
+    database_url = _required_setting(values, DATABASE_URL_ENV)
+    bucket = _required_setting(values, S3_BUCKET_ENV)
+    prefix = (_optional_setting(values, S3_PREFIX_ENV) or "infrahub-sync").strip("/")
+    endpoint = _endpoint(values)
+    region = _optional_setting(values, S3_REGION_ENV)
+    connect = database_connect or (lambda: PsycopgConnectionFactory()(database_url))
+    client = Boto3S3Client(s3_client_builder("s3", endpoint_url=endpoint, region_name=region))
+    try:
+        return projection_builder(connect=connect, s3_client=client, bucket=bucket, prefix=prefix)
+    except ProductStoreProviderError:
+        raise ManagedStorageStartupError() from None
 
 
 def _error_code(error: ClientError) -> str | None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from types import SimpleNamespace
 
 import pytest
 from botocore.exceptions import ClientError
@@ -94,3 +95,69 @@ def test_s3_client_classifies_only_exact_conditional_responses() -> None:
     with pytest.raises(ClientError):
         client.put(bucket="records", key="denied", data=b"data", if_absent=True)
     assert len(sdk.put_calls) == 1
+
+
+def test_managed_storage_factory_validates_settings_and_hides_startup_details() -> None:
+    """The factory has one value-free environment contract and startup failure."""
+    from infrahub_sync.managed import storage
+
+    required = {
+        "INFRAHUB_SYNC_DATABASE_URL": "postgresql://secret-canary@db/sync",
+        "INFRAHUB_SYNC_S3_BUCKET": "sync-artifacts",
+    }
+    captured: dict[str, object] = {}
+
+    def projection(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return object()
+
+    result = storage.managed_product_projection(
+        environ={**required, "INFRAHUB_SYNC_S3_PREFIX": "/stable/", "INFRAHUB_SYNC_S3_ENDPOINT_URL": "https://s3.test"},
+        database_connect=lambda: object(),
+        s3_client_builder=lambda service, **kwargs: captured.setdefault("sdk", {"service": service, **kwargs}),
+        projection_builder=projection,
+    )
+    assert result is not None
+    assert captured["bucket"] == "sync-artifacts"
+    assert captured["prefix"] == "stable"
+    assert captured["sdk"] == {"service": "s3", "endpoint_url": "https://s3.test", "region_name": None}
+
+    for name, value in (
+        ("INFRAHUB_SYNC_DATABASE_URL", ""),
+        ("INFRAHUB_SYNC_S3_BUCKET", ""),
+        ("INFRAHUB_SYNC_S3_ENDPOINT_URL", "not-a-url"),
+    ):
+        values = {**required, name: value}
+        with pytest.raises(ValueError) as error:
+            storage.managed_product_projection(environ=values, s3_client_builder=lambda *_args, **_kwargs: object())
+        assert name in str(error.value)
+        assert "secret-canary" not in str(error.value)
+
+    def unavailable() -> NoReturn:
+        raise storage.ProductStoreProviderError(sqlstate="08006")
+
+    with pytest.raises(storage.ManagedStorageStartupError) as error:
+        storage.managed_product_projection(
+            environ=required,
+            database_connect=unavailable,
+            s3_client_builder=lambda *_args, **_kwargs: object(),
+        )
+    assert str(error.value) == "managed durable storage startup failed"
+    assert error.value.__cause__ is None
+
+
+def test_psycopg_adapter_marks_only_driver_errors() -> None:
+    """Psycopg errors retain SQLSTATE; unrelated provider defects escape unmarked."""
+    from infrahub_sync.managed import storage
+
+    driver_error = storage.psycopg.OperationalError("driver-secret-canary")
+    factory = storage.PsycopgConnectionFactory(lambda _dsn: (_ for _ in ()).throw(driver_error))
+    with pytest.raises(storage.ProductStoreProviderError) as error:
+        factory("postgresql://secret-canary@db/sync")
+    assert error.value.sqlstate is None
+    assert error.value.__cause__ is None
+
+    failure = RuntimeError("product defect")
+    factory = storage.PsycopgConnectionFactory(lambda _dsn: (_ for _ in ()).throw(failure))
+    with pytest.raises(RuntimeError, match="product defect"):
+        factory("postgresql://secret-canary@db/sync")
