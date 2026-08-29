@@ -79,6 +79,9 @@ class ProductRun(BaseModel):
     run_id: str = Field(pattern=_IDENTIFIER_PATTERN)
     operation: Operation
     configuration_reference: str = Field(min_length=1)
+    config_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
+    registry_version: int | None = Field(default=None, ge=1, le=2**63 - 1)
+    package_checksum: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     actor: str | None = None
     audit_links: tuple[str, ...] = ()
     started_at: datetime
@@ -100,6 +103,10 @@ class ProductRun(BaseModel):
 
     @model_validator(mode="after")
     def _require_consistent_children(self) -> ProductRun:
+        binding = (self.config_id, self.registry_version, self.package_checksum)
+        if any(value is None for value in binding) and any(value is not None for value in binding):
+            msg = "configuration binding must be all absent or all present"
+            raise ValueError(msg)
         if self.finished_at is not None and self.outcome is None:
             msg = "a finished product record requires an outcome"
             raise ValueError(msg)
@@ -115,6 +122,15 @@ class ProductRun(BaseModel):
             msg = "Prefect flow-run IDs must be unique within a product record"
             raise ValueError(msg)
         return self
+
+    @property
+    def configuration_binding(self) -> tuple[str, int, str] | None:
+        """Return the complete registered package identity, never a partial tuple."""
+        if self.config_id is None:
+            return None
+        assert self.registry_version is not None
+        assert self.package_checksum is not None
+        return self.config_id, self.registry_version, self.package_checksum
 
 
 class MutationReceipt(BaseModel):

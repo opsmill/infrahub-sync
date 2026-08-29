@@ -373,6 +373,37 @@ def _run(run_id: str = "run-001", *, links: tuple[PrefectExecutionLink, ...] = (
     )
 
 
+def test_registered_run_binding_is_all_or_none_and_survives_restart(tmp_path: Path) -> None:
+    """A registered run retains its exact immutable package identity."""
+    started_at = datetime(2026, 8, 8, 12, tzinfo=timezone.utc)
+    bound = ProductRun(
+        run_id="bound-run-001",
+        operation="plan",
+        configuration_reference="config-001@1",
+        config_id="config-001",
+        registry_version=1,
+        package_checksum="a" * 64,
+        started_at=started_at,
+        phase="accepted",
+    )
+    assert bound.configuration_binding == ("config-001", 1, "a" * 64)
+    with pytest.raises(ValueError, match="configuration binding"):
+        ProductRun(
+            run_id="partial-run-001",
+            operation="plan",
+            configuration_reference="config-001@1",
+            config_id="config-001",
+            started_at=started_at,
+            phase="accepted",
+        )
+
+    projection = local_product_projection(tmp_path)
+    projection.create_run(bound)
+    restarted = local_product_projection(tmp_path).lookup_run("bound-run-001").value
+    assert restarted is not None
+    assert restarted.configuration_binding == bound.configuration_binding
+
+
 def _artifact_reference(
     data: bytes = b"{}",
     *,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sqlite3
@@ -17,11 +18,12 @@ pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient
 
+from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.managed.app import create_app
 from infrahub_sync.managed.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
-from infrahub_sync.managed.models import PlanResource
+from infrahub_sync.managed.models import CreateRunRequest, PlanResource
 from infrahub_sync.managed.orchestration import Observation, Submission
-from infrahub_sync.managed.service import PLAN_ARTIFACT_ID, ManagedRunService
+from infrahub_sync.managed.service import PLAN_ARTIFACT_ID, ManagedAPIError, ManagedRunService
 from infrahub_sync.product_store import ProductProjection, local_product_projection
 
 OWNER_TOKEN = "owner-token-canary-0001"  # noqa: S105 - deliberate non-secret boundary canary.
@@ -29,6 +31,30 @@ OTHER_TOKEN = "other-token-canary-0002"  # noqa: S105 - deliberate non-secret bo
 ADMIN_TOKEN = "admin-token-canary-0003"  # noqa: S105 - deliberate non-secret boundary canary.
 RAW_KEY = "client-idempotency-key-canary"
 AUTH = {"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": RAW_KEY}
+
+
+def _registered_package() -> ConfigurationPackage:
+    return ConfigurationPackage.model_validate(
+        {
+            "format_version": 1,
+            "configuration": {
+                "name": "registered-inventory",
+                "source": {
+                    "name": "netbox",
+                    "settings": {"url": "https://netbox.example", "token": {"$credential": "token"}},
+                },
+                "destination": {
+                    "name": "infrahub",
+                    "settings": {"url": "https://infrahub.example", "token": {"$credential": "token"}},
+                },
+                "order": [],
+                "schema_mapping": [],
+                "diffsync_flags": [],
+                "incremental": None,
+            },
+            "credentials": {"token": {"provider": "env", "identifier": "TOKEN"}},
+        }
+    )
 
 
 class _FakeOrchestration:
@@ -90,8 +116,11 @@ def managed(
     resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection(tmp_path.resolve())
     orchestration = _FakeOrchestration()
+    version = projection.create_configuration(_registered_package())
     service = ManagedRunService(projection, orchestration, secrets=resolver.secret_values)
-    return TestClient(create_app(service, resolver)), projection, orchestration
+    client = TestClient(create_app(service, resolver))
+    client.app.state.run_binding = version
+    return client, projection, orchestration
 
 
 def _create(
@@ -101,16 +130,57 @@ def _create(
     reason: str = "review inventory changes",
     authorization: str = f"Bearer {OWNER_TOKEN}",
 ):
+    version = client.app.state.run_binding
     return client.post(
         "/runs",
         headers={"Authorization": authorization, "Idempotency-Key": key},
         json={
-            "sync_name": "inventory",
             "operation": "plan",
-            "configuration_reference": "sha256:configuration",
+            "config_id": version.config_id,
+            "registry_version": version.registry_version,
             "reason": reason,
         },
     )
+
+
+def test_admission_reads_registered_binding_before_allocating_run(
+    managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """Admission takes package identity and display name from the immutable registry row."""
+    _client, projection, orchestration = managed
+    version = projection.create_configuration(_registered_package())
+    request = CreateRunRequest(
+        operation="plan",
+        config_id=version.config_id,
+        registry_version=version.registry_version,
+        reason="plan registered package",
+    )
+    service = ManagedRunService(projection, orchestration)
+    principal = EnvironmentPrincipalResolver.from_environment().resolve(OWNER_TOKEN)
+    assert principal is not None
+
+    _status, body = asyncio.run(service.create_run(request, principal, "registered-key"))
+    run = projection.lookup_run(body["run"]["run_id"]).value
+    assert run is not None
+    assert run.configuration_binding == (version.config_id, version.registry_version, version.package_checksum)
+    assert run.summary["sync_name"] == "registered-inventory"
+    assert set(orchestration.submissions[0][0]) == {
+        "run_id",
+        "stage",
+        "config_id",
+        "registry_version",
+        "package_checksum",
+        "branch",
+        "expected_checksum",
+        "confirm_writes",
+    }
+
+    missing = CreateRunRequest(
+        operation="plan", config_id="missing-config", registry_version=1, reason="refuse before allocation"
+    )
+    with pytest.raises(ManagedAPIError, match="requested configuration version does not exist"):
+        asyncio.run(service.create_run(missing, principal, "missing-key"))
+    assert len(orchestration.submissions) == 1
 
 
 def _publish_plan(projection: ProductProjection, run_id: str, *, checksum: str = "a" * 64) -> PlanResource:
@@ -172,9 +242,10 @@ def test_authentication_idempotency_and_secret_boundaries(
     parameters, opaque_key = orchestration.submissions[0]
     assert set(parameters) == {
         "run_id",
-        "sync_name",
         "stage",
-        "configuration_reference",
+        "config_id",
+        "registry_version",
+        "package_checksum",
         "branch",
         "expected_checksum",
         "confirm_writes",
@@ -192,9 +263,9 @@ def test_authentication_idempotency_and_secret_boundaries(
         "/runs",
         headers={"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": "secret-parameter-key"},
         json={
-            "sync_name": "inventory",
             "operation": "plan",
-            "configuration_reference": OWNER_TOKEN,
+            "config_id": OWNER_TOKEN,
+            "registry_version": 1,
             "reason": "reject credential-bearing parameter",
         },
     )
@@ -557,10 +628,11 @@ def test_confirmed_sync_reserves_its_write_admission_and_replays(
     managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
 ) -> None:
     client, projection, orchestration = managed
+    version = client.app.state.run_binding
     body = {
-        "sync_name": "inventory",
         "operation": "sync",
-        "configuration_reference": "sha256:configuration",
+        "config_id": version.config_id,
+        "registry_version": version.registry_version,
         "confirm_writes": True,
         "reason": "approved composed sync",
     }
@@ -712,14 +784,15 @@ def test_confirmation_schema_errors_and_openapi_contract(
     managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
 ) -> None:
     client, _projection, orchestration = managed
+    version = client.app.state.run_binding
     headers = {"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": "sync-key"}
     unconfirmed = client.post(
         "/runs",
         headers=headers,
         json={
-            "sync_name": "inventory",
             "operation": "sync",
-            "configuration_reference": "sha256:configuration",
+            "config_id": version.config_id,
+            "registry_version": version.registry_version,
             "reason": "run now",
         },
     )
@@ -727,19 +800,19 @@ def test_confirmation_schema_errors_and_openapi_contract(
         "/runs",
         headers={"Authorization": f"Bearer {OWNER_TOKEN}"},
         json={
-            "sync_name": "inventory",
-            "configuration_reference": "sha256:configuration",
+            "config_id": version.config_id,
+            "registry_version": version.registry_version,
             "reason": "plan now",
         },
     )
-    invalid = client.post("/runs", headers=headers, json={"sync_name": "inventory"})
+    invalid = client.post("/runs", headers=headers, json={"config_id": version.config_id})
     invalid_operation = client.post(
         "/runs",
         headers=headers,
         json={
-            "sync_name": "inventory",
             "operation": "delete",
-            "configuration_reference": "sha256:configuration",
+            "config_id": version.config_id,
+            "registry_version": version.registry_version,
             "reason": "unsupported operation",
         },
     )
