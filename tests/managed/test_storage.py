@@ -310,6 +310,8 @@ def test_managed_storage_endpoint_rejects_invalid_authorities_before_constructio
 @pytest.mark.parametrize(
     "endpoint",
     [
+        "http:s3.test",
+        "http:/s3.test",
         "http://s3.example.test %20",
         "http://s3%.example.test",
         "http://\x01s3.example.test",

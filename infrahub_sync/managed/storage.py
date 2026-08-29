@@ -163,8 +163,15 @@ def _endpoint(values: Mapping[str, object]) -> str | None:
     except ValidationError:
         msg = f"{S3_ENDPOINT_ENV} must be an absolute http or https URL"
         raise ValueError(msg) from None
-    authority_start = endpoint.find("://") + 3
-    if endpoint[authority_start] in "/?#" or parsed.username is not None or parsed.password is not None:
+    raw_scheme, delimiter, remainder = endpoint.partition("://")
+    raw_authority = remainder.partition("/")[0].partition("?")[0].partition("#")[0]
+    if (
+        delimiter != "://"
+        or raw_scheme.lower() not in {"http", "https"}
+        or not raw_authority
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
         msg = f"{S3_ENDPOINT_ENV} must be an absolute http or https URL"
         raise ValueError(msg)
     return endpoint
