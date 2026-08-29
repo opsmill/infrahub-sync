@@ -293,7 +293,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         *,
         response_status: int,
         response_body: Mapping[str, Any],
-        flow_run_id: str,
+        flow_run_id: str | None,
         updated_at: datetime,
     ) -> MutationReceipt: ...
 
@@ -879,7 +879,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         *,
         response_status: int,
         response_body: Mapping[str, Any],
-        flow_run_id: str,
+        flow_run_id: str | None,
         updated_at: datetime,
     ) -> MutationReceipt:
         connection = self._connect()
@@ -1528,7 +1528,7 @@ class ProductProjection:
             redact(receipt_id, secrets),
             response_status=response_status,
             response_body=sanitized,
-            flow_run_id=redact(flow_run_id, secrets),
+            flow_run_id=None if flow_run_id is None else redact(flow_run_id, secrets),
             updated_at=datetime.now(timezone.utc),
         )
 

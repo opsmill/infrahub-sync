@@ -183,6 +183,6 @@ def create_app(
         return JSONResponse(status_code=status, content=content)
 
     if configuration_routes is not None:
-        application.include_router(configuration_router(configuration_routes, authenticate))
+        application.include_router(configuration_router(configuration_routes, authenticate, idempotency_key))
 
     return application

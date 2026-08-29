@@ -47,7 +47,7 @@ def test_configuration_routes_register_then_read(tmp_path: Path, monkeypatch: py
     client = TestClient(create_app(runs, resolver, routes))
     response = client.post(
         "/configs",
-        headers={"Authorization": "Bearer admin-token-canary-0003"},
+        headers={"Authorization": "Bearer admin-token-canary-0003", "Idempotency-Key": "register-once"},
         json={"package": package_data(), "reason": "register"},
     )
     assert response.status_code == 201, response.text
@@ -57,6 +57,37 @@ def test_configuration_routes_register_then_read(tmp_path: Path, monkeypatch: py
         client.get(f"/configs/{config_id}", headers={"Authorization": "Bearer admin-token-canary-0003"}).status_code
         == 200
     )
+
+
+def test_configuration_mutation_replays_exact_response_and_rejects_changed_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A configuration mutation uses the one durable receipt rather than a second write."""
+    monkeypatch.setenv(
+        PRINCIPALS_ENV, json.dumps({"admin": {"token": "admin-token-canary-0003", "administrator": True}})
+    )
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    projection = local_product_projection(tmp_path)
+    client = TestClient(
+        create_app(
+            ManagedRunService(projection, _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(tmp_path, secrets=resolver.secret_values),
+        )
+    )
+    headers = {"Authorization": "Bearer admin-token-canary-0003", "Idempotency-Key": "register-once"}
+    body = {"package": package_data(), "reason": "register this package"}
+
+    first = client.post("/configs", headers=headers, json=body)
+    replay = client.post("/configs", headers=headers, json=body)
+    changed = client.post("/configs", headers=headers, json={**body, "reason": "different reason"})
+
+    assert first.status_code == replay.status_code == 201
+    assert replay.json() == first.json()
+    assert changed.status_code == 409
+    assert len(projection.list_configurations()) == 1
+    receipt = projection.lookup_mutation("admin", __import__("hashlib").sha256(b"register-once").hexdigest())
+    assert receipt.value is not None and receipt.value.state == "accepted"
 
 
 @pytest.mark.parametrize(
