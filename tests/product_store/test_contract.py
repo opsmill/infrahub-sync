@@ -31,6 +31,7 @@ from infrahub_sync.product_store import (
     ConfigurationSummary,
     ConfigurationVersion,
     ConfigurationVersionAllocationError,
+    DBAPIConnection,
     DuplicateArtifactError,
     DuplicateConfigurationError,
     DuplicatePrefectExecutionError,
@@ -2650,14 +2651,14 @@ def test_postgresql_schema_bootstrap_propagates_a_non_duplicate_alter_failure() 
 def _reachable_postgresql_dsn() -> str | None:
     """Return a reachable PostgreSQL DSN from ``PRODUCT_STORE_TEST_POSTGRESQL_DSN``, or None.
 
-    ``psycopg`` is not a project dependency (see the docstring on the real-server test below),
-    so its absence is also a reason to skip, not a collection-time error.
+    The managed extra supplies ``psycopg``; an absent driver or unreachable endpoint still
+    skips this opt-in test before it can contact a service.
     """
     dsn = os.environ.get("PRODUCT_STORE_TEST_POSTGRESQL_DSN")
     if not dsn:
         return None
     try:
-        import psycopg  # ty: ignore[unresolved-import]  # optional dep; pylint: disable=import-outside-toplevel,import-error
+        import psycopg  # pylint: disable=import-outside-toplevel,import-error
     except ImportError:
         return None
     try:
@@ -2694,10 +2695,12 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
     dsn = _reachable_postgresql_dsn()
     if dsn is None:
         pytest.skip("psycopg is not installed, or PRODUCT_STORE_TEST_POSTGRESQL_DSN is unset/unreachable")
-    import psycopg  # ty: ignore[unresolved-import]  # optional dep; pylint: disable=import-outside-toplevel,import-error
+    import psycopg  # pylint: disable=import-outside-toplevel,import-error
 
-    def connect() -> psycopg.Connection:
-        return psycopg.connect(dsn)
+    from infrahub_sync.managed.storage import PsycopgConnectionFactory
+
+    def connect() -> DBAPIConnection:
+        return PsycopgConnectionFactory(psycopg.connect)(dsn)
 
     def reset_schema() -> None:
         with psycopg.connect(dsn) as admin:
@@ -2774,7 +2777,7 @@ def _assert_real_postgresql_refuses_partial_configuration_binding(dsn: str) -> N
     still accepted. Factored out of the test above only to keep that test's statement count
     reasonable; it has exactly one caller.
     """
-    import psycopg  # ty: ignore[unresolved-import]  # optional dep; pylint: disable=import-outside-toplevel,import-error
+    import psycopg  # pylint: disable=import-outside-toplevel,import-error
 
     def raw_insert(
         run_id: str, *, config_id: str | None, registry_version: int | None, package_checksum: str | None
