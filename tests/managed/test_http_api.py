@@ -838,9 +838,31 @@ def test_confirmation_schema_errors_and_openapi_contract(
         "/runs/{run_id}/verify",
         "/runs/{run_id}/apply",
         "/runs/{run_id}/cancel",
+        "/version",
     }
-    for route in paths.values():
+    for path, route in paths.items():
         for operation in route.values():
+            if path == "/version":
+                assert "security" not in operation
+                continue
             assert "401" in operation["responses"]
             assert "422" in operation["responses"]
             assert operation["security"] == [{"BearerAuth": []}]
+
+
+def test_version_is_unauthenticated_and_declares_the_unstable_api(
+    managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """Lifecycle discovery does not require a bearer token."""
+    client, _projection, _orchestration = managed
+
+    response = client.get("/version")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "server_version": "2.0.1",
+        "api_versions": ["v3-unstable"],
+        "stability": "unstable",
+    }
+    operation = client.get("/openapi.json").json()["paths"]["/version"]["get"]
+    assert "security" not in operation

@@ -72,6 +72,14 @@ class OrchestrationSummary(_StrictModel):
     unavailable_reason: str | None = None
 
 
+class VersionResource(_StrictModel):
+    """Unauthenticated managed API compatibility discovery."""
+
+    server_version: str
+    api_versions: tuple[Literal["v3-unstable"], ...]
+    stability: Literal["unstable"]
+
+
 class RunResource(_StrictModel):
     """Stable Sync record plus non-authoritative live orchestration detail."""
 

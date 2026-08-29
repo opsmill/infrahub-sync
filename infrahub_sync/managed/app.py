@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .auth import Principal, PrincipalResolver
+from .compatibility import API_STABILITY, API_VERSIONS, installed_server_version
 from .config_routes import ConfigurationAPIError, ConfigurationRoutes, configuration_router
 from .models import (
     ApplyRunRequest,
@@ -24,6 +25,7 @@ from .models import (
     ResultsResource,
     RunResource,
     VerifyRunRequest,
+    VersionResource,
 )
 from .service import ManagedAPIError, ManagedRunService
 
@@ -38,7 +40,7 @@ def create_app(
     service: ManagedRunService, resolver: PrincipalResolver, configuration_routes: ConfigurationRoutes | None = None
 ) -> FastAPI:
     """Create the managed application from explicit providers."""
-    application = FastAPI(title="Infrahub Sync managed API", version="1.0.0")
+    application = FastAPI(title="Infrahub Sync managed API", version=installed_server_version())
     bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
 
     def authenticate(
@@ -96,6 +98,13 @@ def create_app(
             error=ErrorDetail(code="request-invalid", message="the request does not match the API schema", status=422)
         )
         return JSONResponse(status_code=422, content=envelope.model_dump(mode="json"))
+
+    @application.get("/version")
+    def get_version() -> VersionResource:
+        """Return the installed server and supported unstable API versions."""
+        return VersionResource(
+            server_version=installed_server_version(), api_versions=API_VERSIONS, stability=API_STABILITY
+        )
 
     @application.middleware("http")
     async def contain_unhandled_error(
