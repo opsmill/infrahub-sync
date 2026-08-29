@@ -18,8 +18,11 @@ from infrahub_sync.managed import flow as managed_flow
 from infrahub_sync.managed.flow import managed_sync_run
 from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.writer import write_plan_artifact
-from infrahub_sync.product_store import ProductRun, local_product_projection
+from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 from tests.configuration.validation_packages import package
+
+FLOW_RUN_ID = "ed4778cb-f2cf-4b1f-a87b-68be37659e93"
+WORKER_ID = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
 
 
 def _registered_apply(
@@ -48,6 +51,12 @@ def _registered_apply(
             phase="planned",
         )
     )
+    projection.add_prefect_execution(
+        run_id,
+        PrefectExecutionLink(
+            flow_run_id=FLOW_RUN_ID, purpose="apply", attempt=1, submitted_at=datetime.now(timezone.utc)
+        ),
+    )
     stored = projection.lookup_configuration_version(binding[0], binding[1]).value
     assert stored is not None
     runtime = resolve_runtime_instance(
@@ -65,6 +74,8 @@ def _registered_apply(
     calls: list[str] = []
     monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (managed_flow.logger, False))
+    monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
+    monkeypatch.setattr(managed_flow, "_prefect_flow_run_id", lambda: FLOW_RUN_ID)
 
     def destination_forbidden(*_args: object, **_kwargs: object) -> RunResult:
         calls.append("execute-run")

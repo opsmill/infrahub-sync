@@ -76,6 +76,8 @@ def load_preview_env() -> dict[str, str]:
         "PREVIEW_MINIO_PORT",
         "PREVIEW_S3_BUCKET",
         "PREVIEW_WORK_POOL",
+        "PREVIEW_RUN_ADMISSION_TTL_SECONDS",
+        "PREVIEW_PREFECT_WORKER_QUERY_SECONDS",
     }
     missing = required - values.keys()
     if missing:
@@ -113,6 +115,8 @@ def _runtime_env(values: dict[str, str]) -> dict[str, str]:
             "INFRAHUB_SYNC_S3_REGION": "us-east-1",
             "INFRAHUB_SYNC_MANAGED_BEARER_TOKENS": values["PREVIEW_BEARER_TOKENS"],
             "INFRAHUB_SYNC_MANAGED_WORK_POOL": values["PREVIEW_WORK_POOL"],
+            "INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS": values["PREVIEW_RUN_ADMISSION_TTL_SECONDS"],
+            "PREFECT_WORKER_QUERY_SECONDS": values["PREVIEW_PREFECT_WORKER_QUERY_SECONDS"],
             "INFRAHUB_SYNC_MANAGED_FLOW_WORKING_DIRECTORY": str(REPO_ROOT),
         }
     )

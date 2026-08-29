@@ -17,9 +17,12 @@ from infrahub_sync.managed import flow as managed_flow
 from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.models import PlanManifest
 from infrahub_sync.plan.review import SavedPlan
-from infrahub_sync.product_store import ProductProjection, ProductRun, local_product_projection
+from infrahub_sync.product_store import PrefectExecutionLink, ProductProjection, ProductRun, local_product_projection
 from infrahub_sync.product_store.standalone import execute_standalone
 from tests.configuration.validation_packages import package, package_data
+
+FLOW_RUN_ID = "ed4778cb-f2cf-4b1f-a87b-68be37659e93"
+WORKER_ID = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
 
 
 def _register_inventory(projection: ProductProjection) -> tuple[str, int, str]:
@@ -73,6 +76,12 @@ def test_managed_and_standalone_plan_product_projection_seams_match(
             summary={"sync_name": "inventory"},
         )
     )
+    managed_projection.add_prefect_execution(
+        run_id,
+        PrefectExecutionLink(
+            flow_run_id=FLOW_RUN_ID, purpose="plan", attempt=1, submitted_at=datetime.now(timezone.utc)
+        ),
+    )
 
     monkeypatch.setattr("infrahub_sync.product_store.standalone.execute_run", lambda *_args, **_kwargs: saved)
     execute_standalone(
@@ -85,6 +94,8 @@ def test_managed_and_standalone_plan_product_projection_seams_match(
 
     monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), managed_projection))
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-conformance"), False))
+    monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
+    monkeypatch.setattr(managed_flow, "_prefect_flow_run_id", lambda: FLOW_RUN_ID)
     monkeypatch.setattr(managed_flow, "resolve_runtime_instance", lambda *_args, **_kwargs: instance)
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "_plan", lambda *_args, **_kwargs: saved)
@@ -115,5 +126,6 @@ def test_managed_and_standalone_plan_product_projection_seams_match(
         assert managed_data[key] is not None
         managed_data[key] = None
     managed_data["configuration_reference"] = configuration_reference
+    managed_data["prefect_executions"] = []
     assert standalone_data == managed_data
     assert standalone_artifact == managed_artifact

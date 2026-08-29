@@ -99,6 +99,9 @@ Configure the worker environment before it starts:
 | `INFRAHUB_SYNC_S3_PREFIX` | Optional object-key prefix; defaults to `infrahub-sync`. |
 | `INFRAHUB_SYNC_S3_ENDPOINT_URL` | Optional absolute `http` or `https` endpoint for an S3-compatible service. |
 | `INFRAHUB_SYNC_S3_REGION` | Optional region passed to Boto3. |
+| `INFRAHUB_SYNC_MANAGED_WORK_POOL` | Name of the existing Prefect pool used by the deployment, worker, and API reconciliation. It is never returned by the API. |
+| `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | Optional decimal integer from 1 through 86400; defaults to 300. An unclaimed execution becomes abandoned at this inclusive deadline. |
+| `PREFECT_WORKER_QUERY_SECONDS` | Prefect worker polling interval. It must be a finite positive decimal no greater than 3600; the API derives its liveness thresholds from the same value. |
 | Adapter credential variables | Credentials required by the selected Sync configuration. Keep them in the worker environment or its secret provider. |
 
 The managed flow accepts exactly seven bounded parameters:
@@ -137,9 +140,66 @@ application authentication boundary, not a replacement for transport security.
 Open `http://127.0.0.1:8000/docs`, select **Authorize**, and enter the configured token
 without the `Bearer` prefix; Swagger UI adds the complete `Authorization` header.
 
+## Discovery and liveness
+
+`GET /status` and `GET /version` are the two unauthenticated lifecycle and
+server-discovery routes. They intentionally disclose neither a configured work-pool
+name, worker or run identity, credential, nor Prefect endpoint. All run and
+configuration routes remain bearer-authenticated.
+
+`GET /version` returns the installed server version and the currently supported
+unstable API identifier:
+
+```json
+{"server_version":"<installed version>","api_versions":["v3-unstable"],"stability":"unstable"}
+```
+
+It is a discovery resource only. This server does not yet reject clients based on a
+claimed compatibility range.
+
+`GET /status` describes the configured work pool without exposing its identity:
+
+```json
+{
+  "service": "ready",
+  "worker": {
+    "state": "ready",
+    "detail_available": true,
+    "live_workers": 1,
+    "queue_depth": 0,
+    "observed_at": "2026-08-29T12:00:00+00:00"
+  }
+}
+```
+
+The worker state is `ready` when at least one fresh ONLINE worker has no queued
+runs, `busy` when one is fresh and the queue is non-empty, and `no-live-worker`
+when pool detail was read but no worker is fresh. A fresh worker has a heartbeat no
+older than `max(3 × heartbeat interval, 30 seconds)`. If Prefect cannot provide a
+usable pool result, the state is `unavailable`, `detail_available` is `false`, and
+`live_workers`, `queue_depth`, and `observed_at` are all `null`. This value-free
+response does not expose provider errors or values.
+
+Each submitted Prefect execution is claimed by its worker before it resolves a
+configuration or builds adapters. The API derives the stall threshold as
+`max(3 × PREFECT_WORKER_QUERY_SECONDS, 30 seconds)`, and reconciles no less often
+than that threshold permits (at most five seconds, with a 0.25-second lower bound).
+An unclaimed execution is marked stalled at that threshold and becomes abandoned at
+the admission TTL. A claimed execution whose exact owner is no longer fresh becomes
+`interrupted` with an `ambiguous` outcome; it is not retried automatically.
+
+Cancellation is also bounded. Sync persists cancellation intent before contacting
+Prefect. A successful Prefect acknowledgement is recorded separately. Until the
+same liveness threshold expires, that intent fences claim, abandonment, and orphan
+adjudication. At the inclusive deadline, an unconfirmed cancellation settles as
+unavailable and the execution becomes abandoned or interrupted/ambiguous according
+to whether it was claimed. An acknowledged request retains its accepted response,
+but still reaches that terminal verdict unless Prefect is durably observed as
+terminally cancelled first.
+
 ## Routes
 
-Every route requires `Authorization: Bearer <token>`. Every `POST` route also requires a
+Every route below requires `Authorization: Bearer <token>`. Every `POST` route also requires a
 non-empty `Idempotency-Key` header and a non-empty `reason` in its JSON body.
 
 | Route | Behavior |

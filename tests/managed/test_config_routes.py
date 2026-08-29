@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
     from infrahub_sync.configuration.models import ConfigurationPackage
     from infrahub_sync.managed.auth import PrincipalResolver
+    from infrahub_sync.managed.liveness import RunLivenessReconciler
     from infrahub_sync.product_store.models import ConfigurationVersion
     from infrahub_sync.product_store.store import ProductProjection
 
@@ -998,3 +999,28 @@ def test_build_app_composes_one_managed_projection_for_runs_and_configurations()
         is not None
     )
     assert received == ["storage", "routes", projection, "app"]
+
+
+def test_build_app_uses_the_prefect_worker_query_setting_for_liveness_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The server and Preview can use one Prefect query cadence for liveness."""
+    monkeypatch.setenv("PREFECT_WORKER_QUERY_SECONDS", "20")
+    captured: list[RunLivenessReconciler] = []
+
+    class Resolver:
+        secret_values: tuple[str, ...] = ()
+
+    def app_factory(_service: object, _resolver: object, _routes: object, reconciler: RunLivenessReconciler) -> object:
+        captured.append(reconciler)
+        return object()
+
+    build_app(
+        projection_factory=object,
+        resolver_factory=Resolver,
+        run_service_factory=lambda *_args, **_kwargs: object(),
+        configuration_routes_factory=lambda **_kwargs: object(),
+        app_factory=app_factory,
+    )
+
+    assert captured[0]._policy.stall_threshold_seconds == 60
