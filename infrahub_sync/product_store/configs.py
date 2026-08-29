@@ -64,6 +64,7 @@ from infrahub_sync.product_store.store import (
     ConfigurationVersionAllocationError,
     DuplicateConfigurationError,
     ProductProjection,
+    ProductStoreProviderError,
     local_product_projection,
 )
 
@@ -198,7 +199,7 @@ def _service_boundary(operation: Callable[_P, _R]) -> Callable[_P, _R]:
             return operation(*args, **kwargs)
         except ConfigsError:
             raise
-        except (OSError, sqlite3.Error):
+        except (OSError, sqlite3.Error, ProductStoreProviderError):
             raise ConfigsStorageError(refusal) from None
         except yaml.YAMLError:
             raise ConfigsRequestError(refusal) from None

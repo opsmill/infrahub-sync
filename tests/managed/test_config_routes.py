@@ -104,6 +104,33 @@ def test_configuration_routes_use_the_injected_projection_for_services_receipts_
     assert projection.audit_events()
 
 
+def test_configuration_receipt_and_audit_provider_errors_are_storage_failures() -> None:
+    """Provider failures after the service call retain the configuration storage family."""
+    from infrahub_sync.product_store import ProductStoreProviderError
+
+    class Projection:
+        def reserve_mutation(self, *_args: object, **_kwargs: object) -> NoReturn:
+            raise ProductStoreProviderError(sqlstate="08006")
+
+        def record_audit(self, *_args: object, **_kwargs: object) -> NoReturn:
+            raise ProductStoreProviderError(sqlstate="08006")
+
+    routes = ConfigurationRoutes(product_projection=cast("ProductProjection", Projection()))
+    with pytest.raises(ConfigurationAPIError) as receipt_error:
+        routes.mutate(
+            actor="admin",
+            idempotency_key="provider-error",
+            operation="register-config",
+            resource_kind="configuration-registry",
+            resource_id="configs",
+            package=package_data(),
+            reason="provider error",
+        )
+    with pytest.raises(ConfigurationAPIError) as audit_error:
+        routes.audit_refusal("admin", "register-config", "provider error")
+    assert receipt_error.value.family == audit_error.value.family == "storage"
+
+
 def test_configuration_mutation_replays_exact_response_and_rejects_changed_content(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

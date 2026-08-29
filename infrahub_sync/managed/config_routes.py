@@ -1,6 +1,7 @@
 """HTTP-only adapter for the shared configuration application service."""
 
 from datetime import datetime, timezone
+from functools import wraps
 from hashlib import sha256
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -12,7 +13,14 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from infrahub_sync.plan.canonical import canonical_json_bytes
-from infrahub_sync.product_store import AuditEvent, MutationReceipt, ProductProjection, configs, local_product_projection
+from infrahub_sync.product_store import (
+    AuditEvent,
+    MutationReceipt,
+    ProductProjection,
+    ProductStoreProviderError,
+    configs,
+    local_product_projection,
+)
 
 from .auth import Principal
 from .models import ConfigMutationRequest
@@ -31,6 +39,19 @@ class ConfigurationAPIError(Exception):
         self.family = family
         self.reason = reason
         self.proven_pre_effect = proven_pre_effect
+
+
+def _provider_error_boundary(operation: Any) -> Any:
+    """Keep direct receipt and audit provider failures in the configuration vocabulary."""
+
+    @wraps(operation)
+    def guarded(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return operation(*args, **kwargs)
+        except ProductStoreProviderError:
+            raise ConfigurationAPIError(503, "storage") from None
+
+    return guarded
 
 
 def _strict_integer(value: str, *, minimum: int, maximum: int) -> int:
@@ -114,6 +135,7 @@ class ConfigurationRoutes:
             "next_offset": offset + len(findings) if offset + len(findings) < len(report.findings) else None,
         }
 
+    @_provider_error_boundary
     def mutate(
         self,
         *,
@@ -195,6 +217,7 @@ class ConfigurationRoutes:
         self._audit(actor, operation, reason, "accepted")
         return completed.response_status, completed.response_body
 
+    @_provider_error_boundary
     def audit_refusal(self, actor: str, operation: str, reason: str) -> None:
         """Record a refused configuration mutation without reserving it."""
         self._audit(actor, operation, reason, "refused-authorization")
