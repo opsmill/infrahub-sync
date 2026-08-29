@@ -310,10 +310,38 @@ def test_managed_storage_endpoint_rejects_invalid_authorities_before_constructio
 @pytest.mark.parametrize(
     "endpoint",
     [
+        "http://s3.example.test %20",
+        "http://s3%.example.test",
+        "http://\x01s3.example.test",
+    ],
+)
+def test_managed_storage_endpoint_rejects_parser_invalid_syntax(endpoint: str) -> None:
+    """A typed URL parser closes syntax that the shallow authority guard admitted."""
+    from infrahub_sync.managed import storage
+
+    with pytest.raises(ValueError) as error:
+        storage.managed_product_projection(
+            environ={
+                storage.DATABASE_URL_ENV: "postgresql://db/sync",
+                storage.S3_BUCKET_ENV: "bucket",
+                storage.S3_ENDPOINT_ENV: endpoint,
+            },
+            database_connect=lambda: pytest.fail("database must not be constructed"),
+            s3_client_builder=lambda *_args, **_kwargs: pytest.fail("SDK must not be constructed"),
+            projection_builder=lambda **_kwargs: pytest.fail("projection must not be constructed"),
+        )
+    assert str(error.value) == f"{storage.S3_ENDPOINT_ENV} must be an absolute http or https URL"
+    assert endpoint not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
         "http://s3.example.test",
         "http://s3.example.test:9000",
         "http://127.0.0.1",
         "http://127.0.0.1:9000",
+        "http://localhost",
         "https://[::1]",
         "https://[::1]:9443",
     ],

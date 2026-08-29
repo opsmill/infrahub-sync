@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import os
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
 
 import boto3
 import psycopg
 from botocore.exceptions import ClientError
+from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
 
 from infrahub_sync.product_store import (
     DuplicateArtifactError,
@@ -26,6 +26,7 @@ S3_BUCKET_ENV = "INFRAHUB_SYNC_S3_BUCKET"
 S3_PREFIX_ENV = "INFRAHUB_SYNC_S3_PREFIX"
 S3_ENDPOINT_ENV = "INFRAHUB_SYNC_S3_ENDPOINT_URL"
 S3_REGION_ENV = "INFRAHUB_SYNC_S3_REGION"
+_HTTP_URL_ADAPTER = TypeAdapter(AnyHttpUrl)
 
 
 class ManagedStorageStartupError(RuntimeError):
@@ -158,14 +159,12 @@ def _endpoint(values: Mapping[str, object]) -> str | None:
     if endpoint is None:
         return None
     try:
-        parsed = urlsplit(endpoint)
-        hostname = parsed.hostname
-        port = parsed.port  # Force port parsing: urlsplit defers invalid-port refusal to this property.
-        userinfo = parsed.username is not None or parsed.password is not None
-    except ValueError:
+        parsed = _HTTP_URL_ADAPTER.validate_python(endpoint)
+    except ValidationError:
         msg = f"{S3_ENDPOINT_ENV} must be an absolute http or https URL"
         raise ValueError(msg) from None
-    if parsed.scheme not in {"http", "https"} or not hostname or userinfo or (port is not None and port > 65535):
+    authority_start = endpoint.find("://") + 3
+    if endpoint[authority_start] in "/?#" or parsed.username is not None or parsed.password is not None:
         msg = f"{S3_ENDPOINT_ENV} must be an absolute http or https URL"
         raise ValueError(msg)
     return endpoint
