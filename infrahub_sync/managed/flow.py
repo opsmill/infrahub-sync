@@ -15,6 +15,8 @@ from typing import Any, Literal
 from prefect import flow, get_run_logger
 from prefect.exceptions import MissingContextError
 
+from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
+from infrahub_sync.configuration.runtime import resolve_runtime_instance
 from infrahub_sync.execution import (
     ACTION_KEYS,
     RunResult,
@@ -22,7 +24,6 @@ from infrahub_sync.execution import (
     collect_secret_values,
     execute_run,
     redact,
-    resolve_sync_instance,
     sanitize_exception_chain,
 )
 from infrahub_sync.orchestration.flow import (
@@ -44,6 +45,9 @@ from .service import PLAN_ARTIFACT_ID
 CONFIG_DIR_ENV = "INFRAHUB_SYNC_CONFIG_DIRECTORY"
 RUN_CACHE_ENV = "INFRAHUB_SYNC_CACHE_DIR"
 logger = logging.getLogger(__name__)
+_REGISTERED_VERSION_UNAVAILABLE = "registered configuration version is unavailable"
+_REGISTERED_VERSION_INVALID = "registered configuration version is invalid"
+_REGISTERED_CHECKSUM_MISMATCH = "registered configuration checksum does not match run binding"
 
 
 def _run_logger() -> tuple[RunLogger, bool]:
@@ -155,9 +159,10 @@ def _plan(
 
 def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-statements
     run_id: str,
-    sync_name: str,
     stage: Literal["plan", "verify", "apply", "sync"],
-    configuration_reference: str,
+    config_id: str,
+    registry_version: int,
+    package_checksum: str,
     branch: str | None,
     expected_checksum: str | None,
     confirm_writes: bool,
@@ -170,12 +175,8 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     if stored.value is None:
         msg = f"API-created Sync run {run_id!r} is unavailable"
         raise RuntimeError(msg)
-    if stored.value.configuration_reference != configuration_reference:
-        msg = f"configuration_reference does not match Sync run {run_id!r}"
-        raise ValueError(msg)
-    recorded_sync_name = stored.value.summary.get("sync_name")
-    if recorded_sync_name is not None and recorded_sync_name != sync_name:
-        msg = f"sync_name does not match Sync run {run_id!r}"
+    if stored.value.configuration_binding != (config_id, registry_version, package_checksum):
+        msg = "managed run binding does not match worker parameters"
         raise ValueError(msg)
     if stage in ("apply", "sync") and not confirm_writes:
         msg = f"confirm_writes=true is required for managed stage={stage}"
@@ -184,7 +185,17 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         msg = "expected_checksum is required for managed stage=apply"
         raise ValueError(msg)
 
-    instance = resolve_sync_instance(sync_name, directory=config_directory)
+    registered = projection.lookup_configuration_version(config_id, registry_version).value
+    if registered is None:
+        raise ValueError(_REGISTERED_VERSION_UNAVAILABLE)
+    try:
+        package = parse_configuration_package(registered.declared_content)
+    except ConfigurationPackageParseError:
+        raise ValueError(_REGISTERED_VERSION_INVALID) from None
+    if registered.package_checksum != package_checksum or package.checksum() != package_checksum:
+        raise ValueError(_REGISTERED_CHECKSUM_MISMATCH)
+    sync_name = package.configuration.name
+    instance = resolve_runtime_instance(package, directory=config_directory)
     secrets[:] = collect_secret_values(instance)
     result: dict[str, Any]
     if stage == "plan":
@@ -338,9 +349,10 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
 @flow(name=MANAGED_FLOW_NAME)
 def managed_sync_run(  # pylint: disable=too-many-positional-arguments
     run_id: str,
-    sync_name: str,
     stage: Literal["plan", "verify", "apply", "sync"],
-    configuration_reference: str,
+    config_id: str,
+    registry_version: int,
+    package_checksum: str,
     branch: str | None = None,
     expected_checksum: str | None = None,
     confirm_writes: bool = False,
@@ -353,9 +365,10 @@ def managed_sync_run(  # pylint: disable=too-many-positional-arguments
         with _remote_log_bridge(run_logger, prefect_context=prefect_context, secrets=secrets):
             return _execute_stage(
                 run_id,
-                sync_name,
                 stage,
-                configuration_reference,
+                config_id,
+                registry_version,
+                package_checksum,
                 branch,
                 expected_checksum,
                 confirm_writes,

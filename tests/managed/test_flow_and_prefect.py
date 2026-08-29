@@ -126,12 +126,42 @@ def _create_product_run(
     return projection
 
 
+def test_worker_rejects_missing_registered_package_before_runtime_construction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A bound worker cannot fall back to caller-local configuration files."""
+    run_id = "run-missing-registered-package"
+    projection = local_product_projection(tmp_path)
+    projection.create_run(
+        ProductRun(
+            run_id=run_id,
+            operation="plan",
+            configuration_reference="config-001@1",
+            config_id="config-001",
+            registry_version=1,
+            package_checksum="a" * 64,
+            actor="owner",
+            started_at=datetime.now(timezone.utc),
+            phase="accepted",
+        )
+    )
+    constructed = []
+    monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
+    monkeypatch.setattr(managed_flow, "resolve_runtime_instance", lambda *_args, **_kwargs: constructed.append(True))
+
+    with pytest.raises(RuntimeError, match="registered configuration version is unavailable"):
+        managed_sync_run.fn(run_id, "plan", "config-001", 1, "a" * 64)
+    assert constructed == []
+
+
 def test_managed_and_direct_prefect_flow_schemas_are_separate_and_exact() -> None:
     assert tuple(inspect.signature(managed_sync_run.fn).parameters) == (
         "run_id",
-        "sync_name",
         "stage",
-        "configuration_reference",
+        "config_id",
+        "registry_version",
+        "package_checksum",
         "branch",
         "expected_checksum",
         "confirm_writes",
