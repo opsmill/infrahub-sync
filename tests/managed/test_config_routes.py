@@ -13,6 +13,7 @@ from infrahub_sync.managed.app import create_app
 from infrahub_sync.managed.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.managed.config_routes import ConfigurationRoutes
 from infrahub_sync.managed.orchestration import Observation, Submission
+from infrahub_sync.managed.serve import build_app
 from infrahub_sync.managed.service import ManagedRunService
 from infrahub_sync.product_store import configs as configs_service
 from infrahub_sync.product_store import local_product_projection
@@ -136,3 +137,80 @@ def test_unknown_configs_subclass_uses_fixed_base_family(tmp_path: Path) -> None
     with pytest.raises(Exception) as raised:
         ConfigurationRoutes(tmp_path, service=Service()).list_configs()
     assert raised.value.family == "configs"
+
+
+def test_create_app_keeps_run_and_configuration_dependencies_separate(tmp_path: Path) -> None:
+    """One route from each family touches only its explicitly supplied dependency."""
+
+    class Runs:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        @staticmethod
+        def record_authentication_refusal(_path: str, _reason: str) -> None:
+            return None
+
+        def get_artifact(self, run_id: str, artifact_id: str) -> tuple[bytes, str, str]:
+            self.calls.append(run_id)
+            return (artifact_id.encode(), "text/plain", "a" * 64)
+
+    class ConfigService:
+        ConfigsRequestError = configs_service.ConfigsRequestError
+        ConfigsValidationError = configs_service.ConfigsValidationError
+        ConfigsNotFoundError = configs_service.ConfigsNotFoundError
+        ConfigsStorageError = configs_service.ConfigsStorageError
+        ConfigsInternalError = configs_service.ConfigsInternalError
+        ConfigsError = configs_service.ConfigsError
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def list_configs(self, **_kwargs: object) -> list[dict[str, str]]:
+            self.calls.append("list_configs")
+            return []
+
+    class Resolver:
+        @staticmethod
+        def resolve(_token: str) -> object:
+            return type("Principal", (), {"administrator": True})()
+
+    runs = Runs()
+    config_service = ConfigService()
+    client = TestClient(create_app(runs, Resolver(), ConfigurationRoutes(tmp_path, service=config_service)))
+    headers = {"Authorization": "Bearer accepted"}
+    assert client.get("/runs/run-a/artifacts/one", headers=headers).status_code == 200
+    assert client.get("/configs", headers=headers).status_code == 200
+    assert runs.calls == ["run-a"]
+    assert config_service.calls == ["list_configs"]
+
+
+def test_build_app_binds_one_cache_location_and_passes_configuration_dependency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Runtime construction supplies the one durable cache location to both families."""
+    from infrahub_sync.managed._settings import PRODUCT_CACHE_ENV  # noqa: PLC2701
+
+    monkeypatch.setenv(PRODUCT_CACHE_ENV, str(tmp_path))
+    received: list[object] = []
+
+    def projection(location: Path) -> object:
+        received.append(location)
+        return object()
+
+    class Resolver:
+        secret_values: tuple[str, ...] = ()
+
+    def application(run: object, resolver: object, routes: object) -> object:
+        received.extend((run, resolver, routes))
+        return object()
+
+    assert (
+        build_app(
+            projection_factory=projection,
+            resolver_factory=Resolver,
+            run_service_factory=lambda *_args, **_kwargs: object(),
+            app_factory=application,
+        )
+        is not None
+    )
+    assert received[0] == tmp_path
