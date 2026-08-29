@@ -192,6 +192,58 @@ def test_managed_storage_factory_validates_settings_and_hides_startup_details() 
     assert error.value.__cause__ is None
 
 
+def test_managed_storage_settings_require_exact_strings_and_normalize_prefix_deterministically() -> None:
+    """Every setting is type-closed and every refusal excludes the rejected value."""
+    from infrahub_sync.managed import storage
+
+    class StringSubclass(str):
+        pass
+
+    required = {
+        storage.DATABASE_URL_ENV: "postgresql://database-secret-canary@db/sync",
+        storage.S3_BUCKET_ENV: "bucket-secret-canary",
+    }
+
+    def construct(values: dict[str, object]) -> object:
+        return storage.managed_product_projection(
+            environ=values,
+            database_connect=lambda: object(),
+            s3_client_builder=lambda *_args, **_kwargs: object(),
+            projection_builder=lambda **_kwargs: cast("ProductProjection", object()),
+        )
+
+    for name in (storage.DATABASE_URL_ENV, storage.S3_BUCKET_ENV):
+        for value in (None, "", 42, StringSubclass("subclass-secret-canary")):
+            with pytest.raises(ValueError) as error:
+                construct({**required, name: value})
+            assert str(error.value) == f"{name} must be set"
+            assert "secret-canary" not in str(error.value)
+
+    for name, value in (
+        (storage.S3_ENDPOINT_ENV, "not-an-endpoint"),
+        (storage.S3_ENDPOINT_ENV, "https:///missing-host"),
+        (storage.S3_ENDPOINT_ENV, StringSubclass("https://subclass-secret-canary")),
+        (storage.S3_REGION_ENV, ""),
+        (storage.S3_REGION_ENV, 42),
+        (storage.S3_PREFIX_ENV, ""),
+        (storage.S3_PREFIX_ENV, 42),
+    ):
+        with pytest.raises(ValueError) as error:
+            construct({**required, name: value})
+        assert name in str(error.value)
+        assert "secret-canary" not in str(error.value)
+
+    prefixes: list[object] = []
+    construct({**required, storage.S3_PREFIX_ENV: "/one/two/", storage.S3_REGION_ENV: "us-east-1"})
+    storage.managed_product_projection(
+        environ={**required, storage.S3_PREFIX_ENV: "/one/two/"},
+        database_connect=lambda: object(),
+        s3_client_builder=lambda *_args, **_kwargs: object(),
+        projection_builder=lambda **kwargs: prefixes.append(kwargs["prefix"]) or cast("ProductProjection", object()),
+    )
+    assert prefixes == ["one/two"]
+
+
 def test_psycopg_adapter_marks_only_driver_errors() -> None:
     """Psycopg errors retain SQLSTATE; unrelated provider defects escape unmarked."""
     from infrahub_sync.managed import storage

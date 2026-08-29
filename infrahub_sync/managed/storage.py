@@ -135,7 +135,7 @@ class _PsycopgConnection:
 def _required_setting(values: Mapping[str, object], name: str) -> str:
     """Return a non-empty string setting without reflecting its value."""
     value = values.get(name)
-    if not isinstance(value, str) or not value.strip():
+    if type(value) is not str or not value.strip():  # pylint: disable=unidiomatic-typecheck  # Exact environment boundary.
         msg = f"{name} must be set"
         raise ValueError(msg)
     return value
@@ -146,7 +146,7 @@ def _optional_setting(values: Mapping[str, object], name: str) -> str | None:
     value = values.get(name)
     if value is None:
         return None
-    if not isinstance(value, str) or not value.strip():
+    if type(value) is not str or not value.strip():  # pylint: disable=unidiomatic-typecheck  # Exact environment boundary.
         msg = f"{name} must be a non-empty string when set"
         raise ValueError(msg)
     return value
