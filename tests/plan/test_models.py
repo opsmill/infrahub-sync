@@ -103,6 +103,39 @@ def test_the_two_masks_are_deliberately_different() -> None:
     assert set(CHECKSUM_EXCLUDED_FIELDS) - set(SC006_MASKED_FIELDS) == {"plan_checksum"}
 
 
+@pytest.mark.parametrize(
+    "binding",
+    [
+        pytest.param(
+            {"config_id": "config-001", "registry_version": 1, "package_checksum": "a" * 64},
+            id="complete",
+        ),
+        pytest.param({}, id="absent"),
+    ],
+)
+def test_manifest_configuration_binding_is_all_absent_or_all_present(binding: dict[str, object]) -> None:
+    manifest = PlanManifest(**_manifest(**binding))
+    assert manifest.configuration_binding == (
+        ("config-001", 1, "a" * 64) if binding else None
+    )
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        pytest.param({"config_id": "config-001"}, id="id-only"),
+        pytest.param({"registry_version": 1}, id="version-only"),
+        pytest.param({"package_checksum": "a" * 64}, id="checksum-only"),
+        pytest.param({"config_id": "config-001", "registry_version": True, "package_checksum": "a" * 64}, id="bool"),
+        pytest.param({"config_id": "config-001", "registry_version": "1", "package_checksum": "a" * 64}, id="string"),
+        pytest.param({"config_id": "config-001", "registry_version": 1, "package_checksum": "not-a-digest"}, id="digest"),
+    ],
+)
+def test_manifest_configuration_binding_refuses_partial_or_hostile_values(binding: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        PlanManifest(**_manifest(**binding))
+
+
 # ======================================================================================
 # `payload` is None if and only if `action == "delete"`
 # ======================================================================================
@@ -635,6 +668,9 @@ PLAN_MANIFEST_FIELDS = {
     "operations_count",
     "delete_operations_computed",
     "plan_checksum",
+    "config_id",
+    "registry_version",
+    "package_checksum",
     # Additive: the effective destination the plan is bound to. An
     # identity to compare at apply time, not a grouping of operations into write units.
     "destination_binding",
@@ -736,7 +772,7 @@ def test_planned_operation_rejects_unknown_fields() -> None:
 
 def test_plan_manifest_still_requires_its_declared_fields() -> None:
     """`extra="allow"` does not make the declared fields optional."""
-    for missing in PLAN_MANIFEST_FIELDS - {"destination_binding"}:
+    for missing in PLAN_MANIFEST_FIELDS - {"destination_binding", "config_id", "registry_version", "package_checksum"}:
         record = _manifest()
         del record[missing]
         with pytest.raises(ValidationError):

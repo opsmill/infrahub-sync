@@ -33,8 +33,11 @@ from infrahub_sync.orchestration.flow import (
     RunLogger,
     RunLoggerBridge,
 )
+from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.models import ApplyRecord
-from infrahub_sync.plan.review import SavedPlan
+from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes
+from infrahub_sync.plan.review import SavedPlan, resolve_run_directory
+from infrahub_sync.plan.verify import verify_plan
 from infrahub_sync.product_store import ProductProjection, local_product_projection
 
 from ._settings import PRODUCT_CACHE_ENV
@@ -48,6 +51,8 @@ logger = logging.getLogger(__name__)
 _REGISTERED_VERSION_UNAVAILABLE = "registered configuration version is unavailable"
 _REGISTERED_VERSION_INVALID = "registered configuration version is invalid"
 _REGISTERED_CHECKSUM_MISMATCH = "registered configuration checksum does not match run binding"
+_REGISTERED_PLAN_BINDING_MISMATCH = "registered saved plan binding does not match run binding"
+_REGISTERED_PLAN_VERIFICATION_FAILED = "registered saved plan verification failed"
 
 
 def _run_logger() -> tuple[RunLogger, bool]:
@@ -157,6 +162,15 @@ def _plan(
     return saved
 
 
+def _verify_registered_apply(*, instance: Any, run_id: str, binding: tuple[str, int, str]) -> None:
+    """Verify a bound artifact before the apply path can construct a destination."""
+    artifact = read_plan_artifact_bytes(resolve_run_directory(instance.name, run_id))
+    if verify_plan(artifact=artifact, run_id=run_id, config_version=resolve_config_version(instance)):
+        raise ValueError(_REGISTERED_PLAN_VERIFICATION_FAILED)
+    if parse_plan_artifact(artifact, run_id=run_id).manifest.configuration_binding != binding:
+        raise ValueError(_REGISTERED_PLAN_BINDING_MISMATCH)
+
+
 def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-statements
     run_id: str,
     stage: Literal["plan", "verify", "apply", "sync"],
@@ -196,6 +210,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         raise ValueError(_REGISTERED_CHECKSUM_MISMATCH)
     sync_name = package.configuration.name
     instance = resolve_runtime_instance(package, directory=config_directory)
+    instance._configuration_binding = (config_id, registry_version, package_checksum)
     secrets[:] = collect_secret_values(instance)
     result: dict[str, Any]
     if stage == "plan":
@@ -229,6 +244,11 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             secrets=secrets,
         )
     elif stage == "apply":
+        _verify_registered_apply(
+            instance=instance,
+            run_id=run_id,
+            binding=(config_id, registry_version, package_checksum),
+        )
         applied = execute_run(
             instance,
             operation="apply",
@@ -260,6 +280,11 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 _require_verified=True,
             )
             assert isinstance(verified, SavedPlan)
+            _verify_registered_apply(
+                instance=instance,
+                run_id=run_id,
+                binding=(config_id, registry_version, package_checksum),
+            )
             applied = execute_run(
                 instance,
                 operation="apply",

@@ -322,9 +322,41 @@ class PlanManifest(BaseModel):
     operations_count: int = Field(ge=0)
     delete_operations_computed: bool
     plan_checksum: str
+    # Registered plans bind the exact configuration package the worker verified.  The
+    # three values are deliberately separate artifact fields so they participate in the
+    # canonical checksum alongside every other manifest fact.
+    config_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+    registry_version: int | None = Field(default=None, ge=1, le=2**63 - 1)
+    package_checksum: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     # Additive: manifests written before this field exists carry no
     # binding, and the apply-time destination comparison skips them.
     destination_binding: DestinationBindingRecord | None = None
+
+    @field_validator("registry_version", mode="before")
+    @classmethod
+    def _require_exact_registry_version(cls, value: object) -> object:
+        """Refuse coercible values; a binding is an exact registry identity."""
+        if value is not None and type(value) is not int:
+            msg = "registry_version must be int"
+            raise ValueError(msg)
+        return value
+
+    @model_validator(mode="after")
+    def _require_complete_configuration_binding(self) -> PlanManifest:
+        binding = (self.config_id, self.registry_version, self.package_checksum)
+        if any(value is None for value in binding) and any(value is not None for value in binding):
+            msg = "configuration binding must be all absent or all present"
+            raise ValueError(msg)
+        return self
+
+    @property
+    def configuration_binding(self) -> tuple[str, int, str] | None:
+        """Return the complete registered package identity, never a partial tuple."""
+        if self.config_id is None:
+            return None
+        assert self.registry_version is not None
+        assert self.package_checksum is not None
+        return self.config_id, self.registry_version, self.package_checksum
 
     @model_serializer(mode="wrap")
     def _serialize_without_absent_binding(self, handler: Any) -> dict[str, Any]:
@@ -337,6 +369,10 @@ class PlanManifest(BaseModel):
         data: dict[str, Any] = handler(self)
         if data.get("destination_binding") is None:
             data.pop("destination_binding", None)
+        if self.configuration_binding is None:
+            data.pop("config_id", None)
+            data.pop("registry_version", None)
+            data.pop("package_checksum", None)
         return data
 
 
