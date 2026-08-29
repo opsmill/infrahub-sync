@@ -10,11 +10,13 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .auth import Principal, PrincipalResolver
-from .config_routes import ConfigurationRoutes, configuration_router
+from .config_routes import ConfigurationAPIError, ConfigurationRoutes, configuration_router
 from .models import (
     ApplyRunRequest,
     ArtifactListResource,
     CancelRunRequest,
+    ConfigErrorDetail,
+    ConfigErrorEnvelope,
     CreateRunRequest,
     ErrorDetail,
     ErrorEnvelope,
@@ -74,6 +76,19 @@ def create_app(
         )
         headers = {"WWW-Authenticate": "Bearer"} if exc.status == 401 else None
         return JSONResponse(status_code=exc.status, content=envelope.model_dump(mode="json"), headers=headers)
+
+    @application.exception_handler(ConfigurationAPIError)
+    async def configuration_error(_request: Request, exc: ConfigurationAPIError) -> JSONResponse:  # noqa: RUF029
+        envelope = ConfigErrorEnvelope(
+            error=ConfigErrorDetail(
+                code=f"configs-{exc.family}",
+                message="the configuration service refused the request",
+                status=exc.status,
+                family=exc.family,
+                reason=exc.reason,
+            )
+        )
+        return JSONResponse(status_code=exc.status, content=envelope.model_dump(mode="json"))
 
     @application.exception_handler(RequestValidationError)
     async def validation_error(_request: Request, _exc: RequestValidationError) -> JSONResponse:  # noqa: RUF029

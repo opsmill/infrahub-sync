@@ -12,50 +12,62 @@ from .models import ConfigMutationRequest
 from .service import ManagedAPIError
 
 
+class ConfigurationAPIError(Exception):
+    """Fixed public representation of one shared configuration-service refusal."""
+
+    def __init__(self, status: int, family: str, *, reason: str | None = None) -> None:
+        self.status = status
+        self.family = family
+        self.reason = reason
+
+
 class ConfigurationRoutes:
     """Bind configuration operations to this server's durable cache location."""
 
-    def __init__(self, product_cache_location: Path, *, secrets: tuple[str, ...] = ()) -> None:
+    def __init__(self, product_cache_location: Path, *, service: Any = configs, secrets: tuple[str, ...] = ()) -> None:
         self._location = product_cache_location
+        self._service = service
         self._secrets = secrets
 
     def _call(self, operation: Any, **kwargs: Any) -> Any:
         try:
             return operation(product_cache_location=self._location, **kwargs)
-        except configs.ConfigsRequestError:
-            raise ManagedAPIError(400, "configs-request", "the configuration request is invalid") from None
-        except configs.ConfigsValidationError:
-            raise ManagedAPIError(422, "configs-validation", "the configuration is invalid") from None
-        except configs.ConfigsNotFoundError as exc:
+        except self._service.ConfigsRequestError:
+            raise ConfigurationAPIError(400, "request") from None
+        except self._service.ConfigsValidationError:
+            raise ConfigurationAPIError(422, "validation") from None
+        except self._service.ConfigsNotFoundError as exc:
             reason = exc.reason
-            raise ManagedAPIError(404, "configs-not-found", reason) from None
-        except configs.ConfigsStorageError:
-            raise ManagedAPIError(503, "configs-storage", "configuration storage is unavailable") from None
-        except configs.ConfigsInternalError:
-            raise ManagedAPIError(503, "configs-internal", "configuration service is unavailable") from None
-        except configs.ConfigsError:
-            raise ManagedAPIError(503, "configs-error", "configuration service is unavailable") from None
+            raise ConfigurationAPIError(404, "not-found", reason=reason) from None
+        except self._service.ConfigsStorageError:
+            raise ConfigurationAPIError(503, "storage") from None
+        except self._service.ConfigsInternalError:
+            raise ConfigurationAPIError(503, "internal") from None
+        except self._service.ConfigsError:
+            raise ConfigurationAPIError(503, "configs") from None
+        except AssertionError:
+            raise ConfigurationAPIError(503, "internal") from None
 
     def register(self, package: dict[str, Any]) -> Any:
-        return self._call(configs.register, package=package)
+        return self._call(self._service.register, package=package)
 
     def create_version(self, config_id: str, package: dict[str, Any]) -> Any:
-        return self._call(configs.create_version, config_id=config_id, package=package)
+        return self._call(self._service.create_version, config_id=config_id, package=package)
 
     def list_configs(self) -> Any:
-        return self._call(configs.list_configs)
+        return self._call(self._service.list_configs)
 
     def get_config(self, config_id: str) -> Any:
-        return self._call(configs.get_config, config_id=config_id)
+        return self._call(self._service.get_config, config_id=config_id)
 
     def list_versions(self, config_id: str) -> Any:
-        return self._call(configs.list_versions, config_id=config_id)
+        return self._call(self._service.list_versions, config_id=config_id)
 
     def get_version(self, config_id: str, registry_version: int) -> Any:
-        return self._call(configs.get_version, config_id=config_id, registry_version=registry_version)
+        return self._call(self._service.get_version, config_id=config_id, registry_version=registry_version)
 
     def validate(self, config_id: str, registry_version: int) -> Any:
-        return self._call(configs.validate, config_id=config_id, registry_version=registry_version)
+        return self._call(self._service.validate, config_id=config_id, registry_version=registry_version)
 
 
 def configuration_router(routes: ConfigurationRoutes, authenticate: Any) -> APIRouter:
