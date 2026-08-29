@@ -42,3 +42,14 @@ def test_vendored_package_state_is_consistent() -> None:
         assert "opsmill_prefect_extras" not in wheel_packages, "wheel still ships a removed vendored package"
         assert has_git_dep, "vendored dir removed but the upstream dependency was not restored"
         assert not VENDORED_TESTS_DIR.exists(), "vendored tests remain after the package was re-adopted"
+
+
+def test_managed_storage_drivers_are_not_base_dependencies() -> None:
+    """Only the managed profile carries PostgreSQL and S3 client dependencies."""
+    data = _pyproject()
+    base_dependencies = data["project"]["dependencies"]
+    managed_dependencies = data["project"]["optional-dependencies"]["managed"]
+
+    for package in ("boto3", "psycopg"):
+        assert not any(dependency.lower().startswith(package) for dependency in base_dependencies)
+        assert any(dependency.lower().startswith(package) for dependency in managed_dependencies)
