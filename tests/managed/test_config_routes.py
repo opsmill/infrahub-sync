@@ -135,6 +135,83 @@ def test_configuration_receipt_and_audit_provider_errors_are_storage_failures() 
     assert receipt_error.value.family == audit_error.value.family == "storage"
 
 
+def test_configuration_http_provider_errors_preserve_storage_and_internal_families(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Marked projection failures are storage responses at every configuration HTTP boundary."""
+    from infrahub_sync.product_store import ProductStoreProviderError
+
+    admin_token = "admin-token-canary-0003"
+    reader_token = "reader-token-canary-0004"
+    monkeypatch.setenv(
+        PRINCIPALS_ENV,
+        json.dumps(
+            {
+                "admin": {"token": admin_token, "administrator": True},
+                "reader": {"token": reader_token},
+            }
+        ),
+    )
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    run_projection = local_product_projection(tmp_path)
+
+    class StorageProjection:
+        @staticmethod
+        def list_configurations() -> NoReturn:
+            raise ProductStoreProviderError(sqlstate="08006")
+
+        @staticmethod
+        def reserve_mutation(*_args: object, **_kwargs: object) -> NoReturn:
+            raise ProductStoreProviderError(sqlstate="08006")
+
+        @staticmethod
+        def record_audit(*_args: object, **_kwargs: object) -> NoReturn:
+            raise ProductStoreProviderError(sqlstate="08006")
+
+    client = TestClient(
+        create_app(
+            ManagedRunService(run_projection, _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(product_projection=cast("ProductProjection", StorageProjection())),
+        )
+    )
+    admin_headers = {"Authorization": f"Bearer {admin_token}", "Idempotency-Key": "provider-error"}
+    reader_headers = {"Authorization": f"Bearer {reader_token}", "Idempotency-Key": "audit-provider-error"}
+    responses = (
+        client.get("/configs", headers=admin_headers),
+        client.post("/configs", headers=admin_headers, json={"package": package_data(), "reason": "storage"}),
+        client.post("/configs", headers=reader_headers, json={"package": package_data(), "reason": "audit"}),
+    )
+    for response in responses:
+        payload = response.json()["error"]
+        assert response.status_code == 503
+        assert payload == {
+            "code": "configs-storage",
+            "message": "the configuration service refused the request",
+            "status": 503,
+            "family": "storage",
+            "reason": None,
+        }
+        assert "08006" not in response.text
+
+    class InternalProjection:
+        @staticmethod
+        def list_configurations() -> NoReturn:
+            raise RuntimeError("projection-secret-canary")
+
+    internal_client = TestClient(
+        create_app(
+            ManagedRunService(run_projection, _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(product_projection=cast("ProductProjection", InternalProjection())),
+        )
+    )
+    internal = internal_client.get("/configs", headers=admin_headers)
+    assert internal.status_code == 503
+    assert internal.json()["error"]["family"] == "internal"
+    assert "projection-secret-canary" not in internal.text
+
+
 def test_configuration_mutation_replays_exact_response_and_rejects_changed_content(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
