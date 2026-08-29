@@ -229,9 +229,9 @@ class Boto3S3Client:
         try:
             result = response["Body"].read()
         except (AttributeError, KeyError, TypeError):
-            raise S3ProtocolError() from None
+            raise S3ProtocolError from None
         if type(result) is not bytes:  # pylint: disable=unidiomatic-typecheck  # Exact protocol contract.
-            raise S3ProtocolError()
+            raise S3ProtocolError
         return result
 
     def copy(self, *, bucket: str, source: str, destination: str) -> None:

@@ -140,6 +140,7 @@ def test_s3_get_accepts_only_exact_bytes_and_only_exact_missing_object() -> None
         assert str(error.value) == "S3 get response body must return bytes"
         assert error.value.__cause__ is None
 
+
 def test_managed_storage_factory_validates_settings_and_hides_startup_details() -> None:
     """The factory has one value-free environment contract and startup failure."""
     from infrahub_sync.managed import storage
@@ -196,20 +197,29 @@ def test_managed_storage_settings_require_exact_strings_and_normalize_prefix_det
     """Every setting is type-closed and every refusal excludes the rejected value."""
     from infrahub_sync.managed import storage
 
-    class StringSubclass(str):
-        pass
+    class StringSubclass(str):  # noqa: FURB189 -- Exact str subclasses are an intentional hostile-input probe.
+        __slots__ = ()
 
     required = {
         storage.DATABASE_URL_ENV: "postgresql://database-secret-canary@db/sync",
         storage.S3_BUCKET_ENV: "bucket-secret-canary",
     }
 
+    def database_connect() -> object:
+        return object()
+
+    def s3_client_builder(*_args: object, **_kwargs: object) -> object:
+        return object()
+
+    def projection_builder(**_kwargs: object) -> ProductProjection:
+        return cast("ProductProjection", object())
+
     def construct(values: dict[str, object]) -> object:
         return storage.managed_product_projection(
             environ=values,
-            database_connect=lambda: object(),
-            s3_client_builder=lambda *_args, **_kwargs: object(),
-            projection_builder=lambda **_kwargs: cast("ProductProjection", object()),
+            database_connect=database_connect,
+            s3_client_builder=s3_client_builder,
+            projection_builder=projection_builder,
         )
 
     for name in (storage.DATABASE_URL_ENV, storage.S3_BUCKET_ENV):
@@ -235,11 +245,16 @@ def test_managed_storage_settings_require_exact_strings_and_normalize_prefix_det
 
     prefixes: list[object] = []
     construct({**required, storage.S3_PREFIX_ENV: "/one/two/", storage.S3_REGION_ENV: "us-east-1"})
+
+    def collect_prefix(**kwargs: object) -> ProductProjection:
+        prefixes.append(kwargs["prefix"])
+        return cast("ProductProjection", object())
+
     storage.managed_product_projection(
         environ={**required, storage.S3_PREFIX_ENV: "/one/two/"},
-        database_connect=lambda: object(),
-        s3_client_builder=lambda *_args, **_kwargs: object(),
-        projection_builder=lambda **kwargs: prefixes.append(kwargs["prefix"]) or cast("ProductProjection", object()),
+        database_connect=database_connect,
+        s3_client_builder=s3_client_builder,
+        projection_builder=collect_prefix,
     )
     assert prefixes == ["one/two"]
 

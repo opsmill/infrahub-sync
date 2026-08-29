@@ -24,6 +24,9 @@ from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.product_store.configs import ValidationReport
 from tests.configuration.validation_packages import package_data
 
+ADMIN_TOKEN = "admin-token-canary-0003"  # noqa: S105 - deliberate non-secret boundary canary.
+OTHER_TOKEN = "reader-token-canary-0004"  # noqa: S105 - deliberate non-secret boundary canary.
+
 if TYPE_CHECKING:
     from typing import NoReturn
 
@@ -141,8 +144,8 @@ def test_configuration_http_provider_errors_preserve_storage_and_internal_famili
     """Marked projection failures are storage responses at every configuration HTTP boundary."""
     from infrahub_sync.product_store import ProductStoreProviderError
 
-    admin_token = "admin-token-canary-0003"
-    reader_token = "reader-token-canary-0004"
+    admin_token = ADMIN_TOKEN
+    reader_token = OTHER_TOKEN
     monkeypatch.setenv(
         PRINCIPALS_ENV,
         json.dumps(
@@ -197,7 +200,8 @@ def test_configuration_http_provider_errors_preserve_storage_and_internal_famili
     class InternalProjection:
         @staticmethod
         def list_configurations() -> NoReturn:
-            raise RuntimeError("projection-secret-canary")
+            message = "projection-secret-canary"
+            raise RuntimeError(message)
 
     internal_client = TestClient(
         create_app(

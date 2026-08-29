@@ -63,7 +63,7 @@ def test_preview_smoke_reads_the_worker_published_plan_artifact_through_the_api(
     planned = smoke.index('planned = _wait_for_phase(client, run_id, "planned")')
     artifact = smoke.index('plan_view = client.get(f"/runs/{run_id}/plan")')
     assert planned < artifact
-    assert 'assert plan_view.status_code == 200' in smoke
+    assert "assert plan_view.status_code == 200" in smoke
     assert 'assert plan_payload["checksum_ok"] is True' in smoke
 
 
