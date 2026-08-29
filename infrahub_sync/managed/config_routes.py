@@ -105,7 +105,8 @@ class ConfigurationRoutes:
                 )
             ).hexdigest(),
             reason=reason,
-            resource="configuration",
+            resource_kind="configuration",
+            resource_id=resource_path,
             created_at=now,
             updated_at=now,
         )
@@ -113,7 +114,8 @@ class ConfigurationRoutes:
         stored, created = projection.reserve_mutation(receipt, secrets=self._secrets)
         if not created:
             if (
-                stored.resource != receipt.resource
+                stored.resource_kind != receipt.resource_kind
+                or stored.resource_id != receipt.resource_id
                 or stored.operation != receipt.operation
                 or stored.request_fingerprint != receipt.request_fingerprint
             ):

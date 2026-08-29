@@ -55,12 +55,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS prefect_executions_run_purpose_attempt
 CREATE TABLE IF NOT EXISTS mutation_receipts (
     receipt_id TEXT PRIMARY KEY, actor TEXT NOT NULL, key_digest TEXT NOT NULL,
     operation TEXT NOT NULL, target_run_id TEXT, request_fingerprint TEXT NOT NULL,
-    reason TEXT NOT NULL, resource TEXT NOT NULL DEFAULT 'run', run_id TEXT, prefect_key TEXT,
+    reason TEXT NOT NULL, resource_kind TEXT NOT NULL DEFAULT 'run', resource_id TEXT NOT NULL, run_id TEXT, prefect_key TEXT,
     state TEXT NOT NULL, response_status INTEGER, response_body TEXT, flow_run_id TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     CHECK (
-        (resource = 'run' AND run_id IS NOT NULL AND prefect_key IS NOT NULL)
-        OR (resource = 'configuration' AND run_id IS NULL AND prefect_key IS NULL AND target_run_id IS NULL AND flow_run_id IS NULL)
+        (resource_kind = 'run' AND run_id IS NOT NULL AND prefect_key IS NOT NULL)
+        OR (resource_kind = 'configuration' AND run_id IS NULL AND prefect_key IS NULL AND target_run_id IS NULL AND flow_run_id IS NULL)
     ),
     UNIQUE (actor, key_digest)
 );
@@ -184,10 +184,10 @@ last_observed_at, position FROM prefect_executions WHERE run_id = ? ORDER BY pos
 _INSERT_PREFECT_EXECUTION = """INSERT INTO prefect_executions (run_id, flow_run_id, deployment_id, purpose, attempt,
 last_observed_state, last_observed_at, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"""
 _INSERT_MUTATION_RECEIPT = """INSERT INTO mutation_receipts (receipt_id, actor, key_digest, operation,
-target_run_id, request_fingerprint, reason, resource, run_id, prefect_key, state, response_status, response_body,
-flow_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+target_run_id, request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body,
+flow_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _SELECT_MUTATION_RECEIPT = """SELECT receipt_id, actor, key_digest, operation, target_run_id,
-request_fingerprint, reason, resource, run_id, prefect_key, state, response_status, response_body, flow_run_id,
+request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body, flow_run_id,
 created_at, updated_at FROM mutation_receipts WHERE actor = ? AND key_digest = ?"""
 _INSERT_AUDIT_EVENT = """INSERT INTO audit_events (event_id, run_id, actor, operation, reason, outcome, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?)"""
@@ -413,13 +413,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.execute(f"ALTER TABLE product_runs ADD COLUMN {column} {sql_type}")
 
     def _migrate_mutation_receipts(self, cursor: _Cursor) -> None:
-        """Replace the legacy run-only receipt shape with the nullable resource-aware shape.
-
-        SQLite cannot relax ``NOT NULL`` columns in place.  The additive replacement preserves
-        each legacy row and its write admission, while backfilling ``resource = 'run'``.
-        PostgreSQL accepts the same portable DDL under the provider contract, avoiding a
-        divergent receipt layout between profiles.
-        """
+        """Add resource identity columns and preserve every legacy receipt in place."""
         if self._dialect == "sqlite":
             cursor.execute("PRAGMA table_info(mutation_receipts)")
             columns = frozenset(str(row[1]) for row in cursor.fetchall())
@@ -432,38 +426,27 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 ("mutation_receipts",),
             )
             columns = frozenset(str(row[0]) for row in cursor.fetchall())
-        if "resource" in columns:
-            return
-        cursor.execute("CREATE TABLE mutation_receipts_migration AS SELECT * FROM write_admissions")
-        cursor.execute("DROP TABLE write_admissions")
+        if "resource_kind" not in columns:
+            cursor.execute("ALTER TABLE mutation_receipts ADD COLUMN resource_kind TEXT")
+        if "resource_id" not in columns:
+            cursor.execute("ALTER TABLE mutation_receipts ADD COLUMN resource_id TEXT")
         cursor.execute(
-            "CREATE TABLE mutation_receipts_replacement ("
-            "receipt_id TEXT PRIMARY KEY, actor TEXT NOT NULL, key_digest TEXT NOT NULL, "
-            "operation TEXT NOT NULL, target_run_id TEXT, request_fingerprint TEXT NOT NULL, "
-            "reason TEXT NOT NULL, resource TEXT NOT NULL, run_id TEXT, prefect_key TEXT, "
-            "state TEXT NOT NULL, response_status INTEGER, response_body TEXT, flow_run_id TEXT, "
-            "created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
-            "CHECK ((resource = 'run' AND run_id IS NOT NULL AND prefect_key IS NOT NULL) "
-            "OR (resource = 'configuration' AND run_id IS NULL AND prefect_key IS NULL "
-            "AND target_run_id IS NULL AND flow_run_id IS NULL)), UNIQUE (actor, key_digest))"
+            "UPDATE mutation_receipts SET resource_kind = 'run', resource_id = run_id "
+            "WHERE resource_kind IS NULL OR resource_id IS NULL"
         )
-        cursor.execute(
-            "INSERT INTO mutation_receipts_replacement "
-            "SELECT receipt_id, actor, key_digest, operation, target_run_id, request_fingerprint, reason, "
-            "'run', run_id, prefect_key, state, response_status, response_body, flow_run_id, created_at, updated_at "
-            "FROM mutation_receipts"
-        )
-        cursor.execute("DROP TABLE mutation_receipts")
-        cursor.execute("ALTER TABLE mutation_receipts_replacement RENAME TO mutation_receipts")
-        cursor.execute(
-            "CREATE TABLE write_admissions (run_id TEXT PRIMARY KEY, receipt_id TEXT NOT NULL UNIQUE, operation TEXT NOT NULL, "
-            "FOREIGN KEY (run_id) REFERENCES product_runs(run_id), "
-            "FOREIGN KEY (receipt_id) REFERENCES mutation_receipts(receipt_id))"
-        )
-        cursor.execute(
-            "INSERT INTO write_admissions SELECT run_id, receipt_id, operation FROM mutation_receipts_migration"
-        )
-        cursor.execute("DROP TABLE mutation_receipts_migration")
+        if self._dialect == "sqlite":
+            # SQLite has no ALTER COLUMN.  Editing only the table declaration preserves the
+            # table, rows, indexes, and foreign-key references while making legacy run-only
+            # columns nullable for configuration receipts.
+            cursor.execute("PRAGMA writable_schema = ON")
+            cursor.execute(
+                "UPDATE sqlite_master SET sql = REPLACE(REPLACE(sql, 'run_id TEXT NOT NULL', 'run_id TEXT'), "
+                "'prefect_key TEXT NOT NULL', 'prefect_key TEXT') WHERE type = 'table' AND name = 'mutation_receipts'"
+            )
+            cursor.execute("PRAGMA writable_schema = OFF")
+        else:
+            cursor.execute("ALTER TABLE mutation_receipts ALTER COLUMN run_id DROP NOT NULL")
+            cursor.execute("ALTER TABLE mutation_receipts ALTER COLUMN prefect_key DROP NOT NULL")
 
     def _configuration_binding_constraint_exists(self, cursor: _Cursor) -> bool:
         """Check for the binding safeguard by name instead of attempting and hoping.
@@ -924,7 +907,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.execute(
                     self._sql(
                         "SELECT receipt_id, actor, key_digest, operation, target_run_id, request_fingerprint, "
-                        "reason, resource, run_id, prefect_key, state, response_status, response_body, flow_run_id, "
+                        "reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body, flow_run_id, "
                         "created_at, updated_at FROM mutation_receipts WHERE receipt_id = ?"
                     ),
                     (receipt_id,),
@@ -1783,7 +1766,8 @@ def _receipt_values(receipt: MutationReceipt) -> tuple[Any, ...]:
         receipt.target_run_id,
         receipt.request_fingerprint,
         receipt.reason,
-        receipt.resource,
+        receipt.resource_kind,
+        receipt.resource_id,
         receipt.run_id,
         receipt.prefect_key,
         receipt.state,
@@ -1805,15 +1789,16 @@ def _receipt_from_row(row: Sequence[Any]) -> MutationReceipt:
             "target_run_id": row[4],
             "request_fingerprint": row[5],
             "reason": row[6],
-            "resource": row[7],
-            "run_id": row[8],
-            "prefect_key": row[9],
-            "state": row[10],
-            "response_status": row[11],
-            "response_body": None if row[12] is None else json.loads(row[12]),
-            "flow_run_id": row[13],
-            "created_at": row[14],
-            "updated_at": row[15],
+            "resource_kind": row[7],
+            "resource_id": row[8],
+            "run_id": row[9],
+            "prefect_key": row[10],
+            "state": row[11],
+            "response_status": row[12],
+            "response_body": None if row[13] is None else json.loads(row[13]),
+            "flow_run_id": row[14],
+            "created_at": row[15],
+            "updated_at": row[16],
         }
     )
 

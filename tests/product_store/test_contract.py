@@ -96,7 +96,8 @@ class _CursorAdapter:
         self._fake_rows = None
         stripped = operation.strip()
         if "information_schema.columns" in stripped:
-            self._cursor.execute("PRAGMA table_info(product_runs)")
+            table_name = parameters[0] if parameters else "product_runs"
+            self._cursor.execute(f"PRAGMA table_info({table_name})")  # noqa: S608 - controlled test table name.
             self._fake_rows = tuple((str(row[1]),) for row in self._cursor.fetchall())
             return self
         if "information_schema.table_constraints" in stripped:
@@ -412,6 +413,7 @@ def _receipt(  # noqa: PLR0913 - receipt factory exposes contract dimensions.
         target_run_id=target_run_id,
         request_fingerprint=sha256(f"canonical-request:{operation}:{target_run_id}".encode()).hexdigest(),
         reason=reason,
+        resource_id=run_id,
         run_id=run_id,
         prefect_key=sha256(receipt_id.encode()).hexdigest(),
         created_at=now,
@@ -634,7 +636,7 @@ def test_receipt_migration_backfills_legacy_runs_and_allows_configuration_receip
         legacy_values = product_store_store._receipt_values(legacy_receipt)
         legacy.execute(
             "INSERT INTO mutation_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            legacy_values[:7] + legacy_values[8:],
+            legacy_values[:7] + legacy_values[9:],
         )
         legacy.commit()
     finally:
@@ -644,9 +646,22 @@ def test_receipt_migration_backfills_legacy_runs_and_allows_configuration_receip
     projection = ProductProjection(records, FileArtifactStore(tmp_path / f"{profile[0]}-objects"))
     restored = projection.lookup_mutation(legacy_receipt.actor, legacy_receipt.key_digest)
     assert restored.value is not None
-    assert restored.value.resource == "run"
+    assert restored.value.resource_kind == "run"
+    assert restored.value.resource_id == legacy_receipt.run_id
     assert restored.value.run_id == legacy_receipt.run_id
     assert restored.value.prefect_key == legacy_receipt.prefect_key
+
+    restarted = ProductProjection(SQLiteRunStore(database), FileArtifactStore(tmp_path / "restarted-objects"))
+    after_restart = restarted.lookup_mutation(legacy_receipt.actor, legacy_receipt.key_digest)
+    assert after_restart.value is not None
+    assert after_restart.value.run_id == legacy_receipt.run_id
+    assert after_restart.value.prefect_key == legacy_receipt.prefect_key
+    schema = sqlite3.connect(database)
+    try:
+        columns = {row[1] for row in schema.execute("PRAGMA table_info(mutation_receipts)")}
+    finally:
+        schema.close()
+    assert {"resource_kind", "resource_id"} <= columns
 
     now = datetime(2026, 8, 10, 12, tzinfo=timezone.utc)
     configuration_receipt = MutationReceipt(
@@ -656,7 +671,8 @@ def test_receipt_migration_backfills_legacy_runs_and_allows_configuration_receip
         operation="register-config",
         request_fingerprint=sha256(b"configuration-request").hexdigest(),
         reason="operator registered a configuration",
-        resource="configuration",
+        resource_kind="configuration",
+        resource_id="configs",
         created_at=now,
         updated_at=now,
     )
@@ -2410,7 +2426,7 @@ class _FakePostgreSQLCursor:
             if table not in database.tables:
                 connection.pending_tables.add(table)
             if table == "mutation_receipts":
-                connection.pending_columns.setdefault(table, set()).add("resource")
+                connection.pending_columns.setdefault(table, set()).update({"resource_kind", "resource_id"})
             return ()
         if operation.startswith(("CREATE UNIQUE INDEX IF NOT EXISTS", "CREATE INDEX IF NOT EXISTS")):
             return ()
