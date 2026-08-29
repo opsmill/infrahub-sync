@@ -25,7 +25,11 @@ from infrahub_sync.product_store.configs import ValidationReport
 from tests.configuration.validation_packages import package_data
 
 if TYPE_CHECKING:
+    from typing import NoReturn
+
+    from infrahub_sync.configuration.models import ConfigurationPackage
     from infrahub_sync.managed.auth import PrincipalResolver
+    from infrahub_sync.product_store.models import ConfigurationVersion
 
 
 class _Orchestration:  # pylint: disable=too-few-public-methods
@@ -37,6 +41,10 @@ class _Orchestration:  # pylint: disable=too-few-public-methods
 
     async def cancel(self, flow_run_id: str) -> Observation:  # noqa: ARG002, PLR6301
         return Observation(available=True, state="cancelled")
+
+
+class _UnknownConfigsError(configs_service.ConfigsError):
+    """An unrecognized service error remains conservatively non-retryable."""
 
 
 def test_configuration_routes_register_then_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -158,10 +166,27 @@ def test_configuration_mutation_audits_accepted_replayed_and_refused_idempotency
     assert all(bearer not in event.model_dump_json() for event in events)
 
 
-def test_configuration_service_failure_is_audited_and_the_reserved_receipt_can_retry(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("error_type", "status", "released"),
+    [
+        (configs_service.ConfigsRequestError, 400, True),
+        (configs_service.ConfigsValidationError, 422, True),
+        (configs_service.ConfigsNotFoundError, 404, True),
+        (configs_service.ConfigsStorageError, 503, False),
+        (configs_service.ConfigsInternalError, 503, False),
+        (configs_service.ConfigsError, 503, False),
+        (_UnknownConfigsError, 503, False),
+    ],
+)
+def test_configuration_mutation_releases_only_proven_pre_effect_error_families(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[configs_service.ConfigsError],
+    *,
+    status: int,
+    released: bool,
 ) -> None:
-    """A configuration service outage leaves no unaudited reservation behind."""
+    """Only declared pre-effect families make a configuration receipt retryable."""
     bearer = "admin-token-canary-0003"
     monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
     resolver = EnvironmentPrincipalResolver.from_environment()
@@ -179,9 +204,7 @@ def test_configuration_service_failure_is_audited_and_the_reserved_receipt_can_r
 
         def register(self, **_kwargs: object) -> dict[str, object]:
             self.calls += 1
-            if self.calls == 1:
-                raise self.ConfigsStorageError("transient service failure")  # noqa: EM101, TRY003
-            return {"configuration": {"config_id": "cfg"}, "version": {"registry_version": 1}}
+            raise error_type("service failure")  # noqa: EM101, TRY003
 
     projection = local_product_projection(tmp_path)
     service = Service()
@@ -197,14 +220,62 @@ def test_configuration_service_failure_is_audited_and_the_reserved_receipt_can_r
 
     refused = client.post("/configs", headers=headers, json=body)
     reserved = projection.lookup_mutation("admin", sha256(headers["Idempotency-Key"].encode()).hexdigest()).value
-    retried = client.post("/configs", headers=headers, json=body)
+    retry = client.post("/configs", headers=headers, json=body)
 
-    assert refused.status_code == 503
+    assert refused.status_code == status
     assert reserved is not None
-    assert reserved.state == "reserved"
-    assert retried.status_code == 201
-    assert service.calls == 2
-    assert [event.outcome for event in projection.audit_events()] == ["unavailable", "accepted"]
+    assert reserved.state == ("reserved" if released else "processing")
+    assert retry.status_code == (status if released else 409)
+    assert service.calls == (2 if released else 1)
+    assert [event.outcome for event in projection.audit_events()] == (
+        ["unavailable", "unavailable"] if released else ["unavailable", "refused-idempotency-in-progress"]
+    )
+    assert all(bearer not in event.model_dump_json() for event in projection.audit_events())
+
+
+def test_post_commit_readback_failure_blocks_same_key_retry_without_a_second_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Contain an unknown post-commit outcome; this is not crash recovery or exactly-once execution."""
+    projection = local_product_projection(tmp_path)
+    writes = 0
+
+    class PostCommitReadbackFailure:  # pylint: disable=too-few-public-methods,no-self-use
+        def create_configuration(self, package: ConfigurationPackage) -> ConfigurationVersion:  # noqa: PLR6301
+            nonlocal writes
+            writes += 1
+            return projection.create_configuration(package)
+
+        def lookup_configuration(self, _config_id: str) -> NoReturn:  # noqa: PLR6301
+            message = "read-back failed after configuration commit"
+            raise OSError(message)
+
+    monkeypatch.setattr(configs_service, "local_product_projection", lambda _location: PostCommitReadbackFailure())
+    routes = ConfigurationRoutes(tmp_path)
+    request = {
+        "actor": "admin",
+        "idempotency_key": "post-commit-readback-failure",
+        "operation": "register-config",
+        "resource_kind": "configuration-registry",
+        "resource_id": "configs",
+        "package": package_data(),
+        "reason": "prove conservative containment",
+    }
+
+    with pytest.raises(ConfigurationAPIError) as first:
+        routes.mutate(**request)
+    with pytest.raises(ManagedAPIError) as retry:
+        routes.mutate(**request)
+
+    receipt = projection.lookup_mutation("admin", sha256(b"post-commit-readback-failure").hexdigest()).value
+    assert first.value.status == 503
+    assert first.value.family == "storage"
+    assert retry.value.code == "idempotency-in-progress"
+    assert receipt is not None
+    assert receipt.state == "processing"
+    assert writes == 1
+    assert len(projection.list_configurations()) == 1
+    assert [event.outcome for event in projection.audit_events()] == ["unavailable", "refused-idempotency-in-progress"]
 
 
 def test_concurrent_configuration_mutation_does_not_invoke_service_twice(tmp_path: Path) -> None:

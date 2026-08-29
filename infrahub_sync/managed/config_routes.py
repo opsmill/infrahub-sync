@@ -26,10 +26,11 @@ _MAX_PAGE_LIMIT = 256
 class ConfigurationAPIError(Exception):
     """Fixed public representation of one shared configuration-service refusal."""
 
-    def __init__(self, status: int, family: str, *, reason: str | None = None) -> None:
+    def __init__(self, status: int, family: str, *, reason: str | None = None, proven_pre_effect: bool = False) -> None:
         self.status = status
         self.family = family
         self.reason = reason
+        self.proven_pre_effect = proven_pre_effect
 
 
 def _strict_integer(value: str, *, minimum: int, maximum: int) -> int:
@@ -56,11 +57,11 @@ class ConfigurationRoutes:
         except self._service.ConfigsError as error:
             error_type = type(error)
             if error_type is self._service.ConfigsRequestError:
-                raise ConfigurationAPIError(400, "request") from None
+                raise ConfigurationAPIError(400, "request", proven_pre_effect=True) from None
             if error_type is self._service.ConfigsValidationError:
-                raise ConfigurationAPIError(422, "validation") from None
+                raise ConfigurationAPIError(422, "validation", proven_pre_effect=True) from None
             if error_type is self._service.ConfigsNotFoundError:
-                raise ConfigurationAPIError(404, "not-found", reason=error.reason) from None
+                raise ConfigurationAPIError(404, "not-found", reason=error.reason, proven_pre_effect=True) from None
             if error_type is self._service.ConfigsStorageError:
                 raise ConfigurationAPIError(503, "storage") from None
             if error_type is self._service.ConfigsInternalError:
@@ -154,6 +155,7 @@ class ConfigurationRoutes:
                 self._audit(actor, operation, reason, "replayed")
                 return stored.response_status, stored.response_body
         if not projection.claim_mutation(stored.receipt_id, secrets=self._secrets):
+            self._audit(actor, operation, reason, "refused-idempotency-in-progress")
             raise ManagedAPIError(409, "idempotency-in-progress", "the matching request is still being processed")
         try:
             if operation == "register-config":
@@ -162,8 +164,9 @@ class ConfigurationRoutes:
             else:
                 result = self.create_version(resource_id, package)
                 response_status = 201 if result.created else 200
-        except ConfigurationAPIError:
-            projection.release_mutation(stored.receipt_id, secrets=self._secrets)
+        except ConfigurationAPIError as error:
+            if error.proven_pre_effect:
+                projection.release_mutation(stored.receipt_id, secrets=self._secrets)
             self._audit(actor, operation, reason, "unavailable")
             raise
         response = jsonable_encoder(result)
