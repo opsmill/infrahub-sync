@@ -71,6 +71,39 @@ def test_configuration_routes_register_then_read(tmp_path: Path, monkeypatch: py
     )
 
 
+def test_configuration_routes_use_the_injected_projection_for_services_receipts_and_audit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Configuration operations must not silently reopen a local product projection."""
+    import infrahub_sync.managed.config_routes as config_routes
+
+    bearer = "admin-token-canary-0003"
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    projection = local_product_projection(tmp_path)
+
+    def local_projection_forbidden(*_args: object, **_kwargs: object) -> NoReturn:
+        raise AssertionError("configuration routes reopened a local product projection")
+
+    monkeypatch.setattr(config_routes, "local_product_projection", local_projection_forbidden)
+    client = TestClient(
+        create_app(
+            ManagedRunService(projection, _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(product_projection=projection, secrets=resolver.secret_values),
+        )
+    )
+
+    response = client.post(
+        "/configs",
+        headers={"Authorization": f"Bearer {bearer}", "Idempotency-Key": "injected-projection"},
+        json={"package": package_data(), "reason": "register through one projection"},
+    )
+    assert response.status_code == 201, response.text
+    assert projection.lookup_mutation("admin", sha256(b"injected-projection").hexdigest()).value is not None
+    assert projection.audit_events()
+
+
 def test_configuration_mutation_replays_exact_response_and_rejects_changed_content(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

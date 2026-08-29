@@ -12,7 +12,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from infrahub_sync.plan.canonical import canonical_json_bytes
-from infrahub_sync.product_store import AuditEvent, MutationReceipt, configs, local_product_projection
+from infrahub_sync.product_store import AuditEvent, MutationReceipt, ProductProjection, configs, local_product_projection
 
 from .auth import Principal
 from .models import ConfigMutationRequest
@@ -46,13 +46,26 @@ def _strict_integer(value: str, *, minimum: int, maximum: int) -> int:
 class ConfigurationRoutes:
     """Bind configuration operations to this server's durable cache location."""
 
-    def __init__(self, product_cache_location: Path, *, service: Any = configs, secrets: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        product_cache_location: Path | None = None,
+        *,
+        product_projection: ProductProjection | None = None,
+        service: Any = configs,
+        secrets: tuple[str, ...] = (),
+    ) -> None:
+        if (product_cache_location is None) == (product_projection is None):
+            msg = "provide exactly one product projection or product_cache_location"
+            raise ValueError(msg)
         self._location = product_cache_location
+        self._projection = product_projection
         self._service = service
         self._secrets = secrets
 
     def _call(self, operation: Any, **kwargs: Any) -> Any:
         try:
+            if self._projection is not None:
+                return operation(projection=self._projection, **kwargs)
             return operation(product_cache_location=self._location, **kwargs)
         except self._service.ConfigsError as error:
             error_type = type(error)
@@ -136,7 +149,7 @@ class ConfigurationRoutes:
             created_at=now,
             updated_at=now,
         )
-        projection = local_product_projection(self._location)
+        projection = self._store_projection()
         stored, created = projection.reserve_mutation(receipt, secrets=self._secrets)
         if not created:
             if (
@@ -187,7 +200,7 @@ class ConfigurationRoutes:
         self._audit(actor, operation, reason, "refused-authorization")
 
     def _audit(self, actor: str, operation: str, reason: str, outcome: str) -> None:
-        local_product_projection(self._location).record_audit(
+        self._store_projection().record_audit(
             AuditEvent(
                 event_id=f"a-{uuid4().hex}",
                 run_id=None,
@@ -199,6 +212,13 @@ class ConfigurationRoutes:
             ),
             secrets=self._secrets,
         )
+
+    def _store_projection(self) -> ProductProjection:
+        """Return the injected projection or the explicit local compatibility projection."""
+        if self._projection is not None:
+            return self._projection
+        assert self._location is not None
+        return local_product_projection(self._location)
 
 
 def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempotency_key: Any) -> APIRouter:
