@@ -128,13 +128,17 @@ class ConfigurationRoutes:
                 assert stored.response_body is not None
                 self._audit(actor, operation, reason, "replayed")
                 return stored.response_status, stored.response_body
-        if operation == "register-config":
-            result = self.register(package)
-            response_status = 201
-        else:
-            config_id = resource_path.rsplit("/", 2)[1]
-            result = self.create_version(config_id, package)
-            response_status = 201 if result.created else 200
+        try:
+            if operation == "register-config":
+                result = self.register(package)
+                response_status = 201
+            else:
+                config_id = resource_path.rsplit("/", 2)[1]
+                result = self.create_version(config_id, package)
+                response_status = 201 if result.created else 200
+        except ConfigurationAPIError:
+            self._audit(actor, operation, reason, "unavailable")
+            raise
         response = jsonable_encoder(result)
         completed = projection.complete_mutation(
             stored.receipt_id,

@@ -157,6 +157,54 @@ def test_configuration_mutation_audits_accepted_replayed_and_refused_idempotency
     assert all(bearer not in event.model_dump_json() for event in events)
 
 
+def test_configuration_service_failure_is_audited_and_the_reserved_receipt_can_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A configuration service outage leaves no unaudited reservation behind."""
+    bearer = "admin-token-canary-0003"
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
+    resolver = EnvironmentPrincipalResolver.from_environment()
+
+    class Service:
+        ConfigsRequestError = configs_service.ConfigsRequestError
+        ConfigsValidationError = configs_service.ConfigsValidationError
+        ConfigsNotFoundError = configs_service.ConfigsNotFoundError
+        ConfigsStorageError = configs_service.ConfigsStorageError
+        ConfigsInternalError = configs_service.ConfigsInternalError
+        ConfigsError = configs_service.ConfigsError
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def register(self, **_kwargs: object) -> dict[str, object]:
+            self.calls += 1
+            if self.calls == 1:
+                raise self.ConfigsStorageError("transient service failure")
+            return {"configuration": {"config_id": "cfg"}, "version": {"registry_version": 1}}
+
+    projection = local_product_projection(tmp_path)
+    service = Service()
+    client = TestClient(
+        create_app(
+            ManagedRunService(projection, _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(tmp_path, service=service, secrets=resolver.secret_values),
+        )
+    )
+    headers = {"Authorization": f"Bearer {bearer}", "Idempotency-Key": "retry-after-service-failure"}
+    body = {"package": package_data(), "reason": "retry after outage"}
+
+    refused = client.post("/configs", headers=headers, json=body)
+    reserved = projection.lookup_mutation("admin", sha256(headers["Idempotency-Key"].encode()).hexdigest()).value
+    retried = client.post("/configs", headers=headers, json=body)
+
+    assert refused.status_code == 503
+    assert reserved is not None and reserved.state == "reserved"
+    assert retried.status_code == 201
+    assert service.calls == 2
+    assert [event.outcome for event in projection.audit_events()] == ["unavailable", "accepted"]
+
+
 def test_configuration_mutation_refuses_unauthenticated_and_non_admin_calls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
