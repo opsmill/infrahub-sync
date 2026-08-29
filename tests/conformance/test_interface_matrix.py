@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import pytest
 from typer.testing import CliRunner
@@ -31,14 +31,14 @@ from infrahub_sync.managed import flow as managed_flow
 from infrahub_sync.managed.app import create_app
 from infrahub_sync.managed.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.managed.flow import managed_sync_run
-from infrahub_sync.managed.orchestration import Observation, Submission
+from infrahub_sync.managed.orchestration import CancellationResult, Observation, PoolStatus, Submission
 from infrahub_sync.managed.service import ManagedRunService
 from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.identity import operation_id
 from infrahub_sync.plan.models import PlanManifest, PlannedOperation
 from infrahub_sync.plan.review import SavedPlan, read_saved_plan, resolve_run_directory
 from infrahub_sync.plan.writer import write_plan_artifact
-from infrahub_sync.product_store import ProductProjection, ProductRun, local_product_projection
+from infrahub_sync.product_store import PrefectExecutionLink, ProductProjection, ProductRun, local_product_projection
 from infrahub_sync.product_store.standalone import execute_standalone
 from tests.configuration.validation_packages import package, package_data
 from tests.conformance.interface_adapters import (
@@ -55,6 +55,40 @@ if TYPE_CHECKING:
 
 SENTINEL = "db006-interface-sentinel-credential"
 AUTH_TOKEN = "db006-managed-owner-token"  # noqa: S105 - deliberate non-secret canary.
+
+
+@pytest.fixture(autouse=True)
+def _executor_only_claim(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give direct managed-worker matrix calls one real durable claim."""
+    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+
+    def claim(projection: ProductProjection, run_id: str) -> tuple[str, str]:
+        run = projection.lookup_run(run_id).value
+        assert run is not None
+        link = next(
+            (
+                candidate
+                for candidate in reversed(run.prefect_executions)
+                if candidate.claimed_at is None
+                and candidate.terminal_at is None
+                and candidate.cancellation_requested_at is None
+            ),
+            None,
+        )
+        if link is None:
+            ordinal = len(run.prefect_executions) + 1
+            link = projection.add_prefect_execution(
+                run_id,
+                PrefectExecutionLink(
+                    flow_run_id=str(uuid5(NAMESPACE_URL, f"{run_id}:{ordinal}")),
+                    purpose=f"matrix-{ordinal}",
+                    attempt=1,
+                ),
+            )
+        assert projection.claim_execution(run_id, link.flow_run_id, worker_id=worker_id)
+        return link.flow_run_id, worker_id
+
+    monkeypatch.setattr(managed_flow, "_claim_current_execution", claim)
 
 
 @dataclass
@@ -364,11 +398,15 @@ def test_executed_three_interface_product_envelopes_are_equal(
         managed = _run_managed_worker(scoped, tmp_path / "managed", operation, run_id)
     managed_record = cast("dict[str, object]", managed.product_record)
     assert all(managed_record[key] is not None for key in ("config_id", "registry_version", "package_checksum"))
+    managed_links = cast("list[dict[str, object]]", managed_record["prefect_executions"])
+    assert managed_links
+    assert all(link["terminal_state"] == "completed" for link in managed_links)
     # Standalone interfaces remain legacy by contract. Compare their common product
-    # semantics after separately proving the managed-only durable binding.
+    # semantics after separately proving managed-only binding and execution liveness.
     managed_record["configuration_reference"] = cli.product_record["configuration_reference"]
     for key in ("config_id", "registry_version", "package_checksum"):
         managed_record[key] = None
+    managed_record["prefect_executions"] = []
     observations = [cli, python, managed]
     assert_equivalent(observations)
 
@@ -657,8 +695,11 @@ class _Orchestration:
     async def observe(self, flow_run_id: str) -> Observation:  # noqa: ARG002, PLR6301
         return Observation(available=True, state="running")
 
-    async def cancel(self, flow_run_id: str) -> Observation:  # noqa: ARG002, PLR6301
-        return Observation(available=True, state="cancelling")
+    async def pool_status(self, work_pool_name: str, now: datetime) -> PoolStatus:  # noqa: ARG002, PLR6301
+        return PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
+
+    async def cancel(self, flow_run_id: str) -> CancellationResult:  # noqa: ARG002, PLR6301
+        return CancellationResult(acknowledged=True)
 
 
 def _execute_submission(parameters: Mapping[str, object]) -> dict[str, object]:

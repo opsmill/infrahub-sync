@@ -59,6 +59,14 @@ class Observation:
 
 
 @dataclass(frozen=True, slots=True)
+class CancellationResult:
+    """Exact-flow remote cancellation acknowledgement without fabricated terminal state."""
+
+    acknowledged: bool
+    reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class PoolWorker:
     """Internal, non-public worker liveness evidence from Prefect."""
 
@@ -87,7 +95,7 @@ class ManagedOrchestration(Protocol):
 
     async def pool_status(self, work_pool_name: str, now: datetime) -> PoolStatus: ...
 
-    async def cancel(self, flow_run_id: str) -> Observation: ...
+    async def cancel(self, flow_run_id: str) -> CancellationResult: ...
 
 
 class _PoolClient(Protocol):
@@ -134,29 +142,27 @@ class PrefectOrchestration:
             return PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
         return PoolStatus(detail_available=True, queue_depth=queue_depth, observed_at=now, workers=parsed)
 
-    async def cancel(self, flow_run_id: str) -> Observation:
-        observed = await self.observe(flow_run_id)
-        if not observed.available or observed.state in {"completed", "failed", "crashed", "cancelled"}:
-            return observed
+    async def cancel(self, flow_run_id: str) -> CancellationResult:
+        """Request exact-flow cancellation and report only Prefect acknowledgement."""
         try:
             await self._client.set_flow_run_state(UUID(flow_run_id), Cancelling())
         except (ObjectNotFound, httpx.HTTPError):
-            return Observation(available=False, state=observed.state, reason="prefect-cancellation-unavailable")
-        return await self.observe(flow_run_id)
+            return CancellationResult(acknowledged=False, reason="prefect-cancellation-unavailable")
+        return CancellationResult(acknowledged=True)
 
 
 def _canonical_uuid(value: object) -> str:
     """Require the exact canonical UUID that Prefect assigned to the worker."""
-    if type(value) is not UUID:
+    if type(value) is not UUID:  # pylint: disable=unidiomatic-typecheck
         raise ValueError
     return str(value)
 
 
 def _status_value(value: object) -> str:
     """Accept only Prefect's status enum or an exact string test double."""
-    if type(value) is WorkerStatus:
+    if type(value) is WorkerStatus:  # pylint: disable=unidiomatic-typecheck
         return value.value.lower()
-    if type(value) is not str:
+    if type(value) is not str:  # pylint: disable=unidiomatic-typecheck
         raise ValueError
     return value.lower()
 
@@ -165,9 +171,17 @@ def _pool_worker(worker: Any) -> PoolWorker:
     """Parse one pinned Prefect worker record without coercing hostile values."""
     heartbeat = worker.last_heartbeat_time
     interval = worker.heartbeat_interval_seconds
-    if heartbeat is not None and (type(heartbeat) is not datetime or heartbeat.utcoffset() is None):
+    if heartbeat is not None and (
+        type(heartbeat) is not datetime  # pylint: disable=unidiomatic-typecheck
+        or heartbeat.utcoffset() is None
+    ):
         raise ValueError
-    if type(interval) is not int or isinstance(interval, bool) or interval <= 0 or not isfinite(interval):
+    if (
+        type(interval) is not int  # pylint: disable=unidiomatic-typecheck
+        or isinstance(interval, bool)
+        or interval <= 0
+        or not isfinite(interval)
+    ):
         raise ValueError
     return PoolWorker(
         worker_id=_canonical_uuid(worker.id),

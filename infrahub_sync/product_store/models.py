@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Generic, Literal, TypeVar
+from typing import Annotated, Any, Generic, Literal, TypeAlias, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -173,6 +173,42 @@ class ProductRun(BaseModel):
         assert self.registry_version is not None
         assert self.package_checksum is not None
         return self.config_id, self.registry_version, self.package_checksum
+
+
+class ExecutionFinishWriteback(BaseModel):
+    """Complete business writeback committed with one claimed execution verdict."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["finish"] = "finish"
+    phase: str = Field(min_length=1)
+    outcome: str = Field(min_length=1)
+    finished_at: datetime
+    summary: dict[str, Any]
+    results: dict[str, Any]
+
+    @field_validator("finished_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            msg = "execution writeback timestamps must include a timezone"
+            raise ValueError(msg)
+        return value
+
+
+class ExecutionMergeWriteback(BaseModel):
+    """Business result patch committed with one claimed execution verdict."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["merge"] = "merge"
+    results: dict[str, Any]
+
+
+ExecutionWriteback: TypeAlias = Annotated[
+    ExecutionFinishWriteback | ExecutionMergeWriteback,
+    Field(discriminator="kind"),
+]
 
 
 class MutationReceipt(BaseModel):

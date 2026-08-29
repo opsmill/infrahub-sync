@@ -62,6 +62,9 @@ EXPECTED_PUBLIC_NAMES = {
     "DuplicateConfigurationError",
     "DuplicatePrefectExecutionError",
     "DuplicateRunError",
+    "ExecutionFinishWriteback",
+    "ExecutionMergeWriteback",
+    "ExecutionWriteback",
     "LookupResult",
     "MutationReceipt",
     "PrefectExecutionLink",
@@ -1026,6 +1029,350 @@ def test_execution_claim_refuses_invalid_worker_identity_without_mutation(provid
     loaded = provider.lookup_run("run-001").value
     assert loaded is not None
     assert loaded.prefect_executions[0].claimed_at is None
+
+
+def test_claimed_finish_writeback_is_atomic_and_worker_bound(provider: ProductProjection) -> None:
+    """The exact claiming worker commits the business result and link verdict together."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    )
+    assert provider.claim_execution("run-001", "flow-001", worker_id=worker_id, claimed_at=now)
+    writeback = product_store.ExecutionFinishWriteback(
+        phase="planned",
+        outcome="planned",
+        finished_at=now + timedelta(seconds=1),
+        summary={"total": 1},
+        results={"stage": "plan", "outcome": "planned"},
+    )
+
+    assert not provider.commit_claimed_execution(
+        "run-001",
+        "flow-001",
+        worker_id="d08f703b-ce73-4269-a7aa-1bfb00f8cc63",
+        terminal_at=now + timedelta(seconds=1),
+        terminal_state="completed",
+        terminal_outcome="succeeded",
+        writeback=writeback,
+    )
+    assert provider.commit_claimed_execution(
+        "run-001",
+        "flow-001",
+        worker_id=worker_id,
+        terminal_at=now + timedelta(seconds=1),
+        terminal_state="completed",
+        terminal_outcome="succeeded",
+        writeback=writeback,
+    )
+
+    stored = provider.lookup_run("run-001").value
+    assert stored is not None
+    assert (stored.phase, stored.outcome, stored.finished_at) == ("planned", "planned", now + timedelta(seconds=1))
+    assert stored.results == {"stage": "plan", "outcome": "planned"}
+    assert (stored.prefect_executions[0].terminal_state, stored.prefect_executions[0].terminal_outcome) == (
+        "completed",
+        "succeeded",
+    )
+
+
+def test_cancellation_saga_persists_intent_acknowledgement_and_clean_terminal(provider: ProductProjection) -> None:
+    """Cancellation proof and its accepted receipt share provider transactions."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    receipt = _receipt(operation="cancel", target_run_id="run-001")
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    )
+    provider.reserve_mutation(receipt)
+    assert provider.claim_mutation(receipt.receipt_id)
+    deadline = now + timedelta(seconds=30)
+
+    assert provider.request_execution_cancellation(
+        "run-001",
+        "flow-001",
+        requested_at=now,
+        recovery_deadline_at=deadline,
+        receipt_id=receipt.receipt_id,
+    )
+    assert not provider.claim_execution(
+        "run-001", "flow-001", worker_id="8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0", claimed_at=now
+    )
+    accepted = {"run": {"run_id": "run-001"}, "orchestration": []}
+    assert provider.acknowledge_execution_cancellation(
+        "run-001",
+        "flow-001",
+        acknowledged_at=now + timedelta(seconds=1),
+        response_status=202,
+        response_body=accepted,
+    )
+    provider.observe_prefect_execution("run-001", "flow-001", state="Cancelled")
+    assert not provider.cancel_execution("run-001", "flow-001", terminal_at=deadline)
+    provider.observe_prefect_execution("run-001", "flow-001", state="cancelled")
+    assert provider.cancel_execution("run-001", "flow-001", terminal_at=deadline)
+
+    stored = provider.lookup_run("run-001").value
+    assert stored is not None
+    assert (stored.phase, stored.outcome) == ("cancelled", "cancelled")
+    assert stored.prefect_executions[0].terminal_state == "cancelled"
+    replay = provider.lookup_mutation(receipt.actor, receipt.key_digest).value
+    assert replay is not None
+    assert (replay.state, replay.response_status, replay.response_body) == ("accepted", 202, accepted)
+
+
+def test_cancellation_intent_rejects_naive_time_without_partial_state(provider: ProductProjection) -> None:
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    receipt = _receipt(operation="cancel", target_run_id="run-001")
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    )
+    provider.reserve_mutation(receipt)
+    assert provider.claim_mutation(receipt.receipt_id)
+
+    with pytest.raises(ValueError, match="timezone"):
+        provider.request_execution_cancellation(
+            "run-001",
+            "flow-001",
+            requested_at=now.replace(tzinfo=None),
+            recovery_deadline_at=now + timedelta(seconds=30),
+            receipt_id=receipt.receipt_id,
+        )
+
+    stored = provider.lookup_run("run-001").value
+    assert stored is not None
+    assert stored.prefect_executions[0].cancellation_requested_at is None
+
+
+@pytest.mark.parametrize("claim_state", ["unclaimed", "claimed"])
+@pytest.mark.parametrize("ack_state", ["unacknowledged", "acknowledged"])
+def test_cancellation_expiry_is_inclusive_bounded_and_receipt_stable(
+    provider: ProductProjection, claim_state: str, ack_state: str
+) -> None:
+    """Recovery fences normal liveness only through one fixed inclusive deadline."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+    receipt = _receipt(operation="cancel", target_run_id="run-001")
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    )
+    claimed = claim_state == "claimed"
+    acknowledged = ack_state == "acknowledged"
+    if claimed:
+        assert provider.claim_execution("run-001", "flow-001", worker_id=worker_id, claimed_at=now)
+    provider.reserve_mutation(receipt)
+    assert provider.claim_mutation(receipt.receipt_id)
+    deadline = now + timedelta(seconds=30)
+    assert provider.request_execution_cancellation(
+        "run-001",
+        "flow-001",
+        requested_at=now,
+        recovery_deadline_at=deadline,
+        receipt_id=receipt.receipt_id,
+    )
+    accepted = {"run": {"run_id": "run-001"}, "orchestration": []}
+    if acknowledged:
+        assert provider.acknowledge_execution_cancellation(
+            "run-001",
+            "flow-001",
+            acknowledged_at=now + timedelta(seconds=1),
+            response_status=202,
+            response_body=accepted,
+        )
+
+    assert not provider.abandon_execution("run-001", "flow-001", terminal_at=deadline - timedelta(seconds=1))
+    assert not provider.interrupt_execution("run-001", "flow-001", terminal_at=deadline - timedelta(seconds=1))
+    assert not provider.expire_execution_cancellation(
+        "run-001", "flow-001", terminal_at=deadline - timedelta(microseconds=1)
+    )
+    assert provider.expire_execution_cancellation("run-001", "flow-001", terminal_at=deadline)
+    assert not provider.expire_execution_cancellation("run-001", "flow-001", terminal_at=deadline)
+
+    stored = provider.lookup_run("run-001").value
+    replay = provider.lookup_mutation(receipt.actor, receipt.key_digest).value
+    assert stored is not None
+    assert replay is not None
+    expected = ("interrupted", "ambiguous") if claimed else ("abandoned", "abandoned")
+    assert (stored.phase, stored.outcome) == expected
+    assert (stored.prefect_executions[0].terminal_state, stored.prefect_executions[0].terminal_outcome) == expected
+    assert replay.response_status == (202 if acknowledged else 503)
+    assert replay.response_body == (accepted if acknowledged else replay.response_body)
+    if not acknowledged:
+        assert replay.response_body is not None
+        assert replay.response_body["error"]["code"] == "cancellation-unconfirmed"
+
+
+def test_business_commit_wins_unacknowledged_cancellation_and_settles_receipt(provider: ProductProjection) -> None:
+    """A known worker result is authoritative and makes cancellation replay too late."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+    receipt = _receipt(operation="cancel", target_run_id="run-001")
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="verify", attempt=1, submitted_at=now)
+    )
+    assert provider.claim_execution("run-001", "flow-001", worker_id=worker_id, claimed_at=now)
+    provider.reserve_mutation(receipt)
+    assert provider.claim_mutation(receipt.receipt_id)
+    assert provider.request_execution_cancellation(
+        "run-001",
+        "flow-001",
+        requested_at=now,
+        recovery_deadline_at=now + timedelta(seconds=30),
+        receipt_id=receipt.receipt_id,
+    )
+
+    assert provider.commit_claimed_execution(
+        "run-001",
+        "flow-001",
+        worker_id=worker_id,
+        terminal_at=now + timedelta(seconds=2),
+        terminal_state="completed",
+        terminal_outcome="succeeded",
+        writeback=product_store.ExecutionMergeWriteback(results={"verification": {"outcome": "verified"}}),
+    )
+
+    stored = provider.lookup_run("run-001").value
+    replay = provider.lookup_mutation(receipt.actor, receipt.key_digest).value
+    assert stored is not None
+    assert replay is not None
+    assert stored.results == {"verification": {"outcome": "verified"}}
+    assert stored.prefect_executions[0].terminal_state == "completed"
+    assert replay.response_status == 409
+    assert replay.response_body is not None
+    assert replay.response_body["error"]["code"] == "execution-terminal"
+
+
+def test_external_cancelled_observation_without_acknowledgement_is_not_clean(provider: ProductProjection) -> None:
+    """External cancellation never fabricates acknowledgement or a clean cancelled verdict."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    receipt = _receipt(operation="cancel", target_run_id="run-001")
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    )
+    provider.reserve_mutation(receipt)
+    assert provider.claim_mutation(receipt.receipt_id)
+    deadline = now + timedelta(seconds=30)
+    assert provider.request_execution_cancellation(
+        "run-001",
+        "flow-001",
+        requested_at=now,
+        recovery_deadline_at=deadline,
+        receipt_id=receipt.receipt_id,
+    )
+    provider.observe_prefect_execution("run-001", "flow-001", state="cancelled")
+
+    assert not provider.cancel_execution("run-001", "flow-001", terminal_at=deadline)
+    assert provider.expire_execution_cancellation("run-001", "flow-001", terminal_at=deadline)
+    stored = provider.lookup_run("run-001").value
+    assert stored is not None
+    assert stored.prefect_executions[0].terminal_state == "abandoned"
+
+
+def test_terminal_cancelled_observation_serializes_before_expiry(provider: ProductProjection) -> None:
+    """At equality, durable acknowledged cancelled evidence makes expiry ineligible."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    receipt = _receipt(operation="cancel", target_run_id="run-001")
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    )
+    provider.reserve_mutation(receipt)
+    assert provider.claim_mutation(receipt.receipt_id)
+    deadline = now + timedelta(seconds=30)
+    assert provider.request_execution_cancellation(
+        "run-001",
+        "flow-001",
+        requested_at=now,
+        recovery_deadline_at=deadline,
+        receipt_id=receipt.receipt_id,
+    )
+    assert provider.acknowledge_execution_cancellation(
+        "run-001",
+        "flow-001",
+        acknowledged_at=now + timedelta(seconds=1),
+        response_status=202,
+        response_body={"run": {"run_id": "run-001"}, "orchestration": []},
+    )
+    provider.observe_prefect_execution("run-001", "flow-001", state="cancelled")
+    barrier = Barrier(2)
+
+    def cancel() -> bool:
+        barrier.wait()
+        return provider.cancel_execution("run-001", "flow-001", terminal_at=deadline)
+
+    def expire() -> bool:
+        barrier.wait()
+        return provider.expire_execution_cancellation("run-001", "flow-001", terminal_at=deadline)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = tuple(pool.map(lambda action: action(), (cancel, expire)))
+
+    assert outcomes.count(True) == 1
+    stored = provider.lookup_run("run-001").value
+    assert stored is not None
+    assert stored.prefect_executions[0].terminal_state == "cancelled"
+
+
+def test_claimed_success_and_failure_writebacks_have_one_consistent_winner(provider: ProductProjection) -> None:
+    """Competing known worker verdicts cannot split link and product state."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    )
+    assert provider.claim_execution("run-001", "flow-001", worker_id=worker_id, claimed_at=now)
+    barrier = Barrier(2)
+
+    def commit_success() -> bool:
+        barrier.wait()
+        return provider.commit_claimed_execution(
+            "run-001",
+            "flow-001",
+            worker_id=worker_id,
+            terminal_at=now + timedelta(seconds=1),
+            terminal_state="completed",
+            terminal_outcome="succeeded",
+            writeback=product_store.ExecutionFinishWriteback(
+                phase="planned",
+                outcome="planned",
+                finished_at=now + timedelta(seconds=1),
+                summary={"winner": "success"},
+                results={"winner": "success"},
+            ),
+        )
+
+    def commit_failure() -> bool:
+        barrier.wait()
+        return provider.commit_claimed_execution(
+            "run-001",
+            "flow-001",
+            worker_id=worker_id,
+            terminal_at=now + timedelta(seconds=1),
+            terminal_state="failed",
+            terminal_outcome="failed",
+            writeback=product_store.ExecutionFinishWriteback(
+                phase="plan-failed",
+                outcome="failed",
+                finished_at=now + timedelta(seconds=1),
+                summary={"winner": "failure"},
+                results={"winner": "failure"},
+            ),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = tuple(pool.map(lambda action: action(), (commit_success, commit_failure)))
+
+    assert outcomes.count(True) == 1
+    stored = provider.lookup_run("run-001").value
+    assert stored is not None
+    winner = stored.results["winner"]
+    expected = ("completed", "succeeded") if winner == "success" else ("failed", "failed")
+    assert (stored.prefect_executions[0].terminal_state, stored.prefect_executions[0].terminal_outcome) == expected
 
 
 def test_duplicate_prefect_execution_is_rejected_when_appended(provider: ProductProjection) -> None:

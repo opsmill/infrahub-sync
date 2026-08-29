@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
 from infrahub_sync.managed.liveness import LivenessPolicy, RunLivenessReconciler
-from infrahub_sync.managed.orchestration import Observation, PoolStatus, PoolWorker, Submission
-from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
+from infrahub_sync.managed.orchestration import CancellationResult, Observation, PoolStatus, PoolWorker, Submission
+from infrahub_sync.product_store import MutationReceipt, PrefectExecutionLink, ProductRun, local_product_projection
 
 if TYPE_CHECKING:
     import pytest
@@ -46,9 +47,9 @@ class _Orchestration:
         del flow_run_id
         return self.observation
 
-    async def cancel(self, flow_run_id: str) -> Observation:
+    async def cancel(self, flow_run_id: str) -> CancellationResult:  # noqa: PLR6301
         del flow_run_id
-        return self.observation
+        return CancellationResult(acknowledged=True)
 
 
 def _run(run_id: str, link: PrefectExecutionLink) -> ProductRun:
@@ -62,6 +63,115 @@ def _run(run_id: str, link: PrefectExecutionLink) -> ProductRun:
         phase="planning",
         prefect_executions=(link,),
     )
+
+
+def _request_cancellation(projection, run_id: str, flow_run_id: str, now: datetime, *, acknowledge: bool) -> None:
+    receipt = MutationReceipt(
+        receipt_id=f"mutation-{run_id}",
+        actor="operator",
+        key_digest=sha256(run_id.encode()).hexdigest(),
+        operation="cancel",
+        target_run_id=run_id,
+        request_fingerprint=sha256(f"cancel:{run_id}".encode()).hexdigest(),
+        reason="operator requested stop",
+        resource_id=run_id,
+        run_id=run_id,
+        prefect_key=sha256(f"prefect:{run_id}".encode()).hexdigest(),
+        created_at=now,
+        updated_at=now,
+    )
+    projection.reserve_mutation(receipt)
+    assert projection.claim_mutation(receipt.receipt_id)
+    assert projection.request_execution_cancellation(
+        run_id,
+        flow_run_id,
+        requested_at=now - timedelta(seconds=30),
+        recovery_deadline_at=now,
+        receipt_id=receipt.receipt_id,
+    )
+    if acknowledge:
+        assert projection.acknowledge_execution_cancellation(
+            run_id,
+            flow_run_id,
+            acknowledged_at=now - timedelta(seconds=1),
+            response_status=202,
+            response_body={"run": {"run_id": run_id}, "orchestration": []},
+        )
+
+
+def test_reconciler_orders_clean_cancellation_before_inclusive_expiry(tmp_path) -> None:
+    """Durable acknowledged terminal-cancelled observation wins the deadline race."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    projection = local_product_projection(tmp_path)
+    projection.create_run(
+        _run(
+            "run-clean-cancel",
+            PrefectExecutionLink(
+                flow_run_id="flow-clean-cancel",
+                purpose="plan",
+                attempt=1,
+                submitted_at=now - timedelta(minutes=10),
+            ),
+        )
+    )
+    _request_cancellation(projection, "run-clean-cancel", "flow-clean-cancel", now, acknowledge=True)
+    reconciler = RunLivenessReconciler(
+        projection,
+        _Orchestration(
+            PoolStatus(detail_available=False, queue_depth=None, observed_at=None),
+            Observation(available=True, state="cancelled"),
+        ),
+        LivenessPolicy(1, 30, 5),
+        "pool",
+        clock=lambda: now,
+    )
+
+    asyncio.run(reconciler.reconcile_once())
+
+    run = projection.lookup_run("run-clean-cancel").value
+    assert run is not None
+    assert (run.phase, run.outcome, run.prefect_executions[0].terminal_state) == (
+        "cancelled",
+        "cancelled",
+        "cancelled",
+    )
+
+
+def test_reconciler_expires_unacknowledged_external_cancel_at_equality(tmp_path) -> None:
+    """External cancelled state is ambiguous without acknowledgement at the fixed deadline."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    projection = local_product_projection(tmp_path)
+    projection.create_run(
+        _run(
+            "run-external-cancel",
+            PrefectExecutionLink(
+                flow_run_id="flow-external-cancel",
+                purpose="plan",
+                attempt=1,
+                submitted_at=now - timedelta(minutes=10),
+            ),
+        )
+    )
+    _request_cancellation(projection, "run-external-cancel", "flow-external-cancel", now, acknowledge=False)
+    reconciler = RunLivenessReconciler(
+        projection,
+        _Orchestration(
+            PoolStatus(detail_available=False, queue_depth=None, observed_at=None),
+            Observation(available=True, state="cancelled"),
+        ),
+        LivenessPolicy(1, 30, 5),
+        "pool",
+        clock=lambda: now,
+    )
+
+    asyncio.run(reconciler.reconcile_once())
+
+    run = projection.lookup_run("run-external-cancel").value
+    receipt = projection.lookup_mutation("operator", sha256(b"run-external-cancel").hexdigest()).value
+    assert run is not None
+    assert receipt is not None
+    assert run.prefect_executions[0].terminal_state == "abandoned"
+    assert receipt.response_status == 503
 
 
 def test_claimed_execution_requires_its_exact_fresh_owner(tmp_path) -> None:

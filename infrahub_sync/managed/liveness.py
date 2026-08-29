@@ -96,7 +96,7 @@ class RunLivenessReconciler:
             if link.terminal_at is None:
                 await self.reconcile_execution(run_id, link, pool, now)
 
-    async def reconcile_execution(
+    async def reconcile_execution(  # noqa: PLR0911  # pylint: disable=too-many-return-statements
         self, run_id: str, link: PrefectExecutionLink, pool: PoolStatus | None = None, now: datetime | None = None
     ) -> None:
         """Reconcile one link, suitable for request-time freshness before rendering."""
@@ -105,6 +105,27 @@ class RunLivenessReconciler:
         observed = await self._orchestration.observe(link.flow_run_id)
         if observed.available:
             self._projection.observe_prefect_execution(run_id, link.flow_run_id, state=observed.state)
+        refreshed_run = self._projection.lookup_run(run_id).value
+        if refreshed_run is None:
+            return
+        refreshed = next(
+            (candidate for candidate in refreshed_run.prefect_executions if candidate.flow_run_id == link.flow_run_id),
+            None,
+        )
+        if refreshed is None or refreshed.terminal_at is not None:
+            return
+        link = refreshed
+        if link.cancellation_requested_at is not None:
+            if (
+                link.cancellation_acknowledged_at is not None
+                and link.last_observed_state == "cancelled"
+                and self._projection.cancel_execution(run_id, link.flow_run_id, terminal_at=now)
+            ):
+                return
+            assert link.cancellation_recovery_deadline_at is not None
+            if now >= link.cancellation_recovery_deadline_at:
+                self._projection.expire_execution_cancellation(run_id, link.flow_run_id, terminal_at=now)
+            return
         if link.claimed_at is None:
             if link.submitted_at is not None and age(now, link.submitted_at) >= self._policy.admission_ttl_seconds:
                 self._projection.abandon_execution(run_id, link.flow_run_id, terminal_at=now)

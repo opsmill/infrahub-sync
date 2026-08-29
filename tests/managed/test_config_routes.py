@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 from threading import Event, Thread
@@ -16,7 +17,7 @@ from infrahub_sync.configuration.models import ValidationFinding
 from infrahub_sync.managed.app import create_app
 from infrahub_sync.managed.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.managed.config_routes import ConfigurationAPIError, ConfigurationRoutes
-from infrahub_sync.managed.orchestration import Observation, Submission
+from infrahub_sync.managed.orchestration import CancellationResult, Observation, PoolStatus, Submission
 from infrahub_sync.managed.serve import build_app
 from infrahub_sync.managed.service import ManagedAPIError, ManagedRunService
 from infrahub_sync.product_store import configs as configs_service
@@ -43,8 +44,11 @@ class _Orchestration:  # pylint: disable=too-few-public-methods
     async def observe(self, flow_run_id: str) -> Observation:  # noqa: ARG002, PLR6301
         return Observation(available=True, state="running")
 
-    async def cancel(self, flow_run_id: str) -> Observation:  # noqa: ARG002, PLR6301
-        return Observation(available=True, state="cancelled")
+    async def pool_status(self, work_pool_name: str, now: datetime) -> PoolStatus:  # noqa: ARG002, PLR6301
+        return PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
+
+    async def cancel(self, flow_run_id: str) -> CancellationResult:  # noqa: ARG002, PLR6301
+        return CancellationResult(acknowledged=True)
 
 
 class _UnknownConfigsError(configs_service.ConfigsError):
@@ -941,7 +945,8 @@ def test_build_app_binds_one_projection_and_passes_configuration_dependency() ->
         assert product_projection is projection_dependency
         return route_dependency
 
-    def application(run: object, resolver: object, routes: object) -> object:
+    def application(run: object, resolver: object, routes: object, reconciler: object) -> object:
+        del reconciler
         received.extend((run, resolver, routes))
         return object()
 
@@ -977,8 +982,8 @@ def test_build_app_composes_one_managed_projection_for_runs_and_configurations()
         received.append("routes")
         return object()
 
-    def app_factory(run_service: object, resolver: object, routes: object) -> object:
-        del run_service, resolver, routes
+    def app_factory(run_service: object, resolver: object, routes: object, reconciler: object) -> object:
+        del run_service, resolver, routes, reconciler
         received.append("app")
         return object()
 
@@ -992,4 +997,4 @@ def test_build_app_composes_one_managed_projection_for_runs_and_configurations()
         )
         is not None
     )
-    assert received == ["storage", projection, "routes", "app"]
+    assert received == ["storage", "routes", projection, "app"]

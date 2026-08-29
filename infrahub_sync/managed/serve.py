@@ -12,7 +12,7 @@ from .app import create_app
 from .auth import EnvironmentPrincipalResolver
 from .config_routes import ConfigurationRoutes
 from .liveness import LivenessPolicy, RunLivenessReconciler
-from .orchestration import Observation, PoolStatus, PrefectOrchestration, Submission
+from .orchestration import CancellationResult, Observation, PoolStatus, PrefectOrchestration, Submission
 from .service import ManagedRunService
 from .storage import managed_product_projection
 
@@ -35,7 +35,7 @@ class _ClientPerCallOrchestration:
         async with get_client() as client:
             return await PrefectOrchestration(client).pool_status(work_pool_name, now)
 
-    async def cancel(self, flow_run_id: str) -> Observation:
+    async def cancel(self, flow_run_id: str) -> CancellationResult:
         async with get_client() as client:
             return await PrefectOrchestration(client).cancel(flow_run_id)
 
@@ -53,8 +53,13 @@ def build_app(
     resolver = resolver_factory()
     configuration_routes = configuration_routes_factory(product_projection=projection, secrets=resolver.secret_values)
     orchestration = _ClientPerCallOrchestration()
-    service = run_service_factory(projection, orchestration, secrets=resolver.secret_values)
     policy = LivenessPolicy.from_environment()
+    service = run_service_factory(
+        projection,
+        orchestration,
+        secrets=resolver.secret_values,
+        cancellation_recovery_seconds=policy.stall_threshold_seconds,
+    )
     reconciler = RunLivenessReconciler(
         projection,
         orchestration,

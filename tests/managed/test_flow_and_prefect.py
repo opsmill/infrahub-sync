@@ -8,7 +8,7 @@ from pathlib import Path
 from threading import Event, Thread, current_thread
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import httpx
 import pytest
@@ -26,13 +26,18 @@ from infrahub_sync.execution import RunResult
 from infrahub_sync.managed import flow as managed_flow
 from infrahub_sync.managed.deploy import CATALOGUE
 from infrahub_sync.managed.flow import managed_sync_run
-from infrahub_sync.managed.orchestration import MANAGED_DEFINITION, Observation, PrefectOrchestration
+from infrahub_sync.managed.orchestration import (
+    MANAGED_DEFINITION,
+    CancellationResult,
+    Observation,
+    PrefectOrchestration,
+)
 from infrahub_sync.orchestration import flow as direct_flow
 from infrahub_sync.orchestration.flow import infrahub_sync_run
 from infrahub_sync.plan.errors import OperationApplyFailedError
 from infrahub_sync.plan.models import ApplyRecord, PlanManifest
 from infrahub_sync.plan.review import SavedPlan
-from infrahub_sync.product_store import ProductRun, local_product_projection
+from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 from tests.configuration.validation_packages import package
 
 if TYPE_CHECKING:
@@ -44,8 +49,21 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def _executor_only_claim_bypass(monkeypatch: pytest.MonkeyPatch) -> None:
-    """These stage tests call ``.fn`` outside a Prefect worker process."""
-    monkeypatch.setattr(managed_flow, "_claim_current_execution", lambda _projection, _run_id: None)
+    """Give direct ``.fn`` tests one real durable worker claim."""
+    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+
+    def claim(projection, run_id: str) -> tuple[str, str]:
+        flow_run_id = str(uuid5(NAMESPACE_URL, run_id))
+        run = projection.lookup_run(run_id).value
+        if run is not None and not any(link.flow_run_id == flow_run_id for link in run.prefect_executions):
+            projection.add_prefect_execution(
+                run_id,
+                PrefectExecutionLink(flow_run_id=flow_run_id, purpose="test", attempt=1),
+            )
+            assert projection.claim_execution(run_id, flow_run_id, worker_id=worker_id)
+        return flow_run_id, worker_id
+
+    monkeypatch.setattr(managed_flow, "_claim_current_execution", claim)
 
 
 def _saved(run_id: str) -> SavedPlan:
@@ -438,6 +456,8 @@ def test_managed_flow_redacts_worker_logs_exception_chain_and_failed_state(
     }
     assert environment_canary not in stored.model_dump_json()
     assert configuration_canary not in stored.model_dump_json()
+    assert stored.prefect_executions[0].terminal_state == "failed"
+    assert stored.prefect_executions[0].terminal_outcome == "failed"
 
 
 def test_managed_apply_failure_retains_partial_write_evidence(
@@ -479,6 +499,35 @@ def test_managed_apply_failure_retains_partial_write_evidence(
         "error_type": "OperationApplyFailedError",
         **partial.as_summary_keys(),
     }
+    assert stored.prefect_executions[0].terminal_state == "failed"
+
+
+def test_managed_verify_failure_merges_evidence_and_terminalizes_exact_link(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Read-only verify failure retains the run lifecycle and closes its execution."""
+    run_id = "run-managed-verify-failure"
+    projection = _create_product_run(tmp_path.resolve(), run_id, operation="verify")
+    monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
+    monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
+    monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
+
+    def fail_verify(*_args: object, **_kwargs: object) -> NoReturn:
+        msg = "saved plan verification failed"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(managed_flow, "execute_run", fail_verify)
+
+    with pytest.raises(RuntimeError):
+        managed_sync_run.fn(run_id, "verify", *_binding(projection, run_id))
+
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert (stored.phase, stored.outcome, stored.finished_at) == ("accepted", None, None)
+    assert stored.results["verify_failure"]["error_type"] == "ValueError"
+    assert stored.prefect_executions[0].terminal_state == "failed"
 
 
 def test_managed_confirmed_sync_retains_the_semantic_sync_operation(
@@ -556,6 +605,8 @@ def test_managed_plan_worker_updates_the_api_created_run_and_publishes_review(
     assert stored is not None
     assert stored.phase == "planned"
     assert [artifact.artifact_id for artifact in stored.artifact_refs] == ["plan-review"]
+    assert stored.prefect_executions[0].terminal_state == "completed"
+    assert stored.prefect_executions[0].terminal_outcome == "succeeded"
 
 
 def test_managed_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -586,8 +637,11 @@ def test_managed_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.M
     after = projection.lookup_run(run_id).value
     assert after is not None
     assert before is not None
-    assert after.model_dump(exclude={"results"}) == before.model_dump(exclude={"results"})
+    assert after.model_dump(exclude={"results", "prefect_executions"}) == before.model_dump(
+        exclude={"results", "prefect_executions"}
+    )
     assert after.results == {"verification": result}
+    assert after.prefect_executions[0].terminal_state == "completed"
 
 
 def test_confirmed_managed_sync_calls_plan_verify_apply_in_order_on_one_run(
@@ -716,14 +770,15 @@ async def test_prefect_read_transport_failure_becomes_missing_live_detail() -> N
     )
 
     observed = await gateway.observe(str(uuid4()))
-    cancelled = await gateway.cancel(str(uuid4()))
+    cancellation_client = _RemoteClient()
+    cancelled = await PrefectOrchestration(cancellation_client).cancel(str(cancellation_client.flow_run.id))
 
     assert observed == Observation(
         available=False,
         state=None,
         reason="prefect-read-unavailable",
     )
-    assert cancelled == observed
+    assert cancelled == CancellationResult(acknowledged=True)
 
 
 class _DeploymentClient:

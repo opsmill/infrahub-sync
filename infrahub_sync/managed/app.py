@@ -58,9 +58,9 @@ def create_app(
                 while True:
                     try:
                         await reconciler.reconcile_once()
-                    except CancelledError:
+                    except CancelledError:  # pylint: disable=try-except-raise
                         raise
-                    except Exception as exc:  # noqa: BLE001 - bounded provider failure boundary
+                    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
                         logger.error("managed liveness iteration failed: %s", type(exc).__name__)  # noqa: TRY400
                     await sleep(reconciler.cadence_seconds)
 

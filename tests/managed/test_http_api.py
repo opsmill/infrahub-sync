@@ -6,6 +6,7 @@ import logging
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from pathlib import Path
 from threading import Barrier
 from uuid import NAMESPACE_URL, uuid5
@@ -22,7 +23,7 @@ from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.managed.app import create_app
 from infrahub_sync.managed.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.managed.models import CreateRunRequest, PlanResource
-from infrahub_sync.managed.orchestration import Observation, Submission
+from infrahub_sync.managed.orchestration import CancellationResult, Observation, PoolStatus, Submission
 from infrahub_sync.managed.service import PLAN_ARTIFACT_ID, ManagedAPIError, ManagedRunService
 from infrahub_sync.product_store import ProductProjection, local_product_projection
 
@@ -65,6 +66,7 @@ class _FakeOrchestration:
         self.fail_after_accept_once = False
         self.cancel_failure = False
         self.cancel_exception = False
+        self.cancel_fail_after_accept_once = False
         self.cancelled: list[str] = []
 
     async def submit(self, parameters: dict[str, object], *, idempotency_key: str) -> Submission:
@@ -87,16 +89,23 @@ class _FakeOrchestration:
             Observation(available=False, state=None, reason="prefect-execution-unavailable"),
         )
 
-    async def cancel(self, flow_run_id: str) -> Observation:
+    async def pool_status(self, work_pool_name: str, now: datetime) -> PoolStatus:  # noqa: PLR6301
+        del work_pool_name, now
+        return PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
+
+    async def cancel(self, flow_run_id: str) -> CancellationResult:
         self.cancelled.append(flow_run_id)
         if self.cancel_exception:
             msg = "Prefect cancellation race exposed token-canary"
             raise RuntimeError(msg)
         if self.cancel_failure:
-            return Observation(available=False, state="running", reason="prefect-cancellation-unavailable")
-        observed = Observation(available=True, state="cancelling")
-        self.observations[flow_run_id] = observed
-        return observed
+            return CancellationResult(acknowledged=False, reason="prefect-cancellation-unavailable")
+        self.observations[flow_run_id] = Observation(available=True, state="cancelling")
+        if self.cancel_fail_after_accept_once:
+            self.cancel_fail_after_accept_once = False
+            msg = "response lost after Prefect accepted cancellation token-canary"
+            raise TimeoutError(msg)
+        return CancellationResult(acknowledged=True)
 
 
 @pytest.fixture
@@ -380,7 +389,7 @@ def test_retained_routes_survive_missing_prefect_detail(
 def test_cancellation_transport_failure_remains_a_typed_mutation_error(
     managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
 ) -> None:
-    client, _projection, orchestration = managed
+    client, projection, orchestration = managed
     created = _create(client)
     run_id = created.json()["run"]["run_id"]
     orchestration.cancel_failure = True
@@ -394,6 +403,13 @@ def test_cancellation_transport_failure_remains_a_typed_mutation_error(
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "orchestration-unavailable"
     assert response.json()["error"]["mutation_id"].startswith("m-")
+    run = projection.lookup_run(run_id).value
+    assert run is not None
+    assert run.prefect_executions[-1].cancellation_requested_at is not None
+    assert run.prefect_executions[-1].cancellation_acknowledged_at is None
+    receipt = projection.lookup_mutation("owner", sha256(b"cancel-transport-failure").hexdigest()).value
+    assert receipt is not None
+    assert receipt.state == "processing"
 
 
 def test_cancellation_exception_remains_typed_secret_safe_and_audited(
@@ -415,6 +431,31 @@ def test_cancellation_exception_remains_typed_secret_safe_and_audited(
     assert response.json()["error"]["mutation_id"].startswith("m-")
     assert "token-canary" not in response.text
     assert any(event.operation == "cancel" and event.outcome == "unavailable" for event in projection.audit_events())
+
+
+def test_cancellation_remote_success_then_crash_resumes_same_intent(
+    managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """A lost acknowledgement response retries the exact link and completes one receipt."""
+    client, projection, orchestration = managed
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+    headers = {**AUTH, "Idempotency-Key": "cancel-lost-ack"}
+    body = {"reason": "stop after remote accepted"}
+    orchestration.cancel_fail_after_accept_once = True
+
+    uncertain = client.post(f"/runs/{run_id}/cancel", headers=headers, json=body)
+    recovered = client.post(f"/runs/{run_id}/cancel", headers=headers, json=body)
+
+    assert uncertain.status_code == 503
+    assert recovered.status_code == 202
+    assert len(orchestration.cancelled) == 2
+    assert orchestration.cancelled[0] == orchestration.cancelled[1]
+    run = projection.lookup_run(run_id).value
+    assert run is not None
+    link = run.prefect_executions[-1]
+    assert link.cancellation_requested_at is not None
+    assert link.cancellation_acknowledged_at is not None
 
 
 @pytest.mark.parametrize(
@@ -552,6 +593,9 @@ def test_owner_admin_authorization_apply_verify_and_cancel(  # noqa: PLR0914 - o
     assert orchestration.cancelled == [applied.json()["orchestration"][-1]["flow_run_id"]]
     run = projection.lookup_run(run_id).value
     assert run is not None
+    assert run.prefect_executions[-1].cancellation_requested_at is not None
+    assert run.prefect_executions[-1].cancellation_acknowledged_at is not None
+    assert run.prefect_executions[-1].cancellation_receipt_id is not None
     assert [(link.purpose, link.attempt) for link in run.prefect_executions] == [
         ("plan", 1),
         ("verify", 1),
