@@ -2440,6 +2440,8 @@ class _FakePostgreSQLCursor:
                 raise _FakeDriverError(sqlstate="42P01")  # relation "{table}" does not exist
             connection.pending_columns.setdefault(table, set()).add(column)
             return ()
+        if operation.startswith("UPDATE mutation_receipts SET resource_kind"):
+            return ()
         if "ALTER COLUMN" in operation and "DROP NOT NULL" in operation:
             return ()
         if "information_schema.table_constraints" in operation:
