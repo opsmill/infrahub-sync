@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -130,16 +130,16 @@ class ConfigMutationRequest(_StrictModel):
         def visit(item: object) -> None:
             item_type = type(item)
             if item_type is dict:
-                for key, child in item.items():
-                    if type(key) is not str:
+                for key, child in cast("dict[object, object]", item).items():
+                    if type(key) is not str:  # pylint: disable=unidiomatic-typecheck  # Exact JSON key type.
                         raise ValueError(_JSON_NATIVE_PACKAGE_MESSAGE)
                     visit(child)
                 return
             if item_type is list:
-                for child in item:
+                for child in cast("list[object]", item):
                     visit(child)
                 return
-            if item_type is float and not isfinite(item):
+            if item_type is float and not isfinite(cast("float", item)):
                 raise ValueError(_JSON_NATIVE_PACKAGE_MESSAGE)
             if item_type not in {str, int, float, bool, type(None)}:
                 raise ValueError(_JSON_NATIVE_PACKAGE_MESSAGE)
