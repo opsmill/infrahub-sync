@@ -1,6 +1,5 @@
 """HTTP-only adapter for the shared configuration application service."""
 
-from dataclasses import replace
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -272,7 +271,9 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         registry_version: Annotated[str, registry_version_parameter],
         _principal: Annotated[Principal, Depends(authenticate)],
     ) -> Any:
-        return routes.get_version(config_id, _strict_integer(registry_version, minimum=1, maximum=_MAX_REGISTRY_VERSION))
+        return routes.get_version(
+            config_id, _strict_integer(registry_version, minimum=1, maximum=_MAX_REGISTRY_VERSION)
+        )
 
     @router.post("/configs/{config_id}/versions/{registry_version}/validate")
     def validate(

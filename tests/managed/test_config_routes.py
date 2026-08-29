@@ -179,7 +179,7 @@ def test_configuration_service_failure_is_audited_and_the_reserved_receipt_can_r
         def register(self, **_kwargs: object) -> dict[str, object]:
             self.calls += 1
             if self.calls == 1:
-                raise self.ConfigsStorageError("transient service failure")
+                raise self.ConfigsStorageError("transient service failure")  # noqa: EM101, TRY003
             return {"configuration": {"config_id": "cfg"}, "version": {"registry_version": 1}}
 
     projection = local_product_projection(tmp_path)
@@ -199,7 +199,8 @@ def test_configuration_service_failure_is_audited_and_the_reserved_receipt_can_r
     retried = client.post("/configs", headers=headers, json=body)
 
     assert refused.status_code == 503
-    assert reserved is not None and reserved.state == "reserved"
+    assert reserved is not None
+    assert reserved.state == "reserved"
     assert retried.status_code == 201
     assert service.calls == 2
     assert [event.outcome for event in projection.audit_events()] == ["unavailable", "accepted"]
@@ -519,7 +520,7 @@ def test_configs_request_subclass_uses_base_fallback_without_reflecting_metadata
 
         @staticmethod
         def list_configs(**_kwargs: object) -> None:
-            raise Hostile("do not disclose")
+            raise Hostile("do not disclose")  # noqa: EM101, TRY003
 
     with pytest.raises(ConfigurationAPIError) as raised:
         ConfigurationRoutes(tmp_path, service=Service()).list_configs()
@@ -545,7 +546,7 @@ def test_configs_not_found_subclass_cannot_leak_reason(tmp_path: Path) -> None:
 
         @staticmethod
         def list_configs(**_kwargs: object) -> None:
-            raise Hostile("do not disclose", reason="secret-reason")
+            raise Hostile("do not disclose", reason="secret-reason")  # noqa: EM101, TRY003
 
     with pytest.raises(ConfigurationAPIError) as raised:
         ConfigurationRoutes(tmp_path, service=Service()).list_configs()

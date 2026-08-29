@@ -97,7 +97,7 @@ class _CursorAdapter:
         stripped = operation.strip()
         if "information_schema.columns" in stripped:
             table_name = parameters[0] if parameters else "product_runs"
-            self._cursor.execute(f"PRAGMA table_info({table_name})")  # noqa: S608 - controlled test table name.
+            self._cursor.execute(f"PRAGMA table_info({table_name})")
             self._fake_rows = tuple((str(row[1]),) for row in self._cursor.fetchall())
             return self
         if "information_schema.table_constraints" in stripped:
