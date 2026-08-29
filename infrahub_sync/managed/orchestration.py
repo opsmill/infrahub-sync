@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from math import isfinite
 from pathlib import Path
 from typing import Any, Protocol, cast
 from uuid import UUID
@@ -15,6 +16,7 @@ from opsmill_prefect_extras.executors import (
     RemoteWorkflowExecutor,
 )
 from opsmill_prefect_extras.workflows import WorkflowDefinition
+from prefect.client.schemas.objects import WorkerStatus
 from prefect.exceptions import ObjectNotFound
 from prefect.states import Cancelling
 
@@ -126,45 +128,11 @@ class PrefectOrchestration:
             client = cast("_PoolClient", self._client)
             workers = await client.read_workers_for_work_pool(work_pool_name)
             scheduled = await client.get_scheduled_flow_runs_for_work_pool(work_pool_name)
-            parsed = tuple(
-                PoolWorker(
-                    worker_id=_canonical_uuid(worker.id),
-                    status=_status_value(worker.status),
-                    last_heartbeat=worker.last_heartbeat_time,
-                    heartbeat_interval_seconds=float(worker.heartbeat_interval_seconds),
-                )
-                for worker in workers
-            )
-            if any(
-                worker.last_heartbeat is not None
-                and (not isinstance(worker.last_heartbeat, datetime) or worker.last_heartbeat.utcoffset() is None)
-                for worker in parsed
-            ):
-                return PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
-            if any(
-                worker.heartbeat_interval_seconds is None or worker.heartbeat_interval_seconds <= 0
-                for worker in parsed
-            ):
-                return PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
+            parsed = tuple(_pool_worker(worker) for worker in workers)
             queue_depth = len(scheduled)
         except (ObjectNotFound, httpx.HTTPError, AttributeError, TypeError, ValueError):
             return PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
         return PoolStatus(detail_available=True, queue_depth=queue_depth, observed_at=now, workers=parsed)
-
-
-def _canonical_uuid(value: object) -> str:
-    """Require the exact canonical UUID that Prefect assigned to the worker."""
-    if type(value) is not UUID:
-        raise ValueError
-    return str(value)
-
-
-def _status_value(value: object) -> str:
-    """Read Prefect's enum value without accepting arbitrary object stringification."""
-    raw = getattr(value, "value", value)
-    if type(raw) is not str:
-        raise ValueError
-    return raw.lower()
 
     async def cancel(self, flow_run_id: str) -> Observation:
         observed = await self.observe(flow_run_id)
@@ -175,3 +143,35 @@ def _status_value(value: object) -> str:
         except (ObjectNotFound, httpx.HTTPError):
             return Observation(available=False, state=observed.state, reason="prefect-cancellation-unavailable")
         return await self.observe(flow_run_id)
+
+
+def _canonical_uuid(value: object) -> str:
+    """Require the exact canonical UUID that Prefect assigned to the worker."""
+    if type(value) is not UUID:
+        raise ValueError
+    return str(value)
+
+
+def _status_value(value: object) -> str:
+    """Accept only Prefect's status enum or an exact string test double."""
+    if type(value) is WorkerStatus:
+        return value.value.lower()
+    if type(value) is not str:
+        raise ValueError
+    return value.lower()
+
+
+def _pool_worker(worker: Any) -> PoolWorker:
+    """Parse one pinned Prefect worker record without coercing hostile values."""
+    heartbeat = worker.last_heartbeat_time
+    interval = worker.heartbeat_interval_seconds
+    if heartbeat is not None and (type(heartbeat) is not datetime or heartbeat.utcoffset() is None):
+        raise ValueError
+    if type(interval) is not int or isinstance(interval, bool) or interval <= 0 or not isfinite(interval):
+        raise ValueError
+    return PoolWorker(
+        worker_id=_canonical_uuid(worker.id),
+        status=_status_value(worker.status),
+        last_heartbeat=heartbeat,
+        heartbeat_interval_seconds=float(interval),
+    )

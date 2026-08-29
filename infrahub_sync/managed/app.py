@@ -48,10 +48,12 @@ def create_app(
     reconciler: RunLivenessReconciler | None = None,
 ) -> FastAPI:
     """Create the managed application from explicit providers."""
+
     @asynccontextmanager
     async def lifespan(_application: FastAPI):
         task = None
         if reconciler is not None:
+
             async def reconcile_loop() -> None:
                 while True:
                     try:
@@ -61,6 +63,7 @@ def create_app(
                     except Exception as exc:  # noqa: BLE001 - bounded provider failure boundary
                         logger.error("managed liveness iteration failed: %s", type(exc).__name__)  # noqa: TRY400
                     await sleep(reconciler.cadence_seconds)
+
             task = create_task(reconcile_loop())
         try:
             yield
@@ -172,6 +175,8 @@ def create_app(
 
     @application.get("/runs/{run_id}", responses=ERROR_RESPONSES)
     async def get_run(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> RunResource:
+        if reconciler is not None:
+            await reconciler.reconcile_run(run_id)
         return await service.get_run(run_id)
 
     @application.get("/runs/{run_id}/plan", responses=ERROR_RESPONSES)

@@ -85,6 +85,17 @@ class RunLivenessReconciler:
         for run_id, link in self._projection.pending_executions():
             await self.reconcile_execution(run_id, link, pool, now)
 
+    async def reconcile_run(self, run_id: str) -> None:
+        """Refresh every pending link of one requested run before it is rendered."""
+        run = self._projection.lookup_run(run_id).value
+        if run is None:
+            return
+        now = self._clock()
+        pool = await self._orchestration.pool_status(self._work_pool_name, now)
+        for link in run.prefect_executions:
+            if link.terminal_at is None:
+                await self.reconcile_execution(run_id, link, pool, now)
+
     async def reconcile_execution(
         self, run_id: str, link: PrefectExecutionLink, pool: PoolStatus | None = None, now: datetime | None = None
     ) -> None:
