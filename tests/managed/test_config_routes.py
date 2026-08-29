@@ -838,27 +838,22 @@ def test_create_app_keeps_run_and_configuration_dependencies_separate(tmp_path: 
     assert config_service.calls == ["list_configs"]
 
 
-def test_build_app_binds_one_cache_location_and_passes_configuration_dependency(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Runtime construction supplies the one durable cache location to both families."""
-    from infrahub_sync.managed._settings import PRODUCT_CACHE_ENV  # noqa: PLC2701
-
-    monkeypatch.setenv(PRODUCT_CACHE_ENV, str(tmp_path))
+def test_build_app_binds_one_projection_and_passes_configuration_dependency() -> None:
+    """Runtime construction supplies one durable projection to both families."""
     received: list[object] = []
-    route_locations: list[Path] = []
     route_dependency = object()
+    projection_dependency = object()
 
-    def projection(location: Path) -> object:
-        received.append(location)
-        return object()
+    def projection() -> object:
+        received.append("projection")
+        return projection_dependency
 
     class Resolver:
         secret_values: tuple[str, ...] = ()
 
-    def route_factory(location: Path, *, secrets: tuple[str, ...]) -> object:
+    def route_factory(*, product_projection: object, secrets: tuple[str, ...]) -> object:
         assert secrets == ()
-        route_locations.append(location)
+        assert product_projection is projection_dependency
         return route_dependency
 
     def application(run: object, resolver: object, routes: object) -> object:
@@ -875,6 +870,38 @@ def test_build_app_binds_one_cache_location_and_passes_configuration_dependency(
         )
         is not None
     )
-    assert received[0] == tmp_path
-    assert route_locations == [tmp_path]
+    assert received[0] == "projection"
     assert received[-1] is route_dependency
+
+
+def test_build_app_composes_one_managed_projection_for_runs_and_configurations() -> None:
+    """The deployed API has one environment-owned product projection."""
+    projection = object()
+    received: list[object] = []
+
+    class Resolver:
+        secret_values: tuple[str, ...] = ()
+
+    def storage_factory() -> object:
+        received.append("storage")
+        return projection
+
+    def routes_factory(*, product_projection: object, secrets: tuple[str, ...]) -> object:
+        assert product_projection is projection
+        assert secrets == ()
+        received.append("routes")
+        return object()
+
+    def app_factory(run_service: object, resolver: object, routes: object) -> object:
+        del run_service, resolver, routes
+        received.append("app")
+        return object()
+
+    assert build_app(
+        projection_factory=storage_factory,
+        resolver_factory=Resolver,
+        run_service_factory=lambda value, *_args, **_kwargs: received.append(value) or object(),
+        configuration_routes_factory=routes_factory,
+        app_factory=app_factory,
+    ) is not None
+    assert received == ["storage", projection, "routes", "app"]
