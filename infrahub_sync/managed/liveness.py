@@ -19,6 +19,7 @@ from .orchestration import ManagedOrchestration, PoolStatus  # noqa: TC001 - run
 RUN_ADMISSION_TTL_ENV = "INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS"
 _POLICY_ERROR = "managed liveness settings are invalid"
 _TTL_PATTERN = re.compile(r"^[0-9]+$")
+_DECIMAL_PATTERN = re.compile(r"^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +39,10 @@ class LivenessPolicy:
         ttl_value = int(ttl)
         if not 1 <= ttl_value <= 86400:
             raise ValueError(_POLICY_ERROR)
-        if type(worker_query_seconds) is not str:  # pylint: disable=unidiomatic-typecheck
+        if (
+            type(worker_query_seconds) is not str  # pylint: disable=unidiomatic-typecheck
+            or _DECIMAL_PATTERN.fullmatch(worker_query_seconds) is None
+        ):
             raise ValueError(_POLICY_ERROR)
         try:
             query = Decimal(worker_query_seconds)

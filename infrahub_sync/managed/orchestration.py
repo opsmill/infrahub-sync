@@ -164,7 +164,10 @@ def _status_value(value: object) -> str:
         return value.value.lower()
     if type(value) is not str:  # pylint: disable=unidiomatic-typecheck
         raise ValueError
-    return value.lower()
+    status = value.lower()
+    if status not in {member.value.lower() for member in WorkerStatus}:
+        raise ValueError
+    return status
 
 
 def _pool_worker(worker: Any) -> PoolWorker:

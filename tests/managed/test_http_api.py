@@ -371,7 +371,11 @@ def test_retained_routes_survive_missing_prefect_detail(
     )
 
     assert run_response.status_code == 200
-    assert run_response.json()["orchestration"][0] == {
+    summary = run_response.json()["orchestration"][0]
+    assert {
+        key: summary[key]
+        for key in ("flow_run_id", "purpose", "attempt", "state", "detail_available", "unavailable_reason")
+    } == {
         "flow_run_id": flow_run_id,
         "purpose": "plan",
         "attempt": 1,
@@ -379,6 +383,20 @@ def test_retained_routes_survive_missing_prefect_detail(
         "detail_available": False,
         "unavailable_reason": "prefect-execution-unavailable",
     }
+    assert summary["submitted_at"] is not None
+    assert all(
+        summary[key] is None
+        for key in (
+            "claimed_at",
+            "stalled_at",
+            "cancellation_requested_at",
+            "cancellation_recovery_deadline_at",
+            "cancellation_acknowledged_at",
+            "terminal_at",
+            "terminal_state",
+            "terminal_outcome",
+        )
+    )
     assert plan_response.json() == plan.model_dump(mode="json")
     assert results.json() == {"run_id": run_id, "results": {"status": "planned"}}
     assert {item["artifact_id"] for item in artifacts.json()["artifacts"]} == {PLAN_ARTIFACT_ID, "report"}
@@ -410,6 +428,55 @@ def test_cancellation_transport_failure_remains_a_typed_mutation_error(
     receipt = projection.lookup_mutation("owner", sha256(b"cancel-transport-failure").hexdigest()).value
     assert receipt is not None
     assert receipt.state == "processing"
+
+
+def test_run_resource_exposes_liveness_without_private_worker_or_receipt_ids(
+    managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """Public run links expose every liveness verdict but never correlation identities."""
+    client, projection, _orchestration = managed
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+    flow_run_id = created.json()["orchestration"][0]["flow_run_id"]
+    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+    assert projection.claim_execution(
+        run_id, flow_run_id, worker_id=worker_id, claimed_at=datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    )
+    cancelled = client.post(
+        f"/runs/{run_id}/cancel",
+        headers={**AUTH, "Idempotency-Key": "liveness-public-resource"},
+        json={"reason": "stop with durable liveness evidence"},
+    )
+    assert cancelled.status_code == 202
+
+    response = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {OWNER_TOKEN}"})
+    assert response.status_code == 200
+    payload = response.json()
+    encoded = json.dumps(payload)
+    assert "claiming_worker_id" not in encoded
+    assert "cancellation_receipt_id" not in encoded
+    summary = payload["orchestration"][0]
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    link = stored.prefect_executions[0]
+    assert link.submitted_at is not None
+    assert link.claimed_at is not None
+    assert link.cancellation_requested_at is not None
+    assert link.cancellation_recovery_deadline_at is not None
+    assert link.cancellation_acknowledged_at is not None
+
+    def timestamp(value: datetime) -> str:
+        return value.isoformat().replace("+00:00", "Z")
+
+    assert summary["submitted_at"] == timestamp(link.submitted_at)
+    assert summary["claimed_at"] == timestamp(link.claimed_at)
+    assert summary["stalled_at"] is None
+    assert summary["cancellation_requested_at"] == timestamp(link.cancellation_requested_at)
+    assert summary["cancellation_recovery_deadline_at"] == timestamp(link.cancellation_recovery_deadline_at)
+    assert summary["cancellation_acknowledged_at"] == timestamp(link.cancellation_acknowledged_at)
+    assert summary["terminal_at"] is None
+    assert summary["terminal_state"] is None
+    assert summary["terminal_outcome"] is None
 
 
 def test_cancellation_exception_remains_typed_secret_safe_and_audited(

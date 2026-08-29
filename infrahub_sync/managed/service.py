@@ -30,6 +30,7 @@ from .models import (
     CreateRunRequest,
     OrchestrationSummary,
     PlanResource,
+    PublicRunResource,
     ResultsResource,
     RunResource,
     ServiceStatusResource,
@@ -419,6 +420,7 @@ class ManagedRunService:
                 link.flow_run_id,
                 requested_at=requested_at,
                 recovery_deadline_at=requested_at + timedelta(seconds=self._cancellation_recovery_seconds),
+                recovery_seconds=self._cancellation_recovery_seconds,
                 receipt_id=receipt.receipt_id,
                 secrets=self._secrets,
             )
@@ -870,6 +872,15 @@ class ManagedRunService:
                         state=link.last_observed_state,
                         detail_available=False,
                         unavailable_reason="live-detail-not-requested",
+                        submitted_at=link.submitted_at,
+                        claimed_at=link.claimed_at,
+                        stalled_at=link.stalled_at,
+                        cancellation_requested_at=link.cancellation_requested_at,
+                        cancellation_recovery_deadline_at=link.cancellation_recovery_deadline_at,
+                        cancellation_acknowledged_at=link.cancellation_acknowledged_at,
+                        terminal_at=link.terminal_at,
+                        terminal_state=link.terminal_state,
+                        terminal_outcome=link.terminal_outcome,
                     )
                 )
                 continue
@@ -881,9 +892,18 @@ class ManagedRunService:
                     state=observed.state if observed.available else link.last_observed_state,
                     detail_available=observed.available,
                     unavailable_reason=observed.reason,
+                    submitted_at=link.submitted_at,
+                    claimed_at=link.claimed_at,
+                    stalled_at=link.stalled_at,
+                    cancellation_requested_at=link.cancellation_requested_at,
+                    cancellation_recovery_deadline_at=link.cancellation_recovery_deadline_at,
+                    cancellation_acknowledged_at=link.cancellation_acknowledged_at,
+                    terminal_at=link.terminal_at,
+                    terminal_state=link.terminal_state,
+                    terminal_outcome=link.terminal_outcome,
                 )
             )
-        return RunResource(run=run, orchestration=tuple(orchestration))
+        return RunResource(run=PublicRunResource.from_product_run(run), orchestration=tuple(orchestration))
 
     def _audit(
         self,

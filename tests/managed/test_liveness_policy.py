@@ -9,12 +9,13 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
+import pytest
+
 from infrahub_sync.managed.liveness import LivenessPolicy, RunLivenessReconciler
 from infrahub_sync.managed.orchestration import CancellationResult, Observation, PoolStatus, PoolWorker, Submission
 from infrahub_sync.product_store import MutationReceipt, PrefectExecutionLink, ProductRun, local_product_projection
 
 if TYPE_CHECKING:
-    import pytest
     from opsmill_prefect_extras.executors import RemoteExecutionClient
 
 
@@ -28,6 +29,35 @@ def test_admission_ttl_and_prefect_query_define_liveness_formulae(monkeypatch: p
     assert policy.admission_ttl_seconds == 300
     assert policy.stall_threshold_seconds == 30
     assert policy.cadence_seconds == 5
+
+
+@pytest.mark.parametrize("value", ["0.1", "1", "1.0", "3600"])
+def test_prefect_query_seconds_accepts_only_canonical_decimal_strings(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """The query setting has one grammar before its numeric domain is evaluated."""
+    monkeypatch.setenv("INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS", "300")
+    assert LivenessPolicy.from_environment(worker_query_seconds=value).stall_threshold_seconds >= 30
+
+
+@pytest.mark.parametrize("value", [" 1", "1 ", "+1", "-1", "1e1", "01", ".1", "1.", "NaN", "Infinity", "0", "3600.1"])
+def test_prefect_query_seconds_refuses_noncanonical_or_out_of_domain_values(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS", "300")
+    with pytest.raises(ValueError, match=r"^managed liveness settings are invalid$"):
+        LivenessPolicy.from_environment(worker_query_seconds=value)
+
+
+def test_prefect_query_seconds_refuses_hostile_exact_type_without_reading_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _HostileValue:
+        def __str__(self) -> str:
+            message = "hostile values must not be coerced"
+            raise AssertionError(message)
+
+    monkeypatch.setenv("INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS", "300")
+    with pytest.raises(ValueError, match=r"^managed liveness settings are invalid$"):
+        LivenessPolicy.from_environment(worker_query_seconds=cast("str", _HostileValue()))
 
 
 class _Orchestration:
@@ -87,6 +117,7 @@ def _request_cancellation(projection, run_id: str, flow_run_id: str, now: dateti
         flow_run_id,
         requested_at=now - timedelta(seconds=30),
         recovery_deadline_at=now,
+        recovery_seconds=30,
         receipt_id=receipt.receipt_id,
     )
     if acknowledge:
@@ -419,6 +450,41 @@ def test_pool_parsing_is_value_free_and_heartbeat_freshness_includes_equality() 
         PrefectOrchestration(cast("RemoteExecutionClient", _PoolClient(_HostileInterval()))).pool_status("pool", now)
     )
     assert invalid == PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
+
+
+@pytest.mark.parametrize("status", ["ONLINE", "online", "OFFLINE", "offline"])
+def test_pool_status_accepts_only_the_pinned_worker_status_vocabulary(status: str) -> None:
+    """Exact string doubles model only values shipped by Prefect's WorkerStatus enum."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+
+    class _PoolClient:
+        async def read_workers_for_work_pool(self, _pool: str):  # noqa: PLR6301
+            return [SimpleNamespace(id=uuid4(), status=status, last_heartbeat_time=now, heartbeat_interval_seconds=10)]
+
+        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str):  # noqa: PLR6301
+            return []
+
+    from infrahub_sync.managed.orchestration import PrefectOrchestration
+
+    snapshot = asyncio.run(PrefectOrchestration(cast("RemoteExecutionClient", _PoolClient())).pool_status("pool", now))
+    assert snapshot.detail_available
+
+
+@pytest.mark.parametrize("status", ["idle", "online ", " ONLINE", "unknown", 1, True])
+def test_pool_status_malformed_status_makes_the_whole_snapshot_unavailable(status: object) -> None:
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+
+    class _PoolClient:
+        async def read_workers_for_work_pool(self, _pool: str):  # noqa: PLR6301
+            return [SimpleNamespace(id=uuid4(), status=status, last_heartbeat_time=now, heartbeat_interval_seconds=10)]
+
+        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str):  # noqa: PLR6301
+            return []
+
+    from infrahub_sync.managed.orchestration import PrefectOrchestration
+
+    snapshot = asyncio.run(PrefectOrchestration(cast("RemoteExecutionClient", _PoolClient())).pool_status("pool", now))
+    assert snapshot == PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
 
 
 def test_request_time_reconciliation_terminalizes_each_pending_link(tmp_path) -> None:

@@ -1094,6 +1094,7 @@ def test_cancellation_saga_persists_intent_acknowledgement_and_clean_terminal(pr
         "flow-001",
         requested_at=now,
         recovery_deadline_at=deadline,
+        recovery_seconds=30,
         receipt_id=receipt.receipt_id,
     )
     assert not provider.claim_execution(
@@ -1137,12 +1138,51 @@ def test_cancellation_intent_rejects_naive_time_without_partial_state(provider: 
             "flow-001",
             requested_at=now.replace(tzinfo=None),
             recovery_deadline_at=now + timedelta(seconds=30),
+            recovery_seconds=30,
             receipt_id=receipt.receipt_id,
         )
 
     stored = provider.lookup_run("run-001").value
     assert stored is not None
     assert stored.prefect_executions[0].cancellation_requested_at is None
+
+
+@pytest.mark.parametrize("offset", [30, 29, 31, -30])
+def test_cancellation_intent_requires_the_policy_owned_recovery_deadline(
+    provider: ProductProjection, offset: int
+) -> None:
+    """The persistence CAS cannot accept a caller-chosen cancellation fence."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    receipt = _receipt(operation="cancel", target_run_id="run-001")
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    )
+    provider.reserve_mutation(receipt)
+    assert provider.claim_mutation(receipt.receipt_id)
+
+    if offset == 30:
+        assert provider.request_execution_cancellation(
+            "run-001",
+            "flow-001",
+            requested_at=now,
+            recovery_deadline_at=now + timedelta(seconds=offset),
+            recovery_seconds=30,
+            receipt_id=receipt.receipt_id,
+        )
+    else:
+        with pytest.raises(ValueError, match=r"^execution cancellation recovery deadline is invalid$"):
+            provider.request_execution_cancellation(
+                "run-001",
+                "flow-001",
+                requested_at=now,
+                recovery_deadline_at=now + timedelta(seconds=offset),
+                recovery_seconds=30,
+                receipt_id=receipt.receipt_id,
+            )
+        stored = provider.lookup_run("run-001").value
+        assert stored is not None
+        assert stored.prefect_executions[0].cancellation_requested_at is None
 
 
 @pytest.mark.parametrize("claim_state", ["unclaimed", "claimed"])
@@ -1170,6 +1210,7 @@ def test_cancellation_expiry_is_inclusive_bounded_and_receipt_stable(
         "flow-001",
         requested_at=now,
         recovery_deadline_at=deadline,
+        recovery_seconds=30,
         receipt_id=receipt.receipt_id,
     )
     accepted = {"run": {"run_id": "run-001"}, "orchestration": []}
@@ -1221,6 +1262,7 @@ def test_business_commit_wins_unacknowledged_cancellation_and_settles_receipt(pr
         "flow-001",
         requested_at=now,
         recovery_deadline_at=now + timedelta(seconds=30),
+        recovery_seconds=30,
         receipt_id=receipt.receipt_id,
     )
 
@@ -1261,6 +1303,7 @@ def test_external_cancelled_observation_without_acknowledgement_is_not_clean(pro
         "flow-001",
         requested_at=now,
         recovery_deadline_at=deadline,
+        recovery_seconds=30,
         receipt_id=receipt.receipt_id,
     )
     provider.observe_prefect_execution("run-001", "flow-001", state="cancelled")
@@ -1288,6 +1331,7 @@ def test_terminal_cancelled_observation_serializes_before_expiry(provider: Produ
         "flow-001",
         requested_at=now,
         recovery_deadline_at=deadline,
+        recovery_seconds=30,
         receipt_id=receipt.receipt_id,
     )
     assert provider.acknowledge_execution_cancellation(

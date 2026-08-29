@@ -71,6 +71,40 @@ class OrchestrationSummary(_StrictModel):
     state: str | None
     detail_available: bool
     unavailable_reason: str | None = None
+    submitted_at: datetime | None
+    claimed_at: datetime | None
+    stalled_at: datetime | None
+    cancellation_requested_at: datetime | None
+    cancellation_recovery_deadline_at: datetime | None
+    cancellation_acknowledged_at: datetime | None
+    terminal_at: datetime | None
+    terminal_state: Literal["completed", "failed", "cancelled", "abandoned", "interrupted"] | None
+    terminal_outcome: Literal["succeeded", "failed", "cancelled", "abandoned", "ambiguous"] | None
+
+
+class PublicRunResource(_StrictModel):
+    """Public product-run fields, intentionally excluding durable execution links."""
+
+    run_id: str
+    operation: str
+    configuration_reference: str
+    config_id: str | None
+    registry_version: int | None
+    package_checksum: str | None
+    actor: str | None
+    audit_links: tuple[str, ...]
+    started_at: datetime
+    finished_at: datetime | None
+    phase: str
+    outcome: str | None
+    summary: dict[str, Any]
+    results: dict[str, Any]
+    artifact_refs: tuple[ArtifactReference, ...]
+
+    @classmethod
+    def from_product_run(cls, run: ProductRun) -> PublicRunResource:
+        """Create the explicit public projection without internal execution identities."""
+        return cls.model_validate(run.model_dump(exclude={"prefect_executions"}))
 
 
 class VersionResource(_StrictModel):
@@ -101,7 +135,7 @@ class ServiceStatusResource(_StrictModel):
 class RunResource(_StrictModel):
     """Stable Sync record plus non-authoritative live orchestration detail."""
 
-    run: ProductRun
+    run: PublicRunResource
     orchestration: tuple[OrchestrationSummary, ...]
 
 

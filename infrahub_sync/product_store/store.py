@@ -7,8 +7,9 @@ import os
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+from math import isfinite
 from pathlib import Path, PurePosixPath
 from tempfile import mkdtemp
 from time import sleep
@@ -89,6 +90,7 @@ CREATE TABLE IF NOT EXISTS configuration_versions (
 CREATE UNIQUE INDEX IF NOT EXISTS configuration_versions_checksum
     ON configuration_versions (config_id, package_checksum);
 """
+_CANCELLATION_DEADLINE_ERROR = "execution cancellation recovery deadline is invalid"
 
 # Nullable run-to-configuration binding columns on ``product_runs``. Added by an
 # introspection-guarded ALTER (see ``_migrate_product_runs_columns``) rather than baked into
@@ -365,6 +367,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         *,
         requested_at: datetime,
         recovery_deadline_at: datetime,
+        recovery_seconds: float,
         receipt_id: str,
     ) -> bool: ...
 
@@ -1095,12 +1098,14 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         *,
         requested_at: datetime,
         recovery_deadline_at: datetime,
+        recovery_seconds: float,
         receipt_id: str,
     ) -> bool:
         """Persist first exact-link cancellation intent for one claimed receipt."""
-        if recovery_deadline_at <= requested_at:
-            msg = "execution cancellation recovery deadline must follow its request time"
-            raise ValueError(msg)
+        if type(recovery_seconds) not in {int, float} or not isfinite(recovery_seconds) or recovery_seconds <= 0:
+            raise ValueError(_CANCELLATION_DEADLINE_ERROR)
+        if recovery_deadline_at != requested_at + timedelta(seconds=recovery_seconds):
+            raise ValueError(_CANCELLATION_DEADLINE_ERROR)
         return self._execution_update(
             "UPDATE prefect_executions SET cancellation_requested_at = ?, cancellation_recovery_deadline_at = ?, "
             "cancellation_receipt_id = ? WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL "
@@ -2207,6 +2212,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         *,
         requested_at: datetime,
         recovery_deadline_at: datetime,
+        recovery_seconds: float,
         receipt_id: str,
         secrets: Sequence[str] = (),
     ) -> bool:
@@ -2218,6 +2224,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             redact(flow_run_id, secrets),
             requested_at=requested_at,
             recovery_deadline_at=recovery_deadline_at,
+            recovery_seconds=recovery_seconds,
             receipt_id=redact(receipt_id, secrets),
         )
 
