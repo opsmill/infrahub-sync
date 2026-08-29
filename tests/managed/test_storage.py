@@ -259,6 +259,94 @@ def test_managed_storage_settings_require_exact_strings_and_normalize_prefix_det
     assert prefixes == ["one/two"]
 
 
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://s3.example.test:not-a-port",
+        "http://s3.example.test:65536",
+        "http://s3.example.test:80:90",
+        "http://[::1",
+        "http://[invalid]",
+        "http:///missing-host",
+        "ftp://s3.example.test",
+        "https://user:secret-canary@s3.example.test",
+    ],
+)
+def test_managed_storage_endpoint_rejects_invalid_authorities_before_construction(endpoint: str) -> None:
+    """Invalid endpoints never reach a builder and never reflect their rejected authority."""
+    from infrahub_sync.managed import storage
+
+    calls: list[str] = []
+
+    def database_connect() -> object:
+        calls.append("database")
+        return object()
+
+    def s3_client_builder(*_args: object, **_kwargs: object) -> object:
+        calls.append("sdk")
+        return object()
+
+    def projection_builder(**_kwargs: object) -> ProductProjection:
+        calls.append("projection")
+        return cast("ProductProjection", object())
+
+    with pytest.raises(ValueError) as error:
+        storage.managed_product_projection(
+            environ={
+                storage.DATABASE_URL_ENV: "postgresql://database-secret-canary@db/sync",
+                storage.S3_BUCKET_ENV: "bucket-secret-canary",
+                storage.S3_ENDPOINT_ENV: endpoint,
+            },
+            database_connect=database_connect,
+            s3_client_builder=s3_client_builder,
+            projection_builder=projection_builder,
+        )
+    assert str(error.value) == f"{storage.S3_ENDPOINT_ENV} must be an absolute http or https URL"
+    assert endpoint not in str(error.value)
+    assert "secret-canary" not in str(error.value)
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://s3.example.test",
+        "http://s3.example.test:9000",
+        "http://127.0.0.1",
+        "http://127.0.0.1:9000",
+        "https://[::1]",
+        "https://[::1]:9443",
+    ],
+)
+def test_managed_storage_endpoint_accepts_valid_authorities(endpoint: str) -> None:
+    """Valid hostname, IPv4, and bracketed IPv6 endpoints preserve their exact SDK value."""
+    from infrahub_sync.managed import storage
+
+    received: list[object] = []
+
+    def database_connect() -> object:
+        return object()
+
+    def s3_client_builder(_service: object, **kwargs: object) -> object:
+        received.append(kwargs["endpoint_url"])
+        return object()
+
+    def projection_builder(**_kwargs: object) -> ProductProjection:
+        return cast("ProductProjection", object())
+
+    storage.managed_product_projection(
+        environ={
+            storage.DATABASE_URL_ENV: "postgresql://db/sync",
+            storage.S3_BUCKET_ENV: "bucket",
+            storage.S3_ENDPOINT_ENV: endpoint,
+        },
+        database_connect=database_connect,
+        s3_client_builder=s3_client_builder,
+        projection_builder=projection_builder,
+    )
+    assert received == [endpoint]
+
+
 def test_psycopg_adapter_marks_only_driver_errors() -> None:
     """Psycopg errors retain SQLSTATE; unrelated provider defects escape unmarked."""
     from infrahub_sync.managed import storage

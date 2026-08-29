@@ -157,8 +157,15 @@ def _endpoint(values: Mapping[str, object]) -> str | None:
     endpoint = _optional_setting(values, S3_ENDPOINT_ENV)
     if endpoint is None:
         return None
-    parsed = urlsplit(endpoint)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+    try:
+        parsed = urlsplit(endpoint)
+        hostname = parsed.hostname
+        port = parsed.port  # Force port parsing: urlsplit defers invalid-port refusal to this property.
+        userinfo = parsed.username is not None or parsed.password is not None
+    except ValueError:
+        msg = f"{S3_ENDPOINT_ENV} must be an absolute http or https URL"
+        raise ValueError(msg) from None
+    if parsed.scheme not in {"http", "https"} or not hostname or userinfo or (port is not None and port > 65535):
         msg = f"{S3_ENDPOINT_ENV} must be an absolute http or https URL"
         raise ValueError(msg)
     return endpoint
