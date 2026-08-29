@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Path as APIPath, Query
+from fastapi import APIRouter, Depends, Query
+from fastapi import Path as APIPath
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
@@ -17,7 +18,6 @@ from infrahub_sync.product_store import AuditEvent, MutationReceipt, configs, lo
 from .auth import Principal
 from .models import ConfigMutationRequest
 from .service import ManagedAPIError
-
 
 _CONFIG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 _MAX_REGISTRY_VERSION = 2**63 - 1

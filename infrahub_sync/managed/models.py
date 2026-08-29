@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from infrahub_sync.product_store import ArtifactReference, ProductRun  # noqa: TC001 - Pydantic resolves at runtime.
 
 ManagedStage = Literal["plan", "verify", "apply", "sync"]
+_REASON_GRAMMAR_MESSAGE = "reason must be printable and trimmed"
+_JSON_NATIVE_PACKAGE_MESSAGE = "package must be recursively exact JSON-native"
 
 
 class _StrictModel(BaseModel):
@@ -119,7 +121,7 @@ class ConfigMutationRequest(_StrictModel):
     @classmethod
     def _require_printable_trimmed_reason(cls, value: str) -> str:
         if value != value.strip() or not value.isprintable():
-            raise ValueError("reason must be printable and trimmed")
+            raise ValueError(_REASON_GRAMMAR_MESSAGE)
         return value
 
     @field_validator("package")
@@ -130,7 +132,7 @@ class ConfigMutationRequest(_StrictModel):
             if item_type is dict:
                 for key, child in item.items():
                     if type(key) is not str:
-                        raise ValueError("package must be recursively exact JSON-native")
+                        raise ValueError(_JSON_NATIVE_PACKAGE_MESSAGE)
                     visit(child)
                 return
             if item_type is list:
@@ -138,9 +140,9 @@ class ConfigMutationRequest(_StrictModel):
                     visit(child)
                 return
             if item_type is float and not isfinite(item):
-                raise ValueError("package must be recursively exact JSON-native")
+                raise ValueError(_JSON_NATIVE_PACKAGE_MESSAGE)
             if item_type not in {str, int, float, bool, type(None)}:
-                raise ValueError("package must be recursively exact JSON-native")
+                raise ValueError(_JSON_NATIVE_PACKAGE_MESSAGE)
 
         visit(value)
         return value

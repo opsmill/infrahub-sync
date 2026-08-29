@@ -98,8 +98,8 @@ def test_configuration_mutation_audits_accepted_replayed_and_refused_idempotency
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Every mutation decision is durable evidence and contains no bearer secret."""
-    token = "admin-token-canary-0003"
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": token, "administrator": True}}))
+    bearer = "admin-token-canary-0003"
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
     resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection(tmp_path)
     client = TestClient(
@@ -109,7 +109,7 @@ def test_configuration_mutation_audits_accepted_replayed_and_refused_idempotency
             ConfigurationRoutes(tmp_path, secrets=resolver.secret_values),
         )
     )
-    headers = {"Authorization": f"Bearer {token}", "Idempotency-Key": "audit-once"}
+    headers = {"Authorization": f"Bearer {bearer}", "Idempotency-Key": "audit-once"}
     body = {"package": package_data(), "reason": "register audit proof"}
 
     assert client.post("/configs", headers=headers, json=body).status_code == 201
@@ -118,7 +118,7 @@ def test_configuration_mutation_audits_accepted_replayed_and_refused_idempotency
 
     events = projection.audit_events()
     assert [event.outcome for event in events] == ["accepted", "replayed", "refused-idempotency"]
-    assert all(token not in event.model_dump_json() for event in events)
+    assert all(bearer not in event.model_dump_json() for event in events)
 
 
 def test_configuration_mutation_refuses_unauthenticated_and_non_admin_calls(
@@ -161,8 +161,8 @@ def test_configuration_route_grammar_refuses_hostile_values_before_service_class
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Path, page, and body grammar failures use the fixed request envelope without a service call."""
-    token = "admin-token-canary-0003"
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": token, "administrator": True}}))
+    bearer = "admin-token-canary-0003"
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
     resolver = EnvironmentPrincipalResolver.from_environment()
 
     class Service:
@@ -208,7 +208,7 @@ def test_configuration_route_grammar_refuses_hostile_values_before_service_class
             ConfigurationRoutes(tmp_path, service=service, secrets=resolver.secret_values),
         )
     )
-    headers = {"Authorization": f"Bearer {token}", "Idempotency-Key": "grammar-key"}
+    headers = {"Authorization": f"Bearer {bearer}", "Idempotency-Key": "grammar-key"}
     probes = [
         ("post", "/configs", {"json": {"package": package_data(), "reason": "valid", "extra": True}}),
         ("get", "/configs?offset=true", {}),
@@ -237,8 +237,8 @@ def test_validation_pages_are_bounded_and_concatenate_to_the_single_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Pages slice one ordered validation report without changing its snapshot fields."""
-    token = "admin-token-canary-0003"
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": token, "administrator": True}}))
+    bearer = "admin-token-canary-0003"
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
     resolver = EnvironmentPrincipalResolver.from_environment()
     findings = tuple(
         ValidationFinding(code="synthetic", severity="error", location=f"/item{i}", message=f"finding {i}")
@@ -264,7 +264,7 @@ def test_validation_pages_are_bounded_and_concatenate_to_the_single_snapshot(
             ConfigurationRoutes(tmp_path, service=Service(), secrets=resolver.secret_values),
         )
     )
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {"Authorization": f"Bearer {bearer}"}
     pages = [
         client.post(f"/configs/cfg/versions/1/validate?offset={offset}&limit=256", headers=headers).json()
         for offset in range(0, 600, 256)
@@ -277,7 +277,12 @@ def test_validation_pages_are_bounded_and_concatenate_to_the_single_snapshot(
     ]
     assert all(
         {key: value for key, value in page.items() if key != "findings"}
-        == {"config_id": "cfg", "registry_version": 1, "package_checksum": "a" * 64, "destination_schema_fingerprint": "b" * 64}
+        == {
+            "config_id": "cfg",
+            "registry_version": 1,
+            "package_checksum": "a" * 64,
+            "destination_schema_fingerprint": "b" * 64,
+        }
         for page in pages
     )
 
