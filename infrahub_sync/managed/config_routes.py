@@ -44,18 +44,18 @@ class ConfigurationRoutes:
     def _call(self, operation: Any, **kwargs: Any) -> Any:
         try:
             return operation(product_cache_location=self._location, **kwargs)
-        except self._service.ConfigsRequestError:
-            raise ConfigurationAPIError(400, "request") from None
-        except self._service.ConfigsValidationError:
-            raise ConfigurationAPIError(422, "validation") from None
-        except self._service.ConfigsNotFoundError as exc:
-            reason = exc.reason
-            raise ConfigurationAPIError(404, "not-found", reason=reason) from None
-        except self._service.ConfigsStorageError:
-            raise ConfigurationAPIError(503, "storage") from None
-        except self._service.ConfigsInternalError:
-            raise ConfigurationAPIError(503, "internal") from None
-        except self._service.ConfigsError:
+        except self._service.ConfigsError as error:
+            error_type = type(error)
+            if error_type is self._service.ConfigsRequestError:
+                raise ConfigurationAPIError(400, "request") from None
+            if error_type is self._service.ConfigsValidationError:
+                raise ConfigurationAPIError(422, "validation") from None
+            if error_type is self._service.ConfigsNotFoundError:
+                raise ConfigurationAPIError(404, "not-found", reason=error.reason) from None
+            if error_type is self._service.ConfigsStorageError:
+                raise ConfigurationAPIError(503, "storage") from None
+            if error_type is self._service.ConfigsInternalError:
+                raise ConfigurationAPIError(503, "internal") from None
             raise ConfigurationAPIError(503, "configs") from None
         except AssertionError:
             raise ConfigurationAPIError(503, "internal") from None

@@ -377,6 +377,57 @@ def test_unknown_configs_subclass_uses_fixed_base_family(tmp_path: Path) -> None
     assert raised.value.family == "configs"
 
 
+def test_configs_request_subclass_uses_base_fallback_without_reflecting_metadata(tmp_path: Path) -> None:
+    """Only the exact shared refusal classes receive a public family."""
+
+    class Hostile(configs_service.ConfigsRequestError):
+        message = property(lambda _self: (_ for _ in ()).throw(AssertionError("message read")))
+
+    class Service:
+        ConfigsRequestError = configs_service.ConfigsRequestError
+        ConfigsValidationError = configs_service.ConfigsValidationError
+        ConfigsNotFoundError = configs_service.ConfigsNotFoundError
+        ConfigsStorageError = configs_service.ConfigsStorageError
+        ConfigsInternalError = configs_service.ConfigsInternalError
+        ConfigsError = configs_service.ConfigsError
+
+        @staticmethod
+        def list_configs(**_kwargs: object) -> None:
+            raise Hostile("do not disclose")
+
+    with pytest.raises(ConfigurationAPIError) as raised:
+        ConfigurationRoutes(tmp_path, service=Service()).list_configs()
+    assert raised.value.status == 503
+    assert raised.value.family == "configs"
+
+
+def test_configs_not_found_subclass_cannot_leak_reason(tmp_path: Path) -> None:
+    """A not-found extension gets the fixed base response without its reason property."""
+
+    class Hostile(configs_service.ConfigsNotFoundError):
+        reason = property(
+            lambda _self: (_ for _ in ()).throw(AssertionError("reason read")), lambda _self, _value: None
+        )
+
+    class Service:
+        ConfigsRequestError = configs_service.ConfigsRequestError
+        ConfigsValidationError = configs_service.ConfigsValidationError
+        ConfigsNotFoundError = configs_service.ConfigsNotFoundError
+        ConfigsStorageError = configs_service.ConfigsStorageError
+        ConfigsInternalError = configs_service.ConfigsInternalError
+        ConfigsError = configs_service.ConfigsError
+
+        @staticmethod
+        def list_configs(**_kwargs: object) -> None:
+            raise Hostile("do not disclose", reason="secret-reason")
+
+    with pytest.raises(ConfigurationAPIError) as raised:
+        ConfigurationRoutes(tmp_path, service=Service()).list_configs()
+    assert raised.value.status == 503
+    assert raised.value.family == "configs"
+    assert raised.value.reason is None
+
+
 def test_create_app_keeps_run_and_configuration_dependencies_separate(tmp_path: Path) -> None:
     """One route from each family touches only its explicitly supplied dependency."""
 
