@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from diffsync import Adapter, DiffSyncModel
@@ -66,24 +65,9 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
         token_env_vars = settings.get("token_env_vars", ["TOKEN"])
         api_token = select_runtime_credential(settings, "token", tuple(token_env_vars))
         username_env_vars = settings.get("username_env_vars", ["USERNAME"])
-        username = None
-        for env_var in username_env_vars:
-            username = os.environ.get(env_var)
-            if username:
-                break
-
-        if not username:
-            username = settings.get("username")
-
+        username = select_runtime_credential(settings, "username", tuple(username_env_vars))
         password_env_vars = settings.get("password_env_vars", ["PASSWORD"])
-        password = None
-        for env_var in password_env_vars:
-            password = os.environ.get(env_var)
-            if password:
-                break
-
-        if not password:
-            password = settings.get("password")
+        password = select_runtime_credential(settings, "password", tuple(password_env_vars))
 
         # Other configuration
         timeout = settings.get("timeout", 30)

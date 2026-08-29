@@ -24,6 +24,7 @@ from infrahub_sync.execution import (
     collect_secret_values,
     execute_run,
     redact,
+    resolve_sync_instance,
     sanitize_exception_chain,
 )
 from infrahub_sync.orchestration.flow import (
@@ -53,6 +54,9 @@ _REGISTERED_VERSION_INVALID = "registered configuration version is invalid"
 _REGISTERED_CHECKSUM_MISMATCH = "registered configuration checksum does not match run binding"
 _REGISTERED_PLAN_BINDING_MISMATCH = "registered saved plan binding does not match run binding"
 _REGISTERED_PLAN_VERIFICATION_FAILED = "registered saved plan verification failed"
+_WORKER_BINDING_PARAMETERS_INVALID = "managed worker configuration binding parameters must be all absent or all present"
+_LEGACY_RUN_IDENTITY_UNAVAILABLE = "legacy managed run identity is unavailable"
+_LEGACY_RUN_CONFIGURATION_MISMATCH = "legacy managed run configuration version does not match durable run"
 
 
 def _run_logger() -> tuple[RunLogger, bool]:
@@ -162,43 +166,50 @@ def _plan(
     return saved
 
 
-def _verify_registered_apply(*, instance: Any, run_id: str, binding: tuple[str, int, str]) -> None:
-    """Verify a bound artifact before the apply path can construct a destination."""
+def _verify_registered_apply(*, instance: Any, run_id: str, binding: tuple[str, int, str] | None) -> None:
+    """Verify an artifact before the apply path can construct a destination."""
     artifact = read_plan_artifact_bytes(resolve_run_directory(instance.name, run_id))
     if verify_plan(artifact=artifact, run_id=run_id, config_version=resolve_config_version(instance)):
         raise ValueError(_REGISTERED_PLAN_VERIFICATION_FAILED)
-    if parse_plan_artifact(artifact, run_id=run_id).manifest.configuration_binding != binding:
+    if binding is not None and parse_plan_artifact(artifact, run_id=run_id).manifest.configuration_binding != binding:
         raise ValueError(_REGISTERED_PLAN_BINDING_MISMATCH)
 
 
-def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-statements
-    run_id: str,
-    stage: Literal["plan", "verify", "apply", "sync"],
-    config_id: str,
-    registry_version: int,
-    package_checksum: str,
-    branch: str | None,
-    expected_checksum: str | None,
-    confirm_writes: bool,
-    run_logger: RunLogger,
-    secrets: list[str],
-) -> dict[str, Any]:
-    """Resolve and execute one managed stage within the sanitized worker boundary."""
+def _worker_binding(
+    config_id: str | None, registry_version: int | None, package_checksum: str | None
+) -> tuple[str, int, str] | None:
+    """Return the closed Prefect tuple carrier or refuse a partial carrier."""
+    values = (config_id, registry_version, package_checksum)
+    if all(value is None for value in values):
+        return None
+    if any(value is None for value in values):
+        raise ValueError(_WORKER_BINDING_PARAMETERS_INVALID)
+    assert config_id is not None
+    assert registry_version is not None
+    assert package_checksum is not None
+    return config_id, registry_version, package_checksum
+
+
+def _worker_execution_context(run_id: str, binding: tuple[str, int, str] | None) -> tuple[ProductProjection, Any, str]:
+    """Load the durable run and resolve its registered or legacy runtime."""
     config_directory, projection = _runtime()
     stored = projection.lookup_run(run_id)
     if stored.value is None:
         msg = f"API-created Sync run {run_id!r} is unavailable"
         raise RuntimeError(msg)
-    if stored.value.configuration_binding != (config_id, registry_version, package_checksum):
+    if stored.value.configuration_binding != binding:
         msg = "managed run binding does not match worker parameters"
         raise ValueError(msg)
-    if stage in ("apply", "sync") and not confirm_writes:
-        msg = f"confirm_writes=true is required for managed stage={stage}"
-        raise ValueError(msg)
-    if stage == "apply" and expected_checksum is None:
-        msg = "expected_checksum is required for managed stage=apply"
-        raise ValueError(msg)
+    if binding is None:
+        sync_name = stored.value.summary.get("sync_name")
+        if not isinstance(sync_name, str) or not sync_name:
+            raise ValueError(_LEGACY_RUN_IDENTITY_UNAVAILABLE)
+        instance = resolve_sync_instance(sync_name, directory=config_directory)
+        if resolve_config_version(instance) != stored.value.configuration_reference:
+            raise ValueError(_LEGACY_RUN_CONFIGURATION_MISMATCH)
+        return projection, instance, sync_name
 
+    config_id, registry_version, package_checksum = binding
     registered = projection.lookup_configuration_version(config_id, registry_version).value
     if registered is None:
         raise ValueError(_REGISTERED_VERSION_UNAVAILABLE)
@@ -208,9 +219,33 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         raise ValueError(_REGISTERED_VERSION_INVALID) from None
     if registered.package_checksum != package_checksum or package.checksum() != package_checksum:
         raise ValueError(_REGISTERED_CHECKSUM_MISMATCH)
-    sync_name = package.configuration.name
     instance = resolve_runtime_instance(package, directory=config_directory)
-    instance._configuration_binding = (config_id, registry_version, package_checksum)
+    instance._configuration_binding = binding
+    return projection, instance, package.configuration.name
+
+
+def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-statements
+    run_id: str,
+    stage: Literal["plan", "verify", "apply", "sync"],
+    config_id: str | None,
+    registry_version: int | None,
+    package_checksum: str | None,
+    branch: str | None,
+    expected_checksum: str | None,
+    confirm_writes: bool,
+    run_logger: RunLogger,
+    secrets: list[str],
+) -> dict[str, Any]:
+    """Resolve and execute one managed stage within the sanitized worker boundary."""
+    parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
+    projection, instance, sync_name = _worker_execution_context(run_id, parameter_binding)
+    if stage in ("apply", "sync") and not confirm_writes:
+        msg = f"confirm_writes=true is required for managed stage={stage}"
+        raise ValueError(msg)
+    if stage == "apply" and expected_checksum is None:
+        msg = "expected_checksum is required for managed stage=apply"
+        raise ValueError(msg)
+
     secrets[:] = collect_secret_values(instance)
     result: dict[str, Any]
     if stage == "plan":
@@ -247,7 +282,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         _verify_registered_apply(
             instance=instance,
             run_id=run_id,
-            binding=(config_id, registry_version, package_checksum),
+            binding=parameter_binding,
         )
         applied = execute_run(
             instance,
@@ -283,7 +318,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             _verify_registered_apply(
                 instance=instance,
                 run_id=run_id,
-                binding=(config_id, registry_version, package_checksum),
+                binding=parameter_binding,
             )
             applied = execute_run(
                 instance,
@@ -375,9 +410,9 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
 def managed_sync_run(  # pylint: disable=too-many-positional-arguments
     run_id: str,
     stage: Literal["plan", "verify", "apply", "sync"],
-    config_id: str,
-    registry_version: int,
-    package_checksum: str,
+    config_id: str | None = None,
+    registry_version: int | None = None,
+    package_checksum: str | None = None,
     branch: str | None = None,
     expected_checksum: str | None = None,
     confirm_writes: bool = False,

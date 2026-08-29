@@ -213,6 +213,15 @@ def _observed(row: AdapterRow, kwargs: dict[str, Any]) -> dict[str, object]:
     return {"url": str(kwargs["base_url"]).removesuffix("/api/v0").removesuffix("/api"), "token": kwargs["api_token"]}
 
 
+def _basic_observed(kwargs: dict[str, object]) -> dict[str, object]:
+    """Return the Generic REST client's complete basic-auth input."""
+    return {
+        "url": str(kwargs["base_url"]).removesuffix("/api/v0").removesuffix("/api"),
+        "username": kwargs["username"],
+        "password": kwargs["password"],
+    }
+
+
 def _patch_engine(monkeypatch: pytest.MonkeyPatch, tmp_path: object) -> None:
     class Engine:
         def __init__(self, **kwargs: object) -> None:
@@ -313,3 +322,45 @@ def test_peeringmanager_defaults_reach_genericrestapi_without_overriding_registe
         assert adapter.settings is not None
         assert adapter.settings["url_env_vars"] == ["PEERING_MANAGER_ADDRESS", "PEERING_MANAGER_URL"]
         assert adapter.settings["token_env_vars"] == ["PEERING_MANAGER_TOKEN"]
+
+
+@pytest.mark.parametrize("adapter_name", ["genericrestapi", "peeringmanager"])
+@pytest.mark.parametrize("construction", ["normal", "apply"])
+def test_registered_basic_auth_wins_over_ambient_at_every_genericrestapi_seam(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: object,
+    adapter_name: str,
+    construction: str,
+) -> None:
+    """Delegated Generic REST basic auth must not recover ambient credentials."""
+    row = next(candidate for candidate in ROWS if candidate.name == adapter_name)
+    module = _adapter_module(monkeypatch, row)
+    observed = _capture_client(monkeypatch, row, module)
+    instance = _instance(
+        row,
+        {
+            "url": f"https://registered-{adapter_name}",
+            "auth_method": "basic",
+            "username": "registered-basic-user",
+            "password": "registered-basic-password",
+            "_infrahub_sync_registered_context": True,
+        },
+    )
+    monkeypatch.setenv("USERNAME", "ambient-basic-user")
+    monkeypatch.setenv("PASSWORD", "ambient-basic-password")
+    _patch_engine(monkeypatch, tmp_path)
+    monkeypatch.setattr("infrahub_sync.utils.import_adapter", lambda **_kwargs: getattr(module, _class_name(row)))
+
+    if construction == "normal":
+        get_potenda_from_instance(instance, run_id="ar5-basic-normal")
+    else:
+        PlanApplier.open_existing(instance, run_id="ar5-basic-apply")
+
+    expected = {
+        "url": f"https://registered-{adapter_name}",
+        "username": "registered-basic-user",
+        "password": "registered-basic-password",
+    }
+    assert [_basic_observed(call) for call in observed] == (
+        [expected, expected] if construction == "normal" else [expected]
+    )
