@@ -58,10 +58,6 @@ CREATE TABLE IF NOT EXISTS mutation_receipts (
     reason TEXT NOT NULL, resource_kind TEXT NOT NULL DEFAULT 'run', resource_id TEXT NOT NULL, run_id TEXT, prefect_key TEXT,
     state TEXT NOT NULL, response_status INTEGER, response_body TEXT, flow_run_id TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-    CHECK (
-        (resource_kind = 'run' AND run_id IS NOT NULL AND prefect_key IS NOT NULL)
-        OR (resource_kind = 'configuration' AND run_id IS NULL AND prefect_key IS NULL AND target_run_id IS NULL AND flow_run_id IS NULL)
-    ),
     UNIQUE (actor, key_digest)
 );
 CREATE TABLE IF NOT EXISTS write_admissions (
@@ -105,6 +101,33 @@ _CONFIGURATION_BINDING_CONSTRAINT = "product_runs_configuration_binding_consiste
 _CONFIGURATION_BINDING_CHECK_EXPRESSION = (
     "(config_id IS NULL AND registry_version IS NULL AND package_checksum IS NULL) "
     "OR (config_id IS NOT NULL AND registry_version IS NOT NULL AND package_checksum IS NOT NULL)"
+)
+_SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES = (
+    "mutation_receipts_resource_consistent_insert",
+    "mutation_receipts_resource_consistent_update",
+)
+_SQLITE_MUTATION_RECEIPT_RESOURCE_CHECK = """NOT (
+    (NEW.resource_kind = 'run' AND NEW.run_id IS NOT NULL AND NEW.prefect_key IS NOT NULL)
+    OR (NEW.resource_kind IN ('configuration', 'configuration-registry') AND NEW.run_id IS NULL
+        AND NEW.prefect_key IS NULL AND NEW.target_run_id IS NULL AND NEW.flow_run_id IS NULL)
+)"""
+_SQLITE_MUTATION_RECEIPT_RESOURCE_INSERT_TRIGGER = f"""
+CREATE TRIGGER {_SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES[0]}
+BEFORE INSERT ON mutation_receipts
+FOR EACH ROW WHEN {_SQLITE_MUTATION_RECEIPT_RESOURCE_CHECK}
+BEGIN SELECT RAISE(ABORT, 'mutation receipt resource identity is inconsistent'); END;
+"""
+_SQLITE_MUTATION_RECEIPT_RESOURCE_UPDATE_TRIGGER = f"""
+CREATE TRIGGER {_SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES[1]}
+BEFORE UPDATE ON mutation_receipts
+FOR EACH ROW WHEN {_SQLITE_MUTATION_RECEIPT_RESOURCE_CHECK}
+BEGIN SELECT RAISE(ABORT, 'mutation receipt resource identity is inconsistent'); END;
+"""
+_MUTATION_RECEIPT_RESOURCE_CONSTRAINT = "mutation_receipts_resource_consistent"
+_MUTATION_RECEIPT_RESOURCE_CHECK = (
+    "(resource_kind = 'run' AND run_id IS NOT NULL AND prefect_key IS NOT NULL) OR "
+    "(resource_kind IN ('configuration', 'configuration-registry') AND run_id IS NULL "
+    "AND prefect_key IS NULL AND target_run_id IS NULL AND flow_run_id IS NULL)"
 )
 _SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER_NAME = "product_runs_configuration_binding_insert"
 _SQLITE_CONFIGURATION_BINDING_UPDATE_TRIGGER_NAME = "product_runs_configuration_binding_update"
@@ -297,6 +320,10 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         updated_at: datetime,
     ) -> MutationReceipt: ...
 
+    def claim_mutation(self, receipt_id: str, *, updated_at: datetime) -> bool: ...
+
+    def release_mutation(self, receipt_id: str, *, updated_at: datetime) -> None: ...
+
     def record_audit(self, event: AuditEvent) -> None: ...
 
     def audit_events(self, run_id: str | None = None) -> tuple[AuditEvent, ...]: ...
@@ -367,6 +394,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                             cursor.execute(statement)
                     self._migrate_product_runs_columns(cursor)
                     self._migrate_mutation_receipts(cursor)
+                    self._ensure_mutation_receipt_resource_constraint(cursor)
                     self._ensure_configuration_binding_constraint(cursor)
                     connection.commit()
                 except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -435,9 +463,10 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             "WHERE resource_kind IS NULL OR resource_id IS NULL"
         )
         if self._dialect == "sqlite":
-            # SQLite has no ALTER COLUMN.  Editing only the table declaration preserves the
-            # table, rows, indexes, and foreign-key references while making legacy run-only
-            # columns nullable for configuration receipts.
+            # SQLite has no supported additive ALTER that removes NOT NULL. The table has a
+            # fixed, repository-owned legacy shape and a rebuild would also reconstruct the
+            # dependent write_admissions foreign key. Updating these two declarations is the
+            # only in-place migration that preserves rows, indexes, and references.
             cursor.execute("PRAGMA writable_schema = ON")
             cursor.execute(
                 "UPDATE sqlite_master SET sql = REPLACE(REPLACE(sql, 'run_id TEXT NOT NULL', 'run_id TEXT'), "
@@ -447,6 +476,35 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         else:
             cursor.execute("ALTER TABLE mutation_receipts ALTER COLUMN run_id DROP NOT NULL")
             cursor.execute("ALTER TABLE mutation_receipts ALTER COLUMN prefect_key DROP NOT NULL")
+
+    def _mutation_receipt_resource_constraint_exists(self, cursor: _Cursor) -> bool:
+        if self._dialect == "sqlite":
+            cursor.execute(
+                self._sql("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN (?, ?)"),
+                _SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES,
+            )
+            return {str(row[0]) for row in cursor.fetchall()} >= set(_SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES)
+        cursor.execute(
+            self._sql(
+                "SELECT 1 FROM information_schema.table_constraints "
+                "WHERE table_name = ? AND constraint_name = ? AND table_schema = current_schema()"
+            ),
+            ("mutation_receipts", _MUTATION_RECEIPT_RESOURCE_CONSTRAINT),
+        )
+        return cursor.fetchone() is not None
+
+    def _ensure_mutation_receipt_resource_constraint(self, cursor: _Cursor) -> None:
+        """Give fresh and legacy receipts the same database-enforced resource shape."""
+        if self._mutation_receipt_resource_constraint_exists(cursor):
+            return
+        if self._dialect == "sqlite":
+            cursor.execute(_SQLITE_MUTATION_RECEIPT_RESOURCE_INSERT_TRIGGER)
+            cursor.execute(_SQLITE_MUTATION_RECEIPT_RESOURCE_UPDATE_TRIGGER)
+        else:
+            cursor.execute(
+                f"ALTER TABLE mutation_receipts ADD CONSTRAINT {_MUTATION_RECEIPT_RESOURCE_CONSTRAINT} "
+                f"CHECK ({_MUTATION_RECEIPT_RESOURCE_CHECK})"
+            )
 
     def _configuration_binding_constraint_exists(self, cursor: _Cursor) -> bool:
         """Check for the binding safeguard by name instead of attempting and hoping.
@@ -874,7 +932,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.execute(
                     self._sql(
                         "UPDATE mutation_receipts SET state = 'accepted', response_status = ?, response_body = ?, "
-                        "flow_run_id = ?, updated_at = ? WHERE receipt_id = ? AND state = 'reserved'"
+                        "flow_run_id = ?, updated_at = ? WHERE receipt_id = ? AND state IN ('reserved', 'processing')"
                     ),
                     (response_status, _json(response_body), flow_run_id, updated_at.isoformat(), receipt_id),
                 )
@@ -898,6 +956,52 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             return receipt
         msg = f"Mutation receipt {receipt_id!r} is already complete with a different response"
         raise ValueError(msg)
+
+    def claim_mutation(self, receipt_id: str, *, updated_at: datetime) -> bool:
+        """Claim one retryable receipt before its service call begins."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql(
+                        "UPDATE mutation_receipts SET state = 'processing', updated_at = ? "
+                        "WHERE receipt_id = ? AND state = 'reserved'"
+                    ),
+                    (updated_at.isoformat(), receipt_id),
+                )
+                claimed = cursor.rowcount == 1
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return claimed
+
+    def release_mutation(self, receipt_id: str, *, updated_at: datetime) -> None:
+        """Return an unsuccessful in-flight receipt to retryable reservation state."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql(
+                        "UPDATE mutation_receipts SET state = 'reserved', updated_at = ? "
+                        "WHERE receipt_id = ? AND state = 'processing'"
+                    ),
+                    (updated_at.isoformat(), receipt_id),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
 
     def _lookup_mutation_by_id(self, receipt_id: str) -> MutationReceipt:
         connection = self._connect()
@@ -1421,7 +1525,7 @@ class S3ArtifactStore:
         return _validate_publication(reference, manifest, data)
 
 
-class ProductProjection:
+class ProductProjection:  # pylint: disable=too-many-public-methods
     """One product-record contract over interchangeable relational/object providers."""
 
     def __init__(self, records: _RunStore, artifacts: _ArtifactStore) -> None:
@@ -1516,6 +1620,14 @@ class ProductProjection:
             flow_run_id=None if flow_run_id is None else redact(flow_run_id, secrets),
             updated_at=datetime.now(timezone.utc),
         )
+
+    def claim_mutation(self, receipt_id: str, *, secrets: Sequence[str] = ()) -> bool:
+        """Atomically make one retryable receipt the sole in-flight service caller."""
+        return self._records.claim_mutation(redact(receipt_id, secrets), updated_at=datetime.now(timezone.utc))
+
+    def release_mutation(self, receipt_id: str, *, secrets: Sequence[str] = ()) -> None:
+        """Make a failed in-flight receipt available for a later retry."""
+        self._records.release_mutation(redact(receipt_id, secrets), updated_at=datetime.now(timezone.utc))
 
     def record_audit(self, event: AuditEvent, *, secrets: Sequence[str] = ()) -> None:
         """Append one immutable, secret-safe authorization or mutation event."""

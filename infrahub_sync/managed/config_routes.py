@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query
@@ -66,8 +66,6 @@ class ConfigurationRoutes:
             if error_type is self._service.ConfigsInternalError:
                 raise ConfigurationAPIError(503, "internal") from None
             raise ConfigurationAPIError(503, "configs") from None
-        except AssertionError:
-            raise ConfigurationAPIError(503, "internal") from None
 
     def register(self, package: dict[str, Any]) -> Any:
         return self._call(self._service.register, package=package)
@@ -108,7 +106,8 @@ class ConfigurationRoutes:
         actor: str,
         idempotency_key: str,
         operation: str,
-        resource_path: str,
+        resource_kind: Literal["configuration", "configuration-registry"],
+        resource_id: str,
         package: dict[str, Any],
         reason: str,
     ) -> tuple[int, dict[str, Any]]:
@@ -121,12 +120,18 @@ class ConfigurationRoutes:
             operation=operation,
             request_fingerprint=sha256(
                 canonical_json_bytes(
-                    {"resource": resource_path, "operation": operation, "package": package, "reason": reason}
+                    {
+                        "resource_kind": resource_kind,
+                        "resource_id": resource_id,
+                        "operation": operation,
+                        "package": package,
+                        "reason": reason,
+                    }
                 )
             ).hexdigest(),
             reason=reason,
-            resource_kind="configuration",
-            resource_id=resource_path,
+            resource_kind=resource_kind,
+            resource_id=resource_id,
             created_at=now,
             updated_at=now,
         )
@@ -148,15 +153,17 @@ class ConfigurationRoutes:
                 assert stored.response_body is not None
                 self._audit(actor, operation, reason, "replayed")
                 return stored.response_status, stored.response_body
+        if not projection.claim_mutation(stored.receipt_id, secrets=self._secrets):
+            raise ManagedAPIError(409, "idempotency-in-progress", "the matching request is still being processed")
         try:
             if operation == "register-config":
                 result = self.register(package)
                 response_status = 201
             else:
-                config_id = resource_path.rsplit("/", 2)[1]
-                result = self.create_version(config_id, package)
+                result = self.create_version(resource_id, package)
                 response_status = 201 if result.created else 200
         except ConfigurationAPIError:
+            projection.release_mutation(stored.receipt_id, secrets=self._secrets)
             self._audit(actor, operation, reason, "unavailable")
             raise
         response = jsonable_encoder(result)
@@ -212,7 +219,8 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
             actor=principal.actor,
             idempotency_key=key,
             operation="register-config",
-            resource_path="/configs",
+            resource_kind="configuration-registry",
+            resource_id="configs",
             package=body.package,
             reason=body.reason,
         )
@@ -232,7 +240,8 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
             actor=principal.actor,
             idempotency_key=key,
             operation="create-config-version",
-            resource_path=f"/configs/{config_id}/versions",
+            resource_kind="configuration",
+            resource_id=config_id,
             package=body.package,
             reason=body.reason,
         )

@@ -6,6 +6,7 @@ import ast
 import json
 from hashlib import sha256
 from pathlib import Path
+from threading import Event, Thread
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -17,7 +18,7 @@ from infrahub_sync.managed.auth import PRINCIPALS_ENV, EnvironmentPrincipalResol
 from infrahub_sync.managed.config_routes import ConfigurationAPIError, ConfigurationRoutes
 from infrahub_sync.managed.orchestration import Observation, Submission
 from infrahub_sync.managed.serve import build_app
-from infrahub_sync.managed.service import ManagedRunService
+from infrahub_sync.managed.service import ManagedAPIError, ManagedRunService
 from infrahub_sync.product_store import configs as configs_service
 from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.product_store.configs import ValidationReport
@@ -204,6 +205,107 @@ def test_configuration_service_failure_is_audited_and_the_reserved_receipt_can_r
     assert retried.status_code == 201
     assert service.calls == 2
     assert [event.outcome for event in projection.audit_events()] == ["unavailable", "accepted"]
+
+
+def test_concurrent_configuration_mutation_does_not_invoke_service_twice(tmp_path: Path) -> None:
+    """An in-flight idempotency identity has one service owner, not two."""
+    started = Event()
+    release = Event()
+
+    class Service:
+        ConfigsRequestError = configs_service.ConfigsRequestError
+        ConfigsValidationError = configs_service.ConfigsValidationError
+        ConfigsNotFoundError = configs_service.ConfigsNotFoundError
+        ConfigsStorageError = configs_service.ConfigsStorageError
+        ConfigsInternalError = configs_service.ConfigsInternalError
+        ConfigsError = configs_service.ConfigsError
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def register(self, **_kwargs: object) -> dict[str, object]:
+            self.calls += 1
+            started.set()
+            assert release.wait(timeout=5)
+            return {"configuration": {"config_id": "cfg"}, "version": {"registry_version": 1}}
+
+    service = Service()
+    routes = ConfigurationRoutes(tmp_path, service=service)
+
+    def mutate() -> tuple[int, dict[str, object]]:
+        return routes.mutate(
+            actor="admin",
+            idempotency_key="concurrent-key",
+            operation="register-config",
+            resource_kind="configuration-registry",
+            resource_id="configs",
+            package=package_data(),
+            reason="test concurrent receipt",
+        )
+
+    first = Thread(target=mutate)
+    first.start()
+    assert started.wait(timeout=5)
+    with pytest.raises(ManagedAPIError) as raised:
+        mutate()
+    release.set()
+    first.join(timeout=5)
+
+    assert not first.is_alive()
+    assert raised.value.status == 409
+    assert raised.value.code == "idempotency-in-progress"
+    assert service.calls == 1
+
+
+def test_configuration_receipts_use_semantic_resource_identities(tmp_path: Path) -> None:
+    """Registration and version receipts are keyed by domain resource, not HTTP path."""
+    routes = ConfigurationRoutes(tmp_path)
+    register = routes.mutate(
+        actor="admin",
+        idempotency_key="semantic-registration",
+        operation="register-config",
+        resource_kind="configuration-registry",
+        resource_id="configs",
+        package=package_data(),
+        reason="semantic registration",
+    )
+    config_id = register[1]["configuration"]["config_id"]
+    routes.mutate(
+        actor="admin",
+        idempotency_key="semantic-version",
+        operation="create-config-version",
+        resource_kind="configuration",
+        resource_id=config_id,
+        package=package_data(),
+        reason="semantic version",
+    )
+
+    projection = local_product_projection(tmp_path)
+    registration = projection.lookup_mutation("admin", sha256(b"semantic-registration").hexdigest()).value
+    version = projection.lookup_mutation("admin", sha256(b"semantic-version").hexdigest()).value
+    assert registration is not None
+    assert version is not None
+    assert (registration.resource_kind, registration.resource_id) == ("configuration-registry", "configs")
+    assert (version.resource_kind, version.resource_id) == ("configuration", config_id)
+
+
+def test_unrelated_service_assertion_is_not_reclassified_as_configuration_refusal(tmp_path: Path) -> None:
+    """Only the service boundary, rather than HTTP routing, classifies service failures."""
+
+    class Service:
+        ConfigsRequestError = configs_service.ConfigsRequestError
+        ConfigsValidationError = configs_service.ConfigsValidationError
+        ConfigsNotFoundError = configs_service.ConfigsNotFoundError
+        ConfigsStorageError = configs_service.ConfigsStorageError
+        ConfigsInternalError = configs_service.ConfigsInternalError
+        ConfigsError = configs_service.ConfigsError
+
+        @staticmethod
+        def list_configs(**_kwargs: object) -> None:
+            raise AssertionError("unrelated defect")  # noqa: EM101, TRY003 - the assertion is the transport boundary probe.
+
+    with pytest.raises(AssertionError, match="unrelated defect"):
+        ConfigurationRoutes(tmp_path, service=Service()).list_configs()
 
 
 def test_configuration_mutation_refuses_unauthenticated_and_non_admin_calls(
@@ -440,7 +542,6 @@ def test_configuration_and_version_lists_return_every_service_result(
         (configs_service.ConfigsStorageError("hostile"), 503, "storage", None),
         (configs_service.ConfigsInternalError("hostile"), 503, "internal", None),
         (configs_service.ConfigsError("hostile"), 503, "configs", None),
-        (AssertionError("hostile"), 503, "internal", None),
     ],
 )
 def test_configuration_error_matrix_preserves_only_declared_fields(  # noqa: PLR0913, PLR0917

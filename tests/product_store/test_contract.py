@@ -681,6 +681,46 @@ def test_receipt_migration_backfills_legacy_runs_and_allows_configuration_receip
     assert reserved.run_id is None
     assert reserved.prefect_key is None
     assert reserved.flow_run_id is None
+    schema = sqlite3.connect(database)
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            schema.execute(
+                "UPDATE mutation_receipts SET resource_kind = 'configuration' WHERE receipt_id = ?",
+                (legacy_receipt.receipt_id,),
+            )
+    finally:
+        schema.close()
+
+
+def test_fresh_sqlite_receipt_resource_invariant_rejects_mixed_direct_write(tmp_path: Path) -> None:
+    """The fresh schema enforces the same configuration/run shape as a migrated database."""
+    database = tmp_path / "fresh.sqlite3"
+    SQLiteRunStore(database)
+    connection = sqlite3.connect(database)
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO mutation_receipts (receipt_id, actor, key_digest, operation, request_fingerprint, reason, "
+                "resource_kind, resource_id, run_id, prefect_key, state, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "mixed-receipt",
+                    "operator",
+                    "a" * 64,
+                    "register-config",
+                    "b" * 64,
+                    "test direct write",
+                    "configuration",
+                    "configs",
+                    "run-001",
+                    "c" * 64,
+                    "reserved",
+                    "2026-08-10T12:00:00+00:00",
+                    "2026-08-10T12:00:00+00:00",
+                ),
+            )
+    finally:
+        connection.close()
 
 
 def test_sqlite_concurrent_mutation_reservation_creates_exactly_one_product_run(tmp_path: Path) -> None:
