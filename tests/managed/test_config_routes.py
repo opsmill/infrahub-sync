@@ -374,9 +374,49 @@ def test_validation_pages_are_bounded_and_concatenate_to_the_single_snapshot(
             "registry_version": 1,
             "package_checksum": "a" * 64,
             "destination_schema_fingerprint": "b" * 64,
+            "offset": [0, 256, 512][pages.index(page)],
+            "limit": 256,
+            "total_findings": 600,
+            "next_offset": [256, 512, None][pages.index(page)],
         }
         for page in pages
     )
+
+
+def test_configuration_and_version_lists_return_every_service_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only validation findings paginate; registry lists keep all service records."""
+    bearer = "admin-token-canary-0003"
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
+    resolver = EnvironmentPrincipalResolver.from_environment()
+
+    class Service:
+        ConfigsRequestError = configs_service.ConfigsRequestError
+        ConfigsValidationError = configs_service.ConfigsValidationError
+        ConfigsNotFoundError = configs_service.ConfigsNotFoundError
+        ConfigsStorageError = configs_service.ConfigsStorageError
+        ConfigsInternalError = configs_service.ConfigsInternalError
+        ConfigsError = configs_service.ConfigsError
+
+        @staticmethod
+        def list_configs(**_kwargs: object) -> list[dict[str, int]]:
+            return [{"position": position} for position in range(300)]
+
+        @staticmethod
+        def list_versions(**_kwargs: object) -> list[dict[str, int]]:
+            return [{"position": position} for position in range(300)]
+
+    client = TestClient(
+        create_app(
+            ManagedRunService(local_product_projection(tmp_path), _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(tmp_path, service=Service(), secrets=resolver.secret_values),
+        )
+    )
+    headers = {"Authorization": f"Bearer {bearer}"}
+    assert len(client.get("/configs", headers=headers).json()) == 300
+    assert len(client.get("/configs/cfg/versions", headers=headers).json()) == 300
 
 
 @pytest.mark.parametrize(
@@ -573,6 +613,8 @@ def test_build_app_binds_one_cache_location_and_passes_configuration_dependency(
 
     monkeypatch.setenv(PRODUCT_CACHE_ENV, str(tmp_path))
     received: list[object] = []
+    route_locations: list[Path] = []
+    route_dependency = object()
 
     def projection(location: Path) -> object:
         received.append(location)
@@ -580,6 +622,11 @@ def test_build_app_binds_one_cache_location_and_passes_configuration_dependency(
 
     class Resolver:
         secret_values: tuple[str, ...] = ()
+
+    def route_factory(location: Path, *, secrets: tuple[str, ...]) -> object:
+        assert secrets == ()
+        route_locations.append(location)
+        return route_dependency
 
     def application(run: object, resolver: object, routes: object) -> object:
         received.extend((run, resolver, routes))
@@ -590,8 +637,11 @@ def test_build_app_binds_one_cache_location_and_passes_configuration_dependency(
             projection_factory=projection,
             resolver_factory=Resolver,
             run_service_factory=lambda *_args, **_kwargs: object(),
+            configuration_routes_factory=route_factory,
             app_factory=application,
         )
         is not None
     )
     assert received[0] == tmp_path
+    assert route_locations == [tmp_path]
+    assert received[-1] is route_dependency

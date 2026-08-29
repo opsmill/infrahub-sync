@@ -76,21 +76,32 @@ class ConfigurationRoutes:
     def create_version(self, config_id: str, package: dict[str, Any]) -> Any:
         return self._call(self._service.create_version, config_id=config_id, package=package)
 
-    def list_configs(self, *, offset: int = 0, limit: int = _MAX_PAGE_LIMIT) -> Any:
-        return self._call(self._service.list_configs)[offset : offset + limit]
+    def list_configs(self) -> Any:
+        return self._call(self._service.list_configs)
 
     def get_config(self, config_id: str) -> Any:
         return self._call(self._service.get_config, config_id=config_id)
 
-    def list_versions(self, config_id: str, *, offset: int = 0, limit: int = _MAX_PAGE_LIMIT) -> Any:
-        return self._call(self._service.list_versions, config_id=config_id)[offset : offset + limit]
+    def list_versions(self, config_id: str) -> Any:
+        return self._call(self._service.list_versions, config_id=config_id)
 
     def get_version(self, config_id: str, registry_version: int) -> Any:
         return self._call(self._service.get_version, config_id=config_id, registry_version=registry_version)
 
     def validate(self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = _MAX_PAGE_LIMIT) -> Any:
         report = self._call(self._service.validate, config_id=config_id, registry_version=registry_version)
-        return replace(report, findings=report.findings[offset : offset + limit])
+        findings = report.findings[offset : offset + limit]
+        return {
+            "config_id": report.config_id,
+            "registry_version": report.registry_version,
+            "package_checksum": report.package_checksum,
+            "destination_schema_fingerprint": report.destination_schema_fingerprint,
+            "findings": findings,
+            "offset": offset,
+            "limit": limit,
+            "total_findings": len(report.findings),
+            "next_offset": offset + len(findings) if offset + len(findings) < len(report.findings) else None,
+        }
 
     def mutate(
         self,
@@ -234,10 +245,9 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         offset: Annotated[str, page_offset] = "0",
         limit: Annotated[str, page_limit] = str(_MAX_PAGE_LIMIT),
     ) -> Any:
-        return routes.list_configs(
-            offset=_strict_integer(offset, minimum=0, maximum=_MAX_REGISTRY_VERSION),
-            limit=_strict_integer(limit, minimum=1, maximum=_MAX_PAGE_LIMIT),
-        )
+        _strict_integer(offset, minimum=0, maximum=_MAX_REGISTRY_VERSION)
+        _strict_integer(limit, minimum=1, maximum=_MAX_PAGE_LIMIT)
+        return routes.list_configs()
 
     @router.get("/configs/{config_id}")
     def get_config(
@@ -252,11 +262,9 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         offset: Annotated[str, page_offset] = "0",
         limit: Annotated[str, page_limit] = str(_MAX_PAGE_LIMIT),
     ) -> Any:
-        return routes.list_versions(
-            config_id,
-            offset=_strict_integer(offset, minimum=0, maximum=_MAX_REGISTRY_VERSION),
-            limit=_strict_integer(limit, minimum=1, maximum=_MAX_PAGE_LIMIT),
-        )
+        _strict_integer(offset, minimum=0, maximum=_MAX_REGISTRY_VERSION)
+        _strict_integer(limit, minimum=1, maximum=_MAX_PAGE_LIMIT)
+        return routes.list_versions(config_id)
 
     @router.get("/configs/{config_id}/versions/{registry_version}")
     def get_version(
