@@ -21,6 +21,7 @@ from prefect.client.schemas.responses import (
     OrchestrationResult,
     SetStateStatus,
     StateAcceptDetails,
+    T,
 )
 from prefect.exceptions import ObjectNotFound
 from prefect.states import Cancelling
@@ -114,6 +115,8 @@ class PoolStatus:
             if type(worker) is not PoolWorker:  # pylint: disable=unidiomatic-typecheck
                 raise ValueError
             _validate_pool_worker(worker)
+        if len({worker.worker_id for worker in self.workers}) != len(self.workers):
+            raise ValueError
 
 
 class ManagedOrchestration(Protocol):
@@ -227,7 +230,7 @@ def _cancellation_acknowledged(result: object) -> bool:
     return (
         result.status is SetStateStatus.ACCEPT
         and type(result.details) is StateAcceptDetails  # pylint: disable=unidiomatic-typecheck
-        and isinstance(state, State)
+        and type(state) is State[T]  # pylint: disable=unidiomatic-typecheck
         and type(state.type) is StateType  # pylint: disable=unidiomatic-typecheck
         and state.type is StateType.CANCELLING
     )

@@ -885,6 +885,10 @@ class _DerivedOrchestrationResult(OrchestrationResult[object]):
     pass
 
 
+class _DerivedState(State[object]):
+    pass
+
+
 _ACKNOWLEDGED_CANCELLATION = CancellationResult(acknowledged=True)
 _UNACKNOWLEDGED_CANCELLATION = CancellationResult(
     acknowledged=False,
@@ -946,6 +950,14 @@ _UNACKNOWLEDGED_CANCELLATION = CancellationResult(
         ),
         (
             OrchestrationResult.model_construct(
+                state=_DerivedState.model_validate(Cancelling().model_dump()),
+                status=SetStateStatus.ACCEPT,
+                details=StateAcceptDetails(),
+            ),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult.model_construct(
                 state=Cancelling(),
                 status="ACCEPT",
                 details=StateAcceptDetails(),
@@ -981,6 +993,7 @@ _UNACKNOWLEDGED_CANCELLATION = CancellationResult(
         "wait",
         "non-exact-result",
         "result-subclass",
+        "state-subclass",
         "malformed-status",
         "accept-mismatched-details",
         "reject-mismatched-details",

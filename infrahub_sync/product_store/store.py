@@ -91,6 +91,31 @@ CREATE UNIQUE INDEX IF NOT EXISTS configuration_versions_checksum
     ON configuration_versions (config_id, package_checksum);
 """
 _CANCELLATION_DEADLINE_ERROR = "execution cancellation recovery deadline is invalid"
+_SELECT_LATEST_EXECUTION_RESULTS = (
+    "SELECT results FROM product_runs WHERE run_id = ? AND (SELECT latest.flow_run_id "
+    "FROM prefect_executions AS latest WHERE latest.run_id = product_runs.run_id "
+    "ORDER BY latest.position DESC LIMIT 1) = ?"
+)
+_UPDATE_LATEST_EXECUTION_RESULTS = (
+    "UPDATE product_runs SET results = ? WHERE run_id = ? AND (SELECT latest.flow_run_id "
+    "FROM prefect_executions AS latest WHERE latest.run_id = product_runs.run_id "
+    "ORDER BY latest.position DESC LIMIT 1) = ?"
+)
+_UPDATE_LATEST_EXECUTION_FINISH = (
+    "UPDATE product_runs SET phase = ?, outcome = ?, finished_at = ?, summary = ?, results = ? "
+    "WHERE run_id = ? AND (SELECT latest.flow_run_id FROM prefect_executions AS latest "
+    "WHERE latest.run_id = product_runs.run_id ORDER BY latest.position DESC LIMIT 1) = ?"
+)
+_UPDATE_LATEST_EXECUTION_TERMINAL = (
+    "UPDATE product_runs SET phase = ?, outcome = ?, finished_at = ? WHERE run_id = ? "
+    "AND (SELECT latest.flow_run_id FROM prefect_executions AS latest "
+    "WHERE latest.run_id = product_runs.run_id ORDER BY latest.position DESC LIMIT 1) = ?"
+)
+_UPDATE_LATEST_EXECUTION_CANCELLED = (
+    "UPDATE product_runs SET phase = 'cancelled', outcome = 'cancelled', finished_at = ? WHERE run_id = ? "
+    "AND (SELECT latest.flow_run_id FROM prefect_executions AS latest "
+    "WHERE latest.run_id = product_runs.run_id ORDER BY latest.position DESC LIMIT 1) = ?"
+)
 
 # Nullable run-to-configuration binding columns on ``product_runs``. Added by an
 # introspection-guarded ALTER (see ``_migrate_product_runs_columns``) rather than baked into
@@ -1040,10 +1065,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     return False
                 if isinstance(writeback, ExecutionFinishWriteback):
                     cursor.execute(
-                        self._sql(
-                            "UPDATE product_runs SET phase = ?, outcome = ?, finished_at = ?, summary = ?, results = ? "
-                            "WHERE run_id = ?"
-                        ),
+                        self._sql(_UPDATE_LATEST_EXECUTION_FINISH),
                         (
                             writeback.phase,
                             writeback.outcome,
@@ -1051,17 +1073,21 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                             _json(writeback.summary),
                             _json(writeback.results),
                             run_id,
+                            flow_run_id,
                         ),
                     )
                 else:
-                    cursor.execute(self._sql("SELECT results FROM product_runs WHERE run_id = ?"), (run_id,))
-                    row = _require_result_row(cursor.fetchone(), run_id)
-                    current = _JSON_MAPPING_ADAPTER.validate_json(str(row[0]))
                     cursor.execute(
-                        self._sql("UPDATE product_runs SET results = ? WHERE run_id = ?"),
-                        (_json({**current, **writeback.results}), run_id),
+                        self._sql(_SELECT_LATEST_EXECUTION_RESULTS),
+                        (run_id, flow_run_id),
                     )
-                _require_run_results_recorded(cursor, run_id)
+                    row = cursor.fetchone()
+                    if row is not None:
+                        current = _JSON_MAPPING_ADAPTER.validate_json(str(row[0]))
+                        cursor.execute(
+                            self._sql(_UPDATE_LATEST_EXECUTION_RESULTS),
+                            (_json({**current, **writeback.results}), run_id, flow_run_id),
+                        )
                 cursor.execute(
                     self._sql(
                         "SELECT cancellation_receipt_id FROM prefect_executions WHERE run_id = ? AND flow_run_id = ? "
@@ -1177,8 +1203,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         connection.commit()
                         return False
                     cursor.execute(
-                        self._sql("UPDATE product_runs SET phase = ?, outcome = ?, finished_at = ? WHERE run_id = ?"),
-                        (phase, outcome, acknowledged_at.isoformat(), run_id),
+                        self._sql(_UPDATE_LATEST_EXECUTION_TERMINAL),
+                        (phase, outcome, acknowledged_at.isoformat(), run_id, flow_run_id),
                     )
                     self._complete_receipt_row(
                         cursor,
@@ -1239,11 +1265,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     connection.commit()
                     return False
                 cursor.execute(
-                    self._sql(
-                        "UPDATE product_runs SET phase = 'cancelled', outcome = 'cancelled', finished_at = ? "
-                        "WHERE run_id = ?"
-                    ),
-                    (terminal_at.isoformat(), run_id),
+                    self._sql(_UPDATE_LATEST_EXECUTION_CANCELLED),
+                    (terminal_at.isoformat(), run_id, flow_run_id),
                 )
                 connection.commit()
             except Exception:
@@ -1304,8 +1327,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     connection.commit()
                     return False
                 cursor.execute(
-                    self._sql("UPDATE product_runs SET phase = ?, outcome = ?, finished_at = ? WHERE run_id = ?"),
-                    (phase, outcome, terminal_at.isoformat(), run_id),
+                    self._sql(_UPDATE_LATEST_EXECUTION_TERMINAL),
+                    (phase, outcome, terminal_at.isoformat(), run_id, flow_run_id),
                 )
                 if not acknowledged:
                     receipt_id = str(row[2])
@@ -1398,8 +1421,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     connection.commit()
                     return False
                 cursor.execute(
-                    self._sql("UPDATE product_runs SET phase = ?, outcome = ?, finished_at = ? WHERE run_id = ?"),
-                    (phase, outcome, terminal_at.isoformat(), run_id),
+                    self._sql(_UPDATE_LATEST_EXECUTION_TERMINAL),
+                    (phase, outcome, terminal_at.isoformat(), run_id, flow_run_id),
                 )
                 connection.commit()
             except Exception:
@@ -2179,25 +2202,25 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Claim one pending execution; only a canonical Prefect worker UUID is accepted."""
         if not _is_canonical_uuid(worker_id):
             raise ValueError(_INVALID_MANAGED_WORKER_ID)
-        effective_claimed_at = claimed_at or datetime.now(timezone.utc)
+        effective_claimed_at = claimed_at if claimed_at is not None else datetime.now(timezone.utc)
         _require_execution_timestamp(effective_claimed_at)
         return self._records.claim_execution(run_id, flow_run_id, worker_id=worker_id, claimed_at=effective_claimed_at)
 
     def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime | None = None) -> bool:
         """Set the first stall marker while leaving a pre-TTL execution claimable."""
-        effective_stalled_at = stalled_at or datetime.now(timezone.utc)
+        effective_stalled_at = stalled_at if stalled_at is not None else datetime.now(timezone.utc)
         _require_execution_timestamp(effective_stalled_at)
         return self._records.mark_execution_stalled(run_id, flow_run_id, stalled_at=effective_stalled_at)
 
     def abandon_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime | None = None) -> bool:
         """CAS an unclaimed execution into the terminal abandoned verdict."""
-        effective_terminal_at = terminal_at or datetime.now(timezone.utc)
+        effective_terminal_at = terminal_at if terminal_at is not None else datetime.now(timezone.utc)
         _require_execution_timestamp(effective_terminal_at)
         return self._records.abandon_execution(run_id, flow_run_id, terminal_at=effective_terminal_at)
 
     def interrupt_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime | None = None) -> bool:
         """CAS a claimed execution into the terminal interrupted/ambiguous verdict."""
-        effective_terminal_at = terminal_at or datetime.now(timezone.utc)
+        effective_terminal_at = terminal_at if terminal_at is not None else datetime.now(timezone.utc)
         _require_execution_timestamp(effective_terminal_at)
         return self._records.interrupt_execution(run_id, flow_run_id, terminal_at=effective_terminal_at)
 
@@ -2219,9 +2242,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         if (terminal_state, terminal_outcome) not in {("completed", "succeeded"), ("failed", "failed")}:
             msg = "claimed execution terminal verdict is invalid"
             raise ValueError(msg)
-        if terminal_at.utcoffset() is None:
-            msg = "execution terminal timestamp must include a timezone"
-            raise ValueError(msg)
+        _require_execution_timestamp(terminal_at)
         if isinstance(writeback, ExecutionFinishWriteback):
             if writeback.outcome != "failed" and self._records.has_pending_artifacts(run_id):
                 msg = f"Sync run ID {run_id!r} has an incomplete artifact publication"
@@ -2305,7 +2326,9 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         if terminal_at is not None:
             _require_execution_timestamp(terminal_at)
         return self._records.cancel_execution(
-            run_id, flow_run_id, terminal_at=terminal_at or datetime.now(timezone.utc)
+            run_id,
+            flow_run_id,
+            terminal_at=terminal_at if terminal_at is not None else datetime.now(timezone.utc),
         )
 
     def expire_execution_cancellation(
@@ -2315,7 +2338,9 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         if terminal_at is not None:
             _require_execution_timestamp(terminal_at)
         return self._records.expire_execution_cancellation(
-            run_id, flow_run_id, terminal_at=terminal_at or datetime.now(timezone.utc)
+            run_id,
+            flow_run_id,
+            terminal_at=terminal_at if terminal_at is not None else datetime.now(timezone.utc),
         )
 
     def pending_executions(self) -> tuple[tuple[str, PrefectExecutionLink], ...]:

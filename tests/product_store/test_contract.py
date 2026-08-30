@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
-from threading import Barrier, local
+from threading import Barrier, Event, local
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock
@@ -1312,6 +1312,81 @@ def test_execution_liveness_mutations_refuse_non_exact_timestamps_without_writin
     assert provider.lookup_run("run-001") == before
 
 
+@pytest.mark.parametrize(
+    "invalid_timestamp",
+    [
+        0,
+        1_777_469_600,
+        type("WritebackDatetime", (datetime,), {})(2026, 8, 29, tzinfo=timezone.utc),
+    ],
+    ids=["zero-integer", "integer", "datetime-subclass"],
+)
+def test_execution_finish_writeback_refuses_non_exact_finished_at(invalid_timestamp: object) -> None:
+    with pytest.raises(ValidationError, match="execution writeback timestamps"):
+        product_store.ExecutionFinishWriteback.model_validate(
+            {
+                "phase": "planned",
+                "outcome": "planned",
+                "finished_at": invalid_timestamp,
+                "summary": {},
+                "results": {},
+            }
+        )
+
+
+@pytest.mark.parametrize("transition", ["abandon", "interrupt", "commit", "cancel", "expire"])
+@pytest.mark.parametrize(
+    "invalid_timestamp",
+    [
+        0,
+        1_777_469_600,
+        type("TransitionDatetime", (datetime,), {})(2026, 8, 29, tzinfo=timezone.utc),
+    ],
+    ids=["zero-integer", "integer", "datetime-subclass"],
+)
+def test_every_execution_terminal_transition_refuses_non_exact_timestamp_without_writing(
+    provider: ProductProjection,
+    transition: str,
+    invalid_timestamp: object,
+) -> None:
+    now = datetime(2026, 8, 29, tzinfo=timezone.utc)
+    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    )
+    if transition in {"interrupt", "commit"}:
+        assert provider.claim_execution("run-001", "flow-001", worker_id=worker_id, claimed_at=now)
+    before = provider.lookup_run("run-001")
+    terminal_at = cast("datetime", invalid_timestamp)
+    actions: dict[str, Callable[[], bool]] = {
+        "abandon": lambda: provider.abandon_execution("run-001", "flow-001", terminal_at=terminal_at),
+        "interrupt": lambda: provider.interrupt_execution("run-001", "flow-001", terminal_at=terminal_at),
+        "commit": lambda: provider.commit_claimed_execution(
+            "run-001",
+            "flow-001",
+            worker_id=worker_id,
+            terminal_at=terminal_at,
+            terminal_state="completed",
+            terminal_outcome="succeeded",
+            writeback=product_store.ExecutionFinishWriteback(
+                phase="planned",
+                outcome="planned",
+                finished_at=now,
+                summary={},
+                results={},
+            ),
+        ),
+        "cancel": lambda: provider.cancel_execution("run-001", "flow-001", terminal_at=terminal_at),
+        "expire": lambda: provider.expire_execution_cancellation("run-001", "flow-001", terminal_at=terminal_at),
+    }
+
+    with pytest.raises(ValueError, match=r"^execution timestamps must include a timezone$"):
+        actions[transition]()
+
+    assert provider.lookup_run("run-001") == before
+
+
 def test_claim_and_abandon_race_has_one_winner(tmp_path: Path) -> None:
     """Separate SQLite connections converge through the row predicates alone."""
     projection = local_product_projection(tmp_path)
@@ -1395,6 +1470,204 @@ def test_claimed_finish_writeback_is_atomic_and_worker_bound(provider: ProductPr
         "completed",
         "succeeded",
     )
+
+
+@pytest.mark.parametrize(
+    "older_transition",
+    ["finish", "merge", "abandon", "interrupt", "cancel", "expire", "late-ack"],
+)
+def test_older_execution_terminalization_settles_only_its_link_and_receipt(
+    provider: ProductProjection,
+    older_transition: str,
+) -> None:
+    """Accepted position, not completion timing, decides which link owns product results."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-older", purpose="plan", attempt=1, submitted_at=now)
+    )
+    provider.add_prefect_execution(
+        "run-001",
+        PrefectExecutionLink(
+            flow_run_id="flow-latest", purpose="verify", attempt=1, submitted_at=now + timedelta(seconds=1)
+        ),
+    )
+    if older_transition in {"finish", "merge", "interrupt"}:
+        assert provider.claim_execution("run-001", "flow-older", worker_id=worker_id, claimed_at=now)
+
+    receipt: MutationReceipt | None = None
+    deadline = now + timedelta(seconds=30)
+    if older_transition in {"cancel", "expire", "late-ack"}:
+        receipt = _receipt(operation="cancel", target_run_id="run-001")
+        provider.reserve_mutation(receipt)
+        assert provider.claim_mutation(receipt.receipt_id)
+        assert provider.request_execution_cancellation(
+            "run-001",
+            "flow-older",
+            requested_at=now,
+            recovery_deadline_at=deadline,
+            recovery_seconds=30,
+            receipt_id=receipt.receipt_id,
+        )
+    if older_transition == "cancel":
+        assert receipt is not None
+        assert provider.acknowledge_execution_cancellation(
+            "run-001",
+            "flow-older",
+            acknowledged_at=now + timedelta(seconds=1),
+            response_status=202,
+            response_body={"accepted": True},
+        )
+        provider.observe_prefect_execution("run-001", "flow-older", state="cancelled")
+
+    assert provider.claim_execution(
+        "run-001", "flow-latest", worker_id=worker_id, claimed_at=now + timedelta(seconds=1)
+    )
+    newest_finished_at = now + timedelta(seconds=2)
+    assert provider.commit_claimed_execution(
+        "run-001",
+        "flow-latest",
+        worker_id=worker_id,
+        terminal_at=newest_finished_at,
+        terminal_state="completed",
+        terminal_outcome="succeeded",
+        writeback=product_store.ExecutionFinishWriteback(
+            phase="newest-complete",
+            outcome="newest-result",
+            finished_at=newest_finished_at,
+            summary={"winner": "newest"},
+            results={"winner": "newest"},
+        ),
+    )
+
+    older_terminal_at = deadline if older_transition in {"expire", "late-ack"} else now + timedelta(seconds=3)
+    if older_transition == "finish":
+        settled = provider.commit_claimed_execution(
+            "run-001",
+            "flow-older",
+            worker_id=worker_id,
+            terminal_at=older_terminal_at,
+            terminal_state="failed",
+            terminal_outcome="failed",
+            writeback=product_store.ExecutionFinishWriteback(
+                phase="older-failed",
+                outcome="failed",
+                finished_at=older_terminal_at,
+                summary={"winner": "older"},
+                results={"winner": "older"},
+            ),
+        )
+    elif older_transition == "merge":
+        settled = provider.commit_claimed_execution(
+            "run-001",
+            "flow-older",
+            worker_id=worker_id,
+            terminal_at=older_terminal_at,
+            terminal_state="completed",
+            terminal_outcome="succeeded",
+            writeback=product_store.ExecutionMergeWriteback(results={"older": "must-not-merge"}),
+        )
+    elif older_transition == "abandon":
+        settled = provider.abandon_execution("run-001", "flow-older", terminal_at=older_terminal_at)
+    elif older_transition == "interrupt":
+        settled = provider.interrupt_execution("run-001", "flow-older", terminal_at=older_terminal_at)
+    elif older_transition == "cancel":
+        settled = provider.cancel_execution("run-001", "flow-older", terminal_at=older_terminal_at)
+    elif older_transition == "expire":
+        settled = provider.expire_execution_cancellation("run-001", "flow-older", terminal_at=older_terminal_at)
+    else:
+        settled = provider.acknowledge_execution_cancellation(
+            "run-001",
+            "flow-older",
+            acknowledged_at=older_terminal_at,
+            response_status=202,
+            response_body={"accepted": True},
+        )
+
+    assert settled is (older_transition != "late-ack")
+    stored = provider.lookup_run("run-001").value
+    assert stored is not None
+    assert tuple(link.flow_run_id for link in stored.prefect_executions) == ("flow-older", "flow-latest")
+    assert (stored.phase, stored.outcome, stored.finished_at) == (
+        "newest-complete",
+        "newest-result",
+        newest_finished_at,
+    )
+    assert stored.summary == {"winner": "newest"}
+    assert stored.results == {"winner": "newest"}
+    assert stored.prefect_executions[0].terminal_at == older_terminal_at
+    if receipt is not None:
+        replay = provider.lookup_mutation(receipt.actor, receipt.key_digest).value
+        assert replay is not None
+        assert replay.response_status == (202 if older_transition == "cancel" else 503)
+
+
+def test_cross_link_late_writer_cannot_overwrite_newer_execution_result(provider: ProductProjection) -> None:
+    """Independent link writers retain the latest accepted execution's product result."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+    provider.create_run(_run())
+    for attempt, flow_run_id in enumerate(("flow-older", "flow-latest"), start=1):
+        provider.add_prefect_execution(
+            "run-001",
+            PrefectExecutionLink(flow_run_id=flow_run_id, purpose="plan", attempt=attempt, submitted_at=now),
+        )
+        assert provider.claim_execution("run-001", flow_run_id, worker_id=worker_id, claimed_at=now)
+    start = Barrier(2)
+    newest_committed = Event()
+
+    def commit_latest() -> bool:
+        start.wait()
+        committed = provider.commit_claimed_execution(
+            "run-001",
+            "flow-latest",
+            worker_id=worker_id,
+            terminal_at=now + timedelta(seconds=1),
+            terminal_state="completed",
+            terminal_outcome="succeeded",
+            writeback=product_store.ExecutionFinishWriteback(
+                phase="newest-complete",
+                outcome="newest-result",
+                finished_at=now + timedelta(seconds=1),
+                summary={"winner": "newest"},
+                results={"winner": "newest"},
+            ),
+        )
+        newest_committed.set()
+        return committed
+
+    def commit_older_late() -> bool:
+        start.wait()
+        assert newest_committed.wait(timeout=2)
+        return provider.commit_claimed_execution(
+            "run-001",
+            "flow-older",
+            worker_id=worker_id,
+            terminal_at=now + timedelta(seconds=2),
+            terminal_state="failed",
+            terminal_outcome="failed",
+            writeback=product_store.ExecutionFinishWriteback(
+                phase="older-failed",
+                outcome="failed",
+                finished_at=now + timedelta(seconds=2),
+                summary={"winner": "older"},
+                results={"winner": "older"},
+            ),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = tuple(pool.map(lambda action: action(), (commit_latest, commit_older_late)))
+
+    assert outcomes == (True, True)
+    stored = provider.lookup_run("run-001").value
+    assert stored is not None
+    assert (stored.phase, stored.outcome, stored.results) == (
+        "newest-complete",
+        "newest-result",
+        {"winner": "newest"},
+    )
+    assert all(link.terminal_at is not None for link in stored.prefect_executions)
 
 
 def test_cancellation_saga_persists_intent_acknowledgement_and_clean_terminal(provider: ProductProjection) -> None:

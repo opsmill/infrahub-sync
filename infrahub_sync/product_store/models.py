@@ -231,10 +231,10 @@ class ExecutionFinishWriteback(BaseModel):
     summary: dict[str, Any]
     results: dict[str, Any]
 
-    @field_validator("finished_at")
+    @field_validator("finished_at", mode="before")
     @classmethod
-    def _require_timezone(cls, value: datetime) -> datetime:
-        if value.utcoffset() is None:
+    def _require_timezone(cls, value: object) -> datetime:
+        if type(value) is not datetime or value.utcoffset() is None:  # pylint: disable=unidiomatic-typecheck
             msg = "execution writeback timestamps must include a timezone"
             raise ValueError(msg)
         return value

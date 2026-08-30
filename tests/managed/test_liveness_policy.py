@@ -555,6 +555,58 @@ def test_pool_status_maps_invalid_observation_time_to_unavailable() -> None:
     assert snapshot == PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
 
 
+@pytest.mark.parametrize("worker_order", ["online-first", "offline-first"])
+def test_duplicate_worker_uuid_snapshot_is_unavailable_and_cannot_drive_reconciliation(
+    tmp_path, worker_order: str
+) -> None:
+    """Conflicting records for one worker identity invalidate the whole pool snapshot."""
+    from infrahub_sync.managed.orchestration import PrefectOrchestration
+    from infrahub_sync.managed.service import _service_status  # noqa: PLC2701 - public boundary behavior test.
+
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    worker_id = uuid4()
+    workers = [
+        SimpleNamespace(id=worker_id, status="ONLINE", last_heartbeat_time=now, heartbeat_interval_seconds=10),
+        SimpleNamespace(id=worker_id, status="OFFLINE", last_heartbeat_time=now, heartbeat_interval_seconds=10),
+    ]
+    if worker_order == "offline-first":
+        workers.reverse()
+
+    class _PoolClient:
+        @staticmethod
+        async def read_workers_for_work_pool(_pool: str) -> list[SimpleNamespace]:
+            return workers
+
+        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str):  # noqa: PLR6301
+            return []
+
+    snapshot = asyncio.run(PrefectOrchestration(cast("RemoteExecutionClient", _PoolClient())).pool_status("pool", now))
+    projection = local_product_projection(tmp_path)
+    projection.create_run(
+        _run(
+            "run-duplicate-workers",
+            PrefectExecutionLink(
+                flow_run_id="flow-duplicate-workers",
+                purpose="plan",
+                attempt=1,
+                submitted_at=now - timedelta(seconds=30),
+            ),
+        )
+    )
+    reconciler = RunLivenessReconciler(
+        projection, _Orchestration(snapshot), LivenessPolicy(300, 30, 5), "pool", clock=lambda: now
+    )
+
+    status = _service_status(snapshot)
+    asyncio.run(reconciler.reconcile_once())
+
+    assert snapshot == PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
+    assert status.worker.detail_available is False
+    stored = projection.lookup_run("run-duplicate-workers").value
+    assert stored is not None
+    assert stored.prefect_executions[0].stalled_at is None
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
