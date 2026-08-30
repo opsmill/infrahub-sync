@@ -397,7 +397,8 @@ def test_status_accepts_only_its_declared_success_status() -> None:
 
 
 def test_json_response_over_16_mib_is_a_protocol_error() -> None:
-    oversized_json = b'["' + (b"x" * (16 * 1024 * 1024)) + b'"]'
+    oversized_json = b"[]" + (b" " * (16 * 1024 * 1024))
+    assert json.loads(oversized_json) == []
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/version":
