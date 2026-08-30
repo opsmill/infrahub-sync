@@ -125,8 +125,8 @@ class _CursorAdapter:
         if "ALTER COLUMN" in stripped and "DROP NOT NULL" in stripped:
             return self
         stripped = stripped.replace(
-            "CAST(submitted_at AS TIMESTAMPTZ)",
-            "infrahub_sync_execution_timestamp_microseconds(submitted_at)",
+            "CAST(COALESCE(submitted_at, last_observed_at) AS TIMESTAMPTZ)",
+            "infrahub_sync_execution_timestamp_microseconds(COALESCE(submitted_at, last_observed_at))",
         )
         stripped = stripped.replace(
             "CAST(%s AS TIMESTAMPTZ)",
@@ -1199,12 +1199,31 @@ def test_every_product_admission_refuses_embedded_execution_without_submitted_at
 
 
 @pytest.mark.parametrize("profile", ["sqlite", "postgresql"])
-def test_legacy_execution_without_submitted_at_uses_observation_fallback(profile: str, tmp_path: Path) -> None:
-    """Migrated rows remain readable without fabricating the fallback into storage."""
+@pytest.mark.parametrize(
+    ("anchor_offset_microseconds", "expected_outcome"),
+    [
+        (-1, "refused"),
+        (0, "refused"),
+        (1, "claimed"),
+        (-300_000_000, "refused"),
+    ],
+    ids=["deadline-minus-one-microsecond", "deadline", "deadline-plus-one-microsecond", "well-past-ttl"],
+)
+def test_migrated_execution_claim_uses_observation_fallback_at_admission_deadline(
+    profile: str,
+    tmp_path: Path,
+    anchor_offset_microseconds: int,
+    expected_outcome: str,
+) -> None:
+    """A migrated row uses its observation as the claim CAS admission anchor."""
     database = tmp_path / f"legacy-{profile}.sqlite3"
     records = SQLiteRunStore(database) if profile == "sqlite" else PostgreSQLRunStore(_connect(database))
     projection = ProductProjection(records, FileArtifactStore(tmp_path / f"objects-{profile}"))
-    observed_at = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    claimed_at = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    admission_deadline_at = claimed_at - timedelta(seconds=300)
+    observed_at = (admission_deadline_at + timedelta(microseconds=anchor_offset_microseconds)).astimezone(
+        timezone(timedelta(hours=-4))
+    )
     projection.create_run(_run())
     projection.add_prefect_execution(
         "run-001",
@@ -1232,6 +1251,42 @@ def test_legacy_execution_without_submitted_at_uses_observation_fallback(profile
             ("run-001", "flow-001"),
         ).fetchone()
     assert stored_submitted_at == (None,)
+    claimed = projection.claim_execution(
+        "run-001",
+        "flow-001",
+        worker_id="8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0",
+        claimed_at=claimed_at,
+        admission_ttl_seconds=300,
+    )
+    assert claimed is (expected_outcome == "claimed")
+
+
+@pytest.mark.parametrize("profile", ["sqlite", "postgresql"])
+def test_legacy_execution_without_any_admission_anchor_remains_claimable(profile: str, tmp_path: Path) -> None:
+    """Only a row with neither submission nor observation remains legacy-unclassified."""
+    database = tmp_path / f"unclassified-{profile}.sqlite3"
+    records = SQLiteRunStore(database) if profile == "sqlite" else PostgreSQLRunStore(_connect(database))
+    projection = ProductProjection(records, FileArtifactStore(tmp_path / f"objects-{profile}"))
+    observed_at = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    projection.create_run(_run())
+    projection.add_prefect_execution(
+        "run-001",
+        PrefectExecutionLink(
+            flow_run_id="flow-001",
+            purpose="plan",
+            attempt=1,
+            last_observed_state="pending",
+            last_observed_at=observed_at,
+            submitted_at=observed_at,
+        ),
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE prefect_executions SET submitted_at = NULL, last_observed_at = NULL "
+            "WHERE run_id = ? AND flow_run_id = ?",
+            ("run-001", "flow-001"),
+        )
+
     assert projection.claim_execution(
         "run-001",
         "flow-001",
@@ -1491,6 +1546,51 @@ def test_claim_and_abandon_race_has_one_winner(provider: ProductProjection, age_
     assert outcomes.count(True) == 1
     if age_seconds == 300:
         assert outcomes == (False, True)
+
+
+@pytest.mark.parametrize("profile", ["sqlite", "postgresql"])
+def test_migrated_claim_and_abandon_race_at_deadline_has_one_winner(profile: str, tmp_path: Path) -> None:
+    """The effective observation anchor excludes claim while abandonment wins the row CAS."""
+    database = tmp_path / f"migrated-race-{profile}.sqlite3"
+    records = SQLiteRunStore(database) if profile == "sqlite" else PostgreSQLRunStore(_connect(database))
+    projection = ProductProjection(records, FileArtifactStore(tmp_path / f"objects-{profile}"))
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+    projection.create_run(_run())
+    projection.add_prefect_execution(
+        "run-001",
+        PrefectExecutionLink(
+            flow_run_id="flow-001",
+            purpose="plan",
+            attempt=1,
+            last_observed_at=now - timedelta(seconds=300),
+            submitted_at=now - timedelta(seconds=300),
+        ),
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE prefect_executions SET submitted_at = NULL WHERE run_id = ? AND flow_run_id = ?",
+            ("run-001", "flow-001"),
+        )
+    barrier = Barrier(2)
+
+    def claim() -> bool:
+        barrier.wait()
+        return projection.claim_execution(
+            "run-001",
+            "flow-001",
+            worker_id=worker_id,
+            claimed_at=now,
+            admission_ttl_seconds=300,
+        )
+
+    def abandon() -> bool:
+        barrier.wait()
+        return projection.abandon_execution("run-001", "flow-001", terminal_at=now)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = tuple(pool.map(lambda action: action(), (claim, abandon)))
+    assert outcomes == (False, True)
 
 
 def test_execution_claim_refuses_invalid_worker_identity_without_mutation(provider: ProductProjection) -> None:

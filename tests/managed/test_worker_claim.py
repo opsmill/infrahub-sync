@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,9 +27,10 @@ FLOW_ID = "ed4778cb-f2cf-4b1f-a87b-68be37659e93"
 WORKER_ID = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
 
 
-def _projection(tmp_path: Path, *, submitted_at: datetime | None = None):
+def _projection(tmp_path: Path, *, submitted_at: datetime | None = None, migrated: bool = False):
     projection = local_product_projection(tmp_path)
     now = datetime.now(timezone.utc)
+    effective_submitted_at = now if submitted_at is None else submitted_at
     projection.create_run(
         ProductRun(
             run_id="run-worker-claim",
@@ -44,9 +46,16 @@ def _projection(tmp_path: Path, *, submitted_at: datetime | None = None):
             flow_run_id=FLOW_ID,
             purpose="plan",
             attempt=1,
-            submitted_at=now if submitted_at is None else submitted_at,
+            last_observed_at=effective_submitted_at if migrated else None,
+            submitted_at=effective_submitted_at,
         ),
     )
+    if migrated:
+        with sqlite3.connect(tmp_path / "product-records.sqlite3") as connection:
+            connection.execute(
+                "UPDATE prefect_executions SET submitted_at = NULL WHERE run_id = ? AND flow_run_id = ?",
+                ("run-worker-claim", FLOW_ID),
+            )
     return projection
 
 
@@ -107,7 +116,11 @@ def test_expired_worker_claim_refusal_precedes_all_stage_runtime_construction(
     stage: Literal["plan", "verify", "apply", "sync"],
 ) -> None:
     """An expired admission cannot enter registry, package, adapter, cache, or artifact work."""
-    projection = _projection(tmp_path, submitted_at=datetime.now(timezone.utc) - timedelta(seconds=2))
+    projection = _projection(
+        tmp_path,
+        submitted_at=datetime.now(timezone.utc) - timedelta(seconds=2),
+        migrated=True,
+    )
     constructed: list[str] = []
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
     monkeypatch.setenv("INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS", "1")

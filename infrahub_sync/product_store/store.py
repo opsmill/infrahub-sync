@@ -1010,14 +1010,15 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             "UPDATE prefect_executions SET claimed_at = ?, claiming_worker_id = ? "
             "WHERE run_id = ? AND flow_run_id = ? AND claimed_at IS NULL AND terminal_at IS NULL "
             "AND cancellation_requested_at IS NULL "
-            "AND (submitted_at IS NULL OR "
-            "infrahub_sync_execution_timestamp_microseconds(submitted_at) "
+            "AND (COALESCE(submitted_at, last_observed_at) IS NULL OR "
+            "infrahub_sync_execution_timestamp_microseconds(COALESCE(submitted_at, last_observed_at)) "
             "> infrahub_sync_execution_timestamp_microseconds(?))"
             if self._dialect == "sqlite"
             else "UPDATE prefect_executions SET claimed_at = ?, claiming_worker_id = ? "
             "WHERE run_id = ? AND flow_run_id = ? AND claimed_at IS NULL AND terminal_at IS NULL "
             "AND cancellation_requested_at IS NULL "
-            "AND (submitted_at IS NULL OR CAST(submitted_at AS TIMESTAMPTZ) > CAST(? AS TIMESTAMPTZ))"
+            "AND (COALESCE(submitted_at, last_observed_at) IS NULL OR "
+            "CAST(COALESCE(submitted_at, last_observed_at) AS TIMESTAMPTZ) > CAST(? AS TIMESTAMPTZ))"
         )
         return self._execution_update(
             statement,
