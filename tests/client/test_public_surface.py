@@ -42,7 +42,7 @@ def test_python_api_docs_describe_only_the_http_client() -> None:
     assert "product_cache_location" not in docs
     assert "in-process" not in docs
     assert "config_directory" not in docs
-    assert "unencrypted over HTTP" in docs
+    assert "HTTP provides no transport encryption for bearer credentials" in docs
 
 
 def test_public_client_surface_has_concise_docstrings() -> None:

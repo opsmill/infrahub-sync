@@ -15,8 +15,8 @@ Psycopg, and Boto3 remain optional service dependencies.
 Construct a client with an absolute HTTP or HTTPS service URL, a bearer token, and a positive
 request timeout. TLS verification is enabled and redirects are refused.
 
-Bearer credentials are unencrypted over HTTP. Use HTTP only when the service connection stays
-inside a trusted network whose transport controls you accept; use HTTPS across untrusted networks.
+HTTP provides no transport encryption for bearer credentials. Use HTTP only when the service
+connection stays inside a network you trust; use HTTPS across networks you do not trust.
 
 ```python
 from infrahub_sync.client import SyncClient
