@@ -11,16 +11,23 @@ from infrahub_sync.managed.models import public_run_resource
 from infrahub_sync.product_store.models import PrefectExecutionLink, ProductRun
 
 
-def test_client_models_import_no_product_or_service_module() -> None:
-    source = Path("infrahub_sync/client/models.py").read_text(encoding="utf-8")
-    imports = {
-        node.module or ""
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.ImportFrom)
-    }
+def test_client_package_imports_no_product_or_service_module() -> None:
+    imports: set[str] = set()
+    for path in Path("infrahub_sync/client").glob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Import):
+                imports.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imports.add(node.module or "")
 
     assert not {name for name in imports if name.startswith("infrahub_sync.product_store")}
     assert not {name for name in imports if name.startswith("infrahub_sync.managed")}
+    assert not {name for name in imports if name.startswith("infrahub_sync.adapters")}
+    assert not {name for name in imports if name.startswith("infrahub_sync.execution")}
+    assert not {
+        name for name in imports if name.partition(".")[0] in {"boto3", "fastapi", "prefect", "psycopg", "uvicorn"}
+    }
 
 
 def test_server_projects_store_run_into_standalone_resource() -> None:

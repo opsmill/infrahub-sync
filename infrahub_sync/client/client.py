@@ -144,11 +144,11 @@ class SyncClient:
     def get_version(self) -> VersionResource:
         response = self._send("get_version", "GET", "/version", authenticated=False)
         if response.status_code != 200:
-            raise CompatibilityError
+            raise self._compatibility_error(response)
         try:
             return VersionResource.model_validate(self._json(response, "get_version"))
         except (ValidationError, ProtocolError):
-            raise CompatibilityError from None
+            raise self._compatibility_error(response) from None
 
     def get_status(self) -> ServiceStatusResource:
         response = self._send("get_status", "GET", "/status", authenticated=False)
@@ -435,6 +435,25 @@ class SyncClient:
         if not version.api_versions or "v3-unstable" not in version.api_versions:
             raise CompatibilityError(version.server_version, version.api_versions)
         self._compatible = True
+
+    def _compatibility_error(self, response: httpx.Response) -> CompatibilityError:
+        server_version = None
+        api_versions: tuple[str, ...] = ()
+        try:
+            payload = self._json(response, "get_version")
+            if isinstance(payload, dict):
+                raw = cast("dict[str, object]", payload)
+                version_value = raw.get("server_version")
+                versions_value = raw.get("api_versions")
+                if isinstance(version_value, str):
+                    server_version = version_value
+                if isinstance(versions_value, (list, tuple)) and all(
+                    isinstance(value, str) for value in versions_value
+                ):
+                    api_versions = tuple(cast("list[str] | tuple[str, ...]", versions_value))
+        except ProtocolError:
+            pass
+        return CompatibilityError(server_version, api_versions)
 
     def _send(
         self,

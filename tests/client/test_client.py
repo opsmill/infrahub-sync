@@ -148,6 +148,24 @@ def test_compatibility_refuses_before_protected_request(response: httpx.Response
     assert "Authorization" not in requests[0].headers
 
 
+def test_compatibility_error_preserves_only_safely_parsed_discovery_fields() -> None:
+    response = httpx.Response(
+        200,
+        json={"server_version": "3.1", "api_versions": ["v4"], "stability": {"wrong": True}},
+    )
+    client = SyncClient(
+        "https://example.test",
+        TOKEN,
+        transport=httpx.MockTransport(lambda _request: response),
+    )
+
+    with pytest.raises(CompatibilityError) as raised:
+        client.list_configs()
+
+    assert raised.value.server_version == "3.1"
+    assert raised.value.api_versions == ("v4",)
+
+
 def test_all_route_methods_send_the_frozen_contract() -> None:
     requests: list[httpx.Request] = []
     version = _config_version()

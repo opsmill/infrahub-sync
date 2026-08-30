@@ -43,7 +43,7 @@ class BlockOptionalImport:
 sys.meta_path.insert(0, BlockOptionalImport())
 
 import infrahub_sync
-import infrahub_sync.api.v1
+import infrahub_sync.client
 import infrahub_sync.cli
 import infrahub_sync.execution
 from typer.testing import CliRunner
@@ -58,7 +58,7 @@ assert list_result.exit_code == 0, list_result.output
 
 optional_roots = {sorted(OPTIONAL_DISTRIBUTION_NAMES)!r}
 leaked = sorted(m for m in sys.modules if m.partition(".")[0] in optional_roots)
-assert not leaked, f"optional managed modules imported by the base package: {{leaked}}"
+assert not leaked, f"optional service modules imported by the base package: {{leaked}}"
 print("NO-OPTIONAL-MANAGED-IMPORT-OK")
 """
 

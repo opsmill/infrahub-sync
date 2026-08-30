@@ -29,6 +29,16 @@ _BINDING_MESSAGE = "configuration binding must be all absent or all present"
 _FINISHED_RUN_MESSAGE = "a finished product record requires an outcome"
 _TERMINAL_FIELDS_MESSAGE = "execution terminal fields must be all absent or all present"
 _TERMINAL_VERDICT_MESSAGE = "execution terminal verdict is invalid"
+_WORKER_STATUS_MESSAGE = "worker status is invalid"
+_ARTIFACT_IDS_MESSAGE = "artifact IDs must be unique within a product record"
+_ARTIFACT_OWNER_MESSAGE = "every artifact reference must belong to the product record's run ID"
+_EXECUTION_IDS_MESSAGE = "execution IDs must be unique within a product record"
+
+
+def _timezone(value: datetime | None, message: str) -> datetime | None:
+    if value is not None and value.utcoffset() is None:
+        raise ValueError(message)
+    return value
 
 
 class _RequestModel(BaseModel):
@@ -121,9 +131,7 @@ class ArtifactReferenceResource(_ResourceModel):
     @field_validator("created_at", "expires_at")
     @classmethod
     def _require_timezone(cls, value: datetime | None) -> datetime | None:
-        if value is not None and value.utcoffset() is None:
-            raise ValueError(_ARTIFACT_TIME_MESSAGE)
-        return value
+        return _timezone(value, _ARTIFACT_TIME_MESSAGE)
 
     @model_validator(mode="after")
     def _require_immutable_keys(self) -> ArtifactReferenceResource:
@@ -140,6 +148,11 @@ class PublicExecutionLink(_ResourceModel):
     attempt: int = Field(ge=1)
     last_observed_state: str | None = None
     last_observed_at: datetime | None = None
+
+    @field_validator("last_observed_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        return _timezone(value, "execution timestamps must include a timezone")
 
 
 class PublicRunResource(_ResourceModel):
@@ -160,6 +173,11 @@ class PublicRunResource(_ResourceModel):
     artifact_refs: tuple[ArtifactReferenceResource, ...] = ()
     prefect_executions: tuple[PublicExecutionLink, ...] = ()
 
+    @field_validator("started_at", "finished_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        return _timezone(value, "product-record timestamps must include a timezone")
+
     @model_validator(mode="after")
     def _require_consistent_binding(self) -> PublicRunResource:
         binding = (self.config_id, self.registry_version, self.package_checksum)
@@ -167,6 +185,14 @@ class PublicRunResource(_ResourceModel):
             raise ValueError(_BINDING_MESSAGE)
         if self.finished_at is not None and self.outcome is None:
             raise ValueError(_FINISHED_RUN_MESSAGE)
+        artifact_ids = [reference.artifact_id for reference in self.artifact_refs]
+        if len(artifact_ids) != len(set(artifact_ids)):
+            raise ValueError(_ARTIFACT_IDS_MESSAGE)
+        if any(reference.run_id != self.run_id for reference in self.artifact_refs):
+            raise ValueError(_ARTIFACT_OWNER_MESSAGE)
+        flow_run_ids = [link.flow_run_id for link in self.prefect_executions]
+        if len(flow_run_ids) != len(set(flow_run_ids)):
+            raise ValueError(_EXECUTION_IDS_MESSAGE)
         return self
 
 
@@ -211,6 +237,27 @@ class WorkerStatusResource(_ResourceModel):
     queue_depth: int | None = Field(default=None, ge=0, strict=True)
     observed_at: datetime | None
 
+    @model_validator(mode="after")
+    def _require_status(self) -> WorkerStatusResource:
+        details = (self.live_workers, self.queue_depth, self.observed_at)
+        if not self.detail_available:
+            if self.state != "unavailable" or any(value is not None for value in details):
+                raise ValueError(_WORKER_STATUS_MESSAGE)
+            return self
+        if self.state == "unavailable" or any(value is None for value in details):
+            raise ValueError(_WORKER_STATUS_MESSAGE)
+        assert self.live_workers is not None
+        assert self.queue_depth is not None
+        if self.state == "no-live-worker" and self.live_workers != 0:
+            raise ValueError(_WORKER_STATUS_MESSAGE)
+        if self.state in {"ready", "busy"} and self.live_workers == 0:
+            raise ValueError(_WORKER_STATUS_MESSAGE)
+        if self.state == "ready" and self.queue_depth != 0:
+            raise ValueError(_WORKER_STATUS_MESSAGE)
+        if self.state == "busy" and self.queue_depth == 0:
+            raise ValueError(_WORKER_STATUS_MESSAGE)
+        return self
+
 
 class ServiceStatusResource(_ResourceModel):
     service: Literal["ready"]
@@ -251,6 +298,13 @@ class ConfigurationSummaryResource(_ResourceModel):
     config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
     created_at: datetime
 
+    @field_validator("created_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, "configuration timestamps must include a timezone")
+        assert checked is not None
+        return checked
+
 
 class ConfigurationVersionResource(_ResourceModel):
     config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
@@ -258,6 +312,13 @@ class ConfigurationVersionResource(_ResourceModel):
     package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     declared_content: dict[str, Any]
     created_at: datetime
+
+    @field_validator("created_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, "configuration-version timestamps must include a timezone")
+        assert checked is not None
+        return checked
 
 
 class RegisteredConfigurationResource(_ResourceModel):
@@ -271,10 +332,10 @@ class RegisteredVersionResource(_ResourceModel):
 
 
 class ValidationFindingResource(_ResourceModel):
-    code: str
+    code: str = Field(pattern=r"^[a-z][a-z0-9-]*$", max_length=256)
     severity: Literal["error", "warning"]
-    location: str
-    message: str
+    location: str = Field(pattern=r"^(/(?:[^~/]|~[01])*)*$", max_length=256)
+    message: str = Field(min_length=1, max_length=256)
 
 
 class ValidationReportResource(_ResourceModel):
