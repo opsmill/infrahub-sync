@@ -343,7 +343,6 @@ def test_managed_storage_rejects_non_postgresql_conninfo_before_any_construction
             s3_client_builder=lambda *_args, **_kwargs: constructed("sdk"),
             projection_builder=lambda **_kwargs: constructed("projection"),
         )
-
     assert str(error.value) == f"{storage.DATABASE_URL_ENV} must be a PostgreSQL connection string"
     assert error.value.__cause__ is None
     assert database_url not in str(error.value)
@@ -471,6 +470,44 @@ def test_managed_storage_endpoint_rejects_parser_invalid_syntax(endpoint: str) -
 @pytest.mark.parametrize(
     "endpoint",
     [
+        "http://999.999.999.999",
+        "http://[v1.fe80]",
+        "HTTP://[V1.fe80]",
+    ],
+)
+def test_managed_storage_endpoint_rejects_non_boto3_host_domains_before_construction(endpoint: str) -> None:
+    """Invalid dotted IPv4 and IPvFuture never reach any storage constructor."""
+    from infrahub_sync.managed import storage
+
+    calls: list[str] = []
+
+    def constructed(name: str) -> object:
+        calls.append(name)
+        return object()
+
+    def projection_builder(**_kwargs: object) -> ProductProjection:
+        return cast("ProductProjection", constructed("projection"))
+
+    with pytest.raises(ValueError) as error:
+        storage.managed_product_projection(
+            environ={
+                storage.DATABASE_URL_ENV: "postgresql://db/sync",
+                storage.S3_BUCKET_ENV: "bucket",
+                storage.S3_ENDPOINT_ENV: endpoint,
+            },
+            database_connect=lambda: constructed("database"),
+            s3_client_builder=lambda *_args, **_kwargs: constructed("sdk"),
+            projection_builder=projection_builder,
+        )
+
+    assert str(error.value) == f"{storage.S3_ENDPOINT_ENV} must be an absolute http or https URL"
+    assert endpoint not in str(error.value)
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
         "http://s3.example.test",
         "http://s3.example.test:9000",
         "http://127.0.0.1",
@@ -479,9 +516,6 @@ def test_managed_storage_endpoint_rejects_parser_invalid_syntax(endpoint: str) -
         "https://[::1]",
         "https://[::1]:9443",
         "HTTP://s3.example.test:9000/path%20with%20encoding?query=@value#fragment",
-        "http://[v1.fe80]",
-        "HTTP://[V1.fe80]",
-        "HTTP://[vF.a:b-c._~!$&'()*+,;=]:65535/path@segment?query=@value#fragment",
     ],
 )
 def test_managed_storage_endpoint_accepts_valid_authorities(endpoint: str) -> None:

@@ -122,17 +122,12 @@ def _install_optional_sdk_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     query.RequestError = RuntimeError
     ipfabric = cast("Any", types.ModuleType("ipfabric"))
     ipfabric.IPFClient = lambda **_kwargs: types.SimpleNamespace()
-    prometheus_client = types.ModuleType("prometheus_client")
-    prometheus_parser = cast("Any", types.ModuleType("prometheus_client.parser"))
-    prometheus_parser.text_string_to_metric_families = lambda _text: ()
     for name, module in {
         "pynetbox": pynetbox,
         "pynautobot": pynautobot,
         "pynautobot.core": core,
         "pynautobot.core.query": query,
         "ipfabric": ipfabric,
-        "prometheus_client": prometheus_client,
-        "prometheus_client.parser": prometheus_parser,
     }.items():
         monkeypatch.setitem(sys.modules, name, module)
 

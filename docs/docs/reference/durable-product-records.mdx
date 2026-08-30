@@ -117,7 +117,7 @@ The managed API and worker construct the PostgreSQL/S3 profile from these settin
 | `INFRAHUB_SYNC_DATABASE_URL` | Non-empty PostgreSQL connection string accepted by Psycopg for product records. |
 | `INFRAHUB_SYNC_S3_BUCKET` | Non-empty S3-compatible bucket for immutable artifacts. |
 | `INFRAHUB_SYNC_S3_PREFIX` | Optional object-key prefix; defaults to `infrahub-sync`. |
-| `INFRAHUB_SYNC_S3_ENDPOINT_URL` | Optional absolute `http` or `https` endpoint for an S3-compatible service. |
+| `INFRAHUB_SYNC_S3_ENDPOINT_URL` | Optional exact Boto3-compatible `http` or `https` URL with no userinfo and a DNS/registered-name, valid IPv4, or bracketed valid IPv6 host; an optional valid port is accepted, IPvFuture is not, and the value reaches Boto3 unchanged. |
 | `INFRAHUB_SYNC_S3_REGION` | Optional region passed to Boto3. |
 
 S3 credentials use Boto3's standard credential-provider chain. Configure credentials in

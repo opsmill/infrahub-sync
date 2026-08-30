@@ -23,6 +23,11 @@ def test_managed_storage_operator_references_state_the_complete_deployed_contrac
 
     assert not {setting for setting in MANAGED_STORAGE_SETTINGS if f"`{setting}`" not in text}
     assert "standard credential-provider chain" in text
+    assert "exact Boto3-compatible" in text
+    assert "valid IPv4" in text
+    assert "bracketed valid IPv6" in text
+    assert "IPvFuture is not" in text
+    assert "reaches Boto3 unchanged" in text
     assert "`INFRAHUB_SYNC_CACHE_DIR`" in text
     assert "PH-2" in text
     assert "INFRAHUB_SYNC_MANAGED_CACHE_LOCATION" not in text
