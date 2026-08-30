@@ -182,11 +182,15 @@ def test_active_sources_do_not_teach_removed_commands() -> None:
 
 
 def test_configuration_docs_describe_registered_worker_execution() -> None:
-    config = (ROOT / "docs/docs/reference/config.mdx").read_text(encoding="utf-8")
-    migration = (ROOT / "docs/docs/migrating-from-netbox-or-nautobot.mdx").read_text(encoding="utf-8")
+    config = " ".join((ROOT / "docs/docs/reference/config.mdx").read_text(encoding="utf-8").split())
+    migration = " ".join(
+        (ROOT / "docs/docs/migrating-from-netbox-or-nautobot.mdx").read_text(encoding="utf-8").split()
+    )
 
     assert "register it with `infrahub-sync configs register`" in config
-    assert "service worker" in config
+    assert "service worker resolves the registered configuration" in config
+    assert "loads installed or pre-rendered adapter classes" in config
+    assert "builds runtime models from the registered package" not in config
     assert "generated in the same folder" not in config
     assert "registers the `from-netbox` configuration package" in migration
     assert "generates the `from-netbox` sync code" not in migration
