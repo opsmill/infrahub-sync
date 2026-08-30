@@ -149,3 +149,28 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
     )
 
     assert not [token for token in removed if token in text]
+
+    source_files = []
+    for pattern in ("*.yaml", "*.yml", "*.json", "*.py"):
+        source_files.extend((ROOT / "examples").rglob(pattern))
+    source_text = "\n".join(path.read_text(encoding="utf-8") for path in source_files)
+    source_removed = (*removed[:-2], "uv run infrahub-sync list", "uv run infrahub-sync generate")
+
+    assert not [token for token in source_removed if token in source_text]
+
+
+def test_netbox_tutorial_starts_and_authenticates_the_service_boundary() -> None:
+    text = (ROOT / "docs/docs/tutorials/netbox-demo-to-infrahub.mdx").read_text(encoding="utf-8")
+
+    required = (
+        "infrahub-sync[managed]",
+        "prefect server start",
+        "prefect worker start",
+        "infrahub_sync.managed.deploy",
+        "infrahub_sync.managed.serve",
+        "INFRAHUB_SYNC_MANAGED_BEARER_TOKENS",
+        "INFRAHUB_SYNC_API_URL",
+        "INFRAHUB_SYNC_API_TOKEN",
+        "The worker, not the CLI, reads the NetBox",
+    )
+    assert not [token for token in required if token not in text]

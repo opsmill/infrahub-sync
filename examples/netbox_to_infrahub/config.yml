@@ -1,29 +1,30 @@
 ---
-# from-netbox — demonstrates the two newest features of infrahub-sync:
+# from-netbox — a configuration package for the service-backed Sync workflow:
 #
 # Setup and current limitations:
 #   - README.md
 #   - docs/docs/tutorials/netbox-demo-to-infrahub.mdx
 #
-#   1. Auto-tiered write order. The `order:` list has been removed; the engine
+#   1. Auto-tiered write order. The `order:` list has been removed; the worker
 #      derives tiers from `schema_mapping[].fields[].reference` and groups
 #      kinds that can be written in parallel. Tiered parallel execution is the
-#      default; pass `--no-parallel` when you need serial execution.
+#      service execution policy.
 #
-#   2. Sidecar cache and the saved plan artifact. Every `diff` writes
-#      per-resource snapshots, a `plan.parquet` for querying, and a `plan/`
-#      directory under `.infrahub-sync-cache/from-netbox/<run_id>/`. The
-#      `plan/` directory is what `apply` reads. The run_id is logged at INFO;
-#      pass it to `diff --from-plan` to review the plan, and to `apply` to
-#      apply it without re-extracting the source.
+#   2. Service-owned saved plans. `diff` submits a plan run to the Sync API.
+#      Review the returned run with `runs plan`; `apply` binds the service run
+#      to the checksum printed by that review and never reads a local artifact.
 #
-# Usage from this repository's root. If you copy the project elsewhere, replace
-# `examples` with the directory containing the copied project:
-#   uv run infrahub-sync diff --name from-netbox --directory examples
-#   uv run infrahub-sync diff --name from-netbox --from-plan <run_id> --directory examples
-#   uv run infrahub-sync apply --name from-netbox --run-id <run_id> --directory examples \
-#     --expected-checksum <plan_checksum_from_review>
-#   uv run infrahub-sync sync --name from-netbox --directory examples
+# Usage from this repository's root, after configuring the Sync API URL and
+# bearer token as documented in the tutorial:
+#   uv run infrahub-sync configs register examples/netbox_to_infrahub/config.yml \
+#     --reason "register NetBox import"
+#   uv run infrahub-sync diff --config-id <config-id> --version <version> \
+#     --reason "review NetBox import"
+#   uv run infrahub-sync runs plan <run-id> --detail
+#   uv run infrahub-sync apply <run-id> --expected-checksum <checksum> \
+#     --reason "apply reviewed NetBox import"
+#   uv run infrahub-sync sync --config-id <config-id> --version <version> \
+#     --reason "run NetBox import"
 #
 # ---------------------------------------------------------------------------
 
@@ -39,11 +40,14 @@ destination:
   settings:
     url: "http://localhost:8000"
 
-# Credentials are read from the environment, not this file:
+# Adapter credentials are read by the service worker, not by the CLI and not
+# from this file:
 #   export NETBOX_URL="https://demo.netbox.dev"
 #   export NETBOX_TOKEN="nbt_..."
 #   export INFRAHUB_ADDRESS="http://localhost:8000"
 #   export INFRAHUB_API_TOKEN="..."
+# The CLI separately uses INFRAHUB_SYNC_API_URL and INFRAHUB_SYNC_API_TOKEN to
+# authenticate to the Sync API.
 
 # order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
 # Uncomment and edit only if you need to override the computed order:

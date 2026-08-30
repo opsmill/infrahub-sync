@@ -38,7 +38,11 @@ from infrahub_sync.client import (
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
 
-    from infrahub_sync.client.models import ConfigurationSummaryResource, ConfigurationVersionResource
+    from infrahub_sync.client.models import (
+        ConfigurationSummaryResource,
+        ConfigurationVersionResource,
+        PlanOperationResource,
+    )
 
 DEFAULT_WAIT_TIMEOUT = 30 * 60.0
 DEFAULT_POLL_INTERVAL = 2.0
@@ -387,6 +391,9 @@ def _wait(
             poll_interval=poll_interval,
             on_observation=observe,
         )
+    except TransportError:
+        _echo_run(latest)
+        raise
     except KeyboardInterrupt:
         typer.echo("interrupted: local wait stopped; the remote run was not cancelled", err=True)
         _echo_run(latest)
@@ -415,46 +422,43 @@ def _operation_request(
     )
 
 
-def _summary_mapping(plan: PlanResource, name: str) -> Mapping[str, int]:
-    return cast("Mapping[str, int]", plan.summary[name])
-
-
 def _echo_counts(name: str, counts: Mapping[str, int]) -> None:
     typer.echo(f"{name}: " + ", ".join(f"{key}={value}" for key, value in counts.items()))
 
 
 def _delete_disclosure(plan: PlanResource) -> None:
-    if not cast("bool", plan.summary["delete_operations_computed"]):
+    if not plan.summary.delete_operations_computed:
         typer.echo("Delete operations were NOT computed for this plan; the review may omit destination deletes.")
-    deletes = cast("int", plan.summary["deletes_not_executed"])
+    deletes = plan.summary.deletes_not_executed
     if deletes:
         typer.echo(f"{deletes} delete operation(s) are recorded and NONE will be executed by apply.")
+    else:
+        typer.echo("0 delete operations are recorded; apply has no deletes to skip.")
 
 
 def _identity_text(identity: Mapping[str, Any]) -> str:
     return " ".join(f"{key}={identity[key]}" for key in sorted(identity))
 
 
-def _operation_detail(operation: Mapping[str, Any]) -> None:
-    marker = " (not executed)" if operation["action"] == "delete" else ""
+def _operation_detail(operation: PlanOperationResource) -> None:
+    marker = " (not executed)" if operation.action == "delete" else ""
     typer.echo(
-        f"{operation['operation_id']} {operation['action']} {operation['kind']} "
-        f"{_identity_text(cast('Mapping[str, Any]', operation['identity']))}{marker}"
+        f"{operation.operation_id} {operation.action} {operation.kind} {_identity_text(operation.identity)}{marker}"
     )
-    payload = operation.get("payload")
+    payload = operation.payload
     if payload is not None:
         typer.echo(f"  payload: {json.dumps(payload, sort_keys=True, separators=(',', ':'))}")
-    relationships = operation.get("relationships")
+    relationships = operation.relationships
     if relationships:
         typer.echo(f"  relationships: {json.dumps(relationships, sort_keys=True, separators=(',', ':'))}")
 
 
 def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = None) -> None:
-    operations = [cast("Mapping[str, Any]", operation) for operation in plan.operations]
+    operations = list(plan.operations)
     if kind is not None:
         if not detail:
             raise ClientInputError(_KIND_ARG)
-        operations = [operation for operation in operations if operation["kind"] == kind]
+        operations = [operation for operation in operations if operation.kind == kind]
         if not operations:
             raise ClientInputError(_KIND_ARG)
     _echo_fields(
@@ -463,14 +467,14 @@ def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = N
             ("plan_checksum", plan.checksum),
             ("checksum_ok", plan.checksum_ok),
             ("checksum_source", "Sync API saved plan"),
-            ("operations", plan.summary["total"]),
-            ("delete_operations_computed", plan.summary["delete_operations_computed"]),
+            ("operations", plan.summary.total),
+            ("delete_operations_computed", plan.summary.delete_operations_computed),
         )
     )
     for note in plan.verification_notes:
         typer.echo(f"verification_note: {note}")
-    _echo_counts("by_action", _summary_mapping(plan, "by_action"))
-    _echo_counts("by_kind", _summary_mapping(plan, "by_kind"))
+    _echo_counts("by_action", plan.summary.by_action)
+    _echo_counts("by_kind", plan.summary.by_kind)
     _delete_disclosure(plan)
     if detail:
         for operation in operations:

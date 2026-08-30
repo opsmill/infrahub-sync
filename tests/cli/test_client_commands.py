@@ -23,7 +23,9 @@ from infrahub_sync.client import (
     ConfigurationVersionResource,
     CreateRunRequest,
     OrchestrationSummary,
+    PlanOperationResource,
     PlanResource,
+    PlanSummaryResource,
     ProtocolError,
     PublicExecutionLink,
     PublicRunResource,
@@ -96,32 +98,32 @@ def _plan() -> PlanResource:
         checksum=CHECKSUM,
         checksum_ok=True,
         verification_notes=("reviewed from the service artifact",),
-        summary={
-            "by_action": {"create": 1, "delete": 1},
-            "by_kind": {"Device": 1, "Site": 1},
-            "total": 2,
-            "delete_operations_computed": True,
-            "deletes_not_executed": 1,
-        },
+        summary=PlanSummaryResource(
+            by_action={"create": 1, "delete": 1},
+            by_kind={"Device": 1, "Site": 1},
+            total=2,
+            delete_operations_computed=True,
+            deletes_not_executed=1,
+        ),
         operations=(
-            {
-                "operation_id": "op-create",
-                "action": "create",
-                "kind": "Device",
-                "identity": {"name": "edge-01"},
-                "tier": 0,
-                "payload": {"name": "edge-01"},
-                "relationships": [],
-            },
-            {
-                "operation_id": "op-delete",
-                "action": "delete",
-                "kind": "Site",
-                "identity": {"name": "retired"},
-                "tier": 0,
-                "payload": None,
-                "relationships": None,
-            },
+            PlanOperationResource(
+                operation_id="op-create",
+                action="create",
+                kind="Device",
+                identity={"name": "edge-01"},
+                tier=0,
+                payload={"name": "edge-01"},
+                relationships=(),
+            ),
+            PlanOperationResource(
+                operation_id="op-delete",
+                action="delete",
+                kind="Site",
+                identity={"name": "retired"},
+                tier=0,
+                payload=None,
+                relationships=None,
+            ),
         ),
     )
 
@@ -342,6 +344,43 @@ def test_runs_plan_filters_detail_and_marks_deletes_not_executed(client: MagicMo
     assert "op-create" not in result.output
 
 
+def test_runs_plan_unfiltered_detail_renders_every_operation(client: MagicMock) -> None:
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert "op-create" in result.output
+    assert "op-delete" in result.output
+
+
+def test_runs_plan_discloses_when_delete_operations_were_not_computed(client: MagicMock) -> None:
+    plan = _plan()
+    summary = plan.summary.model_copy(update={"delete_operations_computed": False})
+    client.get_plan.return_value = plan.model_copy(update={"summary": summary})
+
+    result = _invoke(client, "runs", "plan", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert "Delete operations were NOT computed" in result.output
+
+
+def test_runs_plan_discloses_zero_recorded_deletes(client: MagicMock) -> None:
+    plan = _plan()
+    summary = plan.summary.model_copy(
+        update={
+            "by_action": {"create": 1},
+            "by_kind": {"Device": 1},
+            "total": 1,
+            "deletes_not_executed": 0,
+        }
+    )
+    client.get_plan.return_value = plan.model_copy(update={"summary": summary, "operations": plan.operations[:1]})
+
+    result = _invoke(client, "runs", "plan", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert "0 delete operations are recorded; apply has no deletes to skip." in result.output
+
+
 def test_runs_plan_unmatched_kind_is_typed_input_error(client: MagicMock) -> None:
     result = _invoke(client, "runs", "plan", "service-run-1", "--detail", "--kind", "Typo")
 
@@ -443,6 +482,32 @@ def test_keyboard_interrupt_stops_only_the_local_wait(client: MagicMock) -> None
     assert "run_id: service-run-1" in result.output
     assert "phase: running" in result.output
     client.cancel_run.assert_not_called()
+
+
+def test_wait_transport_error_prints_last_observed_product_state(client: MagicMock) -> None:
+    def fail_after_poll(_accepted: RunResource, **kwargs: object) -> None:
+        observer = cast("Callable[[RunResource], None]", kwargs["on_observation"])
+        observer(_run(operation="sync", phase="running"))
+        operation = "get_run"
+        raise TransportError(operation)
+
+    client.wait_for_run.side_effect = fail_after_poll
+
+    result = _invoke(
+        client,
+        "sync",
+        "--config-id",
+        "edge-sync",
+        "--version",
+        "1",
+        "--reason",
+        "wait for sync",
+    )
+
+    assert result.exit_code == 1
+    assert "run_id: service-run-1" in result.output
+    assert "phase: running" in result.output
+    assert result.output.index("phase: running") < result.output.index("error: transport")
 
 
 def test_mutation_transport_failure_still_discloses_the_retry_key(client: MagicMock) -> None:

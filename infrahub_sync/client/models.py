@@ -309,6 +309,28 @@ class RunResource(_ResourceModel):
     orchestration: tuple[OrchestrationSummary, ...]
 
 
+class PlanSummaryResource(_ResourceModel):
+    """Validated saved-plan counts and delete-review disclosures."""
+
+    by_action: dict[str, int]
+    by_kind: dict[str, int]
+    total: int = Field(ge=0)
+    delete_operations_computed: bool
+    deletes_not_executed: int = Field(ge=0)
+
+
+class PlanOperationResource(_ResourceModel):
+    """One validated operation returned by the saved-plan route."""
+
+    operation_id: str = Field(min_length=1)
+    action: Literal["create", "update", "delete"]
+    kind: str = Field(min_length=1)
+    identity: dict[str, Any]
+    tier: int = Field(ge=0)
+    payload: dict[str, Any] | None = None
+    relationships: tuple[dict[str, Any], ...] | None = None
+
+
 class PlanResource(_ResourceModel):
     """Return a saved plan, checksum, summary, and operations."""
 
@@ -316,8 +338,8 @@ class PlanResource(_ResourceModel):
     checksum: str
     checksum_ok: bool
     verification_notes: tuple[str, ...]
-    summary: dict[str, Any]
-    operations: tuple[dict[str, Any], ...]
+    summary: PlanSummaryResource
+    operations: tuple[PlanOperationResource, ...]
     # The consumed destination-schema semantics a registered plan was computed against, so a
     # reviewer reads the binding the apply will compare. `None` for an unregistered plan.
     schema_fingerprint: str | None = None

@@ -11,7 +11,7 @@ If you already have an Infrahub instance running, you can skip straight to the [
 
 By the end of this tutorial, you will know how to:
 
-- run Infrahub in a Docker container
+- run Infrahub and the Sync service locally
 - install Infrahub Sync
 - load a schema into Infrahub
 - create a NetBox → Infrahub sync project
@@ -85,11 +85,13 @@ You should see the Infrahub web interface with a navigation menu on the left sid
 
 ## Install infrahub-sync
 
-1. Install the Python dependencies with uv. This tutorial documents the experimental
-   `v3-preview.1` release, which is not published to PyPI, so install its Git tag directly:
+1. Clone Infrahub Sync beside the automation project, then install the managed profile
+   from that checkout. The managed profile is not published to PyPI yet, so the checkout
+   keeps the executable, this tutorial, and its example package at one revision:
 
 ```bash
-uv add "infrahub-sync @ git+https://github.com/opsmill/infrahub-sync.git@v3-preview.1" pynetbox
+git clone https://github.com/opsmill/infrahub-sync.git ../infrahub-sync
+uv add --editable "../infrahub-sync[managed]" pynetbox
 ```
 
 This installs the `infrahub-sync` command. `pynetbox` is required by the NetBox adapter.
@@ -195,12 +197,11 @@ From your project directory (`infrahub-automation`), create a sync project direc
 
 ```bash
 mkdir -p sync-projects/netbox-demo
-curl -L \
-  https://raw.githubusercontent.com/opsmill/infrahub-sync/refs/tags/v3-preview.1/examples/netbox_to_infrahub/config.yml \
-  -o sync-projects/netbox-demo/config.yml
+cp ../infrahub-sync/examples/netbox_to_infrahub/config.yml \
+  sync-projects/netbox-demo/config.yml
 ```
 
-The downloaded configuration is named `from-netbox`. It maps selected NetBox objects onto the Infrahub schema.
+The copied configuration is named `from-netbox`. It maps selected NetBox objects onto the Infrahub schema.
 
 Open `sync-projects/netbox-demo/config.yml` in an editor and scan the top-level keys:
 
@@ -216,6 +217,111 @@ plan, and then submits a confirmed sync. See [Run a sync](../running-a-sync.mdx)
 need to apply the exact reviewed plan checksum instead of creating a new composed sync.
 
 For a fuller explanation of this file, see [Create a sync project](../creating-a-sync-project.mdx) and the [schema mapping reference](../reference/schema-mapping.mdx).
+
+## Start the Sync API and worker
+
+The CLI sends configuration and run requests to a Sync API. A Prefect worker performs the
+adapter work. This local tutorial starts both; a production deployment should follow the
+[managed HTTP API reference](../reference/managed-http-api.mdx).
+
+Infrahub already listens on `127.0.0.1:8000`, so the commands below bind the Sync API to
+`127.0.0.2:8000`.
+
+1. Save this local service definition as `sync-services.yml`:
+
+```yaml
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: sync
+      POSTGRES_PASSWORD: sync-local-only
+      POSTGRES_DB: infrahub_sync
+    ports:
+      - "127.0.0.1:5433:5432"
+  minio:
+    image: quay.io/minio/minio
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: sync-local
+      MINIO_ROOT_PASSWORD: sync-local-secret
+    ports:
+      - "127.0.0.1:9000:9000"
+  minio-client:
+    image: quay.io/minio/mc
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - until mc alias set local http://minio:9000 sync-local sync-local-secret; do sleep 1; done; mc mb --ignore-existing local/infrahub-sync-artifacts
+```
+
+Start PostgreSQL and MinIO, then create the artifact bucket:
+
+```bash
+docker compose -f sync-services.yml up --detach postgres minio
+docker compose -f sync-services.yml run --rm minio-client
+```
+
+Wait until both containers report ready before continuing. These fixed values are local
+tutorial credentials; do not use them outside an isolated development machine.
+
+2. In terminal 1, start Prefect:
+
+```bash
+uv run prefect server start --host 127.0.0.1 --port 4200
+```
+
+3. In each remaining service terminal, change to the `infrahub-automation` project root
+   and export the shared service, storage, worker, and adapter settings:
+
+```bash
+export PREFECT_API_URL="http://127.0.0.1:4200/api"
+export INFRAHUB_SYNC_DATABASE_URL="postgresql://sync:sync-local-only@127.0.0.1:5433/infrahub_sync"
+export INFRAHUB_SYNC_S3_BUCKET="infrahub-sync-artifacts"
+export INFRAHUB_SYNC_S3_ENDPOINT_URL="http://127.0.0.1:9000"
+export INFRAHUB_SYNC_S3_REGION="us-east-1"
+export AWS_ACCESS_KEY_ID="sync-local"
+export AWS_SECRET_ACCESS_KEY="sync-local-secret"
+export INFRAHUB_SYNC_MANAGED_WORK_POOL="sync-process-pool"
+export INFRAHUB_SYNC_MANAGED_FLOW_WORKING_DIRECTORY="$PWD"
+export INFRAHUB_SYNC_CONFIG_DIRECTORY="$PWD/sync-projects"
+export INFRAHUB_SYNC_CACHE_DIR="$PWD/.infrahub-sync-cache"
+export INFRAHUB_SYNC_MANAGED_BEARER_TOKENS='{"tutorial-admin":{"token":"tutorial-sync-api-token","administrator":true}}'
+export NETBOX_URL="https://demo.netbox.dev"
+export NETBOX_TOKEN="nbt_..."
+export INFRAHUB_ADDRESS="http://localhost:8000"
+export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
+```
+
+Use the complete NetBox token created earlier. The worker, not the CLI, reads the NetBox
+and Infrahub adapter credentials.
+
+4. In terminal 2, create the process pool, deploy the managed flow, and start its worker:
+
+```bash
+uv run prefect work-pool create --type process sync-process-pool
+uv run python -m infrahub_sync.managed.deploy
+uv run prefect worker start --pool sync-process-pool
+```
+
+5. In terminal 3, start the Sync API:
+
+```bash
+export INFRAHUB_SYNC_MANAGED_HOST="127.0.0.2"
+uv run python -m infrahub_sync.managed.serve
+```
+
+6. In the terminal where you will run the CLI, configure the API credentials and verify
+   compatibility:
+
+```bash
+export INFRAHUB_SYNC_API_URL="http://127.0.0.2:8000"
+export INFRAHUB_SYNC_API_TOKEN="tutorial-sync-api-token"
+curl --fail "${INFRAHUB_SYNC_API_URL}/version"
+```
+
+The API token authenticates the CLI to the Sync API. It is separate from
+`INFRAHUB_API_TOKEN`, which the worker uses to access the destination Infrahub instance.
 
 ## Register the configuration package
 
@@ -265,8 +371,9 @@ Review the output before continuing. On a first run against an empty branch, mos
 
 ## Sync the data
 
-After inspecting the diff, run the sync against the same branch. The command loads both
-systems again and prints the newly calculated plan before writing.
+After inspecting the diff, run the sync against the same branch. The worker loads both
+systems again, calculates a new plan, and writes it. The CLI prints the service-owned run
+state.
 
 ```bash
 uv run infrahub-sync sync \
@@ -317,18 +424,20 @@ You used Infrahub Sync to move data from NetBox into Infrahub in a controlled se
 2. NetBox provided the source data.
 3. A branch isolated the import from `main` so it could be reviewed first.
 4. `config.yml` described the adapters, field mappings, references, filters, and Transformations.
-5. `generate` converted the configuration into runnable sync code.
-6. `diff` compared the source and destination without writing changes.
-7. `sync` applied the reviewed changes to the branch.
+5. The Sync API registered the configuration and issued the run identity.
+6. `diff` asked the worker to compare the source and destination without writing changes.
+7. `sync` asked the worker to calculate and apply a new confirmed plan to the branch.
 
 The same pattern applies to larger migrations: start with a clear schema, map a small set of objects, condition source data where needed, review the diff inside a branch, and then synchronize before opening a proposed change toward `main`.
 
-## Stop the local Infrahub instance
+## Stop the local services
 
-When you are finished, stop the Docker Compose stack.
+When you are finished, stop the API, worker, and Prefect processes with Ctrl-C. Then stop
+the Infrahub Docker Compose stack and remove the tutorial storage containers:
 
 ```bash
 uv run invoke stop
+docker compose -f sync-services.yml down
 ```
 
 ## Troubleshooting
@@ -339,7 +448,9 @@ uv run invoke stop
 ERROR | infrahub_sync.cli | Failed to initialize the Sync Instance: Error initializing InfrahubAdapter: Both url and token must be specified!
 ```
 
-The NetBox and/or Infrahub adapter can't find credentials. `generate`, `diff`, and `sync` read the source and destination credentials from the environment, not from `config.yml`. `apply` reads only the destination credentials because it uses the saved plan rather than loading the source. Export the variables needed for the command you are running:
+The service worker cannot find a NetBox or Infrahub adapter credential. Adapter credentials
+belong in the worker environment, not the CLI environment or `config.yml`. Export these
+variables before starting the Prefect worker:
 
 ```bash
 export NETBOX_URL="https://demo.netbox.dev"
@@ -350,7 +461,7 @@ export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
 
 This error names whichever adapter (NetBox or Infrahub) is missing its variables — the same message is raised for either one.
 
-### `generate` reports destination models missing from the schema
+### A plan run reports destination models missing from the schema
 
 ```text
 ERROR | One or more models are not present in the schema - ['LocationSite', ...]
@@ -358,7 +469,7 @@ ERROR | One or more models are not present in the schema - ['LocationSite', ...]
 
 The destination does not have the schema collection this configuration maps to. Download
 and load every file listed in [Load a schema into Infrahub](#load-a-schema-into-infrahub),
-then run `generate` again. Use a fresh Infrahub instance or branch if an existing
+then submit a new `diff` run. Use a fresh Infrahub instance or branch if an existing
 `InfraDevice` or another overlapping kind prevents that collection from loading.
 
 The similarly named `models/examples/netbox/netbox.yml` file in the Infrahub source
