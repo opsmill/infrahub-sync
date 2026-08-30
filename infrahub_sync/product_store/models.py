@@ -87,13 +87,27 @@ class PrefectExecutionLink(BaseModel):
         "cancellation_recovery_deadline_at",
         "cancellation_acknowledged_at",
         "terminal_at",
+        mode="before",
     )
     @classmethod
-    def _require_timezone(cls, value: datetime | None) -> datetime | None:
-        if value is not None and value.utcoffset() is None:
+    def _require_timezone(cls, value: object) -> datetime | None:
+        if value is None:
+            return None
+        if type(value) is datetime:  # pylint: disable=unidiomatic-typecheck
+            parsed = value
+        elif type(value) is str:  # pylint: disable=unidiomatic-typecheck
+            try:
+                parsed = datetime.fromisoformat(value)
+            except ValueError:
+                msg = "Prefect execution timestamps must be exact datetimes or persisted ISO strings"
+                raise ValueError(msg) from None
+        else:
+            msg = "Prefect execution timestamps must be exact datetimes or persisted ISO strings"
+            raise ValueError(msg)
+        if parsed.utcoffset() is None:
             msg = "Prefect execution timestamps must include a timezone"
             raise ValueError(msg)
-        return value
+        return parsed
 
     @field_validator("claiming_worker_id", mode="before")
     @classmethod

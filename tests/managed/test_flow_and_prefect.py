@@ -901,11 +901,19 @@ _UNACKNOWLEDGED_CANCELLATION = CancellationResult(
         ),
         (
             OrchestrationResult(state=Cancelling(), status=SetStateStatus.REJECT, details=StateRejectDetails()),
-            _ACKNOWLEDGED_CANCELLATION,
+            _UNACKNOWLEDGED_CANCELLATION,
         ),
         (
             OrchestrationResult(state=Cancelled(), status=SetStateStatus.REJECT, details=StateRejectDetails()),
-            _ACKNOWLEDGED_CANCELLATION,
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult(state=Running(), status=SetStateStatus.ACCEPT, details=StateAcceptDetails()),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult(state=None, status=SetStateStatus.ACCEPT, details=StateAcceptDetails()),
+            _UNACKNOWLEDGED_CANCELLATION,
         ),
         (
             OrchestrationResult(state=Running(), status=SetStateStatus.REJECT, details=StateRejectDetails()),
@@ -965,6 +973,8 @@ _UNACKNOWLEDGED_CANCELLATION = CancellationResult(
         "accept",
         "reject-cancelling",
         "reject-cancelled",
+        "accept-running",
+        "accept-without-state",
         "reject-running",
         "reject-without-state",
         "abort",

@@ -2860,7 +2860,7 @@ def _require_cancellation_receipt_row(row: Sequence[Any] | None) -> Sequence[Any
 
 
 def _require_execution_timestamp(value: datetime) -> None:
-    if value.utcoffset() is None:
+    if type(value) is not datetime or value.utcoffset() is None:  # pylint: disable=unidiomatic-typecheck
         msg = "execution timestamps must include a timezone"
         raise ValueError(msg)
 

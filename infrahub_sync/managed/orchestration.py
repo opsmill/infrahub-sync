@@ -21,7 +21,6 @@ from prefect.client.schemas.responses import (
     OrchestrationResult,
     SetStateStatus,
     StateAcceptDetails,
-    StateRejectDetails,
 )
 from prefect.exceptions import ObjectNotFound
 from prefect.states import Cancelling
@@ -81,6 +80,10 @@ class PoolWorker:
     last_heartbeat: datetime | None
     heartbeat_interval_seconds: float | None
 
+    def __post_init__(self) -> None:
+        """Reject worker evidence outside the exact internal value domain."""
+        _validate_pool_worker(self)
+
 
 @dataclass(frozen=True, slots=True)
 class PoolStatus:
@@ -107,8 +110,10 @@ class PoolStatus:
             raise ValueError
         if type(self.workers) is not tuple:  # pylint: disable=unidiomatic-typecheck
             raise ValueError
-        if any(type(worker) is not PoolWorker for worker in self.workers):  # pylint: disable=unidiomatic-typecheck
-            raise ValueError
+        for worker in self.workers:
+            if type(worker) is not PoolWorker:  # pylint: disable=unidiomatic-typecheck
+                raise ValueError
+            _validate_pool_worker(worker)
 
 
 class ManagedOrchestration(Protocol):
@@ -185,22 +190,62 @@ def _canonical_uuid(value: object) -> str:
     return str(value)
 
 
-def _cancellation_acknowledged(result: object) -> bool:
-    """Accept only pinned Prefect acknowledgement and replacement-state results."""
-    if type(result) is not OrchestrationResult:  # pylint: disable=unidiomatic-typecheck
-        return False
-    if result.status is SetStateStatus.ACCEPT:
-        return type(result.details) is StateAcceptDetails  # pylint: disable=unidiomatic-typecheck
-    if (
-        result.status is not SetStateStatus.REJECT or type(result.details) is not StateRejectDetails  # pylint: disable=unidiomatic-typecheck
+def _validate_pool_worker(worker: PoolWorker) -> None:
+    """Validate every exact field of one internal worker observation."""
+    if type(worker.worker_id) is not str:  # pylint: disable=unidiomatic-typecheck
+        raise ValueError
+    try:
+        canonical_worker_id = str(UUID(worker.worker_id))
+    except ValueError:
+        raise ValueError from None
+    if canonical_worker_id != worker.worker_id:
+        raise ValueError
+    if type(worker.status) is not str or worker.status not in {  # pylint: disable=unidiomatic-typecheck
+        member.value.lower() for member in WorkerStatus
+    }:
+        raise ValueError
+    heartbeat = worker.last_heartbeat
+    if heartbeat is not None and (
+        type(heartbeat) is not datetime  # pylint: disable=unidiomatic-typecheck
+        or heartbeat.utcoffset() is None
     ):
+        raise ValueError
+    interval = worker.heartbeat_interval_seconds
+    if interval is not None and (
+        type(interval) is not float  # pylint: disable=unidiomatic-typecheck
+        or interval <= 0
+        or not isfinite(interval)
+    ):
+        raise ValueError
+
+
+def _cancellation_acknowledged(result: object) -> bool:
+    """Accept only Prefect's exact acknowledgement of the requested transition."""
+    if type(result) is not OrchestrationResult:  # pylint: disable=unidiomatic-typecheck
         return False
     state = result.state
     return (
-        isinstance(state, State)
+        result.status is SetStateStatus.ACCEPT
+        and type(result.details) is StateAcceptDetails  # pylint: disable=unidiomatic-typecheck
+        and isinstance(state, State)
         and type(state.type) is StateType  # pylint: disable=unidiomatic-typecheck
-        and state.type in {StateType.CANCELLING, StateType.CANCELLED}
+        and state.type is StateType.CANCELLING
     )
+
+
+def normalized_pool_status(snapshot: object) -> PoolStatus:
+    """Map any malformed orchestration snapshot to the fixed unavailable value."""
+    if type(snapshot) is not PoolStatus:  # pylint: disable=unidiomatic-typecheck
+        return PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
+    try:
+        return PoolStatus(
+            detail_available=snapshot.detail_available,
+            queue_depth=snapshot.queue_depth,
+            observed_at=snapshot.observed_at,
+            workers=snapshot.workers,
+        )
+    except (AttributeError, TypeError, ValueError):
+        return PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
 
 
 def _exact_list(value: object) -> list[Any]:

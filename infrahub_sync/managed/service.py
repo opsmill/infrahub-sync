@@ -38,7 +38,7 @@ from .models import (
     VerifyRunRequest,
     WorkerStatusResource,
 )
-from .orchestration import ManagedOrchestration, Observation, PoolStatus
+from .orchestration import ManagedOrchestration, Observation, PoolStatus, normalized_pool_status
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -50,6 +50,7 @@ PLAN_ARTIFACT_ID = "plan-review"
 
 def _service_status(snapshot: PoolStatus) -> ServiceStatusResource:
     """Project internal pool evidence into the deliberately small public schema."""
+    snapshot = normalized_pool_status(snapshot)
     if not snapshot.detail_available:
         return ServiceStatusResource(
             service="ready",

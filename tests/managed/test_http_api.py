@@ -24,6 +24,7 @@ from prefect.client.schemas.responses import (
     OrchestrationResult,
     SetStateStatus,
     StateAbortDetails,
+    StateAcceptDetails,
     StateRejectDetails,
     StateWaitDetails,
 )
@@ -522,6 +523,10 @@ class _PrefectCancellationClient:
 @pytest.mark.parametrize(
     "result",
     [
+        OrchestrationResult(state=Running(), status=SetStateStatus.ACCEPT, details=StateAcceptDetails()),
+        OrchestrationResult(state=None, status=SetStateStatus.ACCEPT, details=StateAcceptDetails()),
+        OrchestrationResult(state=Cancelling(), status=SetStateStatus.REJECT, details=StateRejectDetails()),
+        OrchestrationResult(state=Cancelled(), status=SetStateStatus.REJECT, details=StateRejectDetails()),
         OrchestrationResult(state=Running(), status=SetStateStatus.REJECT, details=StateRejectDetails()),
         OrchestrationResult(state=None, status=SetStateStatus.REJECT, details=StateRejectDetails()),
         OrchestrationResult(state=Cancelling(), status=SetStateStatus.ABORT, details=StateAbortDetails()),
@@ -532,7 +537,17 @@ class _PrefectCancellationClient:
         ),
         SimpleNamespace(status=SetStateStatus.ACCEPT, state=Cancelling()),
     ],
-    ids=("reject-running", "reject-without-state", "abort", "wait", "malformed"),
+    ids=(
+        "accept-running",
+        "accept-without-state",
+        "reject-cancelling",
+        "reject-cancelled",
+        "reject-running",
+        "reject-without-state",
+        "abort",
+        "wait",
+        "malformed",
+    ),
 )
 def test_cancel_rejected_or_malformed_prefect_results_never_acknowledge_or_replay_202(
     managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
@@ -565,7 +580,7 @@ def test_cancel_rejected_or_malformed_prefect_results_never_acknowledge_or_repla
 
 
 @pytest.mark.parametrize("replacement_state", [Cancelling(), Cancelled()], ids=("cancelling", "cancelled"))
-def test_cancel_accepts_prefect_reject_only_with_cancellation_replacement_state(
+def test_cancel_reject_replacement_state_never_fabricates_acknowledgement(
     managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
     monkeypatch: pytest.MonkeyPatch,
     replacement_state: State[object],
@@ -589,10 +604,11 @@ def test_cancel_accepts_prefect_reject_only_with_cancellation_replacement_state(
         json={"reason": "Prefect supplied cancellation replacement"},
     )
 
-    assert response.status_code == 202
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "orchestration-unavailable"
     run = projection.lookup_run(run_id).value
     assert run is not None
-    assert run.prefect_executions[-1].cancellation_acknowledged_at is not None
+    assert run.prefect_executions[-1].cancellation_acknowledged_at is None
 
 
 def test_cancel_refuses_run_without_execution_without_reserving_receipt(

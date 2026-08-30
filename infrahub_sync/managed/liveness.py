@@ -15,7 +15,11 @@ from infrahub_sync.product_store import (  # noqa: TC001 - runtime protocol boun
     ProductRun,
 )
 
-from .orchestration import ManagedOrchestration, PoolStatus  # noqa: TC001 - runtime protocol boundary.
+from .orchestration import (
+    ManagedOrchestration,
+    PoolStatus,
+    normalized_pool_status,
+)
 
 RUN_ADMISSION_TTL_ENV = "INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS"
 _POLICY_ERROR = "managed liveness settings are invalid"
@@ -143,7 +147,7 @@ class RunLivenessReconciler:
     ) -> None:
         """Reconcile one link, suitable for request-time freshness before rendering."""
         now = now or self._clock()
-        pool = pool or await self._orchestration.pool_status(self._work_pool_name, now)
+        pool = normalized_pool_status(pool or await self._orchestration.pool_status(self._work_pool_name, now))
         observed = await self._orchestration.observe(link.flow_run_id)
         if observed.available:
             self._projection.observe_prefect_execution(run_id, link.flow_run_id, state=observed.state)

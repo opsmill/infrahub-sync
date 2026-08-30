@@ -239,8 +239,8 @@ def test_claimed_execution_requires_its_exact_fresh_owner(tmp_path) -> None:
         queue_depth=0,
         observed_at=now,
         workers=(
-            PoolWorker(owner, "offline", now, 10),
-            PoolWorker(str(uuid4()), "online", now, 10),
+            PoolWorker(owner, "offline", now, 10.0),
+            PoolWorker(str(uuid4()), "online", now, 10.0),
         ),
     )
     reconciler = RunLivenessReconciler(
@@ -277,7 +277,7 @@ def test_owner_boundaries_and_clock_reversal_do_not_interrupt_early(tmp_path) ->
         detail_available=True,
         queue_depth=0,
         observed_at=now - timedelta(seconds=1),
-        workers=(PoolWorker(owner, "online", now + timedelta(hours=1), 10),),
+        workers=(PoolWorker(owner, "online", now + timedelta(hours=1), 10.0),),
     )
     reconciler = RunLivenessReconciler(
         projection, _Orchestration(pool), LivenessPolicy(300, 30, 5), "pool", clock=lambda: now - timedelta(days=1)
@@ -317,7 +317,7 @@ def test_restarted_worker_identity_and_unavailable_pool_do_not_conflate_owners(t
                 detail_available=True,
                 queue_depth=0,
                 observed_at=now,
-                workers=(PoolWorker(new_owner, "online", now, 10),),
+                workers=(PoolWorker(new_owner, "online", now, 10.0),),
             )
         ),
         policy,
@@ -553,6 +553,120 @@ def test_pool_status_maps_invalid_observation_time_to_unavailable() -> None:
         )
     )
     assert snapshot == PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("worker_id", "not-a-uuid"),
+        ("worker_id", type("WorkerId", (str,), {})("8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0")),
+        ("status", "ONLINE"),
+        ("status", "unknown"),
+        ("last_heartbeat", datetime(2026, 8, 29, 12)),  # noqa: DTZ001 - deliberate naive provider value.
+        ("last_heartbeat", type("Heartbeat", (datetime,), {})(2026, 8, 29, 12, tzinfo=timezone.utc)),
+        ("heartbeat_interval_seconds", -1.0),
+        ("heartbeat_interval_seconds", 10),
+        ("heartbeat_interval_seconds", float("nan")),
+    ],
+    ids=(
+        "invalid-uuid",
+        "uuid-string-subclass",
+        "unnormalized-status",
+        "unknown-status",
+        "naive-heartbeat",
+        "heartbeat-subclass",
+        "negative-interval",
+        "integer-interval",
+        "nonfinite-interval",
+    ),
+)
+def test_pool_status_refuses_every_malformed_nested_worker_field(field: str, value: object) -> None:
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    worker: dict[str, object] = {
+        "worker_id": "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0",
+        "status": "online",
+        "last_heartbeat": now,
+        "heartbeat_interval_seconds": 10.0,
+    }
+    worker[field] = value
+
+    with pytest.raises(ValueError):
+        PoolStatus(
+            detail_available=True,
+            queue_depth=0,
+            observed_at=now,
+            workers=(PoolWorker(**cast("Any", worker)),),
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("worker_id", "not-a-uuid"),
+        ("status", "ONLINE"),
+        ("last_heartbeat", datetime(2026, 8, 29, 12)),  # noqa: DTZ001 - deliberate naive provider value.
+        ("heartbeat_interval_seconds", -1.0),
+    ],
+)
+def test_malformed_pool_snapshot_is_unavailable_and_causes_no_liveness_transition(
+    tmp_path,
+    field: str,
+    value: object,
+) -> None:
+    """Provider-supplied invalid worker detail cannot drive status or product state."""
+    from infrahub_sync.managed.service import _service_status  # noqa: PLC2701 - public boundary behavior test.
+
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    worker: dict[str, object] = {
+        "worker_id": "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0",
+        "status": "online",
+        "last_heartbeat": now,
+        "heartbeat_interval_seconds": 10.0,
+    }
+    worker[field] = value
+    malformed = cast(
+        "PoolStatus",
+        SimpleNamespace(
+            detail_available=True,
+            queue_depth=0,
+            observed_at=now,
+            workers=(SimpleNamespace(**worker),),
+        ),
+    )
+    projection = local_product_projection(tmp_path)
+    projection.create_run(
+        _run(
+            "run-malformed-pool",
+            PrefectExecutionLink(
+                flow_run_id="flow-malformed-pool",
+                purpose="plan",
+                attempt=1,
+                submitted_at=now - timedelta(seconds=30),
+            ),
+        )
+    )
+    reconciler = RunLivenessReconciler(
+        projection,
+        _Orchestration(malformed),
+        LivenessPolicy(300, 30, 5),
+        "pool",
+        clock=lambda: now,
+    )
+
+    status = _service_status(malformed)
+    asyncio.run(reconciler.reconcile_once())
+
+    assert status.worker.model_dump() == {
+        "state": "unavailable",
+        "detail_available": False,
+        "live_workers": None,
+        "queue_depth": None,
+        "observed_at": None,
+    }
+    run = projection.lookup_run("run-malformed-pool").value
+    assert run is not None
+    assert run.prefect_executions[0].stalled_at is None
+    assert run.prefect_executions[0].terminal_at is None
 
 
 @pytest.mark.parametrize(

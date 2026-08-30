@@ -15,7 +15,7 @@ from hashlib import sha256
 from pathlib import Path
 from threading import Barrier, local
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -973,6 +973,77 @@ def test_execution_link_requires_complete_claim_and_terminal_verdicts() -> None:
 
 
 @pytest.mark.parametrize(
+    "field",
+    [
+        "last_observed_at",
+        "submitted_at",
+        "claimed_at",
+        "stalled_at",
+        "cancellation_requested_at",
+        "cancellation_recovery_deadline_at",
+        "cancellation_acknowledged_at",
+        "terminal_at",
+    ],
+)
+@pytest.mark.parametrize(
+    "invalid_timestamp",
+    [
+        1_777_469_600,
+        type("PersistedDatetime", (datetime,), {})(2026, 8, 29, tzinfo=timezone.utc),
+    ],
+    ids=["integer", "datetime-subclass"],
+)
+def test_execution_link_timestamp_admission_refuses_coercible_non_exact_values(
+    field: str,
+    invalid_timestamp: object,
+) -> None:
+    """Every execution timestamp closes Pydantic's integer and subclass coercion paths."""
+    now = datetime(2026, 8, 29, tzinfo=timezone.utc)
+    payload: dict[str, object] = {
+        "flow_run_id": "flow",
+        "purpose": "plan",
+        "attempt": 1,
+        "last_observed_at": now,
+        "submitted_at": now,
+        "claimed_at": now,
+        "claiming_worker_id": "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0",
+        "stalled_at": now,
+        "cancellation_requested_at": now,
+        "cancellation_recovery_deadline_at": now + timedelta(seconds=30),
+        "cancellation_receipt_id": "mutation-001",
+        "cancellation_acknowledged_at": now,
+        "terminal_at": now,
+        "terminal_state": "completed",
+        "terminal_outcome": "succeeded",
+    }
+    payload[field] = invalid_timestamp
+
+    with pytest.raises(ValidationError, match="Prefect execution timestamps"):
+        PrefectExecutionLink.model_validate(payload)
+
+
+def test_execution_link_explicitly_hydrates_exact_persisted_iso_timestamps() -> None:
+    """Provider rows remain readable without opening general timestamp coercion."""
+    persisted = "2026-08-29T12:00:00+00:00"
+
+    link = PrefectExecutionLink.model_validate(
+        {
+            "flow_run_id": "flow",
+            "purpose": "plan",
+            "attempt": 1,
+            "last_observed_at": persisted,
+            "submitted_at": persisted,
+            "stalled_at": persisted,
+        }
+    )
+
+    assert link.last_observed_at == datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    assert link.submitted_at == datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    assert link.stalled_at == datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    assert all(type(value) is datetime for value in (link.last_observed_at, link.submitted_at, link.stalled_at))
+
+
+@pytest.mark.parametrize(
     ("terminal_state", "terminal_outcome"),
     [
         (state, outcome)
@@ -1189,6 +1260,50 @@ def test_execution_liveness_mutations_refuse_naive_timestamps_without_writing(
         "stall": lambda: provider.mark_execution_stalled("run-001", "flow-001", stalled_at=naive),
         "abandon": lambda: provider.abandon_execution("run-001", "flow-001", terminal_at=naive),
         "interrupt": lambda: provider.interrupt_execution("run-001", "flow-001", terminal_at=naive),
+    }
+
+    with pytest.raises(ValueError, match=r"^execution timestamps must include a timezone$"):
+        mutations[mutation]()
+
+    assert provider.lookup_run("run-001") == before
+
+
+@pytest.mark.parametrize("mutation", ["claim", "stall", "abandon", "interrupt"])
+@pytest.mark.parametrize(
+    "invalid_timestamp",
+    [
+        1_777_469_600,
+        type("MutationDatetime", (datetime,), {})(2026, 8, 29, tzinfo=timezone.utc),
+    ],
+    ids=["integer", "datetime-subclass"],
+)
+def test_execution_liveness_mutations_refuse_non_exact_timestamps_without_writing(
+    provider: ProductProjection,
+    mutation: str,
+    invalid_timestamp: object,
+) -> None:
+    now = datetime(2026, 8, 29, tzinfo=timezone.utc)
+    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    )
+    if mutation == "interrupt":
+        provider.claim_execution("run-001", "flow-001", worker_id=worker_id, claimed_at=now)
+    before = provider.lookup_run("run-001")
+    mutations: dict[str, Callable[[], bool]] = {
+        "claim": lambda: provider.claim_execution(
+            "run-001", "flow-001", worker_id=worker_id, claimed_at=cast("datetime", invalid_timestamp)
+        ),
+        "stall": lambda: provider.mark_execution_stalled(
+            "run-001", "flow-001", stalled_at=cast("datetime", invalid_timestamp)
+        ),
+        "abandon": lambda: provider.abandon_execution(
+            "run-001", "flow-001", terminal_at=cast("datetime", invalid_timestamp)
+        ),
+        "interrupt": lambda: provider.interrupt_execution(
+            "run-001", "flow-001", terminal_at=cast("datetime", invalid_timestamp)
+        ),
     }
 
     with pytest.raises(ValueError, match=r"^execution timestamps must include a timezone$"):
