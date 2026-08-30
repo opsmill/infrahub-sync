@@ -31,12 +31,12 @@ from .models import (
     CreateRunRequest,
     OrchestrationSummary,
     PlanResource,
-    PublicRunResource,
     ResultsResource,
     RunResource,
     ServiceStatusResource,
     VerifyRunRequest,
     WorkerStatusResource,
+    public_run_resource,
 )
 from .orchestration import ManagedOrchestration, Observation, PoolStatus, normalized_pool_status
 
@@ -923,7 +923,7 @@ class ManagedRunService:
                     terminal_outcome=link.terminal_outcome,
                 )
             )
-        return RunResource(run=PublicRunResource.from_product_run(run), orchestration=tuple(orchestration))
+        return RunResource(run=public_run_resource(run), orchestration=tuple(orchestration))
 
     def _audit(
         self,
