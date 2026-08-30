@@ -12,6 +12,13 @@ from fastapi import Path as APIPath
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
+from infrahub_sync.client.models import (
+    ConfigurationSummaryResource,
+    ConfigurationVersionResource,
+    RegisteredConfigurationResource,
+    RegisteredVersionResource,
+    ValidationReportResource,
+)
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
     AuditEvent,
@@ -105,38 +112,48 @@ class ConfigurationRoutes:
                 raise ConfigurationAPIError(503, "internal") from None
             raise ConfigurationAPIError(503, "configs") from None
 
-    def register(self, package: dict[str, Any]) -> Any:
-        return self._call(self._service.register, package=package)
+    def register(self, package: dict[str, Any]) -> RegisteredConfigurationResource:
+        result = self._call(self._service.register, package=package)
+        return RegisteredConfigurationResource.model_validate(result, from_attributes=True)
 
-    def create_version(self, config_id: str, package: dict[str, Any]) -> Any:
-        return self._call(self._service.create_version, config_id=config_id, package=package)
+    def create_version(self, config_id: str, package: dict[str, Any]) -> RegisteredVersionResource:
+        result = self._call(self._service.create_version, config_id=config_id, package=package)
+        return RegisteredVersionResource.model_validate(result, from_attributes=True)
 
-    def list_configs(self) -> Any:
-        return self._call(self._service.list_configs)
+    def list_configs(self) -> tuple[ConfigurationSummaryResource, ...]:
+        results = self._call(self._service.list_configs)
+        return tuple(ConfigurationSummaryResource.model_validate(result, from_attributes=True) for result in results)
 
-    def get_config(self, config_id: str) -> Any:
-        return self._call(self._service.get_config, config_id=config_id)
+    def get_config(self, config_id: str) -> ConfigurationSummaryResource:
+        result = self._call(self._service.get_config, config_id=config_id)
+        return ConfigurationSummaryResource.model_validate(result, from_attributes=True)
 
-    def list_versions(self, config_id: str) -> Any:
-        return self._call(self._service.list_versions, config_id=config_id)
+    def list_versions(self, config_id: str) -> tuple[ConfigurationVersionResource, ...]:
+        results = self._call(self._service.list_versions, config_id=config_id)
+        return tuple(ConfigurationVersionResource.model_validate(result, from_attributes=True) for result in results)
 
-    def get_version(self, config_id: str, registry_version: int) -> Any:
-        return self._call(self._service.get_version, config_id=config_id, registry_version=registry_version)
+    def get_version(self, config_id: str, registry_version: int) -> ConfigurationVersionResource:
+        result = self._call(self._service.get_version, config_id=config_id, registry_version=registry_version)
+        return ConfigurationVersionResource.model_validate(result, from_attributes=True)
 
-    def validate(self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = _MAX_PAGE_LIMIT) -> Any:
+    def validate(
+        self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = _MAX_PAGE_LIMIT
+    ) -> ValidationReportResource:
         report = self._call(self._service.validate, config_id=config_id, registry_version=registry_version)
         findings = report.findings[offset : offset + limit]
-        return {
-            "config_id": report.config_id,
-            "registry_version": report.registry_version,
-            "package_checksum": report.package_checksum,
-            "destination_schema_fingerprint": report.destination_schema_fingerprint,
-            "findings": findings,
-            "offset": offset,
-            "limit": limit,
-            "total_findings": len(report.findings),
-            "next_offset": offset + len(findings) if offset + len(findings) < len(report.findings) else None,
-        }
+        return ValidationReportResource.model_validate(
+            {
+                "config_id": report.config_id,
+                "registry_version": report.registry_version,
+                "package_checksum": report.package_checksum,
+                "destination_schema_fingerprint": report.destination_schema_fingerprint,
+                "findings": tuple(finding.model_dump(mode="json") for finding in findings),
+                "offset": offset,
+                "limit": limit,
+                "total_findings": len(report.findings),
+                "next_offset": offset + len(findings) if offset + len(findings) < len(report.findings) else None,
+            }
+        )
 
     @_provider_error_boundary
     def mutate(

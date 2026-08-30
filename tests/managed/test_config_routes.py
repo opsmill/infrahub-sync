@@ -602,7 +602,16 @@ def test_concurrent_configuration_mutation_does_not_invoke_service_twice(tmp_pat
             self.calls += 1
             started.set()
             assert release.wait(timeout=5)
-            return {"configuration": {"config_id": "cfg"}, "version": {"registry_version": 1}}
+            return {
+                "configuration": {"config_id": "cfg", "created_at": datetime.now().astimezone()},
+                "version": {
+                    "config_id": "cfg",
+                    "registry_version": 1,
+                    "package_checksum": "a" * 64,
+                    "declared_content": {},
+                    "created_at": datetime.now().astimezone(),
+                },
+            }
 
     service = Service()
     routes = ConfigurationRoutes(tmp_path, service=service)
@@ -878,12 +887,23 @@ def test_configuration_and_version_lists_return_every_service_result(
         ConfigsError = configs_service.ConfigsError
 
         @staticmethod
-        def list_configs(**_kwargs: object) -> list[dict[str, int]]:
-            return [{"position": position} for position in range(300)]
+        def list_configs(**_kwargs: object) -> list[dict[str, object]]:
+            return [
+                {"config_id": f"cfg-{position}", "created_at": datetime.now().astimezone()} for position in range(300)
+            ]
 
         @staticmethod
-        def list_versions(**_kwargs: object) -> list[dict[str, int]]:
-            return [{"position": position} for position in range(300)]
+        def list_versions(**_kwargs: object) -> list[dict[str, object]]:
+            return [
+                {
+                    "config_id": "cfg",
+                    "registry_version": position + 1,
+                    "package_checksum": f"{position:064x}",
+                    "declared_content": {},
+                    "created_at": datetime.now().astimezone(),
+                }
+                for position in range(300)
+            ]
 
     client = TestClient(
         create_app(
