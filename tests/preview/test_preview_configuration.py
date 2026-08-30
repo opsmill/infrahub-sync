@@ -381,8 +381,10 @@ def test_standalone_smoke_leaves_an_unreachable_environment_to_pytest(monkeypatc
     assert events == [("run", "uv run pytest -m preview tests/preview -q", environment)]
 
 
-def test_netbox_tutorial_uses_the_preview_1_tag_for_code_and_configuration() -> None:
+def test_netbox_tutorial_uses_one_checkout_for_code_and_configuration() -> None:
     tutorial = (REPO_ROOT / "docs/docs/tutorials/netbox-demo-to-infrahub.mdx").read_text(encoding="utf-8")
 
-    assert "infrahub-sync.git@v3-preview.1" in tutorial
-    assert "infrahub-sync/refs/tags/v3-preview.1/examples/netbox_to_infrahub/config.yml" in tutorial
+    assert "git clone https://github.com/opsmill/infrahub-sync.git ../infrahub-sync" in tutorial
+    assert 'uv add --editable "../infrahub-sync[managed]"' in tutorial
+    assert "cp ../infrahub-sync/examples/netbox_to_infrahub/config.yml" in tutorial
+    assert "v3-preview.1" not in tutorial
