@@ -1,6 +1,9 @@
 """Regression checks for the disposable preview environment."""
 
+import json
+import subprocess  # noqa: S404 -- fixed Docker Compose argv resolves configuration without starting services
 from contextlib import nullcontext
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import infrahub_sdk
@@ -19,6 +22,8 @@ from tasks.preview import (
     ensure_smoke_branch,
 )
 
+PREVIEW_MINIO_SECRET = "preview-minio-secret"  # noqa: S105 - disposable local contract canary.
+
 if TYPE_CHECKING:
     from invoke.tasks import Task
 
@@ -27,6 +32,106 @@ def test_preview_routes_prefect_ui_to_the_published_host_port() -> None:
     compose = (DEV_DIR / "docker-compose.preview.yml").read_text(encoding="utf-8")
 
     assert 'PREFECT_SERVER_UI_API_URL: "http://localhost:${PREVIEW_PREFECT_PORT:-4210}/api"' in compose
+
+
+def test_preview_declares_the_managed_postgresql_and_minio_storage_shape() -> None:
+    """Preview supplies the durable managed contract without the retired product cache."""
+    compose = (DEV_DIR / "docker-compose.preview.yml").read_text(encoding="utf-8")
+    environment = preview._runtime_env(
+        {
+            "INFRAHUB_INITIAL_ADMIN_TOKEN": "local-token",
+            "PREVIEW_BEARER_TOKENS": "{}",
+            "PREVIEW_INFRAHUB_PORT": "8080",
+            "PREVIEW_PREFECT_PORT": "4210",
+            "PREVIEW_SYNC_API_PORT": "8090",
+            "PREVIEW_STORAGE_POSTGRES_PORT": "5439",
+            "PREVIEW_MINIO_PORT": "9010",
+            "PREVIEW_MINIO_ACCESS_KEY": "preview-minio-access",
+            "PREVIEW_MINIO_SECRET_KEY": PREVIEW_MINIO_SECRET,
+            "PREVIEW_S3_BUCKET": "infrahub-sync-preview",
+            "PREVIEW_WORK_POOL": "preview-pool",
+        }
+    )
+
+    assert "sync-postgres:" in compose
+    assert "sync-minio:" in compose
+    assert "sync-minio-bootstrap:" in compose
+    assert "mc mb --ignore-existing" in compose
+    assert "${PREVIEW_MINIO_ACCESS_KEY" in compose
+    assert "${PREVIEW_MINIO_SECRET_KEY" in compose
+    assert environment["INFRAHUB_SYNC_DATABASE_URL"] == "postgresql://postgres:postgres@127.0.0.1:5439/infrahub_sync"
+    assert environment["INFRAHUB_SYNC_S3_BUCKET"] == "infrahub-sync-preview"
+    assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == "http://127.0.0.1:9010"
+    assert environment["AWS_ACCESS_KEY_ID"] == "preview-minio-access"
+    assert environment["AWS_SECRET_ACCESS_KEY"] == PREVIEW_MINIO_SECRET
+    assert "INFRAHUB_SYNC_CACHE_DIR" in environment
+    assert "INFRAHUB_SYNC_MANAGED_CACHE_LOCATION" not in environment
+
+
+def test_preview_minio_healthcheck_is_self_contained_before_bootstrap() -> None:
+    """MinIO becomes healthy without relying on the alias created by its bootstrap."""
+    compose = (DEV_DIR / "docker-compose.preview.yml").read_text(encoding="utf-8")
+    minio_start = compose.index("  sync-minio:\n")
+    bootstrap_start = compose.index("  sync-minio-bootstrap:\n")
+    bootstrap_end = compose.index("  infrahub-server:\n")
+    minio_service = compose[minio_start:bootstrap_start]
+    bootstrap_service = compose[bootstrap_start:bootstrap_end]
+
+    assert 'test: ["CMD", "curl", "--fail", "http://localhost:9000/minio/health/live"]' in minio_service
+    assert "mc ready" not in minio_service
+    assert "depends_on:\n      sync-minio:\n        condition: service_healthy" in bootstrap_service
+
+
+def test_preview_prefect_waits_for_successful_minio_bootstrap() -> None:
+    """The waited Prefect service exposes bootstrap failure to Compose up --wait."""
+    command = ["docker", "compose", "--project-name", "preview-startup-test", "--env-file", str(ENV_FILE)]
+    for compose_file in COMPOSE_FILES:
+        command.extend(("-f", str(compose_file)))
+    command.extend(("config", "--format", "json"))
+
+    result = subprocess.run(command, check=True, capture_output=True, text=True)  # noqa: S603
+    services = json.loads(result.stdout)["services"]
+
+    assert services["sync-minio-bootstrap"]["depends_on"]["sync-minio"]["condition"] == "service_healthy"
+    assert (
+        services["sync-prefect"]["depends_on"]["sync-minio-bootstrap"]["condition"] == "service_completed_successfully"
+    )
+
+
+def test_preview_up_uses_a_bounded_compose_wait(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Preview startup cannot wait forever for its container dependency chain."""
+    compose_calls: list[str] = []
+    context = Context()
+
+    class StopAfterComposeError(RuntimeError):
+        pass
+
+    def record_compose(_context: Context, arguments: str, _values: dict[str, str]) -> None:
+        compose_calls.append(arguments)
+        raise StopAfterComposeError
+
+    monkeypatch.setattr(preview, "STATE_DIR", tmp_path / ".preview")
+    monkeypatch.setattr(
+        preview,
+        "load_preview_env",
+        lambda: {
+            "COMPOSE_PROJECT_NAME": "preview-test",
+            "PREVIEW_INFRAHUB_PORT": "8080",
+            "PREVIEW_PREFECT_PORT": "4210",
+            "PREVIEW_SYNC_API_PORT": "8090",
+        },
+    )
+    monkeypatch.setattr(
+        preview,
+        "_runtime_env",
+        lambda _values: {"INFRAHUB_SYNC_CACHE_DIR": str(tmp_path / "sync-cache")},
+    )
+    monkeypatch.setattr(preview, "_compose", record_compose)
+
+    with pytest.raises(StopAfterComposeError):
+        cast("Task", preview.up).body(context)
+
+    assert compose_calls == ["up --detach --wait --wait-timeout 420 --quiet-pull"]
 
 
 def test_compose_receives_merged_local_preview_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -132,6 +237,39 @@ def test_startup_smoke_requests_the_pristine_main_check(monkeypatch: pytest.Monk
             {**environment, EXPECT_MAIN_EMPTY_ENV: "1"},
         )
     ]
+
+
+def test_actual_smoke_path_receives_the_preview_aws_credential_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reusable smoke command receives the same MinIO credentials as API, worker, and CLI."""
+    events: list[tuple[str, dict[str, str]]] = []
+    context = Context()
+    values = {
+        "COMPOSE_PROJECT_NAME": "preview-test",
+        "INFRAHUB_INITIAL_ADMIN_TOKEN": "local-token",
+        "PREVIEW_BEARER_TOKENS": "{}",
+        "PREVIEW_INFRAHUB_PORT": "8080",
+        "PREVIEW_PREFECT_PORT": "4210",
+        "PREVIEW_SYNC_API_PORT": "8090",
+        "PREVIEW_STORAGE_POSTGRES_PORT": "5439",
+        "PREVIEW_MINIO_PORT": "9010",
+        "PREVIEW_MINIO_ACCESS_KEY": "preview-minio-access",
+        "PREVIEW_MINIO_SECRET_KEY": PREVIEW_MINIO_SECRET,
+        "PREVIEW_S3_BUCKET": "infrahub-sync-preview",
+        "PREVIEW_WORK_POOL": "preview-pool",
+    }
+
+    monkeypatch.setattr(preview, "load_preview_env", lambda: values)
+    monkeypatch.setattr(preview, "ensure_smoke_branch", lambda _env: None)
+    monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
+    monkeypatch.setattr(context, "run", lambda command, *, env: events.append((command, env.copy())))
+
+    preview._run_smoke(context, expect_main_empty=False)
+
+    assert len(events) == 1
+    command, smoke_environment = events[0]
+    assert command == "uv run pytest -m preview tests/preview -q"
+    assert smoke_environment["AWS_ACCESS_KEY_ID"] == "preview-minio-access"
+    assert smoke_environment["AWS_SECRET_ACCESS_KEY"] == PREVIEW_MINIO_SECRET
 
 
 def test_standalone_smoke_leaves_an_unreachable_environment_to_pytest(monkeypatch: pytest.MonkeyPatch) -> None:

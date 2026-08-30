@@ -225,6 +225,14 @@ class DuplicateRunError(ValueError):
     """The requested stable Sync run ID already exists."""
 
 
+class ProductStoreProviderError(RuntimeError):
+    """A driver-neutral durable-provider failure with an optional SQLSTATE."""
+
+    def __init__(self, *, sqlstate: str | None = None) -> None:
+        super().__init__("product store provider failed")
+        self.sqlstate = sqlstate
+
+
 class DuplicateArtifactError(ValueError):
     """The artifact ID or immutable object key is already reserved or published."""
 

@@ -1,6 +1,7 @@
 """HTTP-only adapter for the shared configuration application service."""
 
 from datetime import datetime, timezone
+from functools import wraps
 from hashlib import sha256
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -12,7 +13,13 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from infrahub_sync.plan.canonical import canonical_json_bytes
-from infrahub_sync.product_store import AuditEvent, MutationReceipt, configs, local_product_projection
+from infrahub_sync.product_store import (
+    AuditEvent,
+    MutationReceipt,
+    ProductProjection,
+    ProductStoreProviderError,
+    configs,
+)
 
 from .auth import Principal
 from .models import ConfigMutationRequest
@@ -33,6 +40,23 @@ class ConfigurationAPIError(Exception):
         self.proven_pre_effect = proven_pre_effect
 
 
+def _provider_error_boundary(operation: Any) -> Any:
+    """Keep direct receipt and audit provider failures in the configuration vocabulary."""
+
+    @wraps(operation)
+    def guarded(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return operation(*args, **kwargs)
+        except (ConfigurationAPIError, ManagedAPIError):
+            raise
+        except ProductStoreProviderError:
+            raise ConfigurationAPIError(503, "storage") from None
+        except Exception:  # noqa: BLE001  # Direct receipt/audit defects retain the fixed configuration family.
+            raise ConfigurationAPIError(503, "internal") from None
+
+    return guarded
+
+
 def _strict_integer(value: str, *, minimum: int, maximum: int) -> int:
     """Parse one bounded API integer without accepting FastAPI's coercions."""
     if not value.isascii() or not value.isdecimal():
@@ -46,13 +70,26 @@ def _strict_integer(value: str, *, minimum: int, maximum: int) -> int:
 class ConfigurationRoutes:
     """Bind configuration operations to this server's durable cache location."""
 
-    def __init__(self, product_cache_location: Path, *, service: Any = configs, secrets: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        product_cache_location: Path | None = None,
+        *,
+        product_projection: ProductProjection | None = None,
+        service: Any = configs,
+        secrets: tuple[str, ...] = (),
+    ) -> None:
+        if (product_cache_location is None) == (product_projection is None):
+            msg = "provide exactly one product projection or product_cache_location"
+            raise ValueError(msg)
         self._location = product_cache_location
+        self._projection = product_projection
         self._service = service
         self._secrets = secrets
 
     def _call(self, operation: Any, **kwargs: Any) -> Any:
         try:
+            if self._projection is not None:
+                return operation(projection=self._projection, **kwargs)
             return operation(product_cache_location=self._location, **kwargs)
         except self._service.ConfigsError as error:
             error_type = type(error)
@@ -101,6 +138,7 @@ class ConfigurationRoutes:
             "next_offset": offset + len(findings) if offset + len(findings) < len(report.findings) else None,
         }
 
+    @_provider_error_boundary
     def mutate(
         self,
         *,
@@ -136,7 +174,7 @@ class ConfigurationRoutes:
             created_at=now,
             updated_at=now,
         )
-        projection = local_product_projection(self._location)
+        projection = self._store_projection()
         stored, created = projection.reserve_mutation(receipt, secrets=self._secrets)
         if not created:
             if (
@@ -182,12 +220,13 @@ class ConfigurationRoutes:
         self._audit(actor, operation, reason, "accepted")
         return completed.response_status, completed.response_body
 
+    @_provider_error_boundary
     def audit_refusal(self, actor: str, operation: str, reason: str) -> None:
         """Record a refused configuration mutation without reserving it."""
         self._audit(actor, operation, reason, "refused-authorization")
 
     def _audit(self, actor: str, operation: str, reason: str, outcome: str) -> None:
-        local_product_projection(self._location).record_audit(
+        self._store_projection().record_audit(
             AuditEvent(
                 event_id=f"a-{uuid4().hex}",
                 run_id=None,
@@ -199,6 +238,13 @@ class ConfigurationRoutes:
             ),
             secrets=self._secrets,
         )
+
+    def _store_projection(self) -> ProductProjection:
+        """Return the injected projection or the explicit local compatibility projection."""
+        if self._projection is not None:
+            return self._projection
+        assert self._location is not None
+        return configs._standalone_projection(self._location)
 
 
 def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempotency_key: Any) -> APIRouter:

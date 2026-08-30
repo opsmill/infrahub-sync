@@ -39,12 +39,12 @@ from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes
 from infrahub_sync.plan.review import SavedPlan, resolve_run_directory
 from infrahub_sync.plan.verify import verify_plan
-from infrahub_sync.product_store import ProductProjection, local_product_projection
+from infrahub_sync.product_store import ProductProjection
 
-from ._settings import PRODUCT_CACHE_ENV
 from .models import PlanResource
 from .orchestration import MANAGED_FLOW_NAME
 from .service import PLAN_ARTIFACT_ID
+from .storage import managed_product_projection
 
 CONFIG_DIR_ENV = "INFRAHUB_SYNC_CONFIG_DIRECTORY"
 RUN_CACHE_ENV = "INFRAHUB_SYNC_CACHE_DIR"
@@ -94,20 +94,16 @@ def _remote_log_bridge(
             source_logger.propagate = previous_propagate
 
 
-def _runtime() -> tuple[str, ProductProjection]:
+def _runtime(*, projection_factory: Any = managed_product_projection) -> tuple[str, ProductProjection]:
     config_directory = os.environ.get(CONFIG_DIR_ENV)
-    product_cache = os.environ.get(PRODUCT_CACHE_ENV)
     run_cache = os.environ.get(RUN_CACHE_ENV)
     if not config_directory or not Path(config_directory).is_dir():
         msg = f"{CONFIG_DIR_ENV} must name the worker's configuration directory"
         raise RuntimeError(msg)
-    if not product_cache:
-        msg = f"{PRODUCT_CACHE_ENV} must name the worker's durable product cache"
-        raise RuntimeError(msg)
     if not run_cache or not Path(run_cache).expanduser().is_absolute():
         msg = f"{RUN_CACHE_ENV} must name an absolute shared saved-plan cache"
         raise RuntimeError(msg)
-    return config_directory, local_product_projection(Path(product_cache).expanduser())
+    return config_directory, projection_factory()
 
 
 def _review_document(run_id: str, saved: SavedPlan) -> PlanResource:

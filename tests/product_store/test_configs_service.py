@@ -32,6 +32,7 @@ from tests.configuration.validation_packages import package, package_data
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+    from typing import NoReturn
 
 
 def _store(tmp_path: Path) -> str:
@@ -1769,3 +1770,44 @@ def test_a_large_valid_registry_version_is_still_the_stores_own_answer(tmp_path:
         )
 
     assert raised.value.reason == configs_service.CONFIGURATION_VERSION_NOT_FOUND_REASON
+
+
+class _ProviderFailureProjection:
+    """Make every configuration storage operation raise the selected provider failure."""
+
+    def __init__(self, error: BaseException) -> None:
+        self._error = error
+
+    def __getattr__(self, _name: str) -> Callable[..., NoReturn]:
+        def fail(*_args: object, **_kwargs: object) -> NoReturn:
+            raise self._error
+
+        return fail
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        lambda projection: configs_service.register(package=package_data(), projection=projection),
+        lambda projection: configs_service.create_version(
+            config_id="config-001", package=package_data(), projection=projection
+        ),
+        lambda projection: configs_service.list_configs(projection=projection),
+        lambda projection: configs_service.get_config(config_id="config-001", projection=projection),
+        lambda projection: configs_service.list_versions(config_id="config-001", projection=projection),
+        lambda projection: configs_service.get_version(
+            config_id="config-001", registry_version=1, projection=projection
+        ),
+        lambda projection: configs_service.validate(config_id="config-001", registry_version=1, projection=projection),
+    ],
+)
+def test_exact_provider_errors_are_storage_but_unmarked_errors_are_internal(
+    operation: Callable[[object], object],
+) -> None:
+    """The driver-neutral provider marker is the only dependency failure classified as storage."""
+    from infrahub_sync.product_store import ProductStoreProviderError
+
+    with pytest.raises(configs_service.ConfigsStorageError):
+        operation(_ProviderFailureProjection(ProductStoreProviderError(sqlstate="08006")))
+    with pytest.raises(configs_service.ConfigsInternalError):
+        operation(_ProviderFailureProjection(RuntimeError("unmarked product-store defect")))

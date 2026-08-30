@@ -110,12 +110,16 @@ jobs:
       # tests/test_no_prefect_import.py.
       - name: "Assert managed runtime dependencies are absent from this environment"
         run: |
-          for module in prefect fastapi uvicorn; do
+          for module in boto3 botocore fastapi prefect psycopg; do
             if uv run --no-sync python -c "import ${module}" 2>/dev/null; then
               echo "${module} is importable — this leg must be a base install"
               exit 1
             fi
           done
+          if uv run --no-sync python -c "import uvicorn" 2>/dev/null; then
+            echo "uvicorn is importable — this leg must be a base install"
+            exit 1
+          fi
 
       - name: "pytest: unit tests"
         run: uv run --no-sync invoke tests.tests-unit

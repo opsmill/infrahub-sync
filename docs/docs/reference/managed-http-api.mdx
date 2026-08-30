@@ -26,7 +26,7 @@ uv sync --extra dev --extra prefect --extra managed
 Once a release with the managed profile is published, `pip install
 'infrahub-sync[managed]'` becomes the deployment path.
 
-The profile directly installs FastAPI, HTTPX, Uvicorn, and Prefect 3.8.1. The OpsMill
+The profile directly installs FastAPI, HTTPX, Uvicorn, Prefect 3.8.1, Psycopg, and Boto3. The OpsMill
 Prefect Extras integration ships with the package itself as a vendored copy of upstream
 commit `97465e75137f6121d0377cd637383cfb3530d734`. The base installation does not import
 any of these modules. Ordinary CLI and Python API imports remain Prefect-free.
@@ -35,12 +35,13 @@ You also need:
 
 - a Prefect API and an existing process work pool;
 - a worker with access to the allowed Sync configuration directory;
-- an absolute saved-plan cache path shared by worker processes; and
-- one absolute durable product-cache path visible to both the API and workers.
+- an absolute saved-plan cache path shared by worker processes;
+- PostgreSQL for product records; and
+- an S3-compatible bucket for immutable artifacts.
 
-The MVP product-cache profile uses SQLite and the local filesystem. Run the API and workers
-on infrastructure where they can use the same filesystem paths. The API does not copy
-worker-local paths through Prefect.
+The API and worker each create a process-local client from the same PostgreSQL/S3 settings.
+They share durable records and artifacts through those services, not through a product filesystem.
+S3 credentials use Boto3's standard credential-provider chain.
 
 ## Configure principals
 
@@ -92,8 +93,12 @@ Configure the worker environment before it starts:
 | --- | --- |
 | `PREFECT_API_URL` | Prefect API used by the deployment and worker. |
 | `INFRAHUB_SYNC_CONFIG_DIRECTORY` | Existing directory containing the Sync configurations allowed on this worker. |
-| `INFRAHUB_SYNC_CACHE_DIR` | Absolute shared cache root for saved plans and run artifacts. |
-| `INFRAHUB_SYNC_MANAGED_CACHE_LOCATION` | Absolute durable product-cache root shared with the API. |
+| `INFRAHUB_SYNC_CACHE_DIR` | Absolute shared cache root for saved plans. This PH-2 seam remains unchanged. |
+| `INFRAHUB_SYNC_DATABASE_URL` | Non-empty PostgreSQL connection string accepted by Psycopg for product records. |
+| `INFRAHUB_SYNC_S3_BUCKET` | Non-empty bucket for immutable product artifacts. |
+| `INFRAHUB_SYNC_S3_PREFIX` | Optional object-key prefix; defaults to `infrahub-sync`. |
+| `INFRAHUB_SYNC_S3_ENDPOINT_URL` | Optional absolute `http` or `https` URL with no userinfo. The value reaches Boto3 unchanged; Boto3 owns any narrower SDK compatibility. |
+| `INFRAHUB_SYNC_S3_REGION` | Optional region passed to Boto3. |
 | Adapter credential variables | Credentials required by the selected Sync configuration. Keep them in the worker environment or its secret provider. |
 
 The managed flow accepts exactly seven bounded parameters:
@@ -113,12 +118,14 @@ endpoints, adapter instances, and filesystem paths are never flow parameters.
 
 ## Start the API
 
-Set the same product-cache path used by the worker and start Uvicorn through the packaged
+Set the same durable-store contract used by the worker and start Uvicorn through the packaged
 entry point:
 
 ```bash
 export PREFECT_API_URL="http://127.0.0.1:4200/api"
-export INFRAHUB_SYNC_MANAGED_CACHE_LOCATION="/var/lib/infrahub-sync/product-cache"
+export INFRAHUB_SYNC_DATABASE_URL="postgresql://sync:replace-me@postgres/infrahub_sync"
+export INFRAHUB_SYNC_S3_BUCKET="infrahub-sync-artifacts"
+export INFRAHUB_SYNC_S3_PREFIX="infrahub-sync"
 export INFRAHUB_SYNC_MANAGED_HOST="127.0.0.1"
 python -m infrahub_sync.managed.serve
 ```

@@ -8,11 +8,14 @@ artifacts. It is independent of Prefect: a standalone run has no Prefect links, 
 managed run can retain any number of purpose-labelled execution links after Prefect no
 longer has the corresponding flow-run detail.
 
-The managed Sync HTTP API and its worker use the local profile for durable run, plan,
-result, artifact, execution-link, mutation-receipt, and audit integration. Standalone CLI
-and public Python operations can opt into the same product-run and plan-review contract by
-setting an explicit product-cache location. Their established run-directory and saved-plan
-cache remains the execution artifact source.
+The managed Sync HTTP API and its worker store records in PostgreSQL and immutable
+artifacts in S3-compatible object storage. Each process creates its own clients from the
+same environment settings. Standalone CLI and public Python operations can opt into the
+same product-run and plan-review contract by setting an explicit product-cache location.
+Their established run-directory and saved-plan cache remains the execution artifact source.
+
+Managed execution continues to use `INFRAHUB_SYNC_CACHE_DIR` as the absolute shared cache
+root for saved plans. This PH-2 seam is separate from product records and artifacts.
 
 For Python, pass `product_cache_location` on each version 1 request. For the CLI, pass
 `--product-cache-location` to `diff`, `sync`, and `apply`; the same option is available when
@@ -103,10 +106,33 @@ explicitly unqualified optional features, and nothing else.
 | `omission-contradicts-mapping` | `error` | An omission names content a schema mapping also maps. A contradictory declaration is a package defect, not a preference; the error replaces the warning at that location. | `/omissions/<index>` |
 | `optional-feature-unqualified` | `warning` | The optional `incremental` feature is declared against a source adapter whose capability declaration does not qualify it, so extraction silently runs full. | `/configuration/incremental` |
 
-## Provider profiles
+## Storage profiles
 
-The local profile requires an explicit cache directory and creates a SQLite database plus
-an artifact directory beneath it:
+### Managed deployment
+
+The managed API and worker construct the PostgreSQL/S3 profile from these settings:
+
+| Variable | Requirement |
+| --- | --- |
+| `INFRAHUB_SYNC_DATABASE_URL` | Non-empty PostgreSQL connection string accepted by Psycopg for product records. |
+| `INFRAHUB_SYNC_S3_BUCKET` | Non-empty S3-compatible bucket for immutable artifacts. |
+| `INFRAHUB_SYNC_S3_PREFIX` | Optional object-key prefix; defaults to `infrahub-sync`. |
+| `INFRAHUB_SYNC_S3_ENDPOINT_URL` | Optional absolute `http` or `https` URL with no userinfo. The value reaches Boto3 unchanged; Boto3 owns any narrower SDK compatibility. |
+| `INFRAHUB_SYNC_S3_REGION` | Optional region passed to Boto3. |
+
+S3 credentials use Boto3's standard credential-provider chain. Configure credentials in
+the API, worker, CLI, or smoke-process environment that constructs the client. Sync does
+not define access-key or secret-key settings.
+
+Constructing a managed process initializes the PostgreSQL schema. The PostgreSQL role must
+have the DDL privileges required to create the product-record tables in its configured
+schema, plus permission to read and write their rows.
+
+### Standalone and test injection
+
+The local SQLite/filesystem projection is an injected standalone/test seam. It is not a
+managed deployment option. Standalone CLI and Python callers select it only by supplying an
+explicit absolute product-cache location; in-process tests can inject it directly:
 
 ```python
 from pathlib import Path
@@ -116,12 +142,12 @@ from infrahub_sync.product_store import local_product_projection
 records = local_product_projection(Path("/var/lib/infrahub-sync/product-cache"))
 ```
 
-The path must be absolute after `~` expansion. Relative paths are rejected, and the profile
+The path must be absolute after `~` expansion. Relative paths are rejected, and the seam
 never falls back to the process working directory.
 
-The production profile combines a PostgreSQL DB-API connection factory with an
-S3-compatible client implementing the small `S3Client` protocol (`put`, `get`, `copy`, and
-`delete`):
+The underlying PostgreSQL/S3 library constructor accepts a PostgreSQL DB-API connection
+factory and an S3-compatible client implementing the small `S3Client` protocol (`put`,
+`get`, `copy`, and `delete`):
 
 ```python
 from infrahub_sync.product_store import production_product_projection
@@ -134,23 +160,9 @@ records = production_product_projection(
 )
 ```
 
-Database-driver and object-client packages remain deployment choices rather than base
-Infrahub Sync dependencies. Both profiles implement the same `ProductProjection`
-operations and are covered by the same behavioral contract tests. The production-profile
-tests use a PostgreSQL-paramstyle local DB-API emulator and a deterministic
-S3-compatible client; they prove the injected provider contract, not live PostgreSQL,
-driver, S3 service, authentication, or network integration.
-
-Use `local_product_projection` or `production_product_projection` to construct a supported
-profile. The record-store and artifact-store protocols accepted by `ProductProjection`
-are internal implementation seams, not a public custom-provider compatibility contract.
-`S3Client` remains the documented deployment adapter required by the production factory.
-
-Constructing the supported production projection runs idempotent
-`CREATE TABLE IF NOT EXISTS` statements for the product-record schema.
-The PostgreSQL connection role must have the DDL privileges required to create those
-tables in its configured schema, in addition to the privileges required to read and write
-their rows.
+Psycopg and Boto3 are installed only by the managed extra. The record-store and
+artifact-store protocols accepted by `ProductProjection` are internal implementation
+seams, not a public custom-provider compatibility contract.
 
 ## Record and identity contract
 
@@ -198,8 +210,8 @@ for both the destination and product lifecycle.
 Artifact keys contain their SHA-256 digest and never change. Publication first reserves a
 non-readable relational reference for the run-owned artifact identity. It then writes
 artifact data and its manifest, and finally marks that exact reference published in a
-second relational transaction. The filesystem profile commits data and manifest using an
-atomic directory rename. The S3-compatible profile copies staged data to its immutable key
+second relational transaction. The injected local seam commits data and manifest using an
+atomic directory rename. The managed S3-compatible profile copies staged data to its immutable key
 and uses a create-only manifest put as the object-store commit point. A crash before the
 final relational mark leaves durable pending evidence rather than exposing the artifact.
 The run cannot be finished successfully while any pending publication exists. It can be
@@ -263,7 +275,7 @@ Observed on macOS with Python 3.13.3 on 2026-08-09:
 | VAL-8 88k | 88,117 / 87,868 | 23,015,700 B | 2,732 B | 40,960 B | 11 | 23,059,392 B |
 | Representative 10k | 10,051 / 10,023 | 2,722,700 B | 2,877 B | 40,960 B | 11 | 2,766,537 B |
 
-The five artifact payloads account for ten object files (data plus manifest) and the
-SQLite run/reference/link schema accounts for one database file. Filesystem allocation,
-database page size, and production object-store metadata can change physical billing; the
-payload and manifest byte counts are the portable sizing inputs.
+The standalone/test fixture stores ten object files (data plus manifest) and one SQLite
+run/reference/link database. Filesystem allocation, database page size, and managed
+object-store metadata can change physical billing; the payload and manifest byte counts
+are the portable sizing inputs.

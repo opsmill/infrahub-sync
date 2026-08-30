@@ -72,6 +72,11 @@ def load_preview_env() -> dict[str, str]:
         "PREVIEW_INFRAHUB_PORT",
         "PREVIEW_PREFECT_PORT",
         "PREVIEW_SYNC_API_PORT",
+        "PREVIEW_STORAGE_POSTGRES_PORT",
+        "PREVIEW_MINIO_PORT",
+        "PREVIEW_MINIO_ACCESS_KEY",
+        "PREVIEW_MINIO_SECRET_KEY",
+        "PREVIEW_S3_BUCKET",
         "PREVIEW_WORK_POOL",
     }
     missing = required - values.keys()
@@ -101,7 +106,15 @@ def _runtime_env(values: dict[str, str]) -> dict[str, str]:
             "PREFECT_API_URL": f"{urls['prefect']}/api",
             "INFRAHUB_SYNC_CONFIG_DIRECTORY": str(REPO_ROOT / "examples"),
             "INFRAHUB_SYNC_CACHE_DIR": str(STATE_DIR / "sync-cache"),
-            "INFRAHUB_SYNC_MANAGED_CACHE_LOCATION": str(STATE_DIR / "product-cache"),
+            "INFRAHUB_SYNC_DATABASE_URL": (
+                f"postgresql://postgres:postgres@127.0.0.1:{values['PREVIEW_STORAGE_POSTGRES_PORT']}/infrahub_sync"
+            ),
+            "INFRAHUB_SYNC_S3_BUCKET": values["PREVIEW_S3_BUCKET"],
+            "INFRAHUB_SYNC_S3_PREFIX": "infrahub-sync",
+            "INFRAHUB_SYNC_S3_ENDPOINT_URL": f"http://127.0.0.1:{values['PREVIEW_MINIO_PORT']}",
+            "INFRAHUB_SYNC_S3_REGION": "us-east-1",
+            "AWS_ACCESS_KEY_ID": values["PREVIEW_MINIO_ACCESS_KEY"],
+            "AWS_SECRET_ACCESS_KEY": values["PREVIEW_MINIO_SECRET_KEY"],
             "INFRAHUB_SYNC_MANAGED_BEARER_TOKENS": values["PREVIEW_BEARER_TOKENS"],
             "INFRAHUB_SYNC_MANAGED_WORK_POOL": values["PREVIEW_WORK_POOL"],
             "INFRAHUB_SYNC_MANAGED_FLOW_WORKING_DIRECTORY": str(REPO_ROOT),
@@ -234,10 +247,9 @@ def up(context: Context) -> None:
     env = _runtime_env(values)
     STATE_DIR.mkdir(exist_ok=True)
     Path(env["INFRAHUB_SYNC_CACHE_DIR"]).mkdir(parents=True, exist_ok=True)
-    Path(env["INFRAHUB_SYNC_MANAGED_CACHE_LOCATION"]).mkdir(parents=True, exist_ok=True)
 
     print(f" - [{NAMESPACE}] Starting containers (first run downloads images)")
-    _compose(context, "up --detach --wait --quiet-pull", values)
+    _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS} --quiet-pull", values)
     _wait_for_http(f"{urls['infrahub']}/api/config", "Infrahub")
     _wait_for_http(f"{urls['prefect']}/api/health", "Prefect")
 

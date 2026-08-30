@@ -10,6 +10,9 @@ from threading import Event, Thread
 from typing import TYPE_CHECKING, cast
 
 import pytest
+
+pytest.importorskip("fastapi")
+
 from fastapi.testclient import TestClient
 
 from infrahub_sync.configuration.models import ValidationFinding
@@ -22,7 +25,10 @@ from infrahub_sync.managed.service import ManagedAPIError, ManagedRunService
 from infrahub_sync.product_store import configs as configs_service
 from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.product_store.configs import ValidationReport
-from tests.configuration.validation_packages import package_data
+from tests.configuration.validation_packages import package, package_data
+
+ADMIN_TOKEN = "admin-token-canary-0003"  # noqa: S105 - deliberate non-secret boundary canary.
+OTHER_TOKEN = "reader-token-canary-0004"  # noqa: S105 - deliberate non-secret boundary canary.
 
 if TYPE_CHECKING:
     from typing import NoReturn
@@ -30,6 +36,7 @@ if TYPE_CHECKING:
     from infrahub_sync.configuration.models import ConfigurationPackage
     from infrahub_sync.managed.auth import PrincipalResolver
     from infrahub_sync.product_store.models import ConfigurationVersion
+    from infrahub_sync.product_store.store import ProductProjection
 
 
 class _Orchestration:  # pylint: disable=too-few-public-methods
@@ -69,6 +76,295 @@ def test_configuration_routes_register_then_read(tmp_path: Path, monkeypatch: py
         client.get(f"/configs/{config_id}", headers={"Authorization": "Bearer admin-token-canary-0003"}).status_code
         == 200
     )
+
+
+def test_configuration_routes_use_the_injected_projection_for_services_receipts_and_audit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every configuration path uses the one projection supplied at composition."""
+    from infrahub_sync.managed import config_routes
+
+    bearer = "admin-token-canary-0003"
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    delegate = local_product_projection(tmp_path)
+    message = "configuration routes reopened a local product projection"
+
+    def local_projection_forbidden(*_args: object, **_kwargs: object) -> NoReturn:
+        raise AssertionError(message)
+
+    class ProjectionSentinel:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def __getattr__(self, name: str) -> object:
+            target = getattr(delegate, name)
+            if not callable(target):
+                return target
+
+            def record(*args: object, **kwargs: object) -> object:
+                self.calls.append(name)
+                return target(*args, **kwargs)
+
+            return record
+
+    projection = ProjectionSentinel()
+    monkeypatch.setattr(config_routes, "local_product_projection", local_projection_forbidden, raising=False)
+    monkeypatch.setattr(configs_service, "local_product_projection", local_projection_forbidden)
+    client = TestClient(
+        create_app(
+            ManagedRunService(cast("ProductProjection", projection), _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(
+                product_projection=cast("ProductProjection", projection), secrets=resolver.secret_values
+            ),
+        )
+    )
+
+    headers = {"Authorization": f"Bearer {bearer}", "Idempotency-Key": "injected-projection"}
+    body = {"package": package_data(), "reason": "register through one projection"}
+    registered = client.post(
+        "/configs",
+        headers=headers,
+        json=body,
+    )
+    replayed = client.post("/configs", headers=headers, json=body)
+    config_id = registered.json()["configuration"]["config_id"]
+    listed = client.get("/configs", headers={"Authorization": f"Bearer {bearer}"})
+    validated = client.post(
+        f"/configs/{config_id}/versions/1/validate",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+
+    assert registered.status_code == replayed.status_code == 201
+    assert replayed.json() == registered.json()
+    assert listed.status_code == validated.status_code == 200
+    assert {
+        "reserve_mutation",
+        "claim_mutation",
+        "create_configuration",
+        "complete_mutation",
+        "list_configurations",
+        "lookup_configuration",
+        "lookup_configuration_version",
+        "record_audit",
+    }.issubset(projection.calls)
+    assert projection.calls.count("reserve_mutation") == 2
+    assert projection.calls.count("create_configuration") == 1
+    with pytest.raises(AssertionError, match=message):
+        configs_service._standalone_projection(tmp_path)
+
+
+def test_configuration_receipt_and_audit_provider_errors_are_storage_failures() -> None:
+    """Provider failures after the service call retain the configuration storage family."""
+    from infrahub_sync.product_store import ProductStoreProviderError
+
+    class Projection:
+        @staticmethod
+        def reserve_mutation(*_args: object, **_kwargs: object) -> NoReturn:
+            raise ProductStoreProviderError(sqlstate="08006")
+
+        @staticmethod
+        def record_audit(*_args: object, **_kwargs: object) -> NoReturn:
+            raise ProductStoreProviderError(sqlstate="08006")
+
+    routes = ConfigurationRoutes(product_projection=cast("ProductProjection", Projection()))
+    with pytest.raises(ConfigurationAPIError) as receipt_error:
+        routes.mutate(
+            actor="admin",
+            idempotency_key="provider-error",
+            operation="register-config",
+            resource_kind="configuration-registry",
+            resource_id="configs",
+            package=package_data(),
+            reason="provider error",
+        )
+    with pytest.raises(ConfigurationAPIError) as audit_error:
+        routes.audit_refusal("admin", "register-config", "provider error")
+    assert receipt_error.value.family == audit_error.value.family == "storage"
+
+
+def test_configuration_http_provider_errors_preserve_storage_and_internal_families(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Marked projection failures are storage responses at every configuration HTTP boundary."""
+    from infrahub_sync.product_store import ProductStoreProviderError
+
+    admin_token = ADMIN_TOKEN
+    reader_token = OTHER_TOKEN
+    monkeypatch.setenv(
+        PRINCIPALS_ENV,
+        json.dumps(
+            {
+                "admin": {"token": admin_token, "administrator": True},
+                "reader": {"token": reader_token},
+            }
+        ),
+    )
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    run_projection = local_product_projection(tmp_path)
+
+    class StorageProjection:
+        @staticmethod
+        def list_configurations() -> NoReturn:
+            raise ProductStoreProviderError(sqlstate="08006")
+
+        @staticmethod
+        def reserve_mutation(*_args: object, **_kwargs: object) -> NoReturn:
+            raise ProductStoreProviderError(sqlstate="08006")
+
+        @staticmethod
+        def record_audit(*_args: object, **_kwargs: object) -> NoReturn:
+            raise ProductStoreProviderError(sqlstate="08006")
+
+    client = TestClient(
+        create_app(
+            ManagedRunService(run_projection, _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(product_projection=cast("ProductProjection", StorageProjection())),
+        )
+    )
+    admin_headers = {"Authorization": f"Bearer {admin_token}", "Idempotency-Key": "provider-error"}
+    reader_headers = {"Authorization": f"Bearer {reader_token}", "Idempotency-Key": "audit-provider-error"}
+    responses = (
+        client.get("/configs", headers=admin_headers),
+        client.post("/configs", headers=admin_headers, json={"package": package_data(), "reason": "storage"}),
+        client.post("/configs", headers=reader_headers, json={"package": package_data(), "reason": "audit"}),
+    )
+    for response in responses:
+        payload = response.json()["error"]
+        assert response.status_code == 503
+        assert payload == {
+            "code": "configs-storage",
+            "message": "the configuration service refused the request",
+            "status": 503,
+            "family": "storage",
+            "reason": None,
+        }
+        assert "08006" not in response.text
+
+    class InternalProjection:
+        @staticmethod
+        def list_configurations() -> NoReturn:
+            message = "projection-secret-canary"
+            raise RuntimeError(message)
+
+    internal_client = TestClient(
+        create_app(
+            ManagedRunService(run_projection, _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(product_projection=cast("ProductProjection", InternalProjection())),
+        )
+    )
+    internal = internal_client.get("/configs", headers=admin_headers)
+    assert internal.status_code == 503
+    assert internal.json()["error"]["family"] == "internal"
+    assert "projection-secret-canary" not in internal.text
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "create_configuration",
+        "list_configurations",
+        "lookup_configuration",
+        "list_configuration_versions",
+        "lookup_configuration_version",
+        "reserve_mutation",
+        "claim_mutation",
+        "release_mutation",
+        "complete_mutation",
+        "record_audit",
+    ],
+)
+@pytest.mark.parametrize("failure_kind", ["provider", "runtime"])
+def test_every_configuration_storage_boundary_has_a_value_free_http_family(
+    boundary: str,
+    failure_kind: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Each projection call contains provider details and classifies unmarked defects."""
+    from infrahub_sync.product_store import ProductStoreProviderError
+
+    admin_token = ADMIN_TOKEN
+    reader_token = OTHER_TOKEN
+    monkeypatch.setenv(
+        PRINCIPALS_ENV,
+        json.dumps(
+            {
+                "admin": {"token": admin_token, "administrator": True},
+                "reader": {"token": reader_token, "administrator": False},
+            }
+        ),
+    )
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    delegate = local_product_projection(tmp_path)
+    version = delegate.create_configuration(package())
+    dsn_canary = "postgresql://dsn-secret-canary@db/sync"
+    driver_canary = "driver-secret-canary"
+
+    class FailingProjection:
+        def __getattr__(self, name: str) -> object:
+            target = getattr(delegate, name)
+            if name != boundary:
+                return target
+
+            def fail(*_args: object, **_kwargs: object) -> NoReturn:
+                if failure_kind == "provider":
+                    error = ProductStoreProviderError(sqlstate=dsn_canary)
+                    error.args = (driver_canary,)
+                    raise error
+                message = f"{driver_canary}: {dsn_canary}"
+                raise RuntimeError(message)
+
+            return fail
+
+    projection = cast("ProductProjection", FailingProjection())
+    client = TestClient(
+        create_app(
+            ManagedRunService(projection, _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(product_projection=projection, secrets=resolver.secret_values),
+        ),
+        raise_server_exceptions=False,
+    )
+    admin_headers = {"Authorization": f"Bearer {admin_token}", "Idempotency-Key": f"failure-{boundary}"}
+    reader_headers = {"Authorization": f"Bearer {reader_token}", "Idempotency-Key": f"failure-{boundary}"}
+    valid_body = {"package": package_data(), "reason": "boundary evidence"}
+
+    if boundary == "list_configurations":
+        response = client.get("/configs", headers=admin_headers)
+    elif boundary == "lookup_configuration":
+        response = client.get(f"/configs/{version.config_id}", headers=admin_headers)
+    elif boundary == "list_configuration_versions":
+        response = client.get(f"/configs/{version.config_id}/versions", headers=admin_headers)
+    elif boundary == "lookup_configuration_version":
+        response = client.get(f"/configs/{version.config_id}/versions/1", headers=admin_headers)
+    elif boundary == "release_mutation":
+        response = client.post(
+            "/configs",
+            headers=admin_headers,
+            json={"package": {}, "reason": "pre-effect refusal"},
+        )
+    elif boundary == "record_audit":
+        response = client.post("/configs", headers=reader_headers, json=valid_body)
+    else:
+        response = client.post("/configs", headers=admin_headers, json=valid_body)
+
+    expected_family = "storage" if failure_kind == "provider" else "internal"
+    assert response.status_code == 503
+    assert response.json()["error"]["family"] == expected_family
+    rendered = response.text + "\n" + caplog.text
+    for forbidden in (
+        dsn_canary,
+        driver_canary,
+        "Traceback",
+        "ProductStoreProviderError",
+        "RuntimeError",
+    ):
+        assert forbidden not in rendered
 
 
 def test_configuration_mutation_replays_exact_response_and_rejects_changed_content(
@@ -241,6 +537,9 @@ def test_post_commit_readback_failure_blocks_same_key_retry_without_a_second_con
     writes = 0
 
     class PostCommitReadbackFailure:  # pylint: disable=too-few-public-methods,no-self-use
+        def __getattr__(self, name: str) -> object:
+            return getattr(projection, name)
+
         def create_configuration(self, package: ConfigurationPackage) -> ConfigurationVersion:  # noqa: PLR6301
             nonlocal writes
             writes += 1
@@ -778,27 +1077,22 @@ def test_create_app_keeps_run_and_configuration_dependencies_separate(tmp_path: 
     assert config_service.calls == ["list_configs"]
 
 
-def test_build_app_binds_one_cache_location_and_passes_configuration_dependency(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Runtime construction supplies the one durable cache location to both families."""
-    from infrahub_sync.managed._settings import PRODUCT_CACHE_ENV  # noqa: PLC2701
-
-    monkeypatch.setenv(PRODUCT_CACHE_ENV, str(tmp_path))
+def test_build_app_binds_one_projection_and_passes_configuration_dependency() -> None:
+    """Runtime construction supplies one durable projection to both families."""
     received: list[object] = []
-    route_locations: list[Path] = []
     route_dependency = object()
+    projection_dependency = object()
 
-    def projection(location: Path) -> object:
-        received.append(location)
-        return object()
+    def projection() -> object:
+        received.append("projection")
+        return projection_dependency
 
     class Resolver:
         secret_values: tuple[str, ...] = ()
 
-    def route_factory(location: Path, *, secrets: tuple[str, ...]) -> object:
+    def route_factory(*, product_projection: object, secrets: tuple[str, ...]) -> object:
         assert secrets == ()
-        route_locations.append(location)
+        assert product_projection is projection_dependency
         return route_dependency
 
     def application(run: object, resolver: object, routes: object) -> object:
@@ -815,6 +1109,41 @@ def test_build_app_binds_one_cache_location_and_passes_configuration_dependency(
         )
         is not None
     )
-    assert received[0] == tmp_path
-    assert route_locations == [tmp_path]
+    assert received[0] == "projection"
     assert received[-1] is route_dependency
+
+
+def test_build_app_composes_one_managed_projection_for_runs_and_configurations() -> None:
+    """The deployed API has one environment-owned product projection."""
+    projection = object()
+    received: list[object] = []
+
+    class Resolver:
+        secret_values: tuple[str, ...] = ()
+
+    def storage_factory() -> object:
+        received.append("storage")
+        return projection
+
+    def routes_factory(*, product_projection: object, secrets: tuple[str, ...]) -> object:
+        assert product_projection is projection
+        assert secrets == ()
+        received.append("routes")
+        return object()
+
+    def app_factory(run_service: object, resolver: object, routes: object) -> object:
+        del run_service, resolver, routes
+        received.append("app")
+        return object()
+
+    assert (
+        build_app(
+            projection_factory=storage_factory,
+            resolver_factory=Resolver,
+            run_service_factory=lambda value, *_args, **_kwargs: received.append(value) or object(),
+            configuration_routes_factory=routes_factory,
+            app_factory=app_factory,
+        )
+        is not None
+    )
+    assert received == ["storage", projection, "routes", "app"]
