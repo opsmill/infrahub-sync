@@ -166,6 +166,47 @@ def test_unknown_state_polls_to_the_exact_deadline_without_a_final_request(monke
     assert raised.value.execution_state is None
 
 
+def test_poll_request_uses_remaining_budget_and_cannot_return_after_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock()
+    monkeypatch.setattr(client_module, "monotonic", clock.monotonic)
+    monkeypatch.setattr(client_module, "sleep", clock.sleep)
+    accepted = RunResource.model_validate(_resource(_execution("flow-1")))
+    request_timeouts: list[dict[str, float]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/version":
+            return httpx.Response(
+                200,
+                json={"server_version": "3", "api_versions": ["v3-unstable"], "stability": "unstable"},
+            )
+        request_timeouts.append(request.extensions["timeout"])
+        clock.now += 4
+        return httpx.Response(
+            200,
+            json=_resource(
+                _execution(
+                    "flow-1",
+                    state="completed",
+                    terminal_state="completed",
+                    terminal_outcome="succeeded",
+                ),
+                phase="finished",
+                outcome="succeeded",
+            ),
+        )
+
+    client = SyncClient("https://example.test", "token", transport=httpx.MockTransport(handler))
+    client.get_version()
+
+    with pytest.raises(RunWaitTimeoutError):
+        client.wait_for_run(accepted, timeout=5, poll_interval=2)
+
+    assert clock.sleeps == [2]
+    assert request_timeouts == [{"connect": 3, "read": 3, "write": 3, "pool": 3}]
+
+
 def test_wait_refuses_disappearing_execution_history() -> None:
     accepted = RunResource.model_validate(_resource(_execution("flow-1")))
     client, _calls = _client([_resource(_execution("different-flow"))])

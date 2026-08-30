@@ -256,8 +256,18 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         return self.create_run(request, idempotency_key)
 
     def get_run(self, run_id: str) -> RunResource:
+        return self._get_run(run_id)
+
+    def _get_run(self, run_id: str, *, request_timeout: float | None = None) -> RunResource:
         run_id = self._identifier(run_id, "run_id")
-        return self._request_model("get_run", "GET", f"/runs/{run_id}", model=RunResource, success={200})
+        return self._request_model(
+            "get_run",
+            "GET",
+            f"/runs/{run_id}",
+            model=RunResource,
+            success={200},
+            request_timeout=request_timeout,
+        )
 
     def get_plan(self, run_id: str) -> PlanResource:
         run_id = self._identifier(run_id, "run_id")
@@ -334,15 +344,18 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             if remaining <= 0:
                 raise self._wait_timeout(latest, selected)
             sleep(min(poll_interval, remaining))
-            if monotonic() >= deadline:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
                 raise self._wait_timeout(latest, selected)
-            latest = self.get_run(accepted_resource.run.run_id)
+            latest = self._get_run(accepted_resource.run.run_id, request_timeout=remaining)
             selected = next(
                 (entry for entry in latest.orchestration if entry.flow_run_id == flow_run_id),
                 None,
             )
             if selected is None:
                 raise ProtocolError(_WAIT_FOR_RUN)
+            if monotonic() >= deadline:
+                raise self._wait_timeout(latest, selected)
             terminal = self._wait_verdict(latest, selected)
             if terminal is not None:
                 return terminal
@@ -418,6 +431,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         idempotency_key: str | None = None,
         params: dict[str, int] | None = None,
         config_route: bool = False,
+        request_timeout: float | None = None,
     ) -> _Model:
         if idempotency_key is not None and (not isinstance(idempotency_key, str) or not idempotency_key.strip()):
             raise ClientInputError(_IDEMPOTENCY_KEY_ARG)
@@ -430,6 +444,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             headers=headers,
             json=None if body is None else body.model_dump(mode="json"),
             params=params,
+            request_timeout=request_timeout,
         )
         return self._success(response, operation, model, success, config_route=config_route)
 
@@ -486,12 +501,20 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         headers: dict[str, str] | None = None,
         json: object = None,
         params: dict[str, int] | None = None,
+        request_timeout: float | None = None,
     ) -> httpx.Response:
         request_headers = dict(headers or {})
         if authenticated:
             request_headers["Authorization"] = self._authorization
         try:
-            return self._http.request(method, path, headers=request_headers, json=json, params=params)
+            return self._http.request(
+                method,
+                path,
+                headers=request_headers,
+                json=json,
+                params=params,
+                timeout=self._http.timeout if request_timeout is None else request_timeout,
+            )
         except httpx.TimeoutException:
             raise ClientTimeoutError(operation) from None
         except httpx.HTTPError:
