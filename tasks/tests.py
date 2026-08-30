@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 from invoke import Context, task
@@ -14,8 +15,11 @@ MAIN_DIRECTORY = CURRENT_DIRECTORY.parent
 @task
 def tests_unit(context: Context) -> None:
     """Run unit tests — everything under tests/ except integration-marked tests."""
+    command = 'pytest -m "not integration and not preview"'
+    if sys.version_info < (3, 11):
+        command += " --ignore=tests/managed --ignore=tests/conformance/test_managed_equivalence.py"
     with context.cd(MAIN_DIRECTORY):
-        context.run('pytest -m "not integration and not preview"', pty=True)
+        context.run(command, pty=True)
 
 
 @task

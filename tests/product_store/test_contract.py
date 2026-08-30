@@ -4107,7 +4107,8 @@ def _reachable_postgresql_dsn() -> str | None:
     if not dsn:
         return None
     try:
-        import psycopg  # pylint: disable=import-outside-toplevel,import-error
+        # pylint: disable-next=import-outside-toplevel,import-error
+        import psycopg  # ty: ignore[unresolved-import] - TODO: optional managed dependency
     except ImportError:
         return None
     try:
@@ -4144,7 +4145,8 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
     dsn = _reachable_postgresql_dsn()
     if dsn is None:
         pytest.skip("psycopg is not installed, or PRODUCT_STORE_TEST_POSTGRESQL_DSN is unset/unreachable")
-    import psycopg  # pylint: disable=import-outside-toplevel,import-error
+    # pylint: disable-next=import-outside-toplevel,import-error
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional managed dependency
 
     from infrahub_sync.managed.storage import PsycopgConnectionFactory
 
@@ -4226,7 +4228,8 @@ def _assert_real_postgresql_refuses_partial_configuration_binding(dsn: str) -> N
     still accepted. Factored out of the test above only to keep that test's statement count
     reasonable; it has exactly one caller.
     """
-    import psycopg  # pylint: disable=import-outside-toplevel,import-error
+    # pylint: disable-next=import-outside-toplevel,import-error
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional managed dependency
 
     def raw_insert(
         run_id: str, *, config_id: str | None, registry_version: int | None, package_checksum: str | None
