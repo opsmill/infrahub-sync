@@ -24,6 +24,7 @@ _REGISTRY_VERSION_MESSAGE = "registry_version must be an integer in the registry
 _REASON_MESSAGE = "reason must be printable and trimmed"
 _JSON_PACKAGE_MESSAGE = "package must be recursively exact JSON-native"
 _ARTIFACT_TIME_MESSAGE = "artifact-reference timestamps must include a timezone"
+_EXECUTION_TIME_MESSAGE = "execution timestamps must include a timezone"
 _ARTIFACT_KEY_MESSAGE = "artifact object and manifest keys must include the content digest"
 _BINDING_MESSAGE = "configuration binding must be all absent or all present"
 _FINISHED_RUN_MESSAGE = "a finished product record requires an outcome"
@@ -212,6 +213,19 @@ class OrchestrationSummary(_ResourceModel):
     terminal_at: datetime | None
     terminal_state: TerminalState | None
     terminal_outcome: TerminalOutcome | None
+
+    @field_validator(
+        "submitted_at",
+        "claimed_at",
+        "stalled_at",
+        "cancellation_requested_at",
+        "cancellation_recovery_deadline_at",
+        "cancellation_acknowledged_at",
+        "terminal_at",
+    )
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        return _timezone(value, _EXECUTION_TIME_MESSAGE)
 
     @model_validator(mode="after")
     def _require_terminal_verdict(self) -> OrchestrationSummary:
