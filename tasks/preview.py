@@ -249,7 +249,7 @@ def up(context: Context) -> None:
     Path(env["INFRAHUB_SYNC_CACHE_DIR"]).mkdir(parents=True, exist_ok=True)
 
     print(f" - [{NAMESPACE}] Starting containers (first run downloads images)")
-    _compose(context, "up --detach --wait --quiet-pull", values)
+    _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS} --quiet-pull", values)
     _wait_for_http(f"{urls['infrahub']}/api/config", "Infrahub")
     _wait_for_http(f"{urls['prefect']}/api/health", "Prefect")
 

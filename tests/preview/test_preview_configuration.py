@@ -1,6 +1,9 @@
 """Regression checks for the disposable preview environment."""
 
+import json
+import subprocess  # noqa: S404 -- fixed Docker Compose argv resolves configuration without starting services
 from contextlib import nullcontext
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import infrahub_sdk
@@ -77,6 +80,58 @@ def test_preview_minio_healthcheck_is_self_contained_before_bootstrap() -> None:
     assert 'test: ["CMD", "curl", "--fail", "http://localhost:9000/minio/health/live"]' in minio_service
     assert "mc ready" not in minio_service
     assert "depends_on:\n      sync-minio:\n        condition: service_healthy" in bootstrap_service
+
+
+def test_preview_prefect_waits_for_successful_minio_bootstrap() -> None:
+    """The waited Prefect service exposes bootstrap failure to Compose up --wait."""
+    command = ["docker", "compose", "--project-name", "preview-startup-test", "--env-file", str(ENV_FILE)]
+    for compose_file in COMPOSE_FILES:
+        command.extend(("-f", str(compose_file)))
+    command.extend(("config", "--format", "json"))
+
+    result = subprocess.run(command, check=True, capture_output=True, text=True)  # noqa: S603
+    services = json.loads(result.stdout)["services"]
+
+    assert services["sync-minio-bootstrap"]["depends_on"]["sync-minio"]["condition"] == "service_healthy"
+    assert (
+        services["sync-prefect"]["depends_on"]["sync-minio-bootstrap"]["condition"] == "service_completed_successfully"
+    )
+
+
+def test_preview_up_uses_a_bounded_compose_wait(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Preview startup cannot wait forever for its container dependency chain."""
+    compose_calls: list[str] = []
+    context = Context()
+
+    class StopAfterComposeError(RuntimeError):
+        pass
+
+    def record_compose(_context: Context, arguments: str, _values: dict[str, str]) -> None:
+        compose_calls.append(arguments)
+        raise StopAfterComposeError
+
+    monkeypatch.setattr(preview, "STATE_DIR", tmp_path / ".preview")
+    monkeypatch.setattr(
+        preview,
+        "load_preview_env",
+        lambda: {
+            "COMPOSE_PROJECT_NAME": "preview-test",
+            "PREVIEW_INFRAHUB_PORT": "8080",
+            "PREVIEW_PREFECT_PORT": "4210",
+            "PREVIEW_SYNC_API_PORT": "8090",
+        },
+    )
+    monkeypatch.setattr(
+        preview,
+        "_runtime_env",
+        lambda _values: {"INFRAHUB_SYNC_CACHE_DIR": str(tmp_path / "sync-cache")},
+    )
+    monkeypatch.setattr(preview, "_compose", record_compose)
+
+    with pytest.raises(StopAfterComposeError):
+        cast("Task", preview.up).body(context)
+
+    assert compose_calls == ["up --detach --wait --wait-timeout 420 --quiet-pull"]
 
 
 def test_compose_receives_merged_local_preview_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
