@@ -473,10 +473,12 @@ def test_managed_storage_endpoint_rejects_parser_invalid_syntax(endpoint: str) -
         "http://999.999.999.999",
         "http://[v1.fe80]",
         "HTTP://[V1.fe80]",
+        "http://%61.example.test",
+        "http://example%2etest",
     ],
 )
 def test_managed_storage_endpoint_rejects_non_boto3_host_domains_before_construction(endpoint: str) -> None:
-    """Invalid dotted IPv4 and IPvFuture never reach any storage constructor."""
+    """Hosts outside the Boto3-compatible domain never reach a storage constructor."""
     from infrahub_sync.managed import storage
 
     calls: list[str] = []
