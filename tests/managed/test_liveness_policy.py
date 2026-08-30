@@ -7,9 +7,10 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
+from prefect.states import Cancelled, Completed, Crashed, Failed, Running
 
 from infrahub_sync.managed.liveness import LivenessPolicy, RunLivenessReconciler
 from infrahub_sync.managed.orchestration import CancellationResult, Observation, PoolStatus, PoolWorker, Submission
@@ -288,6 +289,97 @@ def test_owner_boundaries_and_clock_reversal_do_not_interrupt_early(tmp_path) ->
     run = projection.lookup_run("run-fresh-owner").value
     assert run is not None
     assert run.prefect_executions[0].terminal_at is None
+
+
+@pytest.mark.parametrize(
+    ("state", "canonical_state"),
+    [
+        (Completed(name="Cached"), "completed"),
+        (Failed(name="Retry Exhausted"), "failed"),
+        (Crashed(name="Infrastructure Lost"), "crashed"),
+        (Cancelled(name="Externally Stopped"), "cancelled"),
+    ],
+    ids=("completed", "failed", "crashed", "cancelled"),
+)
+def test_custom_named_terminal_prefect_states_interrupt_a_claimed_execution(
+    tmp_path, state: object, canonical_state: str
+) -> None:
+    """Terminal StateType remains authoritative when Prefect supplies a custom name."""
+    from infrahub_sync.managed.orchestration import PrefectOrchestration
+
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    owner_id = uuid4()
+    flow_run_id = uuid4()
+
+    class _PrefectClient:
+        @staticmethod
+        async def read_flow_run(requested_id: UUID) -> SimpleNamespace:
+            assert requested_id == flow_run_id
+            return SimpleNamespace(state=state)
+
+        async def read_workers_for_work_pool(self, _pool: str):  # noqa: PLR6301
+            return [
+                SimpleNamespace(
+                    id=owner_id,
+                    status="ONLINE",
+                    last_heartbeat_time=now,
+                    heartbeat_interval_seconds=10,
+                )
+            ]
+
+        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str):  # noqa: PLR6301
+            return []
+
+    projection = local_product_projection(tmp_path)
+    run_id = f"run-custom-{canonical_state}"
+    projection.create_run(
+        _run(
+            run_id,
+            PrefectExecutionLink(
+                flow_run_id=str(flow_run_id),
+                purpose="plan",
+                attempt=1,
+                submitted_at=now - timedelta(minutes=10),
+                claimed_at=now - timedelta(minutes=1),
+                claiming_worker_id=str(owner_id),
+            ),
+        )
+    )
+    orchestration = PrefectOrchestration(cast("RemoteExecutionClient", _PrefectClient()))
+    reconciler = RunLivenessReconciler(
+        projection,
+        orchestration,
+        LivenessPolicy(300, 30, 5),
+        "pool",
+        clock=lambda: now,
+    )
+
+    asyncio.run(reconciler.reconcile_once())
+
+    run = projection.lookup_run(run_id).value
+    assert run is not None
+    link = run.prefect_executions[0]
+    assert link.terminal_state == "interrupted"
+    assert link.last_observed_state == canonical_state
+
+
+def test_custom_named_nonterminal_prefect_observation_preserves_its_name() -> None:
+    """A nonterminal custom name remains useful live orchestration detail."""
+    from infrahub_sync.managed.orchestration import PrefectOrchestration
+
+    flow_run_id = uuid4()
+
+    class _PrefectClient:
+        @staticmethod
+        async def read_flow_run(requested_id: UUID) -> SimpleNamespace:
+            assert requested_id == flow_run_id
+            return SimpleNamespace(state=Running(name="Awaiting Cache"))
+
+    observation = asyncio.run(
+        PrefectOrchestration(cast("RemoteExecutionClient", _PrefectClient())).observe(str(flow_run_id))
+    )
+
+    assert observation == Observation(available=True, state="awaiting cache")
 
 
 def test_restarted_worker_identity_and_unavailable_pool_do_not_conflate_owners(tmp_path) -> None:

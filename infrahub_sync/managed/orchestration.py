@@ -28,6 +28,7 @@ from prefect.states import Cancelling
 
 MANAGED_FLOW_NAME = "infrahub-sync-managed"
 MANAGED_DEPLOYMENT_NAME = "run"
+_TERMINAL_STATE_TYPES = frozenset({StateType.COMPLETED, StateType.FAILED, StateType.CRASHED, StateType.CANCELLED})
 # Freshness uses three intervals; cap it at the largest age two datetimes can express.
 _MAX_DATETIME_AGE = datetime.max.replace(tzinfo=timezone.utc) - datetime.min.replace(tzinfo=timezone.utc)
 _MAX_HEARTBEAT_INTERVAL_SECONDS = (_MAX_DATETIME_AGE.days * 24 * 60 * 60 + _MAX_DATETIME_AGE.seconds) // 3
@@ -163,7 +164,12 @@ class PrefectOrchestration:
         state = run.state
         if state is None:
             return Observation(available=True, state="pending")
-        state_name = state.name or state.type.value
+        state_type = state.type
+        state_name = (
+            state_type.value
+            if type(state_type) is StateType and state_type in _TERMINAL_STATE_TYPES  # pylint: disable=unidiomatic-typecheck
+            else state.name or state_type.value
+        )
         return Observation(available=True, state=state_name.lower())
 
     async def pool_status(self, work_pool_name: str, now: datetime) -> PoolStatus:
