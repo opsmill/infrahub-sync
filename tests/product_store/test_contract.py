@@ -8,7 +8,7 @@ import re
 import sqlite3
 import subprocess  # noqa: S404 - fixed local interpreter probes restart durability.
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -1167,6 +1167,34 @@ def test_execution_claim_stall_and_terminal_cas_contract(provider: ProductProjec
     assert link.stalled_at == now
     assert link.claimed_at == now
     assert link.claiming_worker_id == worker_id
+
+
+@pytest.mark.parametrize("mutation", ["claim", "stall", "abandon", "interrupt"])
+def test_execution_liveness_mutations_refuse_naive_timestamps_without_writing(
+    provider: ProductProjection,
+    mutation: str,
+) -> None:
+    now = datetime(2026, 8, 29, tzinfo=timezone.utc)
+    naive = now.replace(tzinfo=None)
+    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    )
+    if mutation == "interrupt":
+        provider.claim_execution("run-001", "flow-001", worker_id=worker_id, claimed_at=now)
+    before = provider.lookup_run("run-001")
+    mutations: dict[str, Callable[[], bool]] = {
+        "claim": lambda: provider.claim_execution("run-001", "flow-001", worker_id=worker_id, claimed_at=naive),
+        "stall": lambda: provider.mark_execution_stalled("run-001", "flow-001", stalled_at=naive),
+        "abandon": lambda: provider.abandon_execution("run-001", "flow-001", terminal_at=naive),
+        "interrupt": lambda: provider.interrupt_execution("run-001", "flow-001", terminal_at=naive),
+    }
+
+    with pytest.raises(ValueError, match=r"^execution timestamps must include a timezone$"):
+        mutations[mutation]()
+
+    assert provider.lookup_run("run-001") == before
 
 
 def test_claim_and_abandon_race_has_one_winner(tmp_path: Path) -> None:

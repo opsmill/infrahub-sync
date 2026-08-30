@@ -60,6 +60,17 @@ def test_prefect_query_seconds_refuses_hostile_exact_type_without_reading_it(mon
         LivenessPolicy.from_environment(worker_query_seconds=cast("str", _HostileValue()))
 
 
+def test_admission_ttl_refuses_oversized_digits_with_fixed_unchained_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS", "9" * 5000)
+
+    with pytest.raises(ValueError, match=r"^managed liveness settings are invalid$") as caught:
+        LivenessPolicy.from_environment(worker_query_seconds="10")
+
+    assert caught.value.__cause__ is None
+
+
 class _Orchestration:
     def __init__(self, pool: PoolStatus, observation: Observation | None = None) -> None:
         self.pool = pool

@@ -2179,27 +2179,27 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Claim one pending execution; only a canonical Prefect worker UUID is accepted."""
         if not _is_canonical_uuid(worker_id):
             raise ValueError(_INVALID_MANAGED_WORKER_ID)
-        return self._records.claim_execution(
-            run_id, flow_run_id, worker_id=worker_id, claimed_at=claimed_at or datetime.now(timezone.utc)
-        )
+        effective_claimed_at = claimed_at or datetime.now(timezone.utc)
+        _require_execution_timestamp(effective_claimed_at)
+        return self._records.claim_execution(run_id, flow_run_id, worker_id=worker_id, claimed_at=effective_claimed_at)
 
     def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime | None = None) -> bool:
         """Set the first stall marker while leaving a pre-TTL execution claimable."""
-        return self._records.mark_execution_stalled(
-            run_id, flow_run_id, stalled_at=stalled_at or datetime.now(timezone.utc)
-        )
+        effective_stalled_at = stalled_at or datetime.now(timezone.utc)
+        _require_execution_timestamp(effective_stalled_at)
+        return self._records.mark_execution_stalled(run_id, flow_run_id, stalled_at=effective_stalled_at)
 
     def abandon_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime | None = None) -> bool:
         """CAS an unclaimed execution into the terminal abandoned verdict."""
-        return self._records.abandon_execution(
-            run_id, flow_run_id, terminal_at=terminal_at or datetime.now(timezone.utc)
-        )
+        effective_terminal_at = terminal_at or datetime.now(timezone.utc)
+        _require_execution_timestamp(effective_terminal_at)
+        return self._records.abandon_execution(run_id, flow_run_id, terminal_at=effective_terminal_at)
 
     def interrupt_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime | None = None) -> bool:
         """CAS a claimed execution into the terminal interrupted/ambiguous verdict."""
-        return self._records.interrupt_execution(
-            run_id, flow_run_id, terminal_at=terminal_at or datetime.now(timezone.utc)
-        )
+        effective_terminal_at = terminal_at or datetime.now(timezone.utc)
+        _require_execution_timestamp(effective_terminal_at)
+        return self._records.interrupt_execution(run_id, flow_run_id, terminal_at=effective_terminal_at)
 
     def commit_claimed_execution(
         self,

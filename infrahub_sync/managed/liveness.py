@@ -71,7 +71,10 @@ class LivenessPolicy:
         ttl = os.environ.get(RUN_ADMISSION_TTL_ENV, "300")
         if type(ttl) is not str or _TTL_PATTERN.fullmatch(ttl) is None:  # pylint: disable=unidiomatic-typecheck
             raise ValueError(_POLICY_ERROR)
-        ttl_value = int(ttl)
+        try:
+            ttl_value = int(ttl)
+        except ValueError:
+            raise ValueError(_POLICY_ERROR) from None
         if not 1 <= ttl_value <= 86400:
             raise ValueError(_POLICY_ERROR)
         if (
