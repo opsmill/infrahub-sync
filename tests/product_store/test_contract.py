@@ -1057,6 +1057,43 @@ def test_execution_link_explicitly_hydrates_exact_persisted_iso_timestamps() -> 
     assert all(type(value) is datetime for value in (link.last_observed_at, link.submitted_at, link.stalled_at))
 
 
+def test_execution_link_json_round_trip_hydrates_terminal_z_timestamps() -> None:
+    """The Python 3.10 reader accepts the exact UTC form emitted by Pydantic."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    link = PrefectExecutionLink(
+        flow_run_id="flow",
+        purpose="plan",
+        attempt=1,
+        last_observed_at=now,
+        submitted_at=now,
+        claimed_at=now,
+        claiming_worker_id="8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0",
+        stalled_at=now,
+        cancellation_requested_at=now,
+        cancellation_recovery_deadline_at=now + timedelta(seconds=30),
+        cancellation_receipt_id="mutation-001",
+        cancellation_acknowledged_at=now,
+        terminal_at=now,
+        terminal_state="completed",
+        terminal_outcome="succeeded",
+    )
+
+    persisted = link.model_dump(mode="json")
+
+    timestamp_fields = (
+        "last_observed_at",
+        "submitted_at",
+        "claimed_at",
+        "stalled_at",
+        "cancellation_requested_at",
+        "cancellation_recovery_deadline_at",
+        "cancellation_acknowledged_at",
+        "terminal_at",
+    )
+    assert all(cast("str", persisted[field]).endswith("Z") for field in timestamp_fields)
+    assert PrefectExecutionLink.model_validate(persisted) == link
+
+
 @pytest.mark.parametrize(
     ("terminal_state", "terminal_outcome"),
     [

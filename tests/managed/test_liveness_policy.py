@@ -10,9 +10,12 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
 
 import pytest
+
+pytest.importorskip("prefect")
+
 from prefect.states import Cancelled, Completed, Crashed, Failed, Running
 
-from infrahub_sync.managed.liveness import LivenessPolicy, RunLivenessReconciler
+from infrahub_sync.managed.liveness import LivenessPolicy, RunLivenessReconciler, select_cancellable_execution
 from infrahub_sync.managed.orchestration import CancellationResult, Observation, PoolStatus, PoolWorker, Submission
 from infrahub_sync.product_store import MutationReceipt, PrefectExecutionLink, ProductRun, local_product_projection
 
@@ -76,6 +79,7 @@ class _Orchestration:
     def __init__(self, pool: PoolStatus, observation: Observation | None = None) -> None:
         self.pool = pool
         self.observation = observation or Observation(available=True, state="running")
+        self.observed_flow_run_ids: list[str] = []
 
     async def pool_status(self, work_pool_name: str, now: datetime) -> PoolStatus:
         del work_pool_name, now
@@ -86,7 +90,7 @@ class _Orchestration:
         return Submission(flow_run_id="unused", state="running")
 
     async def observe(self, flow_run_id: str) -> Observation:
-        del flow_run_id
+        self.observed_flow_run_ids.append(flow_run_id)
         return self.observation
 
     async def cancel(self, flow_run_id: str) -> CancellationResult:  # noqa: PLR6301
@@ -105,6 +109,53 @@ def _run(run_id: str, link: PrefectExecutionLink) -> ProductRun:
         phase="planning",
         prefect_executions=(link,),
     )
+
+
+@pytest.mark.parametrize(
+    ("receipt_id", "older_receipt_id", "expected_flow_run_id"),
+    [
+        ("receipt-new", "receipt-old", "flow-new"),
+        ("receipt-old", "receipt-old", None),
+        (None, None, None),
+    ],
+    ids=("matching", "different", "absent"),
+)
+def test_newest_nonterminal_execution_owns_cancellation_selection(
+    receipt_id: str | None,
+    older_receipt_id: str | None,
+    expected_flow_run_id: str | None,
+) -> None:
+    """An unmatched intent on the newest link cannot expose an older link."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+
+    def link(flow_run_id: str, cancellation_receipt_id: str | None) -> PrefectExecutionLink:
+        return PrefectExecutionLink(
+            flow_run_id=flow_run_id,
+            purpose="plan",
+            attempt=1,
+            submitted_at=now,
+            cancellation_requested_at=now if cancellation_receipt_id is not None else None,
+            cancellation_recovery_deadline_at=(
+                now + timedelta(seconds=30) if cancellation_receipt_id is not None else None
+            ),
+            cancellation_receipt_id=cancellation_receipt_id,
+        )
+
+    run = ProductRun(
+        run_id="run-cancellation-owner",
+        operation="plan",
+        configuration_reference="sha256:configuration",
+        actor="operator@example.com",
+        started_at=now,
+        phase="planning",
+        prefect_executions=(link("flow-old", older_receipt_id), link("flow-new", "receipt-new")),
+    )
+    orchestration = _Orchestration(PoolStatus(detail_available=False, queue_depth=None, observed_at=None))
+
+    selected = asyncio.run(select_cancellable_execution(run, receipt_id, orchestration))
+
+    assert (selected.flow_run_id if selected is not None else None) == expected_flow_run_id
+    assert orchestration.observed_flow_run_ids == []
 
 
 def _request_cancellation(projection, run_id: str, flow_run_id: str, now: datetime, *, acknowledge: bool) -> None:

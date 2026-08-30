@@ -38,19 +38,13 @@ async def select_cancellable_execution(
     orchestration: ManagedOrchestration,
 ) -> PrefectExecutionLink | None:
     """Select an eligible link without writing product or receipt state."""
-    correlated = next(
-        (
-            candidate
-            for candidate in reversed(run.prefect_executions)
-            if candidate.terminal_at is None and candidate.cancellation_receipt_id == receipt_id
-        ),
-        None,
-    )
-    if receipt_id is not None and correlated is not None:
-        return correlated
     for candidate in reversed(run.prefect_executions):
-        if candidate.terminal_at is not None or candidate.cancellation_requested_at is not None:
+        if candidate.terminal_at is not None:
             continue
+        if candidate.cancellation_requested_at is not None:
+            if receipt_id is not None and candidate.cancellation_receipt_id == receipt_id:
+                return candidate
+            return None
         observed = await orchestration.observe(candidate.flow_run_id)
         if not observed.available:
             if observed.reason == "prefect-execution-unavailable":

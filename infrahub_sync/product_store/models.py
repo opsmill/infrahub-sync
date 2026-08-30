@@ -97,7 +97,8 @@ class PrefectExecutionLink(BaseModel):
             parsed = value
         elif type(value) is str:  # pylint: disable=unidiomatic-typecheck
             try:
-                parsed = datetime.fromisoformat(value)
+                persisted = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+                parsed = datetime.fromisoformat(persisted)
             except ValueError:
                 msg = "Prefect execution timestamps must be exact datetimes or persisted ISO strings"
                 raise ValueError(msg) from None
