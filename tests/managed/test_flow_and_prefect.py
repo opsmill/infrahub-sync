@@ -881,14 +881,6 @@ class _CancellationClient:
         return self.result
 
 
-class _DerivedOrchestrationResult(OrchestrationResult[object]):
-    pass
-
-
-class _DerivedState(State[object]):
-    pass
-
-
 _ACKNOWLEDGED_CANCELLATION = CancellationResult(acknowledged=True)
 _UNACKNOWLEDGED_CANCELLATION = CancellationResult(
     acknowledged=False,
@@ -949,22 +941,6 @@ _UNACKNOWLEDGED_CANCELLATION = CancellationResult(
         ),
         (SimpleNamespace(status=SetStateStatus.ACCEPT, state=Cancelling()), _UNACKNOWLEDGED_CANCELLATION),
         (
-            _DerivedOrchestrationResult(
-                state=Cancelling(),
-                status=SetStateStatus.ACCEPT,
-                details=StateAcceptDetails(),
-            ),
-            _UNACKNOWLEDGED_CANCELLATION,
-        ),
-        (
-            OrchestrationResult.model_construct(
-                state=_DerivedState.model_validate(Cancelling().model_dump()),
-                status=SetStateStatus.ACCEPT,
-                details=StateAcceptDetails(),
-            ),
-            _UNACKNOWLEDGED_CANCELLATION,
-        ),
-        (
             OrchestrationResult.model_construct(
                 state=Cancelling(),
                 status="ACCEPT",
@@ -1000,16 +976,14 @@ _UNACKNOWLEDGED_CANCELLATION = CancellationResult(
         "reject-without-state",
         "abort",
         "wait",
-        "non-exact-result",
-        "result-subclass",
-        "state-subclass",
+        "non-orchestration-result",
         "malformed-status",
         "accept-mismatched-details",
         "reject-mismatched-details",
     ),
 )
 @pytest.mark.asyncio
-async def test_prefect_cancel_accepts_only_the_pinned_acknowledgement_domain(
+async def test_prefect_cancel_accepts_only_the_documented_acknowledgement(
     result: object,
     expected: CancellationResult,
 ) -> None:

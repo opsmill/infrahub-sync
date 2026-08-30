@@ -203,8 +203,8 @@ def _worker_binding(
 
 
 def _canonical_uuid(value: object) -> str | None:
-    """Return an exact built-in canonical UUID string, never a permissive coercion."""
-    if type(value) is not str:  # pylint: disable=unidiomatic-typecheck
+    """Return the value only when it is already a canonical UUID string."""
+    if not isinstance(value, str):
         return None
     try:
         return value if str(UUID(value)) == value else None
@@ -213,7 +213,7 @@ def _canonical_uuid(value: object) -> str | None:
 
 
 def _prefect_flow_run_id() -> str:
-    """Read the trusted flow-run UUID from Prefect's process-local runtime context."""
+    """Read the flow-run UUID from Prefect's process-local runtime context."""
     from prefect.runtime import flow_run  # pylint: disable=import-outside-toplevel
 
     flow_run_id = _canonical_uuid(flow_run.id)
@@ -223,7 +223,7 @@ def _prefect_flow_run_id() -> str:
 
 
 def _claim_current_execution(projection: ProductProjection, run_id: str) -> tuple[str, str]:
-    """Claim the exact Prefect execution before any configuration or adapter work begins."""
+    """Claim this Prefect execution before any configuration or adapter work begins."""
     worker_id = _canonical_uuid(os.environ.get("PREFECT__WORKER_ID"))
     flow_run_id = _prefect_flow_run_id()
     if worker_id is None:

@@ -70,7 +70,7 @@ class Observation:
 
 @dataclass(frozen=True, slots=True)
 class CancellationResult:
-    """Exact-flow remote cancellation acknowledgement without fabricated terminal state."""
+    """Remote cancellation acknowledgement; never a fabricated terminal state."""
 
     acknowledged: bool
     reason: str | None = None
@@ -86,7 +86,7 @@ class PoolWorker:
     heartbeat_interval_seconds: float | None
 
     def __post_init__(self) -> None:
-        """Reject worker evidence outside the exact internal value domain."""
+        """Reject worker evidence outside the documented value domain."""
         _validate_pool_worker(self)
 
 
@@ -101,24 +101,16 @@ class PoolStatus:
 
     def __post_init__(self) -> None:
         """Keep unavailable and available snapshots structurally disjoint."""
-        if type(self.detail_available) is not bool:  # pylint: disable=unidiomatic-typecheck
-            raise ValueError
         if not self.detail_available:
             if self.queue_depth is not None or self.observed_at is not None or self.workers:
                 raise ValueError
             return
-        if type(self.queue_depth) is not int or self.queue_depth < 0:  # pylint: disable=unidiomatic-typecheck
+        if self.queue_depth is None or self.queue_depth < 0:
             raise ValueError
-        if (  # pylint: disable=unidiomatic-typecheck
-            type(self.observed_at) is not datetime or self.observed_at.utcoffset() is None
-        ):
+        if not isinstance(self.observed_at, datetime) or self.observed_at.utcoffset() is None:
             raise ValueError
-        if type(self.workers) is not tuple:  # pylint: disable=unidiomatic-typecheck
+        if not all(isinstance(worker, PoolWorker) for worker in self.workers):
             raise ValueError
-        for worker in self.workers:
-            if type(worker) is not PoolWorker:  # pylint: disable=unidiomatic-typecheck
-                raise ValueError
-            _validate_pool_worker(worker)
         if len({worker.worker_id for worker in self.workers}) != len(self.workers):
             raise ValueError
 
@@ -165,27 +157,22 @@ class PrefectOrchestration:
         if state is None:
             return Observation(available=True, state="pending")
         state_type = state.type
-        state_name = (
-            state_type.value
-            if type(state_type) is StateType and state_type in _TERMINAL_STATE_TYPES  # pylint: disable=unidiomatic-typecheck
-            else state.name or state_type.value
-        )
+        state_name = state_type.value if state_type in _TERMINAL_STATE_TYPES else state.name or state_type.value
         return Observation(available=True, state=state_name.lower())
 
     async def pool_status(self, work_pool_name: str, now: datetime) -> PoolStatus:
         """Read worker heartbeats and scheduled queue depth without exposing provider detail."""
         try:
             client = cast("_PoolClient", self._client)
-            workers = _exact_list(await client.read_workers_for_work_pool(work_pool_name))
-            scheduled = _exact_list(await client.get_scheduled_flow_runs_for_work_pool(work_pool_name))
+            workers = _pinned_list(await client.read_workers_for_work_pool(work_pool_name))
+            scheduled = _pinned_list(await client.get_scheduled_flow_runs_for_work_pool(work_pool_name))
             parsed = tuple(_pool_worker(worker) for worker in workers)
-            queue_depth = len(scheduled)
-            return PoolStatus(detail_available=True, queue_depth=queue_depth, observed_at=now, workers=parsed)
+            return PoolStatus(detail_available=True, queue_depth=len(scheduled), observed_at=now, workers=parsed)
         except (ObjectNotFound, httpx.HTTPError, AttributeError, TypeError, ValueError):
             return PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
 
     async def cancel(self, flow_run_id: str) -> CancellationResult:
-        """Request exact-flow cancellation and report only Prefect acknowledgement."""
+        """Cancel one flow run and report only what Prefect acknowledged."""
         requested_state = Cancelling()
         try:
             result = await self._client.set_flow_run_state(UUID(flow_run_id), requested_state)
@@ -196,53 +183,47 @@ class PrefectOrchestration:
         return CancellationResult(acknowledged=True)
 
 
+def _pinned_list(value: object) -> list[Any]:
+    """Require the pinned Prefect list response; every failure here means unavailable."""
+    if not isinstance(value, list):
+        raise ValueError  # noqa: TRY004 - pool_status contains ValueError, not TypeError.
+    return cast("list[Any]", value)
+
+
 def _canonical_uuid(value: object) -> str:
-    """Require the exact canonical UUID that Prefect assigned to the worker."""
-    if type(value) is not UUID:  # pylint: disable=unidiomatic-typecheck
-        raise ValueError
+    """Return the canonical form of the UUID Prefect assigned to the worker."""
+    if not isinstance(value, UUID):
+        raise ValueError  # noqa: TRY004 - pool_status contains ValueError, not TypeError.
     return str(value)
 
 
 def _validate_pool_worker(worker: PoolWorker) -> None:
-    """Validate every exact field of one internal worker observation."""
-    if type(worker.worker_id) is not str:  # pylint: disable=unidiomatic-typecheck
-        raise ValueError
+    """Validate one internal worker observation against its documented domain."""
     try:
         canonical_worker_id = str(UUID(worker.worker_id))
     except ValueError:
         raise ValueError from None
     if canonical_worker_id != worker.worker_id:
         raise ValueError
-    if type(worker.status) is not str or worker.status not in {  # pylint: disable=unidiomatic-typecheck
-        member.value.lower() for member in WorkerStatus
-    }:
+    if worker.status not in {member.value.lower() for member in WorkerStatus}:
         raise ValueError
     heartbeat = worker.last_heartbeat
-    if heartbeat is not None and (
-        type(heartbeat) is not datetime  # pylint: disable=unidiomatic-typecheck
-        or heartbeat.utcoffset() is None
-    ):
+    if heartbeat is not None and heartbeat.utcoffset() is None:
         raise ValueError
     interval = worker.heartbeat_interval_seconds
-    if interval is not None and (
-        type(interval) is not float  # pylint: disable=unidiomatic-typecheck
-        or interval <= 0
-        or not isfinite(interval)
-        or interval > _MAX_HEARTBEAT_INTERVAL_SECONDS
-    ):
+    if interval is not None and (interval <= 0 or not isfinite(interval) or interval > _MAX_HEARTBEAT_INTERVAL_SECONDS):
         raise ValueError
 
 
 def _cancellation_acknowledged(result: object, requested_state: State[T]) -> bool:
-    """Accept only Prefect's exact acknowledgement of the requested transition."""
-    if type(result) is not OrchestrationResult:  # pylint: disable=unidiomatic-typecheck
+    """Accept only Prefect's acknowledgement of the requested cancelling transition."""
+    if not isinstance(result, OrchestrationResult):
         return False
     state = result.state
     return (
         result.status is SetStateStatus.ACCEPT
-        and type(result.details) is StateAcceptDetails  # pylint: disable=unidiomatic-typecheck
-        and type(state) is State[T]  # pylint: disable=unidiomatic-typecheck
-        and type(state.type) is StateType  # pylint: disable=unidiomatic-typecheck
+        and isinstance(result.details, StateAcceptDetails)
+        and state is not None
         and state.type is StateType.CANCELLING
         and state.name == requested_state.name
     )
@@ -250,7 +231,7 @@ def _cancellation_acknowledged(result: object, requested_state: State[T]) -> boo
 
 def normalized_pool_status(snapshot: object) -> PoolStatus:
     """Map any malformed orchestration snapshot to the fixed unavailable value."""
-    if type(snapshot) is not PoolStatus:  # pylint: disable=unidiomatic-typecheck
+    if not isinstance(snapshot, PoolStatus):
         return PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
     try:
         return PoolStatus(
@@ -263,19 +244,12 @@ def normalized_pool_status(snapshot: object) -> PoolStatus:
         return PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
 
 
-def _exact_list(value: object) -> list[Any]:
-    """Require the pinned Prefect collection response without generic ``len`` coercion."""
-    if type(value) is not list:  # pylint: disable=unidiomatic-typecheck
-        raise ValueError
-    return cast("list[Any]", value)
-
-
 def _status_value(value: object) -> str:
-    """Accept only Prefect's status enum or an exact string test double."""
-    if type(value) is WorkerStatus:  # pylint: disable=unidiomatic-typecheck
+    """Normalize one Prefect worker status into the documented vocabulary."""
+    if isinstance(value, WorkerStatus):
         return value.value.lower()
-    if type(value) is not str:  # pylint: disable=unidiomatic-typecheck
-        raise ValueError
+    if not isinstance(value, str):
+        raise ValueError  # noqa: TRY004 - pool_status contains ValueError, not TypeError.
     status = value.lower()
     if status not in {member.value.lower() for member in WorkerStatus}:
         raise ValueError
@@ -283,19 +257,12 @@ def _status_value(value: object) -> str:
 
 
 def _pool_worker(worker: Any) -> PoolWorker:
-    """Parse one pinned Prefect worker record without coercing hostile values."""
+    """Parse one Prefect worker record into the internal liveness evidence."""
     heartbeat = worker.last_heartbeat_time
     interval = worker.heartbeat_interval_seconds
-    if heartbeat is not None and (
-        type(heartbeat) is not datetime  # pylint: disable=unidiomatic-typecheck
-        or heartbeat.utcoffset() is None
-    ):
+    if heartbeat is not None and (not isinstance(heartbeat, datetime) or heartbeat.utcoffset() is None):
         raise ValueError
-    if (
-        type(interval) is not int  # pylint: disable=unidiomatic-typecheck
-        or interval <= 0
-        or interval > _MAX_HEARTBEAT_INTERVAL_SECONDS
-    ):
+    if not isinstance(interval, int) or interval <= 0 or interval > _MAX_HEARTBEAT_INTERVAL_SECONDS:
         raise ValueError
     return PoolWorker(
         worker_id=_canonical_uuid(worker.id),

@@ -35,33 +35,20 @@ def test_admission_ttl_and_prefect_query_define_liveness_formulae(monkeypatch: p
     assert policy.cadence_seconds == 5
 
 
-@pytest.mark.parametrize("value", ["0.1", "1", "1.0", "3600"])
-def test_prefect_query_seconds_accepts_only_canonical_decimal_strings(
+@pytest.mark.parametrize("value", ["0.1", "1", "1.0", "3600", " 1 "])
+def test_prefect_query_seconds_accepts_its_documented_numeric_domain(
     monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:
-    """The query setting has one grammar before its numeric domain is evaluated."""
+    """Operator settings are ordinary decimal strings inside the supported range."""
     monkeypatch.setenv("INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS", "300")
     assert LivenessPolicy.from_environment(worker_query_seconds=value).stall_threshold_seconds >= 30
 
 
-@pytest.mark.parametrize("value", [" 1", "1 ", "+1", "-1", "1e1", "01", ".1", "1.", "NaN", "Infinity", "0", "3600.1"])
-def test_prefect_query_seconds_refuses_noncanonical_or_out_of_domain_values(
-    monkeypatch: pytest.MonkeyPatch, value: str
-) -> None:
+@pytest.mark.parametrize("value", ["-1", "0", "3600.1", "NaN", "Infinity", "", "ten"])
+def test_prefect_query_seconds_refuses_out_of_domain_values(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
     monkeypatch.setenv("INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS", "300")
     with pytest.raises(ValueError, match=r"^managed liveness settings are invalid$"):
         LivenessPolicy.from_environment(worker_query_seconds=value)
-
-
-def test_prefect_query_seconds_refuses_hostile_exact_type_without_reading_it(monkeypatch: pytest.MonkeyPatch) -> None:
-    class _HostileValue:
-        def __str__(self) -> str:
-            message = "hostile values must not be coerced"
-            raise AssertionError(message)
-
-    monkeypatch.setenv("INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS", "300")
-    with pytest.raises(ValueError, match=r"^managed liveness settings are invalid$"):
-        LivenessPolicy.from_environment(worker_query_seconds=cast("str", _HostileValue()))
 
 
 def test_admission_ttl_refuses_oversized_digits_with_fixed_unchained_error(
@@ -570,8 +557,8 @@ def test_lifespan_continues_after_ordinary_failure_and_cancels_cleanly(tmp_path)
     assert reconciler.cancelled
 
 
-def test_pool_parsing_is_value_free_and_heartbeat_freshness_includes_equality() -> None:
-    """Only native Prefect-shaped values are parsed, and equality is still fresh."""
+def test_pool_parsing_reports_a_ready_worker_when_freshness_is_exactly_at_the_bound() -> None:
+    """A heartbeat exactly three intervals old is still fresh."""
     from infrahub_sync.managed.orchestration import PrefectOrchestration
     from infrahub_sync.managed.service import _service_status  # noqa: PLC2701 - public status behavior test.
 
@@ -593,18 +580,9 @@ def test_pool_parsing_is_value_free_and_heartbeat_freshness_includes_equality() 
             return []
 
     valid = asyncio.run(PrefectOrchestration(cast("RemoteExecutionClient", _PoolClient(10))).pool_status("pool", now))
+
     assert valid.detail_available
     assert _service_status(valid).worker.state == "ready"
-
-    class _HostileInterval:
-        def __float__(self) -> float:
-            message = "pool parsing must not coerce hostile values"
-            raise AssertionError(message)
-
-    invalid = asyncio.run(
-        PrefectOrchestration(cast("RemoteExecutionClient", _PoolClient(_HostileInterval()))).pool_status("pool", now)
-    )
-    assert invalid == PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
 
 
 @pytest.mark.parametrize(
@@ -795,25 +773,19 @@ def test_duplicate_worker_uuid_snapshot_is_unavailable_and_cannot_drive_reconcil
     ("field", "value"),
     [
         ("worker_id", "not-a-uuid"),
-        ("worker_id", type("WorkerId", (str,), {})("8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0")),
         ("status", "ONLINE"),
         ("status", "unknown"),
         ("last_heartbeat", datetime(2026, 8, 29, 12)),  # noqa: DTZ001 - deliberate naive provider value.
-        ("last_heartbeat", type("Heartbeat", (datetime,), {})(2026, 8, 29, 12, tzinfo=timezone.utc)),
         ("heartbeat_interval_seconds", -1.0),
-        ("heartbeat_interval_seconds", 10),
         ("heartbeat_interval_seconds", float("nan")),
         ("heartbeat_interval_seconds", 105_179_299_200.0),
     ],
     ids=(
         "invalid-uuid",
-        "uuid-string-subclass",
         "unnormalized-status",
         "unknown-status",
         "naive-heartbeat",
-        "heartbeat-subclass",
         "negative-interval",
-        "integer-interval",
         "nonfinite-interval",
         "oversized-interval",
     ),

@@ -37,7 +37,6 @@ def test_installed_server_version_translates_metadata_failures_without_cause(
         "1.0+",
         "1.0+local..part",
         "1!1!2",
-        type("VersionText", (str,), {})("2.0.1"),
     ],
 )
 def test_installed_server_version_rejects_invalid_metadata_values(

@@ -999,19 +999,9 @@ def test_execution_link_requires_complete_claim_and_terminal_verdicts() -> None:
         "terminal_at",
     ],
 )
-@pytest.mark.parametrize(
-    "invalid_timestamp",
-    [
-        1_777_469_600,
-        type("PersistedDatetime", (datetime,), {})(2026, 8, 29, tzinfo=timezone.utc),
-    ],
-    ids=["integer", "datetime-subclass"],
-)
-def test_execution_link_timestamp_admission_refuses_coercible_non_exact_values(
-    field: str,
-    invalid_timestamp: object,
-) -> None:
-    """Every execution timestamp closes Pydantic's integer and subclass coercion paths."""
+def test_execution_link_timestamp_admission_refuses_coercible_integers(field: str) -> None:
+    """Every execution timestamp closes Pydantic's epoch-integer coercion path."""
+    invalid_timestamp = 1_777_469_600
     now = datetime(2026, 8, 29, tzinfo=timezone.utc)
     payload: dict[str, object] = {
         "flow_run_id": "flow",
@@ -1146,15 +1136,8 @@ def test_execution_link_accepts_canonical_builtin_worker_uuid() -> None:
     assert accepted.claiming_worker_id == worker_id
 
 
-@pytest.mark.parametrize(
-    "worker_id",
-    [
-        "8C1DA53D-0E6B-4D3D-A0F1-97B6A9CCEBF0",
-        type("WorkerIdentity", (str,), {})("8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"),
-    ],
-    ids=["noncanonical", "str-subclass"],
-)
-def test_execution_link_refuses_noncanonical_worker_identity_with_fixed_error(worker_id: object) -> None:
+def test_execution_link_refuses_noncanonical_worker_identity_with_fixed_error() -> None:
+    worker_id = "8C1DA53D-0E6B-4D3D-A0F1-97B6A9CCEBF0"
     now = datetime(2026, 8, 29, tzinfo=timezone.utc)
 
     with pytest.raises(ValidationError) as caught:
@@ -1170,39 +1153,6 @@ def test_execution_link_refuses_noncanonical_worker_identity_with_fixed_error(wo
         )
     errors = caught.value.errors(include_input=False)
     assert errors[0]["msg"] == "Value error, managed worker identity is invalid"
-
-
-def test_execution_link_refuses_hostile_worker_identity_without_inspection() -> None:
-    now = datetime(2026, 8, 29, tzinfo=timezone.utc)
-
-    class HostileWorkerIdentity:
-        inspected = False
-
-        def __str__(self) -> str:
-            self.inspected = True
-            msg = "hostile worker identity was inspected"
-            raise AssertionError(msg)
-
-        def __repr__(self) -> str:
-            self.inspected = True
-            msg = "hostile worker identity was inspected"
-            raise AssertionError(msg)
-
-    hostile = HostileWorkerIdentity()
-    with pytest.raises(ValidationError) as caught:
-        PrefectExecutionLink.model_validate(
-            {
-                "flow_run_id": "flow",
-                "purpose": "plan",
-                "attempt": 1,
-                "submitted_at": now,
-                "claimed_at": now,
-                "claiming_worker_id": hostile,
-            }
-        )
-    errors = caught.value.errors(include_input=False)
-    assert errors[0]["msg"] == "Value error, managed worker identity is invalid"
-    assert not hostile.inspected
 
 
 def test_new_execution_requires_submitted_at_without_persistence(provider: ProductProjection) -> None:
@@ -1428,60 +1378,8 @@ def test_execution_liveness_mutations_refuse_naive_timestamps_without_writing(
     assert provider.lookup_run("run-001") == before
 
 
-@pytest.mark.parametrize("mutation", ["claim", "stall", "abandon", "interrupt"])
-@pytest.mark.parametrize(
-    "invalid_timestamp",
-    [
-        1_777_469_600,
-        type("MutationDatetime", (datetime,), {})(2026, 8, 29, tzinfo=timezone.utc),
-    ],
-    ids=["integer", "datetime-subclass"],
-)
-def test_execution_liveness_mutations_refuse_non_exact_timestamps_without_writing(
-    provider: ProductProjection,
-    mutation: str,
-    invalid_timestamp: object,
-) -> None:
-    now = datetime(2026, 8, 29, tzinfo=timezone.utc)
-    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
-    provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
-    )
-    if mutation == "interrupt":
-        provider.claim_execution("run-001", "flow-001", worker_id=worker_id, claimed_at=now)
-    before = provider.lookup_run("run-001")
-    mutations: dict[str, Callable[[], bool]] = {
-        "claim": lambda: provider.claim_execution(
-            "run-001", "flow-001", worker_id=worker_id, claimed_at=cast("datetime", invalid_timestamp)
-        ),
-        "stall": lambda: provider.mark_execution_stalled(
-            "run-001", "flow-001", stalled_at=cast("datetime", invalid_timestamp)
-        ),
-        "abandon": lambda: provider.abandon_execution(
-            "run-001", "flow-001", terminal_at=cast("datetime", invalid_timestamp)
-        ),
-        "interrupt": lambda: provider.interrupt_execution(
-            "run-001", "flow-001", terminal_at=cast("datetime", invalid_timestamp)
-        ),
-    }
-
-    with pytest.raises(ValueError, match=r"^execution timestamps must include a timezone$"):
-        mutations[mutation]()
-
-    assert provider.lookup_run("run-001") == before
-
-
-@pytest.mark.parametrize(
-    "invalid_timestamp",
-    [
-        0,
-        1_777_469_600,
-        type("WritebackDatetime", (datetime,), {})(2026, 8, 29, tzinfo=timezone.utc),
-    ],
-    ids=["zero-integer", "integer", "datetime-subclass"],
-)
-def test_execution_finish_writeback_refuses_non_exact_finished_at(invalid_timestamp: object) -> None:
+@pytest.mark.parametrize("invalid_timestamp", [0, 1_777_469_600], ids=["zero-integer", "integer"])
+def test_execution_finish_writeback_refuses_coercible_integer_finished_at(invalid_timestamp: object) -> None:
     with pytest.raises(ValidationError, match="execution writeback timestamps"):
         product_store.ExecutionFinishWriteback.model_validate(
             {
@@ -1495,19 +1393,9 @@ def test_execution_finish_writeback_refuses_non_exact_finished_at(invalid_timest
 
 
 @pytest.mark.parametrize("transition", ["abandon", "interrupt", "commit", "cancel", "expire"])
-@pytest.mark.parametrize(
-    "invalid_timestamp",
-    [
-        0,
-        1_777_469_600,
-        type("TransitionDatetime", (datetime,), {})(2026, 8, 29, tzinfo=timezone.utc),
-    ],
-    ids=["zero-integer", "integer", "datetime-subclass"],
-)
-def test_every_execution_terminal_transition_refuses_non_exact_timestamp_without_writing(
+def test_every_execution_terminal_transition_refuses_naive_timestamp_without_writing(
     provider: ProductProjection,
     transition: str,
-    invalid_timestamp: object,
 ) -> None:
     now = datetime(2026, 8, 29, tzinfo=timezone.utc)
     worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
@@ -1518,7 +1406,7 @@ def test_every_execution_terminal_transition_refuses_non_exact_timestamp_without
     if transition in {"interrupt", "commit"}:
         assert provider.claim_execution("run-001", "flow-001", worker_id=worker_id, claimed_at=now)
     before = provider.lookup_run("run-001")
-    terminal_at = cast("datetime", invalid_timestamp)
+    terminal_at = now.replace(tzinfo=None)
     actions: dict[str, Callable[[], bool]] = {
         "abandon": lambda: provider.abandon_execution("run-001", "flow-001", terminal_at=terminal_at),
         "interrupt": lambda: provider.interrupt_execution("run-001", "flow-001", terminal_at=terminal_at),

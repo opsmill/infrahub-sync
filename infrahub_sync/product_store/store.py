@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 from tempfile import mkdtemp
 from time import sleep
 from typing import Any, Literal, Protocol, cast
+from uuid import UUID
 
 from pydantic import TypeAdapter
 
@@ -1085,7 +1086,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         terminal_outcome: Literal["succeeded", "failed"],
         writeback: ExecutionWriteback,
     ) -> bool:
-        """Commit one exact worker verdict and its business writeback together."""
+        """Commit one claimed worker verdict and its business writeback together."""
         connection = self._connect()
         try:
             cursor = connection.cursor()
@@ -1173,8 +1174,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         expected_latest_position: int,
         receipt_id: str,
     ) -> bool:
-        """Persist first exact-link cancellation intent for one claimed receipt."""
-        if type(recovery_seconds) not in {int, float} or not isfinite(recovery_seconds) or recovery_seconds <= 0:
+        """Persist first cancellation intent on one link for one claimed receipt."""
+        if not isfinite(recovery_seconds) or recovery_seconds <= 0:
             raise ValueError(_CANCELLATION_DEADLINE_ERROR)
         if recovery_deadline_at != requested_at + timedelta(seconds=recovery_seconds):
             raise ValueError(_CANCELLATION_DEADLINE_ERROR)
@@ -2329,7 +2330,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         writeback: ExecutionWriteback,
         secrets: Sequence[str] = (),
     ) -> bool:
-        """Atomically commit an exact claimed verdict and its business writeback."""
+        """Atomically commit one claimed verdict and its business writeback."""
         if not _is_canonical_uuid(worker_id):
             raise ValueError(_INVALID_MANAGED_WORKER_ID)
         if (terminal_state, terminal_outcome) not in {("completed", "succeeded"), ("failed", "failed")}:
@@ -2385,7 +2386,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Persist cancellation intent before any remote cancellation request."""
         _require_execution_timestamp(requested_at)
         _require_execution_timestamp(recovery_deadline_at)
-        if type(expected_latest_position) is not int or expected_latest_position < 0:  # pylint: disable=unidiomatic-typecheck
+        if expected_latest_position < 0:
             raise ValueError(_CANCELLATION_POSITION_ERROR)
         return self._records.request_execution_cancellation(
             redact(run_id, secrets),
@@ -2705,7 +2706,7 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def _execution_timestamp_microseconds(value: str) -> int:
-    """Convert one persisted aware ISO timestamp to an exact comparable integer."""
+    """Convert one persisted aware ISO timestamp to a comparable integer."""
     parsed = datetime.fromisoformat(value)
     if parsed.utcoffset() is None:
         msg = "persisted execution timestamps must include a timezone"
@@ -2714,13 +2715,9 @@ def _execution_timestamp_microseconds(value: str) -> int:
     return ((elapsed.days * 86400) + elapsed.seconds) * 1_000_000 + elapsed.microseconds
 
 
-def _is_canonical_uuid(value: object) -> bool:
-    """Accept only an exact built-in canonical UUID string."""
-    if type(value) is not str:  # pylint: disable=unidiomatic-typecheck
-        return False
+def _is_canonical_uuid(value: str) -> bool:
+    """Accept only a canonical UUID string, never a non-canonical spelling."""
     try:
-        from uuid import UUID  # pylint: disable=import-outside-toplevel
-
         return str(UUID(value)) == value
     except ValueError:
         return False
@@ -2992,7 +2989,7 @@ def _require_cancellation_receipt_row(row: Sequence[Any] | None) -> Sequence[Any
 
 
 def _require_execution_timestamp(value: datetime) -> None:
-    if type(value) is not datetime or value.utcoffset() is None:  # pylint: disable=unidiomatic-typecheck
+    if value.utcoffset() is None:
         msg = "execution timestamps must include a timezone"
         raise ValueError(msg)
 

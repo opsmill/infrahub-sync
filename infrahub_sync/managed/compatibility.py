@@ -17,7 +17,7 @@ def installed_server_version() -> str:
         installed_version = version("infrahub-sync")
     except (PackageNotFoundError, ValueError):
         raise RuntimeError(_METADATA_ERROR) from None
-    if type(installed_version) is not str or not installed_version:  # pylint: disable=unidiomatic-typecheck
+    if not installed_version:
         raise RuntimeError(_METADATA_ERROR) from None
     try:
         Version(installed_version)

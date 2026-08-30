@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 from collections.abc import Callable  # noqa: TC003 - constructor default is evaluated at runtime.
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -23,8 +22,6 @@ from .orchestration import (
 
 RUN_ADMISSION_TTL_ENV = "INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS"
 _POLICY_ERROR = "managed liveness settings are invalid"
-_TTL_PATTERN = re.compile(r"^[0-9]+$")
-_DECIMAL_PATTERN = re.compile(r"^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$")
 _TERMINAL_STATES = frozenset({"completed", "failed", "crashed", "cancelled"})
 
 
@@ -65,25 +62,17 @@ class LivenessPolicy:
 
     @classmethod
     def from_environment(cls, *, worker_query_seconds: str = "10") -> LivenessPolicy:
-        """Build the policy from exact environment and Prefect setting strings."""
-        ttl = os.environ.get(RUN_ADMISSION_TTL_ENV, "300")
-        if type(ttl) is not str or _TTL_PATTERN.fullmatch(ttl) is None:  # pylint: disable=unidiomatic-typecheck
-            raise ValueError(_POLICY_ERROR)
+        """Build the policy from the admission TTL and Prefect worker-query settings."""
         try:
-            ttl_value = int(ttl)
+            ttl_value = int(os.environ.get(RUN_ADMISSION_TTL_ENV, "300"))
         except ValueError:
             raise ValueError(_POLICY_ERROR) from None
         if not 1 <= ttl_value <= 86400:
             raise ValueError(_POLICY_ERROR)
-        if (
-            type(worker_query_seconds) is not str  # pylint: disable=unidiomatic-typecheck
-            or _DECIMAL_PATTERN.fullmatch(worker_query_seconds) is None
-        ):
-            raise ValueError(_POLICY_ERROR)
         try:
             query = Decimal(worker_query_seconds)
-        except InvalidOperation as exc:
-            raise ValueError(_POLICY_ERROR) from exc
+        except InvalidOperation:
+            raise ValueError(_POLICY_ERROR) from None
         if not query.is_finite() or not Decimal(0) < query <= Decimal(3600):
             raise ValueError(_POLICY_ERROR)
         threshold = max(float(query * 3), 30.0)
@@ -96,7 +85,39 @@ def age(now: datetime, anchor: datetime) -> float:
 
 
 class RunLivenessReconciler:
-    """Conservatively terminalize durable executions; never submit or replay work."""
+    """Conservatively terminalize durable executions; never submit or replay work.
+
+    ``reconcile_execution`` evaluates one link against the rules below in order.
+    The first matching rule decides the link; later rules do not run for it.
+
+    ===  ==============================================================  =========================================
+    #    Condition                                                       Durable transition
+    ===  ==============================================================  =========================================
+    0    ``terminal_at`` is set                                          none; a terminal verdict is final
+    1    intent + acknowledged + observed ``cancelled``                   ``cancelled`` / ``cancelled``
+    2    intent + ``now >= cancellation_recovery_deadline_at``            claimed: ``interrupted`` / ``ambiguous``;
+                                                                         unclaimed: ``abandoned`` / ``abandoned``
+    3    intent, deadline not reached                                    none; await acknowledgement or deadline
+    4    unclaimed + ``age(submitted_at) >= admission_ttl_seconds``       ``abandoned`` / ``abandoned``
+    5    unclaimed + ``age(submitted_at) >= stall_threshold_seconds``     ``stalled_at`` marker; stays claimable
+         + pool detail available
+    6    claimed + Prefect observes a terminal state                     ``interrupted`` / ``ambiguous``
+    7    claimed + ``age(claimed_at) < stall_threshold_seconds``          none; owner grace period
+    8    claimed + pool detail available + owner not fresh               ``interrupted`` / ``ambiguous``
+    ===  ==============================================================  =========================================
+
+    "intent" is a non-null ``cancellation_requested_at``. Rules 1-3 outrank 4-8,
+    so intent is the only authority over a link that carries it. Rules 5 and 8
+    need available pool detail; an unavailable snapshot makes no transition. An
+    owner is fresh when the pool reports the exact claiming worker UUID
+    ``online`` with a heartbeat inside ``max(3 * interval, 30)`` seconds.
+
+    The five legal ``(terminal_state, terminal_outcome)`` verdicts are
+    ``(completed, succeeded)`` and ``(failed, failed)``, written only by the
+    claiming worker, plus ``(cancelled, cancelled)``, ``(abandoned, abandoned)``
+    and ``(interrupted, ambiguous)``, written only here. No rule submits or
+    resubmits work: an execution is never replayed after any verdict.
+    """
 
     def __init__(
         self,
@@ -177,7 +198,7 @@ class RunLivenessReconciler:
             ):
                 self._projection.mark_execution_stalled(run_id, link.flow_run_id, stalled_at=now)
             return
-        if observed.available and observed.state in {"completed", "failed", "crashed", "cancelled"}:
+        if observed.available and observed.state in _TERMINAL_STATES:
             self._projection.interrupt_execution(run_id, link.flow_run_id, terminal_at=now)
             return
         if link.claimed_at is None or age(now, link.claimed_at) < self._policy.stall_threshold_seconds:

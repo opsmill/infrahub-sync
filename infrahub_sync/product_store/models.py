@@ -93,18 +93,18 @@ class PrefectExecutionLink(BaseModel):
     def _require_timezone(cls, value: object) -> datetime | None:
         if value is None:
             return None
-        if type(value) is datetime:  # pylint: disable=unidiomatic-typecheck
+        if isinstance(value, datetime):
             parsed = value
-        elif type(value) is str:  # pylint: disable=unidiomatic-typecheck
+        elif isinstance(value, str):
             try:
                 persisted = f"{value[:-1]}+00:00" if value.endswith("Z") else value
                 parsed = datetime.fromisoformat(persisted)
             except ValueError:
-                msg = "Prefect execution timestamps must be exact datetimes or persisted ISO strings"
+                msg = "Prefect execution timestamps must be datetimes or persisted ISO strings"
                 raise ValueError(msg) from None
         else:
-            msg = "Prefect execution timestamps must be exact datetimes or persisted ISO strings"
-            raise ValueError(msg)
+            msg = "Prefect execution timestamps must be datetimes or persisted ISO strings"
+            raise ValueError(msg)  # noqa: TRY004 - Pydantic reports ValueError, not TypeError.
         if parsed.utcoffset() is None:
             msg = "Prefect execution timestamps must include a timezone"
             raise ValueError(msg)
@@ -115,8 +115,8 @@ class PrefectExecutionLink(BaseModel):
     def _require_canonical_worker_id(cls, value: object) -> object:
         if value is None:
             return None
-        if type(value) is not str:  # pylint: disable=unidiomatic-typecheck
-            raise ValueError(_INVALID_MANAGED_WORKER_ID)
+        if not isinstance(value, str):
+            raise ValueError(_INVALID_MANAGED_WORKER_ID)  # noqa: TRY004 - Pydantic reports ValueError.
         try:
             canonical = str(UUID(value))
         except ValueError:
@@ -235,7 +235,7 @@ class ExecutionFinishWriteback(BaseModel):
     @field_validator("finished_at", mode="before")
     @classmethod
     def _require_timezone(cls, value: object) -> datetime:
-        if type(value) is not datetime or value.utcoffset() is None:  # pylint: disable=unidiomatic-typecheck
+        if not isinstance(value, datetime) or value.utcoffset() is None:
             msg = "execution writeback timestamps must include a timezone"
             raise ValueError(msg)
         return value
