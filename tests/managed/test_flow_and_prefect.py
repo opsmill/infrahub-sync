@@ -904,6 +904,14 @@ _UNACKNOWLEDGED_CANCELLATION = CancellationResult(
             _ACKNOWLEDGED_CANCELLATION,
         ),
         (
+            OrchestrationResult(
+                state=Cancelling(name="Cancellation Requested"),
+                status=SetStateStatus.ACCEPT,
+                details=StateAcceptDetails(),
+            ),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
             OrchestrationResult(state=Cancelling(), status=SetStateStatus.REJECT, details=StateRejectDetails()),
             _UNACKNOWLEDGED_CANCELLATION,
         ),
@@ -983,6 +991,7 @@ _UNACKNOWLEDGED_CANCELLATION = CancellationResult(
     ],
     ids=(
         "accept",
+        "accept-custom-name",
         "reject-cancelling",
         "reject-cancelled",
         "accept-running",

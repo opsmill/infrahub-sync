@@ -93,6 +93,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS configuration_versions_checksum
 _SQLITE_EXECUTION_TIMESTAMP_FUNCTION = "infrahub_sync_execution_timestamp_microseconds"
 _UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _CANCELLATION_DEADLINE_ERROR = "execution cancellation recovery deadline is invalid"
+_CANCELLATION_POSITION_ERROR = "execution cancellation position is invalid"
 _SELECT_LATEST_EXECUTION_RESULTS = (
     "SELECT results FROM product_runs WHERE run_id = ? AND (SELECT latest.flow_run_id "
     "FROM prefect_executions AS latest WHERE latest.run_id = product_runs.run_id "
@@ -403,6 +404,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         requested_at: datetime,
         recovery_deadline_at: datetime,
         recovery_seconds: float,
+        expected_latest_position: int,
         receipt_id: str,
     ) -> bool: ...
 
@@ -887,6 +889,19 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor = connection.cursor()
                 try:
                     cursor.execute(
+                        self._sql("UPDATE product_runs SET run_id = run_id WHERE run_id = ?"),
+                        (run_id,),
+                    )
+                    cursor.execute(
+                        self._sql(
+                            "SELECT 1 FROM prefect_executions WHERE run_id = ? AND terminal_at IS NULL "
+                            "AND cancellation_requested_at IS NOT NULL"
+                        ),
+                        (run_id,),
+                    )
+                    if cursor.fetchone() is not None:
+                        _raise_active_cancellation_conflict(run_id)
+                    cursor.execute(
                         self._sql("SELECT COALESCE(MAX(position) + 1, 0) FROM prefect_executions WHERE run_id = ?"),
                         (run_id,),
                     )
@@ -1155,6 +1170,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         requested_at: datetime,
         recovery_deadline_at: datetime,
         recovery_seconds: float,
+        expected_latest_position: int,
         receipt_id: str,
     ) -> bool:
         """Persist first exact-link cancellation intent for one claimed receipt."""
@@ -1162,21 +1178,49 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             raise ValueError(_CANCELLATION_DEADLINE_ERROR)
         if recovery_deadline_at != requested_at + timedelta(seconds=recovery_seconds):
             raise ValueError(_CANCELLATION_DEADLINE_ERROR)
-        return self._execution_update(
-            "UPDATE prefect_executions SET cancellation_requested_at = ?, cancellation_recovery_deadline_at = ?, "
-            "cancellation_receipt_id = ? WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL "
-            "AND cancellation_requested_at IS NULL AND EXISTS (SELECT 1 FROM mutation_receipts "
-            "WHERE receipt_id = ? AND run_id = ? AND operation = 'cancel' AND state = 'processing')",
-            (
-                requested_at.isoformat(),
-                recovery_deadline_at.isoformat(),
-                receipt_id,
-                run_id,
-                flow_run_id,
-                receipt_id,
-                run_id,
-            ),
-        )
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql("UPDATE product_runs SET run_id = run_id WHERE run_id = ?"), (run_id,))
+                cursor.execute(
+                    self._sql(
+                        "UPDATE prefect_executions SET cancellation_requested_at = ?, "
+                        "cancellation_recovery_deadline_at = ?, cancellation_receipt_id = ? "
+                        "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL "
+                        "AND (SELECT COALESCE(MAX(position), -1) FROM prefect_executions WHERE run_id = ?) = ? "
+                        "AND ((cancellation_requested_at IS NULL AND NOT EXISTS (SELECT 1 FROM prefect_executions "
+                        "WHERE run_id = ? AND terminal_at IS NULL AND cancellation_requested_at IS NOT NULL)) "
+                        "OR (cancellation_requested_at = ? AND cancellation_recovery_deadline_at = ? "
+                        "AND cancellation_receipt_id = ?)) AND EXISTS (SELECT 1 FROM mutation_receipts "
+                        "WHERE receipt_id = ? AND run_id = ? AND operation = 'cancel' AND state = 'processing')"
+                    ),
+                    (
+                        requested_at.isoformat(),
+                        recovery_deadline_at.isoformat(),
+                        receipt_id,
+                        run_id,
+                        flow_run_id,
+                        run_id,
+                        expected_latest_position,
+                        run_id,
+                        requested_at.isoformat(),
+                        recovery_deadline_at.isoformat(),
+                        receipt_id,
+                        receipt_id,
+                        run_id,
+                    ),
+                )
+                updated = cursor.rowcount == 1
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return updated
 
     def acknowledge_execution_cancellation(
         self,
@@ -2334,18 +2378,22 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         requested_at: datetime,
         recovery_deadline_at: datetime,
         recovery_seconds: float,
+        expected_latest_position: int,
         receipt_id: str,
         secrets: Sequence[str] = (),
     ) -> bool:
         """Persist cancellation intent before any remote cancellation request."""
         _require_execution_timestamp(requested_at)
         _require_execution_timestamp(recovery_deadline_at)
+        if type(expected_latest_position) is not int or expected_latest_position < 0:  # pylint: disable=unidiomatic-typecheck
+            raise ValueError(_CANCELLATION_POSITION_ERROR)
         return self._records.request_execution_cancellation(
             redact(run_id, secrets),
             redact(flow_run_id, secrets),
             requested_at=requested_at,
             recovery_deadline_at=recovery_deadline_at,
             recovery_seconds=recovery_seconds,
+            expected_latest_position=expected_latest_position,
             receipt_id=redact(receipt_id, secrets),
         )
 
@@ -2974,6 +3022,11 @@ def _require_submitted_executions(run: ProductRun) -> None:
     if any(link.submitted_at is None for link in run.prefect_executions):
         msg = "new Prefect execution requires submitted_at"
         raise ValueError(msg)
+
+
+def _raise_active_cancellation_conflict(run_id: str) -> None:
+    msg = f"Sync run {run_id!r} has an active execution cancellation"
+    raise WriteAdmissionConflictError(msg)
 
 
 def _redact_bytes(data: bytes, secrets: Sequence[str]) -> bytes:

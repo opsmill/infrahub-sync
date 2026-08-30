@@ -186,11 +186,12 @@ class PrefectOrchestration:
 
     async def cancel(self, flow_run_id: str) -> CancellationResult:
         """Request exact-flow cancellation and report only Prefect acknowledgement."""
+        requested_state = Cancelling()
         try:
-            result = await self._client.set_flow_run_state(UUID(flow_run_id), Cancelling())
+            result = await self._client.set_flow_run_state(UUID(flow_run_id), requested_state)
         except (ObjectNotFound, httpx.HTTPError):
             return CancellationResult(acknowledged=False, reason="prefect-cancellation-unavailable")
-        if not _cancellation_acknowledged(result):
+        if not _cancellation_acknowledged(result, requested_state):
             return CancellationResult(acknowledged=False, reason="prefect-cancellation-unavailable")
         return CancellationResult(acknowledged=True)
 
@@ -232,7 +233,7 @@ def _validate_pool_worker(worker: PoolWorker) -> None:
         raise ValueError
 
 
-def _cancellation_acknowledged(result: object) -> bool:
+def _cancellation_acknowledged(result: object, requested_state: State[T]) -> bool:
     """Accept only Prefect's exact acknowledgement of the requested transition."""
     if type(result) is not OrchestrationResult:  # pylint: disable=unidiomatic-typecheck
         return False
@@ -243,6 +244,7 @@ def _cancellation_acknowledged(result: object) -> bool:
         and type(state) is State[T]  # pylint: disable=unidiomatic-typecheck
         and type(state.type) is StateType  # pylint: disable=unidiomatic-typecheck
         and state.type is StateType.CANCELLING
+        and state.name == requested_state.name
     )
 
 

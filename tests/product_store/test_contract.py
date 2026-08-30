@@ -1727,6 +1727,7 @@ def test_older_execution_terminalization_settles_only_its_link_and_receipt(
             requested_at=now,
             recovery_deadline_at=deadline,
             recovery_seconds=30,
+            expected_latest_position=1,
             receipt_id=receipt.receipt_id,
         )
     if older_transition == "cancel":
@@ -1907,6 +1908,7 @@ def test_cancellation_saga_persists_intent_acknowledgement_and_clean_terminal(pr
         requested_at=now,
         recovery_deadline_at=deadline,
         recovery_seconds=30,
+        expected_latest_position=0,
         receipt_id=receipt.receipt_id,
     )
     assert not provider.claim_execution(
@@ -1934,6 +1936,145 @@ def test_cancellation_saga_persists_intent_acknowledgement_and_clean_terminal(pr
     assert (replay.state, replay.response_status, replay.response_body) == ("accepted", 202, accepted)
 
 
+@pytest.mark.parametrize("winner", ["append", "intent"])
+def test_execution_append_and_cancellation_intent_serialize_in_both_orders(
+    provider: ProductProjection,
+    winner: str,
+) -> None:
+    """The first durable operation fences the reciprocal execution-order race."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    receipt = _receipt(operation="cancel", target_run_id="run-001")
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-old", purpose="plan", attempt=1, submitted_at=now)
+    )
+    provider.reserve_mutation(receipt)
+    assert provider.claim_mutation(receipt.receipt_id)
+
+    def append() -> bool:
+        try:
+            provider.add_prefect_execution(
+                "run-001",
+                PrefectExecutionLink(
+                    flow_run_id="flow-new",
+                    purpose="verify",
+                    attempt=1,
+                    submitted_at=now + timedelta(seconds=1),
+                ),
+            )
+        except WriteAdmissionConflictError:
+            return False
+        return True
+
+    def request_intent() -> bool:
+        return provider.request_execution_cancellation(
+            "run-001",
+            "flow-old",
+            requested_at=now,
+            recovery_deadline_at=now + timedelta(seconds=30),
+            recovery_seconds=30,
+            expected_latest_position=0,
+            receipt_id=receipt.receipt_id,
+        )
+
+    outcomes = (append(), request_intent()) if winner == "append" else (request_intent(), append())
+
+    assert outcomes == (True, False)
+    stored = provider.lookup_run("run-001").value
+    assert stored is not None
+    if winner == "append":
+        assert [link.flow_run_id for link in stored.prefect_executions] == ["flow-old", "flow-new"]
+        assert stored.prefect_executions[0].cancellation_requested_at is None
+    else:
+        assert [link.flow_run_id for link in stored.prefect_executions] == ["flow-old"]
+        assert stored.prefect_executions[0].cancellation_receipt_id == receipt.receipt_id
+
+
+def test_execution_append_and_cancellation_intent_race_has_one_winner(provider: ProductProjection) -> None:
+    """Run-row serialization gives SQLite and PostgreSQL one reciprocal winner."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    receipt = _receipt(operation="cancel", target_run_id="run-001")
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-old", purpose="plan", attempt=1, submitted_at=now)
+    )
+    provider.reserve_mutation(receipt)
+    assert provider.claim_mutation(receipt.receipt_id)
+    barrier = Barrier(2)
+
+    def append() -> bool:
+        barrier.wait()
+        try:
+            provider.add_prefect_execution(
+                "run-001",
+                PrefectExecutionLink(
+                    flow_run_id="flow-new",
+                    purpose="verify",
+                    attempt=1,
+                    submitted_at=now + timedelta(seconds=1),
+                ),
+            )
+        except WriteAdmissionConflictError:
+            return False
+        return True
+
+    def request_intent() -> bool:
+        barrier.wait()
+        return provider.request_execution_cancellation(
+            "run-001",
+            "flow-old",
+            requested_at=now,
+            recovery_deadline_at=now + timedelta(seconds=30),
+            recovery_seconds=30,
+            expected_latest_position=0,
+            receipt_id=receipt.receipt_id,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = tuple(pool.map(lambda action: action(), (append, request_intent)))
+
+    assert outcomes.count(True) == 1
+
+
+def test_cancellation_intent_admission_revalidates_only_its_exact_receipt_owner(
+    provider: ProductProjection,
+) -> None:
+    """A retry reuses one intent while a different receipt cannot claim that link."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    owner = _receipt(operation="cancel", target_run_id="run-001")
+    competitor = _receipt(
+        "mutation-competitor",
+        operation="cancel",
+        target_run_id="run-001",
+        client_key="competitor-key",
+    )
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-old", purpose="plan", attempt=1, submitted_at=now)
+    )
+    for receipt in (owner, competitor):
+        provider.reserve_mutation(receipt)
+        assert provider.claim_mutation(receipt.receipt_id)
+
+    def request(receipt: MutationReceipt) -> bool:
+        return provider.request_execution_cancellation(
+            "run-001",
+            "flow-old",
+            requested_at=now,
+            recovery_deadline_at=now + timedelta(seconds=30),
+            recovery_seconds=30,
+            expected_latest_position=0,
+            receipt_id=receipt.receipt_id,
+        )
+
+    assert request(owner)
+    assert request(owner)
+    assert not request(competitor)
+    stored = provider.lookup_run("run-001").value
+    assert stored is not None
+    assert stored.prefect_executions[0].cancellation_receipt_id == owner.receipt_id
+
+
 def test_cancellation_intent_rejects_naive_time_without_partial_state(provider: ProductProjection) -> None:
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
     receipt = _receipt(operation="cancel", target_run_id="run-001")
@@ -1951,6 +2092,7 @@ def test_cancellation_intent_rejects_naive_time_without_partial_state(provider: 
             requested_at=now.replace(tzinfo=None),
             recovery_deadline_at=now + timedelta(seconds=30),
             recovery_seconds=30,
+            expected_latest_position=0,
             receipt_id=receipt.receipt_id,
         )
 
@@ -1980,6 +2122,7 @@ def test_cancellation_intent_requires_the_policy_owned_recovery_deadline(
             requested_at=now,
             recovery_deadline_at=now + timedelta(seconds=offset),
             recovery_seconds=30,
+            expected_latest_position=0,
             receipt_id=receipt.receipt_id,
         )
     else:
@@ -1990,6 +2133,7 @@ def test_cancellation_intent_requires_the_policy_owned_recovery_deadline(
                 requested_at=now,
                 recovery_deadline_at=now + timedelta(seconds=offset),
                 recovery_seconds=30,
+                expected_latest_position=0,
                 receipt_id=receipt.receipt_id,
             )
         stored = provider.lookup_run("run-001").value
@@ -2023,6 +2167,7 @@ def test_cancellation_expiry_is_inclusive_bounded_and_receipt_stable(
         requested_at=now,
         recovery_deadline_at=deadline,
         recovery_seconds=30,
+        expected_latest_position=0,
         receipt_id=receipt.receipt_id,
     )
     accepted = {"run": {"run_id": "run-001"}, "orchestration": []}
@@ -2078,6 +2223,7 @@ def test_cancellation_acknowledgement_at_or_after_deadline_atomically_expires(
         requested_at=now,
         recovery_deadline_at=deadline,
         recovery_seconds=30,
+        expected_latest_position=0,
         receipt_id=receipt.receipt_id,
     )
 
@@ -2120,6 +2266,7 @@ def test_cancellation_acknowledgement_and_expiry_race_converges_at_deadline(
         requested_at=now,
         recovery_deadline_at=deadline,
         recovery_seconds=30,
+        expected_latest_position=0,
         receipt_id=receipt.receipt_id,
     )
     barrier = Barrier(2)
@@ -2169,6 +2316,7 @@ def test_business_commit_wins_unacknowledged_cancellation_and_settles_receipt(pr
         requested_at=now,
         recovery_deadline_at=now + timedelta(seconds=30),
         recovery_seconds=30,
+        expected_latest_position=0,
         receipt_id=receipt.receipt_id,
     )
 
@@ -2210,6 +2358,7 @@ def test_external_cancelled_observation_without_acknowledgement_is_not_clean(pro
         requested_at=now,
         recovery_deadline_at=deadline,
         recovery_seconds=30,
+        expected_latest_position=0,
         receipt_id=receipt.receipt_id,
     )
     provider.observe_prefect_execution("run-001", "flow-001", state="cancelled")
@@ -2238,6 +2387,7 @@ def test_terminal_cancelled_observation_serializes_before_expiry(provider: Produ
         requested_at=now,
         recovery_deadline_at=deadline,
         recovery_seconds=30,
+        expected_latest_position=0,
         receipt_id=receipt.receipt_id,
     )
     assert provider.acknowledge_execution_cancellation(

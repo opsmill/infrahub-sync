@@ -427,39 +427,42 @@ class ManagedRunService:
                 request.reason,
                 "the cancellation request is already being processed",
             )
-        if link.cancellation_requested_at is None:
-            requested_at = self._clock()
-            requested = self._projection.request_execution_cancellation(
-                run_id,
-                link.flow_run_id,
-                requested_at=requested_at,
-                recovery_deadline_at=requested_at + timedelta(seconds=self._cancellation_recovery_seconds),
-                recovery_seconds=self._cancellation_recovery_seconds,
-                receipt_id=receipt.receipt_id,
+        requested_at = link.cancellation_requested_at or self._clock()
+        recovery_deadline_at = link.cancellation_recovery_deadline_at or (
+            requested_at + timedelta(seconds=self._cancellation_recovery_seconds)
+        )
+        requested = self._projection.request_execution_cancellation(
+            run_id,
+            link.flow_run_id,
+            requested_at=requested_at,
+            recovery_deadline_at=recovery_deadline_at,
+            recovery_seconds=self._cancellation_recovery_seconds,
+            expected_latest_position=len(run.prefect_executions) - 1,
+            receipt_id=receipt.receipt_id,
+            secrets=self._secrets,
+        )
+        if not requested:
+            completed = self._projection.complete_mutation(
+                receipt.receipt_id,
+                response_status=409,
+                response_body=self._error_body(
+                    409,
+                    "execution-terminal",
+                    "the managed execution is already terminal",
+                    run_id=run_id,
+                    mutation_id=receipt.receipt_id,
+                ),
+                flow_run_id=link.flow_run_id,
                 secrets=self._secrets,
             )
-            if not requested:
-                completed = self._projection.complete_mutation(
-                    receipt.receipt_id,
-                    response_status=409,
-                    response_body=self._error_body(
-                        409,
-                        "execution-terminal",
-                        "the managed execution is already terminal",
-                        run_id=run_id,
-                        mutation_id=receipt.receipt_id,
-                    ),
-                    flow_run_id=link.flow_run_id,
-                    secrets=self._secrets,
-                )
-                self._audit(
-                    run_id,
-                    actor=principal.actor,
-                    operation="cancel",
-                    reason=request.reason,
-                    outcome="refused-terminal",
-                )
-                return self._stored_response(completed)
+            self._audit(
+                run_id,
+                actor=principal.actor,
+                operation="cancel",
+                reason=request.reason,
+                outcome="refused-terminal",
+            )
+            return self._stored_response(completed)
         try:
             cancelled = await self._orchestration.cancel(link.flow_run_id)
         except Exception as exc:  # pylint: disable=broad-exception-caught  # noqa: BLE001

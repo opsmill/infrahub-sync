@@ -46,7 +46,13 @@ from infrahub_sync.managed.orchestration import (
 from infrahub_sync.managed.service import PLAN_ARTIFACT_ID, ManagedAPIError, ManagedRunService
 from infrahub_sync.plan.models import PlanManifest
 from infrahub_sync.plan.review import SavedPlan
-from infrahub_sync.product_store import ProductProjection, ProductRun, local_product_projection
+from infrahub_sync.product_store import (
+    PrefectExecutionLink,
+    ProductProjection,
+    ProductRun,
+    WriteAdmissionConflictError,
+    local_product_projection,
+)
 
 if TYPE_CHECKING:
     from opsmill_prefect_extras.executors import RemoteExecutionClient
@@ -536,6 +542,11 @@ class _PrefectCancellationClient:
 @pytest.mark.parametrize(
     "result",
     [
+        OrchestrationResult(
+            state=Cancelling(name="Cancellation Requested"),
+            status=SetStateStatus.ACCEPT,
+            details=StateAcceptDetails(),
+        ),
         OrchestrationResult(state=Running(), status=SetStateStatus.ACCEPT, details=StateAcceptDetails()),
         OrchestrationResult(state=None, status=SetStateStatus.ACCEPT, details=StateAcceptDetails()),
         OrchestrationResult(state=Cancelling(), status=SetStateStatus.REJECT, details=StateRejectDetails()),
@@ -551,6 +562,7 @@ class _PrefectCancellationClient:
         SimpleNamespace(status=SetStateStatus.ACCEPT, state=Cancelling()),
     ],
     ids=(
+        "accept-custom-name",
         "accept-running",
         "accept-without-state",
         "reject-cancelling",
@@ -774,6 +786,7 @@ def test_cancel_post_admission_cas_loss_completes_replayable_conflict(
         requested_at: datetime,
         recovery_deadline_at: datetime,
         recovery_seconds: float,
+        expected_latest_position: int,
         receipt_id: str,
         secrets: tuple[str, ...] = (),
     ) -> bool:
@@ -784,6 +797,7 @@ def test_cancel_post_admission_cas_loss_completes_replayable_conflict(
             requested_at=requested_at,
             recovery_deadline_at=recovery_deadline_at,
             recovery_seconds=recovery_seconds,
+            expected_latest_position=expected_latest_position,
             receipt_id=receipt_id,
             secrets=secrets,
         )
@@ -802,6 +816,55 @@ def test_cancel_post_admission_cas_loss_completes_replayable_conflict(
     assert receipt is not None
     assert (receipt.state, receipt.response_status) == ("accepted", 409)
     assert orchestration.cancelled == []
+
+
+def test_cancel_append_during_observation_never_targets_the_stale_execution(
+    managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A newer durable execution invalidates selection before any remote cancel."""
+    client, projection, orchestration = managed
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+    old_flow_run_id = created.json()["orchestration"][0]["flow_run_id"]
+    new_flow_run_id = "flow-appended-during-observe"
+    key = "cancel-stale-selection"
+    appended = False
+
+    async def append_then_observe(flow_run_id: str) -> Observation:
+        nonlocal appended
+        await asyncio.sleep(0)
+        assert flow_run_id == old_flow_run_id
+        if not appended:
+            projection.add_prefect_execution(
+                run_id,
+                PrefectExecutionLink(
+                    flow_run_id=new_flow_run_id,
+                    purpose="verify",
+                    attempt=1,
+                    submitted_at=datetime.now(timezone.utc),
+                ),
+            )
+            appended = True
+        return Observation(available=True, state="running")
+
+    monkeypatch.setattr(orchestration, "observe", append_then_observe)
+    headers = {**AUTH, "Idempotency-Key": key}
+    body = {"reason": "cancel only the latest active execution"}
+
+    refused = client.post(f"/runs/{run_id}/cancel", headers=headers, json=body)
+    replayed = client.post(f"/runs/{run_id}/cancel", headers=headers, json=body)
+
+    assert refused.status_code == 409
+    assert refused.json()["error"]["code"] == "execution-terminal"
+    assert replayed.json() == refused.json()
+    assert orchestration.cancelled == []
+    run = projection.lookup_run(run_id).value
+    receipt = projection.lookup_mutation("owner", sha256(key.encode()).hexdigest()).value
+    assert run is not None
+    assert receipt is not None
+    assert all(link.cancellation_requested_at is None for link in run.prefect_executions)
+    assert (receipt.state, receipt.response_status, receipt.flow_run_id) == ("accepted", 409, old_flow_run_id)
 
 
 def test_run_resource_exposes_liveness_without_private_worker_or_receipt_ids(
@@ -948,6 +1011,16 @@ def test_cancellation_remote_success_then_crash_resumes_same_intent(
     orchestration.cancel_fail_after_accept_once = True
 
     uncertain = client.post(f"/runs/{run_id}/cancel", headers=headers, json=body)
+    with pytest.raises(WriteAdmissionConflictError):
+        projection.add_prefect_execution(
+            run_id,
+            PrefectExecutionLink(
+                flow_run_id="flow-racing-cancellation-retry",
+                purpose="verify",
+                attempt=1,
+                submitted_at=datetime.now(timezone.utc),
+            ),
+        )
     recovered = client.post(f"/runs/{run_id}/cancel", headers=headers, json=body)
 
     assert uncertain.status_code == 503

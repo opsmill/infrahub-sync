@@ -181,6 +181,7 @@ def _request_cancellation(projection, run_id: str, flow_run_id: str, now: dateti
         requested_at=now - timedelta(seconds=30),
         recovery_deadline_at=now,
         recovery_seconds=30,
+        expected_latest_position=0,
         receipt_id=receipt.receipt_id,
     )
     if acknowledge:
