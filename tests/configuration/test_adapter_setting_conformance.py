@@ -129,6 +129,28 @@ def test_bundled_literal_setting_accesses_are_declared_or_deliberately_refused(a
     assert _settings_forwarding_targets(adapter_name) == {expected_target}
 
 
+# Implementing incremental extraction means overriding both of these; the base class raises
+# unless cursor_tier_for stays NONE.
+_INCREMENTAL_OVERRIDES = frozenset({"cursor_tier_for", "list_changed_since"})
+
+
+def _defined_function_names(module_name: str) -> frozenset[str]:
+    tree = ast.parse((_ADAPTERS_DIRECTORY / f"{module_name}.py").read_text(encoding="utf-8"))
+    return frozenset(node.name for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)))
+
+
+@pytest.mark.parametrize("adapter_name", BUILTIN_ADAPTER_CAPABILITIES)
+def test_incremental_qualification_matches_the_runtime_overrides(adapter_name: str) -> None:
+    # `incremental_extraction=True` must co-occur with the incremental-extraction overrides,
+    # so a new incremental adapter cannot keep the unqualified-optional-feature warning
+    # firing forever, and a declaration cannot qualify a feature its runtime never reads.
+    capability = BUILTIN_ADAPTER_CAPABILITIES[adapter_name]
+    runtime_modules = _RUNTIME_MODULES[adapter_name]
+    defined = frozenset().union(*(_defined_function_names(name) for name in runtime_modules))
+
+    assert capability.incremental_extraction == (defined >= _INCREMENTAL_OVERRIDES)
+
+
 @pytest.mark.parametrize("adapter_name", BUILTIN_ADAPTER_CAPABILITIES)
 def test_dynamic_settings_forwarding_is_explicit(adapter_name: str) -> None:
     boundary = _DYNAMIC_FORWARDING_BOUNDARIES.get(adapter_name)

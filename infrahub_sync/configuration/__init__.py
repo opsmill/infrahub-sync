@@ -15,7 +15,6 @@ from .credentials import (
     EnvironmentCredentialProvider,
     provider_for,
     resolve_reference,
-    validate_package_credentials,
 )
 from .models import (
     ConfigurationPackage,
@@ -27,6 +26,7 @@ from .models import (
     parse_configuration_package,
     sort_findings,
 )
+from .validation import collect_findings, validate_package_credentials
 
 __all__ = [
     "BUILTIN_ADAPTER_CAPABILITIES",
@@ -44,6 +44,7 @@ __all__ = [
     "UnknownAdapterCapabilitiesError",
     "ValidationFinding",
     "WriteOperation",
+    "collect_findings",
     "get_adapter_capabilities",
     "parse_configuration_package",
     "provider_for",

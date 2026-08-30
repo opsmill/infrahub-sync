@@ -3,34 +3,43 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from .models import ConfigurationPackage, ValidationFinding
+from .models import _SETTING_NAME, ConfigurationPackage, ValidationFinding, is_renderable_setting_path
 
 AdapterRole = Literal["source", "destination"]
 WriteOperation = Literal["create", "update", "delete"]
 ConfigurationValidator = Callable[[ConfigurationPackage, AdapterRole], Sequence[ValidationFinding]]
+# The destination-schema accessor contract: (package, branch) -> one JSON-native schema
+# snapshot, mapping each kind name to its attributes (name -> attribute kind) and
+# relationships (name -> {"peer", "cardinality"}). Raises DestinationSchemaReadError and
+# nothing else for a read that fails; performs I/O only when called, never at import.
+DestinationSchemaAccessor = Callable[[ConfigurationPackage, str], Mapping[str, Any]]
+_SCHEMA_READ_REASON = re.compile(r"^[a-z]{1,32}$")
 _ADAPTER_NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
 _ADAPTER_ROLES: frozenset[AdapterRole] = frozenset({"source", "destination"})
 _WRITE_OPERATIONS: frozenset[WriteOperation] = frozenset({"create", "update", "delete"})
-_SETTING_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
-# A declared path component must survive pointer rendering unchanged, so the pointer built
-# from the declaration and the pointer built while walking a package cannot disagree.
-_MAX_SETTING_PATH_COMPONENT_LENGTH = 64
 
 
-def is_renderable_setting_path(path: str) -> bool:
-    """Return whether every dotted component is an exact, bounded setting name."""
-    if not path or path.startswith(".") or path.endswith("."):
-        return False
-    return all(
-        _SETTING_NAME.fullmatch(component) is not None and len(component) <= _MAX_SETTING_PATH_COMPONENT_LENGTH
-        for component in path.split(".")
-    )
+class DestinationSchemaReadError(Exception):
+    """An accessor could not read the destination schema, classified by ``reason``.
+
+    ``reason`` is a short lowercase word naming the failure class ("timeout",
+    "unauthorized", "unreachable", ...) and is validated here so the finding a
+    failed read becomes can carry it verbatim. The message follows the module's
+    own rule for refusal text: exception type names, never third-party content.
+    """
+
+    def __init__(self, message: str, *, reason: str) -> None:
+        if _SCHEMA_READ_REASON.fullmatch(reason) is None:
+            msg = f"schema read failure reason {reason!r} is not a short lowercase word"
+            raise ValueError(msg)
+        super().__init__(message)
+        self.reason = reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +52,12 @@ class AdapterConfigurationCapabilities:
     credential_setting_paths: tuple[str, ...] = ()
     supported_destination_write_operations: frozenset[WriteOperation] = frozenset()
     destination_schema_validation: bool = False
+    destination_schema_accessor: DestinationSchemaAccessor | None = None
+    # Whether this adapter implements incremental extraction (the cursor_tier_for /
+    # list_changed_since overrides). A package declaring `incremental:` against a source
+    # that does not is warned about the unqualified optional feature; the conformance
+    # tests hold this flag to the runtime overrides so it cannot drift.
+    incremental_extraction: bool = False
     validator: ConfigurationValidator | None = None
     contract_version: Literal[1] = 1
 
@@ -75,6 +90,14 @@ class AdapterConfigurationCapabilities:
             raise ValueError(msg)
         if "destination" not in roles and write_operations:
             msg = f"source-only adapter {self.adapter_name!r} cannot declare destination writes"
+            raise ValueError(msg)
+        if self.destination_schema_validation != (self.destination_schema_accessor is not None):
+            # The declaration and the accessor are one fact: declaring schema validation
+            # without a working accessor — or the reverse — is a registration-time error.
+            msg = (
+                f"adapter {self.adapter_name!r} must declare destination schema validation "
+                "together with its schema accessor"
+            )
             raise ValueError(msg)
         if len(credential_setting_paths) != len(set(credential_setting_paths)):
             msg = f"adapter {self.adapter_name!r} contains duplicate credential paths"
@@ -146,6 +169,170 @@ def _validate_relative_rest_mapping_endpoints(
     return tuple(findings)
 
 
+def _resolved_client_settings(package: ConfigurationPackage, branch: str) -> tuple[str, dict[str, Any]]:
+    """Resolve the declared destination settings one schema read needs.
+
+    Returns the declared url and the SDK configuration built from the declared settings,
+    refusing — as :class:`DestinationSchemaReadError` — a missing url and a declared token
+    credential that does not resolve.
+    """
+    # Imported here, not at module load, for the same reason as the client imports below.
+    # pylint: disable-next=import-outside-toplevel
+    from .credentials import CredentialConfigurationError, resolve_reference
+
+    settings = package.configuration.destination.settings or {}
+    url = settings.get("url")
+    if not isinstance(url, str) or not url:
+        msg = "destination setting 'url' is required to read the destination schema"
+        raise DestinationSchemaReadError(msg, reason="unconfigured")
+    sdk_config: dict[str, Any] = {"timeout": 60, "default_branch": branch}
+    token = settings.get("token")
+    if isinstance(token, Mapping):
+        reference_name = token.get("$credential")
+        if isinstance(reference_name, str):
+            try:
+                sdk_config["api_token"] = resolve_reference(package, reference_name)
+            except CredentialConfigurationError as exc:
+                msg = f"destination token credential could not be resolved: {type(exc).__name__}"
+                raise DestinationSchemaReadError(msg, reason="credentials") from None
+    verify_ssl = settings.get("verify_ssl")
+    if verify_ssl is not None:
+        sdk_config["tls_insecure"] = not verify_ssl
+    return url, sdk_config
+
+
+def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str) -> Mapping[str, Any]:
+    """Read one destination schema snapshot from a live Infrahub server.
+
+    The bundled accessor behind ``infrahub``'s schema-validation declaration. Only the
+    explicit validation opt-in calls it, so resolving the *declared* token credential
+    reference here is the sanctioned read (contract section 4); the branch arrives already
+    resolved from the declared setting and nothing ambient is consulted for it. Every
+    SDK-raised error (``infrahub_sdk.exceptions.Error`` and its subclasses), every HTTP
+    transport or status failure, an unresolvable declared credential, a declared
+    client configuration the SDK refuses (``ValueError``, including pydantic's validation
+    error), and a response the call accepted but that cannot be normalized into a schema
+    snapshot is classified into :class:`DestinationSchemaReadError` — the accessor contract
+    the schema checks handle. The SDK-call arms carry exception type names, never
+    third-party content; a normalization failure carries one fixed message
+    (:func:`_normalized_schema_snapshot`).
+    """
+    # Imported here, not at module load: this module stays connection-free to import, and
+    # the default validate path never touches a network client (envelope AR7).
+    # pylint: disable=import-outside-toplevel
+    import httpx
+    from infrahub_sdk import Config, InfrahubClientSync
+    from infrahub_sdk.exceptions import (
+        AuthenticationError,
+        ServerNotReachableError,
+        ServerNotResponsiveError,
+    )
+    from infrahub_sdk.exceptions import (
+        Error as InfrahubSdkError,
+    )
+
+    # pylint: enable=import-outside-toplevel
+    url, sdk_config = _resolved_client_settings(package, branch)
+    try:
+        client = InfrahubClientSync(address=url, config=Config(**sdk_config))
+        schema = client.schema.all(branch=branch)
+    except (httpx.TimeoutException, ServerNotResponsiveError) as exc:
+        msg = f"destination schema read timed out: {type(exc).__name__}"
+        raise DestinationSchemaReadError(msg, reason="timeout") from None
+    except AuthenticationError as exc:
+        msg = f"destination refused the schema read credentials: {type(exc).__name__}"
+        raise DestinationSchemaReadError(msg, reason="unauthorized") from None
+    except httpx.HTTPStatusError as exc:
+        unauthorized = exc.response.status_code in {401, 403}
+        reason = "unauthorized" if unauthorized else "unreachable"
+        msg = f"destination refused the schema read: {type(exc).__name__}"
+        raise DestinationSchemaReadError(msg, reason=reason) from None
+    except (httpx.TransportError, ServerNotReachableError) as exc:
+        msg = f"destination server could not be reached: {type(exc).__name__}"
+        raise DestinationSchemaReadError(msg, reason="unreachable") from None
+    except InfrahubSdkError as exc:
+        # The SDK's own base error: everything it raises that the arms above did not
+        # classify (a missing branch, a GraphQL refusal, undecodable content) is still a
+        # read the destination rejected, never an untyped escape (review F1).
+        msg = f"destination rejected the schema read: {type(exc).__name__}"
+        raise DestinationSchemaReadError(msg, reason="rejected") from None
+    except ValueError as exc:
+        # Config(**sdk_config) refusing the declared settings: pydantic's ValidationError
+        # subclasses ValueError, so both land here as one unusable-configuration class.
+        msg = f"destination client could not be configured from the declared settings: {type(exc).__name__}"
+        raise DestinationSchemaReadError(msg, reason="unconfigured") from None
+    return _normalized_schema_snapshot(schema)
+
+
+# The one message every normalization failure carries. Fixed, so a hostile response puts
+# nothing into it: not an exception type name — a metaclass executes on that read — and
+# never third-party exception text.
+_UNUSABLE_SCHEMA_RESPONSE = "destination returned an unusable schema response"
+
+
+def _normalized_schema_snapshot(schema: object) -> Mapping[str, Any]:
+    """Normalize one client schema response inside one total typed boundary.
+
+    A response the client call accepted but that is not a usable schema is still a read
+    the destination rejected. The entire normalization — the root check, iterating the
+    members, reading their attribute and relationship shapes, and validating the built
+    snapshot — runs under one rule: any ordinary ``Exception`` it raises (``items()``
+    raising, a raising attribute property, raising iteration — whatever a third-party
+    response can do) becomes one *new* :class:`DestinationSchemaReadError` carrying the
+    fixed message and ``reason="rejected"``. The rejection reads nothing from the
+    exception — not its type, whose ``__name__`` a hostile metaclass executes on — and a
+    ``DestinationSchemaReadError`` raised during normalization is rewrapped rather than
+    passed through, so untrusted response code cannot forge its own reason.
+    ``BaseException`` still propagates.
+    """
+    try:
+        return _build_schema_snapshot(schema)
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught  # The totality rule: re-raised typed, nothing read.
+        raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected") from None
+
+
+def _build_schema_snapshot(schema: object) -> dict[str, Any]:
+    """Build the snapshot from a third-party response, inside the boundary above."""
+    if not isinstance(schema, Mapping):
+        raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
+    snapshot: dict[str, Any] = {}
+    for kind, node in schema.items():
+        if not isinstance(kind, str):
+            raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
+        snapshot[kind] = {
+            "attributes": {attribute.name: attribute.kind for attribute in getattr(node, "attributes", ()) or ()},
+            "relationships": {
+                relationship.name: {"peer": relationship.peer, "cardinality": relationship.cardinality}
+                for relationship in getattr(node, "relationships", ()) or ()
+            },
+        }
+    _require_usable_snapshot(snapshot)
+    return snapshot
+
+
+def _require_usable_snapshot(snapshot: Mapping[str, Any]) -> None:
+    """Refuse a built snapshot that is not the string shape the schema checks consume.
+
+    The last step inside the normalization boundary: the members were read without
+    raising and every kind is already a string, but the snapshot is usable only when
+    every attribute name and kind, relationship name, peer, and cardinality is a string
+    too — the shape the SDK contract promises and ``compute_schema_subhash`` and the
+    content checks rely on.
+    """
+    for entry in snapshot.values():
+        attributes: dict[str, Any] = entry["attributes"]
+        relationships: dict[str, Any] = entry["relationships"]
+        usable = all(isinstance(name, str) and isinstance(value, str) for name, value in attributes.items()) and all(
+            isinstance(name, str)
+            and isinstance(relationship["peer"], str)
+            and isinstance(relationship["cardinality"], str)
+            for name, relationship in relationships.items()
+        )
+        if not usable:
+            msg = "destination returned an unusable schema member shape"
+            raise DestinationSchemaReadError(msg, reason="rejected")
+
+
 BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
     {
         "aci": AdapterConfigurationCapabilities(
@@ -168,6 +355,8 @@ BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
             credential_setting_paths=("token",),
             supported_destination_write_operations=_CREATE_UPDATE,
             destination_schema_validation=True,
+            destination_schema_accessor=_read_infrahub_destination_schema,
+            incremental_extraction=True,
         ),
         "ipfabricsync": AdapterConfigurationCapabilities(
             adapter_name="ipfabricsync",
@@ -180,12 +369,14 @@ BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
             roles=_SOURCE_ONLY,
             allowed_settings=frozenset({"token", "url", "verify_ssl"}),
             credential_setting_paths=("token",),
+            incremental_extraction=True,
         ),
         "netbox": AdapterConfigurationCapabilities(
             adapter_name="netbox",
             roles=_SOURCE_ONLY,
             allowed_settings=frozenset({"token", "url", "verify_ssl"}),
             credential_setting_paths=("token",),
+            incremental_extraction=True,
         ),
         "peeringmanager": AdapterConfigurationCapabilities(
             adapter_name="peeringmanager",

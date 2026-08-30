@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import (
@@ -17,6 +16,8 @@ from pydantic import (
 )
 
 from infrahub_sync.execution import collect_secret_values, redact
+from infrahub_sync.product_store.configs import is_closed_vocabulary_field
+from infrahub_sync.product_store.standalone import resolve_product_cache_location
 
 API_VERSION: Literal["1"] = "1"
 Operation = Literal["plan", "sync", "verify", "apply"]
@@ -70,14 +71,13 @@ class _Request(BaseModel):
     @field_validator("product_cache_location")
     @classmethod
     def _require_absolute_product_cache(cls, value: str | None) -> str | None:
-        try:
-            expanded = None if value is None else Path(value).expanduser()
-        except RuntimeError:
-            msg = "product_cache_location has an unresolvable user home"
-            raise ValueError(msg) from None
-        if expanded is not None and not expanded.is_absolute():
-            msg = "product_cache_location must be absolute after user expansion"
-            raise ValueError(msg)
+        """Apply the one shared product-cache-location rule (envelope OES-21).
+
+        ``None`` stays legal here and means the legacy cache-only behavior. Only the
+        absoluteness half of the rule is shared with the registry, which has no fallback.
+        """
+        if value is not None:
+            resolve_product_cache_location(value)
         return value
 
 
@@ -144,16 +144,43 @@ class LifecycleEvent(BaseModel):
     outcome: str = Field(min_length=1)
 
 
-class RunResult(BaseModel):
+class _RedactedResult(BaseModel):
+    """Forward-tolerant result that removes current credential values at both boundaries.
+
+    Redaction happens once on the way in, so no public attribute is ever built from an
+    unredacted value, and once on the way out, so a serializer sees values collected after
+    the model was built.
+    """
+
+    model_config = ConfigDict(extra="allow", frozen=True)
+
+    api_version: Literal["1"] = API_VERSION
+
+    @model_validator(mode="before")
+    @classmethod
+    def _redact_current_values(cls, data: Any) -> Any:
+        """Remove current process credentials before public attributes are built."""
+        return cls._redacted(data, collect_secret_values())
+
+    @model_serializer(mode="wrap")
+    def _serialize_redacted(self, handler: SerializerFunctionWrapHandler) -> Any:
+        """Redact credential values from every serialized result field."""
+        return type(self)._redacted(handler(self), collect_secret_values())
+
+    @classmethod
+    def _redacted(cls, data: Any, secrets: Sequence[str]) -> Any:
+        """Redact one result's data. Both boundaries go through here, so a result that owns
+        fields redaction must treat differently overrides this once and gets both."""
+        return _redact_data(data, secrets)
+
+
+class RunResult(_RedactedResult):
     """Stable success result shared by every local product operation.
 
     ``phase`` and ``outcome`` are forward-tolerant strings. The operation
     vocabulary is closed to the four product operations supported by API v1.
     """
 
-    model_config = ConfigDict(extra="allow", frozen=True)
-
-    api_version: Literal["1"] = API_VERSION
     run_id: str = Field(min_length=1)
     operation: Operation
     phase: str = Field(min_length=1)
@@ -162,21 +189,10 @@ class RunResult(BaseModel):
     domain_summary: dict[str, int]
     artifacts: tuple[ArtifactReference, ...]
 
-    @model_validator(mode="before")
-    @classmethod
-    def _redact_current_values(cls, data: Any) -> Any:
-        """Remove current process credentials before public attributes are built."""
-        return _redact_data(data, collect_secret_values())
-
     def _with_secret_values(self, values: Sequence[str]) -> RunResult:
         """Return a result whose public fields contain no boundary credentials."""
         secrets = _merged_secrets(values)
         return type(self).model_validate(_redact_data(self.model_dump(), secrets))
-
-    @model_serializer(mode="wrap")
-    def _serialize_redacted(self, handler: SerializerFunctionWrapHandler) -> Any:
-        """Redact credential values from every serialized result field."""
-        return _redact_data(handler(self), collect_secret_values())
 
 
 class RunError(Exception):
@@ -201,8 +217,15 @@ class RunError(Exception):
         super().__init__(self.message)
 
     def model_dump(self) -> dict[str, str | None]:
-        """Serialize the structured public error with current redaction values."""
-        data = {
+        """Serialize the structured public error with current redaction values.
+
+        Field by field, because a whole-object pass cannot tell a closed vocabulary apart from
+        caller data: ``operation`` is the four-operation literal and ``outcome`` is always
+        "failed", so an environment holding a collected value equal to either turned the dump
+        into "***" while the attribute beside it still read the real token. Which names are
+        exempt is the service's one rule, read from there rather than listed again here.
+        """
+        data: dict[str, str | None] = {
             "api_version": self.api_version,
             "run_id": self.run_id,
             "operation": self.operation,
@@ -210,7 +233,11 @@ class RunError(Exception):
             "outcome": self.outcome,
             "message": self.message,
         }
-        return _redact_data(data, collect_secret_values())
+        secrets = collect_secret_values()
+        return {
+            field: value if value is None or is_closed_vocabulary_field(field) else redact(value, secrets)
+            for field, value in data.items()
+        }
 
 
 class RunValidationError(RunError):

@@ -37,6 +37,10 @@ from infrahub_sync.plan.canonical import canonical_json_bytes
 
 _REFERENCE_NAME_PATTERN = r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
 _PROVIDER_NAME_PATTERN = r"^[a-z][a-z0-9-]{0,63}$"
+_SETTING_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+# A declared path component must survive pointer rendering unchanged, so the pointer built
+# from the declaration and the pointer built while walking a package cannot disagree.
+_MAX_SETTING_PATH_COMPONENT_LENGTH = 64
 _SAFE_POINTER_RE = re.compile(r"^(/(?:[^~/]|~[01])*)*$")
 _MAX_DECLARATION_DEPTH = 64
 _MAX_VALIDATION_ERRORS = 256
@@ -104,6 +108,20 @@ _POINTER_CHARACTER_ESCAPES = {
 
 class ConfigurationPackageParseError(ValueError):
     """A declared package failed validation at a secret-safe public boundary."""
+
+
+def is_renderable_setting_path(path: str) -> bool:
+    """Return whether every dotted component is an exact, bounded setting name.
+
+    Declared here — beneath both the capability and the credential declarations that
+    check their setting paths against it — so neither module needs the other for it.
+    """
+    if not path or path.startswith(".") or path.endswith("."):
+        return False
+    return all(
+        _SETTING_NAME.fullmatch(component) is not None and len(component) <= _MAX_SETTING_PATH_COMPONENT_LENGTH
+        for component in path.split(".")
+    )
 
 
 def _raise_unsupported_declared_fields(
@@ -434,15 +452,58 @@ class ConfigurationPackageMetadata(BaseModel):
     adapter_api_version: Literal[1] = 1
 
 
+# An omission reason reaches a finding message verbatim, so the bound is what keeps the
+# reason plus the fixed message template under _MAX_FINDING_TEXT_LENGTH: an over-long
+# reason is a registration-time refusal here, never a finding-construction crash.
+_MAX_OMISSION_REASON_LENGTH = 160
+# Acceptance is exactly ``str.isprintable()``. A reason reaches an operator-facing
+# finding message verbatim, so every character a rendered line cannot carry — a control
+# character or ANSI escape (Cc), a format character such as a bidi override (Cf), a
+# surrogate (Cs), a private-use or unassigned code point (Co, Cn), a line or paragraph
+# separator (Zl, Zp), a non-space separator such as U+00A0 (Zs) — is refused by the one
+# closed property Python defines, not by a category list that has to enumerate them.
+# The ordinary space stays legal: ``' '.isprintable()`` is True.
+_UNPRINTABLE_OMISSION_REASON_ERROR = "unprintable_omission_reason"
+
+_OmissionFieldName = Annotated[str, StringConstraints(min_length=1)]
+
+
+class _OmissionDeclaration(BaseModel):
+    """One declared intent: this destination content is intentionally not synchronized."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: str = Field(min_length=1)
+    # Omit the list to omit the whole kind; an empty list would declare nothing.
+    fields: tuple[_OmissionFieldName, ...] | None = Field(default=None, min_length=1)
+    reason: str | None = Field(default=None, min_length=1, max_length=_MAX_OMISSION_REASON_LENGTH)
+
+    @field_validator("reason")
+    @classmethod
+    def _require_printable_reason(cls, value: str | None) -> str | None:
+        """Refuse a reason no rendered line can carry safely, without echoing it."""
+        if value is not None and not value.isprintable():
+            reason = "omission reason must contain only printable characters"
+            raise PydanticCustomError(_UNPRINTABLE_OMISSION_REASON_ERROR, reason, {"reason": reason})
+        return value
+
+    @field_serializer("fields")
+    def _serialize_fields(self, value: tuple[str, ...] | None) -> list[str] | None:
+        return None if value is None else list(value)
+
+
 class ValidationFinding(BaseModel):
     """Stable, secret-safe result produced by configuration validation."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     code: str = Field(pattern=r"^[a-z][a-z0-9-]*$", max_length=_MAX_FINDING_TEXT_LENGTH)
-    # Only "error" has a channel: validate_package_credentials raises. Re-add "warning" with
-    # the surface that reports it, so a capability author cannot write one into silence.
-    severity: Literal["error"]
+    # Exactly the two contract severities. "warning" is reported by the two contract
+    # section 4 families in configuration/warnings.py and nothing else — the core and the
+    # adapter containment boundary emit errors only, so a capability author still cannot
+    # write a severity into silence. A third severity has no reporting surface and is
+    # refused here.
+    severity: Literal["error", "warning"]
     location: str = Field(pattern=r"^(/(?:[^~/]|~[01])*)*$", max_length=_MAX_FINDING_TEXT_LENGTH)
     message: str = Field(min_length=1, max_length=_MAX_FINDING_TEXT_LENGTH)
 
@@ -458,6 +519,10 @@ class ConfigurationPackage(BaseModel):
     credentials: Mapping[CredentialReferenceName, CredentialReference] = Field(
         default_factory=dict, validate_default=True
     )
+    # Always serialized, the empty tuple included: omissions change the validation report a
+    # version produces, so they sit inside declared identity, and serializing the empty
+    # declaration keeps absent and empty from being two different byte streams.
+    omissions: tuple[_OmissionDeclaration, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -482,6 +547,10 @@ class ConfigurationPackage(BaseModel):
     @field_serializer("credentials")
     def _serialize_credentials(self, value: Mapping[str, CredentialReference]) -> dict[str, CredentialReference]:
         return dict(value)
+
+    @field_serializer("omissions")
+    def _serialize_omissions(self, value: tuple[_OmissionDeclaration, ...]) -> list[_OmissionDeclaration]:
+        return list(value)
 
     def declared_content(self) -> dict[str, Any]:
         """Return the exact JSON-native content covered by the package checksum."""
@@ -768,5 +837,7 @@ def parse_configuration_package(value: object) -> ConfigurationPackage:
 
 def sort_findings(findings: Sequence[ValidationFinding]) -> tuple[ValidationFinding, ...]:
     """Return findings in the stable cross-interface order."""
-    severity_order = {"error": 0}
+    # Error before warning at one location: errors prevent execution, warnings do not.
+    # Deliberately still a KeyError on any third severity rather than a silent sort.
+    severity_order = {"error": 0, "warning": 1}
     return tuple(sorted(findings, key=lambda item: (item.location, severity_order[item.severity], item.code)))

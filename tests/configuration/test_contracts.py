@@ -307,6 +307,71 @@ def test_checksum_changes_with_declared_credential_identifier() -> None:
     assert ConfigurationPackage.model_validate(changed).checksum() != baseline.checksum()
 
 
+def test_omissions_are_declared_content_inside_package_identity() -> None:
+    # OPT-A, always-serialize: `omissions` is a top-level sibling of `configuration` and
+    # `credentials`, and the empty declaration serializes too, so absent and empty cannot
+    # be two different byte streams. Omissions change the validation report a version
+    # produces, so two packages differing only in omissions are two identities.
+    baseline = _package()
+    data = baseline.model_dump(mode="json")
+    data["omissions"] = [
+        {"kind": "InfraDevice", "fields": ["serial_number", "asset_tag"], "reason": "serials tracked in the CMDB"}
+    ]
+    declared = ConfigurationPackage.model_validate(data)
+
+    assert baseline.declared_content()["omissions"] == []
+    assert declared.declared_content()["omissions"] == [
+        {"kind": "InfraDevice", "fields": ["serial_number", "asset_tag"], "reason": "serials tracked in the CMDB"}
+    ]
+    assert declared.checksum() != baseline.checksum()
+    reparsed = ConfigurationPackage.model_validate(declared.declared_content())
+    assert reparsed.declared_content() == declared.declared_content()
+    assert reparsed.checksum() == declared.checksum()
+
+
+def test_a_whole_kind_omission_omits_the_field_list() -> None:
+    data = _package().model_dump(mode="json")
+    data["omissions"] = [{"kind": "InfraDevice"}]
+
+    declared = ConfigurationPackage.model_validate(data)
+
+    assert declared.declared_content()["omissions"] == [{"kind": "InfraDevice", "fields": None, "reason": None}]
+
+
+def test_an_omission_reason_at_the_bound_is_accepted_and_the_declaration_is_strict() -> None:
+    data = _package().model_dump(mode="json")
+    data["omissions"] = [{"kind": "InfraDevice", "reason": "r" * 160}]
+
+    declared = ConfigurationPackage.model_validate(data)
+
+    assert declared.omissions[0].reason == "r" * 160
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package({**data, "omissions": [{"kind": "InfraDevice", "note": "x"}]})
+    assert str(caught.value) == "configuration package is invalid at /omissions/0/note: unsupported declared field"
+
+
+def test_an_over_long_omission_reason_is_a_clean_registration_time_refusal() -> None:
+    # The 160-character bound plus the fixed message template stays under the 256 finding
+    # text bound, so an over-long reason is refused here and can never crash a finding.
+    data = _package().model_dump(mode="json")
+    data["omissions"] = [{"kind": "InfraDevice", "reason": "r" * 161}]
+
+    with pytest.raises(ConfigurationPackageParseError) as caught:
+        parse_configuration_package(data)
+
+    assert str(caught.value) == "configuration package is invalid at /omissions/0/reason: value is too long"
+    assert "r" * 161 not in str(caught.value)
+
+
+def test_an_empty_omission_field_list_is_refused() -> None:
+    # Omitting the list omits the whole kind; an empty list would declare nothing.
+    data = _package().model_dump(mode="json")
+    data["omissions"] = [{"kind": "InfraDevice", "fields": []}]
+
+    with pytest.raises(ConfigurationPackageParseError):
+        parse_configuration_package(data)
+
+
 @pytest.mark.parametrize("flag_name", ["SKIP_UNMATCHED_DST", "SKIP_UNMATCHED_BOTH", "NONE"])
 def test_diffsync_flags_are_declared_and_hashed_by_stable_name(flag_name: str) -> None:
     data = _package().model_dump(mode="json")
@@ -2102,7 +2167,9 @@ def test_case_variant_adapter_name_cannot_split_package_identity() -> None:
     package = ConfigurationPackage.model_validate(data)
 
     assert package.checksum() != _package().checksum()
-    with pytest.raises(UnknownAdapterCapabilitiesError, match="no configuration capability declaration"):
+    # OES-15: every validation refusal is one exception type now. The narrow type still exists
+    # where it belongs, pinned by test_capability_lookup_is_exact_and_unknown_is_refused.
+    with pytest.raises(CredentialConfigurationError, match="no configuration capability declaration"):
         validate_package_credentials(package)
 
 
@@ -2192,15 +2259,59 @@ def test_findings_use_deterministic_interface_order() -> None:
     ]
 
 
-def test_finding_severity_has_no_channel_beyond_error() -> None:
-    # A severity nothing reports would let a capability author write into silence.
+def test_finding_severity_carries_exactly_the_two_contract_severities() -> None:
+    # OES-8 candidate A: "warning" exists now that the two contract section 4 families
+    # report into it. A third severity still has nothing that reports it, so it would let
+    # a capability author write into silence and is refused at the model.
+    warning = ValidationFinding(code="optional-field", severity="warning", location="/a", message="optional")
+
+    assert warning.severity == "warning"
     with pytest.raises(ValidationError):
         ValidationFinding(
             code="optional-field",
-            severity=cast("Any", "warning"),
+            severity=cast("Any", "info"),
             location="/a",
             message="optional",
         )
+
+
+def test_error_findings_sort_before_warnings_at_the_same_location() -> None:
+    # (location, severity, code): severity separates two findings at one location with one
+    # code, and error comes first because errors prevent execution and warnings do not.
+    findings = [
+        ValidationFinding(code="same-code", severity="warning", location="/a", message="warning"),
+        ValidationFinding(code="same-code", severity="error", location="/a", message="error"),
+    ]
+
+    assert [item.severity for item in sort_findings(findings)] == ["error", "warning"]
+
+
+def test_mixed_severity_ordering_is_deterministic_across_invocations() -> None:
+    findings = [
+        ValidationFinding(code="zulu-code", severity="warning", location="/a", message="w"),
+        ValidationFinding(code="alpha-code", severity="warning", location="/a", message="w"),
+        ValidationFinding(code="mid-code", severity="error", location="/b", message="e"),
+        ValidationFinding(code="alpha-code", severity="error", location="/a", message="e"),
+    ]
+
+    ordered = sort_findings(findings)
+
+    assert ordered == sort_findings(list(reversed(findings)))
+    assert [(item.location, item.severity, item.code) for item in ordered] == [
+        ("/a", "error", "alpha-code"),
+        ("/a", "warning", "alpha-code"),
+        ("/a", "warning", "zulu-code"),
+        ("/b", "error", "mid-code"),
+    ]
+
+
+def test_sort_findings_still_refuses_a_third_severity() -> None:
+    # The severity dict raises KeyError on a severity outside the declared vocabulary
+    # rather than sorting it somewhere silently; only the model widening was sanctioned.
+    smuggled = ValidationFinding.model_construct(code="smuggled-code", severity="info", location="/a", message="m")
+
+    with pytest.raises(KeyError):
+        sort_findings([smuggled])
 
 
 @pytest.mark.parametrize(

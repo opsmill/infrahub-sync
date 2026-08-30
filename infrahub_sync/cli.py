@@ -28,6 +28,7 @@ from infrahub_sync.plan.errors import (
     UnknownPlanKindError,
     UnsafeRunIdentifierError,
 )
+from infrahub_sync.product_store import configs as configs_service
 from infrahub_sync.product_store.standalone import StandaloneProductRecordError, execute_standalone
 from infrahub_sync.utils import (
     PlanApplier,
@@ -93,8 +94,15 @@ def main(
 
 
 def print_error_and_abort(message: str, sync_instance: SyncInstance | None = None) -> NoReturn:
-    """Log one operator-facing refusal after redacting resolved credentials."""
-    logger.error("%s", redact(message, collect_secret_values(sync_instance)))
+    """Log one operator-facing refusal after redacting resolved credentials.
+
+    Through the service's free-text rule, which is escape-aware. A refusal is text the core
+    built, and a ``configs`` refusal carries ``str(CredentialConfigurationError)`` — a declared
+    key already escaped by the same function a pointer is escaped by. A plain match therefore
+    logged, on the line above the rendered findings, the credential those findings had just
+    redacted.
+    """
+    logger.error("%s", configs_service.redact_message(message, collect_secret_values(sync_instance)))
     raise typer.Abort
 
 

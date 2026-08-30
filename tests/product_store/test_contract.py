@@ -1808,6 +1808,7 @@ _ALLOWED_STORE_CONFIGURATION_METHODS = frozenset(
         "add_configuration_version",
         "lookup_configuration",
         "lookup_configuration_version",
+        "list_configurations",
         "list_configuration_versions",
     }
 )
@@ -1817,6 +1818,7 @@ _ALLOWED_PROJECTION_CONFIGURATION_METHODS = frozenset(
         "add_configuration_version",
         "lookup_configuration",
         "lookup_configuration_version",
+        "list_configurations",
         "list_configuration_versions",
     }
 )
@@ -1908,6 +1910,40 @@ def test_configuration_registry_survives_store_reconstruction(profile: str, tmp_
     assert after_restart.lookup_configuration(first.config_id).available
     assert after_restart.list_configuration_versions(first.config_id) == (first, second)
     assert after_restart.lookup_configuration_version(first.config_id, 2) == product_store.LookupResult(value=second)
+
+
+def test_list_configurations_orders_by_created_at_then_config_id_on_both_profiles(
+    provider: ProductProjection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The configurations listing carries one total ORDER BY: ``created_at``, then ``config_id``.
+
+    ``created_at`` is server-generated, so on an append-only table insertion order equals
+    timestamp order and a missing ORDER BY would pass trivially. The generated IDs and the
+    clock are therefore pinned so two rows share one ``created_at`` (only the ``config_id``
+    tiebreak separates them) and the last-inserted row carries the earliest timestamp (only
+    ordering by ``created_at`` puts it first).
+    """
+    assert provider.list_configurations() == ()
+    registrations = (
+        ("config-b", datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
+        ("config-a", datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
+        ("config-z", datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)),
+    )
+    ids = iter([config_id for config_id, _ in registrations])
+    clock = iter([created_at for _, created_at in registrations])
+    monkeypatch.setattr(product_store_store, "_generate_config_id", lambda: next(ids))
+    monkeypatch.setattr(product_store_store, "datetime", SimpleNamespace(now=lambda tz: next(clock)))  # noqa: ARG005
+    for _ in registrations:
+        provider.create_configuration(_configuration_package())
+
+    listed = provider.list_configurations()
+
+    assert listed == (
+        ConfigurationSummary(config_id="config-z", created_at=datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)),
+        ConfigurationSummary(config_id="config-a", created_at=datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
+        ConfigurationSummary(config_id="config-b", created_at=datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
+    )
+    assert provider.list_configurations() == listed
 
 
 def test_distinct_configurations_may_share_identical_package_content(provider: ProductProjection) -> None:

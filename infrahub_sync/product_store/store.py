@@ -150,6 +150,9 @@ _JSON_MAPPING_ADAPTER = TypeAdapter(dict[str, Any])
 
 _INSERT_CONFIGURATION = "INSERT INTO configurations (config_id, created_at) VALUES (?, ?)"
 _SELECT_CONFIGURATION = "SELECT config_id, created_at FROM configurations WHERE config_id = ?"
+# The one stated configurations listing order. ``created_at`` alone is not total — the clock
+# can give two registrations one timestamp — so ``config_id`` makes the order deterministic.
+_SELECT_CONFIGURATIONS = "SELECT config_id, created_at FROM configurations ORDER BY created_at, config_id"
 _INSERT_CONFIGURATION_VERSION = """INSERT INTO configuration_versions (config_id, registry_version, package_checksum,
 declared_content, created_at) VALUES (?, ?, ?, ?, ?)"""
 _SELECT_CONFIGURATION_VERSION = """SELECT config_id, registry_version, package_checksum, declared_content, created_at
@@ -307,6 +310,8 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def lookup_configuration_version(
         self, config_id: str, registry_version: int
     ) -> LookupResult[ConfigurationVersion]: ...
+
+    def list_configurations(self) -> tuple[ConfigurationSummary, ...]: ...
 
     def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]: ...
 
@@ -1065,6 +1070,20 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             return LookupResult(value=None, reason="configuration-version-not-found")
         return LookupResult(value=_configuration_version_from_row(row))
 
+    def list_configurations(self) -> tuple[ConfigurationSummary, ...]:
+        """Return every registered configuration in the one stated order (see the SQL)."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_SELECT_CONFIGURATIONS))
+                rows = cursor.fetchall()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return tuple(ConfigurationSummary(config_id=row[0], created_at=row[1]) for row in rows)
+
     def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]:
         connection = self._connect()
         try:
@@ -1486,6 +1505,10 @@ class ProductProjection:
     def lookup_configuration_version(self, config_id: str, registry_version: int) -> LookupResult[ConfigurationVersion]:
         """Look up one immutable configuration version by its integer ordinal."""
         return self._records.lookup_configuration_version(config_id, registry_version)
+
+    def list_configurations(self) -> tuple[ConfigurationSummary, ...]:
+        """Return every registered configuration's identity, ordered by creation time then ID."""
+        return self._records.list_configurations()
 
     def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]:
         """Return every registered version of one configuration, oldest first."""
