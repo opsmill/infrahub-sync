@@ -10,10 +10,13 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .auth import Principal, PrincipalResolver
+from .config_routes import ConfigurationAPIError, ConfigurationRoutes, configuration_router
 from .models import (
     ApplyRunRequest,
     ArtifactListResource,
     CancelRunRequest,
+    ConfigErrorDetail,
+    ConfigErrorEnvelope,
     CreateRunRequest,
     ErrorDetail,
     ErrorEnvelope,
@@ -31,7 +34,9 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
-def create_app(service: ManagedRunService, resolver: PrincipalResolver) -> FastAPI:
+def create_app(
+    service: ManagedRunService, resolver: PrincipalResolver, configuration_routes: ConfigurationRoutes | None = None
+) -> FastAPI:
     """Create the managed application from explicit providers."""
     application = FastAPI(title="Infrahub Sync managed API", version="1.0.0")
     bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
@@ -71,6 +76,19 @@ def create_app(service: ManagedRunService, resolver: PrincipalResolver) -> FastA
         )
         headers = {"WWW-Authenticate": "Bearer"} if exc.status == 401 else None
         return JSONResponse(status_code=exc.status, content=envelope.model_dump(mode="json"), headers=headers)
+
+    @application.exception_handler(ConfigurationAPIError)
+    async def configuration_error(_request: Request, exc: ConfigurationAPIError) -> JSONResponse:  # noqa: RUF029
+        envelope = ConfigErrorEnvelope(
+            error=ConfigErrorDetail(
+                code=f"configs-{exc.family}",
+                message="the configuration service refused the request",
+                status=exc.status,
+                family=exc.family,
+                reason=exc.reason,
+            )
+        )
+        return JSONResponse(status_code=exc.status, content=envelope.model_dump(mode="json"))
 
     @application.exception_handler(RequestValidationError)
     async def validation_error(_request: Request, _exc: RequestValidationError) -> JSONResponse:  # noqa: RUF029
@@ -163,5 +181,8 @@ def create_app(service: ManagedRunService, resolver: PrincipalResolver) -> FastA
     ) -> JSONResponse:
         status, content = await service.cancel_run(run_id, body, principal, key)
         return JSONResponse(status_code=status, content=content)
+
+    if configuration_routes is not None:
+        application.include_router(configuration_router(configuration_routes, authenticate, idempotency_key))
 
     return application

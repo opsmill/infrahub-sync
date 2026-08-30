@@ -422,6 +422,9 @@ class ManagedRunService:
         principal: Principal,
         reason: str,
     ) -> tuple[int, dict[str, Any]]:
+        assert receipt.resource_kind == "run"
+        assert receipt.run_id is not None
+        assert receipt.prefect_key is not None
         try:
             submission = await self._orchestration.submit(parameters, idempotency_key=receipt.prefect_key)
         except Exception as exc:  # noqa: BLE001 - remote boundary is translated and cause-sanitized
@@ -583,6 +586,7 @@ class ManagedRunService:
             target_run_id=target_run_id,
             request_fingerprint=fingerprint,
             reason=reason,
+            resource_id=run_id,
             run_id=run_id,
             prefect_key=prefect_key,
             created_at=now,

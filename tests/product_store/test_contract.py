@@ -96,7 +96,8 @@ class _CursorAdapter:
         self._fake_rows = None
         stripped = operation.strip()
         if "information_schema.columns" in stripped:
-            self._cursor.execute("PRAGMA table_info(product_runs)")
+            table_name = parameters[0] if parameters else "product_runs"
+            self._cursor.execute(f"PRAGMA table_info({table_name})")
             self._fake_rows = tuple((str(row[1]),) for row in self._cursor.fetchall())
             return self
         if "information_schema.table_constraints" in stripped:
@@ -115,6 +116,8 @@ class _CursorAdapter:
                 )
             except sqlite3.IntegrityError as exc:
                 raise _FakeDriverError(sqlstate="42710") from exc
+            return self
+        if "ALTER COLUMN" in stripped and "DROP NOT NULL" in stripped:
             return self
         self._cursor.execute(stripped.replace("%s", "?"), parameters)
         return self
@@ -410,6 +413,7 @@ def _receipt(  # noqa: PLR0913 - receipt factory exposes contract dimensions.
         target_run_id=target_run_id,
         request_fingerprint=sha256(f"canonical-request:{operation}:{target_run_id}".encode()).hexdigest(),
         reason=reason,
+        resource_id=run_id,
         run_id=run_id,
         prefect_key=sha256(receipt_id.encode()).hexdigest(),
         created_at=now,
@@ -612,6 +616,113 @@ def test_mutation_reservation_atomically_creates_one_run_and_replays_on_both_pro
     assert provider.lookup_run("run-never-created").reason == "run-not-found"
 
 
+@pytest.mark.parametrize("profile", [("sqlite",), ("postgresql",)])
+def test_receipt_migration_backfills_legacy_runs_and_allows_configuration_receipts(
+    tmp_path: Path, profile: tuple[str]
+) -> None:
+    """Receipt storage upgrades legacy run rows without inventing run identifiers for configs."""
+    database = tmp_path / f"{profile[0]}.sqlite3"
+    legacy = sqlite3.connect(database)
+    try:
+        legacy.execute(
+            "CREATE TABLE mutation_receipts ("
+            "receipt_id TEXT PRIMARY KEY, actor TEXT NOT NULL, key_digest TEXT NOT NULL, "
+            "operation TEXT NOT NULL, target_run_id TEXT, request_fingerprint TEXT NOT NULL, "
+            "reason TEXT NOT NULL, run_id TEXT NOT NULL, prefect_key TEXT NOT NULL, "
+            "state TEXT NOT NULL, response_status INTEGER, response_body TEXT, flow_run_id TEXT, "
+            "created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (actor, key_digest))"
+        )
+        legacy_receipt = _receipt()
+        legacy_values = product_store_store._receipt_values(legacy_receipt)
+        legacy.execute(
+            "INSERT INTO mutation_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            legacy_values[:7] + legacy_values[9:],
+        )
+        legacy.commit()
+    finally:
+        legacy.close()
+
+    records = SQLiteRunStore(database) if profile[0] == "sqlite" else PostgreSQLRunStore(_connect(database))
+    projection = ProductProjection(records, FileArtifactStore(tmp_path / f"{profile[0]}-objects"))
+    restored = projection.lookup_mutation(legacy_receipt.actor, legacy_receipt.key_digest)
+    assert restored.value is not None
+    assert restored.value.resource_kind == "run"
+    assert restored.value.resource_id == legacy_receipt.run_id
+    assert restored.value.run_id == legacy_receipt.run_id
+    assert restored.value.prefect_key == legacy_receipt.prefect_key
+
+    restarted = ProductProjection(SQLiteRunStore(database), FileArtifactStore(tmp_path / "restarted-objects"))
+    after_restart = restarted.lookup_mutation(legacy_receipt.actor, legacy_receipt.key_digest)
+    assert after_restart.value is not None
+    assert after_restart.value.run_id == legacy_receipt.run_id
+    assert after_restart.value.prefect_key == legacy_receipt.prefect_key
+    schema = sqlite3.connect(database)
+    try:
+        columns = {row[1] for row in schema.execute("PRAGMA table_info(mutation_receipts)")}
+    finally:
+        schema.close()
+    assert {"resource_kind", "resource_id"} <= columns
+
+    now = datetime(2026, 8, 10, 12, tzinfo=timezone.utc)
+    configuration_receipt = MutationReceipt(
+        receipt_id="configuration-mutation-001",
+        actor="operator@example.com",
+        key_digest=sha256(b"configuration-key").hexdigest(),
+        operation="register-config",
+        request_fingerprint=sha256(b"configuration-request").hexdigest(),
+        reason="operator registered a configuration",
+        resource_kind="configuration",
+        resource_id="configs",
+        created_at=now,
+        updated_at=now,
+    )
+    reserved, created = projection.reserve_mutation(configuration_receipt)
+    assert created is True
+    assert reserved.run_id is None
+    assert reserved.prefect_key is None
+    assert reserved.flow_run_id is None
+    schema = sqlite3.connect(database)
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            schema.execute(
+                "UPDATE mutation_receipts SET resource_kind = 'configuration' WHERE receipt_id = ?",
+                (legacy_receipt.receipt_id,),
+            )
+    finally:
+        schema.close()
+
+
+def test_fresh_sqlite_receipt_resource_invariant_rejects_mixed_direct_write(tmp_path: Path) -> None:
+    """The fresh schema enforces the same configuration/run shape as a migrated database."""
+    database = tmp_path / "fresh.sqlite3"
+    SQLiteRunStore(database)
+    connection = sqlite3.connect(database)
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO mutation_receipts (receipt_id, actor, key_digest, operation, request_fingerprint, reason, "
+                "resource_kind, resource_id, run_id, prefect_key, state, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "mixed-receipt",
+                    "operator",
+                    "a" * 64,
+                    "register-config",
+                    "b" * 64,
+                    "test direct write",
+                    "configuration",
+                    "configs",
+                    "run-001",
+                    "c" * 64,
+                    "reserved",
+                    "2026-08-10T12:00:00+00:00",
+                    "2026-08-10T12:00:00+00:00",
+                ),
+            )
+    finally:
+        connection.close()
+
+
 def test_sqlite_concurrent_mutation_reservation_creates_exactly_one_product_run(tmp_path: Path) -> None:
     projection = local_product_projection(tmp_path.resolve())
 
@@ -625,7 +736,9 @@ def test_sqlite_concurrent_mutation_reservation_creates_exactly_one_product_run(
     assert sum(created for _, created in results) == 1
     winning_run_ids = {receipt.run_id for receipt, _ in results}
     assert len(winning_run_ids) == 1
-    assert projection.lookup_run(winning_run_ids.pop()).available
+    winning_run_id = winning_run_ids.pop()
+    assert winning_run_id is not None
+    assert projection.lookup_run(winning_run_id).available
 
 
 def test_write_capable_mutation_admission_is_atomic_on_both_profiles(provider: ProductProjection) -> None:
@@ -2345,13 +2458,15 @@ class _FakePostgreSQLCursor:
             raise
         return self
 
-    def _dispatch(self, operation: str, parameters: Sequence[Any]) -> tuple[tuple[Any, ...], ...]:
+    def _dispatch(self, operation: str, parameters: Sequence[Any]) -> tuple[tuple[Any, ...], ...]:  # noqa: PLR0911
         connection = self._connection
         database = connection.database
         if match := _FAKE_CREATE_TABLE.match(operation):
             table = match.group(1)
             if table not in database.tables:
                 connection.pending_tables.add(table)
+            if table == "mutation_receipts":
+                connection.pending_columns.setdefault(table, set()).update({"resource_kind", "resource_id"})
             return ()
         if operation.startswith(("CREATE UNIQUE INDEX IF NOT EXISTS", "CREATE INDEX IF NOT EXISTS")):
             return ()
@@ -2364,6 +2479,10 @@ class _FakePostgreSQLCursor:
             if table not in (database.tables | connection.pending_tables):
                 raise _FakeDriverError(sqlstate="42P01")  # relation "{table}" does not exist
             connection.pending_columns.setdefault(table, set()).add(column)
+            return ()
+        if operation.startswith("UPDATE mutation_receipts SET resource_kind"):
+            return ()
+        if "ALTER COLUMN" in operation and "DROP NOT NULL" in operation:
             return ()
         if "information_schema.table_constraints" in operation:
             name = parameters[-1]
