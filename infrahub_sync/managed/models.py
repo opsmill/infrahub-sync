@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+from datetime import datetime  # noqa: TC003 - Pydantic resolves response annotations at runtime.
 from math import isfinite
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from infrahub_sync.product_store import ArtifactReference, ProductRun  # noqa: TC001 - Pydantic resolves at runtime.
+from infrahub_sync.product_store import (
+    ArtifactReference,
+    PrefectExecutionLink,
+    ProductRun,
+)
 
 ManagedStage = Literal["plan", "verify", "apply", "sync"]
 _REASON_GRAMMAR_MESSAGE = "reason must be printable and trimmed"
 _JSON_NATIVE_PACKAGE_MESSAGE = "package must be recursively exact JSON-native"
 _REGISTRY_VERSION_TYPE_MESSAGE = "registry_version must be int"
 _REGISTRY_VERSION_RANGE_MESSAGE = "registry_version must be in the registry allocatable range"
+_WORKER_STATUS_INVARIANT_MESSAGE = "worker status is invalid"
 
 
 class _StrictModel(BaseModel):
@@ -70,12 +76,116 @@ class OrchestrationSummary(_StrictModel):
     state: str | None
     detail_available: bool
     unavailable_reason: str | None = None
+    submitted_at: datetime | None
+    claimed_at: datetime | None
+    stalled_at: datetime | None
+    cancellation_requested_at: datetime | None
+    cancellation_recovery_deadline_at: datetime | None
+    cancellation_acknowledged_at: datetime | None
+    terminal_at: datetime | None
+    terminal_state: Literal["completed", "failed", "cancelled", "abandoned", "interrupted"] | None
+    terminal_outcome: Literal["succeeded", "failed", "cancelled", "abandoned", "ambiguous"] | None
+
+
+class PublicExecutionLink(_StrictModel):
+    """Legacy execution correlation without Sync-owned liveness internals."""
+
+    flow_run_id: str = Field(min_length=1)
+    deployment_id: str | None = None
+    purpose: str = Field(min_length=1)
+    attempt: int = Field(ge=1)
+    last_observed_state: str | None = None
+    last_observed_at: datetime | None = None
+
+    @field_validator("last_observed_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
+            msg = "Prefect execution timestamps must include a timezone"
+            raise ValueError(msg)
+        return value
+
+    @classmethod
+    def from_prefect_execution(cls, link: PrefectExecutionLink) -> PublicExecutionLink:
+        """Copy only the six fields exposed before managed liveness was added."""
+        return cls(
+            flow_run_id=link.flow_run_id,
+            deployment_id=link.deployment_id,
+            purpose=link.purpose,
+            attempt=link.attempt,
+            last_observed_state=link.last_observed_state,
+            last_observed_at=link.last_observed_at,
+        )
+
+
+class PublicRunResource(ProductRun):
+    """Public product-run fields with legacy-safe execution correlations."""
+
+    prefect_executions: tuple[PublicExecutionLink, ...] = ()
+
+    @classmethod
+    def from_product_run(cls, run: ProductRun) -> PublicRunResource:
+        """Create the explicit public projection without internal execution identities."""
+        return cls.model_validate(
+            {
+                **run.model_dump(exclude={"prefect_executions"}),
+                "prefect_executions": tuple(
+                    PublicExecutionLink.from_prefect_execution(link) for link in run.prefect_executions
+                ),
+            }
+        )
+
+
+class VersionResource(_StrictModel):
+    """Unauthenticated managed API compatibility discovery."""
+
+    server_version: str
+    api_versions: tuple[Literal["v3-unstable"], ...]
+    stability: Literal["unstable"]
+
+
+class WorkerStatusResource(_StrictModel):
+    """Publicly safe summary of managed worker availability."""
+
+    state: Literal["ready", "busy", "no-live-worker", "unavailable"]
+    detail_available: bool
+    live_workers: int | None = Field(default=None, ge=0, strict=True)
+    queue_depth: int | None = Field(default=None, ge=0, strict=True)
+    observed_at: datetime | None
+
+    @model_validator(mode="after")
+    def _require_availability_and_state_invariants(self) -> WorkerStatusResource:
+        details = (self.live_workers, self.queue_depth, self.observed_at)
+        if not self.detail_available:
+            if self.state != "unavailable" or any(value is not None for value in details):
+                raise ValueError(_WORKER_STATUS_INVARIANT_MESSAGE)
+            return self
+        if self.state == "unavailable" or any(value is None for value in details):
+            raise ValueError(_WORKER_STATUS_INVARIANT_MESSAGE)
+        assert self.live_workers is not None
+        assert self.queue_depth is not None
+        if self.state == "no-live-worker" and self.live_workers != 0:
+            raise ValueError(_WORKER_STATUS_INVARIANT_MESSAGE)
+        if self.state in {"ready", "busy"} and self.live_workers == 0:
+            raise ValueError(_WORKER_STATUS_INVARIANT_MESSAGE)
+        if self.state == "ready" and self.queue_depth != 0:
+            raise ValueError(_WORKER_STATUS_INVARIANT_MESSAGE)
+        if self.state == "busy" and self.queue_depth == 0:
+            raise ValueError(_WORKER_STATUS_INVARIANT_MESSAGE)
+        return self
+
+
+class ServiceStatusResource(_StrictModel):
+    """Unauthenticated lifecycle status without provider identifiers."""
+
+    service: Literal["ready"]
+    worker: WorkerStatusResource
 
 
 class RunResource(_StrictModel):
     """Stable Sync record plus non-authoritative live orchestration detail."""
 
-    run: ProductRun
+    run: PublicRunResource
     orchestration: tuple[OrchestrationSummary, ...]
 
 

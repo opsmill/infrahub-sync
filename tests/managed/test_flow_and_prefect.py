@@ -8,7 +8,7 @@ from pathlib import Path
 from threading import Event, Thread, current_thread
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import httpx
 import pytest
@@ -19,27 +19,59 @@ pytest.importorskip("opsmill_prefect_extras")
 
 from opsmill_prefect_extras.deployments import apply_deployments
 from opsmill_prefect_extras.workflows import assert_valid_definitions
+from prefect.client.schemas.objects import State, StateType
+from prefect.client.schemas.responses import (
+    OrchestrationResult,
+    SetStateStatus,
+    StateAbortDetails,
+    StateAcceptDetails,
+    StateRejectDetails,
+    StateWaitDetails,
+)
 from prefect.exceptions import MissingContextError, ObjectNotFound
-from prefect.states import Failed, Pending
+from prefect.states import Cancelled, Cancelling, Failed, Pending, Running
 
 from infrahub_sync.execution import RunResult
 from infrahub_sync.managed import flow as managed_flow
 from infrahub_sync.managed.deploy import CATALOGUE
 from infrahub_sync.managed.flow import managed_sync_run
-from infrahub_sync.managed.orchestration import MANAGED_DEFINITION, Observation, PrefectOrchestration
+from infrahub_sync.managed.orchestration import (
+    MANAGED_DEFINITION,
+    CancellationResult,
+    Observation,
+    PrefectOrchestration,
+)
 from infrahub_sync.orchestration import flow as direct_flow
 from infrahub_sync.orchestration.flow import infrahub_sync_run
 from infrahub_sync.plan.errors import OperationApplyFailedError
 from infrahub_sync.plan.models import ApplyRecord, PlanManifest
 from infrahub_sync.plan.review import SavedPlan
-from infrahub_sync.product_store import ProductRun, local_product_projection
+from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 from tests.configuration.validation_packages import package
 
 if TYPE_CHECKING:
     from prefect.client.schemas.actions import DeploymentUpdate
-    from prefect.client.schemas.objects import State
 
     from infrahub_sync.configuration import ConfigurationPackage
+
+
+@pytest.fixture
+def _claimed_worker_execution(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explicitly give direct ``.fn`` tests one real durable worker claim."""
+    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+
+    def claim(projection, run_id: str) -> tuple[str, str]:
+        flow_run_id = str(uuid5(NAMESPACE_URL, run_id))
+        run = projection.lookup_run(run_id).value
+        if run is not None and not any(link.flow_run_id == flow_run_id for link in run.prefect_executions):
+            projection.add_prefect_execution(
+                run_id,
+                PrefectExecutionLink(flow_run_id=flow_run_id, purpose="test", attempt=1),
+            )
+            assert projection.claim_execution(run_id, flow_run_id, worker_id=worker_id)
+        return flow_run_id, worker_id
+
+    monkeypatch.setattr(managed_flow, "_claim_current_execution", claim)
 
 
 def _saved(run_id: str) -> SavedPlan:
@@ -141,6 +173,7 @@ def _binding(projection, run_id: str) -> tuple[str, int, str]:
     return run.configuration_binding
 
 
+@pytest.mark.usefixtures("_claimed_worker_execution")
 def test_worker_rejects_missing_registered_package_before_runtime_construction(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -368,6 +401,7 @@ def test_direct_and_managed_log_bridges_serialize_ownership_and_restore_state(  
         source_logger.propagate = original_propagate
 
 
+@pytest.mark.usefixtures("_claimed_worker_execution")
 def test_managed_flow_redacts_worker_logs_exception_chain_and_failed_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -432,8 +466,11 @@ def test_managed_flow_redacts_worker_logs_exception_chain_and_failed_state(
     }
     assert environment_canary not in stored.model_dump_json()
     assert configuration_canary not in stored.model_dump_json()
+    assert stored.prefect_executions[0].terminal_state == "failed"
+    assert stored.prefect_executions[0].terminal_outcome == "failed"
 
 
+@pytest.mark.usefixtures("_claimed_worker_execution")
 def test_managed_apply_failure_retains_partial_write_evidence(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -473,8 +510,108 @@ def test_managed_apply_failure_retains_partial_write_evidence(
         "error_type": "OperationApplyFailedError",
         **partial.as_summary_keys(),
     }
+    assert stored.prefect_executions[0].terminal_state == "failed"
 
 
+@pytest.mark.usefixtures("_claimed_worker_execution")
+def test_managed_verify_failure_merges_evidence_and_terminalizes_exact_link(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Read-only verify failure retains the run lifecycle and closes its execution."""
+    run_id = "run-managed-verify-failure"
+    projection = _create_product_run(tmp_path.resolve(), run_id, operation="verify")
+    monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
+    monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
+    monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
+
+    def fail_verify(*_args: object, **_kwargs: object) -> NoReturn:
+        msg = "saved plan verification failed"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(managed_flow, "execute_run", fail_verify)
+
+    with pytest.raises(RuntimeError):
+        managed_sync_run.fn(run_id, "verify", *_binding(projection, run_id))
+
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert (stored.phase, stored.outcome, stored.finished_at) == ("accepted", None, None)
+    assert stored.results["verify_failure"]["error_type"] == "ValueError"
+    assert stored.prefect_executions[0].terminal_state == "failed"
+
+
+@pytest.mark.usefixtures("_claimed_worker_execution")
+def test_success_writeback_persistence_failure_is_not_recorded_as_business_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A failed success commit stays nonterminal for conservative reconciliation."""
+    run_id = "run-managed-success-persistence-failure"
+    projection = _create_product_run(tmp_path.resolve(), run_id)
+    saved = _saved(run_id)
+    monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
+    monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
+    monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
+    monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(managed_flow, "_plan", lambda *_args, **_kwargs: saved)
+    commits: list[str] = []
+
+    def fail_commit(*_args: object, **kwargs: object) -> bool:
+        terminal_state = kwargs["terminal_state"]
+        assert isinstance(terminal_state, str)
+        commits.append(terminal_state)
+        message = "injected persistence failure"
+        raise OSError(message)
+
+    monkeypatch.setattr(projection, "commit_claimed_execution", fail_commit)
+
+    with pytest.raises(RuntimeError, match="injected persistence failure"):
+        managed_sync_run.fn(run_id, "plan", *_binding(projection, run_id))
+
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert commits == ["completed"]
+    assert (stored.phase, stored.outcome, stored.finished_at) == ("accepted", None, None)
+    assert stored.prefect_executions[0].terminal_at is None
+
+
+@pytest.mark.usefixtures("_claimed_worker_execution")
+def test_success_writeback_commit_error_preserves_reread_committed_result(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An ambiguous commit response returns the known result when durable reread proves success."""
+    run_id = "run-managed-success-committed-before-error"
+    projection = _create_product_run(tmp_path.resolve(), run_id)
+    saved = _saved(run_id)
+    monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
+    monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
+    monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
+    monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(managed_flow, "_plan", lambda *_args, **_kwargs: saved)
+    commit = projection.commit_claimed_execution
+
+    def commit_then_fail(*args: object, **kwargs: object) -> bool:
+        assert commit(*args, **kwargs)
+        message = "injected post-commit connection failure"
+        raise OSError(message)
+
+    monkeypatch.setattr(projection, "commit_claimed_execution", commit_then_fail)
+
+    result = managed_sync_run.fn(run_id, "plan", *_binding(projection, run_id))
+
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert result["outcome"] == "no-change"
+    assert (stored.phase, stored.outcome) == ("planned", "no-change")
+    assert stored.prefect_executions[0].terminal_state == "completed"
+
+
+@pytest.mark.usefixtures("_claimed_worker_execution")
 def test_managed_confirmed_sync_retains_the_semantic_sync_operation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -518,6 +655,7 @@ def test_managed_confirmed_sync_retains_the_semantic_sync_operation(
     assert stored.results["operation"] == "sync"
 
 
+@pytest.mark.usefixtures("_claimed_worker_execution")
 def test_managed_plan_worker_updates_the_api_created_run_and_publishes_review(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -550,8 +688,11 @@ def test_managed_plan_worker_updates_the_api_created_run_and_publishes_review(
     assert stored is not None
     assert stored.phase == "planned"
     assert [artifact.artifact_id for artifact in stored.artifact_refs] == ["plan-review"]
+    assert stored.prefect_executions[0].terminal_state == "completed"
+    assert stored.prefect_executions[0].terminal_outcome == "succeeded"
 
 
+@pytest.mark.usefixtures("_claimed_worker_execution")
 def test_managed_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     run_id = "run-managed-verify"
     projection = _create_product_run(tmp_path.resolve(), run_id)
@@ -580,10 +721,14 @@ def test_managed_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.M
     after = projection.lookup_run(run_id).value
     assert after is not None
     assert before is not None
-    assert after.model_dump(exclude={"results"}) == before.model_dump(exclude={"results"})
+    assert after.model_dump(exclude={"results", "prefect_executions"}) == before.model_dump(
+        exclude={"results", "prefect_executions"}
+    )
     assert after.results == {"verification": result}
+    assert after.prefect_executions[0].terminal_state == "completed"
 
 
+@pytest.mark.usefixtures("_claimed_worker_execution")
 def test_confirmed_managed_sync_calls_plan_verify_apply_in_order_on_one_run(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -668,10 +813,14 @@ class _RemoteClient:
         assert flow_run_id == self.flow_run.id
         return self.flow_run
 
-    async def set_flow_run_state(self, flow_run_id: UUID, state: State[object]) -> SimpleNamespace:
+    async def set_flow_run_state(self, flow_run_id: UUID, state: State[object]) -> OrchestrationResult[object]:
         assert flow_run_id == self.flow_run.id
         self.flow_run.state = state
-        return SimpleNamespace()
+        return OrchestrationResult(
+            state=state,
+            status=SetStateStatus.ACCEPT,
+            details=StateAcceptDetails(),
+        )
 
 
 @pytest.mark.asyncio
@@ -710,14 +859,139 @@ async def test_prefect_read_transport_failure_becomes_missing_live_detail() -> N
     )
 
     observed = await gateway.observe(str(uuid4()))
-    cancelled = await gateway.cancel(str(uuid4()))
+    cancellation_client = _RemoteClient()
+    cancelled = await PrefectOrchestration(cancellation_client).cancel(str(cancellation_client.flow_run.id))
 
     assert observed == Observation(
         available=False,
         state=None,
         reason="prefect-read-unavailable",
     )
-    assert cancelled == observed
+    assert cancelled == CancellationResult(acknowledged=True)
+
+
+class _CancellationClient:
+    def __init__(self, result: object) -> None:
+        self.flow_run_id = uuid4()
+        self.result = result
+
+    async def set_flow_run_state(self, flow_run_id: UUID, state: State[object]) -> object:
+        assert flow_run_id == self.flow_run_id
+        assert state.type is StateType.CANCELLING
+        return self.result
+
+
+_ACKNOWLEDGED_CANCELLATION = CancellationResult(acknowledged=True)
+_UNACKNOWLEDGED_CANCELLATION = CancellationResult(
+    acknowledged=False,
+    reason="prefect-cancellation-unavailable",
+)
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        (
+            OrchestrationResult(state=Cancelling(), status=SetStateStatus.ACCEPT, details=StateAcceptDetails()),
+            _ACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult(
+                state=Cancelling(name="Cancellation Requested"),
+                status=SetStateStatus.ACCEPT,
+                details=StateAcceptDetails(),
+            ),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult(state=Cancelling(), status=SetStateStatus.REJECT, details=StateRejectDetails()),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult(state=Cancelled(), status=SetStateStatus.REJECT, details=StateRejectDetails()),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult(state=Running(), status=SetStateStatus.ACCEPT, details=StateAcceptDetails()),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult(state=None, status=SetStateStatus.ACCEPT, details=StateAcceptDetails()),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult(state=Running(), status=SetStateStatus.REJECT, details=StateRejectDetails()),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult(state=None, status=SetStateStatus.REJECT, details=StateRejectDetails()),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult(state=Cancelling(), status=SetStateStatus.ABORT, details=StateAbortDetails()),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult(
+                state=Cancelling(),
+                status=SetStateStatus.WAIT,
+                details=StateWaitDetails(delay_seconds=1),
+            ),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (SimpleNamespace(status=SetStateStatus.ACCEPT, state=Cancelling()), _UNACKNOWLEDGED_CANCELLATION),
+        (
+            OrchestrationResult.model_construct(
+                state=Cancelling(),
+                status="ACCEPT",
+                details=StateAcceptDetails(),
+            ),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult.model_construct(
+                state=Cancelling(),
+                status=SetStateStatus.ACCEPT,
+                details=StateRejectDetails(),
+            ),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult.model_construct(
+                state=Cancelling(),
+                status=SetStateStatus.REJECT,
+                details=StateAcceptDetails(),
+            ),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+    ],
+    ids=(
+        "accept",
+        "accept-custom-name",
+        "reject-cancelling",
+        "reject-cancelled",
+        "accept-running",
+        "accept-without-state",
+        "reject-running",
+        "reject-without-state",
+        "abort",
+        "wait",
+        "non-orchestration-result",
+        "malformed-status",
+        "accept-mismatched-details",
+        "reject-mismatched-details",
+    ),
+)
+@pytest.mark.asyncio
+async def test_prefect_cancel_accepts_only_the_documented_acknowledgement(
+    result: object,
+    expected: CancellationResult,
+) -> None:
+    client = _CancellationClient(result)
+
+    cancellation = await PrefectOrchestration(client).cancel(str(client.flow_run_id))  # ty: ignore[invalid-argument-type]
+
+    assert cancellation == expected
 
 
 class _DeploymentClient:

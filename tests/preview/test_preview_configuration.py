@@ -35,7 +35,7 @@ def test_preview_routes_prefect_ui_to_the_published_host_port() -> None:
 
 
 def test_preview_declares_the_managed_postgresql_and_minio_storage_shape() -> None:
-    """Preview supplies the durable managed contract without the retired product cache."""
+    """Preview supplies storage and liveness settings to both managed processes."""
     compose = (DEV_DIR / "docker-compose.preview.yml").read_text(encoding="utf-8")
     environment = preview._runtime_env(
         {
@@ -50,6 +50,8 @@ def test_preview_declares_the_managed_postgresql_and_minio_storage_shape() -> No
             "PREVIEW_MINIO_SECRET_KEY": PREVIEW_MINIO_SECRET,
             "PREVIEW_S3_BUCKET": "infrahub-sync-preview",
             "PREVIEW_WORK_POOL": "preview-pool",
+            "PREVIEW_RUN_ADMISSION_TTL_SECONDS": "600",
+            "PREVIEW_PREFECT_WORKER_QUERY_SECONDS": "15",
         }
     )
 
@@ -66,6 +68,9 @@ def test_preview_declares_the_managed_postgresql_and_minio_storage_shape() -> No
     assert environment["AWS_SECRET_ACCESS_KEY"] == PREVIEW_MINIO_SECRET
     assert "INFRAHUB_SYNC_CACHE_DIR" in environment
     assert "INFRAHUB_SYNC_MANAGED_CACHE_LOCATION" not in environment
+    assert environment["INFRAHUB_SYNC_MANAGED_WORK_POOL"] == "preview-pool"
+    assert environment["INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS"] == "600"
+    assert environment["PREFECT_WORKER_QUERY_SECONDS"] == "15"
 
 
 def test_preview_minio_healthcheck_is_self_contained_before_bootstrap() -> None:
@@ -256,6 +261,8 @@ def test_actual_smoke_path_receives_the_preview_aws_credential_chain(monkeypatch
         "PREVIEW_MINIO_SECRET_KEY": PREVIEW_MINIO_SECRET,
         "PREVIEW_S3_BUCKET": "infrahub-sync-preview",
         "PREVIEW_WORK_POOL": "preview-pool",
+        "PREVIEW_RUN_ADMISSION_TTL_SECONDS": "600",
+        "PREVIEW_PREFECT_WORKER_QUERY_SECONDS": "15",
     }
 
     monkeypatch.setattr(preview, "load_preview_env", lambda: values)

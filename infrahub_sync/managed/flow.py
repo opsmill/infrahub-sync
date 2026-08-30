@@ -9,8 +9,10 @@ import logging
 import os
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
+from uuid import UUID
 
 from prefect import flow, get_run_logger
 from prefect.exceptions import MissingContextError
@@ -39,8 +41,14 @@ from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes
 from infrahub_sync.plan.review import SavedPlan, resolve_run_directory
 from infrahub_sync.plan.verify import verify_plan
-from infrahub_sync.product_store import ProductProjection
+from infrahub_sync.product_store import (
+    ExecutionFinishWriteback,
+    ExecutionMergeWriteback,
+    ExecutionWriteback,
+    ProductProjection,
+)
 
+from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import MANAGED_FLOW_NAME
 from .service import PLAN_ARTIFACT_ID
@@ -57,6 +65,13 @@ _REGISTERED_PLAN_VERIFICATION_FAILED = "registered saved plan verification faile
 _WORKER_BINDING_PARAMETERS_INVALID = "managed worker configuration binding parameters must be all absent or all present"
 _LEGACY_RUN_IDENTITY_UNAVAILABLE = "legacy managed run identity is unavailable"
 _LEGACY_RUN_CONFIGURATION_MISMATCH = "legacy managed run configuration version does not match durable run"
+_WORKER_EXECUTION_REFUSED = "managed worker execution claim was refused"
+_WORKER_EXECUTION_ID_INVALID = "managed worker execution identity is invalid"
+_WORKER_EXECUTION_WRITEBACK_REFUSED = "managed worker execution writeback was refused"
+
+
+def _raise_writeback_refused() -> None:
+    raise RuntimeError(_WORKER_EXECUTION_WRITEBACK_REFUSED)
 
 
 def _run_logger() -> tuple[RunLogger, bool]:
@@ -187,9 +202,51 @@ def _worker_binding(
     return config_id, registry_version, package_checksum
 
 
-def _worker_execution_context(run_id: str, binding: tuple[str, int, str] | None) -> tuple[ProductProjection, Any, str]:
+def _canonical_uuid(value: object) -> str | None:
+    """Return the value only when it is already a canonical UUID string."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return value if str(UUID(value)) == value else None
+    except ValueError:
+        return None
+
+
+def _prefect_flow_run_id() -> str:
+    """Read the flow-run UUID from Prefect's process-local runtime context."""
+    from prefect.runtime import flow_run  # pylint: disable=import-outside-toplevel
+
+    flow_run_id = _canonical_uuid(flow_run.id)
+    if flow_run_id is None:
+        raise RuntimeError(_WORKER_EXECUTION_ID_INVALID)
+    return flow_run_id
+
+
+def _claim_current_execution(projection: ProductProjection, run_id: str) -> tuple[str, str]:
+    """Claim this Prefect execution before any configuration or adapter work begins."""
+    worker_id = _canonical_uuid(os.environ.get("PREFECT__WORKER_ID"))
+    flow_run_id = _prefect_flow_run_id()
+    if worker_id is None:
+        raise RuntimeError(_WORKER_EXECUTION_ID_INVALID)
+    admission_ttl_seconds = LivenessPolicy.from_environment().admission_ttl_seconds
+    if not projection.claim_execution(
+        run_id,
+        flow_run_id,
+        worker_id=worker_id,
+        admission_ttl_seconds=admission_ttl_seconds,
+    ):
+        raise RuntimeError(_WORKER_EXECUTION_REFUSED)
+    return flow_run_id, worker_id
+
+
+def _worker_execution_context(
+    run_id: str,
+    binding: tuple[str, int, str] | None,
+    *,
+    config_directory: str,
+    projection: ProductProjection,
+) -> tuple[ProductProjection, Any, str]:
     """Load the durable run and resolve its registered or legacy runtime."""
-    config_directory, projection = _runtime()
     stored = projection.lookup_run(run_id)
     if stored.value is None:
         msg = f"API-created Sync run {run_id!r} is unavailable"
@@ -232,10 +289,14 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     confirm_writes: bool,
     run_logger: RunLogger,
     secrets: list[str],
-) -> dict[str, Any]:
+    config_directory: str,
+    projection: ProductProjection,
+) -> tuple[dict[str, Any], ExecutionWriteback]:
     """Resolve and execute one managed stage within the sanitized worker boundary."""
     parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
-    projection, instance, sync_name = _worker_execution_context(run_id, parameter_binding)
+    projection, instance, sync_name = _worker_execution_context(
+        run_id, parameter_binding, config_directory=config_directory, projection=projection
+    )
     if stage in ("apply", "sync") and not confirm_writes:
         msg = f"confirm_writes=true is required for managed stage={stage}"
         raise ValueError(msg)
@@ -251,13 +312,12 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         summary = saved.summary()
         outcome = "no-change" if summary.total == 0 else "planned"
         result = {"run_id": run_id, "stage": stage, "outcome": outcome, "summary": summary.model_dump(mode="json")}
-        projection.finish_run(
-            run_id,
+        writeback: ExecutionWriteback = ExecutionFinishWriteback(
             phase="planned",
             outcome=outcome,
+            finished_at=datetime.now(timezone.utc),
             summary={"sync_name": sync_name, **summary.model_dump(mode="json")},
             results=result,
-            secrets=secrets,
         )
     elif stage == "verify":
         saved = execute_run(instance, operation="verify", run_id=run_id, _require_verified=True)
@@ -270,11 +330,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             "checksum_ok": saved.checksum_ok,
             "verification_notes": list(saved.verification_notes),
         }
-        projection.merge_results(
-            run_id,
-            {"verification": result},
-            secrets=secrets,
-        )
+        writeback = ExecutionMergeWriteback(results={"verification": result})
     elif stage == "apply":
         _verify_registered_apply(
             instance=instance,
@@ -291,13 +347,12 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         )
         assert isinstance(applied, RunResult)
         result = _result_data(applied)
-        projection.finish_run(
-            run_id,
+        writeback = ExecutionFinishWriteback(
             phase="applied",
             outcome=applied.status,
+            finished_at=datetime.now(timezone.utc),
             summary={"sync_name": sync_name, **{key: applied.summary[key] for key in ACTION_KEYS}},
             results=result,
-            secrets=secrets,
         )
     else:
         with bounded_run_lock(instance.name, timeout=60.0):
@@ -329,16 +384,15 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             )
             assert isinstance(applied, RunResult)
         result = {**_result_data(applied), "operation": "sync"}
-        projection.finish_run(
-            run_id,
+        writeback = ExecutionFinishWriteback(
             phase="applied",
             outcome=applied.status,
+            finished_at=datetime.now(timezone.utc),
             summary={"sync_name": sync_name, **{key: applied.summary[key] for key in ACTION_KEYS}},
             results=result,
-            secrets=secrets,
         )
     run_logger.info(redact(f"managed Sync run {run_id} stage={stage} outcome={result['outcome']}", secrets))
-    return result
+    return result, writeback
 
 
 def _failure_evidence(
@@ -362,37 +416,46 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
     exc: Exception,
     run_logger: RunLogger,
     secrets: Sequence[str],
+    projection: ProductProjection,
+    flow_run_id: str,
+    worker_id: str,
 ) -> None:
     """Best-effort durable product evidence without masking the worker failure."""
     try:
-        _config_directory, projection = _runtime()
         stored = projection.lookup_run(run_id).value
         if stored is None:
             return
         evidence = _failure_evidence(stage, exc)
-        projection.merge_results(run_id, {f"{stage}_failure": evidence}, secrets=secrets)
+        results: dict[str, Any] = {f"{stage}_failure": evidence}
         if stage == "verify":
-            return
-        refreshed = projection.lookup_run(run_id).value
-        if refreshed is None:
-            return
-        partial = {
-            key: evidence[key]
-            for key in (
-                "applied_operations",
-                "skipped_delete_operations",
-                "skipped_delete_count",
-                "failed_operation",
-                "may_have_partially_written",
+            writeback: ExecutionWriteback = ExecutionMergeWriteback(results=results)
+        else:
+            partial = {
+                key: evidence[key]
+                for key in (
+                    "applied_operations",
+                    "skipped_delete_operations",
+                    "skipped_delete_count",
+                    "failed_operation",
+                    "may_have_partially_written",
+                )
+                if key in evidence
+            }
+            writeback = ExecutionFinishWriteback(
+                phase=f"{stage}-failed",
+                outcome="failed",
+                finished_at=datetime.now(timezone.utc),
+                summary={**stored.summary, "failed_stage": stage, **partial},
+                results={**stored.results, **results},
             )
-            if key in evidence
-        }
-        projection.finish_run(
+        projection.commit_claimed_execution(
             run_id,
-            phase=f"{stage}-failed",
-            outcome="failed",
-            summary={**refreshed.summary, "failed_stage": stage, **partial},
-            results=refreshed.results,
+            flow_run_id,
+            worker_id=worker_id,
+            terminal_at=datetime.now(timezone.utc),
+            terminal_state="failed",
+            terminal_outcome="failed",
+            writeback=writeback,
             secrets=secrets,
         )
     except Exception as persistence_error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
@@ -416,11 +479,14 @@ def managed_sync_run(  # pylint: disable=too-many-positional-arguments
 ) -> dict[str, Any]:
     """Execute one API-reserved stage and publish its durable product data."""
     run_logger, prefect_context = _run_logger()
-    secrets = list(collect_secret_values())
+    secrets: list[str] = []
     failure: Exception | None = None
+    config_directory, projection = _runtime()
+    flow_run_id, worker_id = _claim_current_execution(projection, run_id)
+    secrets[:] = collect_secret_values()
     try:
         with _remote_log_bridge(run_logger, prefect_context=prefect_context, secrets=secrets):
-            return _execute_stage(
+            result, writeback = _execute_stage(
                 run_id,
                 stage,
                 config_id,
@@ -431,11 +497,46 @@ def managed_sync_run(  # pylint: disable=too-many-positional-arguments
                 confirm_writes,
                 run_logger,
                 secrets,
+                config_directory,
+                projection,
             )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         # Rebuilt after the original exception context exits.
-        _record_failure(run_id, stage, exc, run_logger, secrets)
+        _record_failure(run_id, stage, exc, run_logger, secrets, projection, flow_run_id, worker_id)
         failure = sanitize_exception_chain(exc, secrets)
-    assert failure is not None
-    secrets.clear()
-    raise failure
+    if failure is not None:
+        secrets.clear()
+        raise failure
+
+    persistence_failure: Exception | None = None
+    try:
+        if not projection.commit_claimed_execution(
+            run_id,
+            flow_run_id,
+            worker_id=worker_id,
+            terminal_at=datetime.now(timezone.utc),
+            terminal_state="completed",
+            terminal_outcome="succeeded",
+            writeback=writeback,
+            secrets=secrets,
+        ):
+            _raise_writeback_refused()
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        try:
+            stored = projection.lookup_run(run_id).value
+            link = (
+                None
+                if stored is None
+                else next(
+                    (candidate for candidate in stored.prefect_executions if candidate.flow_run_id == flow_run_id),
+                    None,
+                )
+            )
+        except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            link = None
+        if link is None or (link.terminal_state, link.terminal_outcome) != ("completed", "succeeded"):
+            persistence_failure = sanitize_exception_chain(exc, secrets)
+    if persistence_failure is not None:
+        secrets.clear()
+        raise persistence_failure
+    return result

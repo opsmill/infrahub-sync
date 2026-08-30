@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime  # noqa: TC003 - pydantic resolves this annotation at runtime.
-from typing import Any, Generic, Literal, TypeVar
+from datetime import datetime, timezone
+from typing import Annotated, Any, Generic, Literal, TypeAlias, TypeVar
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from infrahub_sync.execution import Operation  # noqa: TC001 - Pydantic resolves this annotation at runtime.
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+_INVALID_MANAGED_WORKER_ID = "managed worker identity is invalid"
+_LEGAL_EXECUTION_VERDICTS = {
+    ("completed", "succeeded"),
+    ("failed", "failed"),
+    ("cancelled", "cancelled"),
+    ("abandoned", "abandoned"),
+    ("interrupted", "ambiguous"),
+}
 
 
 class ArtifactReference(BaseModel):
@@ -57,14 +66,92 @@ class PrefectExecutionLink(BaseModel):
     attempt: int = Field(ge=1)
     last_observed_state: str | None = None
     last_observed_at: datetime | None = None
+    submitted_at: datetime | None = Field(default_factory=lambda: datetime.now(timezone.utc))
+    claimed_at: datetime | None = None
+    claiming_worker_id: str | None = None
+    stalled_at: datetime | None = None
+    cancellation_requested_at: datetime | None = None
+    cancellation_recovery_deadline_at: datetime | None = None
+    cancellation_receipt_id: str | None = None
+    cancellation_acknowledged_at: datetime | None = None
+    terminal_at: datetime | None = None
+    terminal_state: Literal["completed", "failed", "cancelled", "abandoned", "interrupted"] | None = None
+    terminal_outcome: Literal["succeeded", "failed", "cancelled", "abandoned", "ambiguous"] | None = None
 
-    @field_validator("last_observed_at")
+    @field_validator(
+        "last_observed_at",
+        "submitted_at",
+        "claimed_at",
+        "stalled_at",
+        "cancellation_requested_at",
+        "cancellation_recovery_deadline_at",
+        "cancellation_acknowledged_at",
+        "terminal_at",
+        mode="before",
+    )
     @classmethod
-    def _require_timezone(cls, value: datetime | None) -> datetime | None:
-        if value is not None and value.utcoffset() is None:
+    def _require_timezone(cls, value: object) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, str):
+            try:
+                persisted = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+                parsed = datetime.fromisoformat(persisted)
+            except ValueError:
+                msg = "Prefect execution timestamps must be datetimes or persisted ISO strings"
+                raise ValueError(msg) from None
+        else:
+            msg = "Prefect execution timestamps must be datetimes or persisted ISO strings"
+            raise ValueError(msg)  # noqa: TRY004 - Pydantic reports ValueError, not TypeError.
+        if parsed.utcoffset() is None:
             msg = "Prefect execution timestamps must include a timezone"
             raise ValueError(msg)
+        return parsed
+
+    @field_validator("claiming_worker_id", mode="before")
+    @classmethod
+    def _require_canonical_worker_id(cls, value: object) -> object:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError(_INVALID_MANAGED_WORKER_ID)  # noqa: TRY004 - Pydantic reports ValueError.
+        try:
+            canonical = str(UUID(value))
+        except ValueError:
+            raise ValueError(_INVALID_MANAGED_WORKER_ID) from None
+        if canonical != value:
+            raise ValueError(_INVALID_MANAGED_WORKER_ID)
         return value
+
+    @model_validator(mode="after")
+    def _require_liveness_boundaries(self) -> PrefectExecutionLink:
+        if (self.claimed_at is None) is not (self.claiming_worker_id is None):
+            msg = "execution claim time and worker ID must be all absent or all present"
+            raise ValueError(msg)
+        cancellation = (
+            self.cancellation_requested_at,
+            self.cancellation_recovery_deadline_at,
+            self.cancellation_receipt_id,
+        )
+        if any(value is None for value in cancellation) and any(value is not None for value in cancellation):
+            msg = "execution cancellation request fields must be all absent or all present"
+            raise ValueError(msg)
+        if self.cancellation_acknowledged_at is not None and self.cancellation_requested_at is None:
+            msg = "execution cancellation acknowledgement requires a request"
+            raise ValueError(msg)
+        terminal = (self.terminal_at, self.terminal_state, self.terminal_outcome)
+        if any(value is None for value in terminal) and any(value is not None for value in terminal):
+            msg = "execution terminal fields must be all absent or all present"
+            raise ValueError(msg)
+        if (
+            self.terminal_state is not None
+            and (self.terminal_state, self.terminal_outcome) not in _LEGAL_EXECUTION_VERDICTS
+        ):
+            msg = "execution terminal verdict is invalid"
+            raise ValueError(msg)
+        return self
 
 
 class ProductRun(BaseModel):
@@ -131,6 +218,42 @@ class ProductRun(BaseModel):
         assert self.registry_version is not None
         assert self.package_checksum is not None
         return self.config_id, self.registry_version, self.package_checksum
+
+
+class ExecutionFinishWriteback(BaseModel):
+    """Complete business writeback committed with one claimed execution verdict."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["finish"] = "finish"
+    phase: str = Field(min_length=1)
+    outcome: str = Field(min_length=1)
+    finished_at: datetime
+    summary: dict[str, Any]
+    results: dict[str, Any]
+
+    @field_validator("finished_at", mode="before")
+    @classmethod
+    def _require_timezone(cls, value: object) -> datetime:
+        if not isinstance(value, datetime) or value.utcoffset() is None:
+            msg = "execution writeback timestamps must include a timezone"
+            raise ValueError(msg)
+        return value
+
+
+class ExecutionMergeWriteback(BaseModel):
+    """Business result patch committed with one claimed execution verdict."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["merge"] = "merge"
+    results: dict[str, Any]
+
+
+ExecutionWriteback: TypeAlias = Annotated[
+    ExecutionFinishWriteback | ExecutionMergeWriteback,
+    Field(discriminator="kind"),
+]
 
 
 class MutationReceipt(BaseModel):

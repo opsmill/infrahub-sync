@@ -11,7 +11,8 @@ from prefect.client.orchestration import get_client
 from .app import create_app
 from .auth import EnvironmentPrincipalResolver
 from .config_routes import ConfigurationRoutes
-from .orchestration import Observation, PrefectOrchestration, Submission
+from .liveness import LivenessPolicy, RunLivenessReconciler
+from .orchestration import CancellationResult, Observation, PoolStatus, PrefectOrchestration, Submission
 from .service import ManagedRunService
 from .storage import managed_product_projection
 
@@ -30,7 +31,11 @@ class _ClientPerCallOrchestration:
         async with get_client() as client:
             return await PrefectOrchestration(client).observe(flow_run_id)
 
-    async def cancel(self, flow_run_id: str) -> Observation:
+    async def pool_status(self, work_pool_name: str, now: Any) -> PoolStatus:
+        async with get_client() as client:
+            return await PrefectOrchestration(client).pool_status(work_pool_name, now)
+
+    async def cancel(self, flow_run_id: str) -> CancellationResult:
         async with get_client() as client:
             return await PrefectOrchestration(client).cancel(flow_run_id)
 
@@ -44,11 +49,24 @@ def build_app(
     app_factory: Any = create_app,
 ) -> FastAPI:
     """Construct the managed app from its environment-owned durable storage profile."""
+    policy = LivenessPolicy.from_environment(worker_query_seconds=os.environ.get("PREFECT_WORKER_QUERY_SECONDS", "10"))
     projection = projection_factory()
     resolver = resolver_factory()
-    service = run_service_factory(projection, _ClientPerCallOrchestration(), secrets=resolver.secret_values)
     configuration_routes = configuration_routes_factory(product_projection=projection, secrets=resolver.secret_values)
-    return app_factory(service, resolver, configuration_routes)
+    orchestration = _ClientPerCallOrchestration()
+    service = run_service_factory(
+        projection,
+        orchestration,
+        secrets=resolver.secret_values,
+        cancellation_recovery_seconds=policy.stall_threshold_seconds,
+    )
+    reconciler = RunLivenessReconciler(
+        projection,
+        orchestration,
+        policy,
+        os.environ.get("INFRAHUB_SYNC_MANAGED_WORK_POOL", "default"),
+    )
+    return app_factory(service, resolver, configuration_routes, reconciler)
 
 
 def main() -> None:

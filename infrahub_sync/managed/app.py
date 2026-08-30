@@ -1,7 +1,10 @@
 """FastAPI routing for the stable managed Sync HTTP contract."""
 
 import logging
+import os
+from asyncio import CancelledError, create_task, sleep
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager, suppress
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, Request, Response
@@ -10,7 +13,9 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .auth import Principal, PrincipalResolver
+from .compatibility import API_STABILITY, API_VERSIONS, installed_server_version
 from .config_routes import ConfigurationAPIError, ConfigurationRoutes, configuration_router
+from .liveness import RunLivenessReconciler
 from .models import (
     ApplyRunRequest,
     ArtifactListResource,
@@ -23,7 +28,9 @@ from .models import (
     PlanResource,
     ResultsResource,
     RunResource,
+    ServiceStatusResource,
     VerifyRunRequest,
+    VersionResource,
 )
 from .service import ManagedAPIError, ManagedRunService
 
@@ -35,10 +42,38 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 
 
 def create_app(
-    service: ManagedRunService, resolver: PrincipalResolver, configuration_routes: ConfigurationRoutes | None = None
+    service: ManagedRunService,
+    resolver: PrincipalResolver,
+    configuration_routes: ConfigurationRoutes | None = None,
+    reconciler: RunLivenessReconciler | None = None,
 ) -> FastAPI:
     """Create the managed application from explicit providers."""
-    application = FastAPI(title="Infrahub Sync managed API", version="1.0.0")
+
+    @asynccontextmanager
+    async def lifespan(_application: FastAPI):
+        task = None
+        if reconciler is not None:
+
+            async def reconcile_loop() -> None:
+                while True:
+                    try:
+                        await reconciler.reconcile_once()
+                    except CancelledError:  # pylint: disable=try-except-raise
+                        raise
+                    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+                        logger.error("managed liveness iteration failed: %s", type(exc).__name__)  # noqa: TRY400
+                    await sleep(reconciler.cadence_seconds)
+
+            task = create_task(reconcile_loop())
+        try:
+            yield
+        finally:
+            if task is not None:
+                task.cancel()
+                with suppress(CancelledError):
+                    await task
+
+    application = FastAPI(title="Infrahub Sync managed API", version=installed_server_version(), lifespan=lifespan)
     bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
 
     def authenticate(
@@ -97,6 +132,18 @@ def create_app(
         )
         return JSONResponse(status_code=422, content=envelope.model_dump(mode="json"))
 
+    @application.get("/version")
+    def get_version() -> VersionResource:
+        """Return the installed server and supported unstable API versions."""
+        return VersionResource(
+            server_version=installed_server_version(), api_versions=API_VERSIONS, stability=API_STABILITY
+        )
+
+    @application.get("/status")
+    async def get_status() -> ServiceStatusResource:
+        """Return unauthenticated lifecycle state without provider identifiers."""
+        return await service.status(os.environ.get("INFRAHUB_SYNC_MANAGED_WORK_POOL", "default"))
+
     @application.middleware("http")
     async def contain_unhandled_error(
         request: Request,
@@ -128,6 +175,8 @@ def create_app(
 
     @application.get("/runs/{run_id}", responses=ERROR_RESPONSES)
     async def get_run(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> RunResource:
+        if reconciler is not None:
+            await reconciler.reconcile_run(run_id)
         return await service.get_run(run_id)
 
     @application.get("/runs/{run_id}/plan", responses=ERROR_RESPONSES)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, NoReturn
 from uuid import uuid4
@@ -23,6 +23,7 @@ from infrahub_sync.product_store import (
     WriteAdmissionConflictError,
 )
 
+from .liveness import CancellationSelectionUnavailableError, select_cancellable_execution
 from .models import (
     ApplyRunRequest,
     ArtifactListResource,
@@ -30,17 +31,55 @@ from .models import (
     CreateRunRequest,
     OrchestrationSummary,
     PlanResource,
+    PublicRunResource,
     ResultsResource,
     RunResource,
+    ServiceStatusResource,
     VerifyRunRequest,
+    WorkerStatusResource,
 )
-from .orchestration import ManagedOrchestration, Observation
+from .orchestration import ManagedOrchestration, Observation, PoolStatus, normalized_pool_status
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from .auth import Principal
 
 PLAN_ARTIFACT_ID = "plan-review"
-TERMINAL_STATES = frozenset({"completed", "failed", "crashed", "cancelled"})
+
+
+def _service_status(snapshot: PoolStatus) -> ServiceStatusResource:
+    """Project internal pool evidence into the deliberately small public schema."""
+    snapshot = normalized_pool_status(snapshot)
+    if not snapshot.detail_available:
+        return ServiceStatusResource(
+            service="ready",
+            worker=WorkerStatusResource(
+                state="unavailable", detail_available=False, live_workers=None, queue_depth=None, observed_at=None
+            ),
+        )
+    assert snapshot.queue_depth is not None
+    assert snapshot.observed_at is not None
+    now = snapshot.observed_at
+    live = sum(
+        worker.status == "online"
+        and worker.last_heartbeat is not None
+        and worker.heartbeat_interval_seconds is not None
+        and worker.heartbeat_interval_seconds > 0
+        and max(0.0, (now - worker.last_heartbeat).total_seconds()) <= max(3 * worker.heartbeat_interval_seconds, 30)
+        for worker in snapshot.workers
+    )
+    state = "no-live-worker" if live == 0 else "busy" if snapshot.queue_depth > 0 else "ready"
+    return ServiceStatusResource(
+        service="ready",
+        worker=WorkerStatusResource(
+            state=state,
+            detail_available=True,
+            live_workers=live,
+            queue_depth=snapshot.queue_depth,
+            observed_at=snapshot.observed_at,
+        ),
+    )
 
 
 class ManagedAPIError(Exception):
@@ -73,10 +112,14 @@ class ManagedRunService:
         orchestration: ManagedOrchestration,
         *,
         secrets: tuple[str, ...] = (),
+        cancellation_recovery_seconds: float = 30.0,
+        clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         self._projection = projection
         self._orchestration = orchestration
         self._secrets = tuple(dict.fromkeys((*collect_secret_values(), *secrets)))
+        self._cancellation_recovery_seconds = cancellation_recovery_seconds
+        self._clock = clock
 
     async def create_run(
         self, request: CreateRunRequest, principal: Principal, idempotency_key: str
@@ -277,20 +320,21 @@ class ManagedRunService:
             ) from None
         return await self._resume_or_replay(receipt, parameters, principal, request.reason)
 
-    async def cancel_run(
+    async def cancel_run(  # noqa: PLR0911  # pylint: disable=too-many-branches,too-many-return-statements,too-many-statements
         self, run_id: str, request: CancelRunRequest, principal: Principal, idempotency_key: str
     ) -> tuple[int, dict[str, Any]]:
         """Request cancellation of only the latest active managed execution."""
         run = self._owned_run(run_id, principal, "cancel", request.reason)
-        receipt = self._reserve_existing(
+        body = request.model_dump(mode="json")
+        receipt = self._lookup_existing_receipt(
             run,
             principal,
             idempotency_key,
             operation="cancel",
             reason=request.reason,
-            body=request.model_dump(mode="json"),
+            body=body,
         )
-        if receipt.state == "accepted":
+        if receipt is not None and receipt.state == "accepted":
             self._audit(run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="replayed")
             return self._stored_response(receipt)
         if not run.prefect_executions:
@@ -302,36 +346,123 @@ class ManagedRunService:
                 outcome="refused-no-execution",
             )
             raise self._error(409, "no-active-execution", "the run has no managed execution to cancel", run_id=run_id)
-        link: PrefectExecutionLink | None = None
-        for candidate in reversed(run.prefect_executions):
-            try:
-                observed = await self._orchestration.observe(candidate.flow_run_id)
-            except Exception as exc:  # pylint: disable=broad-exception-caught  # noqa: BLE001
-                self._raise_cancel_unavailable(
-                    receipt,
-                    principal,
-                    request.reason,
-                    "the active managed execution cannot be confirmed",
-                    exc=exc,
-                )
-            if not observed.available:
-                if observed.reason == "prefect-execution-unavailable":
-                    continue
-                self._raise_cancel_unavailable(
-                    receipt,
-                    principal,
-                    request.reason,
-                    "the active managed execution cannot be confirmed",
-                )
-            if observed.state in TERMINAL_STATES:
-                continue
-            link = candidate
-            break
+        try:
+            link = await select_cancellable_execution(
+                run,
+                None if receipt is None else receipt.receipt_id,
+                self._orchestration,
+            )
+        except CancellationSelectionUnavailableError:
+            self._raise_cancel_unavailable(
+                receipt, principal, request.reason, "the active managed execution cannot be confirmed", run_id=run_id
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught  # noqa: BLE001
+            self._raise_cancel_unavailable(
+                receipt,
+                principal,
+                request.reason,
+                "the active managed execution cannot be confirmed",
+                run_id=run_id,
+                exc=exc,
+            )
         if link is None:
             self._audit(
                 run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="refused-terminal"
             )
             raise self._error(409, "execution-terminal", "the managed execution is already terminal", run_id=run_id)
+        if receipt is None:
+            receipt = self._reserve_existing(
+                run,
+                principal,
+                idempotency_key,
+                operation="cancel",
+                reason=request.reason,
+                body=body,
+            )
+            if receipt.state == "accepted":
+                self._audit(
+                    run_id,
+                    actor=principal.actor,
+                    operation="cancel",
+                    reason=request.reason,
+                    outcome="replayed",
+                )
+                return self._stored_response(receipt)
+        decision_at = self._clock()
+        if link.cancellation_recovery_deadline_at is not None and decision_at >= link.cancellation_recovery_deadline_at:
+            self._projection.expire_execution_cancellation(run_id, link.flow_run_id, terminal_at=decision_at)
+            expired = self._projection.lookup_mutation(receipt.actor, receipt.key_digest).value
+            if expired is not None and expired.state == "accepted":
+                self._audit(
+                    run_id,
+                    actor=principal.actor,
+                    operation="cancel",
+                    reason=request.reason,
+                    outcome="replayed",
+                )
+                return self._stored_response(expired)
+            raise self._error(
+                409,
+                "execution-terminal",
+                "the managed execution is already terminal",
+                run_id=run_id,
+                mutation_id=receipt.receipt_id,
+            )
+        if receipt.state == "reserved" and not self._projection.claim_mutation(
+            receipt.receipt_id, secrets=self._secrets
+        ):
+            completed = self._projection.lookup_mutation(receipt.actor, receipt.key_digest).value
+            if completed is not None and completed.state == "accepted":
+                self._audit(
+                    run_id,
+                    actor=principal.actor,
+                    operation="cancel",
+                    reason=request.reason,
+                    outcome="replayed",
+                )
+                return self._stored_response(completed)
+            self._raise_cancel_unavailable(
+                receipt,
+                principal,
+                request.reason,
+                "the cancellation request is already being processed",
+            )
+        requested_at = link.cancellation_requested_at or self._clock()
+        recovery_deadline_at = link.cancellation_recovery_deadline_at or (
+            requested_at + timedelta(seconds=self._cancellation_recovery_seconds)
+        )
+        requested = self._projection.request_execution_cancellation(
+            run_id,
+            link.flow_run_id,
+            requested_at=requested_at,
+            recovery_deadline_at=recovery_deadline_at,
+            recovery_seconds=self._cancellation_recovery_seconds,
+            expected_latest_position=len(run.prefect_executions) - 1,
+            receipt_id=receipt.receipt_id,
+            secrets=self._secrets,
+        )
+        if not requested:
+            completed = self._projection.complete_mutation(
+                receipt.receipt_id,
+                response_status=409,
+                response_body=self._error_body(
+                    409,
+                    "execution-terminal",
+                    "the managed execution is already terminal",
+                    run_id=run_id,
+                    mutation_id=receipt.receipt_id,
+                ),
+                flow_run_id=link.flow_run_id,
+                secrets=self._secrets,
+            )
+            self._audit(
+                run_id,
+                actor=principal.actor,
+                operation="cancel",
+                reason=request.reason,
+                outcome="refused-terminal",
+            )
+            return self._stored_response(completed)
         try:
             cancelled = await self._orchestration.cancel(link.flow_run_id)
         except Exception as exc:  # pylint: disable=broad-exception-caught  # noqa: BLE001
@@ -342,50 +473,75 @@ class ManagedRunService:
                 "Prefect could not confirm the cancellation request",
                 exc=exc,
             )
-        if not cancelled.available:
+        if not cancelled.acknowledged:
             self._raise_cancel_unavailable(
                 receipt,
                 principal,
                 request.reason,
                 "Prefect could not confirm the cancellation request",
             )
-        self._projection.observe_prefect_execution(
-            run_id,
-            link.flow_run_id,
-            state=cancelled.state,
-            secrets=self._secrets,
-        )
+        accepted_observation = Observation(available=True, state="cancelling")
         resource = self._resource_with_observations(
             self._required_run(run_id),
-            {link.flow_run_id: cancelled},
+            {link.flow_run_id: accepted_observation},
         )
         body = resource.model_dump(mode="json")
-        completed = self._projection.complete_mutation(
-            receipt.receipt_id,
+        acknowledged = self._projection.acknowledge_execution_cancellation(
+            run_id,
+            link.flow_run_id,
+            acknowledged_at=self._clock(),
             response_status=202,
             response_body=body,
-            flow_run_id=link.flow_run_id,
             secrets=self._secrets,
         )
+        completed = self._projection.lookup_mutation(receipt.actor, receipt.key_digest).value
+        if completed is None:
+            raise self._error(
+                409,
+                "execution-terminal",
+                "the managed execution is already terminal",
+                run_id=run_id,
+                mutation_id=receipt.receipt_id,
+            )
+        if not acknowledged:
+            if completed.state != "accepted":
+                raise self._error(
+                    409,
+                    "execution-terminal",
+                    "the managed execution is already terminal",
+                    run_id=run_id,
+                    mutation_id=receipt.receipt_id,
+                )
+            self._audit(
+                run_id,
+                actor=principal.actor,
+                operation="cancel",
+                reason=request.reason,
+                outcome="refused-terminal" if completed.response_status == 409 else "unavailable",
+            )
+            return self._stored_response(completed)
         self._audit(run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="accepted")
         return self._stored_response(completed)
 
     def _raise_cancel_unavailable(
         self,
-        receipt: MutationReceipt,
+        receipt: MutationReceipt | None,
         principal: Principal,
         reason: str,
         message: str,
         *,
+        run_id: str | None = None,
         exc: Exception | None = None,
     ) -> NoReturn:
-        self._audit(receipt.run_id, actor=principal.actor, operation="cancel", reason=reason, outcome="unavailable")
+        target_run_id = receipt.run_id if receipt is not None else run_id
+        mutation_id = receipt.receipt_id if receipt is not None else None
+        self._audit(target_run_id, actor=principal.actor, operation="cancel", reason=reason, outcome="unavailable")
         error = self._error(
             503,
             "orchestration-unavailable",
             message,
-            run_id=receipt.run_id,
-            mutation_id=receipt.receipt_id,
+            run_id=target_run_id,
+            mutation_id=mutation_id,
         )
         if exc is None:
             raise error
@@ -408,6 +564,11 @@ class ManagedRunService:
                     secrets=self._secrets,
                 )
         return self._resource_with_observations(self._required_run(run_id), observations)
+
+    async def status(self, work_pool_name: str) -> ServiceStatusResource:
+        """Return lifecycle-safe pool state without exposing provider identifiers."""
+        snapshot = await self._orchestration.pool_status(work_pool_name, datetime.now(timezone.utc))
+        return _service_status(snapshot)
 
     def get_plan(self, run_id: str) -> PlanResource:
         """Return the retained review document."""
@@ -699,6 +860,25 @@ class ManagedRunService:
         return receipt.response_status, receipt.response_body
 
     @staticmethod
+    def _error_body(
+        status: int,
+        code: str,
+        message: str,
+        *,
+        run_id: str | None = None,
+        mutation_id: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "error": {
+                "code": code,
+                "message": message,
+                "status": status,
+                "run_id": run_id,
+                "mutation_id": mutation_id,
+            }
+        }
+
+    @staticmethod
     def _resource_with_observations(run: ProductRun, observations: dict[str, Observation]) -> RunResource:
         orchestration = []
         for link in run.prefect_executions:
@@ -712,6 +892,15 @@ class ManagedRunService:
                         state=link.last_observed_state,
                         detail_available=False,
                         unavailable_reason="live-detail-not-requested",
+                        submitted_at=link.submitted_at,
+                        claimed_at=link.claimed_at,
+                        stalled_at=link.stalled_at,
+                        cancellation_requested_at=link.cancellation_requested_at,
+                        cancellation_recovery_deadline_at=link.cancellation_recovery_deadline_at,
+                        cancellation_acknowledged_at=link.cancellation_acknowledged_at,
+                        terminal_at=link.terminal_at,
+                        terminal_state=link.terminal_state,
+                        terminal_outcome=link.terminal_outcome,
                     )
                 )
                 continue
@@ -723,9 +912,18 @@ class ManagedRunService:
                     state=observed.state if observed.available else link.last_observed_state,
                     detail_available=observed.available,
                     unavailable_reason=observed.reason,
+                    submitted_at=link.submitted_at,
+                    claimed_at=link.claimed_at,
+                    stalled_at=link.stalled_at,
+                    cancellation_requested_at=link.cancellation_requested_at,
+                    cancellation_recovery_deadline_at=link.cancellation_recovery_deadline_at,
+                    cancellation_acknowledged_at=link.cancellation_acknowledged_at,
+                    terminal_at=link.terminal_at,
+                    terminal_state=link.terminal_state,
+                    terminal_outcome=link.terminal_outcome,
                 )
             )
-        return RunResource(run=run, orchestration=tuple(orchestration))
+        return RunResource(run=PublicRunResource.from_product_run(run), orchestration=tuple(orchestration))
 
     def _audit(
         self,

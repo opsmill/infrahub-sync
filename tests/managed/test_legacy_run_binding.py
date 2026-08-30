@@ -23,7 +23,10 @@ from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.models import PlanManifest
 from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME, write_plan_artifact
-from infrahub_sync.product_store import ProductRun, local_product_projection
+from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
+
+FLOW_RUN_ID = "ed4778cb-f2cf-4b1f-a87b-68be37659e93"
+WORKER_ID = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
 
 
 def _legacy_run(cache: Path, run_id: str, operation: Literal["plan", "verify", "apply"]) -> object:
@@ -40,7 +43,20 @@ def _legacy_run(cache: Path, run_id: str, operation: Literal["plan", "verify", "
             summary={"sync_name": "legacy-inventory"},
         )
     )
+    projection.add_prefect_execution(
+        run_id,
+        PrefectExecutionLink(
+            flow_run_id=FLOW_RUN_ID, purpose=operation, attempt=1, submitted_at=datetime.now(timezone.utc)
+        ),
+    )
     return projection
+
+
+@pytest.fixture(autouse=True)
+def _worker_execution_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give direct worker calls the durable Prefect identity now required before parsing."""
+    monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
+    monkeypatch.setattr(managed_flow, "_prefect_flow_run_id", lambda: FLOW_RUN_ID)
 
 
 def _legacy_saved(run_id: str) -> SavedPlan:
@@ -250,6 +266,12 @@ def test_cross_product_and_partial_worker_carriers_refuse_before_runtime(
             summary={"sync_name": "legacy-inventory"},
         )
     projection.create_run(run)
+    projection.add_prefect_execution(
+        run.run_id,
+        PrefectExecutionLink(
+            flow_run_id=FLOW_RUN_ID, purpose="plan", attempt=1, submitted_at=datetime.now(timezone.utc)
+        ),
+    )
     constructed: list[object] = []
     monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))

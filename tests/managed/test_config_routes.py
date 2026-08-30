@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 from threading import Event, Thread
@@ -19,7 +20,7 @@ from infrahub_sync.configuration.models import ValidationFinding
 from infrahub_sync.managed.app import create_app
 from infrahub_sync.managed.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.managed.config_routes import ConfigurationAPIError, ConfigurationRoutes
-from infrahub_sync.managed.orchestration import Observation, Submission
+from infrahub_sync.managed.orchestration import CancellationResult, Observation, PoolStatus, Submission
 from infrahub_sync.managed.serve import build_app
 from infrahub_sync.managed.service import ManagedAPIError, ManagedRunService
 from infrahub_sync.product_store import configs as configs_service
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
 
     from infrahub_sync.configuration.models import ConfigurationPackage
     from infrahub_sync.managed.auth import PrincipalResolver
+    from infrahub_sync.managed.liveness import RunLivenessReconciler
     from infrahub_sync.product_store.models import ConfigurationVersion
     from infrahub_sync.product_store.store import ProductProjection
 
@@ -46,8 +48,11 @@ class _Orchestration:  # pylint: disable=too-few-public-methods
     async def observe(self, flow_run_id: str) -> Observation:  # noqa: ARG002, PLR6301
         return Observation(available=True, state="running")
 
-    async def cancel(self, flow_run_id: str) -> Observation:  # noqa: ARG002, PLR6301
-        return Observation(available=True, state="cancelled")
+    async def pool_status(self, work_pool_name: str, now: datetime) -> PoolStatus:  # noqa: ARG002, PLR6301
+        return PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
+
+    async def cancel(self, flow_run_id: str) -> CancellationResult:  # noqa: ARG002, PLR6301
+        return CancellationResult(acknowledged=True)
 
 
 class _UnknownConfigsError(configs_service.ConfigsError):
@@ -1095,7 +1100,8 @@ def test_build_app_binds_one_projection_and_passes_configuration_dependency() ->
         assert product_projection is projection_dependency
         return route_dependency
 
-    def application(run: object, resolver: object, routes: object) -> object:
+    def application(run: object, resolver: object, routes: object, reconciler: object) -> object:
+        del reconciler
         received.extend((run, resolver, routes))
         return object()
 
@@ -1131,8 +1137,8 @@ def test_build_app_composes_one_managed_projection_for_runs_and_configurations()
         received.append("routes")
         return object()
 
-    def app_factory(run_service: object, resolver: object, routes: object) -> object:
-        del run_service, resolver, routes
+    def app_factory(run_service: object, resolver: object, routes: object, reconciler: object) -> object:
+        del run_service, resolver, routes, reconciler
         received.append("app")
         return object()
 
@@ -1146,4 +1152,64 @@ def test_build_app_composes_one_managed_projection_for_runs_and_configurations()
         )
         is not None
     )
-    assert received == ["storage", projection, "routes", "app"]
+    assert received == ["storage", "routes", projection, "app"]
+
+
+def test_build_app_uses_the_prefect_worker_query_setting_for_liveness_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The server and Preview can use one Prefect query cadence for liveness."""
+    monkeypatch.setenv("PREFECT_WORKER_QUERY_SECONDS", "20")
+    captured: list[RunLivenessReconciler] = []
+
+    class Resolver:
+        secret_values: tuple[str, ...] = ()
+
+    def app_factory(_service: object, _resolver: object, _routes: object, reconciler: RunLivenessReconciler) -> object:
+        captured.append(reconciler)
+        return object()
+
+    build_app(
+        projection_factory=object,
+        resolver_factory=Resolver,
+        run_service_factory=lambda *_args, **_kwargs: object(),
+        configuration_routes_factory=lambda **_kwargs: object(),
+        app_factory=app_factory,
+    )
+
+    assert captured[0]._policy.stall_threshold_seconds == 60
+
+
+@pytest.mark.parametrize(
+    ("setting", "value"),
+    [
+        ("INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS", "0"),
+        ("PREFECT_WORKER_QUERY_SECONDS", "nan"),
+    ],
+)
+def test_build_app_validates_complete_liveness_policy_before_constructing_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+    setting: str,
+    value: str,
+) -> None:
+    """Invalid startup policy has no projection, resolver, route, service, or app side effect."""
+    monkeypatch.setenv(setting, value)
+    constructed: list[str] = []
+
+    def factory(name: str):
+        def construct(*_args: object, **_kwargs: object) -> object:
+            constructed.append(name)
+            return object()
+
+        return construct
+
+    with pytest.raises(ValueError):
+        build_app(
+            projection_factory=factory("projection"),
+            resolver_factory=factory("resolver"),
+            run_service_factory=factory("service"),
+            configuration_routes_factory=factory("routes"),
+            app_factory=factory("app"),
+        )
+
+    assert constructed == []

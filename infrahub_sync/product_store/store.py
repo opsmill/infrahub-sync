@@ -7,12 +7,14 @@ import os
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+from math import isfinite
 from pathlib import Path, PurePosixPath
 from tempfile import mkdtemp
 from time import sleep
 from typing import Any, Literal, Protocol, cast
+from uuid import UUID
 
 from pydantic import TypeAdapter
 
@@ -25,6 +27,9 @@ from infrahub_sync.product_store.models import (
     AuditEvent,
     ConfigurationSummary,
     ConfigurationVersion,
+    ExecutionFinishWriteback,
+    ExecutionMergeWriteback,
+    ExecutionWriteback,
     LookupResult,
     MutationReceipt,
     PrefectExecutionLink,
@@ -45,7 +50,10 @@ CREATE TABLE IF NOT EXISTS artifact_refs (
 );
 CREATE TABLE IF NOT EXISTS prefect_executions (
     run_id TEXT NOT NULL, flow_run_id TEXT NOT NULL, deployment_id TEXT, purpose TEXT NOT NULL,
-    attempt INTEGER NOT NULL, last_observed_state TEXT, last_observed_at TEXT, position INTEGER NOT NULL,
+    attempt INTEGER NOT NULL, last_observed_state TEXT, last_observed_at TEXT, submitted_at TEXT,
+    claimed_at TEXT, claiming_worker_id TEXT, stalled_at TEXT, cancellation_requested_at TEXT,
+    cancellation_recovery_deadline_at TEXT, cancellation_receipt_id TEXT, cancellation_acknowledged_at TEXT,
+    terminal_at TEXT, terminal_state TEXT, terminal_outcome TEXT, position INTEGER NOT NULL,
     PRIMARY KEY (run_id, flow_run_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS prefect_executions_run_position
@@ -83,6 +91,35 @@ CREATE TABLE IF NOT EXISTS configuration_versions (
 CREATE UNIQUE INDEX IF NOT EXISTS configuration_versions_checksum
     ON configuration_versions (config_id, package_checksum);
 """
+_SQLITE_EXECUTION_TIMESTAMP_FUNCTION = "infrahub_sync_execution_timestamp_microseconds"
+_UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+_CANCELLATION_DEADLINE_ERROR = "execution cancellation recovery deadline is invalid"
+_CANCELLATION_POSITION_ERROR = "execution cancellation position is invalid"
+_SELECT_LATEST_EXECUTION_RESULTS = (
+    "SELECT results FROM product_runs WHERE run_id = ? AND (SELECT latest.flow_run_id "
+    "FROM prefect_executions AS latest WHERE latest.run_id = product_runs.run_id "
+    "ORDER BY latest.position DESC LIMIT 1) = ?"
+)
+_UPDATE_LATEST_EXECUTION_RESULTS = (
+    "UPDATE product_runs SET results = ? WHERE run_id = ? AND (SELECT latest.flow_run_id "
+    "FROM prefect_executions AS latest WHERE latest.run_id = product_runs.run_id "
+    "ORDER BY latest.position DESC LIMIT 1) = ?"
+)
+_UPDATE_LATEST_EXECUTION_FINISH = (
+    "UPDATE product_runs SET phase = ?, outcome = ?, finished_at = ?, summary = ?, results = ? "
+    "WHERE run_id = ? AND (SELECT latest.flow_run_id FROM prefect_executions AS latest "
+    "WHERE latest.run_id = product_runs.run_id ORDER BY latest.position DESC LIMIT 1) = ?"
+)
+_UPDATE_LATEST_EXECUTION_TERMINAL = (
+    "UPDATE product_runs SET phase = ?, outcome = ?, finished_at = ? WHERE run_id = ? "
+    "AND (SELECT latest.flow_run_id FROM prefect_executions AS latest "
+    "WHERE latest.run_id = product_runs.run_id ORDER BY latest.position DESC LIMIT 1) = ?"
+)
+_UPDATE_LATEST_EXECUTION_CANCELLED = (
+    "UPDATE product_runs SET phase = 'cancelled', outcome = 'cancelled', finished_at = ? WHERE run_id = ? "
+    "AND (SELECT latest.flow_run_id FROM prefect_executions AS latest "
+    "WHERE latest.run_id = product_runs.run_id ORDER BY latest.position DESC LIMIT 1) = ?"
+)
 
 # Nullable run-to-configuration binding columns on ``product_runs``. Added by an
 # introspection-guarded ALTER (see ``_migrate_product_runs_columns``) rather than baked into
@@ -96,6 +133,19 @@ _CONFIGURATION_BINDING_COLUMNS: tuple[tuple[str, str], ...] = (
     ("config_id", "TEXT"),
     ("registry_version", "INTEGER"),
     ("package_checksum", "TEXT"),
+)
+_PREFECT_EXECUTION_LIVENESS_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("submitted_at", "TEXT"),
+    ("claimed_at", "TEXT"),
+    ("claiming_worker_id", "TEXT"),
+    ("stalled_at", "TEXT"),
+    ("cancellation_requested_at", "TEXT"),
+    ("cancellation_recovery_deadline_at", "TEXT"),
+    ("cancellation_receipt_id", "TEXT"),
+    ("cancellation_acknowledged_at", "TEXT"),
+    ("terminal_at", "TEXT"),
+    ("terminal_state", "TEXT"),
+    ("terminal_outcome", "TEXT"),
 )
 _CONFIGURATION_BINDING_CONSTRAINT = "product_runs_configuration_binding_consistent"
 _CONFIGURATION_BINDING_CHECK_EXPRESSION = (
@@ -174,6 +224,7 @@ _SCHEMA_INITIALIZATION_ATTEMPTS = 2
 # supports up to 8 concurrent writers with margin above that observed worst case.
 _CONFIGURATION_VERSION_ATTEMPTS = 8
 _JSON_MAPPING_ADAPTER = TypeAdapter(dict[str, Any])
+_INVALID_MANAGED_WORKER_ID = "managed worker identity is invalid"
 
 _INSERT_CONFIGURATION = "INSERT INTO configurations (config_id, created_at) VALUES (?, ?)"
 _SELECT_CONFIGURATION = "SELECT config_id, created_at FROM configurations WHERE config_id = ?"
@@ -205,9 +256,13 @@ manifest_key, created_at, expires_at, published FROM artifact_refs WHERE run_id 
 _INSERT_ARTIFACT_REFERENCE = """INSERT INTO artifact_refs (run_id, artifact_id, kind, media_type, digest, size,
 object_key, manifest_key, created_at, expires_at, published) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _SELECT_PREFECT_EXECUTIONS = """SELECT run_id, flow_run_id, deployment_id, purpose, attempt, last_observed_state,
-last_observed_at, position FROM prefect_executions WHERE run_id = ? ORDER BY position"""
+last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at, cancellation_requested_at,
+cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at, terminal_at, terminal_state,
+terminal_outcome, position FROM prefect_executions WHERE run_id = ? ORDER BY position"""
 _INSERT_PREFECT_EXECUTION = """INSERT INTO prefect_executions (run_id, flow_run_id, deployment_id, purpose, attempt,
-last_observed_state, last_observed_at, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"""
+last_observed_state, last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at,
+cancellation_requested_at, cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at,
+terminal_at, terminal_state, terminal_outcome, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _INSERT_MUTATION_RECEIPT = """INSERT INTO mutation_receipts (receipt_id, actor, key_digest, operation,
 target_run_id, request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body,
 flow_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
@@ -314,6 +369,62 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         self, run_id: str, flow_run_id: str, *, state: str | None, observed_at: datetime
     ) -> None: ...
 
+    def claim_execution(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        worker_id: str,
+        claimed_at: datetime,
+        admission_deadline_at: datetime,
+    ) -> bool: ...
+
+    def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime) -> bool: ...
+
+    def abandon_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool: ...
+
+    def interrupt_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool: ...
+
+    def commit_claimed_execution(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        worker_id: str,
+        terminal_at: datetime,
+        terminal_state: Literal["completed", "failed"],
+        terminal_outcome: Literal["succeeded", "failed"],
+        writeback: ExecutionWriteback,
+    ) -> bool: ...
+
+    def request_execution_cancellation(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        requested_at: datetime,
+        recovery_deadline_at: datetime,
+        recovery_seconds: float,
+        expected_latest_position: int,
+        receipt_id: str,
+    ) -> bool: ...
+
+    def acknowledge_execution_cancellation(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        acknowledged_at: datetime,
+        response_status: int,
+        response_body: Mapping[str, Any],
+    ) -> bool: ...
+
+    def cancel_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool: ...
+
+    def expire_execution_cancellation(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool: ...
+
+    def pending_executions(self) -> tuple[tuple[str, PrefectExecutionLink], ...]: ...
+
     def reserve_mutation(
         self, receipt: MutationReceipt, run: ProductRun | None, *, admit_write: bool = False
     ) -> tuple[MutationReceipt, bool]: ...
@@ -403,6 +514,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         if statement.strip():
                             cursor.execute(statement)
                     self._migrate_product_runs_columns(cursor)
+                    self._migrate_prefect_execution_columns(cursor)
                     self._migrate_mutation_receipts(cursor)
                     self._ensure_mutation_receipt_resource_constraint(cursor)
                     self._ensure_configuration_binding_constraint(cursor)
@@ -449,6 +561,24 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         for column, sql_type in _CONFIGURATION_BINDING_COLUMNS:
             if column not in existing:
                 cursor.execute(f"ALTER TABLE product_runs ADD COLUMN {column} {sql_type}")
+
+    def _migrate_prefect_execution_columns(self, cursor: _Cursor) -> None:
+        """Add liveness columns without fabricating timestamps for legacy links."""
+        if self._dialect == "sqlite":
+            cursor.execute("PRAGMA table_info(prefect_executions)")
+            existing = frozenset(str(row[1]) for row in cursor.fetchall())
+        else:
+            cursor.execute(
+                self._sql(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = ? "
+                    "AND table_schema = current_schema()"
+                ),
+                ("prefect_executions",),
+            )
+            existing = frozenset(str(row[0]) for row in cursor.fetchall())
+        for column, sql_type in _PREFECT_EXECUTION_LIVENESS_COLUMNS:
+            if column not in existing:
+                cursor.execute(f"ALTER TABLE prefect_executions ADD COLUMN {column} {sql_type}")
 
     def _migrate_mutation_receipts(self, cursor: _Cursor) -> None:
         """Add resource identity columns and preserve every legacy receipt in place."""
@@ -760,6 +890,19 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor = connection.cursor()
                 try:
                     cursor.execute(
+                        self._sql("UPDATE product_runs SET run_id = run_id WHERE run_id = ?"),
+                        (run_id,),
+                    )
+                    cursor.execute(
+                        self._sql(
+                            "SELECT 1 FROM prefect_executions WHERE run_id = ? AND terminal_at IS NULL "
+                            "AND cancellation_requested_at IS NOT NULL"
+                        ),
+                        (run_id,),
+                    )
+                    if cursor.fetchone() is not None:
+                        _raise_active_cancellation_conflict(run_id)
+                    cursor.execute(
                         self._sql("SELECT COALESCE(MAX(position) + 1, 0) FROM prefect_executions WHERE run_id = ?"),
                         (run_id,),
                     )
@@ -815,6 +958,17 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 link.attempt,
                 link.last_observed_state,
                 _iso(link.last_observed_at),
+                _iso(link.submitted_at),
+                _iso(link.claimed_at),
+                link.claiming_worker_id,
+                _iso(link.stalled_at),
+                _iso(link.cancellation_requested_at),
+                _iso(link.cancellation_recovery_deadline_at),
+                link.cancellation_receipt_id,
+                _iso(link.cancellation_acknowledged_at),
+                _iso(link.terminal_at),
+                link.terminal_state,
+                link.terminal_outcome,
                 position,
             ),
         )
@@ -853,6 +1007,504 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             except Exception:
                 connection.rollback()
                 raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def claim_execution(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        worker_id: str,
+        claimed_at: datetime,
+        admission_deadline_at: datetime,
+    ) -> bool:
+        """Atomically assign an unclaimed, non-terminal execution to one worker."""
+        statement = (
+            "UPDATE prefect_executions SET claimed_at = ?, claiming_worker_id = ? "
+            "WHERE run_id = ? AND flow_run_id = ? AND claimed_at IS NULL AND terminal_at IS NULL "
+            "AND cancellation_requested_at IS NULL "
+            "AND (COALESCE(submitted_at, last_observed_at) IS NULL OR "
+            "infrahub_sync_execution_timestamp_microseconds(COALESCE(submitted_at, last_observed_at)) "
+            "> infrahub_sync_execution_timestamp_microseconds(?))"
+            if self._dialect == "sqlite"
+            else "UPDATE prefect_executions SET claimed_at = ?, claiming_worker_id = ? "
+            "WHERE run_id = ? AND flow_run_id = ? AND claimed_at IS NULL AND terminal_at IS NULL "
+            "AND cancellation_requested_at IS NULL "
+            "AND (COALESCE(submitted_at, last_observed_at) IS NULL OR "
+            "CAST(COALESCE(submitted_at, last_observed_at) AS TIMESTAMPTZ) > CAST(? AS TIMESTAMPTZ))"
+        )
+        return self._execution_update(
+            statement,
+            (claimed_at.isoformat(), worker_id, run_id, flow_run_id, admission_deadline_at.isoformat()),
+        )
+
+    def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime) -> bool:
+        """Record the first informational stall without changing claim eligibility."""
+        return self._execution_update(
+            "UPDATE prefect_executions SET stalled_at = ? WHERE run_id = ? AND flow_run_id = ? "
+            "AND stalled_at IS NULL AND claimed_at IS NULL AND terminal_at IS NULL",
+            (stalled_at.isoformat(), run_id, flow_run_id),
+        )
+
+    def abandon_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool:
+        """Atomically terminalize an unclaimed execution and its owning product run."""
+        return self._terminalize_execution(
+            run_id,
+            flow_run_id,
+            terminal_at=terminal_at,
+            claimed=False,
+            terminal_state="abandoned",
+            terminal_outcome="abandoned",
+            phase="abandoned",
+            outcome="abandoned",
+        )
+
+    def interrupt_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool:
+        """Atomically terminalize an orphaned claimed execution and its product run."""
+        return self._terminalize_execution(
+            run_id,
+            flow_run_id,
+            terminal_at=terminal_at,
+            claimed=True,
+            terminal_state="interrupted",
+            terminal_outcome="ambiguous",
+            phase="interrupted",
+            outcome="ambiguous",
+        )
+
+    def commit_claimed_execution(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        worker_id: str,
+        terminal_at: datetime,
+        terminal_state: Literal["completed", "failed"],
+        terminal_outcome: Literal["succeeded", "failed"],
+        writeback: ExecutionWriteback,
+    ) -> bool:
+        """Commit one claimed worker verdict and its business writeback together."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql(
+                        "UPDATE prefect_executions SET terminal_at = ?, terminal_state = ?, terminal_outcome = ? "
+                        "WHERE run_id = ? AND flow_run_id = ? AND claimed_at IS NOT NULL "
+                        "AND claiming_worker_id = ? AND terminal_at IS NULL"
+                    ),
+                    (
+                        terminal_at.isoformat(),
+                        terminal_state,
+                        terminal_outcome,
+                        run_id,
+                        flow_run_id,
+                        worker_id,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    connection.commit()
+                    return False
+                if isinstance(writeback, ExecutionFinishWriteback):
+                    cursor.execute(
+                        self._sql(_UPDATE_LATEST_EXECUTION_FINISH),
+                        (
+                            writeback.phase,
+                            writeback.outcome,
+                            writeback.finished_at.isoformat(),
+                            _json(writeback.summary),
+                            _json(writeback.results),
+                            run_id,
+                            flow_run_id,
+                        ),
+                    )
+                else:
+                    cursor.execute(
+                        self._sql(_SELECT_LATEST_EXECUTION_RESULTS),
+                        (run_id, flow_run_id),
+                    )
+                    row = cursor.fetchone()
+                    if row is not None:
+                        current = _JSON_MAPPING_ADAPTER.validate_json(str(row[0]))
+                        cursor.execute(
+                            self._sql(_UPDATE_LATEST_EXECUTION_RESULTS),
+                            (_json({**current, **writeback.results}), run_id, flow_run_id),
+                        )
+                cursor.execute(
+                    self._sql(
+                        "SELECT cancellation_receipt_id FROM prefect_executions WHERE run_id = ? AND flow_run_id = ? "
+                        "AND cancellation_requested_at IS NOT NULL AND cancellation_acknowledged_at IS NULL"
+                    ),
+                    (run_id, flow_run_id),
+                )
+                cancellation = cursor.fetchone()
+                if cancellation is not None:
+                    receipt_id = str(cancellation[0])
+                    self._complete_receipt_row(
+                        cursor,
+                        receipt_id,
+                        response_status=409,
+                        response_body=_cancellation_terminal_response(run_id, receipt_id),
+                        flow_run_id=flow_run_id,
+                        updated_at=terminal_at,
+                    )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            else:
+                return True
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def request_execution_cancellation(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        requested_at: datetime,
+        recovery_deadline_at: datetime,
+        recovery_seconds: float,
+        expected_latest_position: int,
+        receipt_id: str,
+    ) -> bool:
+        """Persist first cancellation intent on one link for one claimed receipt."""
+        if not isfinite(recovery_seconds) or recovery_seconds <= 0:
+            raise ValueError(_CANCELLATION_DEADLINE_ERROR)
+        if recovery_deadline_at != requested_at + timedelta(seconds=recovery_seconds):
+            raise ValueError(_CANCELLATION_DEADLINE_ERROR)
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql("UPDATE product_runs SET run_id = run_id WHERE run_id = ?"), (run_id,))
+                cursor.execute(
+                    self._sql(
+                        "UPDATE prefect_executions SET cancellation_requested_at = ?, "
+                        "cancellation_recovery_deadline_at = ?, cancellation_receipt_id = ? "
+                        "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL "
+                        "AND (SELECT COALESCE(MAX(position), -1) FROM prefect_executions WHERE run_id = ?) = ? "
+                        "AND ((cancellation_requested_at IS NULL AND NOT EXISTS (SELECT 1 FROM prefect_executions "
+                        "WHERE run_id = ? AND terminal_at IS NULL AND cancellation_requested_at IS NOT NULL)) "
+                        "OR (cancellation_requested_at = ? AND cancellation_recovery_deadline_at = ? "
+                        "AND cancellation_receipt_id = ?)) AND EXISTS (SELECT 1 FROM mutation_receipts "
+                        "WHERE receipt_id = ? AND run_id = ? AND operation = 'cancel' AND state = 'processing')"
+                    ),
+                    (
+                        requested_at.isoformat(),
+                        recovery_deadline_at.isoformat(),
+                        receipt_id,
+                        run_id,
+                        flow_run_id,
+                        run_id,
+                        expected_latest_position,
+                        run_id,
+                        requested_at.isoformat(),
+                        recovery_deadline_at.isoformat(),
+                        receipt_id,
+                        receipt_id,
+                        run_id,
+                    ),
+                )
+                updated = cursor.rowcount == 1
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return updated
+
+    def acknowledge_execution_cancellation(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        acknowledged_at: datetime,
+        response_status: int,
+        response_body: Mapping[str, Any],
+    ) -> bool:
+        """Persist remote acknowledgement and the replay result in one transaction."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql(
+                        "UPDATE prefect_executions SET flow_run_id = flow_run_id "
+                        "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL "
+                        "AND cancellation_requested_at IS NOT NULL"
+                    ),
+                    (run_id, flow_run_id),
+                )
+                if cursor.rowcount != 1:
+                    connection.commit()
+                    return False
+                cursor.execute(
+                    self._sql(
+                        "SELECT claimed_at, cancellation_recovery_deadline_at, cancellation_receipt_id, "
+                        "cancellation_acknowledged_at FROM prefect_executions WHERE run_id = ? AND flow_run_id = ?"
+                    ),
+                    (run_id, flow_run_id),
+                )
+                row = _require_cancellation_receipt_row(cursor.fetchone())
+                if row[3] is not None:
+                    connection.commit()
+                    return False
+                receipt_id = str(row[2])
+                if acknowledged_at >= datetime.fromisoformat(str(row[1])):
+                    state, outcome, phase = (
+                        ("interrupted", "ambiguous", "interrupted")
+                        if row[0] is not None
+                        else ("abandoned", "abandoned", "abandoned")
+                    )
+                    cursor.execute(
+                        self._sql(
+                            "UPDATE prefect_executions SET terminal_at = ?, terminal_state = ?, terminal_outcome = ? "
+                            "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL "
+                            "AND cancellation_acknowledged_at IS NULL"
+                        ),
+                        (acknowledged_at.isoformat(), state, outcome, run_id, flow_run_id),
+                    )
+                    if cursor.rowcount != 1:
+                        connection.commit()
+                        return False
+                    cursor.execute(
+                        self._sql(_UPDATE_LATEST_EXECUTION_TERMINAL),
+                        (phase, outcome, acknowledged_at.isoformat(), run_id, flow_run_id),
+                    )
+                    self._complete_receipt_row(
+                        cursor,
+                        receipt_id,
+                        response_status=503,
+                        response_body=_cancellation_unconfirmed_response(run_id, receipt_id),
+                        flow_run_id=flow_run_id,
+                        updated_at=acknowledged_at,
+                    )
+                    connection.commit()
+                    return False
+                cursor.execute(
+                    self._sql(
+                        "UPDATE prefect_executions SET cancellation_acknowledged_at = ? "
+                        "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL "
+                        "AND cancellation_acknowledged_at IS NULL"
+                    ),
+                    (acknowledged_at.isoformat(), run_id, flow_run_id),
+                )
+                if cursor.rowcount != 1:
+                    connection.commit()
+                    return False
+                self._complete_receipt_row(
+                    cursor,
+                    receipt_id,
+                    response_status=response_status,
+                    response_body=response_body,
+                    flow_run_id=flow_run_id,
+                    updated_at=acknowledged_at,
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            else:
+                return True
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def cancel_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool:
+        """Commit clean cancellation only from acknowledged durable cancelled observation."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql(
+                        "UPDATE prefect_executions SET terminal_at = ?, terminal_state = 'cancelled', "
+                        "terminal_outcome = 'cancelled' WHERE run_id = ? AND flow_run_id = ? "
+                        "AND terminal_at IS NULL AND cancellation_acknowledged_at IS NOT NULL "
+                        "AND last_observed_state = 'cancelled'"
+                    ),
+                    (terminal_at.isoformat(), run_id, flow_run_id),
+                )
+                if cursor.rowcount != 1:
+                    connection.commit()
+                    return False
+                cursor.execute(
+                    self._sql(_UPDATE_LATEST_EXECUTION_CANCELLED),
+                    (terminal_at.isoformat(), run_id, flow_run_id),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            else:
+                return True
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def expire_execution_cancellation(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool:
+        """Expire bounded cancellation recovery under one serialized row decision."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql(
+                        "UPDATE prefect_executions SET flow_run_id = flow_run_id WHERE run_id = ? AND flow_run_id = ? "
+                        "AND terminal_at IS NULL AND cancellation_requested_at IS NOT NULL"
+                    ),
+                    (run_id, flow_run_id),
+                )
+                if cursor.rowcount != 1:
+                    connection.commit()
+                    return False
+                cursor.execute(
+                    self._sql(
+                        "SELECT claimed_at, cancellation_recovery_deadline_at, cancellation_receipt_id, "
+                        "cancellation_acknowledged_at, last_observed_state FROM prefect_executions "
+                        "WHERE run_id = ? AND flow_run_id = ?"
+                    ),
+                    (run_id, flow_run_id),
+                )
+                row = cursor.fetchone()
+                if row is None or datetime.fromisoformat(str(row[1])) > terminal_at:
+                    connection.commit()
+                    return False
+                acknowledged = row[3] is not None
+                observed_state = None if row[4] is None else str(row[4])
+                if acknowledged and observed_state == "cancelled":
+                    connection.commit()
+                    return False
+                claimed = row[0] is not None
+                state, outcome, phase = (
+                    ("interrupted", "ambiguous", "interrupted") if claimed else ("abandoned", "abandoned", "abandoned")
+                )
+                cursor.execute(
+                    self._sql(
+                        "UPDATE prefect_executions SET terminal_at = ?, terminal_state = ?, terminal_outcome = ? "
+                        "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL"
+                    ),
+                    (terminal_at.isoformat(), state, outcome, run_id, flow_run_id),
+                )
+                if cursor.rowcount != 1:
+                    connection.commit()
+                    return False
+                cursor.execute(
+                    self._sql(_UPDATE_LATEST_EXECUTION_TERMINAL),
+                    (phase, outcome, terminal_at.isoformat(), run_id, flow_run_id),
+                )
+                if not acknowledged:
+                    receipt_id = str(row[2])
+                    self._complete_receipt_row(
+                        cursor,
+                        receipt_id,
+                        response_status=503,
+                        response_body=_cancellation_unconfirmed_response(run_id, receipt_id),
+                        flow_run_id=flow_run_id,
+                        updated_at=terminal_at,
+                    )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            else:
+                return True
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def pending_executions(self) -> tuple[tuple[str, PrefectExecutionLink], ...]:
+        """Return durable non-terminal execution links and their owning run IDs."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql("SELECT DISTINCT run_id FROM prefect_executions WHERE terminal_at IS NULL"))
+                run_ids = tuple(str(row[0]) for row in cursor.fetchall())
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        pending: list[tuple[str, PrefectExecutionLink]] = []
+        for run_id in run_ids:
+            run = self.lookup(run_id).value
+            if run is not None:
+                pending.extend((run_id, link) for link in run.prefect_executions if link.terminal_at is None)
+        return tuple(pending)
+
+    def _execution_update(self, statement: str, values: tuple[Any, ...]) -> bool:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(statement), values)
+                updated = cursor.rowcount == 1
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            else:
+                return updated
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def _terminalize_execution(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        terminal_at: datetime,
+        claimed: bool,
+        terminal_state: str,
+        terminal_outcome: str,
+        phase: str,
+        outcome: str,
+    ) -> bool:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                statement = (
+                    "UPDATE prefect_executions SET terminal_at = ?, terminal_state = ?, terminal_outcome = ? "
+                    "WHERE run_id = ? AND flow_run_id = ? AND claimed_at IS NOT NULL AND terminal_at IS NULL "
+                    "AND cancellation_requested_at IS NULL"
+                    if claimed
+                    else "UPDATE prefect_executions SET terminal_at = ?, terminal_state = ?, terminal_outcome = ? "
+                    "WHERE run_id = ? AND flow_run_id = ? AND claimed_at IS NULL AND terminal_at IS NULL "
+                    "AND cancellation_requested_at IS NULL"
+                )
+                cursor.execute(
+                    self._sql(statement),
+                    (terminal_at.isoformat(), terminal_state, terminal_outcome, run_id, flow_run_id),
+                )
+                if cursor.rowcount != 1:
+                    connection.commit()
+                    return False
+                cursor.execute(
+                    self._sql(_UPDATE_LATEST_EXECUTION_TERMINAL),
+                    (phase, outcome, terminal_at.isoformat(), run_id, flow_run_id),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            else:
+                return True
             finally:
                 cursor.close()
         finally:
@@ -969,6 +1621,34 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             return receipt
         msg = f"Mutation receipt {receipt_id!r} is already complete with a different response"
         raise ValueError(msg)
+
+    def _complete_receipt_row(
+        self,
+        cursor: _Cursor,
+        receipt_id: str,
+        *,
+        response_status: int,
+        response_body: Mapping[str, Any],
+        flow_run_id: str,
+        updated_at: datetime,
+    ) -> None:
+        """Complete a processing receipt inside its caller's open transaction."""
+        cursor.execute(
+            self._sql(
+                "UPDATE mutation_receipts SET state = 'accepted', response_status = ?, response_body = ?, "
+                "flow_run_id = ?, updated_at = ? WHERE receipt_id = ? AND state = 'processing'"
+            ),
+            (
+                response_status,
+                _json(response_body),
+                flow_run_id,
+                updated_at.isoformat(),
+                receipt_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            msg = f"Mutation receipt {receipt_id!r} is unavailable for completion"
+            raise ValueError(msg)
 
     def claim_mutation(self, receipt_id: str, *, updated_at: datetime) -> bool:
         """Claim one retryable receipt before its service call begins."""
@@ -1373,6 +2053,12 @@ class SQLiteRunStore(_RelationalRunStore):
         def connect() -> DBAPIConnection:
             connection = sqlite3.connect(database)
             connection.execute("PRAGMA foreign_keys = ON")
+            connection.create_function(
+                _SQLITE_EXECUTION_TIMESTAMP_FUNCTION,
+                1,
+                _execution_timestamp_microseconds,
+                deterministic=True,
+            )
             return cast("DBAPIConnection", connection)
 
         super().__init__(connect, placeholder="?", dialect="sqlite")
@@ -1550,6 +2236,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         if run.finished_at is not None or run.outcome is not None or run.artifact_refs:
             msg = "a new product record must be unfinished and have no artifact references"
             raise ValueError(msg)
+        _require_submitted_executions(run)
         self._records.create(_redacted_run(run, secrets))
 
     def lookup_run(self, run_id: str) -> LookupResult[ProductRun]:
@@ -1565,6 +2252,9 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         secrets: Sequence[str] = (),
     ) -> PrefectExecutionLink:
         """Append one purpose-labelled execution, optionally allocating its ordinal atomically."""
+        if link.submitted_at is None:
+            msg = "new Prefect execution requires submitted_at"
+            raise ValueError(msg)
         if not self._records.exists(run_id):
             msg = f"Cannot link a Prefect execution to unavailable Sync run ID {run_id!r}"
             raise RunNotFoundError(msg)
@@ -1587,6 +2277,174 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             observed_at=datetime.now(timezone.utc),
         )
 
+    def claim_execution(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        worker_id: str,
+        claimed_at: datetime | None = None,
+        admission_ttl_seconds: int = 300,
+    ) -> bool:
+        """Claim one pending execution; only a canonical Prefect worker UUID is accepted."""
+        if not _is_canonical_uuid(worker_id):
+            raise ValueError(_INVALID_MANAGED_WORKER_ID)
+        effective_claimed_at = claimed_at if claimed_at is not None else datetime.now(timezone.utc)
+        _require_execution_timestamp(effective_claimed_at)
+        admission_deadline_at = effective_claimed_at - timedelta(seconds=admission_ttl_seconds)
+        return self._records.claim_execution(
+            run_id,
+            flow_run_id,
+            worker_id=worker_id,
+            claimed_at=effective_claimed_at,
+            admission_deadline_at=admission_deadline_at,
+        )
+
+    def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime | None = None) -> bool:
+        """Set the first stall marker while leaving a pre-TTL execution claimable."""
+        effective_stalled_at = stalled_at if stalled_at is not None else datetime.now(timezone.utc)
+        _require_execution_timestamp(effective_stalled_at)
+        return self._records.mark_execution_stalled(run_id, flow_run_id, stalled_at=effective_stalled_at)
+
+    def abandon_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime | None = None) -> bool:
+        """CAS an unclaimed execution into the terminal abandoned verdict."""
+        effective_terminal_at = terminal_at if terminal_at is not None else datetime.now(timezone.utc)
+        _require_execution_timestamp(effective_terminal_at)
+        return self._records.abandon_execution(run_id, flow_run_id, terminal_at=effective_terminal_at)
+
+    def interrupt_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime | None = None) -> bool:
+        """CAS a claimed execution into the terminal interrupted/ambiguous verdict."""
+        effective_terminal_at = terminal_at if terminal_at is not None else datetime.now(timezone.utc)
+        _require_execution_timestamp(effective_terminal_at)
+        return self._records.interrupt_execution(run_id, flow_run_id, terminal_at=effective_terminal_at)
+
+    def commit_claimed_execution(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        worker_id: str,
+        terminal_at: datetime,
+        terminal_state: Literal["completed", "failed"],
+        terminal_outcome: Literal["succeeded", "failed"],
+        writeback: ExecutionWriteback,
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """Atomically commit one claimed verdict and its business writeback."""
+        if not _is_canonical_uuid(worker_id):
+            raise ValueError(_INVALID_MANAGED_WORKER_ID)
+        if (terminal_state, terminal_outcome) not in {("completed", "succeeded"), ("failed", "failed")}:
+            msg = "claimed execution terminal verdict is invalid"
+            raise ValueError(msg)
+        _require_execution_timestamp(terminal_at)
+        if isinstance(writeback, ExecutionFinishWriteback):
+            if writeback.outcome != "failed" and self._records.has_pending_artifacts(run_id):
+                msg = f"Sync run ID {run_id!r} has an incomplete artifact publication"
+                raise ArtifactUnavailableError(msg)
+            run = self.lookup_run(run_id).value
+            if run is None:
+                msg = f"Sync run ID {run_id!r} is unavailable"
+                raise RunNotFoundError(msg)
+            for reference in run.artifact_refs:
+                result = self._artifacts.lookup(reference)
+                if not result.available:
+                    msg = f"Artifact {reference.artifact_id!r} is unavailable: {result.reason}"
+                    raise ArtifactUnavailableError(msg)
+            sanitized: ExecutionWriteback = ExecutionFinishWriteback(
+                phase=redact(writeback.phase, secrets),
+                outcome=redact(writeback.outcome, secrets),
+                finished_at=writeback.finished_at,
+                summary=cast("dict[str, Any]", _redact_value(_normalize_mapping(writeback.summary), secrets)),
+                results=cast("dict[str, Any]", _redact_value(_normalize_mapping(writeback.results), secrets)),
+            )
+        else:
+            sanitized = ExecutionMergeWriteback(
+                results=cast("dict[str, Any]", _redact_value(_normalize_mapping(writeback.results), secrets))
+            )
+        return self._records.commit_claimed_execution(
+            redact(run_id, secrets),
+            redact(flow_run_id, secrets),
+            worker_id=worker_id,
+            terminal_at=terminal_at,
+            terminal_state=terminal_state,
+            terminal_outcome=terminal_outcome,
+            writeback=sanitized,
+        )
+
+    def request_execution_cancellation(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        requested_at: datetime,
+        recovery_deadline_at: datetime,
+        recovery_seconds: float,
+        expected_latest_position: int,
+        receipt_id: str,
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """Persist cancellation intent before any remote cancellation request."""
+        _require_execution_timestamp(requested_at)
+        _require_execution_timestamp(recovery_deadline_at)
+        if expected_latest_position < 0:
+            raise ValueError(_CANCELLATION_POSITION_ERROR)
+        return self._records.request_execution_cancellation(
+            redact(run_id, secrets),
+            redact(flow_run_id, secrets),
+            requested_at=requested_at,
+            recovery_deadline_at=recovery_deadline_at,
+            recovery_seconds=recovery_seconds,
+            expected_latest_position=expected_latest_position,
+            receipt_id=redact(receipt_id, secrets),
+        )
+
+    def acknowledge_execution_cancellation(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        acknowledged_at: datetime,
+        response_status: int,
+        response_body: Mapping[str, Any],
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """Commit acknowledgement and the accepted replay response together."""
+        _require_execution_timestamp(acknowledged_at)
+        sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(response_body), secrets))
+        return self._records.acknowledge_execution_cancellation(
+            redact(run_id, secrets),
+            redact(flow_run_id, secrets),
+            acknowledged_at=acknowledged_at,
+            response_status=response_status,
+            response_body=sanitized,
+        )
+
+    def cancel_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime | None = None) -> bool:
+        """Commit clean cancellation only after durable acknowledgement and observation."""
+        if terminal_at is not None:
+            _require_execution_timestamp(terminal_at)
+        return self._records.cancel_execution(
+            run_id,
+            flow_run_id,
+            terminal_at=terminal_at if terminal_at is not None else datetime.now(timezone.utc),
+        )
+
+    def expire_execution_cancellation(
+        self, run_id: str, flow_run_id: str, *, terminal_at: datetime | None = None
+    ) -> bool:
+        """Expire bounded cancellation recovery at its inclusive durable deadline."""
+        if terminal_at is not None:
+            _require_execution_timestamp(terminal_at)
+        return self._records.expire_execution_cancellation(
+            run_id,
+            flow_run_id,
+            terminal_at=terminal_at if terminal_at is not None else datetime.now(timezone.utc),
+        )
+
+    def pending_executions(self) -> tuple[tuple[str, PrefectExecutionLink], ...]:
+        """Return executions that have not received a Sync-owned terminal verdict."""
+        return self._records.pending_executions()
+
     def reserve_mutation(
         self,
         receipt: MutationReceipt,
@@ -1606,6 +2464,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             ):
                 msg = "a mutation-created product record must be unfinished and have no artifact references"
                 raise ValueError(msg)
+            _require_submitted_executions(sanitized_run)
             if sanitized_run.run_id != sanitized_receipt.run_id:
                 msg = "a mutation receipt and its atomically created product run must share one run ID"
                 raise ValueError(msg)
@@ -1846,6 +2705,24 @@ def _iso(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat()
 
 
+def _execution_timestamp_microseconds(value: str) -> int:
+    """Convert one persisted aware ISO timestamp to a comparable integer."""
+    parsed = datetime.fromisoformat(value)
+    if parsed.utcoffset() is None:
+        msg = "persisted execution timestamps must include a timezone"
+        raise ValueError(msg)
+    elapsed = parsed.astimezone(timezone.utc) - _UNIX_EPOCH
+    return ((elapsed.days * 86400) + elapsed.seconds) * 1_000_000 + elapsed.microseconds
+
+
+def _is_canonical_uuid(value: str) -> bool:
+    """Accept only a canonical UUID string, never a non-canonical spelling."""
+    try:
+        return str(UUID(value)) == value
+    except ValueError:
+        return False
+
+
 def _run_from_rows(
     row: Sequence[Any],
     references: Sequence[Sequence[Any]],
@@ -1878,6 +2755,17 @@ def _run_from_rows(
                     "attempt": item[4],
                     "last_observed_state": item[5],
                     "last_observed_at": item[6],
+                    "submitted_at": item[7] if item[7] is not None else item[6],
+                    "claimed_at": item[8],
+                    "claiming_worker_id": item[9],
+                    "stalled_at": item[10],
+                    "cancellation_requested_at": item[11],
+                    "cancellation_recovery_deadline_at": item[12],
+                    "cancellation_receipt_id": item[13],
+                    "cancellation_acknowledged_at": item[14],
+                    "terminal_at": item[15],
+                    "terminal_state": item[16],
+                    "terminal_outcome": item[17],
                 }
                 for item in links
             ],
@@ -1929,6 +2817,30 @@ def _receipt_from_row(row: Sequence[Any]) -> MutationReceipt:
             "updated_at": row[16],
         }
     )
+
+
+def _cancellation_terminal_response(run_id: str, receipt_id: str) -> dict[str, Any]:
+    return {
+        "error": {
+            "code": "execution-terminal",
+            "message": "the managed execution is already terminal",
+            "status": 409,
+            "run_id": run_id,
+            "mutation_id": receipt_id,
+        }
+    }
+
+
+def _cancellation_unconfirmed_response(run_id: str, receipt_id: str) -> dict[str, Any]:
+    return {
+        "error": {
+            "code": "cancellation-unconfirmed",
+            "message": "Prefect did not confirm cancellation before the recovery deadline",
+            "status": 503,
+            "run_id": run_id,
+            "mutation_id": receipt_id,
+        }
+    }
 
 
 def _audit_from_row(row: Sequence[Any]) -> AuditEvent:
@@ -2069,6 +2981,19 @@ def _require_result_row(row: Sequence[Any] | None, run_id: str) -> Sequence[Any]
     return row
 
 
+def _require_cancellation_receipt_row(row: Sequence[Any] | None) -> Sequence[Any]:
+    if row is None:
+        msg = "execution cancellation receipt is unavailable"
+        raise RunNotFoundError(msg)
+    return row
+
+
+def _require_execution_timestamp(value: datetime) -> None:
+    if value.utcoffset() is None:
+        msg = "execution timestamps must include a timezone"
+        raise ValueError(msg)
+
+
 def _redact_value(value: Any, secrets: Sequence[str]) -> Any:
     if isinstance(value, str):
         return redact(value, secrets)
@@ -2088,6 +3013,17 @@ def _redact_value(value: Any, secrets: Sequence[str]) -> Any:
 
 def _redacted_run(run: ProductRun, secrets: Sequence[str]) -> ProductRun:
     return ProductRun.model_validate(_redact_value(run.model_dump(mode="json"), secrets))
+
+
+def _require_submitted_executions(run: ProductRun) -> None:
+    if any(link.submitted_at is None for link in run.prefect_executions):
+        msg = "new Prefect execution requires submitted_at"
+        raise ValueError(msg)
+
+
+def _raise_active_cancellation_conflict(run_id: str) -> None:
+    msg = f"Sync run {run_id!r} has an active execution cancellation"
+    raise WriteAdmissionConflictError(msg)
 
 
 def _redact_bytes(data: bytes, secrets: Sequence[str]) -> bytes:
