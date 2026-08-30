@@ -526,7 +526,16 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             detail = ConfigErrorEnvelope.model_validate(payload).error
             if detail.status != status:
                 raise ValueError
-            return ConfigsAPIError(detail.status, detail.code, detail.family, detail.reason)
+            mutation_id = cast("dict[str, object]", raw_error).get("mutation_id")
+            if mutation_id is not None and not isinstance(mutation_id, str):
+                raise ValueError
+            return ConfigsAPIError(
+                detail.status,
+                detail.code,
+                detail.family,
+                detail.reason,
+                mutation_id=mutation_id,
+            )
         detail = ErrorEnvelope.model_validate(payload).error
         if detail.status != status:
             raise ValueError

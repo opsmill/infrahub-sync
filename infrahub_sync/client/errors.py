@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 
 class SyncClientError(Exception):
     """Base class for every client-owned failure."""
@@ -57,10 +55,18 @@ class APIError(SyncClientError):
 
 
 class ConfigsAPIError(APIError):
-    def __init__(self, status: int, code: str, family: str, reason: str | None = None) -> None:
+    def __init__(
+        self,
+        status: int,
+        code: str,
+        family: str,
+        reason: str | None = None,
+        *,
+        mutation_id: str | None = None,
+    ) -> None:
         self.family = family
         self.reason = reason
-        super().__init__(status, code)
+        super().__init__(status, code, mutation_id=mutation_id)
 
 
 class RunWaitTimeoutError(SyncClientError):
@@ -95,8 +101,3 @@ class RunTerminalError(SyncClientError):
         self.phase = phase
         self.outcome = outcome
         super().__init__("the accepted Sync run ended without success")
-
-
-def exception_public_fields(error: SyncClientError) -> dict[str, Any]:
-    """Return the stable machine fields carried by one client error."""
-    return {name: value for name, value in vars(error).items() if not name.startswith("_")}

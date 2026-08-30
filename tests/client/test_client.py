@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from hashlib import sha256
+from typing import cast
 
 import httpx
 import pytest
@@ -260,6 +261,67 @@ def test_all_route_methods_send_the_frozen_contract() -> None:
         "confirm_writes": False,
         "reason": "test",
     }
+    body_paths = {
+        "/configs",
+        "/configs/cfg/versions",
+        "/configs/cfg/versions/1/validate?offset=2&limit=3",
+        "/runs/run-1/verify",
+        "/runs/run-1/apply",
+        "/runs/run-1/cancel",
+    }
+    mutation_bodies = {
+        request.url.raw_path.decode(): json.loads(request.content) if request.content else None
+        for request in requests
+        if request.method == "POST" and request.url.raw_path.decode() in body_paths
+    }
+    assert mutation_bodies == {
+        "/configs": {"package": {"format_version": 1}, "reason": "test"},
+        "/configs/cfg/versions": {"package": {"format_version": 1}, "reason": "test"},
+        "/configs/cfg/versions/1/validate?offset=2&limit=3": None,
+        "/runs/run-1/verify": {"reason": "test"},
+        "/runs/run-1/apply": {
+            "expected_checksum": "a" * 64,
+            "confirm_writes": True,
+            "branch": None,
+            "reason": "test",
+        },
+        "/runs/run-1/cancel": {"reason": "test"},
+    }
+
+
+def test_register_config_403_retains_machine_fields_and_discards_secrets() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(
+            403,
+            json={
+                "error": {
+                    "code": "configs-forbidden",
+                    "message": "server-secret",
+                    "status": 403,
+                    "family": "authorization",
+                    "reason": "administrator-required",
+                    "mutation_id": "mutation-1",
+                }
+            },
+        )
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+    request = ConfigMutationRequest(package={"format_version": 1}, reason="test")
+
+    with pytest.raises(ConfigsAPIError) as raised:
+        client.register_config(request, "key-1")
+
+    assert raised.value.status == 403
+    assert raised.value.code == "configs-forbidden"
+    assert raised.value.family == "authorization"
+    assert raised.value.reason == "administrator-required"
+    assert raised.value.mutation_id == "mutation-1"
+    assert "server-secret" not in str(raised.value)
+    assert "server-secret" not in repr(raised.value)
+    assert TOKEN not in repr(raised.value)
+    assert raised.value.__cause__ is None
 
 
 @pytest.mark.parametrize(
@@ -332,6 +394,42 @@ def test_status_accepts_only_its_declared_success_status() -> None:
 
     with pytest.raises(ProtocolError):
         client.get_status()
+
+
+def test_json_response_over_16_mib_is_a_protocol_error() -> None:
+    oversized_json = b'["' + (b"x" * (16 * 1024 * 1024)) + b'"]'
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(200, content=oversized_json, headers={"Content-Type": "application/json"})
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+
+    with pytest.raises(ProtocolError) as raised:
+        client.list_configs()
+    assert raised.value.operation == "list_configs"
+    assert raised.value.status == 200
+
+
+def test_partial_execution_terminal_fields_are_a_protocol_error() -> None:
+    response = _run()
+    orchestration = cast("list[dict[str, object]]", response["orchestration"])
+    execution = orchestration[0]
+    execution["terminal_at"] = NOW
+    execution["terminal_state"] = "failed"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(200, json=response)
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+
+    with pytest.raises(ProtocolError) as raised:
+        client.get_run("run-1")
+    assert raised.value.operation == "get_run"
+    assert raised.value.status == 200
 
 
 @pytest.mark.parametrize(
