@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import boto3
@@ -29,20 +27,6 @@ S3_BUCKET_ENV = "INFRAHUB_SYNC_S3_BUCKET"
 S3_PREFIX_ENV = "INFRAHUB_SYNC_S3_PREFIX"
 S3_ENDPOINT_ENV = "INFRAHUB_SYNC_S3_ENDPOINT_URL"
 S3_REGION_ENV = "INFRAHUB_SYNC_S3_REGION"
-_PERCENT_ENCODED = r"%[0-9A-Fa-f]{2}"
-_UNRESERVED = r"[A-Za-z0-9._~-]"
-_SUB_DELIMS = r"[!$&'()*+,;=]"
-_DNS_LABEL = r"(?!-)[A-Za-z0-9-]{1,63}(?<!-)"
-_REG_NAME = rf"(?=[A-Za-z0-9.-]{{1,255}}(?:[:/?#]|\Z)){_DNS_LABEL}(?:\.{_DNS_LABEL})*\.?"
-_IPV_FUTURE = rf"[Vv][0-9A-Fa-f]+\.(?:{_UNRESERVED}|{_SUB_DELIMS}|:)+"
-_HOST = rf"(?:\[(?P<ipvfuture>{_IPV_FUTURE})\]|\[(?P<ipv6>[0-9A-Fa-f:.]+)\]|(?P<reg_name>{_REG_NAME}))"
-_PCHAR = rf"(?:{_UNRESERVED}|{_SUB_DELIMS}|{_PERCENT_ENCODED}|[:@])"
-_ENDPOINT_URI = re.compile(
-    rf"(?P<scheme>(?i:http|https))://{_HOST}(?::(?P<port>[0-9]+))?"
-    rf"(?:/{_PCHAR}*)*(?:\?(?:{_PCHAR}|[/?])*)?(?:#(?:{_PCHAR}|[/?])*)?"
-)
-_IPV4_OCTET = r"(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])"
-_CANONICAL_IPV4_HOST = re.compile(rf"{_IPV4_OCTET}(?:\.{_IPV4_OCTET}){{3}}")
 _ENDPOINT_URL_ADAPTER = TypeAdapter(AnyHttpUrl)
 
 
@@ -60,15 +44,8 @@ class S3ProtocolError(RuntimeError):
         super().__init__("S3 get response body must return bytes")
 
 
-@dataclass(frozen=True)
-class _EndpointUri:
-    """One exact raw endpoint that passed the complete accepted URI construction."""
-
-    value: str
-
-
 class PsycopgConnectionFactory:
-    """Convert exact Psycopg connection failures to the driver-neutral provider error."""
+    """Convert Psycopg connection failures to the driver-neutral provider error."""
 
     def __init__(self, connector: Callable[[str], Any] = psycopg.connect) -> None:
         self._connector = connector
@@ -157,27 +134,27 @@ class _PsycopgConnection:
             raise _provider_error(error) from None
 
 
-def _required_setting(values: Mapping[str, object], name: str) -> str:
-    """Return a non-empty string setting without reflecting its value."""
+def _required_setting(values: Mapping[str, str], name: str) -> str:
+    """Return a non-empty setting without reflecting its value."""
     value = values.get(name)
-    if type(value) is not str or not value.strip():  # pylint: disable=unidiomatic-typecheck  # Exact environment boundary.
+    if value is None or not value.strip():
         msg = f"{name} must be set"
         raise ValueError(msg)
     return value
 
 
-def _optional_setting(values: Mapping[str, object], name: str) -> str | None:
-    """Return one optional non-empty setting without accepting hostile values."""
+def _optional_setting(values: Mapping[str, str], name: str) -> str | None:
+    """Return one optional non-empty setting without reflecting its value."""
     value = values.get(name)
     if value is None:
         return None
-    if type(value) is not str or not value.strip():  # pylint: disable=unidiomatic-typecheck  # Exact environment boundary.
+    if not value.strip():
         msg = f"{name} must be a non-empty string when set"
         raise ValueError(msg)
     return value
 
 
-def _database_url(values: Mapping[str, object]) -> str:
+def _database_url(values: Mapping[str, str]) -> str:
     """Return one non-empty connection string accepted by Psycopg's conninfo parser."""
     database_url = _required_setting(values, DATABASE_URL_ENV)
     try:
@@ -188,48 +165,30 @@ def _database_url(values: Mapping[str, object]) -> str:
     return database_url
 
 
-def _parse_endpoint(value: str) -> _EndpointUri | None:
-    """Intersect the exact raw HTTP URI grammar with the typed URL domain."""
-    match = _ENDPOINT_URI.fullmatch(value)
-    if match is None:
-        return None
-    try:
-        parsed = _ENDPOINT_URL_ADAPTER.validate_python(value)
-    except ValidationError:
-        return None
-    raw_host = match.group("reg_name")
-    parsed_host = parsed.host
-    if (
-        raw_host is not None
-        and parsed_host is not None
-        and _CANONICAL_IPV4_HOST.fullmatch(parsed_host)
-        and raw_host != parsed_host
-    ):
-        return None
-    return _EndpointUri(value)
-
-
-def _endpoint(values: Mapping[str, object]) -> str | None:
-    """Validate the optional S3-compatible endpoint as an absolute HTTP URL."""
+def _endpoint(values: Mapping[str, str]) -> str | None:
+    """Validate the optional S3-compatible endpoint, passing the operator string to Boto3."""
     endpoint = _optional_setting(values, S3_ENDPOINT_ENV)
     if endpoint is None:
         return None
-    parsed = _parse_endpoint(endpoint)
-    if parsed is None:
-        msg = f"{S3_ENDPOINT_ENV} must be an absolute http or https URL"
+    msg = f"{S3_ENDPOINT_ENV} must be an absolute http or https URL without userinfo"
+    try:
+        parsed = _ENDPOINT_URL_ADAPTER.validate_python(endpoint)
+    except ValidationError:
         raise ValueError(msg) from None
-    return parsed.value
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError(msg)
+    return endpoint
 
 
 def managed_product_projection(
     *,
-    environ: Mapping[str, object] | None = None,
+    environ: Mapping[str, str] | None = None,
     database_connect: Callable[[], Any] | None = None,
     s3_client_builder: Callable[..., Any] = boto3.client,
     projection_builder: Callable[..., ProductProjection] = production_product_projection,
 ) -> ProductProjection:
     """Build the one PostgreSQL/S3 projection used by a managed process."""
-    values: Mapping[str, object] = os.environ if environ is None else environ
+    values: Mapping[str, str] = os.environ if environ is None else environ
     database_url = _database_url(values)
     bucket = _required_setting(values, S3_BUCKET_ENV)
     prefix = (_optional_setting(values, S3_PREFIX_ENV) or "infrahub-sync").strip("/")

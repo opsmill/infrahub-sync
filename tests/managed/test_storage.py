@@ -248,12 +248,9 @@ def test_managed_storage_factory_validates_settings_and_hides_startup_details() 
     assert error.value.__cause__ is None
 
 
-def test_managed_storage_settings_require_exact_strings_and_normalize_prefix_deterministically() -> None:
-    """Every setting is type-closed and every refusal excludes the rejected value."""
+def test_managed_storage_settings_refuse_absence_and_normalize_the_prefix_deterministically() -> None:
+    """Every setting refuses absence or emptiness, and no refusal reflects its value."""
     from infrahub_sync.managed import storage
-
-    class StringSubclass(str):  # noqa: FURB189 -- Exact str subclasses are an intentional hostile-input probe.
-        __slots__ = ()
 
     required = {
         storage.DATABASE_URL_ENV: "postgresql://database-secret-canary@db/sync",
@@ -269,7 +266,7 @@ def test_managed_storage_settings_require_exact_strings_and_normalize_prefix_det
     def projection_builder(**_kwargs: object) -> ProductProjection:
         return cast("ProductProjection", object())
 
-    def construct(values: dict[str, object]) -> object:
+    def construct(values: dict[str, str]) -> object:
         return storage.managed_product_projection(
             environ=values,
             database_connect=database_connect,
@@ -278,28 +275,18 @@ def test_managed_storage_settings_require_exact_strings_and_normalize_prefix_det
         )
 
     for name in (storage.DATABASE_URL_ENV, storage.S3_BUCKET_ENV):
-        for value in (None, "", 42, StringSubclass("subclass-secret-canary")):
+        for values in ({key: value for key, value in required.items() if key != name}, {**required, name: ""}):
             with pytest.raises(ValueError) as error:
-                construct({**required, name: value})
+                construct(values)
             assert str(error.value) == f"{name} must be set"
             assert "secret-canary" not in str(error.value)
 
-    for name, value in (
-        (storage.S3_ENDPOINT_ENV, "not-an-endpoint"),
-        (storage.S3_ENDPOINT_ENV, "https:///missing-host"),
-        (storage.S3_ENDPOINT_ENV, StringSubclass("https://subclass-secret-canary")),
-        (storage.S3_REGION_ENV, ""),
-        (storage.S3_REGION_ENV, 42),
-        (storage.S3_PREFIX_ENV, ""),
-        (storage.S3_PREFIX_ENV, 42),
-    ):
+    for name in (storage.S3_ENDPOINT_ENV, storage.S3_REGION_ENV, storage.S3_PREFIX_ENV):
         with pytest.raises(ValueError) as error:
-            construct({**required, name: value})
-        assert name in str(error.value)
-        assert "secret-canary" not in str(error.value)
+            construct({**required, name: ""})
+        assert str(error.value) == f"{name} must be a non-empty string when set"
 
     prefixes: list[object] = []
-    construct({**required, storage.S3_PREFIX_ENV: "/one/two/", storage.S3_REGION_ENV: "us-east-1"})
 
     def collect_prefix(**kwargs: object) -> ProductProjection:
         prefixes.append(kwargs["prefix"])
@@ -386,18 +373,16 @@ def test_managed_storage_contains_sdk_client_construction_failures() -> None:
 @pytest.mark.parametrize(
     "endpoint",
     [
-        "http://s3.example.test:not-a-port",
-        "http://s3.example.test:65536",
-        "http://s3.example.test:80:90",
-        "http://[::1",
-        "http://[invalid]",
-        "http:///missing-host",
+        "not-a-url",
         "ftp://s3.example.test",
+        "http://s3.example.test:not-a-port",
+        "http://[::1",
+        "http://user@s3.example.test",
         "https://user:secret-canary@s3.example.test",
     ],
 )
-def test_managed_storage_endpoint_rejects_invalid_authorities_before_construction(endpoint: str) -> None:
-    """Invalid endpoints never reach a builder and never reflect their rejected authority."""
+def test_managed_storage_endpoint_rejects_non_urls_and_userinfo_before_construction(endpoint: str) -> None:
+    """A rejected endpoint never reaches a builder and never reflects its own value."""
     from infrahub_sync.managed import storage
 
     calls: list[str] = []
@@ -425,126 +410,9 @@ def test_managed_storage_endpoint_rejects_invalid_authorities_before_constructio
             s3_client_builder=s3_client_builder,
             projection_builder=projection_builder,
         )
-    assert str(error.value) == f"{storage.S3_ENDPOINT_ENV} must be an absolute http or https URL"
+    assert str(error.value) == f"{storage.S3_ENDPOINT_ENV} must be an absolute http or https URL without userinfo"
     assert endpoint not in str(error.value)
     assert "secret-canary" not in str(error.value)
-    assert calls == []
-
-
-@pytest.mark.parametrize(
-    "endpoint",
-    [
-        "http:s3.test",
-        "http:/s3.test",
-        "http://s3.example.test\\evil",
-        "http://@s3.example.test",
-        "http://s3.example.test %20",
-        "http://s3%.example.test",
-        "http://\x01s3.example.test",
-        "http://s3.example.test/%zz",
-        "http://[v.fe80]",
-        "http://[::::]",
-        "http://user@s3.example.test",
-        "http://s3.example.test:65536",
-    ],
-)
-def test_managed_storage_endpoint_rejects_parser_invalid_syntax(endpoint: str) -> None:
-    """A typed URL parser closes syntax that the shallow authority guard admitted."""
-    from infrahub_sync.managed import storage
-
-    with pytest.raises(ValueError) as error:
-        storage.managed_product_projection(
-            environ={
-                storage.DATABASE_URL_ENV: "postgresql://db/sync",
-                storage.S3_BUCKET_ENV: "bucket",
-                storage.S3_ENDPOINT_ENV: endpoint,
-            },
-            database_connect=lambda: pytest.fail("database must not be constructed"),
-            s3_client_builder=lambda *_args, **_kwargs: pytest.fail("SDK must not be constructed"),
-            projection_builder=lambda **_kwargs: pytest.fail("projection must not be constructed"),
-        )
-    assert str(error.value) == f"{storage.S3_ENDPOINT_ENV} must be an absolute http or https URL"
-    assert endpoint not in str(error.value)
-
-
-@pytest.mark.parametrize(
-    "endpoint",
-    [
-        "http://999.999.999.999",
-        "http://[v1.fe80]",
-        "HTTP://[V1.fe80]",
-        "http://%61.example.test",
-        "http://example%2etest",
-    ],
-)
-def test_managed_storage_endpoint_rejects_non_boto3_host_domains_before_construction(endpoint: str) -> None:
-    """Hosts outside the Boto3-compatible domain never reach a storage constructor."""
-    from infrahub_sync.managed import storage
-
-    calls: list[str] = []
-
-    def constructed(name: str) -> object:
-        calls.append(name)
-        return object()
-
-    def projection_builder(**_kwargs: object) -> ProductProjection:
-        return cast("ProductProjection", constructed("projection"))
-
-    with pytest.raises(ValueError) as error:
-        storage.managed_product_projection(
-            environ={
-                storage.DATABASE_URL_ENV: "postgresql://db/sync",
-                storage.S3_BUCKET_ENV: "bucket",
-                storage.S3_ENDPOINT_ENV: endpoint,
-            },
-            database_connect=lambda: constructed("database"),
-            s3_client_builder=lambda *_args, **_kwargs: constructed("sdk"),
-            projection_builder=projection_builder,
-        )
-
-    assert str(error.value) == f"{storage.S3_ENDPOINT_ENV} must be an absolute http or https URL"
-    assert endpoint not in str(error.value)
-    assert calls == []
-
-
-@pytest.mark.parametrize(
-    "endpoint",
-    [
-        pytest.param("http://1.2.3", id="shortened"),
-        pytest.param("http://01.2.3.4", id="leading-zero"),
-        pytest.param("http://2130706433", id="integer"),
-        pytest.param("http://0x7f000001", id="hexadecimal"),
-        pytest.param("http://017700000001", id="octal"),
-        pytest.param("http://1.2.3.4.", id="trailing-dot"),
-    ],
-)
-def test_managed_storage_endpoint_rejects_normalized_ipv4_forms_before_construction(endpoint: str) -> None:
-    """An IPv4 endpoint must already be the parser's exact canonical dotted-decimal host."""
-    from infrahub_sync.managed import storage
-
-    calls: list[str] = []
-
-    def constructed(name: str) -> object:
-        calls.append(name)
-        return object()
-
-    def projection_builder(**_kwargs: object) -> ProductProjection:
-        return cast("ProductProjection", constructed("projection"))
-
-    with pytest.raises(ValueError) as error:
-        storage.managed_product_projection(
-            environ={
-                storage.DATABASE_URL_ENV: "postgresql://db/sync",
-                storage.S3_BUCKET_ENV: "bucket",
-                storage.S3_ENDPOINT_ENV: endpoint,
-            },
-            database_connect=lambda: constructed("database"),
-            s3_client_builder=lambda *_args, **_kwargs: constructed("sdk"),
-            projection_builder=projection_builder,
-        )
-
-    assert str(error.value) == f"{storage.S3_ENDPOINT_ENV} must be an absolute http or https URL"
-    assert endpoint not in str(error.value)
     assert calls == []
 
 
@@ -562,7 +430,7 @@ def test_managed_storage_endpoint_rejects_normalized_ipv4_forms_before_construct
     ],
 )
 def test_managed_storage_endpoint_accepts_valid_authorities(endpoint: str) -> None:
-    """Valid hostname, IPv4, and bracketed IPv6 endpoints preserve their exact SDK value."""
+    """An accepted endpoint reaches Boto3 as the operator's own unmodified string."""
     from infrahub_sync.managed import storage
 
     received: list[object] = []
