@@ -1,25 +1,21 @@
 """The shared ``configs`` application service.
 
-This module sits below both interfaces, in ``standalone.py``'s position. It owns validation
-invocation, finding ordering, store access and record projection; ``cli.py`` parses options
-and renders what comes back, and ``api/v1`` builds typed requests and projects the same
-records into its redacted result models. Neither interface constructs a finding, sorts one,
-or decides what a failure means.
+This module owns validation invocation, finding ordering, store access, and record projection.
+Internal callers receive typed records; the HTTP service projects them into neutral wire models.
+Neither boundary constructs a finding, sorts one, or decides what a failure means.
 
 **One error vocabulary, mapped twice.** Everything this module refuses raises a
 :class:`ConfigsError` carrying a ``family``. The CLI renders it through
-``print_error_and_abort`` and the Python API translates it into its public boundary error,
-but both read the same ``family`` from the same exception, so neither interface decides for
-itself which exception types mean what.
+``print_error_and_abort`` and the HTTP service translates it into its public error envelope.
+Both read the same ``family`` from the same exception.
 
 **Total by construction, not by enumeration.** Every public operation carries
 :func:`_service_boundary`, so no exception leaves this module outside that vocabulary. The
 arms inside an operation still decide the family and the message wherever they know what was
 being read; the boundary is only what makes the claim hold for what they did not name.
 
-**Scope.** The run lifecycle above ``execute_standalone`` is deliberately *not* unified into
-a service like this one. ``api/v1.plan()`` and its ``cli.py`` counterpart are two different,
-correct error contracts over one shared call. Nothing here changes that.
+**Scope.** This remains the internal configuration application service. Public Python callers use
+the Sync HTTP client rather than importing this module.
 """
 
 from __future__ import annotations

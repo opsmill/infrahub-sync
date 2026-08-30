@@ -1,0 +1,623 @@
+"""Synchronous client for the Sync HTTP API."""
+
+from __future__ import annotations
+
+import os
+import re
+from hashlib import sha256
+from math import isfinite
+from time import monotonic, sleep
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+
+import httpx
+from pydantic import BaseModel, ValidationError
+from typing_extensions import Self
+
+from .errors import (
+    APIError,
+    ClientInputError,
+    ClientTimeoutError,
+    CompatibilityError,
+    ConfigsAPIError,
+    ProtocolError,
+    RunTerminalError,
+    RunWaitTimeoutError,
+    TransportError,
+)
+from .models import (
+    ApplyRunRequest,
+    ArtifactContent,
+    ArtifactListResource,
+    CancelRunRequest,
+    ConfigErrorEnvelope,
+    ConfigMutationRequest,
+    ConfigurationSummaryResource,
+    ConfigurationVersionResource,
+    CreateRunRequest,
+    ErrorEnvelope,
+    OrchestrationSummary,
+    PlanResource,
+    RegisteredConfigurationResource,
+    RegisteredVersionResource,
+    ResultsResource,
+    RunResource,
+    ServiceStatusResource,
+    ValidationReportResource,
+    VerifyRunRequest,
+    VersionResource,
+)
+
+if TYPE_CHECKING:
+    from types import TracebackType
+
+_Model = TypeVar("_Model", bound=BaseModel)
+_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_DIGEST = re.compile(r"sha-256=(?P<digest>[0-9a-f]{64})")
+_ERROR_STATUSES = frozenset({401, 403, 404, 409, 410, 422, 503})
+_CONFIG_ERROR_STATUSES = _ERROR_STATUSES | {400}
+_MAX_JSON_BYTES = 16 * 1024 * 1024
+_SERVICE_URL_ARG = "service_url"
+_TOKEN_ARG = "token"
+_TIMEOUT_ARG = "timeout"
+_OFFSET_ARG = "offset"
+_LIMIT_ARG = "limit"
+_REQUEST_ARG = "request"
+_IDEMPOTENCY_KEY_ARG = "idempotency_key"
+_GET_ARTIFACT = "get_artifact"
+_CLOSE = "close"
+_WAIT_FOR_RUN = "wait_for_run"
+_POLL_INTERVAL_ARG = "poll_interval"
+
+
+class SyncClient:  # pylint: disable=too-many-public-methods
+    """One side-effect-free synchronous client for every shipped Sync API route."""
+
+    def __init__(
+        self,
+        service_url: str,
+        token: str,
+        *,
+        timeout: float = 30.0,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        url = self._service_url(service_url)
+        if not isinstance(token, str) or not token:
+            raise ClientInputError(_TOKEN_ARG)
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not isfinite(timeout) or timeout <= 0:
+            raise ClientInputError(_TIMEOUT_ARG)
+        self._http = httpx.Client(
+            base_url=url,
+            timeout=float(timeout),
+            transport=transport,
+            follow_redirects=False,
+        )
+        self._authorization = f"Bearer {token}"
+        self._compatible = False
+
+    @classmethod
+    def from_environment(
+        cls,
+        *,
+        timeout: float = 30.0,
+        transport: httpx.BaseTransport | None = None,
+    ) -> SyncClient:
+        """Build a client from the documented URL and token environment settings."""
+        return cls(
+            os.environ.get("INFRAHUB_SYNC_API_URL", ""),
+            os.environ.get("INFRAHUB_SYNC_API_TOKEN", ""),
+            timeout=timeout,
+            transport=transport,
+        )
+
+    @staticmethod
+    def _service_url(value: object) -> str:
+        if not isinstance(value, str):
+            raise ClientInputError(_SERVICE_URL_ARG)
+        try:
+            url = httpx.URL(value)
+        except Exception:  # noqa: BLE001 - all URL parser failures are one client-input refusal.
+            raise ClientInputError(_SERVICE_URL_ARG) from None
+        authority_invalid = url.scheme not in {"http", "https"} or not url.host
+        carries_credentials = any((url.username, url.password, url.query, url.fragment))
+        if authority_invalid or carries_credentials:
+            raise ClientInputError(_SERVICE_URL_ARG)
+        return str(url).rstrip("/")
+
+    def close(self) -> None:
+        """Close the underlying HTTP transport."""
+
+        try:
+            self._http.close()
+        except Exception:  # noqa: BLE001 - no injected transport exception crosses the public boundary.
+            raise TransportError(_CLOSE) from None
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc: BaseException | None,
+        _traceback: TracebackType | None,
+    ) -> None:
+        self.close()
+
+    def get_version(self) -> VersionResource:
+        """Return the unauthenticated server version declaration."""
+
+        response = self._send("get_version", "GET", "/version", authenticated=False)
+        if response.status_code != 200:
+            raise self._compatibility_error(response)
+        try:
+            return VersionResource.model_validate(self._json(response, "get_version"))
+        except (ValidationError, ProtocolError):
+            raise self._compatibility_error(response) from None
+
+    def get_status(self) -> ServiceStatusResource:
+        """Return unauthenticated service and worker status."""
+
+        operation = "get_status"
+        response = self._send(operation, "GET", "/status", authenticated=False)
+        if response.status_code != 200:
+            raise ProtocolError(operation, response.status_code)
+        return self._success(response, operation, ServiceStatusResource, {200})
+
+    def register_config(self, request: ConfigMutationRequest, idempotency_key: str) -> RegisteredConfigurationResource:
+        """Register a configuration package idempotently."""
+
+        return self._request_model(
+            "register_config",
+            "POST",
+            "/configs",
+            model=RegisteredConfigurationResource,
+            success={201},
+            body=request,
+            idempotency_key=idempotency_key,
+            config_route=True,
+        )
+
+    def create_config_version(
+        self, config_id: str, request: ConfigMutationRequest, idempotency_key: str
+    ) -> RegisteredVersionResource:
+        """Create or retrieve an identical configuration version idempotently."""
+
+        config_id = self._identifier(config_id, "config_id")
+        return self._request_model(
+            "create_config_version",
+            "POST",
+            f"/configs/{config_id}/versions",
+            model=RegisteredVersionResource,
+            success={200, 201},
+            body=request,
+            idempotency_key=idempotency_key,
+            config_route=True,
+        )
+
+    def list_configs(self) -> tuple[ConfigurationSummaryResource, ...]:
+        """Return the complete ordered configuration list."""
+
+        return self._request_list("list_configs", "/configs", ConfigurationSummaryResource, config_route=True)
+
+    def get_config(self, config_id: str) -> ConfigurationSummaryResource:
+        """Return one registered configuration summary."""
+
+        config_id = self._identifier(config_id, "config_id")
+        return self._request_model(
+            "get_config",
+            "GET",
+            f"/configs/{config_id}",
+            model=ConfigurationSummaryResource,
+            success={200},
+            config_route=True,
+        )
+
+    def list_config_versions(self, config_id: str) -> tuple[ConfigurationVersionResource, ...]:
+        """Return the complete ordered version list for a configuration."""
+
+        config_id = self._identifier(config_id, "config_id")
+        return self._request_list(
+            "list_config_versions", f"/configs/{config_id}/versions", ConfigurationVersionResource, config_route=True
+        )
+
+    def get_config_version(self, config_id: str, registry_version: int) -> ConfigurationVersionResource:
+        """Return one immutable registered configuration version."""
+
+        config_id = self._identifier(config_id, "config_id")
+        version = self._positive_integer(registry_version, "registry_version")
+        return self._request_model(
+            "get_config_version",
+            "GET",
+            f"/configs/{config_id}/versions/{version}",
+            model=ConfigurationVersionResource,
+            success={200},
+            config_route=True,
+        )
+
+    def validate_config(
+        self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = 256
+    ) -> ValidationReportResource:
+        """Validate a configuration version and return one findings page."""
+
+        config_id = self._identifier(config_id, "config_id")
+        version = self._positive_integer(registry_version, "registry_version")
+        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_OFFSET_ARG)
+        if type(limit) is not int or not 1 <= limit <= 256:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_LIMIT_ARG)
+        return self._request_model(
+            "validate_config",
+            "POST",
+            f"/configs/{config_id}/versions/{version}/validate",
+            model=ValidationReportResource,
+            success={200},
+            params={"offset": offset, "limit": limit},
+            config_route=True,
+        )
+
+    def create_run(self, request: CreateRunRequest, idempotency_key: str) -> RunResource:
+        """Create a plan or synchronization run idempotently."""
+
+        return self._request_model(
+            "create_run",
+            "POST",
+            "/runs",
+            model=RunResource,
+            success={202},
+            body=request,
+            idempotency_key=idempotency_key,
+        )
+
+    def plan(self, request: CreateRunRequest, idempotency_key: str) -> RunResource:
+        """Create a read-only plan run idempotently."""
+
+        if request.operation != "plan" or request.confirm_writes:
+            raise ClientInputError(_REQUEST_ARG)
+        return self.create_run(request, idempotency_key)
+
+    def sync(self, request: CreateRunRequest, idempotency_key: str) -> RunResource:
+        """Create a confirmed synchronization run idempotently."""
+
+        if request.operation != "sync" or not request.confirm_writes:
+            raise ClientInputError(_REQUEST_ARG)
+        return self.create_run(request, idempotency_key)
+
+    def get_run(self, run_id: str) -> RunResource:
+        """Return one run and its orchestration history."""
+
+        return self._get_run(run_id)
+
+    def _get_run(self, run_id: str, *, request_timeout: float | None = None) -> RunResource:
+        run_id = self._identifier(run_id, "run_id")
+        return self._request_model(
+            "get_run",
+            "GET",
+            f"/runs/{run_id}",
+            model=RunResource,
+            success={200},
+            request_timeout=request_timeout,
+        )
+
+    def get_plan(self, run_id: str) -> PlanResource:
+        """Return one saved plan and its checksum."""
+
+        run_id = self._identifier(run_id, "run_id")
+        return self._request_model("get_plan", "GET", f"/runs/{run_id}/plan", model=PlanResource, success={200})
+
+    def get_results(self, run_id: str) -> ResultsResource:
+        """Return the recorded results for one run."""
+
+        run_id = self._identifier(run_id, "run_id")
+        return self._request_model(
+            "get_results", "GET", f"/runs/{run_id}/results", model=ResultsResource, success={200}
+        )
+
+    def list_artifacts(self, run_id: str) -> ArtifactListResource:
+        """Return all artifact references for one run."""
+
+        run_id = self._identifier(run_id, "run_id")
+        return self._request_model(
+            "list_artifacts",
+            "GET",
+            f"/runs/{run_id}/artifacts",
+            model=ArtifactListResource,
+            success={200},
+        )
+
+    def get_artifact(self, run_id: str, artifact_id: str) -> ArtifactContent:
+        """Download an artifact and verify its declared digest."""
+
+        run_id = self._identifier(run_id, "run_id")
+        artifact_id = self._identifier(artifact_id, "artifact_id")
+        self._ensure_compatible()
+        response = self._send(_GET_ARTIFACT, "GET", f"/runs/{run_id}/artifacts/{artifact_id}")
+        if response.status_code != 200:
+            self._raise_response_error(response, _GET_ARTIFACT, config_route=False)
+        values = [value.strip() for header in response.headers.get_list("Digest") for value in header.split(",")]
+        matches = {match.group("digest") for value in values if (match := _DIGEST.fullmatch(value)) is not None}
+        if (
+            not values
+            or len(matches) != 1
+            or len(matches) != len(set(values))
+            or sha256(response.content).hexdigest() not in matches
+        ):
+            raise ProtocolError(_GET_ARTIFACT, response.status_code)
+        digest = matches.pop()
+        media_type = response.headers.get("Content-Type", "").partition(";")[0].strip()
+        if not media_type:
+            raise ProtocolError(_GET_ARTIFACT, response.status_code)
+        return ArtifactContent(data=response.content, media_type=media_type, digest=digest)
+
+    def verify_run(self, run_id: str, request: VerifyRunRequest, idempotency_key: str) -> RunResource:
+        """Start verification of a saved plan idempotently."""
+
+        return self._run_mutation("verify_run", run_id, "verify", request=request, idempotency_key=idempotency_key)
+
+    def verify(self, run_id: str, request: VerifyRunRequest, idempotency_key: str) -> RunResource:
+        """Start verification of a saved plan idempotently."""
+
+        return self.verify_run(run_id, request, idempotency_key)
+
+    def apply_run(self, run_id: str, request: ApplyRunRequest, idempotency_key: str) -> RunResource:
+        """Apply a reviewed saved plan idempotently."""
+
+        return self._run_mutation("apply_run", run_id, "apply", request=request, idempotency_key=idempotency_key)
+
+    def apply(self, run_id: str, request: ApplyRunRequest, idempotency_key: str) -> RunResource:
+        """Apply a reviewed saved plan idempotently."""
+
+        return self.apply_run(run_id, request, idempotency_key)
+
+    def cancel_run(self, run_id: str, request: CancelRunRequest, idempotency_key: str) -> RunResource:
+        """Request cancellation of a run idempotently."""
+
+        return self._run_mutation("cancel_run", run_id, "cancel", request=request, idempotency_key=idempotency_key)
+
+    def wait_for_run(self, accepted_resource: RunResource, *, timeout: float, poll_interval: float) -> RunResource:
+        """Follow the execution selected by one accepted mutation response."""
+        self._positive_duration(timeout, _TIMEOUT_ARG)
+        self._positive_duration(poll_interval, _POLL_INTERVAL_ARG)
+        if not accepted_resource.orchestration:
+            raise ProtocolError(_WAIT_FOR_RUN)
+        flow_run_id = accepted_resource.orchestration[-1].flow_run_id
+        latest = accepted_resource
+        selected = accepted_resource.orchestration[-1]
+        terminal = self._wait_verdict(latest, selected)
+        if terminal is not None:
+            return terminal
+        deadline = monotonic() + timeout
+        while True:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise self._wait_timeout(latest, selected)
+            sleep(min(poll_interval, remaining))
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise self._wait_timeout(latest, selected)
+            latest = self._get_run(accepted_resource.run.run_id, request_timeout=remaining)
+            selected = next(
+                (entry for entry in latest.orchestration if entry.flow_run_id == flow_run_id),
+                None,
+            )
+            if selected is None:
+                raise ProtocolError(_WAIT_FOR_RUN)
+            if monotonic() >= deadline:
+                raise self._wait_timeout(latest, selected)
+            terminal = self._wait_verdict(latest, selected)
+            if terminal is not None:
+                return terminal
+
+    @staticmethod
+    def _wait_verdict(resource: RunResource, execution: OrchestrationSummary) -> RunResource | None:
+        if execution.terminal_outcome is None:
+            return None
+        if execution.terminal_state == "completed" and execution.terminal_outcome == "succeeded":
+            return resource
+        assert execution.terminal_state is not None
+        raise RunTerminalError(
+            resource.run.run_id,
+            terminal_state=execution.terminal_state,
+            terminal_outcome=execution.terminal_outcome,
+            phase=resource.run.phase,
+            outcome=resource.run.outcome,
+        )
+
+    @staticmethod
+    def _wait_timeout(resource: RunResource, execution: OrchestrationSummary) -> RunWaitTimeoutError:
+        return RunWaitTimeoutError(
+            resource.run.run_id,
+            phase=resource.run.phase,
+            outcome=resource.run.outcome,
+            execution_state=execution.state,
+        )
+
+    @staticmethod
+    def _positive_duration(value: object, argument: str) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value) or value <= 0:
+            raise ClientInputError(argument)
+        return float(value)
+
+    def _run_mutation(
+        self, operation: str, run_id: str, suffix: str, *, request: BaseModel, idempotency_key: str
+    ) -> RunResource:
+        run_id = self._identifier(run_id, "run_id")
+        return self._request_model(
+            operation,
+            "POST",
+            f"/runs/{run_id}/{suffix}",
+            model=RunResource,
+            success={202},
+            body=request,
+            idempotency_key=idempotency_key,
+        )
+
+    def _request_list(
+        self, operation: str, path: str, model: type[_Model], *, config_route: bool
+    ) -> tuple[_Model, ...]:
+        self._ensure_compatible()
+        response = self._send(operation, "GET", path)
+        if response.status_code != 200:
+            self._raise_response_error(response, operation, config_route=config_route)
+        payload = self._json(response, operation)
+        if not isinstance(payload, list):
+            raise ProtocolError(operation, response.status_code)
+        try:
+            return tuple(model.model_validate(item) for item in payload)
+        except (ValidationError, TypeError, ValueError):
+            raise ProtocolError(operation, response.status_code) from None
+
+    def _request_model(
+        self,
+        operation: str,
+        method: str,
+        path: str,
+        *,
+        model: type[_Model],
+        success: set[int],
+        body: BaseModel | None = None,
+        idempotency_key: str | None = None,
+        params: dict[str, int] | None = None,
+        config_route: bool = False,
+        request_timeout: float | None = None,
+    ) -> _Model:
+        if idempotency_key is not None and (not isinstance(idempotency_key, str) or not idempotency_key.strip()):
+            raise ClientInputError(_IDEMPOTENCY_KEY_ARG)
+        self._ensure_compatible()
+        headers = {"Idempotency-Key": idempotency_key} if idempotency_key is not None else None
+        response = self._send(
+            operation,
+            method,
+            path,
+            headers=headers,
+            json=None if body is None else body.model_dump(mode="json"),
+            params=params,
+            request_timeout=request_timeout,
+        )
+        return self._success(response, operation, model, success, config_route=config_route)
+
+    def _success(
+        self,
+        response: httpx.Response,
+        operation: str,
+        model: type[_Model],
+        success: set[int],
+        *,
+        config_route: bool = False,
+    ) -> _Model:
+        if response.status_code not in success:
+            self._raise_response_error(response, operation, config_route=config_route)
+        try:
+            return model.model_validate(self._json(response, operation))
+        except (ValidationError, TypeError, ValueError):
+            raise ProtocolError(operation, response.status_code) from None
+
+    def _ensure_compatible(self) -> None:
+        if self._compatible:
+            return
+        version = self.get_version()
+        if not version.api_versions or "v3-unstable" not in version.api_versions:
+            raise CompatibilityError(version.server_version, version.api_versions)
+        self._compatible = True
+
+    def _compatibility_error(self, response: httpx.Response) -> CompatibilityError:
+        server_version = None
+        api_versions: tuple[str, ...] = ()
+        try:
+            payload = self._json(response, "get_version")
+            if isinstance(payload, dict):
+                raw = cast("dict[str, object]", payload)
+                version_value = raw.get("server_version")
+                versions_value = raw.get("api_versions")
+                if isinstance(version_value, str):
+                    server_version = version_value
+                if isinstance(versions_value, (list, tuple)) and all(
+                    isinstance(value, str) for value in versions_value
+                ):
+                    api_versions = tuple(cast("list[str] | tuple[str, ...]", versions_value))
+        except ProtocolError:
+            pass
+        return CompatibilityError(server_version, api_versions)
+
+    def _send(
+        self,
+        operation: str,
+        method: str,
+        path: str,
+        *,
+        authenticated: bool = True,
+        headers: dict[str, str] | None = None,
+        json: object = None,
+        params: dict[str, int] | None = None,
+        request_timeout: float | None = None,
+    ) -> httpx.Response:
+        request_headers = dict(headers or {})
+        if authenticated:
+            request_headers["Authorization"] = self._authorization
+        try:
+            return self._http.request(
+                method,
+                path,
+                headers=request_headers,
+                json=json,
+                params=params,
+                timeout=self._http.timeout if request_timeout is None else request_timeout,
+            )
+        except httpx.TimeoutException:
+            raise ClientTimeoutError(operation) from None
+        except httpx.HTTPError:
+            raise TransportError(operation) from None
+        except Exception:  # noqa: BLE001 - no injected transport exception crosses the public boundary.
+            raise TransportError(operation) from None
+
+    @staticmethod
+    def _json(response: httpx.Response, operation: str) -> Any:
+        if len(response.content) > _MAX_JSON_BYTES:
+            raise ProtocolError(operation, response.status_code)
+        try:
+            return response.json()
+        except Exception:  # noqa: BLE001 - response decoders are contained at the external boundary.
+            raise ProtocolError(operation, response.status_code) from None
+
+    def _raise_response_error(self, response: httpx.Response, operation: str, *, config_route: bool) -> None:
+        accepted = _CONFIG_ERROR_STATUSES if config_route else _ERROR_STATUSES
+        if response.is_redirect or response.status_code not in accepted:
+            raise ProtocolError(operation, response.status_code)
+        payload = self._json(response, operation)
+        try:
+            error = self._parse_api_error(payload, response.status_code, config_route=config_route)
+        except (ValidationError, KeyError, TypeError, ValueError):
+            raise ProtocolError(operation, response.status_code) from None
+        raise error
+
+    @staticmethod
+    def _parse_api_error(payload: object, status: int, *, config_route: bool) -> APIError:
+        raw_error = cast("dict[str, object]", payload).get("error") if isinstance(payload, dict) else None
+        if config_route and isinstance(raw_error, dict) and "family" in raw_error:
+            detail = ConfigErrorEnvelope.model_validate(payload).error
+            if detail.status != status:
+                raise ValueError
+            mutation_id = cast("dict[str, object]", raw_error).get("mutation_id")
+            if mutation_id is not None and not isinstance(mutation_id, str):
+                raise ValueError
+            return ConfigsAPIError(
+                detail.status,
+                detail.code,
+                detail.family,
+                detail.reason,
+                mutation_id=mutation_id,
+            )
+        detail = ErrorEnvelope.model_validate(payload).error
+        if detail.status != status:
+            raise ValueError
+        return APIError(detail.status, detail.code, run_id=detail.run_id, mutation_id=detail.mutation_id)
+
+    @staticmethod
+    def _identifier(value: object, argument: str) -> str:
+        if not isinstance(value, str) or _IDENTIFIER.fullmatch(value) is None:
+            raise ClientInputError(argument)
+        return value
+
+    @staticmethod
+    def _positive_integer(value: object, argument: str) -> int:
+        if type(value) is not int or not 1 <= value <= 2**63 - 1:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(argument)
+        return value

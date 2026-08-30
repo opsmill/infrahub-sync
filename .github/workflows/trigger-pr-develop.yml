@@ -3,6 +3,7 @@
 name: "Pull Request on develop"
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - "renovate/**"
@@ -10,6 +11,9 @@ on:
     branches:
       - develop
       - feature/v3-develop
+
+permissions:
+  contents: read
 
 jobs:
   linter:

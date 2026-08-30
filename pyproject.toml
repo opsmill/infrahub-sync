@@ -17,7 +17,8 @@ classifiers = [
 dependencies = [
     "infrahub-sdk[all]>=1.17,<2",
     "structlog>=25.1,<26.0",
-    "typing-extensions>=4.0",
+    "typing-extensions>=4.4",
+    "httpx>=0.27,<1",
     # The `[redis]` extra is deliberately dropped: it caps `redis<5.0`, which is
     # unsatisfiable next to the optional `prefect` extra below
     # (prefect>=3.6 -> pydocket -> redis>=5). diffsync's cap is stale rather than
@@ -68,7 +69,6 @@ prefect = [
 managed = [
     "boto3>=1.35,<2; python_version >= '3.11'",
     "fastapi>=0.115,<1; python_version >= '3.11'",
-    "httpx>=0.27,<1; python_version >= '3.11'",
     "prefect==3.8.1; python_version >= '3.11'",
     "psycopg[binary]>=3.2,<4; python_version >= '3.11'",
     "uvicorn>=0.34,<1; python_version >= '3.11'",

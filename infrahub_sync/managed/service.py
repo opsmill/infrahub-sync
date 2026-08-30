@@ -31,12 +31,12 @@ from .models import (
     CreateRunRequest,
     OrchestrationSummary,
     PlanResource,
-    PublicRunResource,
     ResultsResource,
     RunResource,
     ServiceStatusResource,
     VerifyRunRequest,
     WorkerStatusResource,
+    public_run_resource,
 )
 from .orchestration import ManagedOrchestration, Observation, PoolStatus, normalized_pool_status
 
@@ -583,7 +583,8 @@ class ManagedRunService:
     def list_artifacts(self, run_id: str) -> ArtifactListResource:
         """List immutable references without reading artifact bodies."""
         run = self._required_run(run_id)
-        return ArtifactListResource(run_id=run_id, artifacts=run.artifact_refs)
+        artifacts = tuple(reference.model_dump(mode="json") for reference in run.artifact_refs)
+        return ArtifactListResource.model_validate({"run_id": run_id, "artifacts": artifacts})
 
     def get_artifact(self, run_id: str, artifact_id: str) -> tuple[bytes, str, str]:
         """Return verified artifact bytes, media type, and recorded digest."""
@@ -923,7 +924,7 @@ class ManagedRunService:
                     terminal_outcome=link.terminal_outcome,
                 )
             )
-        return RunResource(run=PublicRunResource.from_product_run(run), orchestration=tuple(orchestration))
+        return RunResource(run=public_run_resource(run), orchestration=tuple(orchestration))
 
     def _audit(
         self,

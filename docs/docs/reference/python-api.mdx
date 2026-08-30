@@ -1,203 +1,140 @@
 ---
 title: Python API
-description: Run local Infrahub Sync plan, verify, apply, and confirmed sync operations from Python.
+description: Register configurations and control Sync runs through the Sync HTTP API.
 ---
 
-Import the version 1 Python API from `infrahub_sync.api.v1` to run an Infrahub Sync
-configuration in-process. The API uses the same execution and saved-plan contracts as the
-product and does not invoke the CLI.
+`SyncClient` is the supported Python interface for the Sync HTTP API. It sends typed requests to
+the service and returns typed resources. It does not open a product store, load an adapter, resolve
+execution credentials, or run the execution core in the caller process.
 
-The base `infrahub-sync` installation includes this API. Prefect and an external control
-plane are not required. The source and destination declared by the selected configuration
-remain the runtime integrations for operations that contact adapters.
+The base `infrahub-sync` installation includes the client and HTTPX. FastAPI, Uvicorn, Prefect,
+Psycopg, and Boto3 remain optional service dependencies.
 
-The examples below use the repository's `custom-example` project. Its source is a local
-JSON fixture, and its destination requires the bundled schema at
-`examples/prefect_remote_run/schemas/infra_device.yml` in Infrahub. Run the examples from
-the repository root so the configuration's relative paths resolve correctly. The
-[Prefect remote run walkthrough](./prefect-remote-run.mdx) links the complete destination
-setup.
+## Connect
 
-## Optional durable product projection
+Construct a client with an absolute HTTP or HTTPS service URL, a bearer token, and a positive
+request timeout. TLS verification is enabled and redirects are refused.
 
-Every request accepts an optional `product_cache_location`. Set it to an absolute local
-path to publish the same `ProductRun` and immutable `plan-review` artifact contract used by
-managed execution. If it is omitted, the established run-directory and saved-plan behavior
-is unchanged.
-
-Use the same location for plan, verify, and apply. Reviewed apply advances the planning
-record under its original run ID; it does not allocate another product record. A confirmed
-sync similarly keeps one product identity across its plan, verification, and apply stages.
-The local projection uses SQLite and the filesystem and imports no Prefect or managed
-runtime module.
-
-## Create a plan
-
-`plan` loads and validates the named configuration, reads both adapters, saves the proposed
-operations, and returns their counts and artifact locations.
+HTTP provides no transport encryption for bearer credentials. Use HTTP only when the service
+connection stays inside a network you trust; use HTTPS across networks you do not trust.
 
 ```python
-from infrahub_sync.api.v1 import PlanRequest, plan
+from infrahub_sync.client import SyncClient
 
-result = plan(
-    PlanRequest(
-        sync_name="custom-example",
-        config_directory="examples",
-        branch="main",
-        product_cache_location="/var/lib/infrahub-sync/product-cache",
-    )
-)
-
-print(result.run_id)
-print(result.counts.create)
-print(result.domain_summary)
+client = SyncClient("https://sync.example.com", "replace-with-a-token", timeout=30)
 ```
 
-A plan does not write to the destination. Store the returned `run_id`, then review the
-manifest and operations under the returned artifact references before applying it.
-
-The plan artifact is committed before the API reads it back to build `RunResult`. If the API
-cannot read it back, `plan` raises `RunExecutionError` and marks the run failed, but it does not
-rewrite the immutable plan. Use the error's `run_id` to inspect or verify the committed
-artifact before deciding whether to apply it or create a fresh plan.
-
-## Verify a saved plan
-
-`verify` is independent and read-only. It reads the stored plan and checks its format, run
-binding, checksum, source snapshots, and configuration version. It does not construct an
-adapter, change run state, or write to the destination.
+`SyncClient.from_environment()` reads `INFRAHUB_SYNC_API_URL` and
+`INFRAHUB_SYNC_API_TOKEN`:
 
 ```python
-from infrahub_sync.api.v1 import VerifyRequest, verify
+from infrahub_sync.client import SyncClient
 
-verified = verify(
-    VerifyRequest(
-        sync_name="custom-example",
-        config_directory="examples",
-        run_id=result.run_id,
-        product_cache_location="/var/lib/infrahub-sync/product-cache",
-    )
-)
-
-assert verified.outcome == "verified"
+with SyncClient.from_environment(timeout=30) as client:
+    version = client.get_version()
+    status = client.get_status()
 ```
 
-Verification against the live destination remains part of apply. Independent verification
-cannot prove that an endpoint or branch still matches without constructing the destination
-adapter.
+The first protected operation checks `/version` before sending the bearer token. The client
+requires the server to declare `v3-unstable` and caches a successful compatibility check for that
+client instance.
 
-## Apply a reviewed plan
+## Register and inspect configurations
 
-Pass the checksum from the reviewed plan manifest. A preliminary read checks that checksum
-before constructing the destination. The apply seam then reads the artifact once and uses
-those same bytes for its required verification and writes. It applies the stored operations
-without extracting the source or recomputing the plan.
+Configuration mutations require a reason and an idempotency key. A retry after an uncertain
+transport result must reuse the same key.
 
 ```python
-import json
-from pathlib import Path
+from infrahub_sync.client import ConfigMutationRequest, SyncClient
 
-from infrahub_sync.api.v1 import ApplyRequest, apply
+package = {
+    "format_version": 1,
+    "configuration": {
+        "name": "inventory",
+        "source": {"name": "netbox", "settings": {}},
+        "destination": {"name": "infrahub", "settings": {}},
+    },
+}
 
-manifest_path = next(artifact.path for artifact in result.artifacts if artifact.kind == "plan-manifest")
-reviewed_checksum = json.loads(Path(manifest_path).read_text())["plan_checksum"]
-
-applied = apply(
-    ApplyRequest(
-        sync_name="custom-example",
-        config_directory="examples",
-        run_id=result.run_id,
-        expected_checksum=reviewed_checksum,
-        branch="main",
-        product_cache_location="/var/lib/infrahub-sync/product-cache",
+with SyncClient.from_environment() as client:
+    registered = client.register_config(
+        ConfigMutationRequest(package=package, reason="Register inventory sync"),
+        idempotency_key="register-inventory-20260830",
     )
-)
-
-assert applied.outcome in {"applied", "no-change"}
+    config_id = registered.configuration.config_id
+    registry_version = registered.version.registry_version
+    report = client.validate_config(config_id, registry_version, offset=0, limit=256)
 ```
 
-Recorded delete operations remain visible in `counts.delete` but are not sent to the
-destination. A destination mismatch, stale configuration, changed source
-snapshot, or checksum mismatch refuses before the first write.
+The client also exposes `create_config_version`, `list_configs`, `get_config`,
+`list_config_versions`, and `get_config_version`. Configuration list methods return the complete
+server response and do not expose pagination arguments. Validation exposes the server's finding
+page fields and preserves finding order.
 
-## Run a confirmed sync
+## Create and inspect runs
 
-`sync` composes the same plan, independent verification, and apply operations. Set
-`confirm_writes=True`; omission or `False` refuses before configuration loading or adapter
-construction.
+Create a plan from a registered configuration version:
 
 ```python
-from infrahub_sync.api.v1 import SyncRequest, sync
+from infrahub_sync.client import CreateRunRequest, SyncClient
 
-synced = sync(
-    SyncRequest(
-        sync_name="custom-example",
-        config_directory="examples",
-        branch="main",
-        confirm_writes=True,
-        product_cache_location="/var/lib/infrahub-sync/product-cache",
+with SyncClient.from_environment() as client:
+    accepted = client.plan(
+        CreateRunRequest(
+            operation="plan",
+            config_id=config_id,
+            registry_version=registry_version,
+            branch="main",
+            confirm_writes=False,
+            reason="Review inventory changes",
+        ),
+        idempotency_key="plan-inventory-20260830",
     )
-)
+    finished = client.wait_for_run(accepted, timeout=1800, poll_interval=2)
+    saved_plan = client.get_plan(finished.run.run_id)
 ```
 
-The API applies only the operations materialized in the saved plan. An inherited engine
-limitation means a difference that exists solely in nested child elements can be detected
-without producing a saved operation row; in that case API `sync` reports `no-change` and
-does not write that nested-only difference.
+A confirmed composed sync uses `operation="sync"` and `confirm_writes=True`. The client also
+exposes `get_run`, `get_results`, `list_artifacts`, `get_artifact`, `verify_run`, `apply_run`, and
+`cancel_run`. The short method names `sync`, `verify`, and `apply` call the same HTTP operations.
 
-## Result contract
+`apply_run` sends the expected checksum from the reviewed `PlanResource`. It does not read or
+reconstruct plan bytes locally. `get_artifact` verifies the response `Digest` header against the
+received bytes before returning `ArtifactContent`.
 
-All four functions return `RunResult` on success.
+## Wait behavior
 
-| Field | Type | Meaning |
-|---|---|---|
-| `api_version` | `"1"` | Public result schema version. |
-| `run_id` | `str` | Stable Sync run identifier. |
-| `operation` | `"plan"`, `"sync"`, `"verify"`, or `"apply"` | Requested product operation. |
-| `phase` | `str` | Current product phase. Readers preserve values added by later versions. |
-| `outcome` | `str` | Product outcome, such as `planned`, `verified`, `applied`, or `no-change`. Readers preserve values added by later versions. |
-| `counts` | `ActionCounts` | Zero-filled `create`, `update`, and `delete` saved-operation counts. |
-| `domain_summary` | `dict[str, int]` | Saved-operation counts grouped by destination kind. |
-| `artifacts` | `tuple[ArtifactReference, ...]` | Absolute local references for the run directory, plan manifest, and plan operations. |
+`wait_for_run` follows the final orchestration entry in the accepted mutation response by its
+`flow_run_id`. Earlier completed plan or verification executions do not make a later apply appear
+complete. Unknown non-terminal live states continue polling until the bounded deadline.
 
-Artifact references are local paths on the process host. The API does not upload or retain
-them outside the configured cache.
+The durable terminal outcome decides the result:
 
-## Errors and redaction
+- completed/succeeded returns the latest `RunResource`;
+- failed, cancelled, abandoned, or ambiguous outcomes raise `RunTerminalError`;
+- reaching the deadline raises `RunWaitTimeoutError` with the run ID and last observed product and
+  execution state.
 
-Catch `RunValidationError` for request, configuration, and saved-plan safety refusals. Catch
-`RunExecutionError` for adapter and engine failures after validation. Both inherit from
-`RunError` and provide `api_version`, `run_id`, `operation`, `stage`, `outcome`, and a
-secret-safe `message`.
+A local `KeyboardInterrupt` stops the wait and crosses the Python boundary unchanged. It does not
+cancel the remote run.
+
+## Errors
+
+Catch `SyncClientError` for all client-owned failures. More specific types are available for input,
+compatibility, transport, protocol, API refusal, configuration API refusal, wait timeout, and
+terminal run failures.
 
 ```python
-from infrahub_sync.api.v1 import RunError, SyncRequest, sync
-
-request = SyncRequest(
-    sync_name="from-netbox",
-    config_directory="examples",
-    confirm_writes=True,
-)
+from infrahub_sync.client import ConfigsAPIError, SyncClientError
 
 try:
-    synced = sync(request)
-except RunError as exc:
-    error_data = exc.model_dump()
+    configurations = client.list_configs()
+except ConfigsAPIError as exc:
+    print(exc.status, exc.code, exc.family, exc.reason)
+except SyncClientError:
+    raise
 ```
 
-Result serialization and public error messages redact collected credential-bearing values.
-The sanitized exception cause chain prevents those values from reappearing in a rendered
-stack trace. Credentials remain process configuration; do not put them in request fields.
-
-Write-capable operations use one bounded lock per synchronization. A confirmed `sync` that
-cannot acquire the lock within 60 seconds raises `RunExecutionError` with `stage="lock"`.
-Any run identifier mentioned in that message comes from the latest sidecar still marked
-running; it is diagnostic context and may be stale, not proof that the named run owns the
-lock.
-
-## Lifecycle logs
-
-Each operation emits standard-library `logging` records at lifecycle boundaries. Records
-carry `api_version`, `run_id`, `operation`, `stage`, and `outcome` as structured attributes.
-Use `LifecycleEvent.model_validate(record.__dict__)` to read them. Its `stage` and `outcome`
-fields accept values introduced by future versions.
+Exceptions contain fixed client-owned text. Valid API refusals retain only their documented
+machine fields. Raw response bodies, response headers, bearer values, and HTTPX exception chains
+do not cross the client boundary.

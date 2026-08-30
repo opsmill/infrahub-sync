@@ -35,7 +35,7 @@ from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.managed import flow as managed_flow
 from infrahub_sync.managed.app import create_app
 from infrahub_sync.managed.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
-from infrahub_sync.managed.models import CreateRunRequest, PlanResource, PublicRunResource
+from infrahub_sync.managed.models import CreateRunRequest, PlanResource, PublicRunResource, public_run_resource
 from infrahub_sync.managed.orchestration import (
     CancellationResult,
     Observation,
@@ -937,10 +937,10 @@ def test_run_resource_exposes_liveness_without_private_worker_or_receipt_ids(
     assert summary["terminal_outcome"] is None
 
 
-def test_public_run_resource_preserves_the_product_run_contract(
+def test_public_run_resource_is_a_standalone_projection_of_the_product_run_contract(
     managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
 ) -> None:
-    """Only the nested execution-link projection may differ from ProductRun."""
+    """The server copies the store record into a neutral wire model."""
     client, _projection, _orchestration = managed
     product_run = ProductRun(
         run_id="public-contract-run",
@@ -949,18 +949,13 @@ def test_public_run_resource_preserves_the_product_run_contract(
         started_at=datetime(2026, 8, 29, 12, tzinfo=timezone.utc),
         phase="accepted",
     )
-    public_run = PublicRunResource.from_product_run(product_run)
+    public_run = public_run_resource(product_run)
     projected_field = "prefect_executions"
     product_fields = set(ProductRun.model_fields)
-    inherited_fields = product_fields - {projected_field}
 
-    assert issubclass(PublicRunResource, ProductRun)
-    assert set(PublicRunResource.__annotations__) == {projected_field}
+    assert not issubclass(PublicRunResource, ProductRun)
     assert set(PublicRunResource.model_fields) == product_fields
     assert public_run.model_dump(exclude={projected_field}) == product_run.model_dump(exclude={projected_field})
-    assert {field_name: PublicRunResource.model_fields[field_name].asdict() for field_name in inherited_fields} == {
-        field_name: ProductRun.model_fields[field_name].asdict() for field_name in inherited_fields
-    }
 
     openapi = client.get("/openapi.json").json()
     public_schema = openapi["components"]["schemas"]["PublicRunResource"]
@@ -968,9 +963,6 @@ def test_public_run_resource_preserves_the_product_run_contract(
     product_app.add_api_route("/product-run", lambda: product_run, response_model=ProductRun)
     product_schema = product_app.openapi()["components"]["schemas"]["ProductRun"]
     assert set(public_schema["properties"]) == product_fields
-    assert {field_name: public_schema["properties"][field_name] for field_name in inherited_fields} == {
-        field_name: product_schema["properties"][field_name] for field_name in inherited_fields
-    }
     assert set(public_schema.get("required", ())) - {projected_field} == set(product_schema.get("required", ())) - {
         projected_field
     }
