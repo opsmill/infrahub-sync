@@ -64,6 +64,7 @@ _LIMIT_ARG = "limit"
 _REQUEST_ARG = "request"
 _IDEMPOTENCY_KEY_ARG = "idempotency_key"
 _GET_ARTIFACT = "get_artifact"
+_CLOSE = "close"
 _WAIT_FOR_RUN = "wait_for_run"
 _POLL_INTERVAL_ARG = "poll_interval"
 
@@ -123,7 +124,10 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         return str(url).rstrip("/")
 
     def close(self) -> None:
-        self._http.close()
+        try:
+            self._http.close()
+        except Exception:  # noqa: BLE001 - no injected transport exception crosses the public boundary.
+            raise TransportError(_CLOSE) from None
 
     def __enter__(self) -> Self:
         return self
@@ -146,8 +150,11 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             raise self._compatibility_error(response) from None
 
     def get_status(self) -> ServiceStatusResource:
-        response = self._send("get_status", "GET", "/status", authenticated=False)
-        return self._success(response, "get_status", ServiceStatusResource, {200})
+        operation = "get_status"
+        response = self._send(operation, "GET", "/status", authenticated=False)
+        if response.status_code != 200:
+            raise ProtocolError(operation, response.status_code)
+        return self._success(response, operation, ServiceStatusResource, {200})
 
     def register_config(self, request: ConfigMutationRequest, idempotency_key: str) -> RegisteredConfigurationResource:
         return self._request_model(

@@ -8,6 +8,7 @@ from hashlib import sha256
 
 import httpx
 import pytest
+from typing_extensions import override
 
 from infrahub_sync.client import (
     APIError,
@@ -314,6 +315,25 @@ def test_response_failures_are_typed_and_secret_safe(response: httpx.Response, e
     assert raised.value.__cause__ is None
 
 
+def test_status_accepts_only_its_declared_success_status() -> None:
+    response = httpx.Response(
+        503,
+        json={
+            "error": {
+                "code": "unavailable",
+                "message": "secret",
+                "status": 503,
+                "run_id": None,
+                "mutation_id": None,
+            }
+        },
+    )
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(lambda _request: response))
+
+    with pytest.raises(ProtocolError):
+        client.get_status()
+
+
 @pytest.mark.parametrize(
     ("failure", "error_type"),
     [(httpx.ReadTimeout("secret"), ClientTimeoutError), (httpx.ConnectError("secret"), TransportError)],
@@ -326,6 +346,25 @@ def test_httpx_failures_do_not_cross_the_boundary(failure: Exception, error_type
     with pytest.raises(error_type) as raised:
         client.get_version()
     assert "secret" not in str(raised.value)
+    assert raised.value.__cause__ is None
+
+
+def test_close_failure_does_not_cross_the_boundary() -> None:
+    class ClosingTransport(httpx.BaseTransport):
+        @override
+        def handle_request(self, request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=_version(), request=request)
+
+        @override
+        def close(self) -> None:
+            failure_message = "secret"
+            raise RuntimeError(failure_message)
+
+    client = SyncClient("https://example.test", TOKEN, transport=ClosingTransport())
+
+    with pytest.raises(TransportError) as raised:
+        client.close()
+    assert raised.value.operation == "close"
     assert raised.value.__cause__ is None
 
 
