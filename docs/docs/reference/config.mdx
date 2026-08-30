@@ -5,8 +5,11 @@ title: Sync instance configuration
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-The configuration file allows you to define the resources needs for the sync.
-The file should be formatted as a Yaml file, have the filename `config.yml`. During the generation phase, the Sync adapters, and models will be generated in the same folder.
+A configuration package defines the source, destination, and resources for a sync.
+Write the package as YAML or JSON and register it with `infrahub-sync configs register`.
+The service worker loads installed adapters and builds runtime models from the registered
+package. Run commands select the package by the immutable configuration ID and registry
+version returned during registration.
 
 The following settings can be defined:
 

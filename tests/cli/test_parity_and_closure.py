@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -10,6 +11,7 @@ from infrahub_sync.cli import app
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = CliRunner()
+REMOVED_COMMAND = re.compile(r"(?<![\w-])infrahub-sync\s+(?:generate|list)(?![\w-])")
 
 # One row for every CLI consumer in envelope section 12. The HTTP details stay owned by
 # tests/client/test_client.py; this matrix closes the command-to-client side of the boundary.
@@ -129,7 +131,7 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
     )
     files.extend((ROOT / "examples").rglob("*.md"))
     text = "\n".join(path.read_text(encoding="utf-8") for path in files)
-    removed = (
+    removed_options = (
         "--name",
         "--config-file",
         "--directory",
@@ -144,19 +146,50 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
         "--show-progress",
         "--allow-destination-change",
         "--from-plan",
-        "infrahub-sync list",
-        "infrahub-sync generate",
     )
 
-    assert not [token for token in removed if token in text]
+    assert not [token for token in removed_options if token in text]
 
     source_files = []
     for pattern in ("*.yaml", "*.yml", "*.json", "*.py"):
         source_files.extend((ROOT / "examples").rglob(pattern))
     source_text = "\n".join(path.read_text(encoding="utf-8") for path in source_files)
-    source_removed = (*removed[:-2], "uv run infrahub-sync list", "uv run infrahub-sync generate")
 
-    assert not [token for token in source_removed if token in source_text]
+    assert not [token for token in removed_options if token in source_text]
+
+
+def test_active_sources_do_not_teach_removed_commands() -> None:
+    files = [ROOT / "README.md", ROOT / "tests/test_generated_examples.py"]
+    files.extend(
+        path
+        for path in (ROOT / "docs/docs").rglob("*")
+        if path.suffix in {".md", ".mdx"} and "release-notes" not in path.relative_to(ROOT).parts
+    )
+    files.extend(
+        path
+        for path in (ROOT / "examples").rglob("*")
+        if path.suffix in {".json", ".md", ".mdx", ".py", ".yaml", ".yml"}
+    )
+    files.extend((ROOT / "infrahub_sync/generator/templates").glob("*.j2"))
+
+    offenders = {
+        str(path.relative_to(ROOT)): match.group(0)
+        for path in files
+        if (match := REMOVED_COMMAND.search(path.read_text(encoding="utf-8"))) is not None
+    }
+
+    assert offenders == {}
+
+
+def test_configuration_docs_describe_registered_worker_execution() -> None:
+    config = (ROOT / "docs/docs/reference/config.mdx").read_text(encoding="utf-8")
+    migration = (ROOT / "docs/docs/migrating-from-netbox-or-nautobot.mdx").read_text(encoding="utf-8")
+
+    assert "register it with `infrahub-sync configs register`" in config
+    assert "service worker" in config
+    assert "generated in the same folder" not in config
+    assert "registers the `from-netbox` configuration package" in migration
+    assert "generates the `from-netbox` sync code" not in migration
 
 
 def test_netbox_tutorial_starts_and_authenticates_the_service_boundary() -> None:

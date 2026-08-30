@@ -17,9 +17,7 @@ except Exception:  # noqa: BLE001 -- generated adapters need a safe import fallb
 
 
 # -------------------------------------------------------
-# AUTO-GENERATED FILE, DO NOT MODIFY
-#  This file has been generated with the command `infrahub-sync generate`
-#  All modifications will be lost the next time you reexecute this command
+# Generated file - do not edit.
 # -------------------------------------------------------
 class _GeneratedModelBase(_ModelBaseClass):
     if "local_id" not in getattr(_ModelBaseClass, "model_fields", {}):

@@ -29,11 +29,11 @@ The Infrahub schema does not have to mirror the source system one-to-one. Migrat
 
 For a concrete NetBox starting point, follow the
 [NetBox demo tutorial](./tutorials/netbox-demo-to-infrahub.mdx). It provisions a
-fresh Infrahub instance, loads the matching schema-library revision, creates a
-current NetBox demo token, installs the adapter dependency, and generates the
-`from-netbox` sync code. Use `examples/nautobot_to_infrahub/` as a configuration
-reference for Nautobot, and replace its model and field names with the equivalents
-in your Infrahub schema.
+fresh Infrahub instance, loads the matching schema-library revision, configures the
+Sync API and service worker, creates a current NetBox demo token, installs the adapter
+dependency, and registers the `from-netbox` configuration package. Use
+`examples/nautobot_to_infrahub/` as a configuration reference for Nautobot, and replace
+its model and field names with the equivalents in your Infrahub schema.
 
 ## Phase 2 — Build the sync project
 
