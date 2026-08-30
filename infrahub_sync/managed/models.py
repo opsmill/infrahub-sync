@@ -8,7 +8,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from infrahub_sync.product_store import (  # noqa: TC001 - Pydantic resolves at runtime.
+from infrahub_sync.product_store import (
     ArtifactReference,
     PrefectExecutionLink,
     ProductRun,
@@ -118,24 +118,9 @@ class PublicExecutionLink(_StrictModel):
         )
 
 
-class PublicRunResource(_StrictModel):
+class PublicRunResource(ProductRun):
     """Public product-run fields with legacy-safe execution correlations."""
 
-    run_id: str
-    operation: str
-    configuration_reference: str
-    config_id: str | None
-    registry_version: int | None
-    package_checksum: str | None
-    actor: str | None
-    audit_links: tuple[str, ...]
-    started_at: datetime
-    finished_at: datetime | None
-    phase: str
-    outcome: str | None
-    summary: dict[str, Any]
-    results: dict[str, Any]
-    artifact_refs: tuple[ArtifactReference, ...]
     prefect_executions: tuple[PublicExecutionLink, ...] = ()
 
     @classmethod
