@@ -463,6 +463,46 @@ def test_pool_parsing_is_value_free_and_heartbeat_freshness_includes_equality() 
     assert invalid == PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
 
 
+@pytest.mark.parametrize(
+    ("interval", "expected_state"),
+    [
+        (105_179_299_199, "available"),
+        (105_179_299_200, "unavailable"),
+        (10**10_000, "unavailable"),
+    ],
+    ids=("maximum-usable", "one-past-maximum", "oversized-integer"),
+)
+def test_pool_status_bounds_heartbeat_interval_to_the_usable_datetime_age(interval: int, expected_state: str) -> None:
+    """Three heartbeat intervals must fit within the representable datetime age."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+
+    class _PoolClient:
+        async def read_workers_for_work_pool(self, _pool: str):  # noqa: PLR6301
+            return [
+                SimpleNamespace(
+                    id=uuid4(),
+                    status="ONLINE",
+                    last_heartbeat_time=now,
+                    heartbeat_interval_seconds=interval,
+                )
+            ]
+
+        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str):  # noqa: PLR6301
+            return []
+
+    from infrahub_sync.managed.orchestration import PrefectOrchestration
+
+    snapshot = asyncio.run(PrefectOrchestration(cast("RemoteExecutionClient", _PoolClient())).pool_status("pool", now))
+
+    if expected_state == "available":
+        assert snapshot.detail_available
+        assert timedelta(seconds=3 * interval) <= datetime.max.replace(tzinfo=timezone.utc) - datetime.min.replace(
+            tzinfo=timezone.utc
+        )
+    else:
+        assert snapshot == PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
+
+
 @pytest.mark.parametrize("status", ["ONLINE", "online", "OFFLINE", "offline"])
 def test_pool_status_accepts_only_the_pinned_worker_status_vocabulary(status: str) -> None:
     """Exact string doubles model only values shipped by Prefect's WorkerStatus enum."""
@@ -619,6 +659,7 @@ def test_duplicate_worker_uuid_snapshot_is_unavailable_and_cannot_drive_reconcil
         ("heartbeat_interval_seconds", -1.0),
         ("heartbeat_interval_seconds", 10),
         ("heartbeat_interval_seconds", float("nan")),
+        ("heartbeat_interval_seconds", 105_179_299_200.0),
     ],
     ids=(
         "invalid-uuid",
@@ -630,6 +671,7 @@ def test_duplicate_worker_uuid_snapshot_is_unavailable_and_cannot_drive_reconcil
         "negative-interval",
         "integer-interval",
         "nonfinite-interval",
+        "oversized-interval",
     ),
 )
 def test_pool_status_refuses_every_malformed_nested_worker_field(field: str, value: object) -> None:

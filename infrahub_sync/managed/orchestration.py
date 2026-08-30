@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from math import isfinite
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -28,6 +28,9 @@ from prefect.states import Cancelling
 
 MANAGED_FLOW_NAME = "infrahub-sync-managed"
 MANAGED_DEPLOYMENT_NAME = "run"
+# Freshness uses three intervals; cap it at the largest age two datetimes can express.
+_MAX_DATETIME_AGE = datetime.max.replace(tzinfo=timezone.utc) - datetime.min.replace(tzinfo=timezone.utc)
+_MAX_HEARTBEAT_INTERVAL_SECONDS = (_MAX_DATETIME_AGE.days * 24 * 60 * 60 + _MAX_DATETIME_AGE.seconds) // 3
 # The entrypoint is the absolute path of the flow file in THIS installation,
 # resolved at import time. Without it the applied deployment carries no
 # entrypoint at all (the deployment library invents no defaults), and a Prefect
@@ -218,6 +221,7 @@ def _validate_pool_worker(worker: PoolWorker) -> None:
         type(interval) is not float  # pylint: disable=unidiomatic-typecheck
         or interval <= 0
         or not isfinite(interval)
+        or interval > _MAX_HEARTBEAT_INTERVAL_SECONDS
     ):
         raise ValueError
 
@@ -281,9 +285,8 @@ def _pool_worker(worker: Any) -> PoolWorker:
         raise ValueError
     if (
         type(interval) is not int  # pylint: disable=unidiomatic-typecheck
-        or isinstance(interval, bool)
         or interval <= 0
-        or not isfinite(interval)
+        or interval > _MAX_HEARTBEAT_INTERVAL_SECONDS
     ):
         raise ValueError
     return PoolWorker(
