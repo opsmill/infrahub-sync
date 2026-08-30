@@ -158,6 +158,7 @@ class Potenda:
         self._counts: dict[str, int] = {}
         self._last_plan_action_counts: dict[str, int] | None = None
         self._last_applied_plan_action_counts: dict[str, int] | None = None
+        self.configuration_binding = getattr(config, "_configuration_binding", None)
         self._did_full_extract: bool = False
         # Per-side extraction mode, recorded alongside the OR-accumulated
         # `_did_full_extract` rather than in place of it. FR-015 derives deletes only
@@ -556,6 +557,7 @@ class Potenda:
             # The resolved destination identity, when the adapter captured one; `None`
             # writes the manifest shape older plans carry.
             destination_binding=getattr(self.destination, "destination_binding", None),
+            configuration_binding=self.configuration_binding,
         )
         logger.info(
             "Plan artifact: wrote %d operation(s) to %s (deletes computed: %s)",

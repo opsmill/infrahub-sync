@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import ipaddress
 import logging
-import os
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -28,6 +27,7 @@ from infrahub_sync import (
     SyncConfig,
 )
 from infrahub_sync.cache.cursors import CursorState, CursorTier
+from infrahub_sync.configuration.credentials import select_runtime_credential
 from infrahub_sync.generator import has_field
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.errors import (
@@ -53,7 +53,7 @@ def resolved_endpoint(settings: Mapping[str, Any], branch: str | None) -> tuple[
     the parsed YAML only, and the repo's own guidance keeps credentials and addresses in
     environment variables, exactly where that digest is blind.
     """
-    url = os.environ.get("INFRAHUB_ADDRESS") or os.environ.get("INFRAHUB_URL") or settings.get("url")
+    url = select_runtime_credential(settings, "url", ("INFRAHUB_ADDRESS", "INFRAHUB_URL"))
     return url, settings.get("branch") or branch
 
 
@@ -800,7 +800,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         settings = adapter.settings or {}
         infrahub_url, infrahub_branch = resolved_endpoint(settings, branch)
-        infrahub_token = os.environ.get("INFRAHUB_API_TOKEN") or settings.get("token")
+        infrahub_token = select_runtime_credential(settings, "token", ("INFRAHUB_API_TOKEN",))
         verify_ssl = settings.get("verify_ssl")
 
         if not infrahub_url or not infrahub_token:

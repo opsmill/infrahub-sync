@@ -40,6 +40,7 @@ from infrahub_sync.plan.review import SavedPlan, read_saved_plan, resolve_run_di
 from infrahub_sync.plan.writer import write_plan_artifact
 from infrahub_sync.product_store import ProductProjection, ProductRun, local_product_projection
 from infrahub_sync.product_store.standalone import execute_standalone
+from tests.configuration.validation_packages import package, package_data
 from tests.conformance.interface_adapters import (
     cli_product_envelope,
     managed_product_envelope,
@@ -96,7 +97,7 @@ def _instance(tmp_path: Path) -> SyncInstance:
     )
 
 
-def _saved(run_id: str, instance: SyncInstance) -> SavedPlan:
+def _saved(run_id: str, instance: SyncInstance, binding: tuple[str, int, str] | None = None) -> SavedPlan:
     identity = {"name": "edge-1"}
     operation = PlannedOperation(
         operation_id=operation_id("create", "DcimDevice", identity),
@@ -116,11 +117,21 @@ def _saved(run_id: str, instance: SyncInstance) -> SavedPlan:
             operations_count=1,
             delete_operations_computed=True,
             plan_checksum="a" * 64,
+            config_id=None if binding is None else binding[0],
+            registry_version=None if binding is None else binding[1],
+            package_checksum=None if binding is None else binding[2],
         ),
         operations=[operation],
         checksum_ok=True,
         verification_notes=[],
     )
+
+
+def _register_inventory(projection: ProductProjection) -> tuple[str, int, str]:
+    declared = package_data()
+    declared["configuration"]["name"] = "inventory"
+    registered = projection.create_configuration(package(declared))
+    return registered.config_id, registered.registry_version, registered.package_checksum
 
 
 def _result(run_id: str, operation: Operation, tmp_path: Path) -> RunResult:
@@ -281,11 +292,16 @@ def _run_managed_worker(
     root = (tmp_path / "managed-products").resolve()
     destination = _DestinationProbe()
     projection = local_product_projection(root)
+    binding = _register_inventory(projection)
+    saved = _saved(run_id, instance, binding)
     projection.create_run(
         ProductRun(
             run_id=run_id,
             operation="plan" if operation == "apply" else operation,
-            configuration_reference=resolve_config_version(instance),
+            configuration_reference=f"{binding[0]}@{binding[1]}",
+            config_id=binding[0],
+            registry_version=binding[1],
+            package_checksum=binding[2],
             started_at=datetime.now(timezone.utc),
             phase="accepted",
             summary={"sync_name": "inventory"},
@@ -293,10 +309,11 @@ def _run_managed_worker(
     )
     monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("db006-matrix"), False))
-    monkeypatch.setattr(managed_flow, "resolve_sync_instance", lambda *_args, **_kwargs: instance)
+    monkeypatch.setattr(managed_flow, "resolve_runtime_instance", lambda *_args, **_kwargs: instance)
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "bounded_run_lock", lambda *_args, **_kwargs: nullcontext())
     monkeypatch.setattr(managed_flow, "_plan", lambda *_args, **_kwargs: saved)
+    monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
 
     def core(_instance: object, *, operation: Operation, **_kwargs: object) -> SavedPlan | RunResult:
         if operation == "verify":
@@ -307,21 +324,19 @@ def _run_managed_worker(
 
     monkeypatch.setattr(managed_flow, "execute_run", core)
     if operation == "apply":
-        managed_sync_run.fn(run_id, "inventory", "plan", resolve_config_version(instance))
+        managed_sync_run.fn(run_id, "plan", *binding)
         worker_result = managed_sync_run.fn(
             run_id,
-            "inventory",
             "apply",
-            resolve_config_version(instance),
+            *binding,
             expected_checksum=saved.manifest.plan_checksum,
             confirm_writes=True,
         )
     else:
         worker_result = managed_sync_run.fn(
             run_id,
-            "inventory",
             operation,
-            resolve_config_version(instance),
+            *binding,
             confirm_writes=operation == "sync",
         )
     record, artifact = _product_parts(projection, run_id)
@@ -347,6 +362,13 @@ def test_executed_three_interface_product_envelopes_are_equal(
         python = _run_python(scoped, tmp_path / "python", operation, run_id)
     with monkeypatch.context() as scoped:
         managed = _run_managed_worker(scoped, tmp_path / "managed", operation, run_id)
+    managed_record = cast("dict[str, object]", managed.product_record)
+    assert all(managed_record[key] is not None for key in ("config_id", "registry_version", "package_checksum"))
+    # Standalone interfaces remain legacy by contract. Compare their common product
+    # semantics after separately proving the managed-only durable binding.
+    managed_record["configuration_reference"] = cli.product_record["configuration_reference"]
+    for key in ("config_id", "registry_version", "package_checksum"):
+        managed_record[key] = None
     observations = [cli, python, managed]
     assert_equivalent(observations)
 
@@ -438,9 +460,9 @@ def test_python_and_managed_verify_common_fields_and_cli_review_consume_the_same
         instance = _instance(root)
         saved = _saved(run_id, instance)
         projection = local_product_projection(root / "products")
-        _seed_plan(instance, saved, root / "products")
         with monkeypatch.context() as scoped:
             if surface == "python":
+                _seed_plan(instance, saved, root / "products")
                 scoped.setattr(
                     api_operations,
                     "resolve_sync_instance",
@@ -465,6 +487,22 @@ def test_python_and_managed_verify_common_fields_and_cli_review_consume_the_same
                     )
                 )
             else:
+                binding = _register_inventory(projection)
+                saved = _saved(run_id, instance, binding)
+                projection.create_run(
+                    ProductRun(
+                        run_id=run_id,
+                        operation="plan",
+                        configuration_reference=f"{binding[0]}@{binding[1]}",
+                        config_id=binding[0],
+                        registry_version=binding[1],
+                        package_checksum=binding[2],
+                        started_at=datetime.now(timezone.utc),
+                        phase="accepted",
+                        summary={"sync_name": "inventory"},
+                    )
+                )
+                managed_flow._publish_plan(projection, run_id, saved, ())
                 scoped.setattr(
                     managed_flow,
                     "_runtime",
@@ -473,7 +511,7 @@ def test_python_and_managed_verify_common_fields_and_cli_review_consume_the_same
                 scoped.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("db006-matrix"), False))
                 scoped.setattr(
                     managed_flow,
-                    "resolve_sync_instance",
+                    "resolve_runtime_instance",
                     lambda *_args, _instance=instance, **_kwargs: _instance,
                 )
                 scoped.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
@@ -484,9 +522,8 @@ def test_python_and_managed_verify_common_fields_and_cli_review_consume_the_same
                 )
                 worker_result = managed_sync_run.fn(
                     run_id,
-                    "inventory",
                     "verify",
-                    resolve_config_version(instance),
+                    *binding,
                 )
         record, artifact = _product_parts(projection, run_id)
         if surface == "python":
@@ -627,9 +664,10 @@ class _Orchestration:
 def _execute_submission(parameters: Mapping[str, object]) -> dict[str, object]:
     return managed_sync_run.fn(
         run_id=cast("str", parameters["run_id"]),
-        sync_name=cast("str", parameters["sync_name"]),
         stage=cast('Literal["plan", "verify", "apply", "sync"]', parameters["stage"]),
-        configuration_reference=cast("str", parameters["configuration_reference"]),
+        config_id=cast("str", parameters["config_id"]),
+        registry_version=cast("int", parameters["registry_version"]),
+        package_checksum=cast("str", parameters["package_checksum"]),
         branch=cast("str | None", parameters["branch"]),
         expected_checksum=cast("str | None", parameters["expected_checksum"]),
         confirm_writes=cast("bool", parameters["confirm_writes"]),
@@ -644,6 +682,7 @@ def test_managed_http_prefect_parameters_and_all_worker_operations_are_executed_
     monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": AUTH_TOKEN}}))
     resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection((tmp_path / "products").resolve())
+    binding = _register_inventory(projection)
     orchestration = _Orchestration()
     client = TestClient(
         create_app(ManagedRunService(projection, orchestration, secrets=resolver.secret_values), resolver)
@@ -651,7 +690,6 @@ def test_managed_http_prefect_parameters_and_all_worker_operations_are_executed_
     instance = _instance(tmp_path)
     plan_destination = _DestinationProbe()
     sync_destination = _DestinationProbe()
-    configuration_reference = resolve_config_version(instance)
     headers = {"Authorization": f"Bearer {AUTH_TOKEN}"}
 
     with caplog.at_level(logging.INFO):
@@ -659,21 +697,22 @@ def test_managed_http_prefect_parameters_and_all_worker_operations_are_executed_
             "/runs",
             headers={**headers, "Idempotency-Key": "matrix-plan"},
             json={
-                "sync_name": "inventory",
                 "operation": "plan",
-                "configuration_reference": configuration_reference,
+                "config_id": binding[0],
+                "registry_version": binding[1],
                 "reason": "matrix plan",
             },
         )
         assert planned.status_code == 202
         plan_parameters = orchestration.submissions[-1]
         plan_run_id = str(plan_parameters["run_id"])
-        saved = _saved(plan_run_id, instance)
+        saved = _saved(plan_run_id, instance, binding)
         monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
         monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("db006-http-matrix"), False))
-        monkeypatch.setattr(managed_flow, "resolve_sync_instance", lambda *_args, **_kwargs: instance)
+        monkeypatch.setattr(managed_flow, "resolve_runtime_instance", lambda *_args, **_kwargs: instance)
         monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: (SENTINEL,))
         monkeypatch.setattr(managed_flow, "_plan", lambda *_args, **_kwargs: saved)
+        monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
 
         def plan_core(*_args: object, operation: Operation, **_kwargs: object) -> SavedPlan | RunResult:
             if operation == "verify":
@@ -721,9 +760,9 @@ def test_managed_http_prefect_parameters_and_all_worker_operations_are_executed_
             "/runs",
             headers={**headers, "Idempotency-Key": "matrix-sync"},
             json={
-                "sync_name": "inventory",
                 "operation": "sync",
-                "configuration_reference": configuration_reference,
+                "config_id": binding[0],
+                "registry_version": binding[1],
                 "reason": "matrix sync",
                 "confirm_writes": True,
             },
@@ -731,7 +770,7 @@ def test_managed_http_prefect_parameters_and_all_worker_operations_are_executed_
         assert synced.status_code == 202
         sync_parameters = orchestration.submissions[-1]
         sync_run_id = str(sync_parameters["run_id"])
-        sync_saved = _saved(sync_run_id, instance)
+        sync_saved = _saved(sync_run_id, instance, binding)
         monkeypatch.setattr(managed_flow, "_plan", lambda *_args, **_kwargs: sync_saved)
 
         def sync_core(*_args: object, operation: Operation, **_kwargs: object) -> SavedPlan | RunResult:

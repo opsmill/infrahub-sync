@@ -177,6 +177,7 @@ def write_plan_artifact(
     deletes_computed: bool,
     operations: Sequence[PlannedOperation],
     destination_binding: DestinationBindingRecord | None = None,
+    configuration_binding: tuple[str, int, str] | None = None,
 ) -> PlanManifest:
     """Write `<run_dir>/plan/` and return the manifest that was written.
 
@@ -216,6 +217,12 @@ def write_plan_artifact(
     if destination_binding is not None:
         # Before the checksum below, so the recorded binding is covered by it.
         body["destination_binding"] = destination_binding.model_dump()
+    if configuration_binding is not None:
+        body.update(
+            config_id=configuration_binding[0],
+            registry_version=configuration_binding[1],
+            package_checksum=configuration_binding[2],
+        )
     body["plan_checksum"] = compute_plan_checksum(body, operations_bytes)
     manifest = PlanManifest.model_validate(body)
 

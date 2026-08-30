@@ -147,6 +147,8 @@ class SyncConfig(pydantic.BaseModel):
 
 class SyncInstance(SyncConfig):
     directory: str
+    # Worker-only state, deliberately absent from serialized configuration data.
+    _configuration_binding: tuple[str, int, str] | None = pydantic.PrivateAttr(default=None)
 
 
 def resolve_effective_diffsync_flags(

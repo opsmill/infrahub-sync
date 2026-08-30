@@ -10,6 +10,7 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
+from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
 from infrahub_sync.execution import collect_secret_values, redact, sanitize_exception_chain
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
@@ -85,10 +86,10 @@ class ManagedRunService:
             principal.actor,
             request.operation,
             request.reason,
-            sync_name=request.sync_name,
-            configuration_reference=request.configuration_reference,
+            config_id=request.config_id,
             branch=request.branch,
         )
+        sync_name, package_checksum = self._registered_configuration(request)
         if request.operation == "sync" and not request.confirm_writes:
             self._audit(
                 None,
@@ -114,11 +115,14 @@ class ManagedRunService:
         run = ProductRun(
             run_id=run_id,
             operation=request.operation,
-            configuration_reference=request.configuration_reference,
+            configuration_reference=f"{request.config_id}@{request.registry_version}",
+            config_id=request.config_id,
+            registry_version=request.registry_version,
+            package_checksum=package_checksum,
             actor=principal.actor,
             started_at=now,
             phase="accepted",
-            summary={"sync_name": request.sync_name},
+            summary={"sync_name": sync_name},
         )
         reserved, _ = self._projection.reserve_mutation(
             receipt,
@@ -138,14 +142,32 @@ class ManagedRunService:
             return self._stored_response(reserved)
         parameters: dict[str, object] = {
             "run_id": reserved.run_id,
-            "sync_name": request.sync_name,
             "stage": request.operation,
-            "configuration_reference": request.configuration_reference,
+            "config_id": request.config_id,
+            "registry_version": request.registry_version,
+            "package_checksum": package_checksum,
             "branch": request.branch,
             "expected_checksum": None,
             "confirm_writes": request.confirm_writes,
         }
         return await self._submit(reserved, parameters, principal, request.reason)
+
+    def _registered_configuration(self, request: CreateRunRequest) -> tuple[str, str]:
+        """Read the immutable registered package before allocating any run-side state."""
+        stored = self._projection.lookup_configuration_version(request.config_id, request.registry_version).value
+        if stored is None:
+            raise self._error(
+                404, "configuration-version-not-found", "the requested configuration version does not exist"
+            )
+        try:
+            package = parse_configuration_package(stored.declared_content)
+        except ConfigurationPackageParseError:
+            raise self._error(
+                503, "configuration-version-invalid", "the registered configuration version is invalid"
+            ) from None
+        if package.checksum() != stored.package_checksum:
+            raise self._error(503, "configuration-version-invalid", "the registered configuration version is invalid")
+        return package.configuration.name, stored.package_checksum
 
     async def verify_run(
         self, run_id: str, request: VerifyRunRequest, principal: Principal, idempotency_key: str
@@ -658,15 +680,17 @@ class ManagedRunService:
         expected_checksum: str | None = None,
         confirm_writes: bool = False,
     ) -> dict[str, object]:
-        return {
+        parameters: dict[str, object] = {
             "run_id": run.run_id,
-            "sync_name": str(run.summary.get("sync_name", run.configuration_reference)),
             "stage": stage,
-            "configuration_reference": run.configuration_reference,
             "branch": branch,
             "expected_checksum": expected_checksum,
             "confirm_writes": confirm_writes,
         }
+        binding = run.configuration_binding
+        if binding is not None:
+            parameters.update(config_id=binding[0], registry_version=binding[1], package_checksum=binding[2])
+        return parameters
 
     @staticmethod
     def _stored_response(receipt: MutationReceipt) -> tuple[int, dict[str, Any]]:

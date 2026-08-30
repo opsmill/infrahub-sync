@@ -175,6 +175,28 @@ def _write(
     )
 
 
+def test_registered_configuration_binding_is_written_and_covered_by_checksum(tmp_path: Path) -> None:
+    binding = ("config-001", 1, "a" * 64)
+    manifest = write_plan_artifact(
+        run_dir=tmp_path / RUN_ID,
+        run_id=RUN_ID,
+        config_version=CONFIG_VERSION,
+        source_snapshot=_snapshot(),
+        deletes_computed=True,
+        operations=[_tag("registered")],
+        configuration_binding=binding,
+    )
+
+    assert manifest.configuration_binding == binding
+    raw = json.loads(_manifest_path(tmp_path / RUN_ID).read_text(encoding="utf-8"))
+    assert raw["config_id"] == binding[0]
+    assert raw["registry_version"] == binding[1]
+    assert raw["package_checksum"] == binding[2]
+    assert manifest.plan_checksum != compute_plan_checksum(
+        {**raw, "package_checksum": "b" * 64}, _operations_path(tmp_path / RUN_ID).read_bytes()
+    )
+
+
 def _plan_dir(run_dir: Path) -> Path:
     return run_dir / PLAN_DIR_NAME
 

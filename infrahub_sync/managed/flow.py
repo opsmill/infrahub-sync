@@ -15,6 +15,8 @@ from typing import Any, Literal
 from prefect import flow, get_run_logger
 from prefect.exceptions import MissingContextError
 
+from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
+from infrahub_sync.configuration.runtime import resolve_runtime_instance
 from infrahub_sync.execution import (
     ACTION_KEYS,
     RunResult,
@@ -32,8 +34,11 @@ from infrahub_sync.orchestration.flow import (
     RunLogger,
     RunLoggerBridge,
 )
+from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.models import ApplyRecord
-from infrahub_sync.plan.review import SavedPlan
+from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes
+from infrahub_sync.plan.review import SavedPlan, resolve_run_directory
+from infrahub_sync.plan.verify import verify_plan
 from infrahub_sync.product_store import ProductProjection, local_product_projection
 
 from ._settings import PRODUCT_CACHE_ENV
@@ -44,6 +49,14 @@ from .service import PLAN_ARTIFACT_ID
 CONFIG_DIR_ENV = "INFRAHUB_SYNC_CONFIG_DIRECTORY"
 RUN_CACHE_ENV = "INFRAHUB_SYNC_CACHE_DIR"
 logger = logging.getLogger(__name__)
+_REGISTERED_VERSION_UNAVAILABLE = "registered configuration version is unavailable"
+_REGISTERED_VERSION_INVALID = "registered configuration version is invalid"
+_REGISTERED_CHECKSUM_MISMATCH = "registered configuration checksum does not match run binding"
+_REGISTERED_PLAN_BINDING_MISMATCH = "registered saved plan binding does not match run binding"
+_REGISTERED_PLAN_VERIFICATION_FAILED = "registered saved plan verification failed"
+_WORKER_BINDING_PARAMETERS_INVALID = "managed worker configuration binding parameters must be all absent or all present"
+_LEGACY_RUN_IDENTITY_UNAVAILABLE = "legacy managed run identity is unavailable"
+_LEGACY_RUN_CONFIGURATION_MISMATCH = "legacy managed run configuration version does not match durable run"
 
 
 def _run_logger() -> tuple[RunLogger, bool]:
@@ -153,11 +166,71 @@ def _plan(
     return saved
 
 
+def _verify_registered_apply(*, instance: Any, run_id: str, binding: tuple[str, int, str] | None) -> None:
+    """Verify an artifact before the apply path can construct a destination."""
+    artifact = read_plan_artifact_bytes(resolve_run_directory(instance.name, run_id))
+    if verify_plan(artifact=artifact, run_id=run_id, config_version=resolve_config_version(instance)):
+        raise ValueError(_REGISTERED_PLAN_VERIFICATION_FAILED)
+    manifest_binding = parse_plan_artifact(artifact, run_id=run_id).manifest.configuration_binding
+    if manifest_binding != binding:
+        raise ValueError(_REGISTERED_PLAN_BINDING_MISMATCH)
+
+
+def _worker_binding(
+    config_id: str | None, registry_version: int | None, package_checksum: str | None
+) -> tuple[str, int, str] | None:
+    """Return the closed Prefect tuple carrier or refuse a partial carrier."""
+    values = (config_id, registry_version, package_checksum)
+    if all(value is None for value in values):
+        return None
+    if any(value is None for value in values):
+        raise ValueError(_WORKER_BINDING_PARAMETERS_INVALID)
+    assert config_id is not None
+    assert registry_version is not None
+    assert package_checksum is not None
+    return config_id, registry_version, package_checksum
+
+
+def _worker_execution_context(run_id: str, binding: tuple[str, int, str] | None) -> tuple[ProductProjection, Any, str]:
+    """Load the durable run and resolve its registered or legacy runtime."""
+    config_directory, projection = _runtime()
+    stored = projection.lookup_run(run_id)
+    if stored.value is None:
+        msg = f"API-created Sync run {run_id!r} is unavailable"
+        raise RuntimeError(msg)
+    if stored.value.configuration_binding != binding:
+        msg = "managed run binding does not match worker parameters"
+        raise ValueError(msg)
+    if binding is None:
+        sync_name = stored.value.summary.get("sync_name")
+        if not isinstance(sync_name, str) or not sync_name:
+            raise ValueError(_LEGACY_RUN_IDENTITY_UNAVAILABLE)
+        instance = resolve_sync_instance(sync_name, directory=config_directory)
+        if resolve_config_version(instance) != stored.value.configuration_reference:
+            raise ValueError(_LEGACY_RUN_CONFIGURATION_MISMATCH)
+        return projection, instance, sync_name
+
+    config_id, registry_version, package_checksum = binding
+    registered = projection.lookup_configuration_version(config_id, registry_version).value
+    if registered is None:
+        raise ValueError(_REGISTERED_VERSION_UNAVAILABLE)
+    try:
+        package = parse_configuration_package(registered.declared_content)
+    except ConfigurationPackageParseError:
+        raise ValueError(_REGISTERED_VERSION_INVALID) from None
+    if registered.package_checksum != package_checksum or package.checksum() != package_checksum:
+        raise ValueError(_REGISTERED_CHECKSUM_MISMATCH)
+    instance = resolve_runtime_instance(package, directory=config_directory)
+    instance._configuration_binding = binding
+    return projection, instance, package.configuration.name
+
+
 def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-statements
     run_id: str,
-    sync_name: str,
     stage: Literal["plan", "verify", "apply", "sync"],
-    configuration_reference: str,
+    config_id: str | None,
+    registry_version: int | None,
+    package_checksum: str | None,
     branch: str | None,
     expected_checksum: str | None,
     confirm_writes: bool,
@@ -165,18 +238,8 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     secrets: list[str],
 ) -> dict[str, Any]:
     """Resolve and execute one managed stage within the sanitized worker boundary."""
-    config_directory, projection = _runtime()
-    stored = projection.lookup_run(run_id)
-    if stored.value is None:
-        msg = f"API-created Sync run {run_id!r} is unavailable"
-        raise RuntimeError(msg)
-    if stored.value.configuration_reference != configuration_reference:
-        msg = f"configuration_reference does not match Sync run {run_id!r}"
-        raise ValueError(msg)
-    recorded_sync_name = stored.value.summary.get("sync_name")
-    if recorded_sync_name is not None and recorded_sync_name != sync_name:
-        msg = f"sync_name does not match Sync run {run_id!r}"
-        raise ValueError(msg)
+    parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
+    projection, instance, sync_name = _worker_execution_context(run_id, parameter_binding)
     if stage in ("apply", "sync") and not confirm_writes:
         msg = f"confirm_writes=true is required for managed stage={stage}"
         raise ValueError(msg)
@@ -184,7 +247,6 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         msg = "expected_checksum is required for managed stage=apply"
         raise ValueError(msg)
 
-    instance = resolve_sync_instance(sync_name, directory=config_directory)
     secrets[:] = collect_secret_values(instance)
     result: dict[str, Any]
     if stage == "plan":
@@ -218,6 +280,11 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             secrets=secrets,
         )
     elif stage == "apply":
+        _verify_registered_apply(
+            instance=instance,
+            run_id=run_id,
+            binding=parameter_binding,
+        )
         applied = execute_run(
             instance,
             operation="apply",
@@ -249,6 +316,11 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 _require_verified=True,
             )
             assert isinstance(verified, SavedPlan)
+            _verify_registered_apply(
+                instance=instance,
+                run_id=run_id,
+                binding=parameter_binding,
+            )
             applied = execute_run(
                 instance,
                 operation="apply",
@@ -338,9 +410,10 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
 @flow(name=MANAGED_FLOW_NAME)
 def managed_sync_run(  # pylint: disable=too-many-positional-arguments
     run_id: str,
-    sync_name: str,
     stage: Literal["plan", "verify", "apply", "sync"],
-    configuration_reference: str,
+    config_id: str | None = None,
+    registry_version: int | None = None,
+    package_checksum: str | None = None,
     branch: str | None = None,
     expected_checksum: str | None = None,
     confirm_writes: bool = False,
@@ -353,9 +426,10 @@ def managed_sync_run(  # pylint: disable=too-many-positional-arguments
         with _remote_log_bridge(run_logger, prefect_context=prefect_context, secrets=secrets):
             return _execute_stage(
                 run_id,
-                sync_name,
                 stage,
-                configuration_reference,
+                config_id,
+                registry_version,
+                package_checksum,
                 branch,
                 expected_checksum,
                 confirm_writes,

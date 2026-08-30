@@ -12,6 +12,8 @@ from infrahub_sync.product_store import ArtifactReference, ProductRun  # noqa: T
 ManagedStage = Literal["plan", "verify", "apply", "sync"]
 _REASON_GRAMMAR_MESSAGE = "reason must be printable and trimmed"
 _JSON_NATIVE_PACKAGE_MESSAGE = "package must be recursively exact JSON-native"
+_REGISTRY_VERSION_TYPE_MESSAGE = "registry_version must be int"
+_REGISTRY_VERSION_RANGE_MESSAGE = "registry_version must be in the registry allocatable range"
 
 
 class _StrictModel(BaseModel):
@@ -21,12 +23,21 @@ class _StrictModel(BaseModel):
 class CreateRunRequest(_StrictModel):
     """Create one managed plan or confirmed composed sync."""
 
-    sync_name: str = Field(min_length=1)
     operation: Literal["plan", "sync"] = "plan"
-    configuration_reference: str = Field(min_length=1)
+    config_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+    registry_version: int
     branch: str | None = None
     confirm_writes: bool = False
     reason: str = Field(min_length=1)
+
+    @field_validator("registry_version", mode="before")
+    @classmethod
+    def _require_exact_registry_version(cls, value: object) -> int:
+        if type(value) is not int:  # pylint: disable=unidiomatic-typecheck  # bool is not a registry version.
+            raise ValueError(_REGISTRY_VERSION_TYPE_MESSAGE)
+        if not 1 <= value <= 2**63 - 1:
+            raise ValueError(_REGISTRY_VERSION_RANGE_MESSAGE)
+        return value
 
 
 class VerifyRunRequest(_StrictModel):

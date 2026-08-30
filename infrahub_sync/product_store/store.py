@@ -192,10 +192,12 @@ _SELECT_NEXT_CONFIGURATION_VERSION = (
     "SELECT COALESCE(MAX(registry_version) + 1, 1) FROM configuration_versions WHERE config_id = ?"
 )
 
-_INSERT_PRODUCT_RUN = """INSERT INTO product_runs (run_id, operation, configuration_reference, actor, audit_links,
-started_at, finished_at, phase, outcome, summary, results) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+_INSERT_PRODUCT_RUN = """INSERT INTO product_runs (run_id, operation, configuration_reference, config_id,
+registry_version, package_checksum, actor, audit_links, started_at, finished_at, phase, outcome, summary, results)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _SELECT_PRODUCT_RUN = """SELECT run_id, operation, configuration_reference, actor, audit_links, started_at,
-finished_at, phase, outcome, summary, results FROM product_runs WHERE run_id = ?"""
+finished_at, phase, outcome, summary, results, config_id, registry_version, package_checksum
+FROM product_runs WHERE run_id = ?"""
 _SELECT_RUN_ARTIFACT_REFERENCES = """SELECT run_id, artifact_id, kind, media_type, digest, size, object_key,
 manifest_key, created_at, expires_at, published FROM artifact_refs WHERE run_id = ? AND published = 1 ORDER BY artifact_id"""
 _SELECT_ARTIFACT_REFERENCE = """SELECT run_id, artifact_id, kind, media_type, digest, size, object_key,
@@ -596,6 +598,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 run.run_id,
                 run.operation,
                 run.configuration_reference,
+                run.config_id,
+                run.registry_version,
+                run.package_checksum,
                 run.actor,
                 _json(run.audit_links),
                 run.started_at.isoformat(),
@@ -1853,6 +1858,9 @@ def _run_from_rows(
             "outcome": row[8],
             "summary": json.loads(row[9]),
             "results": json.loads(row[10]),
+            "config_id": row[11],
+            "registry_version": row[12],
+            "package_checksum": row[13],
             "artifact_refs": [_reference_from_row(item).model_dump() for item in references],
             "prefect_executions": [
                 {

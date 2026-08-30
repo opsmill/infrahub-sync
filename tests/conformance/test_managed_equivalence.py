@@ -17,8 +17,16 @@ from infrahub_sync.managed import flow as managed_flow
 from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.models import PlanManifest
 from infrahub_sync.plan.review import SavedPlan
-from infrahub_sync.product_store import ProductRun, local_product_projection
+from infrahub_sync.product_store import ProductProjection, ProductRun, local_product_projection
 from infrahub_sync.product_store.standalone import execute_standalone
+from tests.configuration.validation_packages import package, package_data
+
+
+def _register_inventory(projection: ProductProjection) -> tuple[str, int, str]:
+    declared = package_data()
+    declared["configuration"]["name"] = "inventory"
+    registered = projection.create_configuration(package(declared))
+    return registered.config_id, registered.registry_version, registered.package_checksum
 
 
 def test_managed_and_standalone_plan_product_projection_seams_match(
@@ -51,11 +59,15 @@ def test_managed_and_standalone_plan_product_projection_seams_match(
     standalone_cache = (tmp_path / "standalone").resolve()
     managed_cache = (tmp_path / "managed").resolve()
     managed_projection = local_product_projection(managed_cache)
+    binding = _register_inventory(managed_projection)
     managed_projection.create_run(
         ProductRun(
             run_id=run_id,
             operation="plan",
-            configuration_reference=configuration_reference,
+            configuration_reference=f"{binding[0]}@{binding[1]}",
+            config_id=binding[0],
+            registry_version=binding[1],
+            package_checksum=binding[2],
             started_at=datetime.now(timezone.utc),
             phase="accepted",
             summary={"sync_name": "inventory"},
@@ -73,10 +85,10 @@ def test_managed_and_standalone_plan_product_projection_seams_match(
 
     monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), managed_projection))
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-conformance"), False))
-    monkeypatch.setattr(managed_flow, "resolve_sync_instance", lambda *_args, **_kwargs: instance)
+    monkeypatch.setattr(managed_flow, "resolve_runtime_instance", lambda *_args, **_kwargs: instance)
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "_plan", lambda *_args, **_kwargs: saved)
-    managed_flow.managed_sync_run.fn(run_id, "inventory", "plan", configuration_reference)
+    managed_flow.managed_sync_run.fn(run_id, "plan", *binding)
 
     standalone_projection = local_product_projection(standalone_cache)
     standalone_record = standalone_projection.lookup_run(run_id).value
@@ -97,5 +109,11 @@ def test_managed_and_standalone_plan_product_projection_seams_match(
             reference["created_at"] = "<generated>"
         return data
 
-    assert stable_product_record(standalone_record) == stable_product_record(managed_record)
+    standalone_data = stable_product_record(standalone_record)
+    managed_data = stable_product_record(managed_record)
+    for key in ("config_id", "registry_version", "package_checksum"):
+        assert managed_data[key] is not None
+        managed_data[key] = None
+    managed_data["configuration_reference"] = configuration_reference
+    assert standalone_data == managed_data
     assert standalone_artifact == managed_artifact

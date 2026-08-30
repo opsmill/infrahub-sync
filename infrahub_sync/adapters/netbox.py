@@ -2,7 +2,6 @@ from __future__ import annotations
 
 # pylint: disable=R0801
 import logging
-import os
 from typing import TYPE_CHECKING, Any
 
 import pynetbox  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
@@ -18,6 +17,7 @@ from infrahub_sync import (
     SyncConfig,
 )
 from infrahub_sync.cache.cursors import CursorState, CursorTier
+from infrahub_sync.configuration.credentials import select_runtime_credential
 
 from .utils import get_value
 
@@ -39,8 +39,8 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
 
     def _create_netbox_client(self, adapter: SyncAdapter) -> pynetbox.api:
         settings = adapter.settings or {}
-        url = os.environ.get("NETBOX_ADDRESS") or os.environ.get("NETBOX_URL") or settings.get("url")
-        token = os.environ.get("NETBOX_TOKEN") or settings.get("token")
+        url = select_runtime_credential(settings, "url", ("NETBOX_ADDRESS", "NETBOX_URL"))
+        token = select_runtime_credential(settings, "token", ("NETBOX_TOKEN",))
         verify_ssl = settings.get("verify_ssl", True)
 
         if not url or not token:

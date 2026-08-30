@@ -65,6 +65,17 @@ def _literal_setting_method_access(node: ast.AST) -> str | None:
     return _literal_string(node.args[0])
 
 
+def _registered_credential_access(node: ast.AST) -> str | None:
+    """Return the setting consumed through the shared credential boundary."""
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+        return None
+    if node.func.id != "select_runtime_credential" or len(node.args) < 2:
+        return None
+    if not _is_settings_reference(node.args[0]):
+        return None
+    return _literal_string(node.args[1])
+
+
 def _literal_setting_accesses(module_name: str) -> frozenset[str]:
     tree = ast.parse((_ADAPTERS_DIRECTORY / f"{module_name}.py").read_text(encoding="utf-8"))
     setting_names: set[str] = set()
@@ -86,6 +97,12 @@ def _literal_setting_accesses(module_name: str) -> frozenset[str]:
                 setting_names.update(
                     setting_name for operand in operands if (setting_name := _literal_string(operand)) is not None
                 )
+
+        # Credential selection is a shared authority boundary.  Its setting name is
+        # still a real adapter consumer, even though the helper (rather than the
+        # adapter) performs the Mapping lookup.
+        if (setting_name := _registered_credential_access(node)) is not None:
+            setting_names.add(setting_name)
 
     return frozenset(setting_names)
 
