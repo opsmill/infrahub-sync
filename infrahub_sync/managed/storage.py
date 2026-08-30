@@ -41,6 +41,8 @@ _ENDPOINT_URI = re.compile(
     rf"(?P<scheme>(?i:http|https))://{_HOST}(?::(?P<port>[0-9]+))?"
     rf"(?:/{_PCHAR}*)*(?:\?(?:{_PCHAR}|[/?])*)?(?:#(?:{_PCHAR}|[/?])*)?"
 )
+_IPV4_OCTET = r"(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])"
+_CANONICAL_IPV4_HOST = re.compile(rf"{_IPV4_OCTET}(?:\.{_IPV4_OCTET}){{3}}")
 _ENDPOINT_URL_ADAPTER = TypeAdapter(AnyHttpUrl)
 
 
@@ -192,8 +194,17 @@ def _parse_endpoint(value: str) -> _EndpointUri | None:
     if match is None:
         return None
     try:
-        _ENDPOINT_URL_ADAPTER.validate_python(value)
+        parsed = _ENDPOINT_URL_ADAPTER.validate_python(value)
     except ValidationError:
+        return None
+    raw_host = match.group("reg_name")
+    parsed_host = parsed.host
+    if (
+        raw_host is not None
+        and parsed_host is not None
+        and _CANONICAL_IPV4_HOST.fullmatch(parsed_host)
+        and raw_host != parsed_host
+    ):
         return None
     return _EndpointUri(value)
 

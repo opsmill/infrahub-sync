@@ -2477,6 +2477,51 @@ def test_provider_profile_survives_reconstruction(profile: str, tmp_path: Path) 
     assert after_restart.lookup_artifact("run-001", "result").value == b"durable"
 
 
+def test_production_factories_share_exact_configuration_run_and_artifact_state(tmp_path: Path) -> None:
+    """Independent API and worker factories observe one production-profile backend."""
+    database = tmp_path / "shared-postgresql-emulator.sqlite3"
+    fake_s3 = _FakeS3()
+
+    def build() -> ProductProjection:
+        return product_store.production_product_projection(
+            connect=_connect(database),
+            s3_client=fake_s3,
+            bucket="shared-artifacts",
+            prefix="shared-state",
+        )
+
+    api_projection = build()
+    worker_projection = build()
+    version = api_projection.create_configuration(_configuration_package())
+    expected_run = ProductRun(
+        run_id="run-shared-production-state",
+        operation="plan",
+        configuration_reference=f"{version.config_id}@{version.registry_version}",
+        config_id=version.config_id,
+        registry_version=version.registry_version,
+        package_checksum=version.package_checksum,
+        actor="api",
+        started_at=datetime(2026, 8, 29, 12, tzinfo=timezone.utc),
+        phase="accepted",
+    )
+    api_projection.create_run(expected_run)
+
+    assert worker_projection.lookup_configuration_version(version.config_id, version.registry_version).value == version
+    assert worker_projection.lookup_run(expected_run.run_id).value == expected_run
+
+    reference = worker_projection.publish_artifact(
+        expected_run.run_id,
+        artifact_id="shared-artifact",
+        kind="integration-proof",
+        media_type="text/plain",
+        data=b"shared durable state",
+    )
+    expected_published_run = expected_run.model_copy(update={"artifact_refs": (reference,)})
+
+    assert api_projection.lookup_run(expected_run.run_id).value == expected_published_run
+    assert api_projection.lookup_artifact(expected_run.run_id, "shared-artifact").value == b"shared durable state"
+
+
 def test_local_profile_rejects_a_cwd_relative_cache_location() -> None:
     with pytest.raises(ValueError, match="cache_location must be absolute"):
         local_product_projection(Path("relative-cache"))
