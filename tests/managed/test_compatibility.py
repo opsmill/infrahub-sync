@@ -28,7 +28,17 @@ def test_installed_server_version_translates_metadata_failures_without_cause(
 
 @pytest.mark.parametrize(
     "metadata_value",
-    [None, "", "2.0", "02.0.1", "not-a-version", type("VersionText", (str,), {})("2.0.1")],
+    [
+        None,
+        "",
+        " ",
+        "not-a-version",
+        "1..0",
+        "1.0+",
+        "1.0+local..part",
+        "1!1!2",
+        type("VersionText", (str,), {})("2.0.1"),
+    ],
 )
 def test_installed_server_version_rejects_invalid_metadata_values(
     monkeypatch: pytest.MonkeyPatch,
@@ -44,9 +54,19 @@ def test_installed_server_version_rejects_invalid_metadata_values(
 
 @pytest.mark.parametrize(
     "metadata_value",
-    ["0.0.0", "2.0.1", "2.0.1-rc.1", "2.0.1+build.7"],
+    [
+        "0.0.0",
+        "2.0",
+        "02.0.1",
+        "2.0.1.dev1",
+        "2.0.1rc1",
+        "2.0.1.post1",
+        "2.0.1+linux_x86",
+        "1!2.0.1",
+        "v02.0.1-rc.1+LOCAL_7",
+    ],
 )
-def test_installed_server_version_accepts_builtin_semantic_versions(
+def test_installed_server_version_accepts_builtin_pep440_versions_without_normalizing(
     monkeypatch: pytest.MonkeyPatch,
     metadata_value: str,
 ) -> None:
