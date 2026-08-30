@@ -8,7 +8,11 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from infrahub_sync.product_store import ArtifactReference, ProductRun  # noqa: TC001 - Pydantic resolves at runtime.
+from infrahub_sync.product_store import (  # noqa: TC001 - Pydantic resolves at runtime.
+    ArtifactReference,
+    PrefectExecutionLink,
+    ProductRun,
+)
 
 ManagedStage = Literal["plan", "verify", "apply", "sync"]
 _REASON_GRAMMAR_MESSAGE = "reason must be printable and trimmed"
@@ -83,8 +87,39 @@ class OrchestrationSummary(_StrictModel):
     terminal_outcome: Literal["succeeded", "failed", "cancelled", "abandoned", "ambiguous"] | None
 
 
+class PublicExecutionLink(_StrictModel):
+    """Legacy execution correlation without Sync-owned liveness internals."""
+
+    flow_run_id: str = Field(min_length=1)
+    deployment_id: str | None = None
+    purpose: str = Field(min_length=1)
+    attempt: int = Field(ge=1)
+    last_observed_state: str | None = None
+    last_observed_at: datetime | None = None
+
+    @field_validator("last_observed_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
+            msg = "Prefect execution timestamps must include a timezone"
+            raise ValueError(msg)
+        return value
+
+    @classmethod
+    def from_prefect_execution(cls, link: PrefectExecutionLink) -> PublicExecutionLink:
+        """Copy only the six fields exposed before managed liveness was added."""
+        return cls(
+            flow_run_id=link.flow_run_id,
+            deployment_id=link.deployment_id,
+            purpose=link.purpose,
+            attempt=link.attempt,
+            last_observed_state=link.last_observed_state,
+            last_observed_at=link.last_observed_at,
+        )
+
+
 class PublicRunResource(_StrictModel):
-    """Public product-run fields, intentionally excluding durable execution links."""
+    """Public product-run fields with legacy-safe execution correlations."""
 
     run_id: str
     operation: str
@@ -101,11 +136,19 @@ class PublicRunResource(_StrictModel):
     summary: dict[str, Any]
     results: dict[str, Any]
     artifact_refs: tuple[ArtifactReference, ...]
+    prefect_executions: tuple[PublicExecutionLink, ...] = ()
 
     @classmethod
     def from_product_run(cls, run: ProductRun) -> PublicRunResource:
         """Create the explicit public projection without internal execution identities."""
-        return cls.model_validate(run.model_dump(exclude={"prefect_executions"}))
+        return cls.model_validate(
+            {
+                **run.model_dump(exclude={"prefect_executions"}),
+                "prefect_executions": tuple(
+                    PublicExecutionLink.from_prefect_execution(link) for link in run.prefect_executions
+                ),
+            }
+        )
 
 
 class VersionResource(_StrictModel):

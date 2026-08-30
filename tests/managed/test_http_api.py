@@ -56,6 +56,18 @@ OTHER_TOKEN = "other-token-canary-0002"  # noqa: S105 - deliberate non-secret bo
 ADMIN_TOKEN = "admin-token-canary-0003"  # noqa: S105 - deliberate non-secret boundary canary.
 RAW_KEY = "client-idempotency-key-canary"
 AUTH = {"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": RAW_KEY}
+_LEGACY_EXECUTION_FIELDS = {
+    "flow_run_id",
+    "deployment_id",
+    "purpose",
+    "attempt",
+    "last_observed_state",
+    "last_observed_at",
+}
+
+
+def _json_timestamp(value: datetime | None) -> str | None:
+    return None if value is None else value.isoformat().replace("+00:00", "Z")
 
 
 def _registered_package() -> ConfigurationPackage:
@@ -794,14 +806,23 @@ def test_cancel_post_admission_cas_loss_completes_replayable_conflict(
 def test_run_resource_exposes_liveness_without_private_worker_or_receipt_ids(
     managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
 ) -> None:
-    """Public run links expose every liveness verdict but never correlation identities."""
+    """Public runs retain legacy links while liveness omits correlation identities."""
     client, projection, _orchestration = managed
     created = _create(client)
     run_id = created.json()["run"]["run_id"]
-    flow_run_id = created.json()["orchestration"][0]["flow_run_id"]
-    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+    _publish_plan(projection, run_id)
+    verified = client.post(
+        f"/runs/{run_id}/verify",
+        headers={**AUTH, "Idempotency-Key": "liveness-public-verify"},
+        json={"reason": "retain every legacy execution link"},
+    )
+    assert verified.status_code == 202
+    flow_run_id = verified.json()["orchestration"][-1]["flow_run_id"]
     assert projection.claim_execution(
-        run_id, flow_run_id, worker_id=worker_id, claimed_at=datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+        run_id,
+        flow_run_id,
+        worker_id="8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0",
+        claimed_at=datetime(2026, 8, 29, 12, tzinfo=timezone.utc),
     )
     cancelled = client.post(
         f"/runs/{run_id}/cancel",
@@ -813,28 +834,40 @@ def test_run_resource_exposes_liveness_without_private_worker_or_receipt_ids(
     response = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {OWNER_TOKEN}"})
     assert response.status_code == 200
     payload = response.json()
-    encoded = json.dumps(payload)
-    assert "claiming_worker_id" not in encoded
-    assert "cancellation_receipt_id" not in encoded
-    summary = payload["orchestration"][0]
+    assert "claiming_worker_id" not in response.text
+    assert "cancellation_receipt_id" not in response.text
+    summary = payload["orchestration"][-1]
     stored = projection.lookup_run(run_id).value
     assert stored is not None
-    link = stored.prefect_executions[0]
+    assert len(stored.prefect_executions) == 2
+    link = stored.prefect_executions[-1]
     assert link.submitted_at is not None
     assert link.claimed_at is not None
     assert link.cancellation_requested_at is not None
     assert link.cancellation_recovery_deadline_at is not None
     assert link.cancellation_acknowledged_at is not None
 
-    def timestamp(value: datetime) -> str:
-        return value.isoformat().replace("+00:00", "Z")
+    legacy_links = payload["run"]["prefect_executions"]
+    assert len(legacy_links) == len(stored.prefect_executions)
+    assert all(set(public_link) == _LEGACY_EXECUTION_FIELDS for public_link in legacy_links)
+    assert legacy_links == [
+        {
+            "flow_run_id": stored_link.flow_run_id,
+            "deployment_id": stored_link.deployment_id,
+            "purpose": stored_link.purpose,
+            "attempt": stored_link.attempt,
+            "last_observed_state": stored_link.last_observed_state,
+            "last_observed_at": _json_timestamp(stored_link.last_observed_at),
+        }
+        for stored_link in stored.prefect_executions
+    ]
 
-    assert summary["submitted_at"] == timestamp(link.submitted_at)
-    assert summary["claimed_at"] == timestamp(link.claimed_at)
+    assert summary["submitted_at"] == _json_timestamp(link.submitted_at)
+    assert summary["claimed_at"] == _json_timestamp(link.claimed_at)
     assert summary["stalled_at"] is None
-    assert summary["cancellation_requested_at"] == timestamp(link.cancellation_requested_at)
-    assert summary["cancellation_recovery_deadline_at"] == timestamp(link.cancellation_recovery_deadline_at)
-    assert summary["cancellation_acknowledged_at"] == timestamp(link.cancellation_acknowledged_at)
+    assert summary["cancellation_requested_at"] == _json_timestamp(link.cancellation_requested_at)
+    assert summary["cancellation_recovery_deadline_at"] == _json_timestamp(link.cancellation_recovery_deadline_at)
+    assert summary["cancellation_acknowledged_at"] == _json_timestamp(link.cancellation_acknowledged_at)
     assert summary["terminal_at"] is None
     assert summary["terminal_state"] is None
     assert summary["terminal_outcome"] is None
@@ -1298,6 +1331,17 @@ def test_confirmation_schema_errors_and_openapi_contract(
 
     openapi = client.get("/openapi.json").json()
     assert openapi["components"]["securitySchemes"] == {"BearerAuth": {"scheme": "bearer", "type": "http"}}
+    schemas = openapi["components"]["schemas"]
+    legacy_links = schemas["PublicRunResource"]["properties"]["prefect_executions"]
+    legacy_link_name = legacy_links["items"]["$ref"].rsplit("/", maxsplit=1)[-1]
+    legacy_link_schema = schemas[legacy_link_name]
+    assert set(legacy_link_schema["properties"]) == _LEGACY_EXECUTION_FIELDS
+    assert set(legacy_link_schema["required"]) == {"flow_run_id", "purpose", "attempt"}
+    assert legacy_link_schema["properties"]["flow_run_id"]["minLength"] == 1
+    assert legacy_link_schema["properties"]["purpose"]["minLength"] == 1
+    assert legacy_link_schema["properties"]["attempt"]["minimum"] == 1
+    assert "claiming_worker_id" not in json.dumps(openapi)
+    assert "cancellation_receipt_id" not in json.dumps(openapi)
 
     paths = openapi["paths"]
     assert set(paths) == {
