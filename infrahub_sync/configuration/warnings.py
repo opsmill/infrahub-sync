@@ -1,4 +1,4 @@
-"""Contract section 4 warning families over one declared configuration package.
+"""The warning families over one declared configuration package.
 
 The declared-content core (``validation.py``) emits errors only and its frozen code
 enumeration stays untouched; this module owns the warning channel's finding codes and
