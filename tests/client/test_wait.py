@@ -241,3 +241,50 @@ def test_keyboard_interrupt_crosses_wait_without_cancelling() -> None:
     with pytest.raises(KeyboardInterrupt):
         client.wait_for_run(accepted, timeout=10, poll_interval=0.001)
     assert "/cancel" not in calls
+
+
+def test_wait_reports_each_observed_product_record() -> None:
+    accepted = RunResource.model_validate(_resource(_execution("flow-1"), phase="accepted"))
+    running = _resource(_execution("flow-1", state="running"), phase="running")
+    completed = _resource(
+        _execution("flow-1", state="completed", terminal_state="completed", terminal_outcome="succeeded"),
+        phase="finished",
+        outcome="succeeded",
+    )
+    client, _calls = _client([running, completed])
+    observations: list[RunResource] = []
+
+    result = client.wait_for_run(
+        accepted,
+        timeout=10,
+        poll_interval=0.001,
+        on_observation=observations.append,
+    )
+
+    assert result.run.phase == "finished"
+    assert [resource.run.phase for resource in observations] == ["accepted", "running", "finished"]
+
+
+def test_observer_exception_aborts_wait_and_propagates_unchanged() -> None:
+    accepted = RunResource.model_validate(_resource(_execution("flow-1"), phase="accepted"))
+    running = _resource(_execution("flow-1", state="running"), phase="running")
+    client, calls = _client([running])
+    failure = RuntimeError("caller-owned observer failure")
+    observations = 0
+
+    def observe(_resource: RunResource) -> None:
+        nonlocal observations
+        observations += 1
+        if observations == 2:
+            raise failure
+
+    with pytest.raises(RuntimeError) as raised:
+        client.wait_for_run(
+            accepted,
+            timeout=10,
+            poll_interval=0.001,
+            on_observation=observe,
+        )
+
+    assert raised.value is failure
+    assert calls == ["/version", "/runs/run-1"]

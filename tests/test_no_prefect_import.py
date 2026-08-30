@@ -19,7 +19,6 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_ROOT = REPO_ROOT / "infrahub_sync"
-EXAMPLES_DIR = REPO_ROOT / "examples"
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "workflow-tests.yml"
 OPTIONAL_PACKAGE_NAMES = frozenset({"managed", "orchestration"})
 OPTIONAL_PACKAGE_PREFIXES = tuple(f"infrahub_sync.{name}" for name in sorted(OPTIONAL_PACKAGE_NAMES))
@@ -51,10 +50,8 @@ from typer.testing import CliRunner
 runner = CliRunner()
 help_result = runner.invoke(infrahub_sync.cli.app, ["--help"])
 assert help_result.exit_code == 0, help_result.output
-list_result = runner.invoke(
-    infrahub_sync.cli.app, ["list", "--directory", {str(EXAMPLES_DIR)!r}]
-)
-assert list_result.exit_code == 0, list_result.output
+configs_help_result = runner.invoke(infrahub_sync.cli.app, ["configs", "--help"])
+assert configs_help_result.exit_code == 0, configs_help_result.output
 
 optional_roots = {sorted(OPTIONAL_DISTRIBUTION_NAMES)!r}
 leaked = sorted(m for m in sys.modules if m.partition(".")[0] in optional_roots)

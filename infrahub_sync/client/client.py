@@ -48,6 +48,7 @@ from .models import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from types import TracebackType
 
 _Model = TypeVar("_Model", bound=BaseModel)
@@ -372,7 +373,14 @@ class SyncClient:  # pylint: disable=too-many-public-methods
 
         return self._run_mutation("cancel_run", run_id, "cancel", request=request, idempotency_key=idempotency_key)
 
-    def wait_for_run(self, accepted_resource: RunResource, *, timeout: float, poll_interval: float) -> RunResource:
+    def wait_for_run(
+        self,
+        accepted_resource: RunResource,
+        *,
+        timeout: float,
+        poll_interval: float,
+        on_observation: Callable[[RunResource], None] | None = None,
+    ) -> RunResource:
         """Follow the execution selected by one accepted mutation response."""
         self._positive_duration(timeout, _TIMEOUT_ARG)
         self._positive_duration(poll_interval, _POLL_INTERVAL_ARG)
@@ -380,6 +388,8 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             raise ProtocolError(_WAIT_FOR_RUN)
         flow_run_id = accepted_resource.orchestration[-1].flow_run_id
         latest = accepted_resource
+        if on_observation is not None:
+            on_observation(latest)
         selected = accepted_resource.orchestration[-1]
         terminal = self._wait_verdict(latest, selected)
         if terminal is not None:
@@ -394,6 +404,8 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             if remaining <= 0:
                 raise self._wait_timeout(latest, selected)
             latest = self._get_run(accepted_resource.run.run_id, request_timeout=remaining)
+            if on_observation is not None:
+                on_observation(latest)
             selected = next(
                 (entry for entry in latest.orchestration if entry.flow_run_id == flow_run_id),
                 None,

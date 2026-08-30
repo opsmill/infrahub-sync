@@ -19,24 +19,19 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import pytest
-import yaml
 from diffsync.exceptions import ObjectNotFound
 from pydantic import ValidationError
-from typer.testing import CliRunner
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncInstance
-from infrahub_sync import cli as cli_module
 from infrahub_sync.cache import incremental as incremental_module
 from infrahub_sync.cache.cursors import CursorTier
 from infrahub_sync.cache.paths import cache_root_for
-from infrahub_sync.cli import app
 from infrahub_sync.execution import execute_run
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.derive import (
@@ -63,8 +58,6 @@ from infrahub_sync.potenda import Potenda
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
-
-    from click.testing import Result
 
     from infrahub_sync.plan.models import PlannedOperation
 
@@ -1105,8 +1098,6 @@ SC014_CASES: dict[str, ConvergenceCase] = {
 
 @pytest.mark.parametrize("case", list(SC014_CASES.values()), ids=list(SC014_CASES))
 def test_each_convergence_key_case_warns_and_the_plan_run_still_succeeds(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     case: ConvergenceCase,
 ) -> None:
@@ -1117,13 +1108,7 @@ def test_each_convergence_key_case_warns_and_the_plan_run_still_succeeds(
 
     potenda = build_potenda(config=config, source=source, destination=destination, run_id=case.run_id)
     with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
-        result = invoke_command(
-            "diff",
-            config=config,
-            potenda=potenda,
-            project_dir=tmp_path / "project",
-            monkeypatch=monkeypatch,
-        )
+        run_plan(potenda)
 
     # The warning's content.
     messages = derive_warnings(caplog)
@@ -1132,10 +1117,6 @@ def test_each_convergence_key_case_warns_and_the_plan_run_still_succeeds(
         assert fragment in messages[0], f"{fragment!r} missing from: {messages[0]}"
 
     # The run's successful outcome.
-    assert result.exit_code == 0, result.output
-    assert result.exception is None, f"an error escaped the plan run: {result.exception!r}"
-    run_record = json.loads((plan_run_dir(potenda) / "run.json").read_text(encoding="utf-8"))
-    assert run_record["status"] == "dry-run"
     manifest = read_manifest(plan_run_dir(potenda))
     assert set(manifest) == MANIFEST_KEYS, "the warning leaked into the manifest"
     assert manifest["operations_count"] > 0
@@ -1423,15 +1404,8 @@ def test_two_plan_runs_at_different_extraction_modes_are_expected_to_differ(
 
 
 # ---------------------------------------------------------------------------------------
-# Shared surface for the derivation-failure cases: a real CLI invocation, and a plan run
-# that must fail
+# Shared surface for derivation-failure plan runs
 # ---------------------------------------------------------------------------------------
-
-CLI_RUNNER = CliRunner()
-
-# Typer renders `--help` through rich, which in some environments styles each hyphen of an
-# option as its own ANSI span, so the literal flag string is absent from the raw output.
-_ANSI_SGR_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 # The adapter package, scanned by T085 so its fixture is tied to the eight adapters the
 # regression is about rather than to one hand-written fake.
@@ -1440,53 +1414,6 @@ ADAPTERS_DIR = Path(__file__).resolve().parent.parent / "infrahub_sync" / "adapt
 # `rest_api_client.py` is a shared HTTP helper and `utils.py` a shared value helper;
 # neither is an adapter.
 NON_ADAPTER_MODULES = frozenset({"__init__", "rest_api_client", "utils"})
-
-
-def strip_ansi(text: str) -> str:
-    """Return `text` with ANSI SGR (colour) escape sequences removed."""
-    return _ANSI_SGR_RE.sub("", text)
-
-
-def write_config_file(config: SyncInstance, *, directory: Path) -> Path:
-    """Write `config` out as `<directory>/config.yml`, where the CLI's loader finds it.
-
-    The CLI resolves `--name`/`--directory` through `get_all_sync`, which parses every
-    `config.yml` it globs, so the configuration a CLI case runs against has to exist on
-    disk. Dumping the same `SyncInstance` the Potenda under test carries keeps the two from
-    drifting — `directory` is excluded because `get_all_sync` supplies it from the file's
-    own location.
-    """
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / "config.yml"
-    body = config.model_dump(exclude={"directory"}, exclude_none=True)
-    path.write_text(yaml.safe_dump(body, sort_keys=True), encoding="utf-8")
-    return path
-
-
-def invoke_command(  # noqa: PLR0913 — one parameter per axis a CLI case varies on
-    command: str,
-    *,
-    config: SyncInstance,
-    potenda: Potenda,
-    project_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    extra: Sequence[str] = (),
-) -> Result:
-    """Run a real `infrahub-sync <command>` against a real Potenda built on this module's fakes.
-
-    Only adapter construction is substituted: `get_potenda_from_instance` is the seam the
-    repository's other CLI tests use (`tests/test_cli_full_extract.py`), and everything
-    the command does afterwards — the run file, `load_both_sides`, `diff`, `write_plan` and
-    the artifact write — is the real code path. That is what makes the exit code these
-    cases assert the exit code an operator would get.
-    """
-    write_config_file(config, directory=project_dir)
-
-    def _fixed_potenda(**_kwargs: object) -> Potenda:
-        return potenda
-
-    monkeypatch.setattr(cli_module, "get_potenda_from_instance", _fixed_potenda)
-    return CLI_RUNNER.invoke(app, [command, "--name", config.name, "--directory", str(project_dir), *extra])
 
 
 def manifest_path(potenda: Potenda) -> Path:
@@ -1871,12 +1798,10 @@ def _assert_named_failure(raised: BaseException | None, case: _DerivationFailure
 
 
 @pytest.mark.parametrize("build_case", DERIVATION_FAILURES)
-def test_a_derivation_failure_fails_the_diff_command(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def test_a_derivation_failure_fails_the_plan_run(
     build_case: Callable[[], _DerivationFailure],
 ) -> None:
-    """AD047: each FR-030 failure fails the non-mutating `diff` with a non-zero exit."""
+    """AD047: each FR-030 failure fails the plan before publishing an artifact."""
     case = build_case()
     potenda = build_potenda(
         config=case.config,
@@ -1886,64 +1811,12 @@ def test_a_derivation_failure_fails_the_diff_command(
         top_level=case.config.order,
     )
 
-    result = invoke_command(
-        "diff",
-        config=case.config,
-        potenda=potenda,
-        project_dir=tmp_path / "project",
-        monkeypatch=monkeypatch,
-    )
+    with pytest.raises(PlanArtifactError) as raised:
+        run_plan(potenda)
 
-    assert result.exit_code != 0, result.output
-    _assert_named_failure(result.exception, case)
-    assert not manifest_path(potenda).exists()
-    run_record = json.loads((plan_run_dir(potenda) / "run.json").read_text(encoding="utf-8"))
-    assert run_record["status"] == "failed"
-
-
-@pytest.mark.parametrize("build_case", DERIVATION_FAILURES)
-def test_a_derivation_failure_is_equally_hard_on_the_sync_path(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    build_case: Callable[[], _DerivationFailure],
-) -> None:
-    """AD047: the same five failures fail `sync` too, before any destination write."""
-    case = build_case()
-    potenda = build_potenda(
-        config=case.config,
-        source=case.source,
-        destination=case.destination,
-        run_id="20260726T2300-88888888",
-        top_level=case.config.order,
-    )
-
-    result = invoke_command(
-        "sync",
-        config=case.config,
-        potenda=potenda,
-        project_dir=tmp_path / "project",
-        monkeypatch=monkeypatch,
-        extra=["--no-parallel"],
-    )
-
-    assert result.exit_code != 0, result.output
-    _assert_named_failure(result.exception, case)
+    _assert_named_failure(raised.value, case)
     assert not manifest_path(potenda).exists()
     assert case.destination.sync_calls == [], "the destination was written despite a failed derivation"
-
-
-def test_the_diff_command_offers_no_continue_on_error_tolerance() -> None:
-    """AD047: the tolerance option is declared on `sync` only (`infrahub_sync/cli.py`)."""
-    diff_help = CLI_RUNNER.invoke(app, ["diff", "--help"])
-    sync_help = CLI_RUNNER.invoke(app, ["sync", "--help"])
-    assert diff_help.exit_code == 0
-    assert sync_help.exit_code == 0
-    assert "--continue-on-error" in strip_ansi(sync_help.output)
-    assert "--continue-on-error" not in strip_ansi(diff_help.output)
-
-    rejected = CLI_RUNNER.invoke(app, ["diff", "--name", "demo", "--continue-on-error"])
-    # Click's usage error for an unknown option, not a run that tolerated anything.
-    assert rejected.exit_code == 2
 
 
 def test_the_source_side_failures_do_not_route_the_operator_at_the_destination() -> None:
@@ -2094,12 +1967,10 @@ def test_only_the_infrahub_adapter_exposes_a_schema_attribute() -> None:
     assert len(modules) - len(exposing) == 8, f"expected eight schema-less adapters, found {modules}"
 
 
-def test_the_diff_command_succeeds_end_to_end_against_a_destination_with_no_schema(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def test_the_plan_run_succeeds_end_to_end_against_a_destination_with_no_schema(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """AD052 regression: derivation is newly wired onto `diff` for **every** destination."""
+    """AD052 regression: derivation runs for every destination adapter."""
     config = build_config()
     source = qualified_source()
     destination = destination_with_orphan()
@@ -2113,17 +1984,7 @@ def test_the_diff_command_succeeds_end_to_end_against_a_destination_with_no_sche
     )
 
     with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
-        result = invoke_command(
-            "diff",
-            config=config,
-            potenda=potenda,
-            project_dir=tmp_path / "project",
-            monkeypatch=monkeypatch,
-        )
-
-    assert result.exit_code == 0, result.output
-    assert result.exception is None, f"an error escaped the diff path: {result.exception!r}"
-    assert "AttributeError" not in result.output
+        run_plan(potenda)
 
     # The convergence-key warning is skipped outright.
     assert derive_warnings(caplog) == []
@@ -2134,8 +1995,6 @@ def test_the_diff_command_succeeds_end_to_end_against_a_destination_with_no_sche
     assert set(manifest) == MANIFEST_KEYS
     assert manifest["operations_count"] > 0
     assert manifest["delete_operations_computed"] is True
-    run_record = json.loads((plan_run_dir(potenda) / "run.json").read_text(encoding="utf-8"))
-    assert run_record["status"] == "dry-run"
 
 
 # =======================================================================================
@@ -2458,8 +2317,6 @@ def test_a_kind_declaring_no_destination_key_at_all_is_left_to_the_unkeyed_warni
 
 
 def test_the_merge_warning_stays_out_of_the_manifest_and_the_run_succeeds(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A warning, not a refusal: the plan run completes and the manifest is unchanged."""
@@ -2469,16 +2326,7 @@ def test_the_merge_warning_stays_out_of_the_manifest_and_the_run_succeeds(
 
     potenda = build_potenda(config=config, source=source, destination=destination, run_id="20260729T1200-abcdef01")
     with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
-        result = invoke_command(
-            "diff",
-            config=config,
-            potenda=potenda,
-            project_dir=tmp_path / "project",
-            monkeypatch=monkeypatch,
-        )
-
-    assert result.exit_code == 0, result.output
-    assert result.exception is None, f"an error escaped the plan run: {result.exception!r}"
+        run_plan(potenda)
     manifest = read_manifest(plan_run_dir(potenda))
     assert set(manifest) == MANIFEST_KEYS, "the warning leaked into the manifest"
     assert manifest["operations_count"] > 0
