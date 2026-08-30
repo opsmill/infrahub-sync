@@ -972,6 +972,43 @@ def test_execution_link_requires_complete_claim_and_terminal_verdicts() -> None:
         PrefectExecutionLink(flow_run_id="flow", purpose="plan", attempt=1, submitted_at=now, terminal_at=now)
 
 
+@pytest.mark.parametrize(
+    ("terminal_state", "terminal_outcome"),
+    [
+        (state, outcome)
+        for state in ("completed", "failed", "cancelled", "abandoned", "interrupted")
+        for outcome in ("succeeded", "failed", "cancelled", "abandoned", "ambiguous")
+        if (state, outcome)
+        not in {
+            ("completed", "succeeded"),
+            ("failed", "failed"),
+            ("cancelled", "cancelled"),
+            ("abandoned", "abandoned"),
+            ("interrupted", "ambiguous"),
+        }
+    ],
+)
+def test_execution_link_refuses_every_illegal_terminal_verdict_pair(
+    terminal_state: str,
+    terminal_outcome: str,
+) -> None:
+    """The closed terminal vocabularies cannot be recombined into invented verdicts."""
+    now = datetime(2026, 8, 29, tzinfo=timezone.utc)
+
+    with pytest.raises(ValidationError, match="terminal verdict"):
+        PrefectExecutionLink.model_validate(
+            {
+                "flow_run_id": "flow",
+                "purpose": "plan",
+                "attempt": 1,
+                "submitted_at": now,
+                "terminal_at": now,
+                "terminal_state": terminal_state,
+                "terminal_outcome": terminal_outcome,
+            }
+        )
+
+
 def test_execution_link_accepts_canonical_builtin_worker_uuid() -> None:
     now = datetime(2026, 8, 29, tzinfo=timezone.utc)
     worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
@@ -1057,6 +1094,23 @@ def test_new_execution_requires_submitted_at_without_persistence(provider: Produ
     stored = provider.lookup_run("run-001").value
     assert stored is not None
     assert stored.prefect_executions == ()
+
+
+def test_every_product_admission_refuses_embedded_execution_without_submitted_at(
+    provider: ProductProjection,
+) -> None:
+    """Legacy hydration remains readable, but no public creation path can persist a new legacy link."""
+    link = PrefectExecutionLink(flow_run_id="flow-legacy", purpose="plan", attempt=1, submitted_at=None)
+
+    with pytest.raises(ValueError, match=r"^new Prefect execution requires submitted_at$"):
+        provider.create_run(_run(links=(link,)))
+
+    receipt = _receipt(run_id="run-reserved")
+    with pytest.raises(ValueError, match=r"^new Prefect execution requires submitted_at$"):
+        provider.reserve_mutation(receipt, run=_run("run-reserved", links=(link,)))
+
+    assert provider.lookup_run("run-001").reason == "run-not-found"
+    assert provider.lookup_run("run-reserved").reason == "run-not-found"
 
 
 @pytest.mark.parametrize("profile", ["sqlite", "postgresql"])
@@ -1366,6 +1420,100 @@ def test_cancellation_expiry_is_inclusive_bounded_and_receipt_stable(
     if not acknowledged:
         assert replay.response_body is not None
         assert replay.response_body["error"]["code"] == "cancellation-unconfirmed"
+
+
+@pytest.mark.parametrize("acknowledged_offset", [30, 31])
+def test_cancellation_acknowledgement_at_or_after_deadline_atomically_expires(
+    provider: ProductProjection,
+    acknowledged_offset: int,
+) -> None:
+    """A late remote acknowledgement cannot cross the inclusive recovery fence."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    deadline = now + timedelta(seconds=30)
+    receipt = _receipt(operation="cancel", target_run_id="run-001")
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    )
+    provider.reserve_mutation(receipt)
+    assert provider.claim_mutation(receipt.receipt_id)
+    assert provider.request_execution_cancellation(
+        "run-001",
+        "flow-001",
+        requested_at=now,
+        recovery_deadline_at=deadline,
+        recovery_seconds=30,
+        receipt_id=receipt.receipt_id,
+    )
+
+    assert not provider.acknowledge_execution_cancellation(
+        "run-001",
+        "flow-001",
+        acknowledged_at=now + timedelta(seconds=acknowledged_offset),
+        response_status=202,
+        response_body={"accepted": True},
+    )
+
+    stored = provider.lookup_run("run-001").value
+    replay = provider.lookup_mutation(receipt.actor, receipt.key_digest).value
+    assert stored is not None
+    assert replay is not None
+    assert (stored.phase, stored.outcome) == ("abandoned", "abandoned")
+    assert stored.prefect_executions[0].cancellation_acknowledged_at is None
+    assert stored.prefect_executions[0].terminal_state == "abandoned"
+    assert replay.response_status == 503
+    assert replay.response_body is not None
+    assert replay.response_body["error"]["code"] == "cancellation-unconfirmed"
+
+
+def test_cancellation_acknowledgement_and_expiry_race_converges_at_deadline(
+    provider: ProductProjection,
+) -> None:
+    """Concurrent acknowledgement cannot revive or overwrite the inclusive expiry verdict."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    deadline = now + timedelta(seconds=30)
+    receipt = _receipt(operation="cancel", target_run_id="run-001")
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    )
+    provider.reserve_mutation(receipt)
+    assert provider.claim_mutation(receipt.receipt_id)
+    assert provider.request_execution_cancellation(
+        "run-001",
+        "flow-001",
+        requested_at=now,
+        recovery_deadline_at=deadline,
+        recovery_seconds=30,
+        receipt_id=receipt.receipt_id,
+    )
+    barrier = Barrier(2)
+
+    def acknowledge() -> bool:
+        barrier.wait()
+        return provider.acknowledge_execution_cancellation(
+            "run-001",
+            "flow-001",
+            acknowledged_at=deadline,
+            response_status=202,
+            response_body={"accepted": True},
+        )
+
+    def expire() -> bool:
+        barrier.wait()
+        return provider.expire_execution_cancellation("run-001", "flow-001", terminal_at=deadline)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        acknowledgement, _expiry = tuple(pool.map(lambda action: action(), (acknowledge, expire)))
+
+    assert not acknowledgement
+    stored = provider.lookup_run("run-001").value
+    replay = provider.lookup_mutation(receipt.actor, receipt.key_digest).value
+    assert stored is not None
+    assert replay is not None
+    assert stored.prefect_executions[0].terminal_state == "abandoned"
+    assert stored.prefect_executions[0].cancellation_acknowledged_at is None
+    assert replay.response_status == 503
 
 
 def test_business_commit_wins_unacknowledged_cancellation_and_settles_receipt(provider: ProductProjection) -> None:

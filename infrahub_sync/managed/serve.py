@@ -49,11 +49,11 @@ def build_app(
     app_factory: Any = create_app,
 ) -> FastAPI:
     """Construct the managed app from its environment-owned durable storage profile."""
+    policy = LivenessPolicy.from_environment(worker_query_seconds=os.environ.get("PREFECT_WORKER_QUERY_SECONDS", "10"))
     projection = projection_factory()
     resolver = resolver_factory()
     configuration_routes = configuration_routes_factory(product_projection=projection, secrets=resolver.secret_values)
     orchestration = _ClientPerCallOrchestration()
-    policy = LivenessPolicy.from_environment(worker_query_seconds=os.environ.get("PREFECT_WORKER_QUERY_SECONDS", "10"))
     service = run_service_factory(
         projection,
         orchestration,

@@ -2,19 +2,25 @@
 
 from __future__ import annotations
 
-import inspect
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
+from uuid import UUID
 
 import pytest
 
 pytest.importorskip("prefect")
 
 from prefect import __version__ as prefect_version
-from prefect.workers.process import ProcessJobConfiguration
+from prefect.workers.process import ProcessJobConfiguration, ProcessWorker
 
 from infrahub_sync.managed import flow as managed_flow
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
+
+if TYPE_CHECKING:
+    from prefect.client.schemas.objects import FlowRun
 
 FLOW_ID = "ed4778cb-f2cf-4b1f-a87b-68be37659e93"
 WORKER_ID = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
@@ -40,11 +46,40 @@ def _projection(tmp_path: Path):
 
 
 def test_prefect_381_process_configuration_preserves_worker_attribution_environment() -> None:
-    """Pin the documented server UUID channel used by the process worker."""
+    """Pin the server UUID from job preparation through the process child environment."""
     assert prefect_version == "3.8.1"
-    source = inspect.getsource(ProcessJobConfiguration)
-    assert "env" in source
-    assert "PREFECT__WORKER_ID" in inspect.getsource(__import__("prefect.workers.base", fromlist=["BaseWorker"]))
+    flow_run = SimpleNamespace(
+        id=UUID(FLOW_ID),
+        name="managed-run",
+        flow_id=UUID("d08f703b-ce73-4269-a7aa-1bfb00f8cc63"),
+        deployment_id=None,
+    )
+    configuration = ProcessJobConfiguration(command="python -m prefect.engine", env={})
+    typed_flow_run = cast("FlowRun", flow_run)
+    configuration.prepare_for_flow_run(typed_flow_run, worker_id=UUID(WORKER_ID))
+    child_environments: list[dict[str, str | None]] = []
+
+    class Runner:
+        async def execute_flow_run(  # noqa: PLR0913, PLR6301 - minimal pinned worker runner.
+            self,
+            *,
+            flow_run_id: UUID,  # noqa: ARG002 - signature pins the worker seam.
+            command: str | None,  # noqa: ARG002 - signature pins the worker seam.
+            cwd: object,  # noqa: ARG002 - signature pins the worker seam.
+            env: dict[str, str | None],
+            stream_output: bool,  # noqa: ARG002 - signature pins the worker seam.
+            task_status: object,  # noqa: ARG002 - signature pins the worker seam.
+        ) -> SimpleNamespace:
+            child_environments.append(env)
+            return SimpleNamespace(returncode=0, pid=42)
+
+    worker = object.__new__(ProcessWorker)
+    worker._runner = Runner()
+
+    result = asyncio.run(worker.run(typed_flow_run, configuration))
+
+    assert result.status_code == 0
+    assert child_environments[0]["PREFECT__WORKER_ID"] == WORKER_ID
 
 
 def test_worker_claims_canonical_prefect_execution_before_runtime_work(

@@ -1138,25 +1138,72 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             try:
                 cursor.execute(
                     self._sql(
-                        "UPDATE prefect_executions SET cancellation_acknowledged_at = ? "
+                        "UPDATE prefect_executions SET flow_run_id = flow_run_id "
                         "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL "
-                        "AND cancellation_requested_at IS NOT NULL AND cancellation_acknowledged_at IS NULL"
+                        "AND cancellation_requested_at IS NOT NULL"
                     ),
-                    (acknowledged_at.isoformat(), run_id, flow_run_id),
+                    (run_id, flow_run_id),
                 )
                 if cursor.rowcount != 1:
                     connection.commit()
                     return False
                 cursor.execute(
                     self._sql(
-                        "SELECT cancellation_receipt_id FROM prefect_executions WHERE run_id = ? AND flow_run_id = ?"
+                        "SELECT claimed_at, cancellation_recovery_deadline_at, cancellation_receipt_id, "
+                        "cancellation_acknowledged_at FROM prefect_executions WHERE run_id = ? AND flow_run_id = ?"
                     ),
                     (run_id, flow_run_id),
                 )
                 row = _require_cancellation_receipt_row(cursor.fetchone())
+                if row[3] is not None:
+                    connection.commit()
+                    return False
+                receipt_id = str(row[2])
+                if acknowledged_at >= datetime.fromisoformat(str(row[1])):
+                    state, outcome, phase = (
+                        ("interrupted", "ambiguous", "interrupted")
+                        if row[0] is not None
+                        else ("abandoned", "abandoned", "abandoned")
+                    )
+                    cursor.execute(
+                        self._sql(
+                            "UPDATE prefect_executions SET terminal_at = ?, terminal_state = ?, terminal_outcome = ? "
+                            "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL "
+                            "AND cancellation_acknowledged_at IS NULL"
+                        ),
+                        (acknowledged_at.isoformat(), state, outcome, run_id, flow_run_id),
+                    )
+                    if cursor.rowcount != 1:
+                        connection.commit()
+                        return False
+                    cursor.execute(
+                        self._sql("UPDATE product_runs SET phase = ?, outcome = ?, finished_at = ? WHERE run_id = ?"),
+                        (phase, outcome, acknowledged_at.isoformat(), run_id),
+                    )
+                    self._complete_receipt_row(
+                        cursor,
+                        receipt_id,
+                        response_status=503,
+                        response_body=_cancellation_unconfirmed_response(run_id, receipt_id),
+                        flow_run_id=flow_run_id,
+                        updated_at=acknowledged_at,
+                    )
+                    connection.commit()
+                    return False
+                cursor.execute(
+                    self._sql(
+                        "UPDATE prefect_executions SET cancellation_acknowledged_at = ? "
+                        "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL "
+                        "AND cancellation_acknowledged_at IS NULL"
+                    ),
+                    (acknowledged_at.isoformat(), run_id, flow_run_id),
+                )
+                if cursor.rowcount != 1:
+                    connection.commit()
+                    return False
                 self._complete_receipt_row(
                     cursor,
-                    str(row[0]),
+                    receipt_id,
                     response_status=response_status,
                     response_body=response_body,
                     flow_run_id=flow_run_id,
@@ -2085,6 +2132,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         if run.finished_at is not None or run.outcome is not None or run.artifact_refs:
             msg = "a new product record must be unfinished and have no artifact references"
             raise ValueError(msg)
+        _require_submitted_executions(run)
         self._records.create(_redacted_run(run, secrets))
 
     def lookup_run(self, run_id: str) -> LookupResult[ProductRun]:
@@ -2293,6 +2341,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             ):
                 msg = "a mutation-created product record must be unfinished and have no artifact references"
                 raise ValueError(msg)
+            _require_submitted_executions(sanitized_run)
             if sanitized_run.run_id != sanitized_receipt.run_id:
                 msg = "a mutation receipt and its atomically created product run must share one run ID"
                 raise ValueError(msg)
@@ -2835,6 +2884,12 @@ def _redact_value(value: Any, secrets: Sequence[str]) -> Any:
 
 def _redacted_run(run: ProductRun, secrets: Sequence[str]) -> ProductRun:
     return ProductRun.model_validate(_redact_value(run.model_dump(mode="json"), secrets))
+
+
+def _require_submitted_executions(run: ProductRun) -> None:
+    if any(link.submitted_at is None for link in run.prefect_executions):
+        msg = "new Prefect execution requires submitted_at"
+        raise ValueError(msg)
 
 
 def _redact_bytes(data: bytes, secrets: Sequence[str]) -> bytes:

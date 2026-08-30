@@ -13,6 +13,13 @@ from infrahub_sync.execution import Operation  # noqa: TC001 - Pydantic resolves
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 _INVALID_MANAGED_WORKER_ID = "managed worker identity is invalid"
+_LEGAL_EXECUTION_VERDICTS = {
+    ("completed", "succeeded"),
+    ("failed", "failed"),
+    ("cancelled", "cancelled"),
+    ("abandoned", "abandoned"),
+    ("interrupted", "ambiguous"),
+}
 
 
 class ArtifactReference(BaseModel):
@@ -122,6 +129,12 @@ class PrefectExecutionLink(BaseModel):
         terminal = (self.terminal_at, self.terminal_state, self.terminal_outcome)
         if any(value is None for value in terminal) and any(value is not None for value in terminal):
             msg = "execution terminal fields must be all absent or all present"
+            raise ValueError(msg)
+        if (
+            self.terminal_state is not None
+            and (self.terminal_state, self.terminal_outcome) not in _LEGAL_EXECUTION_VERDICTS
+        ):
+            msg = "execution terminal verdict is invalid"
             raise ValueError(msg)
         return self
 

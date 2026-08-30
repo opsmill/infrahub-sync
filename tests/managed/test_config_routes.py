@@ -1178,3 +1178,38 @@ def test_build_app_uses_the_prefect_worker_query_setting_for_liveness_policy(
     )
 
     assert captured[0]._policy.stall_threshold_seconds == 60
+
+
+@pytest.mark.parametrize(
+    ("setting", "value"),
+    [
+        ("INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS", "0"),
+        ("PREFECT_WORKER_QUERY_SECONDS", "nan"),
+    ],
+)
+def test_build_app_validates_complete_liveness_policy_before_constructing_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+    setting: str,
+    value: str,
+) -> None:
+    """Invalid startup policy has no projection, resolver, route, service, or app side effect."""
+    monkeypatch.setenv(setting, value)
+    constructed: list[str] = []
+
+    def factory(name: str):
+        def construct(*_args: object, **_kwargs: object) -> object:
+            constructed.append(name)
+            return object()
+
+        return construct
+
+    with pytest.raises(ValueError):
+        build_app(
+            projection_factory=factory("projection"),
+            resolver_factory=factory("resolver"),
+            run_service_factory=factory("service"),
+            configuration_routes_factory=factory("routes"),
+            app_factory=factory("app"),
+        )
+
+    assert constructed == []

@@ -6,7 +6,7 @@ from datetime import datetime  # noqa: TC003 - Pydantic resolves response annota
 from math import isfinite
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from infrahub_sync.product_store import ArtifactReference, ProductRun  # noqa: TC001 - Pydantic resolves at runtime.
 
@@ -15,6 +15,7 @@ _REASON_GRAMMAR_MESSAGE = "reason must be printable and trimmed"
 _JSON_NATIVE_PACKAGE_MESSAGE = "package must be recursively exact JSON-native"
 _REGISTRY_VERSION_TYPE_MESSAGE = "registry_version must be int"
 _REGISTRY_VERSION_RANGE_MESSAGE = "registry_version must be in the registry allocatable range"
+_WORKER_STATUS_INVARIANT_MESSAGE = "worker status is invalid"
 
 
 class _StrictModel(BaseModel):
@@ -120,9 +121,30 @@ class WorkerStatusResource(_StrictModel):
 
     state: Literal["ready", "busy", "no-live-worker", "unavailable"]
     detail_available: bool
-    live_workers: int | None
-    queue_depth: int | None
+    live_workers: int | None = Field(default=None, ge=0, strict=True)
+    queue_depth: int | None = Field(default=None, ge=0, strict=True)
     observed_at: datetime | None
+
+    @model_validator(mode="after")
+    def _require_availability_and_state_invariants(self) -> WorkerStatusResource:
+        details = (self.live_workers, self.queue_depth, self.observed_at)
+        if not self.detail_available:
+            if self.state != "unavailable" or any(value is not None for value in details):
+                raise ValueError(_WORKER_STATUS_INVARIANT_MESSAGE)
+            return self
+        if self.state == "unavailable" or any(value is None for value in details):
+            raise ValueError(_WORKER_STATUS_INVARIANT_MESSAGE)
+        assert self.live_workers is not None
+        assert self.queue_depth is not None
+        if self.state == "no-live-worker" and self.live_workers != 0:
+            raise ValueError(_WORKER_STATUS_INVARIANT_MESSAGE)
+        if self.state in {"ready", "busy"} and self.live_workers == 0:
+            raise ValueError(_WORKER_STATUS_INVARIANT_MESSAGE)
+        if self.state == "ready" and self.queue_depth != 0:
+            raise ValueError(_WORKER_STATUS_INVARIANT_MESSAGE)
+        if self.state == "busy" and self.queue_depth == 0:
+            raise ValueError(_WORKER_STATUS_INVARIANT_MESSAGE)
+        return self
 
 
 class ServiceStatusResource(_StrictModel):

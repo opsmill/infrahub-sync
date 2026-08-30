@@ -85,6 +85,25 @@ class PoolStatus:
     observed_at: datetime | None
     workers: tuple[PoolWorker, ...] = ()
 
+    def __post_init__(self) -> None:
+        """Keep unavailable and available snapshots structurally disjoint."""
+        if type(self.detail_available) is not bool:  # pylint: disable=unidiomatic-typecheck
+            raise ValueError
+        if not self.detail_available:
+            if self.queue_depth is not None or self.observed_at is not None or self.workers:
+                raise ValueError
+            return
+        if type(self.queue_depth) is not int or self.queue_depth < 0:  # pylint: disable=unidiomatic-typecheck
+            raise ValueError
+        if (  # pylint: disable=unidiomatic-typecheck
+            type(self.observed_at) is not datetime or self.observed_at.utcoffset() is None
+        ):
+            raise ValueError
+        if type(self.workers) is not tuple:  # pylint: disable=unidiomatic-typecheck
+            raise ValueError
+        if any(type(worker) is not PoolWorker for worker in self.workers):  # pylint: disable=unidiomatic-typecheck
+            raise ValueError
+
 
 class ManagedOrchestration(Protocol):
     """Small orchestration boundary consumed by the HTTP service."""
@@ -134,13 +153,13 @@ class PrefectOrchestration:
         """Read worker heartbeats and scheduled queue depth without exposing provider detail."""
         try:
             client = cast("_PoolClient", self._client)
-            workers = await client.read_workers_for_work_pool(work_pool_name)
-            scheduled = await client.get_scheduled_flow_runs_for_work_pool(work_pool_name)
+            workers = _exact_list(await client.read_workers_for_work_pool(work_pool_name))
+            scheduled = _exact_list(await client.get_scheduled_flow_runs_for_work_pool(work_pool_name))
             parsed = tuple(_pool_worker(worker) for worker in workers)
             queue_depth = len(scheduled)
+            return PoolStatus(detail_available=True, queue_depth=queue_depth, observed_at=now, workers=parsed)
         except (ObjectNotFound, httpx.HTTPError, AttributeError, TypeError, ValueError):
             return PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
-        return PoolStatus(detail_available=True, queue_depth=queue_depth, observed_at=now, workers=parsed)
 
     async def cancel(self, flow_run_id: str) -> CancellationResult:
         """Request exact-flow cancellation and report only Prefect acknowledgement."""
@@ -156,6 +175,13 @@ def _canonical_uuid(value: object) -> str:
     if type(value) is not UUID:  # pylint: disable=unidiomatic-typecheck
         raise ValueError
     return str(value)
+
+
+def _exact_list(value: object) -> list[Any]:
+    """Require the pinned Prefect collection response without generic ``len`` coercion."""
+    if type(value) is not list:  # pylint: disable=unidiomatic-typecheck
+        raise ValueError
+    return cast("list[Any]", value)
 
 
 def _status_value(value: object) -> str:

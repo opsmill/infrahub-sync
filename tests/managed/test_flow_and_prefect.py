@@ -47,9 +47,9 @@ if TYPE_CHECKING:
     from infrahub_sync.configuration import ConfigurationPackage
 
 
-@pytest.fixture(autouse=True)
-def _executor_only_claim_bypass(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Give direct ``.fn`` tests one real durable worker claim."""
+@pytest.fixture
+def _claimed_worker_execution(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explicitly give direct ``.fn`` tests one real durable worker claim."""
     worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
 
     def claim(projection, run_id: str) -> tuple[str, str]:
@@ -165,6 +165,7 @@ def _binding(projection, run_id: str) -> tuple[str, int, str]:
     return run.configuration_binding
 
 
+@pytest.mark.usefixtures("_claimed_worker_execution")
 def test_worker_rejects_missing_registered_package_before_runtime_construction(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -392,6 +393,7 @@ def test_direct_and_managed_log_bridges_serialize_ownership_and_restore_state(  
         source_logger.propagate = original_propagate
 
 
+@pytest.mark.usefixtures("_claimed_worker_execution")
 def test_managed_flow_redacts_worker_logs_exception_chain_and_failed_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -460,6 +462,7 @@ def test_managed_flow_redacts_worker_logs_exception_chain_and_failed_state(
     assert stored.prefect_executions[0].terminal_outcome == "failed"
 
 
+@pytest.mark.usefixtures("_claimed_worker_execution")
 def test_managed_apply_failure_retains_partial_write_evidence(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -502,6 +505,7 @@ def test_managed_apply_failure_retains_partial_write_evidence(
     assert stored.prefect_executions[0].terminal_state == "failed"
 
 
+@pytest.mark.usefixtures("_claimed_worker_execution")
 def test_managed_verify_failure_merges_evidence_and_terminalizes_exact_link(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -530,6 +534,76 @@ def test_managed_verify_failure_merges_evidence_and_terminalizes_exact_link(
     assert stored.prefect_executions[0].terminal_state == "failed"
 
 
+@pytest.mark.usefixtures("_claimed_worker_execution")
+def test_success_writeback_persistence_failure_is_not_recorded_as_business_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A failed success commit stays nonterminal for conservative reconciliation."""
+    run_id = "run-managed-success-persistence-failure"
+    projection = _create_product_run(tmp_path.resolve(), run_id)
+    saved = _saved(run_id)
+    monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
+    monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
+    monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
+    monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(managed_flow, "_plan", lambda *_args, **_kwargs: saved)
+    commits: list[str] = []
+
+    def fail_commit(*_args: object, **kwargs: object) -> bool:
+        terminal_state = kwargs["terminal_state"]
+        assert isinstance(terminal_state, str)
+        commits.append(terminal_state)
+        message = "injected persistence failure"
+        raise OSError(message)
+
+    monkeypatch.setattr(projection, "commit_claimed_execution", fail_commit)
+
+    with pytest.raises(RuntimeError, match="injected persistence failure"):
+        managed_sync_run.fn(run_id, "plan", *_binding(projection, run_id))
+
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert commits == ["completed"]
+    assert (stored.phase, stored.outcome, stored.finished_at) == ("accepted", None, None)
+    assert stored.prefect_executions[0].terminal_at is None
+
+
+@pytest.mark.usefixtures("_claimed_worker_execution")
+def test_success_writeback_commit_error_preserves_reread_committed_result(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An ambiguous commit response returns the known result when durable reread proves success."""
+    run_id = "run-managed-success-committed-before-error"
+    projection = _create_product_run(tmp_path.resolve(), run_id)
+    saved = _saved(run_id)
+    monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(managed_flow, "_run_logger", lambda: (logging.getLogger("test-managed"), False))
+    monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
+    monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
+    monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(managed_flow, "_plan", lambda *_args, **_kwargs: saved)
+    commit = projection.commit_claimed_execution
+
+    def commit_then_fail(*args: object, **kwargs: object) -> bool:
+        assert commit(*args, **kwargs)
+        message = "injected post-commit connection failure"
+        raise OSError(message)
+
+    monkeypatch.setattr(projection, "commit_claimed_execution", commit_then_fail)
+
+    result = managed_sync_run.fn(run_id, "plan", *_binding(projection, run_id))
+
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert result["outcome"] == "no-change"
+    assert (stored.phase, stored.outcome) == ("planned", "no-change")
+    assert stored.prefect_executions[0].terminal_state == "completed"
+
+
+@pytest.mark.usefixtures("_claimed_worker_execution")
 def test_managed_confirmed_sync_retains_the_semantic_sync_operation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -573,6 +647,7 @@ def test_managed_confirmed_sync_retains_the_semantic_sync_operation(
     assert stored.results["operation"] == "sync"
 
 
+@pytest.mark.usefixtures("_claimed_worker_execution")
 def test_managed_plan_worker_updates_the_api_created_run_and_publishes_review(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -609,6 +684,7 @@ def test_managed_plan_worker_updates_the_api_created_run_and_publishes_review(
     assert stored.prefect_executions[0].terminal_outcome == "succeeded"
 
 
+@pytest.mark.usefixtures("_claimed_worker_execution")
 def test_managed_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     run_id = "run-managed-verify"
     projection = _create_product_run(tmp_path.resolve(), run_id)
@@ -644,6 +720,7 @@ def test_managed_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.M
     assert after.prefect_executions[0].terminal_state == "completed"
 
 
+@pytest.mark.usefixtures("_claimed_worker_execution")
 def test_confirmed_managed_sync_calls_plan_verify_apply_in_order_on_one_run(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -6,7 +6,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 import pytest
@@ -485,6 +485,122 @@ def test_pool_status_malformed_status_makes_the_whole_snapshot_unavailable(statu
 
     snapshot = asyncio.run(PrefectOrchestration(cast("RemoteExecutionClient", _PoolClient())).pool_status("pool", now))
     assert snapshot == PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
+
+
+@pytest.mark.parametrize("scheduled", [{}, (), {"flow": object()}])
+def test_pool_status_rejects_non_list_scheduled_run_shapes(scheduled: object) -> None:
+    """Only the pinned Prefect list response can supply a public queue count."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+
+    class _PoolClient:
+        async def read_workers_for_work_pool(self, _pool: str):  # noqa: PLR6301
+            return []
+
+        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str):  # noqa: PLR6301
+            return scheduled
+
+    from infrahub_sync.managed.orchestration import PrefectOrchestration
+
+    snapshot = asyncio.run(PrefectOrchestration(cast("RemoteExecutionClient", _PoolClient())).pool_status("pool", now))
+    assert snapshot == PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
+
+
+@pytest.mark.parametrize("workers", [{}, (), {"worker": object()}])
+def test_pool_status_rejects_non_list_worker_shapes(workers: object) -> None:
+    """Only the pinned Prefect list response can supply worker evidence."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+
+    class _PoolClient:
+        async def read_workers_for_work_pool(self, _pool: str):  # noqa: PLR6301
+            return workers
+
+        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str):  # noqa: PLR6301
+            return []
+
+    from infrahub_sync.managed.orchestration import PrefectOrchestration
+
+    snapshot = asyncio.run(PrefectOrchestration(cast("RemoteExecutionClient", _PoolClient())).pool_status("pool", now))
+    assert snapshot == PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
+
+
+def test_pool_status_maps_invalid_observation_time_to_unavailable() -> None:
+    """An invalid adapter snapshot cannot escape as partially available detail."""
+
+    class _PoolClient:
+        async def read_workers_for_work_pool(self, _pool: str):  # noqa: PLR6301
+            return []
+
+        async def get_scheduled_flow_runs_for_work_pool(self, _pool: str):  # noqa: PLR6301
+            return []
+
+    from infrahub_sync.managed.orchestration import PrefectOrchestration
+
+    snapshot = asyncio.run(
+        PrefectOrchestration(cast("RemoteExecutionClient", _PoolClient())).pool_status(
+            "pool",
+            datetime(2026, 8, 29, 12),  # noqa: DTZ001 - deliberate malformed provider timestamp.
+        )
+    )
+    assert snapshot == PoolStatus(detail_available=False, queue_depth=None, observed_at=None)
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        {"detail_available": True, "queue_depth": -1, "observed_at": datetime(2026, 8, 29, tzinfo=timezone.utc)},
+        {"detail_available": True, "queue_depth": 0, "observed_at": None},
+        {
+            "detail_available": False,
+            "queue_depth": 0,
+            "observed_at": datetime(2026, 8, 29, tzinfo=timezone.utc),
+        },
+    ],
+)
+def test_pool_status_refuses_count_and_availability_invariant_violations(snapshot: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        PoolStatus(**cast("Any", snapshot))
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "state": "unavailable",
+            "detail_available": False,
+            "live_workers": 0,
+            "queue_depth": None,
+            "observed_at": None,
+        },
+        {
+            "state": "ready",
+            "detail_available": True,
+            "live_workers": -1,
+            "queue_depth": 0,
+            "observed_at": datetime(2026, 8, 29, tzinfo=timezone.utc),
+        },
+        {
+            "state": "busy",
+            "detail_available": True,
+            "live_workers": 1,
+            "queue_depth": 0,
+            "observed_at": datetime(2026, 8, 29, tzinfo=timezone.utc),
+        },
+        {
+            "state": "ready",
+            "detail_available": True,
+            "live_workers": True,
+            "queue_depth": 0,
+            "observed_at": datetime(2026, 8, 29, tzinfo=timezone.utc),
+        },
+    ],
+)
+def test_public_worker_status_refuses_count_and_availability_invariant_violations(payload: dict[str, object]) -> None:
+    from pydantic import ValidationError
+
+    from infrahub_sync.managed.models import WorkerStatusResource
+
+    with pytest.raises(ValidationError):
+        WorkerStatusResource.model_validate(payload)
 
 
 def test_request_time_reconciliation_terminalizes_each_pending_link(tmp_path) -> None:

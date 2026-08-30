@@ -493,22 +493,43 @@ def managed_sync_run(  # pylint: disable=too-many-positional-arguments
                 config_directory,
                 projection,
             )
-            if not projection.commit_claimed_execution(
-                run_id,
-                flow_run_id,
-                worker_id=worker_id,
-                terminal_at=datetime.now(timezone.utc),
-                terminal_state="completed",
-                terminal_outcome="succeeded",
-                writeback=writeback,
-                secrets=secrets,
-            ):
-                _raise_writeback_refused()
-            return result
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         # Rebuilt after the original exception context exits.
         _record_failure(run_id, stage, exc, run_logger, secrets, projection, flow_run_id, worker_id)
         failure = sanitize_exception_chain(exc, secrets)
-    assert failure is not None
-    secrets.clear()
-    raise failure
+    if failure is not None:
+        secrets.clear()
+        raise failure
+
+    persistence_failure: Exception | None = None
+    try:
+        if not projection.commit_claimed_execution(
+            run_id,
+            flow_run_id,
+            worker_id=worker_id,
+            terminal_at=datetime.now(timezone.utc),
+            terminal_state="completed",
+            terminal_outcome="succeeded",
+            writeback=writeback,
+            secrets=secrets,
+        ):
+            _raise_writeback_refused()
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        try:
+            stored = projection.lookup_run(run_id).value
+            link = (
+                None
+                if stored is None
+                else next(
+                    (candidate for candidate in stored.prefect_executions if candidate.flow_run_id == flow_run_id),
+                    None,
+                )
+            )
+        except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            link = None
+        if link is None or (link.terminal_state, link.terminal_outcome) != ("completed", "succeeded"):
+            persistence_failure = sanitize_exception_chain(exc, secrets)
+    if persistence_failure is not None:
+        secrets.clear()
+        raise persistence_failure
+    return result

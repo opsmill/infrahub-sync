@@ -57,9 +57,9 @@ SENTINEL = "db006-interface-sentinel-credential"
 AUTH_TOKEN = "db006-managed-owner-token"  # noqa: S105 - deliberate non-secret canary.
 
 
-@pytest.fixture(autouse=True)
-def _executor_only_claim(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Give direct managed-worker matrix calls one real durable claim."""
+@pytest.fixture
+def _claimed_worker_execution(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explicitly give managed-worker matrix calls one real durable claim."""
     worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
 
     def claim(projection: ProductProjection, run_id: str) -> tuple[str, str]:
@@ -383,6 +383,7 @@ def _run_managed_worker(
 
 
 @pytest.mark.parametrize("operation", ["plan", "apply", "sync"])
+@pytest.mark.usefixtures("_claimed_worker_execution")
 def test_executed_three_interface_product_envelopes_are_equal(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -485,6 +486,7 @@ def test_interface_adapter_mutations_cannot_false_pass(
         assert_equivalent([expected, observed])
 
 
+@pytest.mark.usefixtures("_claimed_worker_execution")
 def test_python_and_managed_verify_common_fields_and_cli_review_consume_the_same_plan(  # noqa: PLR0914
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -715,6 +717,7 @@ def _execute_submission(parameters: Mapping[str, object]) -> dict[str, object]:
     )
 
 
+@pytest.mark.usefixtures("_claimed_worker_execution")
 def test_managed_http_prefect_parameters_and_all_worker_operations_are_executed_and_secret_safe(  # noqa: PLR0914, PLR0915
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
