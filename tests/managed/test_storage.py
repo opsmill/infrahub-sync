@@ -510,6 +510,47 @@ def test_managed_storage_endpoint_rejects_non_boto3_host_domains_before_construc
 @pytest.mark.parametrize(
     "endpoint",
     [
+        pytest.param("http://1.2.3", id="shortened"),
+        pytest.param("http://01.2.3.4", id="leading-zero"),
+        pytest.param("http://2130706433", id="integer"),
+        pytest.param("http://0x7f000001", id="hexadecimal"),
+        pytest.param("http://017700000001", id="octal"),
+        pytest.param("http://1.2.3.4.", id="trailing-dot"),
+    ],
+)
+def test_managed_storage_endpoint_rejects_normalized_ipv4_forms_before_construction(endpoint: str) -> None:
+    """An IPv4 endpoint must already be the parser's exact canonical dotted-decimal host."""
+    from infrahub_sync.managed import storage
+
+    calls: list[str] = []
+
+    def constructed(name: str) -> object:
+        calls.append(name)
+        return object()
+
+    def projection_builder(**_kwargs: object) -> ProductProjection:
+        return cast("ProductProjection", constructed("projection"))
+
+    with pytest.raises(ValueError) as error:
+        storage.managed_product_projection(
+            environ={
+                storage.DATABASE_URL_ENV: "postgresql://db/sync",
+                storage.S3_BUCKET_ENV: "bucket",
+                storage.S3_ENDPOINT_ENV: endpoint,
+            },
+            database_connect=lambda: constructed("database"),
+            s3_client_builder=lambda *_args, **_kwargs: constructed("sdk"),
+            projection_builder=projection_builder,
+        )
+
+    assert str(error.value) == f"{storage.S3_ENDPOINT_ENV} must be an absolute http or https URL"
+    assert endpoint not in str(error.value)
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
         "http://s3.example.test",
         "http://s3.example.test:9000",
         "http://127.0.0.1",
