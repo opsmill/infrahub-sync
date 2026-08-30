@@ -9,19 +9,17 @@ or decides what a failure means.
 **One error vocabulary, mapped twice.** Everything this module refuses raises a
 :class:`ConfigsError` carrying a ``family``. The CLI renders it through
 ``print_error_and_abort`` and the Python API translates it into its public boundary error,
-but both read the same ``family`` from the same exception — which is the gap envelope OES-19
-found in the run lifecycle, where the CLI catches narrow types and the API catches broadly.
+but both read the same ``family`` from the same exception, so neither interface decides for
+itself which exception types mean what.
 
 **Total by construction, not by enumeration.** Every public operation carries
 :func:`_service_boundary`, so no exception leaves this module outside that vocabulary. The
 arms inside an operation still decide the family and the message wherever they know what was
 being read; the boundary is only what makes the claim hold for what they did not name.
 
-**Bounded deviation from contract section 6, stated so a reviewer does not read it as an
-unnoticed violation.** The run lifecycle above ``execute_standalone`` is deliberately *not*
-unified into a service like this one. ``api/v1.plan()`` and its ``cli.py`` counterpart are
-two different, correct error contracts over one shared call, which is what contract section 6
-asks interfaces to do (envelope OES-19). Nothing here changes that.
+**Scope.** The run lifecycle above ``execute_standalone`` is deliberately *not* unified into
+a service like this one. ``api/v1.plan()`` and its ``cli.py`` counterpart are two different,
+correct error contracts over one shared call. Nothing here changes that.
 """
 
 from __future__ import annotations
@@ -157,16 +155,15 @@ def _service_boundary(operation: Callable[_P, _R]) -> Callable[_P, _R]:
     reading, so they give the precise family and the message an operator can act on. This is
     what makes the vocabulary *total* — it catches what no arm named, so nothing leaves as a
     raw traceback outside the one vocabulary both interfaces map. Enumerating exception types
-    at each site is what this replaces: four escapes were found that way, one at a time, and
-    each fix left the next one live.
+    at each call site does not: every site left unenumerated is another escape.
 
     Classification is by ``except`` clause only, which matches the exception's actual type
     without touching the instance. ``isinstance`` is itself inspection — it consults the
     instance's ``__class__``, a read a hostile property executes on — and an exception no
     arm named can have been constructed by a hostile caller argument (a
     ``product_cache_location`` whose ``__str__`` raises it), so a runtime classification
-    table used to escape this module as a raw untyped error. Nothing reaches the text from
-    the exception either: one fixed message per operation.
+    table lets a hostile value escape this module as a raw untyped error. Nothing reaches
+    the text from the exception either: one fixed message per operation.
 
     The boundary infers only two families from an exception no arm named, and nothing
     else. A filesystem or SQLite error can only have come from the store, and this module
@@ -210,11 +207,10 @@ def _service_boundary(operation: Callable[_P, _R]) -> Callable[_P, _R]:
 
 
 # Every escape ``_escape_pointer_character`` can write, read backwards. "~0" and "~1" are the
-# two the pointer grammar cares about, and inverting only those was enough to keep the grammar
-# satisfied — but a declared key holding any of the others never matched a collected value, so
-# it was never redacted. ":" is the one that decides this: ``_add_url_userinfo`` collects a
-# credential as "user:password", which makes the most common collected-secret shape the one an
-# escape-blind match cannot find.
+# only two the pointer grammar cares about, but inverting only those leaves a declared key
+# holding any of the others unmatched against a collected value, and so unredacted. ":" is the
+# one that decides this: ``_add_url_userinfo`` collects a credential as "user:password", which
+# makes the most common collected-secret shape the one an escape-blind match cannot find.
 _POINTER_ESCAPE_DECODINGS = {escaped: character for character, escaped in _POINTER_CHARACTER_ESCAPES.items()}
 # Longest first. Defensive, not load-bearing against the table as it stands: the only entries
 # longer than two characters are "\\u003a" and "\\u003b", and the two characters they open with
@@ -309,12 +305,10 @@ def redact_pointer(location: str, secrets: Sequence[str]) -> str:
     exists to separate and would leave them indistinguishable. Both interfaces redact through
     this function, so the tag cannot differ between them.
 
-    One thing the round-trip does not preserve: ``validation.py``'s truncation marker is the
-    six-character text ``\u2026``, which the decoder reads as an escape and the encoder writes
-    back as the single printable character it stands for. A redacted pointer therefore shows a
-    literal "…" where an unredacted one shows the marker, and a declared key containing "…"
-    shows the same thing — so in a redacted pointer that character is a hint that truncation
-    happened, not proof of it. Nothing collides: the tag appended here carries its own digest.
+    The round-trip does not preserve ``validation.py``'s truncation marker: a redacted pointer
+    shows a literal "…" where an unredacted one shows the six-character marker, so there that
+    character is a hint that truncation happened rather than proof of it. Nothing collides: the
+    tag appended here carries its own digest.
     """
     components: list[str] = []
     replaced = False
@@ -397,7 +391,7 @@ def redact_message(text: str, secrets: Sequence[str]) -> str:
     declared content go through here: a finding's message, the refusal the command line logs,
     and the ``message`` of the public boundary error. The expansion is what makes it
     escape-aware, and applying it here rather than at each surface is what stops one surface
-    from drifting behind :func:`redact_finding` again.
+    from drifting behind :func:`redact_finding`.
 
     **It matches renderings; it does not escape at the point of writing, and the difference is
     where its two known limits come from.** What is verified is that the four renderings
@@ -423,11 +417,11 @@ def redact_message(text: str, secrets: Sequence[str]) -> str:
 # pattern refuses — which turns a returned refusal into a raised validation error at one
 # boundary and a corrupted code at the other.
 #
-# The refusal half is the same defect as the finding half, one level up, and was left open
-# when the finding half was closed: an environment holding a collected value equal to
-# "storage" made an error's ``family`` attribute say "storage" while the dump of the same
-# error said "***", and made the command line label the refusal "***" — the token both
-# interfaces render for one error meaning, gone environment-dependent.
+# The rule covers a refusal's own fields as well as a finding's. In an environment holding a
+# collected value equal to "storage", redacting them makes an error's ``family`` attribute say
+# "storage" while the dump of the same error says "***", and makes the command line label the
+# refusal "***" — the token both interfaces render for one error meaning, gone
+# environment-dependent.
 #
 # Only a message and a pointer quote declared content. Whatever is not named here is redacted,
 # so a field added later is redacted by default rather than exposed by it.
@@ -449,15 +443,14 @@ def redact_public_field(field: str, value: str, secrets: Sequence[str]) -> str:
 
     **The whole rule, in one function, so a finding or a refusal cannot be redacted two ways.**
     A finding reaches a boundary either as the model or as a serialized mapping, and both
-    shapes are the same four fields under the same rule — but each shape had its own copy of
-    it, and when the message rule was made escape-aware only one copy was. This is what the two
-    shapes now call, so there is nothing left for them to disagree about. A refusal's own
-    fields are the identical rule one level up: ``family``, ``operation`` and ``outcome`` are
-    closed vocabularies, and ``message`` is caller-derived free text.
+    shapes are the same four fields under the same rule; both call this, so the two shapes
+    have nothing to disagree about. A refusal's own fields are the identical rule one level
+    up: ``family``, ``operation`` and ``outcome`` are closed vocabularies, and ``message`` is
+    caller-derived free text.
 
     **Both caller-derived fields are matched escape-aware, and they have to be by two different
     mechanisms.** A finding message quotes the same declared key its pointer does, escaped by
-    the same function — so a plain match over the message let the credential the pointer
+    the same function — so a plain match over the message lets the credential the pointer
     hardening exists for through on the same output line. The pointer is structure and is taken
     apart (:func:`redact_pointer`); the message is free text and cannot be, so the secret is
     encoded into the forms a message writes it as instead (:func:`redact_message`).
@@ -492,13 +485,13 @@ def redact_finding(finding: ValidationFinding, secrets: Sequence[str]) -> Valida
 def describe(error: ConfigsError, secrets: Sequence[str]) -> str:
     """Return the one operator-facing refusal text both interfaces render, already redacted.
 
-    The family leads, so the vocabulary a reviewer reads in this module is the vocabulary an
-    operator sees at a command line and a caller reads off the public API error.
+    The family leads, so the vocabulary declared in this module is the vocabulary an operator
+    sees at a command line and a caller reads off the public API error.
 
     **Redacted here, per field, rather than by the caller over the rendered line.** The line is
     a closed vocabulary followed by caller-derived free text, and a match over the whole line
     cannot tell them apart: an environment holding a collected value equal to "not-found"
-    turned the label of every not-found refusal into "***". Each half therefore goes through
+    turns the label of every not-found refusal into "***". Each half therefore goes through
     :func:`redact_public_field` under its own name, which is the same rule the public error
     dump applies to the same two values.
     """
@@ -612,8 +605,8 @@ def _projection(
     """Open the configuration registry, refusing an absent or non-absolute store location.
 
     Absence is a refusal rather than a fallback: unlike a run, a registry has nowhere to live
-    without an explicit store. Only the absoluteness half of the rule is shared with the run
-    commands (envelope OES-21).
+    without an explicit store. Only the absoluteness half of the rule is shared with the
+    run commands.
     """
     if projection is not None:
         if product_cache_location is not None:
@@ -647,7 +640,7 @@ def _standalone_projection(product_cache_location: Path) -> ProductProjection:
     return local_product_projection(product_cache_location)
 
 
-# The two machine-readable absence values the read operations distinguish (envelope AR3).
+# The two machine-readable absence values the read operations distinguish.
 # ``CONFIGURATION_NOT_FOUND_REASON`` matches the store's own lookup reason for the same
 # absence; the version value names the case the store cannot: the configuration exists and
 # the requested version does not.
@@ -699,12 +692,12 @@ def _require_registry_version(value: object) -> None:
 
     Exactly ``int`` — no subclass — and within ``1..=_MAX_REGISTRY_VERSION``, as the
     caller's own input rather than the store's answer, so every integer is classified
-    before SQLite sees it. ``bool`` is an ``int`` subclass, so an ``isinstance`` guard let
+    before SQLite sees it. ``bool`` is an ``int`` subclass, so an ``isinstance`` guard lets
     ``registry_version=True`` reach SQLite, compare equal to 1, and silently resolve version
     1; the registry allocates versions from 1, so ``0`` and ``-1`` are not versions that
     happen to be absent — reporting them ``not-found`` claims the store answered a question
     it can never be asked; and the store's INTEGER is signed 64-bit, so an integer above
-    the range is equally unaskable — it used to surface as SQLite's own ``OverflowError``.
+    the range is equally unaskable, and surfaces as SQLite's own ``OverflowError``.
     """
     if type(value) is not int:  # pylint: disable=unidiomatic-typecheck  # bool must not pass.
         # Fixed message: reading the class's __name__ executes a hostile metaclass.
@@ -877,9 +870,9 @@ def get_version(
 ) -> ConfigurationVersion:
     """Return one immutable registered version exactly as it was persisted.
 
-    Two lookups, so the two absences stay distinct (envelope AR3): the configuration first —
-    its absence refuses with :data:`CONFIGURATION_NOT_FOUND_REASON` — then the version, whose
-    absence on an existing configuration refuses with
+    Two lookups, so the two absences stay distinct: the configuration first — its absence
+    refuses with :data:`CONFIGURATION_NOT_FOUND_REASON` — then the version, whose absence
+    on an existing configuration refuses with
     :data:`CONFIGURATION_VERSION_NOT_FOUND_REASON`. Deletion does not exist, so the two steps
     cannot race. The store's blended single-lookup reason is untouched; ``validate`` keeps it.
     """
@@ -909,11 +902,11 @@ def validate(
     declarations, which is why a package that was accepted at registration can report
     findings later.
 
-    ``destination_schema`` is the explicit opt-in contract section 4 names ``validate``
-    the carrier of: ``None`` — the default — keeps the declared-content-only behavior
-    byte-identical, with zero schema reads and zero network I/O. An explicit options
-    object adds the destination schema checks, merges their findings under the same
-    ``sort_findings`` contract, and records the judged snapshot's fingerprint.
+    ``destination_schema`` is the explicit opt-in for the destination schema checks:
+    ``None`` — the default — keeps the declared-content-only behavior byte-identical, with
+    zero schema reads and zero network I/O. An explicit options object adds the destination
+    schema checks, merges their findings under the same ``sort_findings`` contract, and
+    records the judged snapshot's fingerprint.
     """
     _require_argument_type(config_id, name="config_id", expected=str)
     _require_registry_version(registry_version)
