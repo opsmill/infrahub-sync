@@ -132,9 +132,9 @@ schema, plus permission to read and write their rows.
 
 ### Test injection
 
-The local SQLite/filesystem projection is an internal test seam. It is not a managed
-deployment option or a public CLI/Python execution mode. In-process service and store tests
-can inject it directly:
+The local SQLite/filesystem projection is an injected standalone/test seam. It is not a
+managed deployment option or a public CLI/Python execution mode. In-process service and
+store tests can inject it directly:
 
 ```python
 from pathlib import Path
