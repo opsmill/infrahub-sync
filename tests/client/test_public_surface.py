@@ -24,6 +24,12 @@ def test_httpx_is_a_base_dependency_only() -> None:
     assert "httpx" not in managed
 
 
+def test_typing_extensions_supports_the_python_310_client_tests() -> None:
+    metadata = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert '"typing-extensions>=4.4"' in metadata
+
+
 def test_python_api_docs_describe_only_the_http_client() -> None:
     docs = (ROOT / "docs/docs/reference/python-api.mdx").read_text(encoding="utf-8")
 

@@ -17,7 +17,7 @@ classifiers = [
 dependencies = [
     "infrahub-sdk[all]>=1.17,<2",
     "structlog>=25.1,<26.0",
-    "typing-extensions>=4.0",
+    "typing-extensions>=4.4",
     "httpx>=0.27,<1",
     # The `[redis]` extra is deliberately dropped: it caps `redis<5.0`, which is
     # unsatisfiable next to the optional `prefect` extra below

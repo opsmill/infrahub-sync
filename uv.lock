@@ -1179,7 +1179,7 @@ requires-dist = [
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.12" },
     { name = "types-toml", marker = "extra == 'dev'" },
     { name = "types-ujson", marker = "extra == 'dev'" },
-    { name = "typing-extensions", specifier = ">=4.0" },
+    { name = "typing-extensions", specifier = ">=4.4" },
     { name = "uvicorn", marker = "python_full_version >= '3.11' and extra == 'managed'", specifier = ">=0.34,<1" },
     { name = "yamllint", marker = "extra == 'dev'", specifier = ">=1.37.1" },
 ]
