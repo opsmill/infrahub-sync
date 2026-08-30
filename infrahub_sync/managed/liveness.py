@@ -113,15 +113,16 @@ class RunLivenessReconciler:
     is fresh when the pool reports the exact claiming worker UUID ``online``
     with a heartbeat inside ``max(3 * interval, 30)`` seconds.
 
-    The five legal ``(terminal_state, terminal_outcome)`` verdicts are
-    ``(completed, succeeded)`` and ``(failed, failed)``, written only by the
-    claiming worker, plus ``(cancelled, cancelled)``, ``(abandoned, abandoned)``
-    and ``(interrupted, ambiguous)``. Those three have two writers:
-    reconciliation here, and request-time cancellation recovery in
-    ``ManagedRunService.cancel_run``, which expires an intent-owned link at the
-    same inclusive deadline as rule 2. Both writers go through the same durable
-    compare-and-set, so only one of them commits a verdict. Neither submits or
-    resubmits work: an execution is never replayed after any verdict.
+    There are five legal ``(terminal_state, terminal_outcome)`` verdicts.
+    ``(completed, succeeded)`` and ``(failed, failed)`` are written only by the
+    claiming worker. ``(cancelled, cancelled)`` is written only by
+    reconciliation rule 1. ``(abandoned, abandoned)`` and
+    ``(interrupted, ambiguous)`` may be written either by reconciliation or by
+    request-time cancellation recovery in ``ManagedRunService.cancel_run``, at
+    the same inclusive deadline as rule 2. Those competing reconciliation and
+    request-time paths use the durable compare-and-set, so only one of them
+    commits a verdict. No writer submits or resubmits work: an execution is
+    never replayed after any verdict.
     """
 
     def __init__(
