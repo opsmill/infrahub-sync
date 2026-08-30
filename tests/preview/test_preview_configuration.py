@@ -79,16 +79,6 @@ def test_preview_minio_healthcheck_is_self_contained_before_bootstrap() -> None:
     assert "depends_on:\n      sync-minio:\n        condition: service_healthy" in bootstrap_service
 
 
-def test_preview_smoke_reads_the_worker_published_plan_artifact_through_the_api() -> None:
-    """The static smoke contract proves Preview reads a worker-published artifact via the API."""
-    smoke = (REPO_ROOT / "tests" / "preview" / "test_managed_api.py").read_text(encoding="utf-8")
-    planned = smoke.index('planned = _wait_for_phase(client, run_id, "planned")')
-    artifact = smoke.index('plan_view = client.get(f"/runs/{run_id}/plan")')
-    assert planned < artifact
-    assert "assert plan_view.status_code == 200" in smoke
-    assert 'assert plan_payload["checksum_ok"] is True' in smoke
-
-
 def test_compose_receives_merged_local_preview_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, dict[str, str], bool]] = []
     context = Context()

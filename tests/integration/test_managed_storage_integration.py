@@ -56,14 +56,15 @@ def test_independent_managed_projections_share_configurations_runs_and_artifacts
         phase="accepted",
     )
     api_projection.create_run(expected_run)
-    api_projection.publish_artifact(
+    reference = api_projection.publish_artifact(
         run_id,
         artifact_id="shared-artifact",
         kind="integration-proof",
         media_type="text/plain",
         data=b"shared durable state",
     )
+    expected_published_run = expected_run.model_copy(update={"artifact_refs": (reference,)})
 
     assert worker_projection.lookup_configuration_version(version.config_id, version.registry_version).value == version
-    assert worker_projection.lookup_run(run_id).value == expected_run
+    assert worker_projection.lookup_run(run_id).value == expected_published_run
     assert worker_projection.lookup_artifact(run_id, "shared-artifact").value == b"shared durable state"

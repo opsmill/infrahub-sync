@@ -6,6 +6,7 @@ import logging
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from pathlib import Path
 from threading import Barrier
 from uuid import NAMESPACE_URL, uuid5
@@ -19,12 +20,15 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
 from infrahub_sync.configuration import ConfigurationPackage
+from infrahub_sync.managed import flow as managed_flow
 from infrahub_sync.managed.app import create_app
 from infrahub_sync.managed.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.managed.models import CreateRunRequest, PlanResource
 from infrahub_sync.managed.orchestration import Observation, Submission
 from infrahub_sync.managed.service import PLAN_ARTIFACT_ID, ManagedAPIError, ManagedRunService
-from infrahub_sync.product_store import ProductProjection, local_product_projection
+from infrahub_sync.plan.models import PlanManifest
+from infrahub_sync.plan.review import SavedPlan
+from infrahub_sync.product_store import ProductProjection, ProductRun, local_product_projection
 
 OWNER_TOKEN = "owner-token-canary-0001"  # noqa: S105 - deliberate non-secret boundary canary.
 OTHER_TOKEN = "other-token-canary-0002"  # noqa: S105 - deliberate non-secret boundary canary.
@@ -207,6 +211,62 @@ def _publish_plan(projection: ProductProjection, run_id: str, *, checksum: str =
         data=plan.model_dump_json().encode(),
     )
     return plan
+
+
+def test_worker_published_plan_is_retrievable_through_an_independent_api_projection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Worker publication crosses the shared backend and the API artifact boundary."""
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": OWNER_TOKEN}}))
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    api_projection = local_product_projection(tmp_path.resolve())
+    worker_projection = local_product_projection(tmp_path.resolve())
+    version = api_projection.create_configuration(_registered_package())
+    run_id = "run-worker-api-artifact"
+    api_projection.create_run(
+        ProductRun(
+            run_id=run_id,
+            operation="plan",
+            configuration_reference=f"{version.config_id}@{version.registry_version}",
+            config_id=version.config_id,
+            registry_version=version.registry_version,
+            package_checksum=version.package_checksum,
+            actor="owner",
+            started_at=datetime(2026, 8, 29, 12, tzinfo=timezone.utc),
+            phase="accepted",
+        )
+    )
+    saved = SavedPlan(
+        manifest=PlanManifest(
+            format_version=2,
+            run_id=run_id,
+            created_at="2026-08-29T12:00:00+00:00",
+            config_version=f"{version.config_id}@{version.registry_version}",
+            source_snapshot=[],
+            operations_count=0,
+            delete_operations_computed=True,
+            plan_checksum="a" * 64,
+        ),
+        operations=[],
+        checksum_ok=True,
+        verification_notes=[],
+    )
+
+    managed_flow._publish_plan(worker_projection, run_id, saved, ())
+
+    expected_plan = managed_flow._review_document(run_id, saved)
+    expected_bytes = expected_plan.model_dump_json().encode()
+    service = ManagedRunService(api_projection, _FakeOrchestration(), secrets=resolver.secret_values)
+    client = TestClient(create_app(service, resolver))
+    headers = {"Authorization": f"Bearer {OWNER_TOKEN}"}
+    plan_response = client.get(f"/runs/{run_id}/plan", headers=headers)
+    artifact_response = client.get(f"/runs/{run_id}/artifacts/{PLAN_ARTIFACT_ID}", headers=headers)
+
+    assert plan_response.status_code == 200
+    assert plan_response.json() == expected_plan.model_dump(mode="json")
+    assert artifact_response.status_code == 200
+    assert artifact_response.content == expected_bytes
+    assert artifact_response.headers["digest"] == f"sha-256={sha256(expected_bytes).hexdigest()}"
 
 
 def test_authentication_idempotency_and_secret_boundaries(
