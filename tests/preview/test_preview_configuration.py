@@ -202,6 +202,8 @@ def test_actual_smoke_path_receives_the_preview_aws_credential_chain(monkeypatch
         "PREVIEW_MINIO_SECRET_KEY": PREVIEW_MINIO_SECRET,
         "PREVIEW_S3_BUCKET": "infrahub-sync-preview",
         "PREVIEW_WORK_POOL": "preview-pool",
+        "PREVIEW_RUN_ADMISSION_TTL_SECONDS": "600",
+        "PREVIEW_PREFECT_WORKER_QUERY_SECONDS": "15",
     }
 
     monkeypatch.setattr(preview, "load_preview_env", lambda: values)
