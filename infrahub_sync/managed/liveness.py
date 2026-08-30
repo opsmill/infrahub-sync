@@ -107,15 +107,20 @@ class RunLivenessReconciler:
     ===  ==============================================================  =========================================
 
     "intent" is a non-null ``cancellation_requested_at``. Rules 1-3 outrank 4-8,
-    so intent is the only authority over a link that carries it. Rules 5 and 8
-    need available pool detail; an unavailable snapshot makes no transition. An
-    owner is fresh when the pool reports the exact claiming worker UUID
-    ``online`` with a heartbeat inside ``max(3 * interval, 30)`` seconds.
+    so within reconciliation intent is the only authority over a link that
+    carries it: rules 4-8 never act on an intent-owned link. Rules 5 and 8 need
+    available pool detail; an unavailable snapshot makes no transition. An owner
+    is fresh when the pool reports the exact claiming worker UUID ``online``
+    with a heartbeat inside ``max(3 * interval, 30)`` seconds.
 
     The five legal ``(terminal_state, terminal_outcome)`` verdicts are
     ``(completed, succeeded)`` and ``(failed, failed)``, written only by the
     claiming worker, plus ``(cancelled, cancelled)``, ``(abandoned, abandoned)``
-    and ``(interrupted, ambiguous)``, written only here. No rule submits or
+    and ``(interrupted, ambiguous)``. Those three have two writers:
+    reconciliation here, and request-time cancellation recovery in
+    ``ManagedRunService.cancel_run``, which expires an intent-owned link at the
+    same inclusive deadline as rule 2. Both writers go through the same durable
+    compare-and-set, so only one of them commits a verdict. Neither submits or
     resubmits work: an execution is never replayed after any verdict.
     """
 
