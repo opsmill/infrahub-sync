@@ -23,15 +23,14 @@ class CompatibilityError(SyncClientError):
 
 
 class TransportError(SyncClientError):
-    def __init__(self, operation: str) -> None:
+    def __init__(self, operation: str, *, message: str = "the Sync API transport failed") -> None:
         self.operation = operation
-        super().__init__("the Sync API transport failed")
+        super().__init__(message)
 
 
 class ClientTimeoutError(TransportError):
     def __init__(self, operation: str) -> None:
-        self.operation = operation
-        SyncClientError.__init__(self, "the Sync API request timed out")
+        super().__init__(operation, message="the Sync API request timed out")
 
 
 class ProtocolError(SyncClientError):

@@ -4,11 +4,54 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from infrahub_sync.client.models import *  # noqa: F403 - retained server import surface.
-from infrahub_sync.client.models import PublicExecutionLink, PublicRunResource
+from infrahub_sync.client.models import (
+    ApplyRunRequest,
+    ArtifactListResource,
+    CancelRunRequest,
+    ConfigErrorDetail,
+    ConfigErrorEnvelope,
+    ConfigMutationRequest,
+    CreateRunRequest,
+    ErrorDetail,
+    ErrorEnvelope,
+    OrchestrationSummary,
+    PlanResource,
+    PublicExecutionLink,
+    PublicRunResource,
+    ResultsResource,
+    RunResource,
+    ServiceStatusResource,
+    VerifyRunRequest,
+    VersionResource,
+    WorkerStatusResource,
+)
 
 if TYPE_CHECKING:
     from infrahub_sync.product_store import PrefectExecutionLink, ProductRun
+
+__all__ = [
+    "ApplyRunRequest",
+    "ArtifactListResource",
+    "CancelRunRequest",
+    "ConfigErrorDetail",
+    "ConfigErrorEnvelope",
+    "ConfigMutationRequest",
+    "CreateRunRequest",
+    "ErrorDetail",
+    "ErrorEnvelope",
+    "OrchestrationSummary",
+    "PlanResource",
+    "PublicExecutionLink",
+    "PublicRunResource",
+    "ResultsResource",
+    "RunResource",
+    "ServiceStatusResource",
+    "VerifyRunRequest",
+    "VersionResource",
+    "WorkerStatusResource",
+    "public_execution_link",
+    "public_run_resource",
+]
 
 
 def public_execution_link(link: PrefectExecutionLink) -> PublicExecutionLink:

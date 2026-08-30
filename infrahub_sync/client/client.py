@@ -68,7 +68,7 @@ _WAIT_FOR_RUN = "wait_for_run"
 _POLL_INTERVAL_ARG = "poll_interval"
 
 
-class SyncClient:
+class SyncClient:  # pylint: disable=too-many-public-methods
     """One side-effect-free synchronous client for every shipped Sync API route."""
 
     def __init__(
@@ -116,14 +116,9 @@ class SyncClient:
             url = httpx.URL(value)
         except Exception:  # noqa: BLE001 - all URL parser failures are one client-input refusal.
             raise ClientInputError(_SERVICE_URL_ARG) from None
-        if (
-            url.scheme not in {"http", "https"}
-            or not url.host
-            or url.username
-            or url.password
-            or url.query
-            or url.fragment
-        ):
+        authority_invalid = url.scheme not in {"http", "https"} or not url.host
+        carries_credentials = any((url.username, url.password, url.query, url.fragment))
+        if authority_invalid or carries_credentials:
             raise ClientInputError(_SERVICE_URL_ARG)
         return str(url).rstrip("/")
 
@@ -159,8 +154,8 @@ class SyncClient:
             "register_config",
             "POST",
             "/configs",
-            RegisteredConfigurationResource,
-            {201},
+            model=RegisteredConfigurationResource,
+            success={201},
             body=request,
             idempotency_key=idempotency_key,
             config_route=True,
@@ -174,8 +169,8 @@ class SyncClient:
             "create_config_version",
             "POST",
             f"/configs/{config_id}/versions",
-            RegisteredVersionResource,
-            {200, 201},
+            model=RegisteredVersionResource,
+            success={200, 201},
             body=request,
             idempotency_key=idempotency_key,
             config_route=True,
@@ -187,7 +182,12 @@ class SyncClient:
     def get_config(self, config_id: str) -> ConfigurationSummaryResource:
         config_id = self._identifier(config_id, "config_id")
         return self._request_model(
-            "get_config", "GET", f"/configs/{config_id}", ConfigurationSummaryResource, {200}, config_route=True
+            "get_config",
+            "GET",
+            f"/configs/{config_id}",
+            model=ConfigurationSummaryResource,
+            success={200},
+            config_route=True,
         )
 
     def list_config_versions(self, config_id: str) -> tuple[ConfigurationVersionResource, ...]:
@@ -203,8 +203,8 @@ class SyncClient:
             "get_config_version",
             "GET",
             f"/configs/{config_id}/versions/{version}",
-            ConfigurationVersionResource,
-            {200},
+            model=ConfigurationVersionResource,
+            success={200},
             config_route=True,
         )
 
@@ -221,15 +221,21 @@ class SyncClient:
             "validate_config",
             "POST",
             f"/configs/{config_id}/versions/{version}/validate",
-            ValidationReportResource,
-            {200},
+            model=ValidationReportResource,
+            success={200},
             params={"offset": offset, "limit": limit},
             config_route=True,
         )
 
     def create_run(self, request: CreateRunRequest, idempotency_key: str) -> RunResource:
         return self._request_model(
-            "create_run", "POST", "/runs", RunResource, {202}, body=request, idempotency_key=idempotency_key
+            "create_run",
+            "POST",
+            "/runs",
+            model=RunResource,
+            success={202},
+            body=request,
+            idempotency_key=idempotency_key,
         )
 
     def plan(self, request: CreateRunRequest, idempotency_key: str) -> RunResource:
@@ -244,19 +250,27 @@ class SyncClient:
 
     def get_run(self, run_id: str) -> RunResource:
         run_id = self._identifier(run_id, "run_id")
-        return self._request_model("get_run", "GET", f"/runs/{run_id}", RunResource, {200})
+        return self._request_model("get_run", "GET", f"/runs/{run_id}", model=RunResource, success={200})
 
     def get_plan(self, run_id: str) -> PlanResource:
         run_id = self._identifier(run_id, "run_id")
-        return self._request_model("get_plan", "GET", f"/runs/{run_id}/plan", PlanResource, {200})
+        return self._request_model("get_plan", "GET", f"/runs/{run_id}/plan", model=PlanResource, success={200})
 
     def get_results(self, run_id: str) -> ResultsResource:
         run_id = self._identifier(run_id, "run_id")
-        return self._request_model("get_results", "GET", f"/runs/{run_id}/results", ResultsResource, {200})
+        return self._request_model(
+            "get_results", "GET", f"/runs/{run_id}/results", model=ResultsResource, success={200}
+        )
 
     def list_artifacts(self, run_id: str) -> ArtifactListResource:
         run_id = self._identifier(run_id, "run_id")
-        return self._request_model("list_artifacts", "GET", f"/runs/{run_id}/artifacts", ArtifactListResource, {200})
+        return self._request_model(
+            "list_artifacts",
+            "GET",
+            f"/runs/{run_id}/artifacts",
+            model=ArtifactListResource,
+            success={200},
+        )
 
     def get_artifact(self, run_id: str, artifact_id: str) -> ArtifactContent:
         run_id = self._identifier(run_id, "run_id")
@@ -281,19 +295,19 @@ class SyncClient:
         return ArtifactContent(data=response.content, media_type=media_type, digest=digest)
 
     def verify_run(self, run_id: str, request: VerifyRunRequest, idempotency_key: str) -> RunResource:
-        return self._run_mutation("verify_run", run_id, "verify", request, idempotency_key)
+        return self._run_mutation("verify_run", run_id, "verify", request=request, idempotency_key=idempotency_key)
 
     def verify(self, run_id: str, request: VerifyRunRequest, idempotency_key: str) -> RunResource:
         return self.verify_run(run_id, request, idempotency_key)
 
     def apply_run(self, run_id: str, request: ApplyRunRequest, idempotency_key: str) -> RunResource:
-        return self._run_mutation("apply_run", run_id, "apply", request, idempotency_key)
+        return self._run_mutation("apply_run", run_id, "apply", request=request, idempotency_key=idempotency_key)
 
     def apply(self, run_id: str, request: ApplyRunRequest, idempotency_key: str) -> RunResource:
         return self.apply_run(run_id, request, idempotency_key)
 
     def cancel_run(self, run_id: str, request: CancelRunRequest, idempotency_key: str) -> RunResource:
-        return self._run_mutation("cancel_run", run_id, "cancel", request, idempotency_key)
+        return self._run_mutation("cancel_run", run_id, "cancel", request=request, idempotency_key=idempotency_key)
 
     def wait_for_run(self, accepted_resource: RunResource, *, timeout: float, poll_interval: float) -> RunResource:
         """Follow the execution selected by one accepted mutation response."""
@@ -357,15 +371,15 @@ class SyncClient:
         return float(value)
 
     def _run_mutation(
-        self, operation: str, run_id: str, suffix: str, request: BaseModel, idempotency_key: str
+        self, operation: str, run_id: str, suffix: str, *, request: BaseModel, idempotency_key: str
     ) -> RunResource:
         run_id = self._identifier(run_id, "run_id")
         return self._request_model(
             operation,
             "POST",
             f"/runs/{run_id}/{suffix}",
-            RunResource,
-            {202},
+            model=RunResource,
+            success={202},
             body=request,
             idempotency_key=idempotency_key,
         )
@@ -390,9 +404,9 @@ class SyncClient:
         operation: str,
         method: str,
         path: str,
+        *,
         model: type[_Model],
         success: set[int],
-        *,
         body: BaseModel | None = None,
         idempotency_key: str | None = None,
         params: dict[str, int] | None = None,

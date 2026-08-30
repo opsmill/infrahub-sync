@@ -583,9 +583,8 @@ class ManagedRunService:
     def list_artifacts(self, run_id: str) -> ArtifactListResource:
         """List immutable references without reading artifact bodies."""
         run = self._required_run(run_id)
-        return ArtifactListResource.model_validate(
-            {"run_id": run_id, "artifacts": tuple(reference.model_dump(mode="json") for reference in run.artifact_refs)}
-        )
+        artifacts = tuple(reference.model_dump(mode="json") for reference in run.artifact_refs)
+        return ArtifactListResource.model_validate({"run_id": run_id, "artifacts": artifacts})
 
     def get_artifact(self, run_id: str, artifact_id: str) -> tuple[bytes, str, str]:
         """Return verified artifact bytes, media type, and recorded digest."""
