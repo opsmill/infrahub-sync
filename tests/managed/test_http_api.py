@@ -25,7 +25,7 @@ from infrahub_sync.managed.auth import PRINCIPALS_ENV, EnvironmentPrincipalResol
 from infrahub_sync.managed.models import CreateRunRequest, PlanResource
 from infrahub_sync.managed.orchestration import CancellationResult, Observation, PoolStatus, Submission
 from infrahub_sync.managed.service import PLAN_ARTIFACT_ID, ManagedAPIError, ManagedRunService
-from infrahub_sync.product_store import ProductProjection, local_product_projection
+from infrahub_sync.product_store import ProductProjection, ProductRun, local_product_projection
 
 OWNER_TOKEN = "owner-token-canary-0001"  # noqa: S105 - deliberate non-secret boundary canary.
 OTHER_TOKEN = "other-token-canary-0002"  # noqa: S105 - deliberate non-secret boundary canary.
@@ -428,6 +428,186 @@ def test_cancellation_transport_failure_remains_a_typed_mutation_error(
     receipt = projection.lookup_mutation("owner", sha256(b"cancel-transport-failure").hexdigest()).value
     assert receipt is not None
     assert receipt.state == "processing"
+
+
+def test_cancel_refuses_run_without_execution_without_reserving_receipt(
+    managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """A pre-admission refusal has no durable mutation effect."""
+    client, projection, orchestration = managed
+    run_id = "run-without-execution"
+    key = "cancel-no-execution"
+    projection.create_run(
+        ProductRun(
+            run_id=run_id,
+            operation="plan",
+            configuration_reference="legacy",
+            actor="owner",
+            started_at=datetime(2026, 8, 29, 12, tzinfo=timezone.utc),
+            phase="accepted",
+        )
+    )
+
+    response = client.post(
+        f"/runs/{run_id}/cancel",
+        headers={**AUTH, "Idempotency-Key": key},
+        json={"reason": "nothing was submitted"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "no-active-execution"
+    assert projection.lookup_mutation("owner", sha256(key.encode()).hexdigest()).value is None
+    assert orchestration.cancelled == []
+
+
+def test_cancel_observation_failure_before_admission_has_no_receipt_or_secret(
+    managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Remote selection failure remains typed and cannot reserve or reflect provider detail."""
+    client, projection, orchestration = managed
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+    key = "cancel-observation-unavailable"
+
+    async def fail_observation(_flow_run_id: str) -> Observation:  # noqa: RUF029 - async protocol fault seam.
+        msg = "provider observation exposed token-canary"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(orchestration, "observe", fail_observation)
+
+    response = client.post(
+        f"/runs/{run_id}/cancel",
+        headers={**AUTH, "Idempotency-Key": key},
+        json={"reason": "stop despite provider outage"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "orchestration-unavailable"
+    assert response.json()["error"]["mutation_id"] is None
+    assert "token-canary" not in response.text
+    assert projection.lookup_mutation("owner", sha256(key.encode()).hexdigest()).value is None
+    assert orchestration.cancelled == []
+
+
+def test_cancel_replays_same_key_and_refuses_distinct_key_without_reserving_receipt(
+    managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """One intent owns the link; its key replays while a new key has no effect."""
+    client, projection, orchestration = managed
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+    first_key = "cancel-intent-owner"
+    second_key = "cancel-intent-competitor"
+    request = {"reason": "stop the active execution"}
+
+    accepted = client.post(
+        f"/runs/{run_id}/cancel",
+        headers={**AUTH, "Idempotency-Key": first_key},
+        json=request,
+    )
+    replayed = client.post(
+        f"/runs/{run_id}/cancel",
+        headers={**AUTH, "Idempotency-Key": first_key},
+        json=request,
+    )
+    refused = client.post(
+        f"/runs/{run_id}/cancel",
+        headers={**AUTH, "Idempotency-Key": second_key},
+        json=request,
+    )
+
+    assert accepted.status_code == 202
+    assert replayed.status_code == 202
+    assert replayed.json() == accepted.json()
+    assert refused.status_code == 409
+    assert refused.json()["error"]["code"] == "execution-terminal"
+    assert projection.lookup_mutation("owner", sha256(second_key.encode()).hexdigest()).value is None
+    assert len(orchestration.cancelled) == 1
+
+
+def test_duplicate_cancel_claim_loss_replays_concurrent_completion(
+    managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A duplicate that loses the receipt claim observes the winner's completed result."""
+    client, projection, orchestration = managed
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+    flow_run_id = created.json()["orchestration"][0]["flow_run_id"]
+    response_body = {"run": {"run_id": run_id}, "orchestration": []}
+    original_claim = projection.claim_mutation
+
+    def lose_to_completed_duplicate(receipt_id: str, *, secrets=()) -> bool:
+        assert original_claim(receipt_id, secrets=secrets)
+        projection.complete_mutation(
+            receipt_id,
+            response_status=202,
+            response_body=response_body,
+            flow_run_id=flow_run_id,
+        )
+        return False
+
+    monkeypatch.setattr(projection, "claim_mutation", lose_to_completed_duplicate)
+
+    response = client.post(
+        f"/runs/{run_id}/cancel",
+        headers={**AUTH, "Idempotency-Key": "duplicate-cancel"},
+        json={"reason": "duplicate caller"},
+    )
+
+    assert response.status_code == 202
+    assert response.json() == response_body
+    assert orchestration.cancelled == []
+
+
+def test_cancel_post_admission_cas_loss_completes_replayable_conflict(
+    managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Business terminalization after admission settles the cancellation receipt once."""
+    client, projection, orchestration = managed
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+    flow_run_id = created.json()["orchestration"][0]["flow_run_id"]
+    key = "cancel-after-admission-race"
+    original_request = projection.request_execution_cancellation
+
+    def lose_eligibility_after_admission(  # noqa: PLR0913 - mirrors the provider CAS boundary.
+        request_run_id: str,
+        request_flow_run_id: str,
+        *,
+        requested_at: datetime,
+        recovery_deadline_at: datetime,
+        recovery_seconds: float,
+        receipt_id: str,
+        secrets: tuple[str, ...] = (),
+    ) -> bool:
+        assert projection.abandon_execution(run_id, flow_run_id)
+        return original_request(
+            request_run_id,
+            request_flow_run_id,
+            requested_at=requested_at,
+            recovery_deadline_at=recovery_deadline_at,
+            recovery_seconds=recovery_seconds,
+            receipt_id=receipt_id,
+            secrets=secrets,
+        )
+
+    monkeypatch.setattr(projection, "request_execution_cancellation", lose_eligibility_after_admission)
+    headers = {**AUTH, "Idempotency-Key": key}
+    body = {"reason": "race with terminalization"}
+
+    refused = client.post(f"/runs/{run_id}/cancel", headers=headers, json=body)
+    replayed = client.post(f"/runs/{run_id}/cancel", headers=headers, json=body)
+
+    assert refused.status_code == 409
+    assert refused.json()["error"]["code"] == "execution-terminal"
+    assert replayed.json() == refused.json()
+    receipt = projection.lookup_mutation("owner", sha256(key.encode()).hexdigest()).value
+    assert receipt is not None
+    assert (receipt.state, receipt.response_status) == ("accepted", 409)
+    assert orchestration.cancelled == []
 
 
 def test_run_resource_exposes_liveness_without_private_worker_or_receipt_ids(

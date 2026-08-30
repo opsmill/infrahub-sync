@@ -5,12 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Annotated, Any, Generic, Literal, TypeAlias, TypeVar
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from infrahub_sync.execution import Operation  # noqa: TC001 - Pydantic resolves this annotation at runtime.
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+_INVALID_MANAGED_WORKER_ID = "managed worker identity is invalid"
 
 
 class ArtifactReference(BaseModel):
@@ -84,6 +86,21 @@ class PrefectExecutionLink(BaseModel):
         if value is not None and value.utcoffset() is None:
             msg = "Prefect execution timestamps must include a timezone"
             raise ValueError(msg)
+        return value
+
+    @field_validator("claiming_worker_id", mode="before")
+    @classmethod
+    def _require_canonical_worker_id(cls, value: object) -> object:
+        if value is None:
+            return None
+        if type(value) is not str:  # pylint: disable=unidiomatic-typecheck
+            raise ValueError(_INVALID_MANAGED_WORKER_ID)
+        try:
+            canonical = str(UUID(value))
+        except ValueError:
+            raise ValueError(_INVALID_MANAGED_WORKER_ID) from None
+        if canonical != value:
+            raise ValueError(_INVALID_MANAGED_WORKER_ID)
         return value
 
     @model_validator(mode="after")

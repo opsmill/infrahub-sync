@@ -12,6 +12,7 @@ from decimal import Decimal, InvalidOperation
 from infrahub_sync.product_store import (  # noqa: TC001 - runtime protocol boundary.
     PrefectExecutionLink,
     ProductProjection,
+    ProductRun,
 )
 
 from .orchestration import ManagedOrchestration, PoolStatus  # noqa: TC001 - runtime protocol boundary.
@@ -20,6 +21,40 @@ RUN_ADMISSION_TTL_ENV = "INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS"
 _POLICY_ERROR = "managed liveness settings are invalid"
 _TTL_PATTERN = re.compile(r"^[0-9]+$")
 _DECIMAL_PATTERN = re.compile(r"^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$")
+_TERMINAL_STATES = frozenset({"completed", "failed", "crashed", "cancelled"})
+
+
+class CancellationSelectionUnavailableError(RuntimeError):
+    """Signal that Prefect could not classify a candidate without carrying provider detail."""
+
+
+async def select_cancellable_execution(
+    run: ProductRun,
+    receipt_id: str | None,
+    orchestration: ManagedOrchestration,
+) -> PrefectExecutionLink | None:
+    """Select an eligible link without writing product or receipt state."""
+    correlated = next(
+        (
+            candidate
+            for candidate in reversed(run.prefect_executions)
+            if candidate.terminal_at is None and candidate.cancellation_receipt_id == receipt_id
+        ),
+        None,
+    )
+    if receipt_id is not None and correlated is not None:
+        return correlated
+    for candidate in reversed(run.prefect_executions):
+        if candidate.terminal_at is not None or candidate.cancellation_requested_at is not None:
+            continue
+        observed = await orchestration.observe(candidate.flow_run_id)
+        if not observed.available:
+            if observed.reason == "prefect-execution-unavailable":
+                continue
+            raise CancellationSelectionUnavailableError
+        if observed.state not in _TERMINAL_STATES:
+            return candidate
+    return None
 
 
 @dataclass(frozen=True, slots=True)

@@ -2100,6 +2100,9 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         secrets: Sequence[str] = (),
     ) -> PrefectExecutionLink:
         """Append one purpose-labelled execution, optionally allocating its ordinal atomically."""
+        if link.submitted_at is None:
+            msg = "new Prefect execution requires submitted_at"
+            raise ValueError(msg)
         if not self._records.exists(run_id):
             msg = f"Cannot link a Prefect execution to unavailable Sync run ID {run_id!r}"
             raise RunNotFoundError(msg)

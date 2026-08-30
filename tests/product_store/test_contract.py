@@ -972,6 +972,129 @@ def test_execution_link_requires_complete_claim_and_terminal_verdicts() -> None:
         PrefectExecutionLink(flow_run_id="flow", purpose="plan", attempt=1, submitted_at=now, terminal_at=now)
 
 
+def test_execution_link_accepts_canonical_builtin_worker_uuid() -> None:
+    now = datetime(2026, 8, 29, tzinfo=timezone.utc)
+    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+
+    accepted = PrefectExecutionLink(
+        flow_run_id="flow",
+        purpose="plan",
+        attempt=1,
+        submitted_at=now,
+        claimed_at=now,
+        claiming_worker_id=worker_id,
+    )
+    assert accepted.claiming_worker_id == worker_id
+
+
+@pytest.mark.parametrize(
+    "worker_id",
+    [
+        "8C1DA53D-0E6B-4D3D-A0F1-97B6A9CCEBF0",
+        type("WorkerIdentity", (str,), {})("8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"),
+    ],
+    ids=["noncanonical", "str-subclass"],
+)
+def test_execution_link_refuses_noncanonical_worker_identity_with_fixed_error(worker_id: object) -> None:
+    now = datetime(2026, 8, 29, tzinfo=timezone.utc)
+
+    with pytest.raises(ValidationError) as caught:
+        PrefectExecutionLink.model_validate(
+            {
+                "flow_run_id": "flow",
+                "purpose": "plan",
+                "attempt": 1,
+                "submitted_at": now,
+                "claimed_at": now,
+                "claiming_worker_id": worker_id,
+            }
+        )
+    errors = caught.value.errors(include_input=False)
+    assert errors[0]["msg"] == "Value error, managed worker identity is invalid"
+
+
+def test_execution_link_refuses_hostile_worker_identity_without_inspection() -> None:
+    now = datetime(2026, 8, 29, tzinfo=timezone.utc)
+
+    class HostileWorkerIdentity:
+        inspected = False
+
+        def __str__(self) -> str:
+            self.inspected = True
+            msg = "hostile worker identity was inspected"
+            raise AssertionError(msg)
+
+        def __repr__(self) -> str:
+            self.inspected = True
+            msg = "hostile worker identity was inspected"
+            raise AssertionError(msg)
+
+    hostile = HostileWorkerIdentity()
+    with pytest.raises(ValidationError) as caught:
+        PrefectExecutionLink.model_validate(
+            {
+                "flow_run_id": "flow",
+                "purpose": "plan",
+                "attempt": 1,
+                "submitted_at": now,
+                "claimed_at": now,
+                "claiming_worker_id": hostile,
+            }
+        )
+    errors = caught.value.errors(include_input=False)
+    assert errors[0]["msg"] == "Value error, managed worker identity is invalid"
+    assert not hostile.inspected
+
+
+def test_new_execution_requires_submitted_at_without_persistence(provider: ProductProjection) -> None:
+    """New link admission refuses a missing submission timestamp before provider write."""
+    provider.create_run(_run())
+    link = PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=None)
+
+    with pytest.raises(ValueError, match=r"^new Prefect execution requires submitted_at$"):
+        provider.add_prefect_execution("run-001", link)
+
+    stored = provider.lookup_run("run-001").value
+    assert stored is not None
+    assert stored.prefect_executions == ()
+
+
+@pytest.mark.parametrize("profile", ["sqlite", "postgresql"])
+def test_legacy_execution_without_submitted_at_uses_observation_fallback(profile: str, tmp_path: Path) -> None:
+    """Migrated rows remain readable without fabricating the fallback into storage."""
+    database = tmp_path / f"legacy-{profile}.sqlite3"
+    records = SQLiteRunStore(database) if profile == "sqlite" else PostgreSQLRunStore(_connect(database))
+    projection = ProductProjection(records, FileArtifactStore(tmp_path / f"objects-{profile}"))
+    observed_at = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    projection.create_run(_run())
+    projection.add_prefect_execution(
+        "run-001",
+        PrefectExecutionLink(
+            flow_run_id="flow-001",
+            purpose="plan",
+            attempt=1,
+            last_observed_state="pending",
+            last_observed_at=observed_at,
+            submitted_at=observed_at,
+        ),
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE prefect_executions SET submitted_at = NULL WHERE run_id = ? AND flow_run_id = ?",
+            ("run-001", "flow-001"),
+        )
+
+    loaded = projection.lookup_run("run-001").value
+    assert loaded is not None
+    assert loaded.prefect_executions[0].submitted_at == observed_at
+    with sqlite3.connect(database) as connection:
+        stored_submitted_at = connection.execute(
+            "SELECT submitted_at FROM prefect_executions WHERE run_id = ? AND flow_run_id = ?",
+            ("run-001", "flow-001"),
+        ).fetchone()
+    assert stored_submitted_at == (None,)
+
+
 def test_execution_claim_stall_and_terminal_cas_contract(provider: ProductProjection) -> None:
     """A stall is informational; claim and abandonment have mutually exclusive predicates."""
     now = datetime(2026, 8, 29, tzinfo=timezone.utc)
