@@ -74,6 +74,8 @@ def load_preview_env() -> dict[str, str]:
         "PREVIEW_SYNC_API_PORT",
         "PREVIEW_STORAGE_POSTGRES_PORT",
         "PREVIEW_MINIO_PORT",
+        "PREVIEW_MINIO_ACCESS_KEY",
+        "PREVIEW_MINIO_SECRET_KEY",
         "PREVIEW_S3_BUCKET",
         "PREVIEW_WORK_POOL",
     }
@@ -111,6 +113,8 @@ def _runtime_env(values: dict[str, str]) -> dict[str, str]:
             "INFRAHUB_SYNC_S3_PREFIX": "infrahub-sync",
             "INFRAHUB_SYNC_S3_ENDPOINT_URL": f"http://127.0.0.1:{values['PREVIEW_MINIO_PORT']}",
             "INFRAHUB_SYNC_S3_REGION": "us-east-1",
+            "AWS_ACCESS_KEY_ID": values["PREVIEW_MINIO_ACCESS_KEY"],
+            "AWS_SECRET_ACCESS_KEY": values["PREVIEW_MINIO_SECRET_KEY"],
             "INFRAHUB_SYNC_MANAGED_BEARER_TOKENS": values["PREVIEW_BEARER_TOKENS"],
             "INFRAHUB_SYNC_MANAGED_WORK_POOL": values["PREVIEW_WORK_POOL"],
             "INFRAHUB_SYNC_MANAGED_FLOW_WORKING_DIRECTORY": str(REPO_ROOT),

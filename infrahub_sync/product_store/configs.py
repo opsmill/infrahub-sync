@@ -642,6 +642,14 @@ def _projection(
         raise ConfigsStorageError(msg) from None
 
 
+def _standalone_projection(
+    product_cache_location: Path,
+    projection_factory: Callable[[Path], ProductProjection] = local_product_projection,
+) -> ProductProjection:
+    """Open the explicit local compatibility seam for managed route tests."""
+    return projection_factory(product_cache_location)
+
+
 # The two machine-readable absence values the read operations distinguish (envelope AR3).
 # ``CONFIGURATION_NOT_FOUND_REASON`` matches the store's own lookup reason for the same
 # absence; the version value names the case the store cannot: the configuration exists and

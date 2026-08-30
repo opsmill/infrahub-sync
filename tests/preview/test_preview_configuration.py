@@ -19,6 +19,8 @@ from tasks.preview import (
     ensure_smoke_branch,
 )
 
+PREVIEW_MINIO_SECRET = "preview-minio-secret"  # noqa: S105 - disposable local contract canary.
+
 if TYPE_CHECKING:
     from invoke.tasks import Task
 
@@ -41,6 +43,8 @@ def test_preview_declares_the_managed_postgresql_and_minio_storage_shape() -> No
             "PREVIEW_SYNC_API_PORT": "8090",
             "PREVIEW_STORAGE_POSTGRES_PORT": "5439",
             "PREVIEW_MINIO_PORT": "9010",
+            "PREVIEW_MINIO_ACCESS_KEY": "preview-minio-access",
+            "PREVIEW_MINIO_SECRET_KEY": PREVIEW_MINIO_SECRET,
             "PREVIEW_S3_BUCKET": "infrahub-sync-preview",
             "PREVIEW_WORK_POOL": "preview-pool",
         }
@@ -50,9 +54,13 @@ def test_preview_declares_the_managed_postgresql_and_minio_storage_shape() -> No
     assert "sync-minio:" in compose
     assert "sync-minio-bootstrap:" in compose
     assert "mc mb --ignore-existing" in compose
+    assert "${PREVIEW_MINIO_ACCESS_KEY" in compose
+    assert "${PREVIEW_MINIO_SECRET_KEY" in compose
     assert environment["INFRAHUB_SYNC_DATABASE_URL"] == "postgresql://postgres:postgres@127.0.0.1:5439/infrahub_sync"
     assert environment["INFRAHUB_SYNC_S3_BUCKET"] == "infrahub-sync-preview"
     assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == "http://127.0.0.1:9010"
+    assert environment["AWS_ACCESS_KEY_ID"] == "preview-minio-access"
+    assert environment["AWS_SECRET_ACCESS_KEY"] == PREVIEW_MINIO_SECRET
     assert "INFRAHUB_SYNC_CACHE_DIR" in environment
     assert "INFRAHUB_SYNC_MANAGED_CACHE_LOCATION" not in environment
 
@@ -170,6 +178,39 @@ def test_startup_smoke_requests_the_pristine_main_check(monkeypatch: pytest.Monk
             {**environment, EXPECT_MAIN_EMPTY_ENV: "1"},
         )
     ]
+
+
+def test_actual_smoke_path_receives_the_preview_aws_credential_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reusable smoke command receives the same MinIO credentials as API, worker, and CLI."""
+    events: list[tuple[str, dict[str, str]]] = []
+    context = Context()
+    values = {
+        "COMPOSE_PROJECT_NAME": "preview-test",
+        "INFRAHUB_INITIAL_ADMIN_TOKEN": "local-token",
+        "PREVIEW_BEARER_TOKENS": "{}",
+        "PREVIEW_INFRAHUB_PORT": "8080",
+        "PREVIEW_PREFECT_PORT": "4210",
+        "PREVIEW_SYNC_API_PORT": "8090",
+        "PREVIEW_STORAGE_POSTGRES_PORT": "5439",
+        "PREVIEW_MINIO_PORT": "9010",
+        "PREVIEW_MINIO_ACCESS_KEY": "preview-minio-access",
+        "PREVIEW_MINIO_SECRET_KEY": PREVIEW_MINIO_SECRET,
+        "PREVIEW_S3_BUCKET": "infrahub-sync-preview",
+        "PREVIEW_WORK_POOL": "preview-pool",
+    }
+
+    monkeypatch.setattr(preview, "load_preview_env", lambda: values)
+    monkeypatch.setattr(preview, "ensure_smoke_branch", lambda _env: None)
+    monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
+    monkeypatch.setattr(context, "run", lambda command, *, env: events.append((command, env.copy())))
+
+    preview._run_smoke(context, expect_main_empty=False)
+
+    assert len(events) == 1
+    command, smoke_environment = events[0]
+    assert command == "uv run pytest -m preview tests/preview -q"
+    assert smoke_environment["AWS_ACCESS_KEY_ID"] == "preview-minio-access"
+    assert smoke_environment["AWS_SECRET_ACCESS_KEY"] == PREVIEW_MINIO_SECRET
 
 
 def test_standalone_smoke_leaves_an_unreachable_environment_to_pytest(monkeypatch: pytest.MonkeyPatch) -> None:

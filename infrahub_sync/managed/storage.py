@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import boto3
 import psycopg
 from botocore.exceptions import ClientError
+from psycopg import conninfo
 
 from infrahub_sync.product_store import (
     DuplicateArtifactError,
@@ -172,6 +173,17 @@ def _optional_setting(values: Mapping[str, object], name: str) -> str | None:
     return value
 
 
+def _database_url(values: Mapping[str, object]) -> str:
+    """Return one non-empty connection string accepted by Psycopg's conninfo parser."""
+    database_url = _required_setting(values, DATABASE_URL_ENV)
+    try:
+        conninfo.conninfo_to_dict(database_url)
+    except psycopg.ProgrammingError:
+        msg = f"{DATABASE_URL_ENV} must be a PostgreSQL connection string"
+        raise ValueError(msg) from None
+    return database_url
+
+
 def _valid_port(port: str | None) -> bool:
     """Check a decimal port's range without an unbounded integer conversion."""
     if port is None:
@@ -215,13 +227,16 @@ def managed_product_projection(
 ) -> ProductProjection:
     """Build the one PostgreSQL/S3 projection used by a managed process."""
     values: Mapping[str, object] = os.environ if environ is None else environ
-    database_url = _required_setting(values, DATABASE_URL_ENV)
+    database_url = _database_url(values)
     bucket = _required_setting(values, S3_BUCKET_ENV)
     prefix = (_optional_setting(values, S3_PREFIX_ENV) or "infrahub-sync").strip("/")
     endpoint = _endpoint(values)
     region = _optional_setting(values, S3_REGION_ENV)
     connect = database_connect or (lambda: PsycopgConnectionFactory()(database_url))
-    client = Boto3S3Client(s3_client_builder("s3", endpoint_url=endpoint, region_name=region))
+    try:
+        client = Boto3S3Client(s3_client_builder("s3", endpoint_url=endpoint, region_name=region))
+    except Exception:  # noqa: BLE001  # SDK construction is one fixed startup boundary.
+        raise ManagedStorageStartupError from None
     try:
         return projection_builder(connect=connect, s3_client=client, bucket=bucket, prefix=prefix)
     except ProductStoreProviderError:
@@ -232,6 +247,12 @@ def _error_code(error: ClientError) -> str | None:
     """Return the SDK service code without reading an error message."""
     value = error.response.get("Error", {}).get("Code")
     return value if isinstance(value, str) else None
+
+
+def _http_status(error: ClientError) -> int | None:
+    """Return the exact SDK response status without coercion."""
+    value = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    return value if type(value) is int else None  # pylint: disable=unidiomatic-typecheck  # Exact response boundary.
 
 
 class Boto3S3Client:
@@ -251,11 +272,11 @@ class Boto3S3Client:
             try:
                 self._client.put_object(**arguments)
             except ClientError as error:
-                code = _error_code(error)
-                if code == "PreconditionFailed":
+                response = _error_code(error), _http_status(error)
+                if response == ("PreconditionFailed", 412):
                     msg = "S3 object already exists"
                     raise DuplicateArtifactError(msg) from None
-                if code == "ConditionalRequestConflict" and attempt + 1 < _CONDITIONAL_CONFLICT_ATTEMPTS:
+                if response == ("ConditionalRequestConflict", 409) and attempt + 1 < _CONDITIONAL_CONFLICT_ATTEMPTS:
                     continue
                 raise
             return
@@ -265,7 +286,7 @@ class Boto3S3Client:
         try:
             response = self._client.get_object(Bucket=bucket, Key=key)
         except ClientError as error:
-            if _error_code(error) == "NoSuchKey":
+            if (_error_code(error), _http_status(error)) == ("NoSuchKey", 404):
                 return None
             raise
         try:

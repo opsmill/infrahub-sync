@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from typing_extensions import override
 
 pytest.importorskip("botocore")
 
@@ -19,8 +20,16 @@ if TYPE_CHECKING:
     from infrahub_sync.product_store import ProductProjection
 
 
-def _client_error(code: str) -> ClientError:
-    return ClientError({"Error": {"Code": code, "Message": "sdk-secret-canary"}}, "PutObject")
+def _client_error(code: str, status: int | None = None) -> ClientError:
+    if status is None:
+        status = {"PreconditionFailed": 412, "ConditionalRequestConflict": 409, "NoSuchKey": 404}.get(code, 400)
+    return ClientError(
+        {
+            "Error": {"Code": code, "Message": "sdk-secret-canary"},
+            "ResponseMetadata": {"HTTPStatusCode": status},
+        },
+        "PutObject",
+    )
 
 
 class _Body:
@@ -106,6 +115,52 @@ def test_s3_client_classifies_only_exact_conditional_responses() -> None:
     with pytest.raises(ClientError):
         client.put(bucket="records", key="denied", data=b"data", if_absent=True)
     assert len(sdk.put_calls) == 1
+
+
+@pytest.mark.parametrize("code", ["PreconditionFailed", "ConditionalRequestConflict", "AccessDenied"])
+@pytest.mark.parametrize("status", [409, 412, 403])
+def test_s3_conditional_put_classification_is_the_exact_code_status_product(code: str, status: int) -> None:
+    """Neither a matching code nor a matching status is sufficient on its own."""
+    from infrahub_sync.managed.storage import Boto3S3Client
+
+    sdk = _SDK()
+    failure = _client_error(code, status)
+    sdk.put_failure = lambda: (_ for _ in ()).throw(failure)
+
+    if (code, status) == ("PreconditionFailed", 412):
+        with pytest.raises(DuplicateArtifactError):
+            Boto3S3Client(sdk).put(bucket="records", key="object", data=b"data", if_absent=True)
+        expected_attempts = 1
+    else:
+        with pytest.raises(ClientError) as raised:
+            Boto3S3Client(sdk).put(bucket="records", key="object", data=b"data", if_absent=True)
+        assert raised.value is failure
+        expected_attempts = 3 if (code, status) == ("ConditionalRequestConflict", 409) else 1
+
+    assert len(sdk.put_calls) == expected_attempts
+
+
+@pytest.mark.parametrize("code", ["NoSuchKey", "NoSuchBucket", "AccessDenied"])
+@pytest.mark.parametrize("status", [404, 403, 200])
+def test_s3_missing_get_classification_is_the_exact_code_status_product(code: str, status: int) -> None:
+    """Only the service's exact missing-key code and HTTP status become absence."""
+    from infrahub_sync.managed.storage import Boto3S3Client
+
+    failure = _client_error(code, status)
+
+    class FailingGetSDK(_SDK):
+        @override
+        def get_object(self, **_kwargs: object) -> dict[str, object]:
+            raise failure
+
+    sdk = FailingGetSDK()
+
+    if (code, status) == ("NoSuchKey", 404):
+        assert Boto3S3Client(sdk).get(bucket="records", key="object") is None
+    else:
+        with pytest.raises(ClientError) as raised:
+            Boto3S3Client(sdk).get(bucket="records", key="object")
+        assert raised.value is failure
 
 
 def test_s3_get_accepts_only_exact_bytes_and_only_exact_missing_object() -> None:
@@ -257,6 +312,76 @@ def test_managed_storage_settings_require_exact_strings_and_normalize_prefix_det
         projection_builder=collect_prefix,
     )
     assert prefixes == ["one/two"]
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        "not-a-postgresql-connection-string",
+        "sqlite:///database-secret-canary",
+        "host='unterminated-database-secret-canary",
+        "postgresql://db/sync?unknown-option=database-secret-canary",
+    ],
+)
+def test_managed_storage_rejects_non_postgresql_conninfo_before_any_construction(database_url: str) -> None:
+    """Database URL acceptance is exactly Psycopg's non-empty conninfo domain."""
+    from infrahub_sync.managed import storage
+
+    calls: list[str] = []
+
+    def constructed(name: str) -> NoReturn:
+        calls.append(name)
+        raise AssertionError(name)
+
+    with pytest.raises(ValueError) as error:
+        storage.managed_product_projection(
+            environ={
+                storage.DATABASE_URL_ENV: database_url,
+                storage.S3_BUCKET_ENV: "bucket",
+            },
+            database_connect=lambda: constructed("database"),
+            s3_client_builder=lambda *_args, **_kwargs: constructed("sdk"),
+            projection_builder=lambda **_kwargs: constructed("projection"),
+        )
+
+    assert str(error.value) == f"{storage.DATABASE_URL_ENV} must be a PostgreSQL connection string"
+    assert error.value.__cause__ is None
+    assert database_url not in str(error.value)
+    assert "secret-canary" not in str(error.value)
+    assert calls == []
+
+
+def test_managed_storage_contains_sdk_client_construction_failures() -> None:
+    """SDK construction details become the fixed unchained startup refusal."""
+    from infrahub_sync.managed import storage
+
+    calls: list[str] = []
+
+    def sdk_failure(*_args: object, **_kwargs: object) -> NoReturn:
+        calls.append("sdk")
+        message = "driver-secret-canary at https://endpoint-secret-canary"
+        raise RuntimeError(message)
+
+    def projection_builder(**_kwargs: object) -> ProductProjection:
+        calls.append("projection")
+        return cast("ProductProjection", object())
+
+    with pytest.raises(storage.ManagedStorageStartupError) as error:
+        storage.managed_product_projection(
+            environ={
+                storage.DATABASE_URL_ENV: "postgresql://database-secret-canary@db/sync",
+                storage.S3_BUCKET_ENV: "bucket",
+                storage.S3_ENDPOINT_ENV: "https://endpoint-secret-canary",
+            },
+            database_connect=lambda: calls.append("database"),
+            s3_client_builder=sdk_failure,
+            projection_builder=projection_builder,
+        )
+
+    assert str(error.value) == "managed durable storage startup failed"
+    assert error.value.__cause__ is None
+    assert "secret-canary" not in str(error.value)
+    assert calls == ["sdk"]
 
 
 @pytest.mark.parametrize(
