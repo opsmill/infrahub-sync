@@ -40,7 +40,7 @@ dev = [
     "ipython",
     "pytest-asyncio",
     "requests",
-    "pre-commit>=4.0,<5.0",
+    "prek>=0.5.0",
     "types-toml",
     "types-ujson",
     "typer-cli",
@@ -395,4 +395,3 @@ showcontent = true
 directory = "housekeeping"
 name = "Housekeeping"
 showcontent = true
-
