@@ -16,7 +16,13 @@ from opsmill_prefect_extras.executors import (
     RemoteWorkflowExecutor,
 )
 from opsmill_prefect_extras.workflows import WorkflowDefinition
-from prefect.client.schemas.objects import WorkerStatus
+from prefect.client.schemas.objects import State, StateType, WorkerStatus
+from prefect.client.schemas.responses import (
+    OrchestrationResult,
+    SetStateStatus,
+    StateAcceptDetails,
+    StateRejectDetails,
+)
 from prefect.exceptions import ObjectNotFound
 from prefect.states import Cancelling
 
@@ -164,8 +170,10 @@ class PrefectOrchestration:
     async def cancel(self, flow_run_id: str) -> CancellationResult:
         """Request exact-flow cancellation and report only Prefect acknowledgement."""
         try:
-            await self._client.set_flow_run_state(UUID(flow_run_id), Cancelling())
+            result = await self._client.set_flow_run_state(UUID(flow_run_id), Cancelling())
         except (ObjectNotFound, httpx.HTTPError):
+            return CancellationResult(acknowledged=False, reason="prefect-cancellation-unavailable")
+        if not _cancellation_acknowledged(result):
             return CancellationResult(acknowledged=False, reason="prefect-cancellation-unavailable")
         return CancellationResult(acknowledged=True)
 
@@ -175,6 +183,24 @@ def _canonical_uuid(value: object) -> str:
     if type(value) is not UUID:  # pylint: disable=unidiomatic-typecheck
         raise ValueError
     return str(value)
+
+
+def _cancellation_acknowledged(result: object) -> bool:
+    """Accept only pinned Prefect acknowledgement and replacement-state results."""
+    if type(result) is not OrchestrationResult:  # pylint: disable=unidiomatic-typecheck
+        return False
+    if result.status is SetStateStatus.ACCEPT:
+        return type(result.details) is StateAcceptDetails  # pylint: disable=unidiomatic-typecheck
+    if (
+        result.status is not SetStateStatus.REJECT or type(result.details) is not StateRejectDetails  # pylint: disable=unidiomatic-typecheck
+    ):
+        return False
+    state = result.state
+    return (
+        isinstance(state, State)
+        and type(state.type) is StateType  # pylint: disable=unidiomatic-typecheck
+        and state.type in {StateType.CANCELLING, StateType.CANCELLED}
+    )
 
 
 def _exact_list(value: object) -> list[Any]:

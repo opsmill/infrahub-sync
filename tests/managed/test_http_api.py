@@ -9,7 +9,9 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 from threading import Barrier
-from uuid import NAMESPACE_URL, uuid5
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
 
@@ -18,17 +20,35 @@ pytest.importorskip("opsmill_prefect_extras")
 pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient
+from prefect.client.schemas.responses import (
+    OrchestrationResult,
+    SetStateStatus,
+    StateAbortDetails,
+    StateRejectDetails,
+    StateWaitDetails,
+)
+from prefect.states import Cancelled, Cancelling, Running
 
 from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.managed import flow as managed_flow
 from infrahub_sync.managed.app import create_app
 from infrahub_sync.managed.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.managed.models import CreateRunRequest, PlanResource
-from infrahub_sync.managed.orchestration import CancellationResult, Observation, PoolStatus, Submission
+from infrahub_sync.managed.orchestration import (
+    CancellationResult,
+    Observation,
+    PoolStatus,
+    PrefectOrchestration,
+    Submission,
+)
 from infrahub_sync.managed.service import PLAN_ARTIFACT_ID, ManagedAPIError, ManagedRunService
 from infrahub_sync.plan.models import PlanManifest
 from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.product_store import ProductProjection, ProductRun, local_product_projection
+
+if TYPE_CHECKING:
+    from opsmill_prefect_extras.executors import RemoteExecutionClient
+    from prefect.client.schemas.objects import State
 
 OWNER_TOKEN = "owner-token-canary-0001"  # noqa: S105 - deliberate non-secret boundary canary.
 OTHER_TOKEN = "other-token-canary-0002"  # noqa: S105 - deliberate non-secret boundary canary.
@@ -487,6 +507,92 @@ def test_cancellation_transport_failure_remains_a_typed_mutation_error(
     receipt = projection.lookup_mutation("owner", sha256(b"cancel-transport-failure").hexdigest()).value
     assert receipt is not None
     assert receipt.state == "processing"
+
+
+class _PrefectCancellationClient:
+    def __init__(self, result: object) -> None:
+        self.result = result
+        self.calls: list[UUID] = []
+
+    async def set_flow_run_state(self, flow_run_id: UUID, _state: State[object]) -> object:
+        self.calls.append(flow_run_id)
+        return self.result
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        OrchestrationResult(state=Running(), status=SetStateStatus.REJECT, details=StateRejectDetails()),
+        OrchestrationResult(state=None, status=SetStateStatus.REJECT, details=StateRejectDetails()),
+        OrchestrationResult(state=Cancelling(), status=SetStateStatus.ABORT, details=StateAbortDetails()),
+        OrchestrationResult(
+            state=Cancelling(),
+            status=SetStateStatus.WAIT,
+            details=StateWaitDetails(delay_seconds=1),
+        ),
+        SimpleNamespace(status=SetStateStatus.ACCEPT, state=Cancelling()),
+    ],
+    ids=("reject-running", "reject-without-state", "abort", "wait", "malformed"),
+)
+def test_cancel_rejected_or_malformed_prefect_results_never_acknowledge_or_replay_202(
+    managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    monkeypatch: pytest.MonkeyPatch,
+    result: object,
+) -> None:
+    client, projection, orchestration = managed
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+    flow_run_id = created.json()["orchestration"][0]["flow_run_id"]
+    prefect_client = _PrefectCancellationClient(result)
+    gateway = PrefectOrchestration(cast("RemoteExecutionClient", prefect_client))
+    monkeypatch.setattr(orchestration, "cancel", gateway.cancel)
+    headers = {**AUTH, "Idempotency-Key": "cancel-prefect-refusal"}
+    body = {"reason": "Prefect did not acknowledge cancellation"}
+
+    first = client.post(f"/runs/{run_id}/cancel", headers=headers, json=body)
+    replay = client.post(f"/runs/{run_id}/cancel", headers=headers, json=body)
+
+    assert [first.status_code, replay.status_code] == [503, 503]
+    assert first.json()["error"]["code"] == "orchestration-unavailable"
+    assert replay.json()["error"]["code"] == "orchestration-unavailable"
+    run = projection.lookup_run(run_id).value
+    assert run is not None
+    assert run.prefect_executions[-1].cancellation_acknowledged_at is None
+    receipt = projection.lookup_mutation("owner", sha256(b"cancel-prefect-refusal").hexdigest()).value
+    assert receipt is not None
+    assert receipt.state == "processing"
+    assert prefect_client.calls == [UUID(flow_run_id), UUID(flow_run_id)]
+
+
+@pytest.mark.parametrize("replacement_state", [Cancelling(), Cancelled()], ids=("cancelling", "cancelled"))
+def test_cancel_accepts_prefect_reject_only_with_cancellation_replacement_state(
+    managed: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    monkeypatch: pytest.MonkeyPatch,
+    replacement_state: State[object],
+) -> None:
+    client, projection, orchestration = managed
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+    prefect_client = _PrefectCancellationClient(
+        OrchestrationResult(
+            state=replacement_state,
+            status=SetStateStatus.REJECT,
+            details=StateRejectDetails(),
+        )
+    )
+    gateway = PrefectOrchestration(cast("RemoteExecutionClient", prefect_client))
+    monkeypatch.setattr(orchestration, "cancel", gateway.cancel)
+
+    response = client.post(
+        f"/runs/{run_id}/cancel",
+        headers={**AUTH, "Idempotency-Key": "cancel-prefect-replacement"},
+        json={"reason": "Prefect supplied cancellation replacement"},
+    )
+
+    assert response.status_code == 202
+    run = projection.lookup_run(run_id).value
+    assert run is not None
+    assert run.prefect_executions[-1].cancellation_acknowledged_at is not None
 
 
 def test_cancel_refuses_run_without_execution_without_reserving_receipt(

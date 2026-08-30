@@ -19,8 +19,17 @@ pytest.importorskip("opsmill_prefect_extras")
 
 from opsmill_prefect_extras.deployments import apply_deployments
 from opsmill_prefect_extras.workflows import assert_valid_definitions
+from prefect.client.schemas.objects import State, StateType
+from prefect.client.schemas.responses import (
+    OrchestrationResult,
+    SetStateStatus,
+    StateAbortDetails,
+    StateAcceptDetails,
+    StateRejectDetails,
+    StateWaitDetails,
+)
 from prefect.exceptions import MissingContextError, ObjectNotFound
-from prefect.states import Failed, Pending
+from prefect.states import Cancelled, Cancelling, Failed, Pending, Running
 
 from infrahub_sync.execution import RunResult
 from infrahub_sync.managed import flow as managed_flow
@@ -42,7 +51,6 @@ from tests.configuration.validation_packages import package
 
 if TYPE_CHECKING:
     from prefect.client.schemas.actions import DeploymentUpdate
-    from prefect.client.schemas.objects import State
 
     from infrahub_sync.configuration import ConfigurationPackage
 
@@ -805,10 +813,14 @@ class _RemoteClient:
         assert flow_run_id == self.flow_run.id
         return self.flow_run
 
-    async def set_flow_run_state(self, flow_run_id: UUID, state: State[object]) -> SimpleNamespace:
+    async def set_flow_run_state(self, flow_run_id: UUID, state: State[object]) -> OrchestrationResult[object]:
         assert flow_run_id == self.flow_run.id
         self.flow_run.state = state
-        return SimpleNamespace()
+        return OrchestrationResult(
+            state=state,
+            status=SetStateStatus.ACCEPT,
+            details=StateAcceptDetails(),
+        )
 
 
 @pytest.mark.asyncio
@@ -856,6 +868,124 @@ async def test_prefect_read_transport_failure_becomes_missing_live_detail() -> N
         reason="prefect-read-unavailable",
     )
     assert cancelled == CancellationResult(acknowledged=True)
+
+
+class _CancellationClient:
+    def __init__(self, result: object) -> None:
+        self.flow_run_id = uuid4()
+        self.result = result
+
+    async def set_flow_run_state(self, flow_run_id: UUID, state: State[object]) -> object:
+        assert flow_run_id == self.flow_run_id
+        assert state.type is StateType.CANCELLING
+        return self.result
+
+
+class _DerivedOrchestrationResult(OrchestrationResult[object]):
+    pass
+
+
+_ACKNOWLEDGED_CANCELLATION = CancellationResult(acknowledged=True)
+_UNACKNOWLEDGED_CANCELLATION = CancellationResult(
+    acknowledged=False,
+    reason="prefect-cancellation-unavailable",
+)
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        (
+            OrchestrationResult(state=Cancelling(), status=SetStateStatus.ACCEPT, details=StateAcceptDetails()),
+            _ACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult(state=Cancelling(), status=SetStateStatus.REJECT, details=StateRejectDetails()),
+            _ACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult(state=Cancelled(), status=SetStateStatus.REJECT, details=StateRejectDetails()),
+            _ACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult(state=Running(), status=SetStateStatus.REJECT, details=StateRejectDetails()),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult(state=None, status=SetStateStatus.REJECT, details=StateRejectDetails()),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult(state=Cancelling(), status=SetStateStatus.ABORT, details=StateAbortDetails()),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult(
+                state=Cancelling(),
+                status=SetStateStatus.WAIT,
+                details=StateWaitDetails(delay_seconds=1),
+            ),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (SimpleNamespace(status=SetStateStatus.ACCEPT, state=Cancelling()), _UNACKNOWLEDGED_CANCELLATION),
+        (
+            _DerivedOrchestrationResult(
+                state=Cancelling(),
+                status=SetStateStatus.ACCEPT,
+                details=StateAcceptDetails(),
+            ),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult.model_construct(
+                state=Cancelling(),
+                status="ACCEPT",
+                details=StateAcceptDetails(),
+            ),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult.model_construct(
+                state=Cancelling(),
+                status=SetStateStatus.ACCEPT,
+                details=StateRejectDetails(),
+            ),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+        (
+            OrchestrationResult.model_construct(
+                state=Cancelling(),
+                status=SetStateStatus.REJECT,
+                details=StateAcceptDetails(),
+            ),
+            _UNACKNOWLEDGED_CANCELLATION,
+        ),
+    ],
+    ids=(
+        "accept",
+        "reject-cancelling",
+        "reject-cancelled",
+        "reject-running",
+        "reject-without-state",
+        "abort",
+        "wait",
+        "non-exact-result",
+        "result-subclass",
+        "malformed-status",
+        "accept-mismatched-details",
+        "reject-mismatched-details",
+    ),
+)
+@pytest.mark.asyncio
+async def test_prefect_cancel_accepts_only_the_pinned_acknowledgement_domain(
+    result: object,
+    expected: CancellationResult,
+) -> None:
+    client = _CancellationClient(result)
+
+    cancellation = await PrefectOrchestration(client).cancel(str(client.flow_run_id))  # ty: ignore[invalid-argument-type]
+
+    assert cancellation == expected
 
 
 class _DeploymentClient:
