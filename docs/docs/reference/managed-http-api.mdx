@@ -35,7 +35,7 @@ You also need:
 
 - a Prefect API and an existing process work pool;
 - a worker with access to the allowed Sync configuration directory;
-- an absolute saved-plan cache path shared by worker processes; and
+- an absolute saved-plan cache path shared by worker processes;
 - PostgreSQL for product records; and
 - an S3-compatible bucket for immutable artifacts.
 
@@ -94,7 +94,7 @@ Configure the worker environment before it starts:
 | `PREFECT_API_URL` | Prefect API used by the deployment and worker. |
 | `INFRAHUB_SYNC_CONFIG_DIRECTORY` | Existing directory containing the Sync configurations allowed on this worker. |
 | `INFRAHUB_SYNC_CACHE_DIR` | Absolute shared cache root for saved plans. This PH-2 seam remains unchanged. |
-| `INFRAHUB_SYNC_DATABASE_URL` | Non-empty PostgreSQL connection string for product records. |
+| `INFRAHUB_SYNC_DATABASE_URL` | Non-empty PostgreSQL connection string accepted by Psycopg for product records. |
 | `INFRAHUB_SYNC_S3_BUCKET` | Non-empty bucket for immutable product artifacts. |
 | `INFRAHUB_SYNC_S3_PREFIX` | Optional object-key prefix; defaults to `infrahub-sync`. |
 | `INFRAHUB_SYNC_S3_ENDPOINT_URL` | Optional absolute `http` or `https` endpoint for an S3-compatible service. |

@@ -44,19 +44,18 @@ def test_independent_managed_projections_share_configurations_runs_and_artifacts
     worker_projection = managed_product_projection(environ=settings)
     version = api_projection.create_configuration(package())
     run_id = f"managed-storage-integration-{version.config_id}"
-    api_projection.create_run(
-        ProductRun(
-            run_id=run_id,
-            operation="plan",
-            configuration_reference=f"{version.config_id}@{version.registry_version}",
-            config_id=version.config_id,
-            registry_version=version.registry_version,
-            package_checksum=version.package_checksum,
-            actor="integration",
-            started_at=datetime.now(timezone.utc),
-            phase="accepted",
-        )
+    expected_run = ProductRun(
+        run_id=run_id,
+        operation="plan",
+        configuration_reference=f"{version.config_id}@{version.registry_version}",
+        config_id=version.config_id,
+        registry_version=version.registry_version,
+        package_checksum=version.package_checksum,
+        actor="integration",
+        started_at=datetime.now(timezone.utc),
+        phase="accepted",
     )
+    api_projection.create_run(expected_run)
     api_projection.publish_artifact(
         run_id,
         artifact_id="shared-artifact",
@@ -66,5 +65,5 @@ def test_independent_managed_projections_share_configurations_runs_and_artifacts
     )
 
     assert worker_projection.lookup_configuration_version(version.config_id, version.registry_version).value == version
-    assert worker_projection.lookup_run(run_id).value is not None
+    assert worker_projection.lookup_run(run_id).value == expected_run
     assert worker_projection.lookup_artifact(run_id, "shared-artifact").value == b"shared durable state"

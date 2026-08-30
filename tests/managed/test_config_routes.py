@@ -11,6 +11,9 @@ from threading import Event, Thread
 from typing import TYPE_CHECKING, cast
 
 import pytest
+
+pytest.importorskip("fastapi")
+
 from fastapi.testclient import TestClient
 
 from infrahub_sync.configuration.models import ValidationFinding
@@ -23,7 +26,7 @@ from infrahub_sync.managed.service import ManagedAPIError, ManagedRunService
 from infrahub_sync.product_store import configs as configs_service
 from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.product_store.configs import ValidationReport
-from tests.configuration.validation_packages import package_data
+from tests.configuration.validation_packages import package, package_data
 
 ADMIN_TOKEN = "admin-token-canary-0003"  # noqa: S105 - deliberate non-secret boundary canary.
 OTHER_TOKEN = "reader-token-canary-0004"  # noqa: S105 - deliberate non-secret boundary canary.
@@ -83,35 +86,76 @@ def test_configuration_routes_register_then_read(tmp_path: Path, monkeypatch: py
 def test_configuration_routes_use_the_injected_projection_for_services_receipts_and_audit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Configuration operations must not silently reopen a local product projection."""
+    """Every configuration path uses the one projection supplied at composition."""
     from infrahub_sync.managed import config_routes
 
     bearer = "admin-token-canary-0003"
     monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
     resolver = EnvironmentPrincipalResolver.from_environment()
-    projection = local_product_projection(tmp_path)
+    delegate = local_product_projection(tmp_path)
     message = "configuration routes reopened a local product projection"
 
     def local_projection_forbidden(*_args: object, **_kwargs: object) -> NoReturn:
         raise AssertionError(message)
 
-    monkeypatch.setattr(config_routes, "local_product_projection", local_projection_forbidden)
+    class ProjectionSentinel:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def __getattr__(self, name: str) -> object:
+            target = getattr(delegate, name)
+            if not callable(target):
+                return target
+
+            def record(*args: object, **kwargs: object) -> object:
+                self.calls.append(name)
+                return target(*args, **kwargs)
+
+            return record
+
+    projection = ProjectionSentinel()
+    monkeypatch.setattr(config_routes, "local_product_projection", local_projection_forbidden, raising=False)
+    monkeypatch.setattr(configs_service, "local_product_projection", local_projection_forbidden)
     client = TestClient(
         create_app(
-            ManagedRunService(projection, _Orchestration(), secrets=resolver.secret_values),
+            ManagedRunService(cast("ProductProjection", projection), _Orchestration(), secrets=resolver.secret_values),
             resolver,
-            ConfigurationRoutes(product_projection=projection, secrets=resolver.secret_values),
+            ConfigurationRoutes(
+                product_projection=cast("ProductProjection", projection), secrets=resolver.secret_values
+            ),
         )
     )
 
-    response = client.post(
+    headers = {"Authorization": f"Bearer {bearer}", "Idempotency-Key": "injected-projection"}
+    body = {"package": package_data(), "reason": "register through one projection"}
+    registered = client.post(
         "/configs",
-        headers={"Authorization": f"Bearer {bearer}", "Idempotency-Key": "injected-projection"},
-        json={"package": package_data(), "reason": "register through one projection"},
+        headers=headers,
+        json=body,
     )
-    assert response.status_code == 201, response.text
-    assert projection.lookup_mutation("admin", sha256(b"injected-projection").hexdigest()).value is not None
-    assert projection.audit_events()
+    replayed = client.post("/configs", headers=headers, json=body)
+    config_id = registered.json()["configuration"]["config_id"]
+    listed = client.get("/configs", headers={"Authorization": f"Bearer {bearer}"})
+    validated = client.post(
+        f"/configs/{config_id}/versions/1/validate",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+
+    assert registered.status_code == replayed.status_code == 201
+    assert replayed.json() == registered.json()
+    assert listed.status_code == validated.status_code == 200
+    assert {
+        "reserve_mutation",
+        "claim_mutation",
+        "create_configuration",
+        "complete_mutation",
+        "list_configurations",
+        "lookup_configuration",
+        "lookup_configuration_version",
+        "record_audit",
+    }.issubset(projection.calls)
+    assert projection.calls.count("reserve_mutation") == 2
+    assert projection.calls.count("create_configuration") == 1
 
 
 def test_configuration_receipt_and_audit_provider_errors_are_storage_failures() -> None:
@@ -219,6 +263,111 @@ def test_configuration_http_provider_errors_preserve_storage_and_internal_famili
     assert internal.status_code == 503
     assert internal.json()["error"]["family"] == "internal"
     assert "projection-secret-canary" not in internal.text
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "create_configuration",
+        "list_configurations",
+        "lookup_configuration",
+        "list_configuration_versions",
+        "lookup_configuration_version",
+        "reserve_mutation",
+        "claim_mutation",
+        "release_mutation",
+        "complete_mutation",
+        "record_audit",
+    ],
+)
+@pytest.mark.parametrize("failure_kind", ["provider", "runtime"])
+def test_every_configuration_storage_boundary_has_a_value_free_http_family(
+    boundary: str,
+    failure_kind: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Each projection call contains provider details and classifies unmarked defects."""
+    from infrahub_sync.product_store import ProductStoreProviderError
+
+    admin_token = ADMIN_TOKEN
+    reader_token = OTHER_TOKEN
+    monkeypatch.setenv(
+        PRINCIPALS_ENV,
+        json.dumps(
+            {
+                "admin": {"token": admin_token, "administrator": True},
+                "reader": {"token": reader_token, "administrator": False},
+            }
+        ),
+    )
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    delegate = local_product_projection(tmp_path)
+    version = delegate.create_configuration(package())
+    dsn_canary = "postgresql://dsn-secret-canary@db/sync"
+    driver_canary = "driver-secret-canary"
+
+    class FailingProjection:
+        def __getattr__(self, name: str) -> object:
+            target = getattr(delegate, name)
+            if name != boundary:
+                return target
+
+            def fail(*_args: object, **_kwargs: object) -> NoReturn:
+                if failure_kind == "provider":
+                    error = ProductStoreProviderError(sqlstate=dsn_canary)
+                    error.args = (driver_canary,)
+                    raise error
+                message = f"{driver_canary}: {dsn_canary}"
+                raise RuntimeError(message)
+
+            return fail
+
+    projection = cast("ProductProjection", FailingProjection())
+    client = TestClient(
+        create_app(
+            ManagedRunService(projection, _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(product_projection=projection, secrets=resolver.secret_values),
+        ),
+        raise_server_exceptions=False,
+    )
+    admin_headers = {"Authorization": f"Bearer {admin_token}", "Idempotency-Key": f"failure-{boundary}"}
+    reader_headers = {"Authorization": f"Bearer {reader_token}", "Idempotency-Key": f"failure-{boundary}"}
+    valid_body = {"package": package_data(), "reason": "boundary evidence"}
+
+    if boundary == "list_configurations":
+        response = client.get("/configs", headers=admin_headers)
+    elif boundary == "lookup_configuration":
+        response = client.get(f"/configs/{version.config_id}", headers=admin_headers)
+    elif boundary == "list_configuration_versions":
+        response = client.get(f"/configs/{version.config_id}/versions", headers=admin_headers)
+    elif boundary == "lookup_configuration_version":
+        response = client.get(f"/configs/{version.config_id}/versions/1", headers=admin_headers)
+    elif boundary == "release_mutation":
+        response = client.post(
+            "/configs",
+            headers=admin_headers,
+            json={"package": {}, "reason": "pre-effect refusal"},
+        )
+    elif boundary == "record_audit":
+        response = client.post("/configs", headers=reader_headers, json=valid_body)
+    else:
+        response = client.post("/configs", headers=admin_headers, json=valid_body)
+
+    expected_family = "storage" if failure_kind == "provider" else "internal"
+    assert response.status_code == 503
+    assert response.json()["error"]["family"] == expected_family
+    rendered = response.text + "\n" + caplog.text
+    for forbidden in (
+        dsn_canary,
+        driver_canary,
+        "Traceback",
+        "ProductStoreProviderError",
+        "RuntimeError",
+    ):
+        assert forbidden not in rendered
 
 
 def test_configuration_mutation_replays_exact_response_and_rejects_changed_content(

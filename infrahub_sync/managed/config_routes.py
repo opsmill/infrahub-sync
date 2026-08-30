@@ -19,7 +19,6 @@ from infrahub_sync.product_store import (
     ProductProjection,
     ProductStoreProviderError,
     configs,
-    local_product_projection,
 )
 
 from .auth import Principal
@@ -48,8 +47,12 @@ def _provider_error_boundary(operation: Any) -> Any:
     def guarded(*args: Any, **kwargs: Any) -> Any:
         try:
             return operation(*args, **kwargs)
+        except (ConfigurationAPIError, ManagedAPIError):
+            raise
         except ProductStoreProviderError:
             raise ConfigurationAPIError(503, "storage") from None
+        except Exception:  # noqa: BLE001  # Direct receipt/audit defects retain the fixed configuration family.
+            raise ConfigurationAPIError(503, "internal") from None
 
     return guarded
 
@@ -241,7 +244,7 @@ class ConfigurationRoutes:
         if self._projection is not None:
             return self._projection
         assert self._location is not None
-        return local_product_projection(self._location)
+        return configs._standalone_projection(self._location)
 
 
 def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempotency_key: Any) -> APIRouter:

@@ -10,6 +10,7 @@ package's. The static import-graph half is collection-safe and stays in-process.
 from __future__ import annotations
 
 import ast
+import re
 import subprocess  # noqa: S404 - fixed argv probe, the point of the test
 import sys
 from pathlib import Path
@@ -19,9 +20,13 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_ROOT = REPO_ROOT / "infrahub_sync"
 EXAMPLES_DIR = REPO_ROOT / "examples"
+WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "workflow-tests.yml"
 OPTIONAL_PACKAGE_NAMES = frozenset({"managed", "orchestration"})
 OPTIONAL_PACKAGE_PREFIXES = tuple(f"infrahub_sync.{name}" for name in sorted(OPTIONAL_PACKAGE_NAMES))
-OPTIONAL_DISTRIBUTION_NAMES = frozenset({"fastapi", "opsmill_prefect_extras", "prefect", "uvicorn"})
+OPTIONAL_DISTRIBUTION_NAMES = frozenset(
+    {"boto3", "botocore", "fastapi", "opsmill_prefect_extras", "prefect", "psycopg", "uvicorn"}
+)
+BASE_UNAVAILABLE_DISTRIBUTION_NAMES = OPTIONAL_DISTRIBUTION_NAMES - {"opsmill_prefect_extras"}
 
 PROBE_SCRIPT = f"""
 import sys
@@ -131,6 +136,15 @@ def test_no_base_package_module_imports_an_optional_runtime_package() -> None:
         for path in _module_paths()
     }
     assert not {path: names for path, names in offenders.items() if names}
+
+
+def test_base_install_workflow_proves_external_managed_runtimes_are_unavailable() -> None:
+    """The real base-profile leg checks dependencies not vendored in the wheel."""
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    match = re.search(r"for module in (?P<modules>[^;\n]+); do", workflow)
+
+    assert match is not None
+    assert frozenset(match.group("modules").split()) == BASE_UNAVAILABLE_DISTRIBUTION_NAMES
 
 
 @pytest.mark.parametrize(
