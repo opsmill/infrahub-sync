@@ -156,6 +156,8 @@ def test_configuration_routes_use_the_injected_projection_for_services_receipts_
     }.issubset(projection.calls)
     assert projection.calls.count("reserve_mutation") == 2
     assert projection.calls.count("create_configuration") == 1
+    with pytest.raises(AssertionError, match=message):
+        configs_service._standalone_projection(tmp_path)
 
 
 def test_configuration_receipt_and_audit_provider_errors_are_storage_failures() -> None:
@@ -540,6 +542,9 @@ def test_post_commit_readback_failure_blocks_same_key_retry_without_a_second_con
     writes = 0
 
     class PostCommitReadbackFailure:  # pylint: disable=too-few-public-methods,no-self-use
+        def __getattr__(self, name: str) -> object:
+            return getattr(projection, name)
+
         def create_configuration(self, package: ConfigurationPackage) -> ConfigurationVersion:  # noqa: PLR6301
             nonlocal writes
             writes += 1

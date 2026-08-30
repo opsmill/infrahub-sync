@@ -642,12 +642,9 @@ def _projection(
         raise ConfigsStorageError(msg) from None
 
 
-def _standalone_projection(
-    product_cache_location: Path,
-    projection_factory: Callable[[Path], ProductProjection] = local_product_projection,
-) -> ProductProjection:
+def _standalone_projection(product_cache_location: Path) -> ProductProjection:
     """Open the explicit local compatibility seam for managed route tests."""
-    return projection_factory(product_cache_location)
+    return local_product_projection(product_cache_location)
 
 
 # The two machine-readable absence values the read operations distinguish (envelope AR3).

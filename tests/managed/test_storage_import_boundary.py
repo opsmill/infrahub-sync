@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import ast
+import inspect
 from pathlib import Path
+
+import pytest
 
 MANAGED_PACKAGE = Path(__file__).resolve().parents[2] / "infrahub_sync" / "managed"
 FORBIDDEN_PROJECTION = "local_product_projection"
@@ -32,3 +35,18 @@ def test_deployed_managed_runtime_cannot_import_or_reference_the_local_projectio
     }
 
     assert offenders == {}
+
+
+def test_deployed_runtime_defaults_bind_the_managed_projection_call_boundary() -> None:
+    """API and worker defaults call the managed factory while retaining explicit injection."""
+    pytest.importorskip("boto3")
+    pytest.importorskip("prefect")
+    pytest.importorskip("psycopg")
+
+    from infrahub_sync.managed import flow, serve, storage
+
+    api_default = inspect.signature(serve.build_app).parameters["projection_factory"].default
+    worker_default = inspect.signature(flow._runtime).parameters["projection_factory"].default
+
+    assert api_default is storage.managed_product_projection
+    assert worker_default is storage.managed_product_projection

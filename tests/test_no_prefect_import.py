@@ -26,7 +26,7 @@ OPTIONAL_PACKAGE_PREFIXES = tuple(f"infrahub_sync.{name}" for name in sorted(OPT
 OPTIONAL_DISTRIBUTION_NAMES = frozenset(
     {"boto3", "botocore", "fastapi", "opsmill_prefect_extras", "prefect", "psycopg", "uvicorn"}
 )
-BASE_UNAVAILABLE_DISTRIBUTION_NAMES = OPTIONAL_DISTRIBUTION_NAMES - {"opsmill_prefect_extras"}
+AR6_BASE_UNAVAILABLE_DISTRIBUTION_NAMES = frozenset({"boto3", "botocore", "fastapi", "prefect", "psycopg"})
 
 PROBE_SCRIPT = f"""
 import sys
@@ -139,12 +139,12 @@ def test_no_base_package_module_imports_an_optional_runtime_package() -> None:
 
 
 def test_base_install_workflow_proves_external_managed_runtimes_are_unavailable() -> None:
-    """The real base-profile leg checks dependencies not vendored in the wheel."""
+    """The real base-profile leg checks the exact AR6 external dependency set."""
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
     match = re.search(r"for module in (?P<modules>[^;\n]+); do", workflow)
 
     assert match is not None
-    assert frozenset(match.group("modules").split()) == BASE_UNAVAILABLE_DISTRIBUTION_NAMES
+    assert frozenset(match.group("modules").split()) == AR6_BASE_UNAVAILABLE_DISTRIBUTION_NAMES
 
 
 @pytest.mark.parametrize(

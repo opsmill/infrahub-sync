@@ -70,6 +70,20 @@ def test_preview_declares_the_managed_postgresql_and_minio_storage_shape() -> No
     assert environment["PREFECT_WORKER_QUERY_SECONDS"] == "15"
 
 
+def test_preview_minio_healthcheck_is_self_contained_before_bootstrap() -> None:
+    """MinIO becomes healthy without relying on the alias created by its bootstrap."""
+    compose = (DEV_DIR / "docker-compose.preview.yml").read_text(encoding="utf-8")
+    minio_start = compose.index("  sync-minio:\n")
+    bootstrap_start = compose.index("  sync-minio-bootstrap:\n")
+    bootstrap_end = compose.index("  infrahub-server:\n")
+    minio_service = compose[minio_start:bootstrap_start]
+    bootstrap_service = compose[bootstrap_start:bootstrap_end]
+
+    assert 'test: ["CMD", "curl", "--fail", "http://localhost:9000/minio/health/live"]' in minio_service
+    assert "mc ready" not in minio_service
+    assert "depends_on:\n      sync-minio:\n        condition: service_healthy" in bootstrap_service
+
+
 def test_preview_smoke_reads_the_worker_published_plan_artifact_through_the_api() -> None:
     """The static smoke contract proves Preview reads a worker-published artifact via the API."""
     smoke = (REPO_ROOT / "tests" / "preview" / "test_managed_api.py").read_text(encoding="utf-8")

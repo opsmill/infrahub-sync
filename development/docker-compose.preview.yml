@@ -33,7 +33,7 @@ services:
     ports:
       - "${PREVIEW_MINIO_PORT:-9010}:9000"
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "--fail", "http://localhost:9000/minio/health/live"]
       interval: 5s
       timeout: 5s
       retries: 20

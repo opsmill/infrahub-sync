@@ -5,13 +5,13 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from ipaddress import AddressValueError, IPv6Address
 from typing import TYPE_CHECKING, Any
 
 import boto3
 import psycopg
 from botocore.exceptions import ClientError
 from psycopg import conninfo
+from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
 
 from infrahub_sync.product_store import (
     DuplicateArtifactError,
@@ -32,7 +32,8 @@ S3_REGION_ENV = "INFRAHUB_SYNC_S3_REGION"
 _PERCENT_ENCODED = r"%[0-9A-Fa-f]{2}"
 _UNRESERVED = r"[A-Za-z0-9._~-]"
 _SUB_DELIMS = r"[!$&'()*+,;=]"
-_REG_NAME = rf"(?:{_UNRESERVED}|{_SUB_DELIMS}|{_PERCENT_ENCODED})+"
+_DNS_LABEL = r"(?!-)[A-Za-z0-9-]{1,63}(?<!-)"
+_REG_NAME = rf"(?=[A-Za-z0-9.-]{{1,255}}(?:[:/?#]|\Z)){_DNS_LABEL}(?:\.{_DNS_LABEL})*\.?"
 _IPV_FUTURE = rf"[Vv][0-9A-Fa-f]+\.(?:{_UNRESERVED}|{_SUB_DELIMS}|:)+"
 _HOST = rf"(?:\[(?P<ipvfuture>{_IPV_FUTURE})\]|\[(?P<ipv6>[0-9A-Fa-f:.]+)\]|(?P<reg_name>{_REG_NAME}))"
 _PCHAR = rf"(?:{_UNRESERVED}|{_SUB_DELIMS}|{_PERCENT_ENCODED}|[:@])"
@@ -40,6 +41,7 @@ _ENDPOINT_URI = re.compile(
     rf"(?P<scheme>(?i:http|https))://{_HOST}(?::(?P<port>[0-9]+))?"
     rf"(?:/{_PCHAR}*)*(?:\?(?:{_PCHAR}|[/?])*)?(?:#(?:{_PCHAR}|[/?])*)?"
 )
+_ENDPOINT_URL_ADAPTER = TypeAdapter(AnyHttpUrl)
 
 
 class ManagedStorageStartupError(RuntimeError):
@@ -184,25 +186,15 @@ def _database_url(values: Mapping[str, object]) -> str:
     return database_url
 
 
-def _valid_port(port: str | None) -> bool:
-    """Check a decimal port's range without an unbounded integer conversion."""
-    if port is None:
-        return True
-    significant_digits = port.lstrip("0") or "0"
-    return len(significant_digits) < 5 or (len(significant_digits) == 5 and significant_digits <= "65535")
-
-
 def _parse_endpoint(value: str) -> _EndpointUri | None:
-    """Construct one accepted endpoint from the complete raw RFC 3986 HTTP URI grammar."""
+    """Intersect the exact raw HTTP URI grammar with the typed URL domain."""
     match = _ENDPOINT_URI.fullmatch(value)
-    if match is None or not _valid_port(match["port"]):
+    if match is None:
         return None
-    ipv6 = match["ipv6"]
-    if ipv6 is not None:
-        try:
-            IPv6Address(ipv6)
-        except AddressValueError:
-            return None
+    try:
+        _ENDPOINT_URL_ADAPTER.validate_python(value)
+    except ValidationError:
+        return None
     return _EndpointUri(value)
 
 
