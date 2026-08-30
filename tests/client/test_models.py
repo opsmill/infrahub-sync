@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 from datetime import datetime, timezone
+from importlib.util import resolve_name
 from pathlib import Path
 
 import pytest
@@ -14,15 +15,27 @@ from infrahub_sync.managed.models import public_run_resource
 from infrahub_sync.product_store.models import PrefectExecutionLink, ProductRun
 
 
-def test_client_package_imports_no_product_or_service_module() -> None:
+def _package_imports(root: Path, package: str) -> set[str]:
     imports: set[str] = set()
-    for path in Path("infrahub_sync/client").glob("*.py"):
-        source = path.read_text(encoding="utf-8")
-        for node in ast.walk(ast.parse(source)):
+    for path in root.rglob("*.py"):
+        relative = path.relative_to(root).with_suffix("")
+        module_parts = [*package.split("."), *relative.parts]
+        if module_parts[-1] == "__init__":
+            module_parts.pop()
+        current_package = ".".join(module_parts if path.stem == "__init__" else module_parts[:-1])
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Import):
                 imports.update(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom):
-                imports.add(node.module or "")
+                imported = node.module or ""
+                if node.level:
+                    imported = resolve_name(f"{'.' * node.level}{imported}", current_package)
+                imports.add(imported)
+    return imports
+
+
+def test_client_package_imports_no_product_or_service_module() -> None:
+    imports = _package_imports(Path("infrahub_sync/client"), "infrahub_sync.client")
 
     assert not {name for name in imports if name.startswith("infrahub_sync.product_store")}
     assert not {name for name in imports if name.startswith("infrahub_sync.managed")}
@@ -31,6 +44,17 @@ def test_client_package_imports_no_product_or_service_module() -> None:
     assert not {
         name for name in imports if name.partition(".")[0] in {"boto3", "fastapi", "prefect", "psycopg", "uvicorn"}
     }
+
+
+def test_client_import_scan_resolves_nested_relative_imports(tmp_path: Path) -> None:
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "probe.py").write_text(
+        "from ...product_store.models import ProductRun\n",
+        encoding="utf-8",
+    )
+
+    assert "infrahub_sync.product_store.models" in _package_imports(tmp_path, "infrahub_sync.client")
 
 
 @pytest.mark.parametrize(
