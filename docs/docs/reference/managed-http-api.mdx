@@ -97,7 +97,7 @@ Configure the worker environment before it starts:
 | `INFRAHUB_SYNC_DATABASE_URL` | Non-empty PostgreSQL connection string accepted by Psycopg for product records. |
 | `INFRAHUB_SYNC_S3_BUCKET` | Non-empty bucket for immutable product artifacts. |
 | `INFRAHUB_SYNC_S3_PREFIX` | Optional object-key prefix; defaults to `infrahub-sync`. |
-| `INFRAHUB_SYNC_S3_ENDPOINT_URL` | Optional exact Boto3-compatible `http` or `https` URL with no userinfo and a DNS/registered-name, valid IPv4, or bracketed valid IPv6 host; an optional valid port is accepted, IPvFuture is not, and the value reaches Boto3 unchanged. |
+| `INFRAHUB_SYNC_S3_ENDPOINT_URL` | Optional absolute `http` or `https` URL with no userinfo. The value reaches Boto3 unchanged; Boto3 owns any narrower SDK compatibility. |
 | `INFRAHUB_SYNC_S3_REGION` | Optional region passed to Boto3. |
 | Adapter credential variables | Credentials required by the selected Sync configuration. Keep them in the worker environment or its secret provider. |
 
