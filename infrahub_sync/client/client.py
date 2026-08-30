@@ -6,6 +6,7 @@ import os
 import re
 from hashlib import sha256
 from math import isfinite
+from time import monotonic, sleep
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import httpx
@@ -19,6 +20,8 @@ from .errors import (
     CompatibilityError,
     ConfigsAPIError,
     ProtocolError,
+    RunTerminalError,
+    RunWaitTimeoutError,
     TransportError,
 )
 from .models import (
@@ -32,6 +35,7 @@ from .models import (
     ConfigurationVersionResource,
     CreateRunRequest,
     ErrorEnvelope,
+    OrchestrationSummary,
     PlanResource,
     RegisteredConfigurationResource,
     RegisteredVersionResource,
@@ -60,6 +64,8 @@ _LIMIT_ARG = "limit"
 _REQUEST_ARG = "request"
 _IDEMPOTENCY_KEY_ARG = "idempotency_key"
 _GET_ARTIFACT = "get_artifact"
+_WAIT_FOR_RUN = "wait_for_run"
+_POLL_INTERVAL_ARG = "poll_interval"
 
 
 class SyncClient:
@@ -288,6 +294,67 @@ class SyncClient:
 
     def cancel_run(self, run_id: str, request: CancelRunRequest, idempotency_key: str) -> RunResource:
         return self._run_mutation("cancel_run", run_id, "cancel", request, idempotency_key)
+
+    def wait_for_run(self, accepted_resource: RunResource, *, timeout: float, poll_interval: float) -> RunResource:
+        """Follow the execution selected by one accepted mutation response."""
+        self._positive_duration(timeout, _TIMEOUT_ARG)
+        self._positive_duration(poll_interval, _POLL_INTERVAL_ARG)
+        if not accepted_resource.orchestration:
+            raise ProtocolError(_WAIT_FOR_RUN)
+        flow_run_id = accepted_resource.orchestration[-1].flow_run_id
+        latest = accepted_resource
+        selected = accepted_resource.orchestration[-1]
+        terminal = self._wait_verdict(latest, selected)
+        if terminal is not None:
+            return terminal
+        deadline = monotonic() + timeout
+        while True:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise self._wait_timeout(latest, selected)
+            sleep(min(poll_interval, remaining))
+            if monotonic() >= deadline:
+                raise self._wait_timeout(latest, selected)
+            latest = self.get_run(accepted_resource.run.run_id)
+            selected = next(
+                (entry for entry in latest.orchestration if entry.flow_run_id == flow_run_id),
+                None,
+            )
+            if selected is None:
+                raise ProtocolError(_WAIT_FOR_RUN)
+            terminal = self._wait_verdict(latest, selected)
+            if terminal is not None:
+                return terminal
+
+    @staticmethod
+    def _wait_verdict(resource: RunResource, execution: OrchestrationSummary) -> RunResource | None:
+        if execution.terminal_outcome is None:
+            return None
+        if execution.terminal_state == "completed" and execution.terminal_outcome == "succeeded":
+            return resource
+        assert execution.terminal_state is not None
+        raise RunTerminalError(
+            resource.run.run_id,
+            terminal_state=execution.terminal_state,
+            terminal_outcome=execution.terminal_outcome,
+            phase=resource.run.phase,
+            outcome=resource.run.outcome,
+        )
+
+    @staticmethod
+    def _wait_timeout(resource: RunResource, execution: OrchestrationSummary) -> RunWaitTimeoutError:
+        return RunWaitTimeoutError(
+            resource.run.run_id,
+            phase=resource.run.phase,
+            outcome=resource.run.outcome,
+            execution_state=execution.state,
+        )
+
+    @staticmethod
+    def _positive_duration(value: object, argument: str) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value) or value <= 0:
+            raise ClientInputError(argument)
+        return float(value)
 
     def _run_mutation(
         self, operation: str, run_id: str, suffix: str, request: BaseModel, idempotency_key: str
