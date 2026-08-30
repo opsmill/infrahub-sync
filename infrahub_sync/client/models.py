@@ -51,6 +51,8 @@ class _ResourceModel(BaseModel):
 
 
 class CreateRunRequest(_RequestModel):
+    """Request creation of a plan or confirmed synchronization run."""
+
     operation: Literal["plan", "sync"] = "plan"
     config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
     registry_version: int
@@ -67,10 +69,14 @@ class CreateRunRequest(_RequestModel):
 
 
 class VerifyRunRequest(_RequestModel):
+    """Request verification of a saved run plan."""
+
     reason: str = Field(min_length=1)
 
 
 class ApplyRunRequest(_RequestModel):
+    """Request application of a reviewed plan checksum."""
+
     expected_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     confirm_writes: bool = False
     branch: str | None = None
@@ -78,10 +84,14 @@ class ApplyRunRequest(_RequestModel):
 
 
 class CancelRunRequest(_RequestModel):
+    """Request cancellation of an accepted run."""
+
     reason: str = Field(min_length=1)
 
 
 class ConfigMutationRequest(_RequestModel):
+    """Submit a configuration package with an audit reason."""
+
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=False)
     package: dict[str, Any]
     reason: str = Field(min_length=1, max_length=512)
@@ -118,6 +128,8 @@ class ConfigMutationRequest(_RequestModel):
 
 
 class ArtifactReferenceResource(_ResourceModel):
+    """Describe one immutable run artifact."""
+
     artifact_id: str = Field(pattern=_IDENTIFIER_PATTERN)
     run_id: str = Field(pattern=_IDENTIFIER_PATTERN)
     kind: str = Field(min_length=1)
@@ -143,6 +155,8 @@ class ArtifactReferenceResource(_ResourceModel):
 
 
 class PublicExecutionLink(_ResourceModel):
+    """Expose the public fields that link a run to one execution."""
+
     flow_run_id: str = Field(min_length=1)
     deployment_id: str | None = None
     purpose: str = Field(min_length=1)
@@ -157,6 +171,8 @@ class PublicExecutionLink(_ResourceModel):
 
 
 class PublicRunResource(_ResourceModel):
+    """Represent the public product record for one Sync run."""
+
     run_id: str = Field(pattern=_IDENTIFIER_PATTERN)
     operation: Operation
     configuration_reference: str = Field(min_length=1)
@@ -198,6 +214,8 @@ class PublicRunResource(_ResourceModel):
 
 
 class OrchestrationSummary(_ResourceModel):
+    """Summarize one orchestration attempt and its terminal verdict."""
+
     flow_run_id: str
     purpose: str
     attempt: int
@@ -239,12 +257,16 @@ class OrchestrationSummary(_ResourceModel):
 
 
 class VersionResource(_ResourceModel):
+    """Declare the server and API versions supported by the service."""
+
     server_version: str
     api_versions: tuple[str, ...]
     stability: str
 
 
 class WorkerStatusResource(_ResourceModel):
+    """Report bounded worker availability details."""
+
     state: Literal["ready", "busy", "no-live-worker", "unavailable"]
     detail_available: bool
     live_workers: int | None = Field(default=None, ge=0, strict=True)
@@ -274,16 +296,22 @@ class WorkerStatusResource(_ResourceModel):
 
 
 class ServiceStatusResource(_ResourceModel):
+    """Report service readiness and worker availability."""
+
     service: Literal["ready"]
     worker: WorkerStatusResource
 
 
 class RunResource(_ResourceModel):
+    """Combine a public run record with its orchestration history."""
+
     run: PublicRunResource
     orchestration: tuple[OrchestrationSummary, ...]
 
 
 class PlanResource(_ResourceModel):
+    """Return a saved plan, checksum, summary, and operations."""
+
     run_id: str
     checksum: str
     checksum_ok: bool
@@ -293,22 +321,30 @@ class PlanResource(_ResourceModel):
 
 
 class ResultsResource(_ResourceModel):
+    """Return the recorded results for one run."""
+
     run_id: str
     results: dict[str, Any]
 
 
 class ArtifactListResource(_ResourceModel):
+    """List the artifact references owned by one run."""
+
     run_id: str
     artifacts: tuple[ArtifactReferenceResource, ...]
 
 
 class ArtifactContent(_ResourceModel):
+    """Hold verified artifact bytes and content metadata."""
+
     data: bytes
     media_type: str
     digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class ConfigurationSummaryResource(_ResourceModel):
+    """Identify one registered configuration."""
+
     config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
     created_at: datetime
 
@@ -321,6 +357,8 @@ class ConfigurationSummaryResource(_ResourceModel):
 
 
 class ConfigurationVersionResource(_ResourceModel):
+    """Represent one immutable registered configuration version."""
+
     config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
     registry_version: int = Field(ge=1)
     package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -336,16 +374,22 @@ class ConfigurationVersionResource(_ResourceModel):
 
 
 class RegisteredConfigurationResource(_ResourceModel):
+    """Return a newly registered configuration and its first version."""
+
     configuration: ConfigurationSummaryResource
     version: ConfigurationVersionResource
 
 
 class RegisteredVersionResource(_ResourceModel):
+    """Return a configuration version and whether it was newly created."""
+
     version: ConfigurationVersionResource
     created: bool
 
 
 class ValidationFindingResource(_ResourceModel):
+    """Describe one ordered configuration validation finding."""
+
     code: str = Field(pattern=r"^[a-z][a-z0-9-]*$", max_length=256)
     severity: Literal["error", "warning"]
     location: str = Field(pattern=r"^(/(?:[^~/]|~[01])*)*$", max_length=256)
@@ -353,6 +397,8 @@ class ValidationFindingResource(_ResourceModel):
 
 
 class ValidationReportResource(_ResourceModel):
+    """Return one page of configuration validation findings."""
+
     config_id: str
     registry_version: int
     package_checksum: str
@@ -365,6 +411,8 @@ class ValidationReportResource(_ResourceModel):
 
 
 class ErrorDetail(_ResourceModel):
+    """Parse the public fields in a general API error."""
+
     code: str
     message: str
     status: int
@@ -373,10 +421,14 @@ class ErrorDetail(_ResourceModel):
 
 
 class ErrorEnvelope(_ResourceModel):
+    """Wrap a general API error response."""
+
     error: ErrorDetail
 
 
 class ConfigErrorDetail(_ResourceModel):
+    """Parse the public fields in a configuration API error."""
+
     code: str
     message: str
     status: int
@@ -385,4 +437,6 @@ class ConfigErrorDetail(_ResourceModel):
 
 
 class ConfigErrorEnvelope(_ResourceModel):
+    """Wrap a configuration API error response."""
+
     error: ConfigErrorDetail

@@ -12,6 +12,9 @@ on:
       - develop
       - feature/v3-develop
 
+permissions:
+  contents: read
+
 jobs:
   linter:
     uses: ./.github/workflows/workflow-linter.yml

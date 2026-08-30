@@ -8,12 +8,16 @@ class SyncClientError(Exception):
 
 
 class ClientInputError(SyncClientError):
+    """Report an invalid explicit client argument before network I/O."""
+
     def __init__(self, argument: str) -> None:
         self.argument = argument
         super().__init__("invalid client input")
 
 
 class CompatibilityError(SyncClientError):
+    """Report an API version that the client cannot use."""
+
     def __init__(self, server_version: str | None = None, api_versions: tuple[str, ...] = ()) -> None:
         self.server_version = server_version
         self.api_versions = api_versions
@@ -21,17 +25,23 @@ class CompatibilityError(SyncClientError):
 
 
 class TransportError(SyncClientError):
+    """Contain a non-timeout HTTP transport failure."""
+
     def __init__(self, operation: str, *, message: str = "the Sync API transport failed") -> None:
         self.operation = operation
         super().__init__(message)
 
 
 class ClientTimeoutError(TransportError):
+    """Contain an HTTP request timeout."""
+
     def __init__(self, operation: str) -> None:
         super().__init__(operation, message="the Sync API request timed out")
 
 
 class ProtocolError(SyncClientError):
+    """Report a response that violates the declared HTTP contract."""
+
     def __init__(self, operation: str, status: int | None = None) -> None:
         self.operation = operation
         self.status = status
@@ -39,6 +49,8 @@ class ProtocolError(SyncClientError):
 
 
 class APIError(SyncClientError):
+    """Expose safe machine fields from a general API refusal."""
+
     def __init__(
         self,
         status: int,
@@ -55,6 +67,8 @@ class APIError(SyncClientError):
 
 
 class ConfigsAPIError(APIError):
+    """Expose safe machine fields from a configuration API refusal."""
+
     def __init__(
         self,
         status: int,
@@ -70,6 +84,8 @@ class ConfigsAPIError(APIError):
 
 
 class RunWaitTimeoutError(SyncClientError):
+    """Report an accepted run that exceeded its bounded wait deadline."""
+
     def __init__(
         self,
         run_id: str,
@@ -86,6 +102,8 @@ class RunWaitTimeoutError(SyncClientError):
 
 
 class RunTerminalError(SyncClientError):
+    """Report an accepted run that reached a non-success terminal verdict."""
+
     def __init__(
         self,
         run_id: str,

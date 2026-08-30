@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 from pathlib import Path
 
 import pytest
+
+import infrahub_sync.client as client_package
+from infrahub_sync.client import SyncClient
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -38,9 +42,19 @@ def test_python_api_docs_describe_only_the_http_client() -> None:
     assert "product_cache_location" not in docs
     assert "in-process" not in docs
     assert "config_directory" not in docs
+    assert "unencrypted over HTTP" in docs
+
+
+def test_public_client_surface_has_concise_docstrings() -> None:
+    for name in client_package.__all__:
+        assert getattr(client_package, name).__doc__, name
+    for name, operation in inspect.getmembers(SyncClient, inspect.isfunction):
+        if not name.startswith("_"):
+            assert operation.__doc__, name
 
 
 def test_pr_workflow_can_be_dispatched_manually() -> None:
     workflow = (ROOT / ".github/workflows/trigger-pr-develop.yml").read_text(encoding="utf-8")
 
     assert "workflow_dispatch:" in workflow
+    assert "permissions:\n  contents: read" in workflow

@@ -124,6 +124,8 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         return str(url).rstrip("/")
 
     def close(self) -> None:
+        """Close the underlying HTTP transport."""
+
         try:
             self._http.close()
         except Exception:  # noqa: BLE001 - no injected transport exception crosses the public boundary.
@@ -141,6 +143,8 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         self.close()
 
     def get_version(self) -> VersionResource:
+        """Return the unauthenticated server version declaration."""
+
         response = self._send("get_version", "GET", "/version", authenticated=False)
         if response.status_code != 200:
             raise self._compatibility_error(response)
@@ -150,6 +154,8 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             raise self._compatibility_error(response) from None
 
     def get_status(self) -> ServiceStatusResource:
+        """Return unauthenticated service and worker status."""
+
         operation = "get_status"
         response = self._send(operation, "GET", "/status", authenticated=False)
         if response.status_code != 200:
@@ -157,6 +163,8 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         return self._success(response, operation, ServiceStatusResource, {200})
 
     def register_config(self, request: ConfigMutationRequest, idempotency_key: str) -> RegisteredConfigurationResource:
+        """Register a configuration package idempotently."""
+
         return self._request_model(
             "register_config",
             "POST",
@@ -171,6 +179,8 @@ class SyncClient:  # pylint: disable=too-many-public-methods
     def create_config_version(
         self, config_id: str, request: ConfigMutationRequest, idempotency_key: str
     ) -> RegisteredVersionResource:
+        """Create or retrieve an identical configuration version idempotently."""
+
         config_id = self._identifier(config_id, "config_id")
         return self._request_model(
             "create_config_version",
@@ -184,9 +194,13 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         )
 
     def list_configs(self) -> tuple[ConfigurationSummaryResource, ...]:
+        """Return the complete ordered configuration list."""
+
         return self._request_list("list_configs", "/configs", ConfigurationSummaryResource, config_route=True)
 
     def get_config(self, config_id: str) -> ConfigurationSummaryResource:
+        """Return one registered configuration summary."""
+
         config_id = self._identifier(config_id, "config_id")
         return self._request_model(
             "get_config",
@@ -198,12 +212,16 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         )
 
     def list_config_versions(self, config_id: str) -> tuple[ConfigurationVersionResource, ...]:
+        """Return the complete ordered version list for a configuration."""
+
         config_id = self._identifier(config_id, "config_id")
         return self._request_list(
             "list_config_versions", f"/configs/{config_id}/versions", ConfigurationVersionResource, config_route=True
         )
 
     def get_config_version(self, config_id: str, registry_version: int) -> ConfigurationVersionResource:
+        """Return one immutable registered configuration version."""
+
         config_id = self._identifier(config_id, "config_id")
         version = self._positive_integer(registry_version, "registry_version")
         return self._request_model(
@@ -218,6 +236,8 @@ class SyncClient:  # pylint: disable=too-many-public-methods
     def validate_config(
         self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = 256
     ) -> ValidationReportResource:
+        """Validate a configuration version and return one findings page."""
+
         config_id = self._identifier(config_id, "config_id")
         version = self._positive_integer(registry_version, "registry_version")
         if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
@@ -235,6 +255,8 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         )
 
     def create_run(self, request: CreateRunRequest, idempotency_key: str) -> RunResource:
+        """Create a plan or synchronization run idempotently."""
+
         return self._request_model(
             "create_run",
             "POST",
@@ -246,16 +268,22 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         )
 
     def plan(self, request: CreateRunRequest, idempotency_key: str) -> RunResource:
+        """Create a read-only plan run idempotently."""
+
         if request.operation != "plan" or request.confirm_writes:
             raise ClientInputError(_REQUEST_ARG)
         return self.create_run(request, idempotency_key)
 
     def sync(self, request: CreateRunRequest, idempotency_key: str) -> RunResource:
+        """Create a confirmed synchronization run idempotently."""
+
         if request.operation != "sync" or not request.confirm_writes:
             raise ClientInputError(_REQUEST_ARG)
         return self.create_run(request, idempotency_key)
 
     def get_run(self, run_id: str) -> RunResource:
+        """Return one run and its orchestration history."""
+
         return self._get_run(run_id)
 
     def _get_run(self, run_id: str, *, request_timeout: float | None = None) -> RunResource:
@@ -270,16 +298,22 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         )
 
     def get_plan(self, run_id: str) -> PlanResource:
+        """Return one saved plan and its checksum."""
+
         run_id = self._identifier(run_id, "run_id")
         return self._request_model("get_plan", "GET", f"/runs/{run_id}/plan", model=PlanResource, success={200})
 
     def get_results(self, run_id: str) -> ResultsResource:
+        """Return the recorded results for one run."""
+
         run_id = self._identifier(run_id, "run_id")
         return self._request_model(
             "get_results", "GET", f"/runs/{run_id}/results", model=ResultsResource, success={200}
         )
 
     def list_artifacts(self, run_id: str) -> ArtifactListResource:
+        """Return all artifact references for one run."""
+
         run_id = self._identifier(run_id, "run_id")
         return self._request_model(
             "list_artifacts",
@@ -290,6 +324,8 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         )
 
     def get_artifact(self, run_id: str, artifact_id: str) -> ArtifactContent:
+        """Download an artifact and verify its declared digest."""
+
         run_id = self._identifier(run_id, "run_id")
         artifact_id = self._identifier(artifact_id, "artifact_id")
         self._ensure_compatible()
@@ -312,18 +348,28 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         return ArtifactContent(data=response.content, media_type=media_type, digest=digest)
 
     def verify_run(self, run_id: str, request: VerifyRunRequest, idempotency_key: str) -> RunResource:
+        """Start verification of a saved plan idempotently."""
+
         return self._run_mutation("verify_run", run_id, "verify", request=request, idempotency_key=idempotency_key)
 
     def verify(self, run_id: str, request: VerifyRunRequest, idempotency_key: str) -> RunResource:
+        """Start verification of a saved plan idempotently."""
+
         return self.verify_run(run_id, request, idempotency_key)
 
     def apply_run(self, run_id: str, request: ApplyRunRequest, idempotency_key: str) -> RunResource:
+        """Apply a reviewed saved plan idempotently."""
+
         return self._run_mutation("apply_run", run_id, "apply", request=request, idempotency_key=idempotency_key)
 
     def apply(self, run_id: str, request: ApplyRunRequest, idempotency_key: str) -> RunResource:
+        """Apply a reviewed saved plan idempotently."""
+
         return self.apply_run(run_id, request, idempotency_key)
 
     def cancel_run(self, run_id: str, request: CancelRunRequest, idempotency_key: str) -> RunResource:
+        """Request cancellation of a run idempotently."""
+
         return self._run_mutation("cancel_run", run_id, "cancel", request=request, idempotency_key=idempotency_key)
 
     def wait_for_run(self, accepted_resource: RunResource, *, timeout: float, poll_interval: float) -> RunResource:
