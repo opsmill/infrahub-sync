@@ -225,12 +225,14 @@ schema_mapping:
         expression: "{{ lookup('node_uname_info', {}, 'labels.nodename') or 'unknown' }}"
 ```
 
-## Generating the models
+## Registering the package
 
-Use the generate command to produce Python models from your configuration:
+Register the example package before creating a run:
 
 ```bash
-uv run infrahub-sync generate --name from-node-exporter --directory examples/
+uv run infrahub-sync configs register \
+  "examples/prometheus_to_infrahub (node_exporter)/config.yml" \
+  --reason "register Prometheus import"
 ```
 
 ## Common issues and troubleshooting

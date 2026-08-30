@@ -1,87 +1,46 @@
-# Review the local plan and apply workflow
+# Custom adapter example
 
-The `custom-example` project provides a deterministic source fixture for a bounded live
-review of the local CLI and Python execution surfaces. Its custom source adapter reads
-five devices from `custom_adapter_src/mock_db.json`; a live, writable Infrahub instance is
-the destination.
+The `custom-example` package provides a deterministic source fixture. Its custom source
+adapter reads five devices from `custom_adapter_src/mock_db.json`; a live, writable
+Infrahub instance is the destination.
 
-Run every command from the repository root. The configuration uses repository-relative
-adapter and fixture paths.
+The CLI does not load this adapter from the caller's filesystem. A Sync service worker
+must have the package and custom adapter installed in its execution environment.
 
-## Prerequisites
+## Register and review
 
-- Install the repository environment with `uv sync --extra dev --extra prefect`.
-- Run an Infrahub instance that you may modify.
-- Export `INFRAHUB_ADDRESS` and `INFRAHUB_API_TOKEN` for that instance.
-- Install `infrahubctl` if it is not already available.
-- Start with no `InfraDevice` objects when you want the plan to contain exactly five
-  creates.
-
-Load the schema used by the example:
+Connect the CLI to that service and register the package:
 
 ```bash
-uv run infrahubctl schema load \
-  examples/prefect_remote_run/schemas/infra_device.yml \
-  --branch main
+export INFRAHUB_SYNC_API_URL=https://sync.example.com
+export INFRAHUB_SYNC_API_TOKEN=<token>
+
+uv run infrahub-sync configs register examples/custom_adapter/config.yml \
+  --reason "register custom adapter example"
+uv run infrahub-sync diff --config-id <config-id> --version <version> \
+  --reason "review custom adapter plan"
+uv run infrahub-sync runs plan <run-id> --detail
 ```
 
-Do not load this file over an incompatible existing `InfraDevice` kind. Use a disposable
-Infrahub instance or inspect the existing schema first.
-
-## Create and review a plan
-
-Create a read-only plan:
-
-```bash
-uv run infrahub-sync diff --name custom-example --directory examples/
-```
-
-The output names the run identifier and cache directory. Review the saved artifact without
-contacting the source or destination:
-
-```bash
-uv run infrahub-sync diff \
-  --name custom-example \
-  --directory examples/ \
-  --from-plan <run-id> \
-  --detail
-```
-
-An empty destination produces five `InfraDevice` creates. Copy the `plan checksum` value
+An empty destination produces five `InfraDevice` creates. Copy the `plan_checksum` value
 from the review output.
 
 ## Apply the reviewed plan
 
-Apply the exact artifact whose checksum you reviewed:
-
 ```bash
-uv run infrahub-sync apply \
-  --name custom-example \
-  --directory examples/ \
-  --run-id <run-id> \
-  --expected-checksum <plan-checksum>
+uv run infrahub-sync apply <run-id> \
+  --expected-checksum <plan-checksum> \
+  --reason "apply custom adapter plan"
 ```
 
-The apply verifies the artifact and destination binding before its first write. It does not
-read the source or recompute the plan.
+The service verifies the reviewed checksum before worker execution. The CLI does not read
+the source or a local plan.
 
 ## Verify convergence
 
-Create a new plan after the apply:
+Create a new plan over the same registered version. It should report zero creates,
+updates, and deletes. If it does not, inspect the worker's installed adapter, the
+destination schema, and `custom_adapter_src/mock_db.json` before applying another plan.
 
-```bash
-uv run infrahub-sync diff --name custom-example --directory examples/
-```
-
-The new plan should report zero creates, updates, and deletes. If it does not, inspect the
-destination schema and the five source records in `custom_adapter_src/mock_db.json` before
-applying another plan.
-
-## Related execution surfaces
-
-- Use the same `custom-example` project with the
-  [Python API](../../docs/docs/reference/python-api.mdx).
-- Follow the [Prefect remote-run walkthrough](../prefect_remote_run/README.md) to serve
-  the project as a direct Prefect deployment.
-- Read [Run a sync](../../docs/docs/running-a-sync.mdx) for plan format, partial-write,
-  delete, and convergence behavior.
+See [Run a sync](../../docs/docs/running-a-sync.mdx) for wait, idempotency, delete, and
+failure behavior.

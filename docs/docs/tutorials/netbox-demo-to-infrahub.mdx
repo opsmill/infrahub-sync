@@ -211,23 +211,23 @@ Open `sync-projects/netbox-demo/config.yml` in an editor and scan the top-level 
 
 The configuration includes default endpoint values, but the environment variables exported above take precedence for tokens and URLs.
 
-The example configuration comments also describe saved-plan review and apply. This
-tutorial first uses `diff` to inspect the current systems, then uses `sync --diff` to load
-them again, calculate a new plan, print it, and apply it. See
-[Run a sync](../running-a-sync.mdx) when you need to apply the exact saved plan you
-reviewed instead of recalculating it.
+This tutorial registers the package, uses `diff` to create a service plan, reviews that
+plan, and then submits a confirmed sync. See [Run a sync](../running-a-sync.mdx) when you
+need to apply the exact reviewed plan checksum instead of creating a new composed sync.
 
 For a fuller explanation of this file, see [Create a sync project](../creating-a-sync-project.mdx) and the [schema mapping reference](../reference/schema-mapping.mdx).
 
-## Generate the sync code
+## Register the configuration package
 
-Generate the Python models and adapter code for this sync project.
+Register the downloaded package with the Sync API.
 
 ```bash
-uv run infrahub-sync generate --name from-netbox --directory sync-projects
+uv run infrahub-sync configs register sync-projects/netbox-demo/config.yml \
+  --reason "register NetBox demo import"
 ```
 
-The `generate` command reads the sync configuration and the destination schema, then writes the Python code used at runtime. Run `generate` again any time you edit `config.yml`.
+Record the returned `config_id` and `registry_version`. If you edit the package later, use
+`configs version <config-id> <package>` to create another immutable registry version.
 
 For more about the command flow, see [Run a sync](../running-a-sync.mdx).
 
@@ -249,15 +249,17 @@ Infrahub branch. For more about branches and proposed changes, see
 Run a dry-run diff against the `netbox-import` branch before writing any data to Infrahub.
 
 ```bash
-uv run infrahub-sync diff --name from-netbox --directory sync-projects --branch netbox-import
+uv run infrahub-sync diff \
+  --config-id <config-id> \
+  --version <version> \
+  --branch netbox-import \
+  --reason "review NetBox demo import"
 ```
 
-The `diff` command loads data from NetBox and Infrahub, compares both sides, and prints the
-planned changes. It also saves a plan artifact under
-`.infrahub-sync-cache/from-netbox/<run-id>/plan/`, which you can review on its own with
-`infrahub-sync diff --name from-netbox --directory sync-projects --from-plan <run-id>`.
-The `sync` command in the next step creates and applies a new plan; it does not apply this
-saved artifact.
+The service worker loads NetBox and Infrahub, compares both sides, and publishes a saved
+plan. The CLI waits by default and prints its summary. Review it again with `infrahub-sync
+runs plan <run-id> --detail`. The `sync` command in the next step creates and applies a new
+plan; it does not apply this saved artifact.
 
 Review the output before continuing. On a first run against an empty branch, most planned changes should be creates. Exact counts depend on the current public NetBox demo data.
 
@@ -267,10 +269,17 @@ After inspecting the diff, run the sync against the same branch. The command loa
 systems again and prints the newly calculated plan before writing.
 
 ```bash
-uv run infrahub-sync sync --name from-netbox --directory sync-projects --branch netbox-import --diff
+uv run infrahub-sync sync \
+  --config-id <config-id> \
+  --version <version> \
+  --branch netbox-import \
+  --reason "import NetBox demo data"
 ```
 
-The `--diff` option prints the diff before applying the changes. The first sync can take a few minutes because it writes the imported objects and relationships into the `netbox-import` branch — `main` is untouched until you merge the resulting proposed change. Because this configuration omits `order:`, Infrahub Sync derives the write order from the mapping references.
+The first sync can take a few minutes because it writes the imported objects and
+relationships into the `netbox-import` branch — `main` is untouched until you merge the
+resulting proposed change. Because this configuration omits `order:`, Infrahub Sync
+derives the write order from the mapping references.
 
 :::warning A second `diff` against this branch fails once interfaces exist
 
@@ -376,22 +385,15 @@ A first `diff` succeeds. Once a `sync` or `apply` has written an `InterfacePhysi
 
 The cause is that the destination loader rebuilds each related peer's identifier from a cached copy of the peer node, and the copy it finds carries the peer's attributes but not its relationships. `InterfaceLag` is identified by `device` **and** `name`, so its identifier cannot be rebuilt and the load aborts.
 
-**`diff` has no `--continue-on-error` option** — the flag exists only on `sync`, so the advice in the error message does not apply when the failure came from `diff`. There are two ways forward, depending on whether you need a plan you can review before it is applied.
-
-**To keep the plan, review, and apply loop:** delete the interface objects at the destination, then re-run `diff`. Those objects are re-imported by the next sync.
-
-**If you do not need to review the plan first:** run `sync` with the flag, which loads, plans, and applies in one step.
-
-```bash
-uv run infrahub-sync sync --name from-netbox --directory sync-projects --branch netbox-import --continue-on-error
-```
-
-The unresolvable peer link is logged and skipped rather than aborting the run. The cost is that the affected interface's `bundle` peer is then absent from the extracted destination state, so the run carries an update for that object every time, even when nothing changed upstream. Read the warnings before relying on the result.
+The client does not expose a control that changes worker extraction behavior. Delete the
+interface objects at the destination, correct the mapping or destination data, then create
+a new plan. Those objects are re-imported by the next confirmed sync.
 
 Two things to be clear about:
 
 - **This is not a NetBox-specific defect, and it is not introduced by the saved-plan workflow.** It affects any configuration in which a mapped kind references a peer kind whose `identifiers` include a relationship — the `nautobot`, `ipfabric`, `slurpit`, and `aci` example configurations all contain that shape.
-- **`--continue-on-error` is a `sync` option, and it only covers this loading failure.** It does not make a run tolerant of everything: a source record that references a peer the source itself cannot resolve still fails the whole run when the plan is derived, by design. Use it for this destination-loading case, not as a general "keep going" switch.
+- A source record that references a peer the source itself cannot resolve fails the whole
+  run when the plan is derived. The client cannot soften that worker refusal.
 
 ## Next steps
 

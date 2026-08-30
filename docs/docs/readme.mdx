@@ -2,7 +2,11 @@
 title: Infrahub Sync
 ---
 
-Infrahub Sync synchronizes infrastructure data between Infrahub and external systems — NetBox, Nautobot, IP Fabric, Slurp’it, Cisco ACI, Peering Manager, ServiceNow-style CMDBs, and any system with a REST/JSON API. Use it to migrate from a legacy system of record, run two systems side-by-side, or keep Infrahub in sync with another source of truth. Define a sync project declaratively in YAML, and the CLI generates the adapter code, calculates the diff, and applies only the deltas on each run.
+Infrahub Sync synchronizes infrastructure data between Infrahub and external systems —
+NetBox, Nautobot, IP Fabric, Slurp’it, Cisco ACI, Peering Manager,
+ServiceNow-style CMDBs, and any system with a REST/JSON API. Define the synchronization
+declaratively in a configuration package, register an immutable version with the Sync API,
+and use the CLI or Python client to create and inspect service-owned runs.
 
 Infrahub Sync is open source under Apache 2.0, distributed on [PyPI](https://pypi.org/project/infrahub-sync/), and maintained on [GitHub](https://github.com/opsmill/infrahub-sync).
 
@@ -19,32 +23,37 @@ Infrahub Sync supports the following:
 
 ### Concepts
 
-- **Sync project** — a directory containing a YAML configuration file (`config.yml`) that defines one synchronization between two systems. A project specifies the source, the destination, the sync order, and the per-model schema mapping. A team can have many sync projects, each managing a different source-destination pair.
+- **Configuration package** — a JSON or YAML object that defines one synchronization
+  between two systems. The Sync API registry assigns its configuration identity, version,
+  and checksum.
 - **Adapter** — the component that connects Infrahub Sync to a specific system. Each adapter handles both communication (API calls, authentication, request handling) and translation (converting the system's data into the internal sync engine's format). Infrahub Sync ships with adapters for common systems and supports custom adapters for systems without a pre-built one.
 - **Schema mapping** — the part of the project configuration that defines how source fields map to destination fields. Direct field mappings, references between models, identifiers, and static values are all declared in YAML.
 
-The core CLI workflow uses `generate`, `diff`, and either `apply` or `sync`. The `list`
-command discovers projects before that workflow begins.
+The core CLI workflow registers a package, creates a plan with `diff`, reviews it with
+`runs plan`, and either applies its checksum or creates a confirmed `sync` run.
 
 ### Define a sync project
 
-Each sync project consists of a directory and a `config.yml` describing the sync. The configuration specifies the source adapter and destination adapter with their connection details, the order in which models should be synchronized, and how each source field maps to a destination field. Credentials reference environment variables rather than being embedded in the file.
+The package specifies the source adapter and destination adapter, execution order, and how
+each source field maps to a destination field. Credentials are references rather than
+embedded values. Submit the package with `configs register`; later runs use the returned
+configuration identity and version.
 
 → [Create a sync project](./creating-a-sync-project.mdx) · [Sync instance configuration](./reference/config.mdx)
 
-### Generate the adapter code
-
-`infrahub-sync generate --name <project> --directory <dir>` reads the YAML configuration and produces the Python adapter and model code that `diff` and `sync` use. Re-run `generate` whenever the configuration or the schema mapping changes.
-
 ### Preview with `diff`
 
-`infrahub-sync diff --name <project> --directory <dir>` reads both the source and destination, calculates what would change, and prints the result to the terminal. The destination is not modified. The `diff` command is read-only and is typically run before applying any sync — particularly during initial setup or when adjusting mappings.
+`infrahub-sync diff --config-id <id> --version <version> --reason <reason>` creates a plan
+run through the Sync API. The destination is not modified. After the bounded wait succeeds,
+the CLI prints the saved summary and service checksum. `runs plan <run-id> --detail`
+reopens the same review after a detached admission.
 
 ### Execute the sync
 
-`infrahub-sync sync --name <project> --directory <dir>` calculates a plan and applies its
-write operations. When `order` is omitted, the engine derives dependency tiers from the
-schema mapping. When `order` is present, the configured sequence is used.
+`infrahub-sync sync --config-id <id> --version <version> --reason <reason>` submits a
+confirmed synchronization. The service and worker calculate the plan and apply its write
+operations. When `order` is omitted, the engine derives dependency tiers from the schema
+mapping. When `order` is present, the configured sequence is used.
 
 After a failed write, inspect the run record and destination before calculating a fresh
 plan. A failed operation can have written part of its change, and safe re-application is
@@ -59,8 +68,8 @@ Three `diffsync_flags` (`SKIP_UNMATCHED_DST` by default, `SKIP_UNMATCHED_SRC`, `
 
 | Surface | Use it for | Runtime requirements |
 |---|---|---|
-| CLI | Interactive and scheduled operations, including saved-plan review and apply | Base installation plus adapter dependencies |
-| Python API | Typed in-process plan, verify, apply, and confirmed sync operations | Base installation plus adapter dependencies |
+| CLI | Configuration and run operations through the Sync API | Base installation and Sync API access |
+| Python client | Typed access to every shipped Sync API resource | Base installation and Sync API access |
 | Direct Prefect deployment | Starting and observing one plan or confirmed sync through Prefect's API | `prefect` extra and a Prefect server |
 | Managed Sync HTTP API | Authenticated remote runs, durable records and artifacts, reviewed apply, idempotency, and cancellation | `managed` extra, Prefect, a work pool, a worker, and shared durable storage |
 
@@ -93,7 +102,8 @@ Infrahub is populated from what is actually deployed in the network rather than 
 - **Pre-built adapter library** — adapters for Infrahub, NetBox, Nautobot, IP Fabric, Cisco ACI, LibreNMS, Observium, Peering Manager, Prometheus, and Slurp’it, plus a Generic REST API adapter for systems with HTTP/JSON APIs. Each adapter handles both communication and translation for its target system.
 - **Declarative YAML configuration** — a single file per sync project defines source, destination, sync order, and per-model schema mapping. Mappings support 14 filter operations (including `regex` and `is_ip_within`), per-field transforms, custom Jinja filters, and ordered cross-reference resolution.
 - **Sync engine** — built on the `diffsync` framework. Plans record deltas; three flags control what each run is allowed to change. Delete operations remain reviewable but are not executed.
-- **Typer-based CLI** — five commands: `list` (show available projects), `generate` (produce adapter code from the configuration), `diff` (preview changes), `sync` (apply changes), `apply` (write a previously reviewed saved plan to the destination without re-extracting the source).
+- **Typer-based CLI** — configuration registry commands, `diff` and `sync` run
+  admission, service plan review, and reviewed-checksum apply through one Sync API client.
 - **Custom adapter support** — for systems without a pre-built adapter, write a local custom adapter and load it from a filesystem path, a Python module path, or an installed entry point (`INFRAHUB_SYNC_ADAPTER_PATHS`).
 - **Custom CA certificate support** — connect to systems with self-signed or internal CA-issued TLS certificates.
 

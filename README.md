@@ -28,6 +28,7 @@ Built on the [`diffsync`](https://github.com/networktocode/diffsync) framework, 
 ## Prerequisites
 
 - A running [Infrahub](https://github.com/opsmill/infrahub) instance
+- A running Sync API and worker
 - Python 3.10–3.13
 - Credentials and network access for the source and destination systems
 
@@ -51,16 +52,19 @@ infrahub-sync --help
 
 ## Example: NetBox → Infrahub
 
-The repository includes a NetBox project at `examples/netbox_to_infrahub/`, named
-`from-netbox`. It reads the changing public NetBox demo (`demo.netbox.dev`) and targets a
-local Infrahub at `localhost:8000`.
+The repository includes a NetBox configuration package at
+`examples/netbox_to_infrahub/config.yml`. Register it once, then address the immutable
+configuration version returned by the service:
 
 ```bash
-# Preview what the sync would change
-infrahub-sync diff --name from-netbox --directory ./examples
+export INFRAHUB_SYNC_API_URL=https://sync.example.com
+export INFRAHUB_SYNC_API_TOKEN=<token>
 
-# Review the saved plan without contacting either system
-infrahub-sync diff --name from-netbox --directory ./examples --from-plan <run-id>
+infrahub-sync configs register examples/netbox_to_infrahub/config.yml \
+  --reason "register NetBox import"
+infrahub-sync diff --config-id <config-id> --version <version> \
+  --reason "review NetBox import"
+infrahub-sync runs plan <run-id> --detail
 ```
 
 Before applying the plan, read the
@@ -75,7 +79,9 @@ For setup and a complete walkthrough, see the
 
 ## Day 2 Operations
 
-**Scheduling.** Infrahub Sync runs as a CLI, so it plugs into the scheduling tooling your team already uses — cron, CI jobs, Prefect, or any workflow engine. This keeps the footprint small and lets you control sync cadence, observability, and failure handling through systems you already trust.
+**Scheduling.** The CLI submits runs to the Sync API. The service owns admission, durable
+run records, and worker execution, so a caller can disconnect after using `--no-wait` and
+inspect the same run later.
 
 **Observability.** Sync runs emit lifecycle and adapter logs through Python logging. Public
 Python API lifecycle records include structured attributes such as the run identifier,
@@ -118,7 +124,8 @@ may change.
 
 - **Sync engine.** Built on `diffsync` with three sync flags (`SKIP_UNMATCHED_DST` default, `SKIP_UNMATCHED_SRC`, `SKIP_MODIFIED`) and optional Redis-backed store for stateful sync.
 - **Declarative YAML configuration.** Per-field mapping with 14 filter operations (including `regex` and `is_ip_within`), per-field transforms, custom Jinja filters, and ordered cross-reference resolution.
-- **Typer-based CLI.** Five commands — `list`, `diff` (read-only), `generate`, `sync`, `apply` (write a previously reviewed saved plan to the destination without re-extracting the source).
+- **Typer-based CLI.** Register and inspect configuration packages, create plan or sync
+  runs, review service-owned plans, and apply a reviewed checksum through the Sync API.
 - **Custom adapters and certificates.** Load custom adapters from filesystem paths, Python module paths, or installed entry points (`INFRAHUB_SYNC_ADAPTER_PATHS`); custom CA certificate support for internal PKI.
 - **Example library.** Sample YAML configurations under `examples/` cover every pre-configured adapter plus additional targets (Device42, PeeringDB) and a custom adapter template. Review each example's adapter, schema, credential, and destination prerequisites before running it.
 
@@ -126,8 +133,8 @@ may change.
 
 | Surface | Use it for | Runtime requirements |
 |---|---|---|
-| CLI | Interactive and scheduled `list`, `generate`, `diff`, `sync`, and reviewed-plan `apply` operations | Base installation plus adapter dependencies |
-| Python API | Typed in-process plan, verify, apply, and confirmed sync operations | Base installation plus adapter dependencies |
+| CLI | Configuration registration, plan review, run admission, and reviewed-plan apply | Base installation and Sync API access |
+| Python client | Typed access to every shipped Sync API resource | Base installation and Sync API access |
 | Direct Prefect deployment | Starting and observing one plan or confirmed sync through Prefect's API | `prefect` extra and a Prefect server |
 | Managed Sync HTTP API | Authenticated remote runs, durable records and artifacts, reviewed apply, idempotency, and cancellation | `managed` extra, Prefect, a work pool, a worker, and shared durable storage |
 

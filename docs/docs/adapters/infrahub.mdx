@@ -191,12 +191,13 @@ This allows you to:
 | Only `owner` specified | CoreAccount (source name) | CoreAccountGroup |
 | Both specified | CoreAccountGroup | CoreAccountGroup |
 
-## Generating the models
+## Registering the package
 
-Use the generate command to produce Python models from your configuration:
+Register the example package before creating a run:
 
 ```bash
-uv run infrahub-sync generate --name from-netbox --directory examples/
+uv run infrahub-sync configs register examples/netbox_to_infrahub/config.yml \
+  --reason "register NetBox import"
 ```
 
 ## Common issues and troubleshooting

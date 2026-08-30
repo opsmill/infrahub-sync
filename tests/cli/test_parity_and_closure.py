@@ -120,3 +120,32 @@ def test_only_shared_client_constructs_sync_api_http_requests() -> None:
             constructors.append(path.relative_to(ROOT))
 
     assert constructors == [Path("infrahub_sync/client/client.py")]
+
+
+def test_live_docs_and_examples_close_removed_cli_paths() -> None:
+    files = [ROOT / "README.md"]
+    files.extend(
+        path for path in (ROOT / "docs/docs").rglob("*.mdx") if "release-notes" not in path.relative_to(ROOT).parts
+    )
+    files.extend((ROOT / "examples").rglob("*.md"))
+    text = "\n".join(path.read_text(encoding="utf-8") for path in files)
+    removed = (
+        "--name",
+        "--config-file",
+        "--directory",
+        "--adapter-path",
+        "--product-cache-location",
+        "--run-id",
+        "--concurrent-load",
+        "--full-extract",
+        "--parallel",
+        "--allow-rowcount-drop",
+        "--continue-on-error",
+        "--show-progress",
+        "--allow-destination-change",
+        "--from-plan",
+        "infrahub-sync list",
+        "infrahub-sync generate",
+    )
+
+    assert not [token for token in removed if token in text]

@@ -41,7 +41,7 @@ This installs all runtime and development dependencies defined in `pyproject.tom
 
 ```bash
 uv run infrahub-sync --help
-uv run infrahub-sync list --directory examples/
+uv run infrahub-sync configs --help
 ```
 
 ## Development workflow
@@ -60,8 +60,8 @@ After making changes, verify the CLI still works:
 
 ```bash
 uv run infrahub-sync --help
-uv run infrahub-sync list --directory examples/
-uv run infrahub-sync generate --name from-netbox --directory examples/
+uv run infrahub-sync configs --help
+uv run infrahub-sync runs plan --help
 ```
 
 ### Running tests

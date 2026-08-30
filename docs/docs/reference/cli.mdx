@@ -1,6 +1,6 @@
 # `infrahub-sync`
 
-Infrahub-sync: synchronize data between infrastructure sources and destinations.
+Synchronize registered configurations through the Sync API.
 
 **Usage**:
 
@@ -10,39 +10,22 @@ $ infrahub-sync [OPTIONS] COMMAND [ARGS]...
 
 **Options**:
 
-* `--verbosity [quiet|default|verbose]`: Log verbosity level  [default: default]
-* `-v, --verbose`: Shorthand for --verbosity verbose
-* `-q, --quiet`: Shorthand for --verbosity quiet
+* `--api-url TEXT`: Absolute URL of the Sync API. Defaults to INFRAHUB_SYNC_API_URL.  [env var: INFRAHUB_SYNC_API_URL]
 * `--install-completion`: Install completion for the current shell.
 * `--show-completion`: Show completion for the current shell, to copy it or customize the installation.
 * `--help`: Show this message and exit.
 
 **Commands**:
 
-* `list`: List all available SYNC projects.
-* `diff`: Calculate and print the differences...
-* `sync`: Synchronize the data between source and...
-* `apply`: Apply a previously cached plan against the...
-* `generate`: Generate all the Python files for a given...
-
-## `infrahub-sync list`
-
-List all available SYNC projects.
-
-**Usage**:
-
-```console
-$ infrahub-sync list [OPTIONS]
-```
-
-**Options**:
-
-* `--directory TEXT`: Base directory to search for sync configurations
-* `--help`: Show this message and exit.
+* `diff`: Create a plan run and review its saved...
+* `sync`: Create a confirmed synchronization run.
+* `apply`: Apply a service-owned plan after binding...
+* `configs`: Register and inspect configuration packages.
+* `runs`: Inspect service-owned runs.
 
 ## `infrahub-sync diff`
 
-Calculate and print the differences between the source and the destination systems for a given project.
+Create a plan run and review its saved summary after completion.
 
 **Usage**:
 
@@ -52,24 +35,19 @@ $ infrahub-sync diff [OPTIONS]
 
 **Options**:
 
-* `--name TEXT`: Name of the sync to use
-* `--config-file TEXT`: File path to the sync configuration YAML file
-* `--directory TEXT`: Base directory to search for sync configurations
-* `--branch TEXT`: Branch to use for the diff.
-* `--show-progress / --no-show-progress`: Show a progress bar (default: auto-detect terminal)
-* `--adapter-path TEXT`: Paths to look for adapters. Can be specified multiple times.
-* `--run-id TEXT`: Re-use a specific cache run id for the live comparison. To review a saved plan instead, pass --from-plan &lt;run-id&gt;.
-* `--concurrent-load / --no-concurrent-load`: Load source and destination concurrently. Disable when a custom adapter isn&#x27;t thread-safe.  [default: concurrent-load]
-* `--full-extract / --no-full-extract`: Re-extract every resource from scratch (default). Pass --no-full-extract to enable the cursor-driven incremental path on warm runs — see docs/reference/incremental-extraction.  [default: full-extract]
-* `--from-plan TEXT`: Review the saved plan artifact for this run id instead of comparing live systems. Constructs no adapter, extracts nothing, and takes no lock.
-* `--detail`: Expand the plan summary to one record per operation. Requires --from-plan.
-* `--kind TEXT`: Narrow --detail to a single destination kind. Requires --from-plan and --detail.
-* `--product-cache-location TEXT`: Absolute local product-cache path. When set, publish the durable ProductRun and plan-review artifact.
+* `--config-id TEXT`: Registered configuration identity.  [required]
+* `--version INTEGER`: Registered configuration version.  [required]
+* `--reason TEXT`: Audit reason for the plan.  [required]
+* `--branch TEXT`: Destination branch admitted by the Sync API.
+* `--idempotency-key TEXT`: Retry key.
+* `--wait / --no-wait`: Wait for this run&#x27;s execution.  [default: wait]
+* `--wait-timeout FLOAT`: Bounded wait in seconds.  [default: 1800.0]
+* `--poll-interval FLOAT`: Poll interval in seconds.  [default: 2.0]
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync sync`
 
-Synchronize the data between source and the destination systems for a given project or configuration file.
+Create a confirmed synchronization run.
 
 **Usage**:
 
@@ -79,58 +57,211 @@ $ infrahub-sync sync [OPTIONS]
 
 **Options**:
 
-* `--name TEXT`: Name of the sync to use
-* `--config-file TEXT`: File path to the sync configuration YAML file
-* `--directory TEXT`: Base directory to search for sync configurations
-* `--branch TEXT`: Branch to use for the sync.
-* `--diff / --no-diff`: Print the differences between the source and the destination before syncing  [default: diff]
-* `--show-progress / --no-show-progress`: Show a progress bar (default: auto-detect terminal)
-* `--adapter-path TEXT`: Paths to look for adapters. Can be specified multiple times.
-* `--parallel / --no-parallel`: Sync tier-by-tier using the auto-computed dep graph. Requires order: to be omitted from config.yml.  [default: parallel]
-* `--allow-rowcount-drop / --no-allow-rowcount-drop`: Skip the rowcount drop guardrail. Use only when you know the source intentionally shrank.  [default: no-allow-rowcount-drop]
-* `--continue-on-error / --no-continue-on-error`: Log and skip peer relationships whose identifier values are missing instead of aborting. Useful when source data is partial; review the warnings before relying on the result.  [default: no-continue-on-error]
-* `--concurrent-load / --no-concurrent-load`: Load source and destination concurrently. Disable when a custom adapter isn&#x27;t thread-safe.  [default: concurrent-load]
-* `--full-extract / --no-full-extract`: Re-extract every resource from scratch (default). Pass --no-full-extract to enable the cursor-driven incremental path on warm runs — see docs/reference/incremental-extraction.  [default: full-extract]
-* `--product-cache-location TEXT`: Absolute local product-cache path. When set, publish the durable ProductRun and plan-review artifact.
+* `--config-id TEXT`: Registered configuration identity.  [required]
+* `--version INTEGER`: Registered configuration version.  [required]
+* `--reason TEXT`: Audit reason for the synchronization.  [required]
+* `--branch TEXT`: Destination branch admitted by the Sync API.
+* `--idempotency-key TEXT`: Retry key.
+* `--wait / --no-wait`: Wait for this run&#x27;s execution.  [default: wait]
+* `--wait-timeout FLOAT`: Bounded wait in seconds.  [default: 1800.0]
+* `--poll-interval FLOAT`: Poll interval in seconds.  [default: 2.0]
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync apply`
 
-Apply a previously cached plan against the destination — no source extraction.
+Apply a service-owned plan after binding its reviewed checksum.
 
 **Usage**:
 
 ```console
-$ infrahub-sync apply [OPTIONS]
+$ infrahub-sync apply [OPTIONS] RUN_ID
 ```
+
+**Arguments**:
+
+* `RUN_ID`: Service-issued run ID whose plan was reviewed.  [required]
 
 **Options**:
 
-* `--name TEXT`: Name of the sync to use
-* `--config-file TEXT`: File path to the sync configuration YAML file
-* `--directory TEXT`: Base directory to search for sync configurations
-* `--run-id TEXT`: Cache run id produced by a previous `diff`.  [required]
-* `--branch TEXT`: Branch to use for the apply.
-* `--allow-destination-change / --no-allow-destination-change`: Apply even though the live destination endpoint or branch differs from the one the plan was computed against. Without it, a destination mismatch refuses before any write.  [default: no-allow-destination-change]
-* `--expected-checksum TEXT`: Apply only if the stored plan hashes to this checksum — the `plan checksum` line of the review output. A mismatch refuses before the destination is contacted.
-* `--product-cache-location TEXT`: Absolute local product-cache path used by the plan. When set, extend its durable ProductRun.
+* `--expected-checksum TEXT`: Checksum printed by `runs plan`.  [required]
+* `--reason TEXT`: Audit reason for the apply.  [required]
+* `--branch TEXT`: Destination branch admitted by the Sync API.
+* `--idempotency-key TEXT`: Retry key.
+* `--wait / --no-wait`: Wait for this run&#x27;s apply execution.  [default: wait]
+* `--wait-timeout FLOAT`: Bounded wait in seconds.  [default: 1800.0]
+* `--poll-interval FLOAT`: Poll interval in seconds.  [default: 2.0]
 * `--help`: Show this message and exit.
 
-## `infrahub-sync generate`
+## `infrahub-sync configs`
 
-Generate all the Python files for a given sync based on the configuration.
+Register and inspect configuration packages.
 
 **Usage**:
 
 ```console
-$ infrahub-sync generate [OPTIONS]
+$ infrahub-sync configs [OPTIONS] COMMAND [ARGS]...
 ```
 
 **Options**:
 
-* `--name TEXT`: Name of the sync to use
-* `--config-file TEXT`: File path to the sync configuration YAML file
-* `--directory TEXT`: Base directory to search for sync configurations
-* `--branch TEXT`: Branch to use for the sync.
-* `--adapter-path TEXT`: Paths to look for adapters. Can be specified multiple times.
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `register`: Register a JSON or YAML configuration...
+* `version`: Create the next immutable version of a...
+* `list`: List registered configurations.
+* `show`: Show a configuration or one of its versions.
+* `versions`: List immutable versions of a registered...
+* `validate`: Validate a registered configuration version.
+
+### `infrahub-sync configs register`
+
+Register a JSON or YAML configuration package.
+
+**Usage**:
+
+```console
+$ infrahub-sync configs register [OPTIONS] PACKAGE
+```
+
+**Arguments**:
+
+* `PACKAGE`: [required]
+
+**Options**:
+
+* `--reason TEXT`: Audit reason for the mutation.  [required]
+* `--idempotency-key TEXT`: Retry key. A new key is generated and printed when omitted.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync configs version`
+
+Create the next immutable version of a registered configuration.
+
+**Usage**:
+
+```console
+$ infrahub-sync configs version [OPTIONS] CONFIG_ID PACKAGE
+```
+
+**Arguments**:
+
+* `CONFIG_ID`: [required]
+* `PACKAGE`: [required]
+
+**Options**:
+
+* `--reason TEXT`: Audit reason for the mutation.  [required]
+* `--idempotency-key TEXT`: Retry key. A new key is generated and printed when omitted.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync configs list`
+
+List registered configurations.
+
+**Usage**:
+
+```console
+$ infrahub-sync configs list [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `infrahub-sync configs show`
+
+Show a configuration or one of its versions.
+
+**Usage**:
+
+```console
+$ infrahub-sync configs show [OPTIONS] CONFIG_ID
+```
+
+**Arguments**:
+
+* `CONFIG_ID`: [required]
+
+**Options**:
+
+* `--version INTEGER`: Show one immutable registry version.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync configs versions`
+
+List immutable versions of a registered configuration.
+
+**Usage**:
+
+```console
+$ infrahub-sync configs versions [OPTIONS] CONFIG_ID
+```
+
+**Arguments**:
+
+* `CONFIG_ID`: [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `infrahub-sync configs validate`
+
+Validate a registered configuration version.
+
+**Usage**:
+
+```console
+$ infrahub-sync configs validate [OPTIONS] CONFIG_ID VERSION
+```
+
+**Arguments**:
+
+* `CONFIG_ID`: [required]
+* `VERSION`: [required]
+
+**Options**:
+
+* `--offset INTEGER`: Finding offset.  [default: 0]
+* `--limit INTEGER`: Maximum findings to return.  [default: 256]
+* `--help`: Show this message and exit.
+
+## `infrahub-sync runs`
+
+Inspect service-owned runs.
+
+**Usage**:
+
+```console
+$ infrahub-sync runs [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `plan`: Review a saved plan summary, checksum, and...
+
+### `infrahub-sync runs plan`
+
+Review a saved plan summary, checksum, and operations.
+
+**Usage**:
+
+```console
+$ infrahub-sync runs plan [OPTIONS] RUN_ID
+```
+
+**Arguments**:
+
+* `RUN_ID`: Service-issued run ID.  [required]
+
+**Options**:
+
+* `--detail`: Render every saved operation.
+* `--kind TEXT`: Filter the detailed operation list by destination kind.
 * `--help`: Show this message and exit.
