@@ -48,6 +48,7 @@ from infrahub_sync.product_store import (
     ProductProjection,
 )
 
+from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import MANAGED_FLOW_NAME
 from .service import PLAN_ARTIFACT_ID
@@ -227,7 +228,13 @@ def _claim_current_execution(projection: ProductProjection, run_id: str) -> tupl
     flow_run_id = _prefect_flow_run_id()
     if worker_id is None:
         raise RuntimeError(_WORKER_EXECUTION_ID_INVALID)
-    if not projection.claim_execution(run_id, flow_run_id, worker_id=worker_id):
+    admission_ttl_seconds = LivenessPolicy.from_environment().admission_ttl_seconds
+    if not projection.claim_execution(
+        run_id,
+        flow_run_id,
+        worker_id=worker_id,
+        admission_ttl_seconds=admission_ttl_seconds,
+    ):
         raise RuntimeError(_WORKER_EXECUTION_REFUSED)
     return flow_run_id, worker_id
 

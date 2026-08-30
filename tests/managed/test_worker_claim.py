@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 from uuid import UUID
 
 import pytest
@@ -26,9 +26,9 @@ FLOW_ID = "ed4778cb-f2cf-4b1f-a87b-68be37659e93"
 WORKER_ID = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
 
 
-def _projection(tmp_path: Path):
+def _projection(tmp_path: Path, *, submitted_at: datetime | None = None):
     projection = local_product_projection(tmp_path)
-    now = datetime(2026, 8, 29, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
     projection.create_run(
         ProductRun(
             run_id="run-worker-claim",
@@ -40,7 +40,12 @@ def _projection(tmp_path: Path):
     )
     projection.add_prefect_execution(
         "run-worker-claim",
-        PrefectExecutionLink(flow_run_id=FLOW_ID, purpose="plan", attempt=1, submitted_at=now),
+        PrefectExecutionLink(
+            flow_run_id=FLOW_ID,
+            purpose="plan",
+            attempt=1,
+            submitted_at=now if submitted_at is None else submitted_at,
+        ),
     )
     return projection
 
@@ -93,6 +98,27 @@ def test_worker_claims_canonical_prefect_execution_before_runtime_work(
 
     link = projection.lookup_run("run-worker-claim").value.prefect_executions[0]  # type: ignore[union-attr]
     assert link.claiming_worker_id == WORKER_ID
+
+
+@pytest.mark.parametrize("stage", ["plan", "verify", "apply", "sync"])
+def test_expired_worker_claim_refusal_precedes_all_stage_runtime_construction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    stage: Literal["plan", "verify", "apply", "sync"],
+) -> None:
+    """An expired admission cannot enter registry, package, adapter, cache, or artifact work."""
+    projection = _projection(tmp_path, submitted_at=datetime.now(timezone.utc) - timedelta(seconds=2))
+    constructed: list[str] = []
+    monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
+    monkeypatch.setenv("INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS", "1")
+    monkeypatch.setattr(managed_flow, "_prefect_flow_run_id", lambda: FLOW_ID)
+    monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(managed_flow, "_execute_stage", lambda *_args, **_kwargs: constructed.append(stage))
+
+    with pytest.raises(RuntimeError, match="managed worker execution claim was refused"):
+        managed_flow.managed_sync_run.fn("run-worker-claim", stage)
+
+    assert constructed == []
 
 
 @pytest.mark.parametrize("state", ["missing", "claimed", "abandoned", "interrupted"])

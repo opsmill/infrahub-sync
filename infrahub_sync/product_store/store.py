@@ -90,6 +90,8 @@ CREATE TABLE IF NOT EXISTS configuration_versions (
 CREATE UNIQUE INDEX IF NOT EXISTS configuration_versions_checksum
     ON configuration_versions (config_id, package_checksum);
 """
+_SQLITE_EXECUTION_TIMESTAMP_FUNCTION = "infrahub_sync_execution_timestamp_microseconds"
+_UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _CANCELLATION_DEADLINE_ERROR = "execution cancellation recovery deadline is invalid"
 _SELECT_LATEST_EXECUTION_RESULTS = (
     "SELECT results FROM product_runs WHERE run_id = ? AND (SELECT latest.flow_run_id "
@@ -365,7 +367,15 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         self, run_id: str, flow_run_id: str, *, state: str | None, observed_at: datetime
     ) -> None: ...
 
-    def claim_execution(self, run_id: str, flow_run_id: str, *, worker_id: str, claimed_at: datetime) -> bool: ...
+    def claim_execution(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        worker_id: str,
+        claimed_at: datetime,
+        admission_deadline_at: datetime,
+    ) -> bool: ...
 
     def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime) -> bool: ...
 
@@ -986,13 +996,32 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         finally:
             connection.close()
 
-    def claim_execution(self, run_id: str, flow_run_id: str, *, worker_id: str, claimed_at: datetime) -> bool:
+    def claim_execution(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        worker_id: str,
+        claimed_at: datetime,
+        admission_deadline_at: datetime,
+    ) -> bool:
         """Atomically assign an unclaimed, non-terminal execution to one worker."""
-        return self._execution_update(
+        statement = (
             "UPDATE prefect_executions SET claimed_at = ?, claiming_worker_id = ? "
             "WHERE run_id = ? AND flow_run_id = ? AND claimed_at IS NULL AND terminal_at IS NULL "
-            "AND cancellation_requested_at IS NULL",
-            (claimed_at.isoformat(), worker_id, run_id, flow_run_id),
+            "AND cancellation_requested_at IS NULL "
+            "AND (submitted_at IS NULL OR "
+            "infrahub_sync_execution_timestamp_microseconds(submitted_at) "
+            "> infrahub_sync_execution_timestamp_microseconds(?))"
+            if self._dialect == "sqlite"
+            else "UPDATE prefect_executions SET claimed_at = ?, claiming_worker_id = ? "
+            "WHERE run_id = ? AND flow_run_id = ? AND claimed_at IS NULL AND terminal_at IS NULL "
+            "AND cancellation_requested_at IS NULL "
+            "AND (submitted_at IS NULL OR CAST(submitted_at AS TIMESTAMPTZ) > CAST(? AS TIMESTAMPTZ))"
+        )
+        return self._execution_update(
+            statement,
+            (claimed_at.isoformat(), worker_id, run_id, flow_run_id, admission_deadline_at.isoformat()),
         )
 
     def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime) -> bool:
@@ -1978,6 +2007,12 @@ class SQLiteRunStore(_RelationalRunStore):
         def connect() -> DBAPIConnection:
             connection = sqlite3.connect(database)
             connection.execute("PRAGMA foreign_keys = ON")
+            connection.create_function(
+                _SQLITE_EXECUTION_TIMESTAMP_FUNCTION,
+                1,
+                _execution_timestamp_microseconds,
+                deterministic=True,
+            )
             return cast("DBAPIConnection", connection)
 
         super().__init__(connect, placeholder="?", dialect="sqlite")
@@ -2197,14 +2232,27 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         )
 
     def claim_execution(
-        self, run_id: str, flow_run_id: str, *, worker_id: str, claimed_at: datetime | None = None
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        worker_id: str,
+        claimed_at: datetime | None = None,
+        admission_ttl_seconds: int = 300,
     ) -> bool:
         """Claim one pending execution; only a canonical Prefect worker UUID is accepted."""
         if not _is_canonical_uuid(worker_id):
             raise ValueError(_INVALID_MANAGED_WORKER_ID)
         effective_claimed_at = claimed_at if claimed_at is not None else datetime.now(timezone.utc)
         _require_execution_timestamp(effective_claimed_at)
-        return self._records.claim_execution(run_id, flow_run_id, worker_id=worker_id, claimed_at=effective_claimed_at)
+        admission_deadline_at = effective_claimed_at - timedelta(seconds=admission_ttl_seconds)
+        return self._records.claim_execution(
+            run_id,
+            flow_run_id,
+            worker_id=worker_id,
+            claimed_at=effective_claimed_at,
+            admission_deadline_at=admission_deadline_at,
+        )
 
     def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime | None = None) -> bool:
         """Set the first stall marker while leaving a pre-TTL execution claimable."""
@@ -2605,6 +2653,16 @@ def _json(value: Any) -> str:
 
 def _iso(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat()
+
+
+def _execution_timestamp_microseconds(value: str) -> int:
+    """Convert one persisted aware ISO timestamp to an exact comparable integer."""
+    parsed = datetime.fromisoformat(value)
+    if parsed.utcoffset() is None:
+        msg = "persisted execution timestamps must include a timezone"
+        raise ValueError(msg)
+    elapsed = parsed.astimezone(timezone.utc) - _UNIX_EPOCH
+    return ((elapsed.days * 86400) + elapsed.seconds) * 1_000_000 + elapsed.microseconds
 
 
 def _is_canonical_uuid(value: object) -> bool:

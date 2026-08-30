@@ -124,6 +124,14 @@ class _CursorAdapter:
             return self
         if "ALTER COLUMN" in stripped and "DROP NOT NULL" in stripped:
             return self
+        stripped = stripped.replace(
+            "CAST(submitted_at AS TIMESTAMPTZ)",
+            "infrahub_sync_execution_timestamp_microseconds(submitted_at)",
+        )
+        stripped = stripped.replace(
+            "CAST(%s AS TIMESTAMPTZ)",
+            "infrahub_sync_execution_timestamp_microseconds(?)",
+        )
         self._cursor.execute(stripped.replace("%s", "?"), parameters)
         return self
 
@@ -151,6 +159,12 @@ class _ConnectionAdapter:
     def __init__(self, path: Path) -> None:
         self._connection = sqlite3.connect(path)
         self._connection.execute("PRAGMA foreign_keys = ON")
+        self._connection.create_function(
+            "infrahub_sync_execution_timestamp_microseconds",
+            1,
+            product_store_store._execution_timestamp_microseconds,
+            deterministic=True,
+        )
         self._connection.execute(
             f"CREATE TABLE IF NOT EXISTS {_POSTGRESQL_EMULATION_CONSTRAINTS_TABLE} (constraint_name TEXT PRIMARY KEY)"
         )
@@ -1218,6 +1232,13 @@ def test_legacy_execution_without_submitted_at_uses_observation_fallback(profile
             ("run-001", "flow-001"),
         ).fetchone()
     assert stored_submitted_at == (None,)
+    assert projection.claim_execution(
+        "run-001",
+        "flow-001",
+        worker_id="8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0",
+        claimed_at=observed_at + timedelta(days=1),
+        admission_ttl_seconds=300,
+    )
 
 
 def test_execution_claim_stall_and_terminal_cas_contract(provider: ProductProjection) -> None:
@@ -1238,6 +1259,53 @@ def test_execution_claim_stall_and_terminal_cas_contract(provider: ProductProjec
     assert link.stalled_at == now
     assert link.claimed_at == now
     assert link.claiming_worker_id == worker_id
+
+
+@pytest.mark.parametrize(
+    ("age_microseconds", "expected_outcome"),
+    [
+        (299_000_000, "claimed"),
+        (299_999_999, "claimed"),
+        (300_000_000, "refused"),
+        (301_000_000, "refused"),
+    ],
+    ids=["before-boundary", "one-microsecond-before", "exact-boundary", "after-boundary"],
+)
+def test_execution_claim_respects_inclusive_admission_ttl(
+    provider: ProductProjection,
+    age_microseconds: int,
+    expected_outcome: str,
+) -> None:
+    """The persistence claim refuses a link at and beyond its admission deadline."""
+    claimed_at = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001",
+        PrefectExecutionLink(
+            flow_run_id="flow-001",
+            purpose="plan",
+            attempt=1,
+            submitted_at=(claimed_at - timedelta(microseconds=age_microseconds)).astimezone(
+                timezone(timedelta(hours=-4))
+            ),
+        ),
+    )
+
+    claimed = provider.claim_execution(
+        "run-001",
+        "flow-001",
+        worker_id=worker_id,
+        claimed_at=claimed_at,
+        admission_ttl_seconds=300,
+    )
+
+    expected_claimed = expected_outcome == "claimed"
+    assert claimed is expected_claimed
+    run = provider.lookup_run("run-001").value
+    assert run is not None
+    link = run.prefect_executions[0]
+    assert (link.claiming_worker_id == worker_id) is expected_claimed
 
 
 @pytest.mark.parametrize("mutation", ["claim", "stall", "abandon", "interrupt"])
@@ -1387,28 +1455,42 @@ def test_every_execution_terminal_transition_refuses_non_exact_timestamp_without
     assert provider.lookup_run("run-001") == before
 
 
-def test_claim_and_abandon_race_has_one_winner(tmp_path: Path) -> None:
-    """Separate SQLite connections converge through the row predicates alone."""
-    projection = local_product_projection(tmp_path)
+@pytest.mark.parametrize("age_seconds", [299, 300], ids=["before-boundary", "exact-boundary"])
+def test_claim_and_abandon_race_has_one_winner(provider: ProductProjection, age_seconds: int) -> None:
+    """Both provider profiles serialize claim against abandonment at the TTL boundary."""
     now = datetime(2026, 8, 29, tzinfo=timezone.utc)
     worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
-    projection.create_run(_run())
-    projection.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    provider.create_run(_run())
+    provider.add_prefect_execution(
+        "run-001",
+        PrefectExecutionLink(
+            flow_run_id="flow-001",
+            purpose="plan",
+            attempt=1,
+            submitted_at=now - timedelta(seconds=age_seconds),
+        ),
     )
     barrier = Barrier(2)
 
     def claim() -> bool:
         barrier.wait()
-        return projection.claim_execution("run-001", "flow-001", worker_id=worker_id, claimed_at=now)
+        return provider.claim_execution(
+            "run-001",
+            "flow-001",
+            worker_id=worker_id,
+            claimed_at=now,
+            admission_ttl_seconds=300,
+        )
 
     def abandon() -> bool:
         barrier.wait()
-        return projection.abandon_execution("run-001", "flow-001", terminal_at=now)
+        return provider.abandon_execution("run-001", "flow-001", terminal_at=now)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         outcomes = tuple(pool.map(lambda action: action(), (claim, abandon)))
     assert outcomes.count(True) == 1
+    if age_seconds == 300:
+        assert outcomes == (False, True)
 
 
 def test_execution_claim_refuses_invalid_worker_identity_without_mutation(provider: ProductProjection) -> None:
