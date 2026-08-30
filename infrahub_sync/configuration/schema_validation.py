@@ -3,7 +3,7 @@
 The declared-content core (``validation.py``) judges declared content only and stays
 untouched; this module owns the schema-path checks and their finding codes. Three error
 families live here, each behind its own ``_CODE_`` constant and frozen by this module's
-own exact-set and reachability tests (envelope AR8):
+own exact-set and reachability tests:
 
 * the destination-schema-mismatch family — exactly four predicates judged against the
   destination schema snapshot: a mapping kind the snapshot does not declare, a field name
@@ -11,24 +11,23 @@ own exact-set and reachability tests (envelope AR8):
   a name the schema declares as an attribute, and a declared static value whose shape
   (list versus scalar) disagrees with the relationship's declared cardinality — plus the
   capability gate for an explicit request against a destination that does not declare
-  schema validation (a missing capability needed to determine safety is an error, contract
-  section 4). Two further checkable predicates are deliberately out of this unit's scope
-  and recorded as parent-level follow-up: a static value's type against the attribute's
-  declared kind, and a reference against the relationship's declared peer kind;
+  schema validation (a missing capability needed to determine safety is an error). Two
+  further checkable predicates are out of scope here: a static value's type against the
+  attribute's declared kind, and a reference against the relationship's declared peer kind;
 * the unsupported-destination-write family — the operations one configuration requests,
   derived through the one shared SYNC-78 effective-operation rule, judged against the
   destination's declared write operations;
-* the schema-read-failure family (envelope AR9) — a schema read the accessor reports as
-  failed becomes a typed error finding rather than a generic service-boundary refusal.
-  The bundled accessor classifies SDK-raised errors, HTTP transport and status failures,
-  an unresolvable declared credential, and a declared client configuration the SDK
-  refuses; an exception outside the accessor contract is not intercepted here.
+* the schema-read-failure family — a schema read the accessor reports as failed becomes a
+  typed error finding rather than a generic service-boundary refusal. The bundled accessor
+  classifies SDK-raised errors, HTTP transport and status failures, an unresolvable declared
+  credential, and a declared client configuration the SDK refuses; an exception outside the
+  accessor contract is not intercepted here.
 
 Checks accumulate: a failed check never suppresses an independent one, and an unevaluable
 subtree — an unknown destination adapter, an unknown kind, an unknown field — suppresses
-only its own deeper checks, mirroring the core's OES-15 rule. Nothing here runs on the
-default ``validate`` path: only the explicit opt-in reaches this module, and the accessor
-is the only thing that may perform I/O.
+only its own deeper checks, mirroring the core's rule. Nothing here runs on the default
+``validate`` path: only the explicit opt-in reaches this module, and the accessor is the only
+thing that may perform I/O.
 """
 
 from __future__ import annotations
@@ -71,8 +70,8 @@ class DestinationSchemaValidation:
     """Every schema-path finding for one package, with the judged snapshot's identity.
 
     ``schema_fingerprint`` is the ``compute_schema_subhash`` identity of the snapshot the
-    content checks actually judged (envelope AR6) — ``None`` whenever no snapshot was
-    read: a non-declaring destination, an unknown adapter, or a failed read.
+    content checks actually judged — ``None`` whenever no snapshot was read: a
+    non-declaring destination, an unknown adapter, or a failed read.
     """
 
     findings: tuple[ValidationFinding, ...]
@@ -181,8 +180,8 @@ def collect_destination_schema_findings(package: ConfigurationPackage) -> Destin
     Accumulating and total over declared defects: a non-declaring destination, a failed
     schema read, and an unsupported write request each become findings, never raises. An
     unknown destination adapter adds nothing here — the core's own finding already names
-    that defect and its subtree is unevaluable (OES-15) — and checks independent of a
-    failed read still report. Findings return in the stable ``sort_findings`` order.
+    that defect and its subtree is unevaluable — and checks independent of a failed read
+    still report. Findings return in the stable ``sort_findings`` order.
     """
     destination = package.configuration.destination
     capabilities = BUILTIN_ADAPTER_CAPABILITIES.get(destination.name)

@@ -75,15 +75,10 @@ _CODE_UNKNOWN_CREDENTIAL_REFERENCE = "unknown-credential-reference"
 # "~2" marks a truncated diagnostic pointer, and the finding pointer grammar refuses it: a "~"
 # there must introduce "~0" or "~1". This marker is legal and, in a finding as the core emits
 # one, unforgeable: safe_pointer_component escapes only unprintable characters into the
-# "\uXXXX" form and U+2026 is printable, so a declared key can never render as one.
-#
-# That holds as far as redaction and no further. redact_pointer decodes every component and
-# re-encodes it, and the decoder reads "\u2026" as an escape and writes the single printable
-# character back, so a redacted pointer carries a literal "…" where this marker was — which a
-# declared key containing "…" also renders as. Both interfaces redact through that one
-# function, so they agree with each other. Nothing collides, because the redaction tag carries
-# its own digest; what is lost is that in a *redacted* pointer the marker is a hint that the
-# pointer was truncated rather than proof of it.
+# "\uXXXX" form and U+2026 is printable, so a declared key can never render as one. Redaction
+# is the exception: a redacted pointer carries a literal "…" where this marker was, so there
+# the marker is a hint that the pointer was truncated rather than proof of it. Nothing
+# collides, because the redaction tag carries its own digest.
 _LOCATION_TRUNCATION_MARKER = r"\u2026"
 # Truncation is lossy at two bounds — a declared key past 64 characters and the whole pointer
 # past 256 — so two different defects can otherwise arrive as one byte-identical finding twice.
@@ -422,10 +417,10 @@ def _revalidated_finding(item: ValidationFinding) -> ValidationFinding:
         msg = "adapter finding carries an unprintable character"
         raise ValueError(msg)
     if validated.severity != "error":
-        # The warning channel's emission rule is closed: only the two contract section 4
-        # families in the warnings module report warnings. The wrapper never raises on a
-        # warning, so an adapter allowed to return one could write a defect into the
-        # non-blocking channel; the caller contains this like any other unusable result.
+        # The warning channel's emission rule is closed: only the two families in the
+        # warnings module report warnings. The wrapper never raises on a warning, so an
+        # adapter allowed to return one could write a defect into the non-blocking
+        # channel; the caller contains this like any other unusable result.
         msg = "adapter finding carries a severity the adapter has no standing to report"
         raise ValueError(msg)
     return _finding(
@@ -690,10 +685,10 @@ def _accumulate(package: ConfigurationPackage) -> tuple[_AccumulatedFinding, ...
         accumulated=walked,
     )
     accumulated.extend(_from_check(_CHECK_WALK, walked))
-    # Contract section 4's warning families run last, appended after the shipped execution
-    # order, so a package carrying any legacy defect keeps its shipped first-error message
-    # at the wrapper. Warnings before an error here are what the wrapper's first-*error*
-    # rule exists for.
+    # The warning families run last, appended after the shipped execution order, so a
+    # package carrying any legacy defect keeps its shipped first-error message at the
+    # wrapper. Warnings before an error here are what the wrapper's first-*error* rule
+    # exists for.
     accumulated.extend(_from_module(_CHECK_OMISSIONS, accumulate_intentional_omissions(package)))
     accumulated.extend(_from_module(_CHECK_OPTIONAL_FEATURES, accumulate_unqualified_optional_features(package)))
     return tuple(accumulated)
