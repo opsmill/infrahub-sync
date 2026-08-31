@@ -131,17 +131,21 @@ Configure the worker environment before it starts:
 | `PREFECT_WORKER_QUERY_SECONDS` | Prefect worker polling interval. It must be a finite positive decimal no greater than 3600; the API derives its liveness thresholds from the same value. |
 | Adapter credential variables | Credentials required by the selected Sync configuration. Keep them in the worker environment or its secret provider. |
 
-The managed flow accepts exactly seven bounded parameters:
+The managed flow accepts exactly eight bounded parameters:
 
 | Parameter | Type | Purpose |
 | --- | --- | --- |
 | `run_id` | `str` | API-created Sync run identity. |
-| `sync_name` | `str` | Configuration selected from the worker's configured directory. |
 | `stage` | `plan`, `verify`, `apply`, or `sync` | Execution stage accepted by the API. |
-| `configuration_reference` | `str` | Immutable, non-secret configuration revision recorded on the product run. |
+| `config_id` | `str` or `null` | Registered configuration identity. |
+| `registry_version` | `int` or `null` | Immutable version of the registered configuration. |
+| `package_checksum` | `str` or `null` | Checksum bound to the registered configuration package. |
 | `branch` | `str` or `null` | Optional Infrahub branch. |
 | `expected_checksum` | SHA-256 string or `null` | Reviewed checksum required by `apply`. |
 | `confirm_writes` | `bool` | Required for `apply` and composed `sync`. |
+
+`config_id`, `registry_version`, and `package_checksum` must be all present for a
+registered execution or all `null` for a legacy execution.
 
 The API rejects configured secret values in flow-bound request fields. Credentials,
 endpoints, adapter instances, and filesystem paths are never flow parameters.
