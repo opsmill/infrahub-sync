@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import Enum
 from types import MappingProxyType
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -15,9 +17,11 @@ AdapterRole = Literal["source", "destination"]
 WriteOperation = Literal["create", "update", "delete"]
 ConfigurationValidator = Callable[[ConfigurationPackage, AdapterRole], Sequence[ValidationFinding]]
 # The destination-schema accessor contract: (package, branch) -> one JSON-native schema
-# snapshot, mapping each kind name to its attributes (name -> attribute kind) and
-# relationships (name -> {"peer", "cardinality"}). Raises DestinationSchemaReadError and
-# nothing else for a read that fails; performs I/O only when called, never at import.
+# snapshot, mapping each kind name to its ordered "human_friendly_id" and
+# "uniqueness_constraints" component paths, its attributes
+# (name -> {"kind", "optional", "default_value", "unique"}), and its relationships
+# (name -> {"peer", "cardinality", "optional", "kind"}). Raises DestinationSchemaReadError
+# and nothing else for a read that fails; performs I/O only when called, never at import.
 DestinationSchemaAccessor = Callable[[ConfigurationPackage, str], Mapping[str, Any]]
 _SCHEMA_READ_REASON = re.compile(r"^[a-z]{1,32}$")
 _ADAPTER_NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
@@ -292,7 +296,12 @@ def _normalized_schema_snapshot(schema: object) -> Mapping[str, Any]:
 
 
 def _build_schema_snapshot(schema: object) -> dict[str, Any]:
-    """Build the snapshot from a third-party response, inside the boundary above."""
+    """Build the snapshot from a third-party response, inside the boundary above.
+
+    Each kind carries its ordered ``human_friendly_id`` and ``uniqueness_constraints``
+    component paths and, per member, every property that can change a constructed
+    runtime model or a planned write. Nothing else from the response crosses.
+    """
     if not isinstance(schema, Mapping):
         raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
     snapshot: dict[str, Any] = {}
@@ -300,9 +309,24 @@ def _build_schema_snapshot(schema: object) -> dict[str, Any]:
         if not isinstance(kind, str):
             raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
         snapshot[kind] = {
-            "attributes": {attribute.name: attribute.kind for attribute in getattr(node, "attributes", ()) or ()},
+            "human_friendly_id": _optional_string_path(getattr(node, "human_friendly_id", None)),
+            "uniqueness_constraints": _optional_string_paths(getattr(node, "uniqueness_constraints", None)),
+            "attributes": {
+                attribute.name: {
+                    "kind": _member_text(attribute.kind),
+                    "optional": _exact_bool(attribute.optional),
+                    "default_value": _json_native_default(attribute.default_value),
+                    "unique": _exact_bool(attribute.unique),
+                }
+                for attribute in getattr(node, "attributes", ()) or ()
+            },
             "relationships": {
-                relationship.name: {"peer": relationship.peer, "cardinality": relationship.cardinality}
+                relationship.name: {
+                    "peer": relationship.peer,
+                    "cardinality": _member_text(relationship.cardinality),
+                    "optional": _exact_bool(relationship.optional),
+                    "kind": _member_text(relationship.kind),
+                }
                 for relationship in getattr(node, "relationships", ()) or ()
             },
         }
@@ -310,23 +334,93 @@ def _build_schema_snapshot(schema: object) -> dict[str, Any]:
     return snapshot
 
 
+def _optional_string_path(value: object) -> list[str]:
+    """Copy an optional SDK component path without coercing malformed containers."""
+    if value is None:
+        return []
+    return _string_path(value)
+
+
+def _optional_string_paths(value: object) -> list[list[str]]:
+    """Copy optional SDK component paths without coercing malformed containers."""
+    if value is None:
+        return []
+    if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
+        raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
+    return [_string_path(path) for path in value]
+
+
+def _string_path(value: object) -> list[str]:
+    """Copy one non-string SDK sequence containing only string components."""
+    if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
+        raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
+    components: list[str] = []
+    for component in value:
+        if not isinstance(component, str):
+            raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
+        components.append(component)
+    return components
+
+
+def _exact_bool(value: object) -> bool:
+    """Return an SDK flag only when it is an exact boolean."""
+    if value is True:
+        return True
+    if value is False:
+        return False
+    raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
+
+
+def _member_text(value: object) -> object:
+    """Return the value of an SDK string enum, leaving anything else to the shape check."""
+    return value.value if isinstance(value, Enum) else value
+
+
+def _json_native_default(value: object) -> Any:
+    """Keep a JSON-native declared default; refuse anything a model cannot reproduce.
+
+    A non-finite float is refused here rather than carried: JSON has no encoding for it,
+    so it could not survive the canonical projection a plan is identified by.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    if isinstance(value, Enum):
+        return _json_native_default(value.value)
+    if isinstance(value, (list, tuple)):
+        return [_json_native_default(item) for item in value]
+    if isinstance(value, Mapping) and all(isinstance(key, str) for key in value):
+        return {key: _json_native_default(item) for key, item in value.items()}
+    raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
+
+
 def _require_usable_snapshot(snapshot: Mapping[str, Any]) -> None:
-    """Refuse a built snapshot that is not the string shape the schema checks consume.
+    """Refuse a built snapshot that is not the string shape its consumers expect.
 
     The last step inside the normalization boundary: the members were read without
     raising and every kind is already a string, but the snapshot is usable only when
-    every attribute name and kind, relationship name, peer, and cardinality is a string
-    too — the shape the SDK contract promises and ``compute_schema_subhash`` and the
-    content checks rely on.
+    every member name and every declared text property is a string too — the shape the
+    SDK contract promises and the content checks and the normalized runtime domain rely
+    on.
     """
     for entry in snapshot.values():
         attributes: dict[str, Any] = entry["attributes"]
         relationships: dict[str, Any] = entry["relationships"]
-        usable = all(isinstance(name, str) and isinstance(value, str) for name, value in attributes.items()) and all(
-            isinstance(name, str)
-            and isinstance(relationship["peer"], str)
-            and isinstance(relationship["cardinality"], str)
-            for name, relationship in relationships.items()
+        paths: list[Any] = [
+            *entry["human_friendly_id"],
+            *(component for constraint in entry["uniqueness_constraints"] for component in constraint),
+        ]
+        usable = (
+            all(isinstance(name, str) and isinstance(attribute["kind"], str) for name, attribute in attributes.items())
+            and all(
+                isinstance(name, str)
+                and isinstance(relationship["peer"], str)
+                and isinstance(relationship["cardinality"], str)
+                and isinstance(relationship["kind"], str)
+                for name, relationship in relationships.items()
+            )
+            and all(isinstance(component, str) for component in paths)
         )
         if not usable:
             msg = "destination returned an unusable schema member shape"

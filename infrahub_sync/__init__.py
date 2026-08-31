@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from infrahub_sync.cache.cursors import CursorState
+    from infrahub_sync.runtime_schema import RuntimeModelPlan
 
 import pydantic
 
@@ -149,6 +150,10 @@ class SyncInstance(SyncConfig):
     directory: str
     # Worker-only state, deliberately absent from serialized configuration data.
     _configuration_binding: tuple[str, int, str] | None = pydantic.PrivateAttr(default=None)
+    # The registered run's runtime model plan, when one was built. Its presence is what
+    # tells engine assembly to use installed resolution and bind in-memory classes rather
+    # than the legacy generated-wrapper path.
+    _runtime_models: RuntimeModelPlan | None = pydantic.PrivateAttr(default=None)
 
 
 def resolve_effective_diffsync_flags(

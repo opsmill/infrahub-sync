@@ -1,7 +1,7 @@
 """Destination schema validation — the explicit opt-in checks outside the declared-content core.
 
 The declared-content core (``validation.py``) judges declared content only and stays
-untouched; this module owns the schema-path checks and their finding codes. Three error
+untouched; this module owns the schema-path checks and their finding codes. Four error
 families live here, each behind its own ``_CODE_`` constant and frozen by this module's
 own exact-set and reachability tests:
 
@@ -17,6 +17,9 @@ own exact-set and reachability tests:
 * the unsupported-destination-write family — the operations one configuration requests,
   derived through the one shared SYNC-78 effective-operation rule, judged against the
   destination's declared write operations;
+* the closed-domain family — a snapshot the accessor delivered but the shared runtime
+  schema domain refuses. Registered execution refuses the same snapshot, so validation
+  reports the same defect rather than silently withholding the fingerprint;
 * the schema-read-failure family — a schema read the accessor reports as failed becomes a
   typed error finding rather than a generic service-boundary refusal. The bundled accessor
   classifies SDK-raised errors, HTTP transport and status failures, an unresolvable declared
@@ -37,10 +40,15 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from infrahub_sync import requested_destination_write_operations
-from infrahub_sync.cache import compute_schema_subhash
+from infrahub_sync.runtime_schema import (
+    UnsupportedSchemaSemanticsError,
+    compute_consumed_schema_fingerprint,
+    normalize_destination_schema,
+)
 
 from .capabilities import BUILTIN_ADAPTER_CAPABILITIES, DestinationSchemaReadError
 from .models import ValidationFinding, sort_findings
+from .runtime import effective_destination_branch
 from .validation import _finding_message
 
 if TYPE_CHECKING:
@@ -48,6 +56,7 @@ if TYPE_CHECKING:
 
 _CODE_DESTINATION_SCHEMA_MISMATCH = "destination-schema-mismatch"
 _CODE_DESTINATION_SCHEMA_READ_FAILED = "destination-schema-read-failed"
+_CODE_DESTINATION_SCHEMA_UNSUPPORTED_SEMANTICS = "destination-schema-unsupported-semantics"
 _CODE_DESTINATION_SCHEMA_VALIDATION_UNSUPPORTED = "destination-schema-validation-unsupported"
 _CODE_UNSUPPORTED_DESTINATION_WRITE = "unsupported-destination-write"
 
@@ -69,9 +78,11 @@ class DestinationSchemaOptions:
 class DestinationSchemaValidation:
     """Every schema-path finding for one package, with the judged snapshot's identity.
 
-    ``schema_fingerprint`` is the ``compute_schema_subhash`` identity of the snapshot the
-    content checks actually judged — ``None`` whenever no snapshot was read: a
-    non-declaring destination, an unknown adapter, or a failed read.
+    ``schema_fingerprint`` is the consumed-semantics identity of the snapshot the content
+    checks actually judged — ``None`` whenever no snapshot was read: a non-declaring
+    destination, an unknown adapter, or a failed read. Validation and registered worker
+    construction compute it through the same projection; recording it on a plan, and
+    comparing it before an apply writes, belong to the plan-guard unit that follows.
     """
 
     findings: tuple[ValidationFinding, ...]
@@ -79,19 +90,13 @@ class DestinationSchemaValidation:
 
 
 def resolve_declared_destination_branch(package: ConfigurationPackage) -> str:
-    """Resolve the destination branch from the declared setting only.
+    """Resolve the destination branch validation reads, through the shared rule.
 
-    The interim SYNC-79 helper: reads ``destination.settings.branch`` and nothing else —
-    never the ambient environment — defaulting to ``"main"``, the SDK's own default
-    branch. Its consumers are the schema read and, through the snapshot that read
-    returns, the fingerprint subhash. CF-005's shared resolver replaces this at its one
-    call site.
+    Validation judges declared content and has no run request, so it passes no run
+    branch: the result is the declared branch or ``"main"``. Execution calls the same
+    resolver with the run's branch.
     """
-    settings = package.configuration.destination.settings or {}
-    branch = settings.get("branch")
-    if isinstance(branch, str) and branch:
-        return branch
-    return "main"
+    return effective_destination_branch(package.configuration.destination.settings, None)
 
 
 def _finding(*, code: str, location: str, message: str) -> ValidationFinding:
@@ -226,6 +231,22 @@ def collect_destination_schema_findings(package: ConfigurationPackage) -> Destin
                 )
             )
         else:
-            fingerprint = compute_schema_subhash(package.configuration, dict(snapshot))
+            try:
+                fingerprint = compute_consumed_schema_fingerprint(
+                    configuration=package.configuration, snapshot=normalize_destination_schema(snapshot)
+                )
+            except UnsupportedSchemaSemanticsError:
+                # The worker refuses this snapshot too, so validation names the same
+                # defect rather than reporting only a missing fingerprint.
+                findings.append(
+                    _finding(
+                        code=_CODE_DESTINATION_SCHEMA_UNSUPPORTED_SEMANTICS,
+                        location=_DESTINATION_LOCATION,
+                        message=(
+                            f"destination schema for branch {branch!r} declares semantics outside the "
+                            "supported schema domain"
+                        ),
+                    )
+                )
             findings.extend(_schema_content_findings(package, snapshot))
     return DestinationSchemaValidation(findings=sort_findings(findings), schema_fingerprint=fingerprint)

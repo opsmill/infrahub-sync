@@ -97,6 +97,7 @@ def test_managed_and_standalone_plan_product_projection_seams_match(
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
     monkeypatch.setattr(managed_flow, "_prefect_flow_run_id", lambda: FLOW_RUN_ID)
     monkeypatch.setattr(managed_flow, "resolve_runtime_instance", lambda *_args, **_kwargs: instance)
+    monkeypatch.setattr(managed_flow, "build_runtime_model_plan", lambda **_kwargs: object())
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "_plan", lambda *_args, **_kwargs: saved)
     managed_flow.managed_sync_run.fn(run_id, "plan", *binding)

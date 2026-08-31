@@ -18,13 +18,13 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from infrahub_sync.cache import compute_schema_subhash
 from infrahub_sync.configuration import schema_validation
 from infrahub_sync.configuration import validation as validation_module
 from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES
 from infrahub_sync.configuration.schema_validation import DestinationSchemaOptions
 from infrahub_sync.configuration.validation import collect_findings
 from infrahub_sync.product_store import configs as configs_service
+from infrahub_sync.runtime_schema import compute_consumed_schema_fingerprint, normalize_destination_schema
 from tests.configuration.validation_packages import package, package_data
 
 if TYPE_CHECKING:
@@ -34,8 +34,12 @@ if TYPE_CHECKING:
 
 _SNAPSHOT: dict[str, Any] = {
     "InfraDevice": {
-        "attributes": {"name": "Text"},
-        "relationships": {"site": {"peer": "LocationSite", "cardinality": "one"}},
+        "human_friendly_id": ["name__value"],
+        "uniqueness_constraints": [["name__value"]],
+        "attributes": {"name": {"kind": "Text", "optional": False, "default_value": None, "unique": True}},
+        "relationships": {
+            "site": {"peer": "LocationSite", "cardinality": "one", "optional": True, "kind": "Attribute"}
+        },
     },
 }
 
@@ -169,8 +173,8 @@ def test_the_opt_in_records_the_snapshot_fingerprint(tmp_path: Path, monkeypatch
 
     report = _validate(config_id, location, destination_schema=DestinationSchemaOptions())
 
-    assert report.destination_schema_fingerprint == compute_schema_subhash(
-        package(package_data()).configuration, _SNAPSHOT
+    assert report.destination_schema_fingerprint == compute_consumed_schema_fingerprint(
+        configuration=package(package_data()).configuration, snapshot=normalize_destination_schema(_SNAPSHOT)
     )
 
 

@@ -47,6 +47,7 @@ from infrahub_sync.product_store import (
     ExecutionWriteback,
     ProductProjection,
 )
+from infrahub_sync.runtime_schema import STAGE_RUNTIME_MODEL_SCOPE, build_runtime_model_plan
 
 from .liveness import LivenessPolicy
 from .models import PlanResource
@@ -245,8 +246,19 @@ def _worker_execution_context(
     *,
     config_directory: str,
     projection: ProductProjection,
+    run_branch: str | None,
+    stage: str,
+    build_models: bool = True,
 ) -> tuple[ProductProjection, Any, str]:
-    """Load the durable run and resolve its registered or legacy runtime."""
+    """Load the durable run and resolve its registered or legacy runtime.
+
+    A registered run builds its runtime model plan here, from one destination schema read,
+    before any adapter is constructed or any source is extracted. A saved-plan apply defers
+    that build until its artifact binding is verified. What the plan covers follows the stage:
+    both sides for plan and sync, the destination only for a saved-plan apply, and nothing at
+    all for verify, which constructs no adapter. The legacy path keeps its generated-code
+    resolution and builds no plan.
+    """
     stored = projection.lookup_run(run_id)
     if stored.value is None:
         msg = f"API-created Sync run {run_id!r} is unavailable"
@@ -275,6 +287,11 @@ def _worker_execution_context(
         raise ValueError(_REGISTERED_CHECKSUM_MISMATCH)
     instance = resolve_runtime_instance(package, directory=config_directory)
     instance._configuration_binding = binding
+    scope = STAGE_RUNTIME_MODEL_SCOPE.get(stage)
+    if scope is not None and build_models:
+        instance._runtime_models = build_runtime_model_plan(
+            package=package, instance=instance, run_branch=run_branch, scope=scope
+        )
     return projection, instance, package.configuration.name
 
 
@@ -286,6 +303,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     package_checksum: str | None,
     branch: str | None,
     expected_checksum: str | None,
+    *,
     confirm_writes: bool,
     run_logger: RunLogger,
     secrets: list[str],
@@ -295,7 +313,13 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     """Resolve and execute one managed stage within the sanitized worker boundary."""
     parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
     projection, instance, sync_name = _worker_execution_context(
-        run_id, parameter_binding, config_directory=config_directory, projection=projection
+        run_id,
+        parameter_binding,
+        config_directory=config_directory,
+        projection=projection,
+        run_branch=branch,
+        stage=stage,
+        build_models=stage != "apply",
     )
     if stage in ("apply", "sync") and not confirm_writes:
         msg = f"confirm_writes=true is required for managed stage={stage}"
@@ -337,6 +361,15 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             run_id=run_id,
             binding=parameter_binding,
         )
+        if parameter_binding is not None:
+            _, instance, sync_name = _worker_execution_context(
+                run_id,
+                parameter_binding,
+                config_directory=config_directory,
+                projection=projection,
+                run_branch=branch,
+                stage=stage,
+            )
         applied = execute_run(
             instance,
             operation="apply",
@@ -494,11 +527,11 @@ def managed_sync_run(  # pylint: disable=too-many-positional-arguments
                 package_checksum,
                 branch,
                 expected_checksum,
-                confirm_writes,
-                run_logger,
-                secrets,
-                config_directory,
-                projection,
+                confirm_writes=confirm_writes,
+                run_logger=run_logger,
+                secrets=secrets,
+                config_directory=config_directory,
+                projection=projection,
             )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         # Rebuilt after the original exception context exits.

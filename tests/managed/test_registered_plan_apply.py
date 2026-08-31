@@ -76,6 +76,7 @@ def _registered_apply(
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (managed_flow.logger, False))
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
     monkeypatch.setattr(managed_flow, "_prefect_flow_run_id", lambda: FLOW_RUN_ID)
+    monkeypatch.setattr(managed_flow, "build_runtime_model_plan", lambda **_kwargs: object())
 
     def destination_forbidden(*_args: object, **_kwargs: object) -> RunResult:
         calls.append("execute-run")

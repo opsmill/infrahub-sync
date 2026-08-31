@@ -83,17 +83,26 @@ An adapter's own configuration check keeps its own codes, which are outside this
 
 #### Destination schema validation codes
 
-These four codes are emitted **only on the explicit opt-in**: `validate` given a
+These five codes are emitted **only on the explicit opt-in**: `validate` given a
 destination-schema options object. The default `validate` path judges declared content
-only, performs no schema read and no network I/O, and never emits them. All four carry an
+only, performs no schema read and no network I/O, and never emits them. All five carry an
 `error` severity.
 
 | Code | What it means | Where it points |
 | ---- | ------------- | --------------- |
 | `destination-schema-mismatch` | A declared schema mapping disagrees with the destination's schema snapshot: an undeclared kind, a field that is neither an attribute nor a relationship, a relationship reference on an attribute, or a static value whose shape disagrees with the relationship's cardinality. | the mapping entry, field, reference, or static value |
 | `destination-schema-read-failed` | The destination schema could not be read: a timeout, refused credentials, an unreachable server, a rejected or unusable response, an unresolvable declared token, or unusable declared client settings. The message names the failure class. | `/configuration/destination` |
+| `destination-schema-unsupported-semantics` | The destination schema was read, but it declares semantics outside the supported schema domain — an unknown relationship cardinality, a member shape the domain does not define, or a default no JSON encoding can carry. A run of this configuration refuses the same schema. | `/configuration/destination` |
 | `destination-schema-validation-unsupported` | Schema validation was explicitly requested against a destination adapter that does not declare it. A missing capability needed to determine safety is an error, not a warning. | `/configuration/destination` |
 | `unsupported-destination-write` | The configuration requests destination write operations the destination adapter does not declare support for. | `/configuration/destination` |
+
+A successful opt-in read also returns `destination_schema_fingerprint`: the full SHA-256
+digest of the schema semantics this configuration consumes — each mapped kind, its
+DiffSync identifiers, its ordered human-friendly ID and uniqueness-constraint component
+paths, every mapped field's type and required/default/unique properties, and every
+mandatory-without-default field on those kinds. Unmapped destination growth and
+differences in schema delivery order leave it unchanged. It is `null` whenever no
+snapshot was read — the default path, a non-declaring destination, or a failed read.
 
 #### Warning-channel codes
 
