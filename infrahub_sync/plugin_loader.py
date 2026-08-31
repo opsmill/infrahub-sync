@@ -36,6 +36,15 @@ class PluginLoadError(Exception):
     """Exception raised when a plugin cannot be loaded."""
 
 
+def _target_base_class(default_class_candidates: tuple[str, ...]) -> type[Any] | None:
+    """The base class a resolution request is really asking for, if it names one."""
+    if "Adapter" in default_class_candidates:
+        return Adapter
+    if "Model" in default_class_candidates:
+        return DiffSyncModel
+    return None
+
+
 class Plugintype(str, Enum):
     """Plugin type enum for categorizing how a plugin was loaded."""
 
@@ -335,14 +344,35 @@ class PluginLoader:
             # If it's a module, find the class
             if inspect.ismodule(obj):
                 return self._find_class_in_module(obj, class_name, name, default_class_candidates)
-            # If it's already a class, return it
             if inspect.isclass(obj):
-                return cast("type[Any]", obj)
+                return self._entry_point_class(cast("type[Any]", obj), class_name, name, default_class_candidates)
 
         except (ImportError, AttributeError):
             pass
 
         return None
+
+    def _entry_point_class(
+        self,
+        loaded: type[Any],
+        class_name: str | None,
+        name: str,
+        default_class_candidates: tuple[str, ...],
+    ) -> type[Any] | None:
+        """Answer a class-valued entry point for whichever class the caller asked for.
+
+        A distribution publishes one entry point per adapter, and it ordinarily names the
+        adapter class. That one entry point has to answer both questions the loader asks,
+        so a loaded class that is not what was requested is resolved from the module that
+        defines it — the same module a module-valued entry point would have named.
+        """
+        target = _target_base_class(default_class_candidates)
+        if target is None or issubclass(loaded, target):
+            return loaded
+        defining_module = sys.modules.get(loaded.__module__)
+        if defining_module is None:
+            return None
+        return self._find_class_in_module(defining_module, class_name, name, default_class_candidates)
 
     def _resolve_from_builtin(
         self, name: str, class_name: str | None, default_class_candidates: tuple[str, ...]
@@ -455,11 +485,7 @@ class PluginLoader:
             if obj.__module__ == module.__name__ and not issubclass(obj, BaseException)
         ]
 
-        target_base_class = None
-        if "Adapter" in default_class_candidates:
-            target_base_class = Adapter
-        elif "Model" in default_class_candidates:
-            target_base_class = DiffSyncModel
+        target_base_class = _target_base_class(default_class_candidates)
 
         if target_base_class:
             for cls in classes_in_module:
