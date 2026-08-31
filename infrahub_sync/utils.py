@@ -110,7 +110,7 @@ def import_adapter(sync_instance: SyncInstance, adapter: SyncAdapter):
     # Fall back to installed resolution.
     # The "sync" classes could be declared into a separate module
     try:
-        return resolve_installed_adapter_class(sync_instance, adapter)
+        return resolve_installed_adapter_class(adapter)
     except PluginLoadError as exc:
         if adapter.adapter:
             msg = f"Failed to load adapter '{adapter.adapter}': {exc}"

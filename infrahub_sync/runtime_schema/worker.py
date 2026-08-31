@@ -131,17 +131,17 @@ def build_runtime_model_plan(
     return RuntimeModelPlan(
         branch=branch,
         schema_fingerprint=compute_consumed_schema_fingerprint(configuration=instance, snapshot=snapshot),
-        source_adapter_class=resolve_installed_adapter_class(instance, instance.source),
+        source_adapter_class=resolve_installed_adapter_class(instance.source),
         source_models=build_runtime_models(
             snapshot=snapshot,
             configuration=instance,
-            model_base=resolve_installed_model_base(instance, instance.source),
+            model_base=resolve_installed_model_base(instance.source),
         ),
-        destination_adapter_class=resolve_installed_adapter_class(instance, instance.destination),
+        destination_adapter_class=resolve_installed_adapter_class(instance.destination),
         destination_models=build_runtime_models(
             snapshot=snapshot,
             configuration=instance,
-            model_base=resolve_installed_model_base(instance, instance.destination),
+            model_base=resolve_installed_model_base(instance.destination),
         ),
     )
 

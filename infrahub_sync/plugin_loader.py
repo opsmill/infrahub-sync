@@ -29,7 +29,7 @@ from diffsync import Adapter, DiffSyncModel
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from infrahub_sync import SyncAdapter, SyncConfig
+    from infrahub_sync import SyncAdapter
 
 
 class PluginLoadError(Exception):
@@ -56,15 +56,30 @@ class PluginLoader:
     - Python entry points: group infrahub_sync.adapters
     """
 
-    def __init__(self, adapter_paths: Iterable[str] | None = None) -> None:
+    def __init__(self, adapter_paths: Iterable[str] | None = None, *, allow_filesystem: bool = True) -> None:
         """
         Initialize a new PluginLoader.
 
         Args:
             adapter_paths: Optional list of paths to search for adapters.
+            allow_filesystem: Whether filesystem resolution may run at all. False makes
+                the loader structurally incapable of loading a module from a path, an
+                adapter-path directory, or the working directory.
         """
         self.adapter_paths = list(adapter_paths) if adapter_paths else []
+        self.allow_filesystem = allow_filesystem
         self._cache: dict[str, tuple[type[Any], Plugintype]] = {}
+
+    @classmethod
+    def installed_only(cls) -> PluginLoader:
+        """Return a loader that resolves installed code and nothing else.
+
+        Dotted imports, entry points, and bundled adapter modules only: no configured
+        adapter paths, no ``INFRAHUB_SYNC_ADAPTER_PATHS``, and no working directory. This
+        is the loader registered execution resolves through, so an adapter that is not
+        installed in the worker's environment cannot enter a registered run.
+        """
+        return cls(adapter_paths=None, allow_filesystem=False)
 
     @classmethod
     def from_env_and_args(cls, adapter_paths: Iterable[str] | None = None) -> PluginLoader:
@@ -167,12 +182,13 @@ class PluginLoader:
                 return cls
 
         # 2. Filesystem path (search adapter_paths and CWD)
-        cls = self._resolve_from_filesystem(
-            path=spec_path, class_name=class_name, default_class_candidates=default_class_candidates
-        )
-        if cls:
-            self._cache[spec] = (cls, Plugintype.FILESYSTEM)
-            return cls
+        if self.allow_filesystem:
+            cls = self._resolve_from_filesystem(
+                path=spec_path, class_name=class_name, default_class_candidates=default_class_candidates
+            )
+            if cls:
+                self._cache[spec] = (cls, Plugintype.FILESYSTEM)
+                return cls
 
         # 3. Try as an entry point
         if cls is None:
@@ -189,10 +205,12 @@ class PluginLoader:
                 return cls
 
         # If we get here, we couldn't resolve the class
-        msg = (
-            f"Could not resolve adapter class for spec '{spec}'. "
-            f"Tried dotted path, filesystem, entry point, and built-in resolution."
+        tried = (
+            "dotted path, filesystem, entry point, and built-in"
+            if self.allow_filesystem
+            else ("dotted path, entry point, and built-in")
         )
+        msg = f"Could not resolve adapter class for spec '{spec}'. Tried {tried} resolution."
         raise PluginLoadError(msg)
 
     def _resolve_from_dotted_path(
@@ -483,30 +501,31 @@ class PluginLoader:
         return None
 
 
-def resolve_installed_adapter_class(configuration: SyncConfig, adapter: SyncAdapter) -> type[Any]:
+def resolve_installed_adapter_class(adapter: SyncAdapter) -> type[Any]:
     """Resolve one side's adapter class from installed code only.
 
-    The registered worker's resolution seam: dotted path, entry point, or built-in
-    module, through the same loader the generated wrapper would have used. It never
-    reads the configuration directory, so generated Python cannot reach a registered run.
+    The registered worker's resolution seam. It resolves through
+    :meth:`PluginLoader.installed_only`, so neither generated Python in the configuration
+    directory nor any filesystem plugin — a configured adapter path, the
+    ``INFRAHUB_SYNC_ADAPTER_PATHS`` environment, or the working directory — can enter a
+    registered run.
 
     Raises:
         PluginLoadError: no installed class answers the declared adapter.
     """
-    loader = PluginLoader.from_env_and_args(adapter_paths=configuration.adapters_path or [])
-    return loader.resolve(adapter.adapter or adapter.name)
+    return PluginLoader.installed_only().resolve(adapter.adapter or adapter.name)
 
 
-def resolve_installed_model_base(configuration: SyncConfig, adapter: SyncAdapter) -> type[Any]:
+def resolve_installed_model_base(adapter: SyncAdapter) -> type[Any]:
     """Resolve one side's DiffSync model base from installed code only.
 
     Uses the spec the generated models file uses — the module half of an explicit
     adapter spec, otherwise the adapter name — so a runtime-built class derives from the
-    same base a generated one would have.
+    same base a generated one would have, resolved through the same installed-only loader
+    as the adapter class.
 
     Raises:
         PluginLoadError: no installed class answers the declared adapter.
     """
-    loader = PluginLoader.from_env_and_args(adapter_paths=configuration.adapters_path or [])
     spec = adapter.adapter.split(":")[0] if adapter.adapter else adapter.name
-    return loader.resolve(spec, default_class_candidates=("Model",))
+    return PluginLoader.installed_only().resolve(spec, default_class_candidates=("Model",))
