@@ -8,6 +8,7 @@ import pytest
 from infrahub_sdk.schema.main import AttributeKind, NodeSchemaAPI
 
 from infrahub_sync.configuration import capabilities as capabilities_module
+from infrahub_sync.configuration.capabilities import DestinationSchemaReadError
 from infrahub_sync.runtime_schema import normalize_destination_schema
 
 _NODE: dict[str, Any] = {
@@ -62,3 +63,19 @@ def test_the_delivered_snapshot_normalizes_into_the_closed_domain(snapshot: dict
     normalized = normalize_destination_schema(snapshot)
 
     assert normalized.kinds["InfraDevice"].human_friendly_id == ("name__value",)
+
+
+class _NonStringPathNode:
+    """A node whose identity paths are not the strings the SDK contract promises."""
+
+    human_friendly_id = ("name__value", 7)
+    uniqueness_constraints = ()
+    attributes: tuple[object, ...] = ()
+    relationships: tuple[object, ...] = ()
+
+
+def test_a_non_string_identity_path_is_refused_at_the_adapter_boundary() -> None:
+    # Refused rather than coerced: `str()` on a third-party object would let its own text
+    # into the snapshot, and everything derived from one.
+    with pytest.raises(DestinationSchemaReadError):
+        capabilities_module._build_schema_snapshot({"InfraDevice": _NonStringPathNode()})

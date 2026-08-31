@@ -308,9 +308,9 @@ def _build_schema_snapshot(schema: object) -> dict[str, Any]:
         if not isinstance(kind, str):
             raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
         snapshot[kind] = {
-            "human_friendly_id": [str(path) for path in getattr(node, "human_friendly_id", None) or ()],
+            "human_friendly_id": list(getattr(node, "human_friendly_id", None) or ()),
             "uniqueness_constraints": [
-                [str(path) for path in constraint] for constraint in getattr(node, "uniqueness_constraints", None) or ()
+                list(constraint) for constraint in getattr(node, "uniqueness_constraints", None) or ()
             ],
             "attributes": {
                 attribute.name: {
@@ -348,8 +348,8 @@ def _json_native_default(value: object) -> Any:
         return _json_native_default(value.value)
     if isinstance(value, (list, tuple)):
         return [_json_native_default(item) for item in value]
-    if isinstance(value, Mapping):
-        return {str(key): _json_native_default(item) for key, item in value.items()}
+    if isinstance(value, Mapping) and all(isinstance(key, str) for key in value):
+        return {key: _json_native_default(item) for key, item in value.items()}
     raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
 
 
@@ -365,14 +365,20 @@ def _require_usable_snapshot(snapshot: Mapping[str, Any]) -> None:
     for entry in snapshot.values():
         attributes: dict[str, Any] = entry["attributes"]
         relationships: dict[str, Any] = entry["relationships"]
-        usable = all(
-            isinstance(name, str) and isinstance(attribute["kind"], str) for name, attribute in attributes.items()
-        ) and all(
-            isinstance(name, str)
-            and isinstance(relationship["peer"], str)
-            and isinstance(relationship["cardinality"], str)
-            and isinstance(relationship["kind"], str)
-            for name, relationship in relationships.items()
+        paths: list[Any] = [
+            *entry["human_friendly_id"],
+            *(component for constraint in entry["uniqueness_constraints"] for component in constraint),
+        ]
+        usable = (
+            all(isinstance(name, str) and isinstance(attribute["kind"], str) for name, attribute in attributes.items())
+            and all(
+                isinstance(name, str)
+                and isinstance(relationship["peer"], str)
+                and isinstance(relationship["cardinality"], str)
+                and isinstance(relationship["kind"], str)
+                for name, relationship in relationships.items()
+            )
+            and all(isinstance(component, str) for component in paths)
         )
         if not usable:
             msg = "destination returned an unusable schema member shape"
