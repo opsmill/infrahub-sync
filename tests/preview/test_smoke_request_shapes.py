@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from infrahub_sync.client.models import ApplyRunRequest, ConfigMutationRequest, CreateRunRequest
+from tasks.preview import SHARED_DEVICE_NAME
 from tests.preview import test_managed_api as smoke
 
 INFRAHUB_URL = "http://localhost:8080"
@@ -184,3 +185,39 @@ def test_mirroring_covers_exactly_the_fields_the_package_maps() -> None:
 def test_mirroring_preserves_an_unset_value_rather_than_substituting_one() -> None:
     """An absent value is still the destination's value; substituting one is an update."""
     assert smoke.mirrored_device_payloads([FakeNode(name="core01", type=None)]) == [{"name": "core01", "type": None}]
+
+
+# ======================================================================================
+# One shared device is mutated, so the plan is an update rather than a create
+# ======================================================================================
+
+
+def test_every_run_mutates_to_a_value_no_earlier_run_used() -> None:
+    """A fixed value would converge and silently empty the plan the smoke asserts on.
+
+    The first apply writes it to the destination, the next run's mirror copies it back
+    into `main`, and the shared device then compares equal — no update left to prove.
+    """
+    assert len({smoke.mutated_device_type() for _ in range(50)}) == 50
+
+
+def test_the_mutation_covers_exactly_the_fields_the_package_maps() -> None:
+    """A mapped field the mutation omits is one the destination sees cleared."""
+    assert set(smoke.mutation_payload("preview-smoke-abc123")) == set(smoke.SMOKE_FIELDS)
+
+
+def test_the_mutation_targets_the_device_seeded_before_the_fork() -> None:
+    """Any other name is absent from the destination, which makes the plan a create."""
+    assert smoke.mutation_payload("preview-smoke-abc123")["name"] == SHARED_DEVICE_NAME
+
+
+def test_mirroring_then_mutating_differs_from_the_destination_in_one_device() -> None:
+    """The whole plan shape in one place: no create, no delete, exactly one update."""
+    nodes = [FakeNode(name=SHARED_DEVICE_NAME, type="juniper mx204"), FakeNode(name="edge02", type="cisco nexus9000")]
+    destination = {payload["name"]: payload for payload in smoke.mirrored_device_payloads(nodes)}
+
+    mutated = smoke.mutation_payload(smoke.mutated_device_type())
+    source = {**destination, mutated["name"]: mutated}
+
+    assert set(source) == set(destination), "the same devices on both sides: nothing to create, nothing to delete"
+    assert [name for name in source if source[name] != destination[name]] == [SHARED_DEVICE_NAME]

@@ -8,17 +8,21 @@ The package is Infrahub-to-Infrahub against the preview's own instance — `main
 source, the disposable smoke branch as the destination — because the registered path
 resolves adapters through the installed loader and admits no filesystem adapter.
 
-`main` starts **empty** and the smoke branch does not: the CLI-cycle smoke applies
-`custom-example`'s five devices into it first, and `preview.up` asserts `main` stays
-pristine. Planning an empty source against a populated destination derives a plan of
-nothing but deletes — and a v2 artifact records deletes without ever executing them, so
-the apply completes green having written nothing at all. So the smoke seeds `main` first:
-every device the destination already holds — copied **verbatim**, every mapped field —
-plus one device it owns. The source is then a superset of the destination whose shared
-devices compare equal, which reduces the plan to that one create, and the assertions
-below insist on that rather than on terminal completion alone.
+What this smoke proves is an **update**. `preview.up` seeds one device on `main` before
+the smoke branch forks, so both branches hold it; the smoke then mutates that device on
+`main` alone, and the registered workflow has one real cross-branch update to plan and
+apply. The mutation carries a fresh value on every run, because a fixed one would
+converge: the first apply writes it to the destination, the next run's mirror copies it
+straight back, and the update the assertions rest on would quietly vanish.
 
-Copying verbatim is the part that has to be exact. Seeding a mirrored device with any
+Everything else has to compare equal, or the plan stops being that single update. So the
+smoke mirrors every device the destination holds into `main` first — copied **verbatim**,
+every mapped field — leaving nothing source-absent and nothing destination-absent. That
+matters because a plan of deletes alone still completes green: a v2 artifact records
+deletes without ever executing them, so such an apply reaches `applied` having written
+nothing at all.
+
+Copying verbatim is the part that has to be exact. Mirroring a device with any
 manufactured value makes it an update instead of a match, and an update that rewrites a
 device's own unique attribute is rejected by the destination's uniqueness constraint —
 so the apply fails on its first operation having written nothing.
@@ -34,16 +38,15 @@ from typing import Any
 import httpx
 import pytest
 
-from tasks.preview import SMOKE_BRANCH
+from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
 
 pytestmark = pytest.mark.preview
 
 POLL_TIMEOUT_SECONDS = 240
 
-# The kind `preview.up` loads into Infrahub before the smoke runs, and the fields the
-# package maps. A mirror has to carry all of them, or the mirrored device becomes an
-# update rather than a match.
-SMOKE_KIND = "InfraDevice"
+# The fields the package maps. A mirror has to carry all of them, or the mirrored device
+# becomes an update rather than a match. The kind and the shared device's name come from
+# `tasks.preview`, which seeds that device on `main` before the smoke branch forks.
 SMOKE_FIELDS = ("name", "type")
 
 
@@ -198,29 +201,52 @@ def mirrored_device_payloads(nodes: Iterable[Any]) -> list[dict[str, Any]]:
     return [{name: getattr(node, name).value for name in SMOKE_FIELDS} for node in nodes]
 
 
+def mutated_device_type() -> str:
+    """A `type` value no earlier run used, for the one device the smoke mutates.
+
+    Freshness is what keeps the smoke honest across runs. A fixed value converges: the
+    first apply writes it to the destination, the next run's mirror copies it back into
+    `main`, the shared device then compares equal, and the plan holds no update at all.
+    """
+    return f"preview-smoke-{uuid.uuid4().hex[:12]}"
+
+
+def mutation_payload(mutated_type: str) -> dict[str, Any]:
+    """The single post-fork write on `main`: the shared device's new mapped values.
+
+    It names the device `preview.up` seeded before the smoke branch forked, so the write
+    lands on one the destination already holds — an update, never a create.
+    """
+    return {"name": SHARED_DEVICE_NAME, "type": mutated_type}
+
+
 def _device_types(client: Any, branch: str) -> dict[str, Any]:  # noqa: ANN401 — the SDK's sync client
     return {node.name.value: node.type.value for node in client.all(kind=SMOKE_KIND, branch=branch)}
 
 
-def _device_names(client: Any, branch: str) -> set[str]:  # noqa: ANN401 — the SDK's sync client
-    return set(_device_types(client, branch))
-
-
 def _seed_source_branch(preview_env: dict[str, Any]) -> str:
-    """Make `main` a superset of the destination, and return the device the smoke adds.
+    """Leave `main` differing from the destination in one device, and return its new type.
 
-    Mirroring first is what keeps the plan free of deletes: any device the destination
-    holds and the source does not becomes a recorded, never-executed delete. Mirroring is
-    an upsert on `name`, so re-running the smoke converges rather than duplicating.
+    Mirroring first is what removes everything else from the plan: `main` ends up holding
+    exactly the devices the destination holds, carrying exactly the destination's values,
+    so nothing is created and nothing is deleted. Mutating the shared device afterwards
+    leaves the single update this smoke exists to apply — afterwards, because a mirror
+    run second would copy the destination's value straight back over the mutation.
+
+    Both writes upsert on the device's unique name, so a re-run converges rather than
+    duplicating.
     """
     client = _infrahub_client(preview_env)
-    for payload in mirrored_device_payloads(client.all(kind=SMOKE_KIND, branch=SMOKE_BRANCH)):
-        client.create(kind=SMOKE_KIND, branch="main", data=payload).save(allow_upsert=True)
-    smoke_device = f"preview-smoke-{uuid.uuid4().hex[:12]}"
-    client.create(kind=SMOKE_KIND, branch="main", data={"name": smoke_device, "type": "registered-smoke"}).save(
-        allow_upsert=True
+    payloads = mirrored_device_payloads(client.all(kind=SMOKE_KIND, branch=SMOKE_BRANCH))
+    assert SHARED_DEVICE_NAME in {payload["name"] for payload in payloads}, (
+        f"{SHARED_DEVICE_NAME!r} is not on {SMOKE_BRANCH}; `tasks.preview.ensure_smoke_branch` seeds it on "
+        f"main before the branch forks, and without it this smoke has no update to plan"
     )
-    return smoke_device
+    for payload in payloads:
+        client.create(kind=SMOKE_KIND, branch="main", data=payload).save(allow_upsert=True)
+    mutated_type = mutated_device_type()
+    client.create(kind=SMOKE_KIND, branch="main", data=mutation_payload(mutated_type)).save(allow_upsert=True)
+    return mutated_type
 
 
 def test_requests_without_a_bearer_token_are_refused(preview_env: dict[str, Any]) -> None:
@@ -230,8 +256,8 @@ def test_requests_without_a_bearer_token_are_refused(preview_env: dict[str, Any]
 
 
 def test_managed_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
-    smoke_device = _seed_source_branch(preview_env)
-    assert smoke_device not in _device_names(_infrahub_client(preview_env), SMOKE_BRANCH)
+    mutated_type = _seed_source_branch(preview_env)
+    assert _device_types(_infrahub_client(preview_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] != mutated_type
 
     with _client(preview_env, token=preview_env["bearer_token"]) as client:
         config_id, registry_version = _registered_version(client, preview_env)
@@ -252,11 +278,15 @@ def test_managed_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
         assert plan_payload["schema_fingerprint"], plan_payload
         # The plan must exercise the approved create/update path; a delete-only plan
         # applies cleanly and writes nothing.
-        assert unwritten_plan_reasons(plan_payload["summary"]) == [], plan_payload["summary"]
-        # Mirrored devices are copied verbatim, so they compare equal and the plan is
-        # creates alone. An update here means the mirror manufactured a value, and an
-        # update that rewrites a device's own unique attribute cannot converge.
-        assert plan_payload["summary"]["by_action"].get("update", 0) == 0, plan_payload["summary"]
+        summary = plan_payload["summary"]
+        assert unwritten_plan_reasons(summary) == [], summary
+        # Exactly the one update the pre-fork seed and the post-fork mutation set up. A
+        # create means the mirror missed a device the destination holds; a skipped delete
+        # means `main` is not the destination's mirror; a second update means the mirror
+        # manufactured a value instead of copying it.
+        assert summary["by_action"].get("update", 0) == 1, summary
+        assert summary["by_action"].get("create", 0) == 0, summary
+        assert summary.get("deletes_not_executed", 0) == 0, summary
         checksum = plan_payload["checksum"]
 
         apply_accepted = client.post(f"/runs/{run_id}/apply", headers=_idempotency(), json=apply_run_request(checksum))
@@ -266,11 +296,15 @@ def test_managed_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
         assert applied["run"]["outcome"] is not None, applied["run"]
         # What the apply actually did, not merely that it finished.
         applied_summary = applied["run"]["summary"]
-        assert applied_summary.get("create", 0) + applied_summary.get("update", 0) > 0, applied_summary
+        assert applied_summary.get("update", 0) > 0, applied_summary
+        assert applied_summary.get("create", 0) == 0, applied_summary
         assert applied_summary.get("delete", 0) == 0, applied_summary
 
         results = client.get(f"/runs/{run_id}/results")
         assert results.status_code == 200, results.text
+        # The applied-operation identifiers stay on the worker's own run file; over HTTP
+        # the recorded action counts are the positive-applied evidence.
+        assert results.json()["results"]["summary"]["update"] > 0, results.text
 
-    # The destination now holds what the plan said it would write.
-    assert smoke_device in _device_names(_infrahub_client(preview_env), SMOKE_BRANCH)
+    # The destination now carries the value the source was mutated to.
+    assert _device_types(_infrahub_client(preview_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] == mutated_type
