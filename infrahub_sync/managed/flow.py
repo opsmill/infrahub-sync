@@ -294,6 +294,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     package_checksum: str | None,
     branch: str | None,
     expected_checksum: str | None,
+    *,
     confirm_writes: bool,
     run_logger: RunLogger,
     secrets: list[str],
@@ -506,11 +507,11 @@ def managed_sync_run(  # pylint: disable=too-many-positional-arguments
                 package_checksum,
                 branch,
                 expected_checksum,
-                confirm_writes,
-                run_logger,
-                secrets,
-                config_directory,
-                projection,
+                confirm_writes=confirm_writes,
+                run_logger=run_logger,
+                secrets=secrets,
+                config_directory=config_directory,
+                projection=projection,
             )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         # Rebuilt after the original exception context exits.

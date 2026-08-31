@@ -34,6 +34,7 @@ from infrahub_sync.runtime_schema import (
     ATTRIBUTE_TYPE_DOMAIN,
     UnsupportedSchemaSemanticsError,
     build_runtime_models,
+    mapped_attribute_kinds,
     normalize_destination_schema,
 )
 from infrahub_sync.utils import get_instance, render_adapter
@@ -255,14 +256,9 @@ def test_an_attribute_kind_outside_the_closed_table_refuses_before_extraction() 
 def test_every_captured_mapped_attribute_kind_is_inside_the_closed_table(snapshot_name: str, example_name: str) -> None:
     instance = get_instance(name=example_name, directory=str(REPO_ROOT / "examples"))
     assert instance is not None
-    mapped = {(mapping.name, field.name) for mapping in instance.schema_mapping for field in mapping.fields or ()}
+    snapshot = normalize_destination_schema(capabilities_module._build_schema_snapshot(_load_sdk_schema(snapshot_name)))
 
-    captured = {
-        attribute.kind
-        for kind, node in _load_sdk_schema(snapshot_name).items()
-        for attribute in node.attributes
-        if (kind, attribute.name) in mapped
-    }
+    captured = mapped_attribute_kinds(snapshot, instance)
 
     assert captured
     assert captured <= set(ATTRIBUTE_TYPE_DOMAIN)

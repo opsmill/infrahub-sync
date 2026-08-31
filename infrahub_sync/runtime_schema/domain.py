@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, NoReturn
+from typing import Any, NoReturn, cast
 
 from .errors import UnsupportedSchemaSemanticsError
 
@@ -89,7 +89,7 @@ def _require_mapping(value: object, *, detail: str) -> Mapping[str, Any]:
     for key in value:
         if not isinstance(key, str):
             _refuse(detail)
-    return value
+    return cast("Mapping[str, Any]", value)
 
 
 def _require_bool(value: object, *, detail: str) -> bool:

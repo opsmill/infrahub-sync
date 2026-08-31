@@ -13,7 +13,10 @@ import pytest
 
 from infrahub_sync.configuration import ConfigurationPackage, parse_configuration_package
 from infrahub_sync.configuration.capabilities import DestinationSchemaReadError
+from infrahub_sync.execution import RunResult
 from infrahub_sync.plan.config_version import resolve_config_version
+from infrahub_sync.plan.models import PlanManifest
+from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.product_store.models import ConfigurationVersion, LookupResult, ProductRun
 from infrahub_sync.runtime_schema import (
     DestinationSchemaUnavailableError,
@@ -28,6 +31,7 @@ from tests.configuration.validation_packages import package_data
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from infrahub_sync import SyncInstance
     from infrahub_sync.product_store import ProductProjection
 
 pytest.importorskip("prefect")
@@ -174,6 +178,47 @@ def test_a_legacy_unregistered_run_builds_no_runtime_models(spy: _SnapshotSpy, t
 
     assert instance._runtime_models is None
     assert spy.branches == []
+
+
+def test_a_registered_stage_reaches_execution_with_its_models_bound(
+    spy: _SnapshotSpy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = _package()
+    binding = ("cfg-runtime-models", 1, package.checksum())
+    projection = _StubProjection(package, binding)
+    seen: list[SyncInstance] = []
+
+    def _record(instance: SyncInstance, **kwargs: object) -> SavedPlan | RunResult:
+        seen.append(instance)
+        if kwargs.get("operation") == "apply":
+            return _run_result(instance.name, tmp_path / "run-composed-sync")
+        return _saved_plan()
+
+    def _skip(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(managed_flow, "execute_run", _record)
+    monkeypatch.setattr(managed_flow, "_publish_plan", _skip)
+    monkeypatch.setattr(managed_flow, "_verify_registered_apply", _skip)
+
+    result, _ = managed_flow._execute_stage(
+        "run-composed-sync",
+        "sync",
+        *binding,
+        None,
+        None,
+        confirm_writes=True,
+        run_logger=managed_flow.logger,
+        secrets=[],
+        config_directory=str(tmp_path),
+        projection=cast("ProductProjection", projection),
+    )
+
+    assert result["operation"] == "sync"
+    # Plan, verify and apply legs share the one instance the single schema read built.
+    assert len({id(instance) for instance in seen}) == 1
+    assert seen[0]._runtime_models is not None
+    assert spy.branches == ["main"]
 
 
 # --- AR5: one snapshot decides one plan -------------------------------------------------
@@ -327,6 +372,37 @@ def test_the_plan_binds_onto_adapters_without_reading_generated_python(
 
     assert adapter.BuiltinTag is plan.destination_models["BuiltinTag"]
     assert adapter.LocationSite is plan.destination_models["LocationSite"]
+
+
+def _saved_plan() -> SavedPlan:
+    """The smallest real saved plan the managed stage's assertions accept."""
+    return SavedPlan(
+        manifest=PlanManifest(
+            format_version=1,
+            run_id="run-composed-sync",
+            created_at="2026-08-30T00:00:00+00:00",
+            config_version="sha256:" + "0" * 64,
+            source_snapshot=[],
+            operations_count=0,
+            delete_operations_computed=True,
+            plan_checksum="a" * 64,
+        ),
+        operations=[],
+        checksum_ok=True,
+        verification_notes=[],
+    )
+
+
+def _run_result(sync_name: str, artifact_path: Path) -> RunResult:
+    return RunResult(
+        sync_name=sync_name,
+        operation="apply",
+        run_id="run-composed-sync",
+        status="no-change",
+        changed=False,
+        summary={"create": 0, "update": 0, "delete": 0},
+        artifact_path=str(artifact_path),
+    )
 
 
 class _RecordingAdapter:
