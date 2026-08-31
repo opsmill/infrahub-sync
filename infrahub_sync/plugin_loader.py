@@ -40,6 +40,9 @@ class PluginLoadError(Exception):
 # are admitted whatever the install style reports — an editable or source checkout has no
 # distribution metadata mapping `infrahub_sync` to a distribution at all.
 BUNDLED_PACKAGE = "infrahub_sync"
+# Where the bundled package really lives, taken from this module's own location rather
+# than from `sys.modules`, so a replaced `infrahub_sync` entry cannot move it.
+BUNDLED_ROOT = Path(__file__).resolve().parent
 
 
 def installed_module_origins(spec_path: str) -> set[Path]:
@@ -56,6 +59,37 @@ def installed_module_origins(spec_path: str) -> set[Path]:
             if str(entry).replace("\\", "/") in wanted:
                 origins.add(Path(str(distribution.locate_file(entry))))
     return origins
+
+
+def _normalized_module_origin(module: object) -> Path | None:
+    """The file a loaded module reports itself as coming from, normalized."""
+    spec = getattr(module, "__spec__", None)
+    origin = getattr(spec, "origin", None) or getattr(module, "__file__", None)
+    if not isinstance(origin, str) or not origin:
+        return None
+    try:
+        return Path(origin).resolve()
+    except OSError:
+        return None
+
+
+def module_origin_is_admitted(module: object, spec_path: str) -> bool:
+    """Whether the module actually loaded is one registered execution may read.
+
+    Predicting an origin from ``sys.path`` does not cover a name already in
+    ``sys.modules`` — ``import_module`` returns that entry without consulting a finder —
+    nor a submodule reached through a parent package's manipulated ``__path__``. This
+    answers the same provenance question about the module object itself: bundled modules
+    must come from inside the installed bundled package, and everything else must be a
+    file some installed distribution ships. A module reporting no usable origin is
+    refused.
+    """
+    origin = _normalized_module_origin(module)
+    if origin is None:
+        return False
+    if spec_path.partition(".")[0] == BUNDLED_PACKAGE:
+        return origin.is_relative_to(BUNDLED_ROOT)
+    return any(candidate.resolve() == origin for candidate in installed_module_origins(spec_path))
 
 
 def _provides_top_level(base: Path, name: str) -> bool:
@@ -349,8 +383,15 @@ class PluginLoader:
 
         try:
             module = importlib.import_module(path)
-            return self._find_class_in_module(module, class_name, path, default_class_candidates)
         except (ImportError, AttributeError):
+            return None
+        # The predicted origin decided whether to import at all; this decides whether the
+        # module that answered may be read, which a preloaded or redirected one changes.
+        if self.installed_only and not module_origin_is_admitted(module, path):
+            return None
+        try:
+            return self._find_class_in_module(module, class_name, path, default_class_candidates)
+        except AttributeError:
             return None
 
     def _resolve_from_filesystem(
