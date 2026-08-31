@@ -254,6 +254,51 @@ def test_flow_working_directory_is_required_absolute_and_existing(
     ]
 
 
+def test_the_worker_identity_binding_is_a_canonical_uuid_or_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Preview hands the deployment a server-issued UUID; nothing else is installable.
+
+    The value becomes `PREFECT__WORKER_ID` in every managed flow-run process, and the
+    claim gate fences writebacks on it, so a non-canonical or invented identity must be
+    refused here rather than reaching a run.
+    """
+    from infrahub_sync.managed import deploy
+
+    monkeypatch.delenv(deploy.MANAGED_WORKER_ID_ENV, raising=False)
+    assert deploy.declared_worker_identity() is None
+
+    for rejected in ("not-a-uuid", "7F1D3C52-9A04-4F0F-9B7A-2C5F1E8D6A31", "7f1d3c529a044f0f9b7a2c5f1e8d6a31"):
+        monkeypatch.setenv(deploy.MANAGED_WORKER_ID_ENV, rejected)
+        with pytest.raises(ValueError, match=deploy.MANAGED_WORKER_ID_ENV):
+            deploy.declared_worker_identity()
+
+    monkeypatch.setenv(deploy.MANAGED_WORKER_ID_ENV, "7f1d3c52-9a04-4f0f-9b7a-2c5f1e8d6a31")
+    assert deploy.declared_worker_identity() == "7f1d3c52-9a04-4f0f-9b7a-2c5f1e8d6a31"
+
+
+def test_binding_the_worker_identity_preserves_unrelated_job_variables() -> None:
+    """Convergence, not replacement: the binding owns one key of one job variable."""
+    from infrahub_sync.managed import deploy
+
+    existing = {"image": "example", "env": {"EXISTING": "kept", "PREFECT__WORKER_ID": "stale"}}
+
+    bound = deploy.job_variables_with_worker_identity(existing, "7f1d3c52-9a04-4f0f-9b7a-2c5f1e8d6a31")
+
+    assert bound == {
+        "image": "example",
+        "env": {"EXISTING": "kept", "PREFECT__WORKER_ID": "7f1d3c52-9a04-4f0f-9b7a-2c5f1e8d6a31"},
+    }
+    # The caller's mapping is not edited in place; convergence compares before it writes.
+    assert existing["env"]["PREFECT__WORKER_ID"] == "stale"
+
+
+def test_binding_the_worker_identity_into_an_empty_deployment_creates_only_env() -> None:
+    from infrahub_sync.managed import deploy
+
+    assert deploy.job_variables_with_worker_identity({}, "7f1d3c52-9a04-4f0f-9b7a-2c5f1e8d6a31") == {
+        "env": {"PREFECT__WORKER_ID": "7f1d3c52-9a04-4f0f-9b7a-2c5f1e8d6a31"}
+    }
+
+
 def test_managed_definition_entrypoint_targets_the_flow_file() -> None:
     """The applied deployment must carry an executable entrypoint.
 

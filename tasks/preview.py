@@ -21,6 +21,7 @@ import shlex
 import signal
 import subprocess  # noqa: S404 -- fixed argv process management for the local preview stack
 import time
+import uuid
 from pathlib import Path
 
 from invoke import Context, task
@@ -40,6 +41,11 @@ COMPOSE_FILES = (
 SCHEMA_FILE = REPO_ROOT / "examples" / "prefect_remote_run" / "schemas" / "infra_device.yml"
 SMOKE_BRANCH = "preview-smoke"
 EXPECT_MAIN_EMPTY_ENV = "INFRAHUB_SYNC_PREVIEW_EXPECT_MAIN_EMPTY"
+# How the resolved worker identity reaches the managed deployment's job variables, and
+# from there every managed flow-run process. See `infrahub_sync.managed.deploy`.
+MANAGED_WORKER_ID_ENV = "INFRAHUB_SYNC_MANAGED_WORKER_ID"
+WORKER_NAME_PREFIX = "infrahub-sync-preview"
+WORKER_REGISTRATION_TIMEOUT_SECONDS = 120
 # Process name -> substring its command line must contain before a recorded pid
 # is treated as ours (guards against pid recycling by unrelated processes).
 MANAGED_PROCESSES = {
@@ -177,6 +183,65 @@ def _wait_for_http(url: str, description: str, timeout: int = WAIT_TIMEOUT_SECON
     raise PreviewError(msg)
 
 
+def _unique_worker_name() -> str:
+    """Name this bring-up's worker uniquely, so only its own registration resolves.
+
+    A reused name would match a registration an earlier session left behind, and binding
+    that stale id would fence every managed run against a worker that no longer exists.
+    """
+    return f"{WORKER_NAME_PREFIX}-{uuid.uuid4()}"
+
+
+def _registered_worker_id(
+    prefect_api_url: str,
+    work_pool: str,
+    worker_name: str,
+    timeout: int = WORKER_REGISTRATION_TIMEOUT_SECONDS,
+) -> str:
+    """Return the canonical UUID the Prefect server registered for exactly this worker.
+
+    A self-hosted Prefect server never hands the worker process its own backend id, so the
+    managed deployment has to carry it instead — and it must be *this* worker's id, since
+    the claim it fences is per-worker. Registration is asynchronous, so absence is polled
+    through; anything else is refused rather than guessed: no online worker under this
+    name, more than one, or an id that is not a canonical UUID string.
+
+    The refusal text is fixed. A worker record is server-supplied content and never
+    reaches the message.
+
+    Raises:
+        PreviewError: no single online worker under `worker_name` presented a canonical
+            identity within `timeout`.
+    """
+    import httpx  # noqa: PLC0415 -- lazy so importing the tasks package never requires the managed extras
+
+    url = f"{prefect_api_url}/work_pools/{work_pool}/workers/filter"
+    body = {"workers": {"status": {"any_": ["ONLINE"]}}, "limit": 200}
+    print(f" - [{NAMESPACE}] Resolving the registered id of worker {worker_name}")
+    deadline = time.monotonic() + timeout
+    while True:
+        identities: list[str] = []
+        with contextlib.suppress(httpx.HTTPError, ValueError):
+            workers = httpx.post(url, json=body, timeout=15).json()
+            identities = [
+                worker.get("id")
+                for worker in workers
+                if worker.get("name") == worker_name and worker.get("status") == "ONLINE"
+            ]
+        if len(identities) == 1 and isinstance(identities[0], str):
+            with contextlib.suppress(ValueError):
+                if str(uuid.UUID(identities[0])) == identities[0]:
+                    return identities[0]
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(3)
+    msg = (
+        f"the Prefect work pool {work_pool!r} did not present exactly one online worker named "
+        f"{worker_name!r} with a canonical registered identity within {timeout}s"
+    )
+    raise PreviewError(msg)
+
+
 def _pid_file(name: str) -> Path:
     return STATE_DIR / f"{name}.pid"
 
@@ -270,14 +335,23 @@ def up(context: Context) -> None:
         warn=True,  # already-exists is fine
     )
 
-    print(f" - [{NAMESPACE}] Applying the managed deployment")
-    context.run("uv run python -m infrahub_sync.managed.deploy", env=env)
-
+    # The worker starts before the deployment is applied, and the API before nothing:
+    # a managed flow run claims its execution with the worker identity the deployment
+    # carries, so the API must not be reachable until that identity is installed.
+    worker_name = _unique_worker_name()
     _start_process(
         "prefect-worker",
-        ["uv", "run", "prefect", "worker", "start", "--pool", values["PREVIEW_WORK_POOL"]],
+        ["uv", "run", "prefect", "worker", "start", "--pool", values["PREVIEW_WORK_POOL"], "--name", worker_name],
         env,
     )
+    worker_id = _registered_worker_id(env["PREFECT_API_URL"], values["PREVIEW_WORK_POOL"], worker_name)
+
+    print(f" - [{NAMESPACE}] Applying the managed deployment")
+    context.run(
+        "uv run python -m infrahub_sync.managed.deploy",
+        env={**env, MANAGED_WORKER_ID_ENV: worker_id},
+    )
+
     _start_process(
         "sync-api",
         [
