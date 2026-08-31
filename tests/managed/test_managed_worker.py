@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
+from pydantic import ValidationError
 
 pytest.importorskip("prefect")
 
 from prefect import __version__ as prefect_version
 from prefect.client.schemas.objects import WorkerStatus
+from prefect.logging.handlers import APILogHandler
+from prefect.server.schemas.actions import LogCreate as ServerLogCreate
 from prefect.workers.process import ProcessWorker
 
 from infrahub_sync.managed.worker import ManagedProcessWorker, ManagedWorkerIdentityError, managed_worker_name
@@ -59,6 +64,9 @@ class _WorkerClient:
         stop = None if limit is None else start + limit
         return self.records[start:stop]
 
+    async def read_flow(self, flow_id: UUID) -> SimpleNamespace:  # noqa: PLR6301 - Prefect client protocol.
+        return SimpleNamespace(id=flow_id, name="managed-flow", labels={})
+
 
 def _worker(name: str, records: list[Any]) -> ManagedProcessWorker:
     worker = ManagedProcessWorker(work_pool_name=POOL_NAME, name=name)
@@ -68,6 +76,37 @@ def _worker(name: str, records: list[Any]) -> ManagedProcessWorker:
         SimpleNamespace(id=POOL_ID, name=POOL_NAME, base_job_template=worker.get_default_base_job_template()),
     )
     return worker
+
+
+def _flow_run() -> SimpleNamespace:
+    return SimpleNamespace(
+        id=FLOW_ID,
+        name="managed-run",
+        flow_id=SECOND_WORKER_ID,
+        deployment_id=None,
+        job_variables={},
+    )
+
+
+class _Runner:
+    def __init__(self) -> None:
+        self.child_environments: list[dict[str, str | None]] = []
+
+    async def execute_flow_run(self, **kwargs: Any) -> SimpleNamespace:  # noqa: ANN401
+        self.child_environments.append(kwargs["env"])
+        kwargs["task_status"].started(42)
+        return SimpleNamespace(returncode=0, pid=42)
+
+
+def _stub_submission(worker: ManagedProcessWorker) -> _Runner:
+    runner = _Runner()
+    worker._runner = cast("Any", runner)
+    worker._emit_flow_run_submitted_event = cast("Any", lambda _configuration: None)  # type: ignore[method-assign]
+    worker._give_worker_labels_to_flow_run = cast("Any", AsyncMock())  # type: ignore[method-assign]
+    worker._propose_submitting_state = cast("Any", AsyncMock())  # type: ignore[method-assign]
+    worker._propose_crashed_state = cast("Any", AsyncMock())  # type: ignore[method-assign]
+    worker._release_limit_slot = cast("Any", lambda _flow_run_id: None)  # type: ignore[method-assign]
+    return runner
 
 
 @pytest.mark.parametrize(
@@ -134,6 +173,120 @@ async def test_uniquely_named_workers_do_not_share_identity() -> None:
     assert first.backend_id != second.backend_id
 
 
+async def test_self_hosted_logs_omit_worker_metadata_but_keep_child_identity(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    worker = _worker("managed-a", [_record("managed-a", FIRST_WORKER_ID)])
+    await worker._refresh_worker_identity()
+
+    with caplog.at_level(logging.INFO):
+        worker._logger.info("managed worker heartbeat completed")
+        worker.get_flow_run_logger(cast("Any", _flow_run())).info("managed run submitted")
+
+    worker_record = next(record for record in caplog.records if record.message == "managed worker heartbeat completed")
+    flow_record = next(record for record in caplog.records if record.message == "managed run submitted")
+    assert not hasattr(worker_record, "worker_id")
+
+    payload = APILogHandler().prepare(flow_record)
+    payload.pop("__payload_size__")
+    assert "worker_id" not in payload
+    ServerLogCreate.model_validate(payload)
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        ServerLogCreate.model_validate({**payload, "worker_id": str(FIRST_WORKER_ID)})
+
+    assert worker.backend_id == FIRST_WORKER_ID
+    assert worker_record.message == "managed worker heartbeat completed"
+
+
+async def test_polling_submission_refuses_when_refresh_changes_identity_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker("managed-a", [_record("managed-a", FIRST_WORKER_ID)])
+    await worker._refresh_worker_identity()
+    runner = _stub_submission(worker)
+    poll_started = asyncio.Event()
+    release_poll = asyncio.Event()
+    refresh_cleared_identity = asyncio.Event()
+    release_refresh = asyncio.Event()
+
+    async def _scheduled_runs() -> list[object]:
+        poll_started.set()
+        await release_poll.wait()
+        return [SimpleNamespace(flow_run=cast("Any", _flow_run()))]
+
+    async def _base_sync(_worker: ProcessWorker) -> None:
+        refresh_cleared_identity.set()
+        await release_refresh.wait()
+
+    worker._get_scheduled_flow_runs = cast("Any", _scheduled_runs)  # type: ignore[method-assign]
+    monkeypatch.setattr(ProcessWorker, "sync_with_backend", _base_sync)
+
+    async def _submit_scheduled(*, flow_run_response: list[object]) -> list[object]:
+        assert flow_run_response
+        return [await worker._submit_run_and_capture_errors(cast("Any", _flow_run()))]
+
+    worker._submit_scheduled_flow_runs = cast("Any", _submit_scheduled)  # type: ignore[method-assign]
+    worker._has_successfully_synced = True
+    poll_task = asyncio.create_task(worker.get_and_submit_flow_runs())
+    await poll_started.wait()
+    refresh_task = asyncio.create_task(worker.sync_with_backend())
+    await refresh_cleared_identity.wait()
+    assert worker.backend_id is None
+
+    release_poll.set()
+    results = await poll_task
+    release_refresh.set()
+    await refresh_task
+
+    assert len(results) == 1
+    assert isinstance(results[0], ManagedWorkerIdentityError)
+    assert runner.child_environments == []
+
+
+async def test_polling_submission_refuses_when_refresh_rebinds_to_a_new_uuid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker("managed-a", [_record("managed-a", FIRST_WORKER_ID)])
+    await worker._refresh_worker_identity()
+    runner = _stub_submission(worker)
+    poll_started = asyncio.Event()
+    release_poll = asyncio.Event()
+
+    async def _scheduled_runs() -> list[object]:
+        poll_started.set()
+        await release_poll.wait()
+        return [SimpleNamespace(flow_run=cast("Any", _flow_run()))]
+
+    async def _base_sync(self: ProcessWorker) -> None:
+        await self._initialize_after_sync()
+
+    async def _base_initialize(self: ProcessWorker) -> None:  # noqa: RUF029 - Prefect lifecycle hook.
+        self._has_successfully_synced = True
+
+    worker._get_scheduled_flow_runs = cast("Any", _scheduled_runs)  # type: ignore[method-assign]
+    monkeypatch.setattr(ProcessWorker, "sync_with_backend", _base_sync)
+    monkeypatch.setattr(ProcessWorker, "_initialize_after_sync", _base_initialize)
+
+    async def _submit_scheduled(*, flow_run_response: list[object]) -> list[object]:
+        assert flow_run_response
+        return [await worker._submit_run_and_capture_errors(cast("Any", _flow_run()))]
+
+    worker._submit_scheduled_flow_runs = cast("Any", _submit_scheduled)  # type: ignore[method-assign]
+    worker._has_successfully_synced = True
+    poll_task = asyncio.create_task(worker.get_and_submit_flow_runs())
+    await poll_started.wait()
+    cast("_WorkerClient", worker._client).records = [_record("managed-a", SECOND_WORKER_ID)]
+    await worker.sync_with_backend()
+    assert worker.backend_id == SECOND_WORKER_ID
+
+    release_poll.set()
+    results = await poll_task
+
+    assert len(results) == 1
+    assert isinstance(results[0], ManagedWorkerIdentityError)
+    assert runner.child_environments == []
+
+
 async def test_recurring_sync_clears_readiness_until_identity_is_refreshed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -162,37 +315,10 @@ async def test_prefect_381_injects_the_resolved_worker_uuid_into_the_actual_chil
     assert prefect_version == "3.8.1"
     worker = _worker("managed-a", [_record("managed-a", FIRST_WORKER_ID)])
     await worker._refresh_worker_identity()
-    flow_run = cast(
-        "FlowRun",
-        SimpleNamespace(
-            id=FLOW_ID,
-            name="managed-run",
-            flow_id=SECOND_WORKER_ID,
-            deployment_id=None,
-            job_variables={},
-        ),
-    )
+    flow_run = cast("FlowRun", _flow_run())
+    runner = _stub_submission(worker)
+    result = await worker._submit_run_and_capture_errors(flow_run)
 
-    class _ConfigurationClient:
-        async def read_flow(self, flow_id: UUID) -> SimpleNamespace:  # noqa: PLR6301 - client protocol method.
-            return SimpleNamespace(id=flow_id, name="managed-flow", labels={})
-
-    configuration = await worker.job_configuration.resolve_for_flow_run(
-        flow_run,
-        client=cast("Any", _ConfigurationClient()),
-        work_pool=worker.work_pool,
-        worker_name=worker.name,
-        worker_id=worker.backend_id,
-    )
-    child_environments: list[dict[str, str | None]] = []
-
-    class _Runner:
-        async def execute_flow_run(self, **kwargs: Any) -> SimpleNamespace:  # noqa: ANN401, PLR6301
-            child_environments.append(kwargs["env"])
-            return SimpleNamespace(returncode=0, pid=42)
-
-    worker._runner = cast("Any", _Runner())
-    result = await worker.run(flow_run, configuration)
-
+    assert not isinstance(result, Exception)
     assert result.status_code == 0
-    assert child_environments[0]["PREFECT__WORKER_ID"] == str(FIRST_WORKER_ID)
+    assert runner.child_environments[0]["PREFECT__WORKER_ID"] == str(FIRST_WORKER_ID)
