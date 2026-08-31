@@ -14,6 +14,7 @@ normalized snapshot or anything derived from one.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, NoReturn, cast
@@ -105,7 +106,14 @@ def _require_str(value: object, *, detail: str) -> str:
 
 
 def _require_json_default(value: object, *, detail: str) -> Any:
-    """Accept only a JSON-native default, so a model default is reproducible."""
+    """Accept only a JSON-native default, so a model default is reproducible.
+
+    Non-finite floats are outside the domain: JSON cannot encode them, so one would fail
+    canonical encoding later, as an unrelated serialization error rather than the closed
+    domain's own refusal.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        _refuse(f"{detail} declares a non-finite default")
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):

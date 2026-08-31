@@ -77,6 +77,18 @@ _SNAPSHOT: dict[str, Any] = {
 }
 
 
+# A snapshot the accessor could deliver but the closed runtime domain refuses: a
+# relationship cardinality outside the declared domain.
+_UNSUPPORTED_SNAPSHOT: dict[str, Any] = {
+    "InfraDevice": {
+        "human_friendly_id": ["name__value"],
+        "uniqueness_constraints": [["name__value"]],
+        "attributes": {"name": _attribute(optional=False, unique=True)},
+        "relationships": {"site": _relationship("LocationSite", "several")},
+    },
+}
+
+
 class _SpiedAccessor:
     """An injected accessor that records every read and returns a fixed snapshot."""
 
@@ -433,6 +445,8 @@ FROZEN_SCHEMA_CODES = frozenset(
         "unsupported-destination-write",
         # AR9's schema-read-failure family.
         "destination-schema-read-failed",
+        # The closed-domain family: a snapshot the shared runtime domain refuses.
+        "destination-schema-unsupported-semantics",
     }
 )
 
@@ -481,6 +495,10 @@ def test_every_frozen_schema_code_is_reachable_and_nothing_else_is_emitted(
         reached.add(finding.code)
         severities.add(finding.severity)
     _inject(monkeypatch, _table_with_accessor(_raising_accessor("timeout")))
+    for finding in collect_destination_schema_findings(package(package_data())).findings:
+        reached.add(finding.code)
+        severities.add(finding.severity)
+    _inject(monkeypatch, _table_with_accessor(_SpiedAccessor(_UNSUPPORTED_SNAPSHOT)))
     for finding in collect_destination_schema_findings(package(package_data())).findings:
         reached.add(finding.code)
         severities.add(finding.severity)
@@ -810,3 +828,18 @@ def test_every_frozen_schema_code_is_documented_for_an_operator() -> None:
 
     assert "### Finding codes" in documented
     assert {code for code in FROZEN_SCHEMA_CODES if f"`{code}`" not in documented} == set()
+
+
+# --- F5: unsupported closed-domain semantics are a finding, not a silent null -----------
+
+
+def test_a_snapshot_outside_the_closed_domain_reports_a_finding(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Validation and the worker share one closed domain, so a snapshot the domain refuses
+    # must be visible to an operator rather than only erasing the fingerprint.
+    _inject(monkeypatch, _table_with_accessor(_SpiedAccessor(_UNSUPPORTED_SNAPSHOT)))
+
+    result = collect_destination_schema_findings(package(package_data()))
+
+    assert result.schema_fingerprint is None
+    assert "destination-schema-unsupported-semantics" in {finding.code for finding in result.findings}
+    assert all(finding.severity == "error" for finding in result.findings)

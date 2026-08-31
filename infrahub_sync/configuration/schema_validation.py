@@ -1,7 +1,7 @@
 """Destination schema validation — the explicit opt-in checks outside the declared-content core.
 
 The declared-content core (``validation.py``) judges declared content only and stays
-untouched; this module owns the schema-path checks and their finding codes. Three error
+untouched; this module owns the schema-path checks and their finding codes. Four error
 families live here, each behind its own ``_CODE_`` constant and frozen by this module's
 own exact-set and reachability tests:
 
@@ -17,6 +17,9 @@ own exact-set and reachability tests:
 * the unsupported-destination-write family — the operations one configuration requests,
   derived through the one shared SYNC-78 effective-operation rule, judged against the
   destination's declared write operations;
+* the closed-domain family — a snapshot the accessor delivered but the shared runtime
+  schema domain refuses. Registered execution refuses the same snapshot, so validation
+  reports the same defect rather than silently withholding the fingerprint;
 * the schema-read-failure family — a schema read the accessor reports as failed becomes a
   typed error finding rather than a generic service-boundary refusal. The bundled accessor
   classifies SDK-raised errors, HTTP transport and status failures, an unresolvable declared
@@ -53,6 +56,7 @@ if TYPE_CHECKING:
 
 _CODE_DESTINATION_SCHEMA_MISMATCH = "destination-schema-mismatch"
 _CODE_DESTINATION_SCHEMA_READ_FAILED = "destination-schema-read-failed"
+_CODE_DESTINATION_SCHEMA_UNSUPPORTED_SEMANTICS = "destination-schema-unsupported-semantics"
 _CODE_DESTINATION_SCHEMA_VALIDATION_UNSUPPORTED = "destination-schema-validation-unsupported"
 _CODE_UNSUPPORTED_DESTINATION_WRITE = "unsupported-destination-write"
 
@@ -232,8 +236,17 @@ def collect_destination_schema_findings(package: ConfigurationPackage) -> Destin
                     configuration=package.configuration, snapshot=normalize_destination_schema(snapshot)
                 )
             except UnsupportedSchemaSemanticsError:
-                # A snapshot the accessor delivered but the closed domain refuses has no
-                # identity to report; the content checks below still judge what they can.
-                fingerprint = None
+                # The worker refuses this snapshot too, so validation names the same
+                # defect rather than reporting only a missing fingerprint.
+                findings.append(
+                    _finding(
+                        code=_CODE_DESTINATION_SCHEMA_UNSUPPORTED_SEMANTICS,
+                        location=_DESTINATION_LOCATION,
+                        message=(
+                            f"destination schema for branch {branch!r} declares semantics outside the "
+                            "supported schema domain"
+                        ),
+                    )
+                )
             findings.extend(_schema_content_findings(package, snapshot))
     return DestinationSchemaValidation(findings=sort_findings(findings), schema_fingerprint=fingerprint)

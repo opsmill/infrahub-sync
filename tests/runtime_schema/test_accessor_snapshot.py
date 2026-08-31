@@ -79,3 +79,25 @@ def test_a_non_string_identity_path_is_refused_at_the_adapter_boundary() -> None
     # into the snapshot, and everything derived from one.
     with pytest.raises(DestinationSchemaReadError):
         capabilities_module._build_schema_snapshot({"InfraDevice": _NonStringPathNode()})
+
+
+class _NonFiniteDefaultAttribute:
+    name = "asn"
+    kind = "Number"
+    optional = True
+    default_value = float("inf")
+    unique = False
+
+
+class _NonFiniteDefaultNode:
+    """A node declaring a default no JSON encoding can carry."""
+
+    human_friendly_id = ()
+    uniqueness_constraints = ()
+    attributes = (_NonFiniteDefaultAttribute(),)
+    relationships: tuple[object, ...] = ()
+
+
+def test_a_non_finite_declared_default_is_refused_at_the_adapter_boundary() -> None:
+    with pytest.raises(DestinationSchemaReadError):
+        capabilities_module._build_schema_snapshot({"InfraDevice": _NonFiniteDefaultNode()})

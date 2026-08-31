@@ -75,6 +75,26 @@ def test_normalization_orders_members_by_name_so_delivery_order_is_irrelevant() 
 
 
 @pytest.mark.parametrize(
+    "default_value",
+    [
+        pytest.param(float("nan"), id="nan"),
+        pytest.param(float("inf"), id="inf"),
+        pytest.param(float("-inf"), id="-inf"),
+    ],
+)
+def test_a_non_finite_default_refuses_before_it_can_reach_the_fingerprint(default_value: float) -> None:
+    # A non-finite float is not JSON, so it cannot survive canonical encoding. Refusing it
+    # here keeps the closed domain the one place that answers "unsupported semantics".
+    entry = {
+        **_SNAPSHOT["InfraDevice"],
+        "attributes": {"asn": {"kind": "Number", "optional": True, "default_value": default_value, "unique": False}},
+    }
+
+    with pytest.raises(UnsupportedSchemaSemanticsError):
+        normalize_destination_schema({"InfraDevice": entry})
+
+
+@pytest.mark.parametrize(
     "mutation",
     [
         pytest.param({"attributes": {"name": {"kind": "Text"}}}, id="attribute-missing-property"),

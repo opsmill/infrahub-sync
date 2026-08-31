@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -341,7 +342,13 @@ def _member_text(value: object) -> object:
 
 
 def _json_native_default(value: object) -> Any:
-    """Keep a JSON-native declared default; refuse anything a model cannot reproduce."""
+    """Keep a JSON-native declared default; refuse anything a model cannot reproduce.
+
+    A non-finite float is refused here rather than carried: JSON has no encoding for it,
+    so it could not survive the canonical projection a plan is identified by.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
     if isinstance(value, Enum):
