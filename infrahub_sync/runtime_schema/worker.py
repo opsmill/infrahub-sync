@@ -14,7 +14,8 @@ is admitted, not qualified.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Literal
 
 from infrahub_sync.configuration.capabilities import (
     DestinationSchemaReadError,
@@ -40,20 +41,39 @@ if TYPE_CHECKING:
 
     from diffsync import DiffSyncModel
 
-    from infrahub_sync import SyncConfig, SyncInstance
+    from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
     from infrahub_sync.configuration.models import ConfigurationPackage
+
+
+# What one stage's runtime preparation must produce. A saved-plan apply constructs the
+# destination only, so building — and therefore resolving — the source would reintroduce
+# the source dependency a no-source apply exists to avoid.
+RuntimeModelScope = Literal["destination", "both"]
+STAGE_RUNTIME_MODEL_SCOPE: Mapping[str, RuntimeModelScope | None] = MappingProxyType(
+    {"plan": "both", "sync": "both", "apply": "destination", "verify": None}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeSideModels:
+    """One side's resolved adapter class and its fresh model classes."""
+
+    adapter_class: type[Any]
+    models: Mapping[str, type[DiffSyncModel]]
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeModelPlan:
-    """One run's resolved adapter classes, model classes, and schema identity."""
+    """One run's resolved sides and the schema identity they were built from.
+
+    ``source`` is ``None`` on a destination-only plan. Both sides, when present, come
+    from the one snapshot this plan's ``schema_fingerprint`` was computed over.
+    """
 
     branch: str
     schema_fingerprint: str
-    source_adapter_class: type[Any]
-    source_models: Mapping[str, type[DiffSyncModel]]
-    destination_adapter_class: type[Any]
-    destination_models: Mapping[str, type[DiffSyncModel]]
+    destination: RuntimeSideModels
+    source: RuntimeSideModels | None
 
 
 def read_destination_schema_snapshot(package: ConfigurationPackage, branch: str) -> Mapping[str, Any]:
@@ -106,8 +126,13 @@ def build_runtime_model_plan(
     package: ConfigurationPackage,
     instance: SyncInstance,
     run_branch: str | None,
+    scope: RuntimeModelScope,
 ) -> RuntimeModelPlan:
     """Build one registered run's adapter classes, model classes, and schema fingerprint.
+
+    ``scope`` is what the stage will construct: ``"both"`` for plan and sync, and
+    ``"destination"`` for a saved-plan apply, which builds and resolves nothing for the
+    source. Whatever the scope covers comes from one schema read.
 
     Raises:
         UnsupportedDestinationProfileError: the destination is outside the admitted
@@ -128,21 +153,22 @@ def build_runtime_model_plan(
         raise DestinationSchemaUnavailableError(msg, reason=exc.reason) from None
     snapshot = normalize_destination_schema(raw)
     _require_mapped_kinds(instance, snapshot.kinds)
+
+    def side(adapter: SyncAdapter) -> RuntimeSideModels:
+        return RuntimeSideModels(
+            adapter_class=resolve_installed_adapter_class(adapter),
+            models=build_runtime_models(
+                snapshot=snapshot,
+                configuration=instance,
+                model_base=resolve_installed_model_base(adapter),
+            ),
+        )
+
     return RuntimeModelPlan(
         branch=branch,
         schema_fingerprint=compute_consumed_schema_fingerprint(configuration=instance, snapshot=snapshot),
-        source_adapter_class=resolve_installed_adapter_class(instance.source),
-        source_models=build_runtime_models(
-            snapshot=snapshot,
-            configuration=instance,
-            model_base=resolve_installed_model_base(instance.source),
-        ),
-        destination_adapter_class=resolve_installed_adapter_class(instance.destination),
-        destination_models=build_runtime_models(
-            snapshot=snapshot,
-            configuration=instance,
-            model_base=resolve_installed_model_base(instance.destination),
-        ),
+        destination=side(instance.destination),
+        source=side(instance.source) if scope == "both" else None,
     )
 
 

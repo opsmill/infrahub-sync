@@ -24,10 +24,13 @@ from infrahub_sync.runtime_schema import (
     DestinationSchemaUnavailableError,
     MissingMappedKindError,
     RuntimeModelPlan,
+    RuntimeModelScope,
+    RuntimeModelScopeError,
     UnsupportedDestinationProfileError,
     build_runtime_model_plan,
 )
 from infrahub_sync.runtime_schema import worker as worker_module
+from infrahub_sync.utils import get_potenda_from_instance
 from tests.configuration.validation_packages import package_data
 
 if TYPE_CHECKING:
@@ -120,11 +123,22 @@ def _netbox_driver(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     sys.modules.pop("infrahub_sync.adapters.netbox", None)
 
 
-def _plan(package: ConfigurationPackage, tmp_path: Path, *, run_branch: str | None = None) -> RuntimeModelPlan:
+def _instance(package: ConfigurationPackage, tmp_path: Path) -> SyncInstance:
     from infrahub_sync.configuration.runtime import resolve_runtime_instance
 
-    instance = resolve_runtime_instance(package, directory=str(tmp_path))
-    return build_runtime_model_plan(package=package, instance=instance, run_branch=run_branch)
+    return resolve_runtime_instance(package, directory=str(tmp_path))
+
+
+def _plan(
+    package: ConfigurationPackage,
+    tmp_path: Path,
+    *,
+    run_branch: str | None = None,
+    scope: RuntimeModelScope = "both",
+) -> RuntimeModelPlan:
+    return build_runtime_model_plan(
+        package=package, instance=_instance(package, tmp_path), run_branch=run_branch, scope=scope
+    )
 
 
 # --- AR1: the registered worker has a real runtime-model consumer -----------------------
@@ -133,10 +147,11 @@ def _plan(package: ConfigurationPackage, tmp_path: Path, *, run_branch: str | No
 def test_the_plan_carries_fresh_model_classes_for_both_sides(spy: _SnapshotSpy, tmp_path: Path) -> None:
     plan = _plan(_package(), tmp_path)
 
-    assert set(plan.source_models) == {"BuiltinTag", "LocationSite"}
-    assert set(plan.destination_models) == {"BuiltinTag", "LocationSite"}
-    assert plan.source_models["BuiltinTag"] is not plan.destination_models["BuiltinTag"]
-    assert plan.destination_models["LocationSite"]._attributes == ("tags",)
+    assert plan.source is not None
+    assert set(plan.source.models) == {"BuiltinTag", "LocationSite"}
+    assert set(plan.destination.models) == {"BuiltinTag", "LocationSite"}
+    assert plan.source.models["BuiltinTag"] is not plan.destination.models["BuiltinTag"]
+    assert plan.destination.models["LocationSite"]._attributes == ("tags",)
     assert spy.branches == ["main"]
 
 
@@ -151,11 +166,12 @@ def test_registered_composition_attaches_the_plan_to_the_runtime_instance(spy: _
         config_directory=str(tmp_path),
         projection=cast("ProductProjection", projection),
         run_branch=None,
+        stage="plan",
     )
 
     assert name == package.configuration.name
     assert instance._runtime_models is not None
-    assert set(instance._runtime_models.destination_models) == {"BuiltinTag", "LocationSite"}
+    assert set(instance._runtime_models.destination.models) == {"BuiltinTag", "LocationSite"}
     assert spy.branches == ["main"]
 
 
@@ -176,6 +192,7 @@ def test_a_legacy_unregistered_run_builds_no_runtime_models(spy: _SnapshotSpy, t
         config_directory=str(tmp_path),
         projection=cast("ProductProjection", projection),
         run_branch=None,
+        stage="plan",
     )
 
     assert instance._runtime_models is None
@@ -220,6 +237,87 @@ def test_a_registered_stage_reaches_execution_with_its_models_bound(
     # Plan, verify and apply legs share the one instance the single schema read built.
     assert len({id(instance) for instance in seen}) == 1
     assert seen[0]._runtime_models is not None
+    assert spy.branches == ["main"]
+
+
+# --- F1: runtime preparation is scoped to what the stage consumes -----------------------
+
+
+@pytest.mark.parametrize(
+    ("stage", "expected_reads"),
+    [("plan", 1), ("sync", 1), ("apply", 1), ("verify", 0)],
+)
+def test_only_stages_that_construct_adapters_read_the_schema(
+    spy: _SnapshotSpy, tmp_path: Path, stage: str, expected_reads: int
+) -> None:
+    package = _package()
+    binding = ("cfg-runtime-models", 1, package.checksum())
+    projection = _StubProjection(package, binding)
+
+    _, instance, _ = managed_flow._worker_execution_context(
+        f"run-{stage}",
+        binding,
+        config_directory=str(tmp_path),
+        projection=cast("ProductProjection", projection),
+        run_branch=None,
+        stage=stage,
+    )
+
+    assert len(spy.branches) == expected_reads
+    assert (instance._runtime_models is None) == (expected_reads == 0)
+
+
+def test_a_saved_plan_apply_builds_no_source_requirements(spy: _SnapshotSpy, tmp_path: Path) -> None:
+    # Apply constructs the destination only, so requiring the source plugin would
+    # reintroduce the source dependency a no-source apply exists to avoid.
+    package = _package()
+    binding = ("cfg-runtime-models", 1, package.checksum())
+    projection = _StubProjection(package, binding)
+
+    _, instance, _ = managed_flow._worker_execution_context(
+        "run-apply",
+        binding,
+        config_directory=str(tmp_path),
+        projection=cast("ProductProjection", projection),
+        run_branch=None,
+        stage="apply",
+    )
+
+    plan = instance._runtime_models
+    assert plan is not None
+    assert plan.source is None
+    assert set(plan.destination.models) == {"BuiltinTag", "LocationSite"}
+    assert spy.branches == ["main"]
+
+
+def test_an_apply_scoped_plan_never_resolves_the_source_adapter(
+    spy: _SnapshotSpy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _forbidden(adapter: object) -> type:
+        del adapter
+        msg = "apply resolved a source adapter"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(worker_module, "resolve_installed_adapter_class", _forbidden)
+    monkeypatch.setattr(worker_module, "resolve_installed_model_base", _forbidden)
+
+    with pytest.raises(AssertionError, match="apply resolved a source adapter"):
+        # The destination is still resolved, so the spy must fire for it and only it.
+        _plan(_package(), tmp_path, scope="destination")
+
+    assert spy.branches == ["main"]
+
+
+def test_engine_assembly_refuses_a_destination_only_plan(spy: _SnapshotSpy, tmp_path: Path) -> None:
+    # Assembling a two-sided engine from an apply-scoped plan is a wrong-stage request,
+    # refused where the classes are selected rather than by loading a source adapter.
+    package = _package()
+    instance = _instance(package, tmp_path)
+    instance._runtime_models = _plan(package, tmp_path, scope="destination")
+
+    with pytest.raises(RuntimeModelScopeError):
+        get_potenda_from_instance(sync_instance=instance)
+
     assert spy.branches == ["main"]
 
 
@@ -294,9 +392,10 @@ def test_a_non_bundled_installed_source_with_an_infrahub_destination_may_execute
 
     plan = _plan(parse_configuration_package(content), tmp_path)
 
-    assert plan.source_adapter_class is InstalledSourceAdapter
-    assert set(plan.source_models) == {"BuiltinTag", "LocationSite"}
-    assert issubclass(plan.source_models["BuiltinTag"], InstalledSourceModel)
+    assert plan.source is not None
+    assert plan.source.adapter_class is InstalledSourceAdapter
+    assert set(plan.source.models) == {"BuiltinTag", "LocationSite"}
+    assert issubclass(plan.source.models["BuiltinTag"], InstalledSourceModel)
     assert spy.branches == ["main"]
 
 
@@ -357,7 +456,7 @@ def test_two_configurations_sharing_kinds_get_distinct_bound_classes(spy: _Snaps
     second = _plan(_package(name="second-configuration"), tmp_path)
 
     assert spy.branches == ["main", "main"]
-    assert first.destination_models["BuiltinTag"] is not second.destination_models["BuiltinTag"]
+    assert first.destination.models["BuiltinTag"] is not second.destination.models["BuiltinTag"]
     assert first.schema_fingerprint == second.schema_fingerprint
 
 
@@ -378,8 +477,8 @@ def test_a_rebuild_after_a_schema_change_leaves_the_earlier_classes_untouched(
     spy.snapshot = grown
     after = _plan(_package(), tmp_path)
 
-    assert "colour" not in before.destination_models["BuiltinTag"].model_fields
-    assert after.destination_models["BuiltinTag"] is not before.destination_models["BuiltinTag"]
+    assert "colour" not in before.destination.models["BuiltinTag"].model_fields
+    assert after.destination.models["BuiltinTag"] is not before.destination.models["BuiltinTag"]
     assert after.schema_fingerprint == before.schema_fingerprint
 
 
@@ -407,10 +506,10 @@ def test_the_plan_binds_onto_adapters_without_reading_generated_python(
 
     plan = _plan(_package(), tmp_path)
     adapter = _RecordingAdapter()
-    worker_module.bind_runtime_models(adapter, plan.destination_models)
+    worker_module.bind_runtime_models(adapter, plan.destination.models)
 
-    assert adapter.BuiltinTag is plan.destination_models["BuiltinTag"]
-    assert adapter.LocationSite is plan.destination_models["LocationSite"]
+    assert adapter.BuiltinTag is plan.destination.models["BuiltinTag"]
+    assert adapter.LocationSite is plan.destination.models["LocationSite"]
 
 
 def _saved_plan() -> SavedPlan:

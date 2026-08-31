@@ -47,7 +47,7 @@ from infrahub_sync.product_store import (
     ExecutionWriteback,
     ProductProjection,
 )
-from infrahub_sync.runtime_schema import build_runtime_model_plan
+from infrahub_sync.runtime_schema import STAGE_RUNTIME_MODEL_SCOPE, build_runtime_model_plan
 
 from .liveness import LivenessPolicy
 from .models import PlanResource
@@ -247,11 +247,14 @@ def _worker_execution_context(
     config_directory: str,
     projection: ProductProjection,
     run_branch: str | None,
+    stage: str,
 ) -> tuple[ProductProjection, Any, str]:
     """Load the durable run and resolve its registered or legacy runtime.
 
     A registered run also builds its runtime model plan here, from one destination
-    schema read, before any adapter is constructed or any source is extracted. The
+    schema read, before any adapter is constructed or any source is extracted. What that
+    plan covers follows the stage: both sides for plan and sync, the destination only for
+    a saved-plan apply, and nothing at all for verify, which constructs no adapter. The
     legacy path keeps its generated-code resolution and builds no plan.
     """
     stored = projection.lookup_run(run_id)
@@ -282,7 +285,11 @@ def _worker_execution_context(
         raise ValueError(_REGISTERED_CHECKSUM_MISMATCH)
     instance = resolve_runtime_instance(package, directory=config_directory)
     instance._configuration_binding = binding
-    instance._runtime_models = build_runtime_model_plan(package=package, instance=instance, run_branch=run_branch)
+    scope = STAGE_RUNTIME_MODEL_SCOPE.get(stage)
+    if scope is not None:
+        instance._runtime_models = build_runtime_model_plan(
+            package=package, instance=instance, run_branch=run_branch, scope=scope
+        )
     return projection, instance, package.configuration.name
 
 
@@ -309,6 +316,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         config_directory=config_directory,
         projection=projection,
         run_branch=branch,
+        stage=stage,
     )
     if stage in ("apply", "sync") and not confirm_writes:
         msg = f"confirm_writes=true is required for managed stage={stage}"

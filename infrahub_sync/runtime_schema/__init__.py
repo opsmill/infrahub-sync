@@ -13,6 +13,7 @@ from .domain import (
 from .errors import (
     DestinationSchemaUnavailableError,
     MissingMappedKindError,
+    RuntimeModelScopeError,
     RuntimeSchemaError,
     UnsupportedDestinationProfileError,
     UnsupportedSchemaSemanticsError,
@@ -23,7 +24,10 @@ from .projection import (
     compute_consumed_schema_fingerprint,
 )
 from .worker import (
+    STAGE_RUNTIME_MODEL_SCOPE,
     RuntimeModelPlan,
+    RuntimeModelScope,
+    RuntimeSideModels,
     bind_runtime_models,
     build_runtime_model_plan,
     read_destination_schema_snapshot,
@@ -32,6 +36,7 @@ from .worker import (
 __all__ = [
     "ATTRIBUTE_TYPE_DOMAIN",
     "CARDINALITIES",
+    "STAGE_RUNTIME_MODEL_SCOPE",
     "DestinationSchemaSnapshot",
     "DestinationSchemaUnavailableError",
     "MissingMappedKindError",
@@ -39,7 +44,10 @@ __all__ = [
     "NormalizedKind",
     "NormalizedRelationship",
     "RuntimeModelPlan",
+    "RuntimeModelScope",
+    "RuntimeModelScopeError",
     "RuntimeSchemaError",
+    "RuntimeSideModels",
     "UnsupportedDestinationProfileError",
     "UnsupportedSchemaSemanticsError",
     "bind_runtime_models",
