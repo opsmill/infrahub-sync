@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NoReturn
 
 from .errors import UnsupportedSchemaSemanticsError
 
@@ -47,9 +47,13 @@ class NormalizedRelationship:
 
 @dataclass(frozen=True, slots=True)
 class NormalizedKind:
-    """One destination kind and its identity paths, members ordered by name."""
+    """One destination kind and its identity paths, members ordered by name.
 
-    name: str
+    Spelled ``kind`` rather than ``name`` because the shipping generator helpers the
+    model builder reuses read a node's kind under that name.
+    """
+
+    kind: str
     human_friendly_id: tuple[str, ...]
     uniqueness_constraints: tuple[tuple[str, ...], ...]
     attributes: tuple[NormalizedAttribute, ...]
@@ -74,28 +78,29 @@ class DestinationSchemaSnapshot:
         return hash(tuple(sorted(self.kinds)))
 
 
-def _refuse(detail: str) -> UnsupportedSchemaSemanticsError:
-    return UnsupportedSchemaSemanticsError(f"destination schema snapshot is outside the supported domain: {detail}")
+def _refuse(detail: str) -> NoReturn:
+    msg = f"destination schema snapshot is outside the supported domain: {detail}"
+    raise UnsupportedSchemaSemanticsError(msg)
 
 
 def _require_mapping(value: object, *, detail: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
-        raise _refuse(detail)
+        _refuse(detail)
     for key in value:
         if not isinstance(key, str):
-            raise _refuse(detail)
+            _refuse(detail)
     return value
 
 
 def _require_bool(value: object, *, detail: str) -> bool:
     if not isinstance(value, bool):
-        raise _refuse(detail)
+        _refuse(detail)
     return value
 
 
 def _require_str(value: object, *, detail: str) -> str:
     if not isinstance(value, str):
-        raise _refuse(detail)
+        _refuse(detail)
     return value
 
 
@@ -107,15 +112,14 @@ def _require_json_default(value: object, *, detail: str) -> Any:
         return [_require_json_default(item, detail=detail) for item in value]
     if isinstance(value, Mapping):
         return {
-            _require_str(key, detail=detail): _require_json_default(item, detail=detail)
-            for key, item in value.items()
+            _require_str(key, detail=detail): _require_json_default(item, detail=detail) for key, item in value.items()
         }
-    raise _refuse(detail)
+    _refuse(detail)
 
 
 def _component_paths(value: object, *, kind: str) -> tuple[str, ...]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        raise _refuse(f"kind {kind!r} declares a non-list component path")
+        _refuse(f"kind {kind!r} declares a non-list component path")
     return tuple(_require_str(item, detail=f"kind {kind!r} declares a non-string path component") for item in value)
 
 
@@ -124,7 +128,7 @@ def _normalized_attribute(name: str, entry: object, *, kind: str) -> NormalizedA
     member = _require_mapping(entry, detail=detail)
     missing = {"kind", "optional", "default_value", "unique"} - set(member)
     if missing:
-        raise _refuse(f"{detail} is missing {sorted(missing)!r}")
+        _refuse(f"{detail} is missing {sorted(missing)!r}")
     return NormalizedAttribute(
         name=name,
         kind=_require_str(member["kind"], detail=detail),
@@ -139,10 +143,10 @@ def _normalized_relationship(name: str, entry: object, *, kind: str) -> Normaliz
     member = _require_mapping(entry, detail=detail)
     missing = {"peer", "cardinality", "optional", "kind"} - set(member)
     if missing:
-        raise _refuse(f"{detail} is missing {sorted(missing)!r}")
+        _refuse(f"{detail} is missing {sorted(missing)!r}")
     cardinality = _require_str(member["cardinality"], detail=detail)
     if cardinality not in CARDINALITIES:
-        raise _refuse(f"{detail} declares cardinality {cardinality!r}")
+        _refuse(f"{detail} declares cardinality {cardinality!r}")
     return NormalizedRelationship(
         name=name,
         peer=_require_str(member["peer"], detail=detail),
@@ -165,19 +169,17 @@ def normalize_destination_schema(snapshot: Mapping[str, Any]) -> DestinationSche
         member = _require_mapping(entry, detail=f"kind {kind!r} is not a mapping")
         missing = {"human_friendly_id", "uniqueness_constraints", "attributes", "relationships"} - set(member)
         if missing:
-            raise _refuse(f"kind {kind!r} is missing {sorted(missing)!r}")
+            _refuse(f"kind {kind!r} is missing {sorted(missing)!r}")
         raw_constraints = member["uniqueness_constraints"]
         if not isinstance(raw_constraints, Sequence) or isinstance(raw_constraints, (str, bytes)):
-            raise _refuse(f"kind {kind!r} declares non-list uniqueness constraints")
+            _refuse(f"kind {kind!r} declares non-list uniqueness constraints")
         attributes = _require_mapping(member["attributes"], detail=f"kind {kind!r} attributes")
         relationships = _require_mapping(member["relationships"], detail=f"kind {kind!r} relationships")
         kinds[kind] = NormalizedKind(
-            name=kind,
+            kind=kind,
             human_friendly_id=_component_paths(member["human_friendly_id"] or (), kind=kind),
             uniqueness_constraints=tuple(_component_paths(item, kind=kind) for item in raw_constraints),
-            attributes=tuple(
-                _normalized_attribute(name, attributes[name], kind=kind) for name in sorted(attributes)
-            ),
+            attributes=tuple(_normalized_attribute(name, attributes[name], kind=kind) for name in sorted(attributes)),
             relationships=tuple(
                 _normalized_relationship(name, relationships[name], kind=kind) for name in sorted(relationships)
             ),

@@ -17,8 +17,10 @@ from .errors import (
     UnsupportedDestinationProfileError,
     UnsupportedSchemaSemanticsError,
 )
+from .models import ATTRIBUTE_TYPE_DOMAIN, build_runtime_models, mapped_attribute_kinds
 
 __all__ = [
+    "ATTRIBUTE_TYPE_DOMAIN",
     "CARDINALITIES",
     "DestinationSchemaSnapshot",
     "DestinationSchemaUnavailableError",
@@ -29,5 +31,7 @@ __all__ = [
     "RuntimeSchemaError",
     "UnsupportedDestinationProfileError",
     "UnsupportedSchemaSemanticsError",
+    "build_runtime_models",
+    "mapped_attribute_kinds",
     "normalize_destination_schema",
 ]

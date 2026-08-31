@@ -31,7 +31,7 @@ def test_normalized_kind_carries_every_consumed_property() -> None:
     snapshot = normalize_destination_schema(_SNAPSHOT)
 
     kind = snapshot.kinds["InfraDevice"]
-    assert kind.name == "InfraDevice"
+    assert kind.kind == "InfraDevice"
     assert kind.human_friendly_id == ("name__value",)
     assert kind.uniqueness_constraints == (("name__value",), ("site__name__value", "name__value"))
 
@@ -79,7 +79,11 @@ def test_normalization_orders_members_by_name_so_delivery_order_is_irrelevant() 
     [
         pytest.param({"attributes": {"name": {"kind": "Text"}}}, id="attribute-missing-property"),
         pytest.param(
-            {"relationships": {"site": {"peer": "LocationSite", "cardinality": "several", "optional": False, "kind": "Attribute"}}},
+            {
+                "relationships": {
+                    "site": {"peer": "LocationSite", "cardinality": "several", "optional": False, "kind": "Attribute"}
+                }
+            },
             id="unknown-cardinality",
         ),
         pytest.param({"human_friendly_id": ["name__value", 7]}, id="non-string-hfid-component"),

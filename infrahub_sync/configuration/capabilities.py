@@ -310,8 +310,7 @@ def _build_schema_snapshot(schema: object) -> dict[str, Any]:
         snapshot[kind] = {
             "human_friendly_id": [str(path) for path in getattr(node, "human_friendly_id", None) or ()],
             "uniqueness_constraints": [
-                [str(path) for path in constraint]
-                for constraint in getattr(node, "uniqueness_constraints", None) or ()
+                [str(path) for path in constraint] for constraint in getattr(node, "uniqueness_constraints", None) or ()
             ],
             "attributes": {
                 attribute.name: {
