@@ -20,14 +20,14 @@ import pkgutil
 import re
 import sys
 from enum import Enum
-from importlib.metadata import entry_points, packages_distributions
+from importlib.metadata import distributions, entry_points
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from diffsync import Adapter, DiffSyncModel
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
 
     from infrahub_sync import SyncAdapter
 
@@ -42,24 +42,98 @@ class PluginLoadError(Exception):
 BUNDLED_PACKAGE = "infrahub_sync"
 
 
-def is_installed_distribution_module(spec_path: str) -> bool:
-    """Whether a dotted target belongs to code installed into this environment.
+def installed_module_origins(spec_path: str) -> set[Path]:
+    """Every location an installed distribution ships this exact dotted module at.
 
-    The provenance rule registered resolution admits by: a dotted spec is admitted when
-    its top-level package is this distribution's own, or when installed distribution
-    metadata reports that package as owned by a distribution. Everything else — a module
-    that is importable only because a checkout or the working directory is on
-    ``sys.path``, and the standard library, which no distribution owns — is refused.
+    Read from distribution file metadata, so it names the installed copy rather than
+    whatever happens to answer the name on ``sys.path``.
+    """
+    relative = spec_path.replace(".", "/")
+    wanted = {f"{relative}.py", f"{relative}/__init__.py"}
+    origins: set[Path] = set()
+    for distribution in distributions():
+        for entry in distribution.files or ():
+            if str(entry).replace("\\", "/") in wanted:
+                origins.add(Path(str(distribution.locate_file(entry))))
+    return origins
+
+
+def _provides_top_level(base: Path, name: str) -> bool:
+    """Whether this import-path entry answers a top-level name at all."""
+    return (base / name / "__init__.py").is_file() or (base / f"{name}.py").is_file()
+
+
+def _module_file(base: Path, parts: Sequence[str]) -> Path | None:
+    """The file this import-path entry would supply for a dotted name, or None."""
+    current = base
+    for index, part in enumerate(parts):
+        package_init = current / part / "__init__.py"
+        if index == len(parts) - 1:
+            # Packages win over same-named modules, as the import system orders them.
+            if package_init.is_file():
+                return package_init
+            module = current / f"{part}.py"
+            return module if module.is_file() else None
+        if not package_init.is_file():
+            return None
+        current /= part
+    return None
+
+
+def effective_module_origin(spec_path: str) -> Path | None:
+    """The file an import of this dotted name would load, found without importing it.
+
+    Walks ``sys.path`` in order, the way the path finder does. The first entry that
+    answers the top-level name decides the answer even when it does not supply the
+    submodule, because that entry shadows every later one — which is exactly the case a
+    checkout creates over an installed distribution. Anything this cannot resolve — a zip
+    import, a namespace package, a custom finder — returns None and is refused.
+    """
+    parts = spec_path.split(".")
+    for entry in sys.path:
+        base = Path(entry) if entry else Path.cwd()
+        origin = _module_file(base, parts)
+        if origin is not None:
+            return origin
+        if _provides_top_level(base, parts[0]):
+            return None
+    return None
+
+
+def is_installed_distribution_module(spec_path: str) -> bool:
+    """Whether a dotted target is the module an installed distribution actually ships.
+
+    The provenance rule registered resolution admits by. A dotted spec is admitted when
+    its top-level package is this distribution's own, or when the file an import would
+    load is exactly a file some installed distribution ships. Owning the top-level name
+    is not enough: a checkout module that shadows an installed package answers the name
+    from a different file, and is refused.
 
     Deliberately conservative at one edge: a third-party adapter installed in editable
-    mode reports no owning distribution either, so it sits outside the registered profile
-    until it is installed normally. Answered from metadata alone, so the verdict is
-    reached before the target is imported.
+    mode ships no module files in its metadata either, so it sits outside the registered
+    profile until it is installed normally. Answered from distribution metadata and the
+    filesystem, so the verdict is reached without importing the candidate.
     """
-    top_level = spec_path.partition(".")[0]
-    if top_level == BUNDLED_PACKAGE:
+    if spec_path.partition(".")[0] == BUNDLED_PACKAGE:
         return True
-    return bool(packages_distributions().get(top_level))
+    origins = installed_module_origins(spec_path)
+    if not origins:
+        return False
+    effective = effective_module_origin(spec_path)
+    if effective is None:
+        return False
+    resolved = effective.resolve()
+    return any(origin.resolve() == resolved for origin in origins)
+
+
+def _raise_declared_class_unavailable(
+    name: str, class_name: str, default_class_candidates: tuple[str, ...]
+) -> NoReturn:
+    """Refuse a declaration whose named class the entry point's module cannot supply."""
+    target = _target_base_class(default_class_candidates)
+    required = "" if target is None else f" as a {target.__name__} subclass"
+    msg = f"Entry point '{name}' does not declare a class named '{class_name}'{required}."
+    raise PluginLoadError(msg)
 
 
 def _target_base_class(default_class_candidates: tuple[str, ...]) -> type[Any] | None:
@@ -376,7 +450,10 @@ class PluginLoader:
 
             # If it's a module, find the class
             if inspect.ismodule(obj):
-                return self._find_class_in_module(obj, class_name, name, default_class_candidates)
+                resolved = self._find_class_in_module(obj, class_name, name, default_class_candidates)
+                if resolved is None and class_name is not None:
+                    _raise_declared_class_unavailable(name, class_name, default_class_candidates)
+                return resolved
             if inspect.isclass(obj):
                 return self._entry_point_class(cast("type[Any]", obj), class_name, name, default_class_candidates)
 
@@ -398,14 +475,24 @@ class PluginLoader:
         adapter class. That one entry point has to answer both questions the loader asks,
         so a loaded class that is not what was requested is resolved from the module that
         defines it — the same module a module-valued entry point would have named.
+
+        A declaration carrying an explicit ``:ClassName`` is answered by that name and no
+        other, because the declared name is what the package checksum covers: resolving
+        some other class would let the executed identity differ from the reviewed one.
         """
         target = _target_base_class(default_class_candidates)
-        if target is None or issubclass(loaded, target):
+        satisfies = target is None or issubclass(loaded, target)
+        if satisfies and (class_name is None or loaded.__name__ == class_name):
             return loaded
         defining_module = sys.modules.get(loaded.__module__)
-        if defining_module is None:
-            return None
-        return self._find_class_in_module(defining_module, class_name, name, default_class_candidates)
+        resolved = (
+            None
+            if defining_module is None
+            else self._find_class_in_module(defining_module, class_name, name, default_class_candidates)
+        )
+        if resolved is None and class_name is not None:
+            _raise_declared_class_unavailable(name, class_name, default_class_candidates)
+        return resolved
 
     def _resolve_from_builtin(
         self, name: str, class_name: str | None, default_class_candidates: tuple[str, ...]
@@ -503,13 +590,17 @@ class PluginLoader:
         Returns:
             The found class, or None if not found.
         """
-        # If class name is specified, look for it directly
+        # If class name is specified, look for it directly. It has to be a class, and it
+        # has to be the kind of class the caller asked for: a declaration naming the
+        # model where an adapter is required is an error, not a hint to look elsewhere.
         if class_name:
-            if hasattr(module, class_name):
-                cls = getattr(module, class_name)
-                if inspect.isclass(cls):
-                    return cls
-            return None
+            cls = getattr(module, class_name, None)
+            if not inspect.isclass(cls):
+                return None
+            target = _target_base_class(default_class_candidates)
+            if target is not None and not issubclass(cls, target):
+                return None
+            return cls
 
         # Get all classes defined in the module
         classes_in_module = [

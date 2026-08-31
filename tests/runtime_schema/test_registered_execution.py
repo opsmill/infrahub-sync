@@ -22,6 +22,7 @@ from infrahub_sync.configuration import ConfigurationPackage, parse_configuratio
 from infrahub_sync.configuration.runtime import resolve_runtime_instance
 from infrahub_sync.execution import execute_run
 from infrahub_sync.plan.review import SavedPlan
+from infrahub_sync.plugin_loader import PluginLoadError
 from infrahub_sync.runtime_schema import build_runtime_model_plan
 from infrahub_sync.runtime_schema import worker as worker_module
 from infrahub_sync.utils import get_potenda_from_instance
@@ -178,12 +179,20 @@ def _providers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[dict
     _forget_netbox_adapter()
 
 
-def _registered_instance(tmp_path: Path, *, branch: str | None = None, run_branch: str | None = None) -> SyncInstance:
+def _registered_instance(
+    tmp_path: Path,
+    *,
+    branch: str | None = None,
+    run_branch: str | None = None,
+    source_adapter: str | None = None,
+) -> SyncInstance:
     """One registered package resolved and prepared exactly as the worker prepares it."""
     content = package_data()
     content["configuration"]["schema_mapping"] = MAPPING
     if branch is not None:
         content["configuration"]["destination"]["settings"]["branch"] = branch
+    if source_adapter is not None:
+        content["configuration"]["source"]["adapter"] = source_adapter
     package: ConfigurationPackage = parse_configuration_package(content)
     instance = resolve_runtime_instance(package, directory=str(tmp_path / "config"))
     (tmp_path / "config").mkdir(exist_ok=True)
@@ -276,3 +285,102 @@ def test_the_constructed_destination_receives_the_effective_branch(
     assert destination.destination_binding.branch == expected
     assert destination.client.config.default_branch == expected
     assert destination.client.schema.branches == [expected]
+
+
+# --- R2: the declared class is the class the engine runs ---------------------------------
+
+
+class _EntryPoint:
+    def __init__(self, name: str, target: object) -> None:
+        self.name = name
+        self._target = target
+
+    def load(self) -> object:
+        return self._target
+
+
+class _EntryPoints:
+    """The packaging metadata one installed plugin distribution publishes."""
+
+    def __init__(self, entry_point: _EntryPoint) -> None:
+        self._entry_point = entry_point
+
+    def select(self, *, group: str, name: str) -> tuple[_EntryPoint, ...]:
+        if group == "infrahub_sync.adapters" and name == self._entry_point.name:
+            return (self._entry_point,)
+        return ()
+
+
+def _publish_entry_point(monkeypatch: pytest.MonkeyPatch, target: object) -> str:
+    monkeypatch.setattr(
+        "infrahub_sync.plugin_loader.entry_points", lambda: _EntryPoints(_EntryPoint("plugin_source", target))
+    )
+    return "plugin_source"
+
+
+def _plugin_source_module() -> types.ModuleType:
+    """An installed plugin's adapter module, with a second adapter to name wrongly."""
+    module = types.ModuleType("declared_identity_plugin")
+    source = """
+from diffsync import Adapter, DiffSyncModel
+
+from infrahub_sync import DiffSyncMixin, DiffSyncModelMixin
+
+
+class PluginModel(DiffSyncModelMixin, DiffSyncModel):
+    pass
+
+
+class _Base(DiffSyncMixin, Adapter):
+    def __init__(self, target, adapter, config, **kwargs):
+        super().__init__(**kwargs)
+        self.target = target
+        self.config = config
+
+    def model_loader(self, model_name, model):
+        return None
+
+
+class PluginAdapter(_Base):
+    type = "Plugin"
+
+
+class OtherAdapter(_Base):
+    type = "Other"
+"""
+    exec(compile(source, module.__name__, "exec"), module.__dict__)  # noqa: S102
+    for name in ("PluginModel", "_Base", "PluginAdapter", "OtherAdapter"):
+        getattr(module, name).__module__ = module.__name__
+    return module
+
+
+def test_the_declared_source_class_is_the_class_the_engine_constructs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The declared `:ClassName` is inside the package checksum, so the engine must run
+    # that class and not whichever one the entry point happens to load.
+    module = _plugin_source_module()
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    entry_point = _publish_entry_point(monkeypatch, module.OtherAdapter)
+    instance = _registered_instance(tmp_path, source_adapter=f"{entry_point}:PluginAdapter")
+
+    engine = get_potenda_from_instance(sync_instance=instance, run_id="declared-identity")
+
+    assert type(engine.source) is module.PluginAdapter
+    assert type(engine.source) is not module.OtherAdapter
+    plan = instance._runtime_models
+    assert plan is not None
+    assert plan.source is not None
+    assert issubclass(plan.source.models["BuiltinTag"], module.PluginModel)
+    assert cast("Any", engine.source).BuiltinTag is plan.source.models["BuiltinTag"]
+
+
+def test_a_declared_source_class_the_plugin_does_not_provide_refuses_before_assembly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _plugin_source_module()
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    entry_point = _publish_entry_point(monkeypatch, module.OtherAdapter)
+
+    with pytest.raises(PluginLoadError, match="MissingAdapter"):
+        _registered_instance(tmp_path, source_adapter=f"{entry_point}:MissingAdapter")

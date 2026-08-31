@@ -140,6 +140,76 @@ def test_a_module_valued_entry_point_still_resolves_both(monkeypatch: pytest.Mon
     assert resolve_installed_model_base(adapter) is module.PluginModel
 
 
+# --- an explicit :ClassName is the declaration, and it is honoured exactly ---------------
+
+
+@pytest.mark.parametrize("value", ["class", "module"], ids=["class-valued", "module-valued"])
+def test_an_explicit_class_name_resolves_that_exact_class(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    module = _plugin_module(with_model=True)
+    _publish(monkeypatch, module, value=module.PluginAdapter if value == "class" else module)
+    adapter = SyncAdapter(name="plugin", adapter=f"{ENTRY_POINT}:PluginAdapter")
+
+    assert resolve_installed_adapter_class(adapter) is module.PluginAdapter
+
+
+@pytest.mark.parametrize("value", ["class", "module"], ids=["class-valued", "module-valued"])
+def test_an_explicit_class_name_the_distribution_does_not_declare_refuses(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    # The declared class is checksummed into the package, so resolving a different one
+    # would let the executed identity differ from the reviewed one.
+    module = _plugin_module(with_model=True)
+    _publish(monkeypatch, module, value=module.PluginAdapter if value == "class" else module)
+    adapter = SyncAdapter(name="plugin", adapter=f"{ENTRY_POINT}:DefinitelyNotTheAdapter")
+
+    with pytest.raises(PluginLoadError, match="DefinitelyNotTheAdapter"):
+        resolve_installed_adapter_class(adapter)
+
+
+@pytest.mark.parametrize("value", ["class", "module"], ids=["class-valued", "module-valued"])
+def test_an_explicit_class_name_of_the_wrong_base_refuses(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    # Naming the model where an adapter is required is a declaration error, not a hint
+    # to go looking for the adapter.
+    module = _plugin_module(with_model=True)
+    _publish(monkeypatch, module, value=module.PluginAdapter if value == "class" else module)
+    adapter = SyncAdapter(name="plugin", adapter=f"{ENTRY_POINT}:PluginModel")
+
+    with pytest.raises(PluginLoadError, match="PluginModel"):
+        resolve_installed_adapter_class(adapter)
+
+
+def test_an_explicit_class_name_that_is_not_a_class_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _plugin_module(with_model=True)
+    module.PluginAdapterFactory = lambda: None  # ty: ignore[unresolved-attribute]
+    _publish(monkeypatch, module, value=module.PluginAdapter)
+    adapter = SyncAdapter(name="plugin", adapter=f"{ENTRY_POINT}:PluginAdapterFactory")
+
+    with pytest.raises(PluginLoadError, match="PluginAdapterFactory"):
+        resolve_installed_adapter_class(adapter)
+
+
+def test_an_explicit_class_name_still_resolves_the_model_base_by_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The model base is resolved from the module half of the spec, so naming the adapter
+    # class does not make the model base the adapter.
+    module = _plugin_module(with_model=True)
+    _publish(monkeypatch, module, value=module.PluginAdapter)
+    adapter = SyncAdapter(name="plugin", adapter=f"{ENTRY_POINT}:PluginAdapter")
+
+    assert resolve_installed_model_base(adapter) is module.PluginModel
+
+
+def test_without_an_explicit_name_the_requested_base_still_decides(
+    monkeypatch: pytest.MonkeyPatch, adapter: SyncAdapter
+) -> None:
+    module = _plugin_module(with_model=True)
+    _publish(monkeypatch, module, value=module.PluginAdapter)
+
+    assert resolve_installed_adapter_class(adapter) is module.PluginAdapter
+    assert resolve_installed_model_base(adapter) is module.PluginModel
+
+
 def test_an_entry_point_naming_an_unusable_object_refuses(
     monkeypatch: pytest.MonkeyPatch, adapter: SyncAdapter
 ) -> None:

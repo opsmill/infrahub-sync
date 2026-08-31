@@ -32,6 +32,7 @@ from infrahub_sync.runtime_schema import (
 from infrahub_sync.runtime_schema import worker as worker_module
 from infrahub_sync.utils import get_potenda_from_instance
 from tests.configuration.validation_packages import package_data
+from tests.runtime_schema.installed_distribution import install_distribution
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -397,29 +398,34 @@ def test_a_non_infrahub_destination_refuses_before_any_schema_read(spy: _Snapsho
     assert spy.branches == []
 
 
-@pytest.mark.parametrize(
-    "source_adapter",
-    [
-        pytest.param("tests.runtime_schema.installed_source_adapter", id="dotted-module"),
-        pytest.param(
-            "tests.runtime_schema.installed_source_adapter:InstalledSourceAdapter", id="dotted-module-and-class"
-        ),
-        pytest.param("installed_source_entry_point", id="entry-point-name"),
-    ],
-)
-def test_a_non_bundled_installed_source_with_an_infrahub_destination_may_execute(
-    spy: _SnapshotSpy, tmp_path: Path, source_adapter: str, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("declare_class", [False, True], ids=["module", "module-and-class"])
+def test_an_installed_dotted_source_with_an_infrahub_destination_may_execute(
+    spy: _SnapshotSpy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, declare_class: bool
 ) -> None:
-    # Admitted, not qualified: an installed dotted or entry-point source runs, while a
-    # filesystem declaration never crosses registered admission at all. The dotted cases
-    # need this module to look like installed code, because registered resolution admits
-    # a dotted target only when a distribution owns its top-level package.
+    # Admitted, not qualified. The source is laid out and claimed the way an install lays
+    # it out, because registered admission binds the dotted origin to a shipped file.
+    dotted = install_distribution(
+        monkeypatch, site_packages=tmp_path / "site-packages", package="workerpkg", module="adapter"
+    )
+    content = _package_content()
+    content["configuration"]["source"]["adapter"] = f"{dotted}:WheelAdapter" if declare_class else dotted
+
+    plan = _plan(parse_configuration_package(content), tmp_path)
+
+    module = importlib.import_module(dotted)
+    assert plan.source is not None
+    assert plan.source.adapter_class is module.WheelAdapter
+    assert set(plan.source.models) == {"BuiltinTag", "LocationSite"}
+    assert issubclass(plan.source.models["BuiltinTag"], module.WheelModel)
+    assert spy.branches == ["main"]
+
+
+def test_an_entry_point_source_with_an_infrahub_destination_may_execute(
+    spy: _SnapshotSpy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An entry point is distribution metadata, so it needs no separate provenance check.
     from tests.runtime_schema.installed_source_adapter import InstalledSourceAdapter, InstalledSourceModel
 
-    monkeypatch.setattr(
-        "infrahub_sync.plugin_loader.packages_distributions",
-        lambda: {"tests": ["a-plugin-distribution"]},
-    )
     monkeypatch.setattr(
         "infrahub_sync.plugin_loader.entry_points",
         lambda: _EntryPoints(
@@ -428,13 +434,12 @@ def test_a_non_bundled_installed_source_with_an_infrahub_destination_may_execute
         ),
     )
     content = _package_content()
-    content["configuration"]["source"]["adapter"] = source_adapter
+    content["configuration"]["source"]["adapter"] = "installed_source_entry_point"
 
     plan = _plan(parse_configuration_package(content), tmp_path)
 
     assert plan.source is not None
     assert plan.source.adapter_class is InstalledSourceAdapter
-    assert set(plan.source.models) == {"BuiltinTag", "LocationSite"}
     assert issubclass(plan.source.models["BuiltinTag"], InstalledSourceModel)
     assert spy.branches == ["main"]
 
