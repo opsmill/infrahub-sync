@@ -250,6 +250,54 @@ def test_an_attribute_kind_outside_the_closed_table_refuses_before_extraction() 
 
 
 @pytest.mark.parametrize(
+    "default_value",
+    [
+        pytest.param('a"b', id="double-quote"),
+        pytest.param("a'b", id="single-quote"),
+        pytest.param("a\"'b", id="both-quotes"),
+        pytest.param("a\nb", id="newline"),
+        pytest.param("a\\b", id="backslash"),
+        pytest.param("a\tb", id="tab"),
+        pytest.param("a\rb", id="carriage-return"),
+        pytest.param("", id="empty"),
+        pytest.param("caf\u00e9", id="non-ascii"),
+        pytest.param("\x00", id="null-byte"),
+    ],
+)
+def test_a_string_default_matches_the_generator_exactly(tmp_path: Path, default_value: str) -> None:
+    # A default is inside the declared closed domain, so parity has to hold for every
+    # string a destination can declare — not only the ones that need no escaping.
+    node = NodeSchema(
+        name="Device",
+        namespace="Infra",
+        attributes=[
+            AttributeSchema(name="name", kind=AttributeKind.TEXT, unique=True),
+            AttributeSchema(name="label", kind=AttributeKind.TEXT, optional=True, default_value=default_value),
+        ],
+    )
+    configuration = SyncConfig(
+        name="string-default",
+        source=SyncAdapter(name="netbox"),
+        destination=SyncAdapter(name="infrahub"),
+        schema_mapping=[
+            SchemaMappingModel(
+                name="InfraDevice",
+                fields=[SchemaMappingField(name="name"), SchemaMappingField(name="label")],
+            )
+        ],
+    )
+    schema: SchemaMapping = {node.kind: node}
+
+    runtime = _runtime_models(configuration, schema, InfrahubModel)
+    generated = _generated_models(
+        SyncInstance(**configuration.model_dump(), directory=str(tmp_path)), schema, tmp_path, "default"
+    )
+
+    assert runtime["InfraDevice"].model_fields["label"].default == default_value
+    assert _describe(runtime["InfraDevice"]) == _describe(generated["InfraDevice"])
+
+
+@pytest.mark.parametrize(
     ("snapshot_name", "example_name"),
     [("netbox_example_schema.json", "from-netbox"), ("custom_example_schema.json", "custom-example")],
 )
