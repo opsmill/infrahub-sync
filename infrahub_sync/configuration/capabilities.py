@@ -309,16 +309,14 @@ def _build_schema_snapshot(schema: object) -> dict[str, Any]:
         if not isinstance(kind, str):
             raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
         snapshot[kind] = {
-            "human_friendly_id": list(getattr(node, "human_friendly_id", None) or ()),
-            "uniqueness_constraints": [
-                list(constraint) for constraint in getattr(node, "uniqueness_constraints", None) or ()
-            ],
+            "human_friendly_id": _optional_string_path(getattr(node, "human_friendly_id", None)),
+            "uniqueness_constraints": _optional_string_paths(getattr(node, "uniqueness_constraints", None)),
             "attributes": {
                 attribute.name: {
                     "kind": _member_text(attribute.kind),
-                    "optional": bool(attribute.optional),
+                    "optional": _exact_bool(attribute.optional),
                     "default_value": _json_native_default(attribute.default_value),
-                    "unique": bool(attribute.unique),
+                    "unique": _exact_bool(attribute.unique),
                 }
                 for attribute in getattr(node, "attributes", ()) or ()
             },
@@ -326,7 +324,7 @@ def _build_schema_snapshot(schema: object) -> dict[str, Any]:
                 relationship.name: {
                     "peer": relationship.peer,
                     "cardinality": _member_text(relationship.cardinality),
-                    "optional": bool(relationship.optional),
+                    "optional": _exact_bool(relationship.optional),
                     "kind": _member_text(relationship.kind),
                 }
                 for relationship in getattr(node, "relationships", ()) or ()
@@ -334,6 +332,43 @@ def _build_schema_snapshot(schema: object) -> dict[str, Any]:
         }
     _require_usable_snapshot(snapshot)
     return snapshot
+
+
+def _optional_string_path(value: object) -> list[str]:
+    """Copy an optional SDK component path without coercing malformed containers."""
+    if value is None:
+        return []
+    return _string_path(value)
+
+
+def _optional_string_paths(value: object) -> list[list[str]]:
+    """Copy optional SDK component paths without coercing malformed containers."""
+    if value is None:
+        return []
+    if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
+        raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
+    return [_string_path(path) for path in value]
+
+
+def _string_path(value: object) -> list[str]:
+    """Copy one non-string SDK sequence containing only string components."""
+    if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
+        raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
+    components: list[str] = []
+    for component in value:
+        if not isinstance(component, str):
+            raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
+        components.append(component)
+    return components
+
+
+def _exact_bool(value: object) -> bool:
+    """Return an SDK flag only when it is an exact boolean."""
+    if value is True:
+        return True
+    if value is False:
+        return False
+    raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
 
 
 def _member_text(value: object) -> object:

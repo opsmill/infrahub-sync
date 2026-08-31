@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -79,6 +80,64 @@ def test_a_non_string_identity_path_is_refused_at_the_adapter_boundary() -> None
     # into the snapshot, and everything derived from one.
     with pytest.raises(DestinationSchemaReadError):
         capabilities_module._build_schema_snapshot({"InfraDevice": _NonStringPathNode()})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param("human_friendly_id", "name__value", id="human-friendly-id"),
+        pytest.param("uniqueness_constraints", "name__value", id="constraint-collection"),
+        pytest.param("uniqueness_constraints", ["name__value"], id="constraint-path"),
+    ],
+)
+def test_a_scalar_string_identity_path_container_is_refused_at_the_adapter_boundary(field: str, value: object) -> None:
+    node = SimpleNamespace(
+        human_friendly_id=(),
+        uniqueness_constraints=(),
+        attributes=(),
+        relationships=(),
+    )
+    setattr(node, field, value)
+
+    with pytest.raises(DestinationSchemaReadError) as caught:
+        capabilities_module._build_schema_snapshot({"InfraDevice": node})
+
+    assert caught.value.reason == "rejected"
+
+
+@pytest.mark.parametrize(
+    ("member_group", "member"),
+    [
+        pytest.param(
+            "attributes",
+            SimpleNamespace(name="name", kind="Text", optional="false", default_value=None, unique=False),
+            id="attribute-optional",
+        ),
+        pytest.param(
+            "attributes",
+            SimpleNamespace(name="name", kind="Text", optional=False, default_value=None, unique=1),
+            id="attribute-unique",
+        ),
+        pytest.param(
+            "relationships",
+            SimpleNamespace(name="site", peer="LocationSite", cardinality="one", optional="false", kind="Attribute"),
+            id="relationship-optional",
+        ),
+    ],
+)
+def test_a_non_boolean_member_flag_is_refused_at_the_adapter_boundary(member_group: str, member: object) -> None:
+    node = SimpleNamespace(
+        human_friendly_id=(),
+        uniqueness_constraints=(),
+        attributes=(),
+        relationships=(),
+    )
+    setattr(node, member_group, (member,))
+
+    with pytest.raises(DestinationSchemaReadError) as caught:
+        capabilities_module._build_schema_snapshot({"InfraDevice": node})
+
+    assert caught.value.reason == "rejected"
 
 
 class _NonFiniteDefaultAttribute:
