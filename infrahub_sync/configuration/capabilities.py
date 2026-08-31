@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -27,6 +28,10 @@ _SCHEMA_READ_REASON = re.compile(r"^[a-z]{1,32}$")
 _ADAPTER_NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
 _ADAPTER_ROLES: frozenset[AdapterRole] = frozenset({"source", "destination"})
 _WRITE_OPERATIONS: frozenset[WriteOperation] = frozenset({"create", "update", "delete"})
+# The Unicode top-level categories a schema member name may not draw from: "Other"
+# (control, format, surrogate, private-use, unassigned) and "Separator" (spaces, line and
+# paragraph separators).
+_UNUSABLE_NAME_CATEGORIES = frozenset("CZ")
 
 
 class DestinationSchemaReadError(Exception):
@@ -345,6 +350,20 @@ def _relationship_shape(relationship: Any) -> dict[str, Any]:
     }
 
 
+def _is_usable_member_name(name: object) -> bool:
+    """Whether a name is text that means one member everywhere Sync carries it.
+
+    Non-empty, and no character in a Unicode "Other" category (Cc, Cf, Cs, Co, Cn) or a
+    Unicode "Separator" category (Zs, Zl, Zp). ``str.isprintable()`` is deliberately not
+    the rule: it admits U+0020, so ``"bad name"`` would pass — and as an optional unmapped
+    attribute such a name is compatible growth that never changes the consumed-semantics
+    fingerprint, so no later check would look at it again.
+    """
+    if not isinstance(name, str) or not name:
+        return False
+    return not any(unicodedata.category(character)[0] in _UNUSABLE_NAME_CATEGORIES for character in name)
+
+
 def _collected_members(
     members: Any,
     *,
@@ -362,14 +381,14 @@ def _collected_members(
     response this adapter cannot read rather than a choice to make.
 
     A member name also becomes a model field name, a plan payload key, and text in logs and
-    refusals, so a name carrying control, format, or separator characters — or no name at
-    all — is refused here for the same reason: it is not a name Sync can carry through to
-    those places intact.
+    refusals, so a name that is not usable text — see :func:`_is_usable_member_name` — is
+    refused here for the same reason: it is not a name Sync can carry through to those
+    places intact.
     """
     collected: dict[str, Any] = {}
     for member in members or ():
         name = member.name
-        if not isinstance(name, str) or not name or not name.isprintable():
+        if not _is_usable_member_name(name):
             raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
         if name in claimed:
             raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")

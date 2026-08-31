@@ -715,3 +715,39 @@ def test_an_ambiguous_live_member_name_refuses_before_any_write(
     assert "rejected" in message
     for leaked in ("\x00", "\x1b", INFRAHUB_CANARY, NETBOX_CANARY):
         assert leaked not in message
+
+
+def test_a_separator_bearing_unmapped_member_refuses_before_any_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The compatible-growth path: an unusable name the fingerprint would never notice.
+
+    `"bad name"` is printable, and as an optional unmapped attribute it is excluded from
+    the consumed-semantics projection — so the recorded fingerprint still matches and the
+    drift guard has nothing to compare. The adapter boundary is the only place that can
+    refuse it, and it must, before the source or a write-capable destination is reached.
+    """
+    harness = _harness(tmp_path, monkeypatch)
+    harness.spy.raw_schema = {
+        "BuiltinTag": _live_node(
+            attributes=[
+                {"name": "name", "kind": AttributeKind.TEXT, "optional": False, "unique": True},
+                {"name": "description", "kind": AttributeKind.TEXT, "optional": True},
+                {"name": "bad name", "kind": AttributeKind.TEXT, "optional": True},
+            ],
+            relationships=[],
+        ),
+        "LocationSite": _live_node(
+            attributes=[{"name": "name", "kind": AttributeKind.TEXT, "optional": False, "unique": True}],
+            relationships=[
+                {"name": "tags", "peer": "BuiltinTag", "cardinality": "many", "optional": True, "kind": "Generic"}
+            ],
+        ),
+    }
+    retained = (harness.run_dir / PLAN_DIR_NAME / MANIFEST_FILE_NAME).read_bytes()
+
+    with pytest.raises(RuntimeError, match="rejected"):
+        _apply(harness)
+
+    assert harness.calls == []
+    assert (harness.run_dir / PLAN_DIR_NAME / MANIFEST_FILE_NAME).read_bytes() == retained
