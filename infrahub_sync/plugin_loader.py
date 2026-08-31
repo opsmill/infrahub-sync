@@ -29,6 +29,8 @@ from diffsync import Adapter, DiffSyncModel
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from infrahub_sync import SyncAdapter, SyncConfig
+
 
 class PluginLoadError(Exception):
     """Exception raised when a plugin cannot be loaded."""
@@ -479,3 +481,32 @@ class PluginLoader:
                     return cls
 
         return None
+
+
+def resolve_installed_adapter_class(configuration: SyncConfig, adapter: SyncAdapter) -> type[Any]:
+    """Resolve one side's adapter class from installed code only.
+
+    The registered worker's resolution seam: dotted path, entry point, or built-in
+    module, through the same loader the generated wrapper would have used. It never
+    reads the configuration directory, so generated Python cannot reach a registered run.
+
+    Raises:
+        PluginLoadError: no installed class answers the declared adapter.
+    """
+    loader = PluginLoader.from_env_and_args(adapter_paths=configuration.adapters_path or [])
+    return loader.resolve(adapter.adapter or adapter.name)
+
+
+def resolve_installed_model_base(configuration: SyncConfig, adapter: SyncAdapter) -> type[Any]:
+    """Resolve one side's DiffSync model base from installed code only.
+
+    Uses the spec the generated models file uses — the module half of an explicit
+    adapter spec, otherwise the adapter name — so a runtime-built class derives from the
+    same base a generated one would have.
+
+    Raises:
+        PluginLoadError: no installed class answers the declared adapter.
+    """
+    loader = PluginLoader.from_env_and_args(adapter_paths=configuration.adapters_path or [])
+    spec = adapter.adapter.split(":")[0] if adapter.adapter else adapter.name
+    return loader.resolve(spec, default_class_candidates=("Model",))

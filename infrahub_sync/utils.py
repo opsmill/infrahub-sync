@@ -18,7 +18,7 @@ from infrahub_sync.generator import render_template
 from infrahub_sync.plan.errors import PlanVerificationError
 from infrahub_sync.plan.reader import read_plan_artifact_bytes
 from infrahub_sync.plan.verify import destination_binding_failure
-from infrahub_sync.plugin_loader import PluginLoader, PluginLoadError
+from infrahub_sync.plugin_loader import PluginLoader, PluginLoadError, resolve_installed_adapter_class
 from infrahub_sync.potenda import Potenda
 
 logger = logging.getLogger(__name__)
@@ -105,28 +105,15 @@ def import_adapter(sync_instance: SyncInstance, adapter: SyncAdapter):
             except (ImportError, AttributeError, SyntaxError, TypeError, ValueError, OSError) as exc:
                 logger.warning("Could not load generated adapter from %s: %s", adapter_file_path, exc)
 
-    # Fall back to the plugin loader
+    # Fall back to installed resolution.
     # The "sync" classes could be declared into a separate module
-    adapter_paths = sync_instance.adapters_path or []
-    loader = PluginLoader.from_env_and_args(adapter_paths=adapter_paths)
-
-    # If explicit adapter spec is provided, use it
-    if adapter.adapter:
-        try:
-            # Try loading the explicitly specified adapter
-            adapter_class = loader.resolve(adapter.adapter)
-            logger.debug("Using directly specified adapter class: %s", adapter_class.__name__)
-        except PluginLoadError as exc:
+    try:
+        return resolve_installed_adapter_class(sync_instance, adapter)
+    except PluginLoadError as exc:
+        if adapter.adapter:
             msg = f"Failed to load adapter '{adapter.adapter}': {exc}"
             raise ImportError(msg) from exc
-        else:
-            return adapter_class
-
-    else:
-        try:
-            return loader.resolve(adapter.name)
-        except PluginLoadError:
-            return None
+        return None
 
 
 def get_all_sync(directory: str | None = None) -> list[SyncInstance]:
