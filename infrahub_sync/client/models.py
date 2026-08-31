@@ -318,6 +318,9 @@ class PlanResource(_ResourceModel):
     verification_notes: tuple[str, ...]
     summary: dict[str, Any]
     operations: tuple[dict[str, Any], ...]
+    # The consumed destination-schema semantics a registered plan was computed against, so a
+    # reviewer reads the binding the apply will compare. `None` for an unregistered plan.
+    schema_fingerprint: str | None = None
 
 
 class ResultsResource(_ResourceModel):

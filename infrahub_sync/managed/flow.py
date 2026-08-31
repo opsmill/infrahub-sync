@@ -133,6 +133,7 @@ def _review_document(run_id: str, saved: SavedPlan) -> PlanResource:
         verification_notes=tuple(saved.verification_notes),
         summary=summary.model_dump(mode="json"),
         operations=tuple(operation.model_dump(mode="json") for operation in saved.operations()),
+        schema_fingerprint=saved.manifest.registered_schema_fingerprint,
     )
 
 

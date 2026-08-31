@@ -22,20 +22,24 @@ import pytest
 pytest.importorskip("prefect")
 pytest.importorskip("opsmill_prefect_extras")
 
+from infrahub_sync.client.models import PlanResource
 from infrahub_sync.configuration import ConfigurationPackage, parse_configuration_package
 from infrahub_sync.configuration.capabilities import DestinationSchemaReadError
 from infrahub_sync.configuration.runtime import resolve_runtime_instance
 from infrahub_sync.execution import RunResult
 from infrahub_sync.managed import flow as managed_flow
 from infrahub_sync.managed.flow import managed_sync_run
+from infrahub_sync.managed.service import PLAN_ARTIFACT_ID
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.config_version import resolve_config_version
+from infrahub_sync.plan.review import read_saved_plan
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME, write_plan_artifact
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 from infrahub_sync.runtime_schema import compute_consumed_schema_fingerprint, normalize_destination_schema
 from infrahub_sync.runtime_schema import worker as worker_module
 from tests.configuration.validation_packages import package_data
+from tests.plan.artifact_fixtures import duplicated_key_manifest_bytes
 
 if TYPE_CHECKING:
     from infrahub_sync import SyncInstance
@@ -124,6 +128,7 @@ class _Harness:
     spy: _SnapshotSpy
     run_dir: Path
     instance: SyncInstance
+    projection: Any
 
 
 def _fingerprint(instance: SyncInstance, snapshot: dict[str, Any]) -> str:
@@ -213,6 +218,7 @@ def _harness(
         spy=spy,
         run_dir=run_dir,
         instance=instance,
+        projection=projection,
     )
 
 
@@ -455,24 +461,32 @@ def test_a_reswapped_binding_with_a_repaired_checksum_still_refuses(
     assert harness.calls == []
 
 
-def test_a_duplicate_schema_binding_key_refuses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Hostile: a second key changes what the manifest means, so it stops being approved."""
-    harness = _harness(tmp_path, monkeypatch)
-    drifted = _mutated("BuiltinTag", **{"attributes.name.kind": "Number"})
-    harness.spy.snapshot = drifted
-    plan_dir = harness.run_dir / PLAN_DIR_NAME
-    body = (plan_dir / MANIFEST_FILE_NAME).read_bytes().decode()
-    duplicated = body.replace(
-        '"schema_fingerprint"',
-        f'"schema_fingerprint": "{_fingerprint(harness.instance, drifted)}", "schema_fingerprint"',
-        1,
-    )
-    (plan_dir / MANIFEST_FILE_NAME).write_bytes(duplicated.encode())
+def test_a_duplicate_schema_binding_key_refuses_before_the_schema_is_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hostile: two values for one binding, self-consistent and operator-approved.
 
-    with pytest.raises(RuntimeError):
-        _apply(harness)
+    The checksum is repaired over the collapsed parse and that repaired value is what the
+    operator passes as `expected_checksum`, so neither the artifact checksum nor the
+    approval can catch it. The manifest is refused for being ambiguous, before the live
+    schema is read, before any source is touched, and before execution.
+    """
+    harness = _harness(tmp_path, monkeypatch)
+    plan_dir = harness.run_dir / PLAN_DIR_NAME
+    manifest_path = plan_dir / MANIFEST_FILE_NAME
+    approved = duplicated_key_manifest_bytes(
+        json.loads(manifest_path.read_bytes()),
+        key="schema_fingerprint",
+        first=_fingerprint(harness.instance, _mutated("BuiltinTag", **{"attributes.name.kind": "Number"})),
+        operations_bytes=(plan_dir / OPERATIONS_FILE_NAME).read_bytes(),
+    )
+    manifest_path.write_bytes(approved)
+
+    with pytest.raises(RuntimeError, match="verification failed"):
+        _apply(harness, expected_checksum=json.loads(approved)["plan_checksum"])
 
     assert harness.calls == []
+    assert harness.spy.branches == []
 
 
 # ======================================================================================
@@ -560,3 +574,51 @@ def test_a_failed_schema_read_refuses_with_only_its_short_reason(
     assert INFRAHUB_CANARY not in message
     assert "https://destination.invalid" not in message
     assert harness.calls == []
+
+
+# ======================================================================================
+# AR7 — the binding survives publication
+# ======================================================================================
+
+
+def _published_plan(harness: _Harness) -> PlanResource:
+    """Publish the retained plan through the real review path and read the stored bytes back."""
+    saved = read_saved_plan(sync_name=harness.instance.name, run_id=RUN_ID)
+    managed_flow._publish_plan(harness.projection, RUN_ID, saved, [])
+    stored = harness.projection.lookup_artifact(RUN_ID, PLAN_ARTIFACT_ID)
+    assert stored.value is not None
+    return PlanResource.model_validate_json(stored.value)
+
+
+def test_a_published_registered_plan_carries_its_schema_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reviewer reading the published document sees the semantics the plan is bound to."""
+    harness = _harness(tmp_path, monkeypatch)
+
+    published = _published_plan(harness)
+
+    assert published.schema_fingerprint == _fingerprint(harness.instance, _SNAPSHOT)
+    assert published.checksum == harness.checksum
+    assert published.checksum_ok
+
+
+def test_a_published_unregistered_plan_carries_no_schema_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Legacy publication is unchanged: the field is present and null, like every other optional."""
+    harness = _harness(tmp_path, monkeypatch)
+    write_plan_artifact(
+        run_dir=harness.run_dir.parent / "legacy-run",
+        run_id="legacy-run",
+        config_version=resolve_config_version(harness.instance),
+        source_snapshot=[],
+        deletes_computed=True,
+        operations=[],
+    )
+    saved = read_saved_plan(sync_name=harness.instance.name, run_id="legacy-run")
+
+    document = managed_flow._review_document("legacy-run", saved)
+
+    assert document.schema_fingerprint is None
+    assert json.loads(document.model_dump_json())["schema_fingerprint"] is None

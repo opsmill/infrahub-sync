@@ -17,10 +17,18 @@ from pydantic import ValidationError
 from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.errors import PlanArtifactTornError
 from infrahub_sync.plan.models import PLAN_FORMAT_VERSION, PlanManifest
-from infrahub_sync.plan.reader import load_plan_artifact
-from infrahub_sync.plan.review import read_saved_plan
+from infrahub_sync.plan.reader import load_plan_artifact, read_plan_artifact_bytes
+from infrahub_sync.plan.review import expected_checksum_refusal, read_saved_plan
+from infrahub_sync.plan.verify import verify_plan
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME, write_plan_artifact
-from tests.plan.artifact_fixtures import CONFIG_VERSION, RUN_ID, SYNC_NAME, operation_record, write_artifact
+from tests.plan.artifact_fixtures import (
+    CONFIG_VERSION,
+    RUN_ID,
+    SYNC_NAME,
+    duplicated_key_manifest_bytes,
+    operation_record,
+    write_artifact,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -239,3 +247,66 @@ def test_the_recorded_binding_survives_read_review_and_publication_unchanged(tmp
     # published review renders the same binding the artifact carries.
     assert saved.manifest.model_dump(mode="json")["schema_fingerprint"] == FINGERPRINT
     assert (run_dir / PLAN_DIR_NAME / MANIFEST_FILE_NAME).read_bytes() == before
+
+
+# ======================================================================================
+# A duplicated binding is refused before anything interprets the manifest
+# ======================================================================================
+
+
+def _duplicate_binding(run_dir: Path, *, first: str) -> None:
+    """Rewrite the retained manifest with two `schema_fingerprint` keys and a valid checksum."""
+    plan_dir = run_dir / PLAN_DIR_NAME
+    manifest_path = plan_dir / MANIFEST_FILE_NAME
+    manifest_path.write_bytes(
+        duplicated_key_manifest_bytes(
+            json.loads(manifest_path.read_bytes()),
+            key="schema_fingerprint",
+            first=first,
+            operations_bytes=(plan_dir / OPERATIONS_FILE_NAME).read_bytes(),
+        )
+    )
+
+
+def test_a_duplicated_schema_binding_reads_as_torn_even_with_a_repaired_checksum(tmp_path: Path) -> None:
+    """Two values for one binding make the manifest ambiguous, whatever it hashes to."""
+    run_dir = _run_dir(tmp_path)
+    _write_registered(run_dir)
+    _duplicate_binding(run_dir, first="c" * 64)
+
+    with pytest.raises(PlanArtifactTornError, match="schema_fingerprint"):
+        load_plan_artifact(run_dir)
+
+
+def test_a_duplicated_manifest_key_cannot_be_verified(tmp_path: Path) -> None:
+    """The verifier refuses at its gate, before any field of the manifest is interpreted."""
+    run_dir = _run_dir(tmp_path)
+    _write_registered(run_dir)
+    _duplicate_binding(run_dir, first="c" * 64)
+
+    failures = verify_plan(artifact=read_plan_artifact_bytes(run_dir), run_id=RUN_ID, config_version=CONFIG_VERSION)
+
+    assert [failure.check for failure in failures] == ["format_version"]
+    assert failures[0].found == "no readable, parseable manifest"
+
+
+def test_a_duplicated_manifest_key_cannot_be_hashed_so_no_checksum_approves_it(tmp_path: Path) -> None:
+    """Fails closed: an ambiguous manifest is never the artifact an operator approved."""
+    run_dir = _run_dir(tmp_path)
+    manifest = _write_registered(run_dir)
+    _duplicate_binding(run_dir, first="c" * 64)
+
+    refusal = expected_checksum_refusal(
+        artifact=read_plan_artifact_bytes(run_dir), run_id=RUN_ID, expected=manifest.plan_checksum
+    )
+
+    assert refusal is not None
+    assert "could not be hashed" in refusal.reason
+
+
+def test_the_writer_still_produces_a_manifest_the_strict_loader_accepts(tmp_path: Path) -> None:
+    """Preservation: nothing the writer emits — registered or not — carries a duplicate."""
+    run_dir = _run_dir(tmp_path)
+    _write_registered(run_dir)
+
+    assert load_plan_artifact(run_dir).manifest.registered_schema_fingerprint == FINGERPRINT

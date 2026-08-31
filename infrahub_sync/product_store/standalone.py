@@ -37,6 +37,9 @@ class SavedPlanReviewArtifact(BaseModel):
     verification_notes: tuple[str, ...]
     summary: dict[str, Any]
     operations: tuple[dict[str, Any], ...]
+    # Mirrors `PlanResource`: DB-003 requires the two published documents to be the same
+    # bytes. `None` on this path, which publishes unregistered plans.
+    schema_fingerprint: str | None = None
 
 
 class StandaloneProductRecordError(Exception):
@@ -81,6 +84,7 @@ def _review_document(run_id: str, saved: SavedPlan) -> SavedPlanReviewArtifact:
         verification_notes=tuple(saved.verification_notes),
         summary=saved.summary().model_dump(mode="json"),
         operations=tuple(operation.model_dump(mode="json") for operation in saved.operations()),
+        schema_fingerprint=saved.manifest.registered_schema_fingerprint,
     )
 
 

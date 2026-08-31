@@ -181,6 +181,49 @@ def run_id_listing_text(stored: Sequence[str], *, cache_root: Path) -> str:
     return f"The most recent run identifiers for this sync are: {', '.join(shown)}.{truncation}"
 
 
+class DuplicateManifestKeyError(ValueError):
+    """The manifest's bytes declare one key twice, so what it records is ambiguous.
+
+    Not a member of the plan-artifact taxonomy: it is a decode-level signal, like
+    `json.JSONDecodeError`, that each caller turns into its own typed verdict — a torn
+    artifact for the reader, an unparseable manifest for the verifier's gate.
+    """
+
+
+def _refuse_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Build one JSON object, refusing a key that appears more than once in it."""
+    mapping: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in mapping:
+            msg = f"the manifest declares the key {key!r} more than once"
+            raise DuplicateManifestKeyError(msg)
+        mapping[key] = value
+    return mapping
+
+
+def load_manifest_mapping(manifest_bytes: bytes) -> Any:
+    """Decode the manifest's bytes, refusing a duplicate key before anything reads them.
+
+    `json.loads` keeps the **last** of two duplicate keys and canonical re-encoding collapses
+    them, so a manifest carrying one field twice can be re-checksummed into a self-consistent,
+    operator-approvable artifact whose recorded value depends on decode order. Its bindings
+    are then ambiguous rather than wrong, which no later comparison can detect. Every reader
+    of the manifest goes through this one function so the ambiguity is refused once, before
+    interpretation, rather than resolved differently in two places.
+
+    Applies at every level of the document, not only the top: `object_pairs_hook` runs for
+    each object, so a duplicated key inside `destination_binding` or a snapshot record is
+    refused on the same rule. Operation records keep their ordinary decoding — this is the
+    manifest's loader, not a general JSON policy.
+
+    Raises:
+        DuplicateManifestKeyError: some object in the manifest declares a key twice.
+        json.JSONDecodeError: the bytes are not JSON.
+        UnicodeDecodeError: the bytes are not decodable text.
+    """
+    return json.loads(manifest_bytes, object_pairs_hook=_refuse_duplicate_keys)
+
+
 def _read_optional_bytes(path: Path, *, description: str) -> bytes | None:
     """Return `path`'s bytes, `None` when absent, raising when present but unreadable.
 
@@ -263,7 +306,14 @@ def _parse_manifest(raw: RawPlanArtifact, run_id: str) -> tuple[PlanManifest, di
             found="no manifest",
         )
     try:
-        mapping = json.loads(raw.manifest_bytes)
+        mapping = load_manifest_mapping(raw.manifest_bytes)
+    except DuplicateManifestKeyError as exc:
+        raise _torn(
+            run_id,
+            f"{MANIFEST_FILE_NAME} declares a key more than once, so what it records is ambiguous",
+            expected="each manifest key exactly once",
+            found=str(exc),
+        ) from exc
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise _torn(
             run_id,
