@@ -519,7 +519,7 @@ class ValidationReport:
     destination schema snapshot the schema checks judged — ``None`` whenever no snapshot
     was read: the default path, a non-declaring destination, or a failed read. It is what
     makes "same package, same schema snapshot, same report" auditable rather than
-    asserted, and it is the same projection a run records on its plan.
+    asserted.
     """
 
     config_id: str

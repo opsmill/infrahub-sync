@@ -1,6 +1,6 @@
 """The one compatibility property: a canonical projection of consumed schema semantics.
 
-A plan's schema fingerprint is SHA-256 over this projection. It carries every fact a
+The fingerprint is SHA-256 over this projection. It carries every fact a
 registered configuration consumes — each configured kind, its effective DiffSync
 identifiers, its ordered destination human-friendly ID and uniqueness-constraint
 component paths, every mapped field's model- and write-affecting properties, and the
@@ -10,6 +10,10 @@ because such a field can reject a retained create.
 Everything else is compatible growth: an unmapped kind, an optional or defaulted
 unmapped field, and any difference in snapshot delivery order leave the projection —
 and so the fingerprint — unchanged.
+
+Registered configuration validation and registered worker construction compute this
+today. Recording it on a saved plan, and comparing a plan's recorded value against the
+live schema before an apply writes, is the plan-guard unit that follows this one.
 """
 
 from __future__ import annotations

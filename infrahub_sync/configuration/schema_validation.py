@@ -80,9 +80,9 @@ class DestinationSchemaValidation:
 
     ``schema_fingerprint`` is the consumed-semantics identity of the snapshot the content
     checks actually judged — ``None`` whenever no snapshot was read: a non-declaring
-    destination, an unknown adapter, or a failed read. Validation, worker construction,
-    and apply share this one projection, so a fingerprint reported here is the fingerprint
-    a plan of the same package against the same schema records.
+    destination, an unknown adapter, or a failed read. Validation and registered worker
+    construction compute it through the same projection; recording it on a plan, and
+    comparing it before an apply writes, belong to the plan-guard unit that follows.
     """
 
     findings: tuple[ValidationFinding, ...]
