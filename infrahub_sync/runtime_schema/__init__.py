@@ -18,6 +18,10 @@ from .errors import (
     UnsupportedSchemaSemanticsError,
 )
 from .models import ATTRIBUTE_TYPE_DOMAIN, build_runtime_models, mapped_attribute_kinds
+from .projection import (
+    canonical_consumed_schema_projection,
+    compute_consumed_schema_fingerprint,
+)
 
 __all__ = [
     "ATTRIBUTE_TYPE_DOMAIN",
@@ -32,6 +36,8 @@ __all__ = [
     "UnsupportedDestinationProfileError",
     "UnsupportedSchemaSemanticsError",
     "build_runtime_models",
+    "canonical_consumed_schema_projection",
+    "compute_consumed_schema_fingerprint",
     "mapped_attribute_kinds",
     "normalize_destination_schema",
 ]

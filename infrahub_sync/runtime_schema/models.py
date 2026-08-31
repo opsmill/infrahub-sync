@@ -17,8 +17,6 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
-from diffsync import DiffSyncModel
-
 from infrahub_sync.generator import get_attributes, get_identifiers, has_field, has_node
 
 from .domain import NormalizedAttribute, NormalizedKind, NormalizedRelationship
@@ -27,6 +25,7 @@ from .errors import UnsupportedSchemaSemanticsError
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from diffsync import DiffSyncModel
     from infrahub_sdk.schema import NodeSchema
 
     from infrahub_sync import SyncConfig
