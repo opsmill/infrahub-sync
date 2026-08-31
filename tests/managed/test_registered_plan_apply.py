@@ -19,6 +19,7 @@ from infrahub_sync.managed.flow import managed_sync_run
 from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.writer import write_plan_artifact
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
+from infrahub_sync.runtime_schema import RuntimeModelPlan, RuntimeSideModels
 from tests.configuration.validation_packages import package
 
 FLOW_RUN_ID = "ed4778cb-f2cf-4b1f-a87b-68be37659e93"
@@ -28,7 +29,7 @@ SCHEMA_FINGERPRINT = "c" * 64
 
 def _registered_apply(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, manifest_binding: tuple[str, int, str] | Literal["exact"] | None
-) -> tuple[str, tuple[str, int, str], list[str]]:
+) -> tuple[str, tuple[str, int, str], str, list[str]]:
     """Prepare one bound run and a manifest, with a destination-call sentinel."""
     monkeypatch.setenv("NETBOX_TOKEN", "registered-netbox-canary")
     monkeypatch.setenv("INFRAHUB_API_TOKEN", "registered-infrahub-canary")
@@ -63,7 +64,7 @@ def _registered_apply(
     runtime = resolve_runtime_instance(
         ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path)
     )
-    write_plan_artifact(
+    manifest = write_plan_artifact(
         run_dir=tmp_path / "runs" / runtime.name / run_id,
         run_id=run_id,
         config_version=resolve_config_version(runtime),
@@ -80,7 +81,16 @@ def _registered_apply(
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (managed_flow.logger, False))
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
     monkeypatch.setattr(managed_flow, "_prefect_flow_run_id", lambda: FLOW_RUN_ID)
-    monkeypatch.setattr(managed_flow, "build_runtime_model_plan", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        managed_flow,
+        "build_runtime_model_plan",
+        lambda **_kwargs: RuntimeModelPlan(
+            branch="main",
+            schema_fingerprint=SCHEMA_FINGERPRINT,
+            destination=RuntimeSideModels(adapter_class=object, models={}),
+            source=None,
+        ),
+    )
 
     def destination_forbidden(*_args: object, **_kwargs: object) -> RunResult:
         calls.append("execute-run")
@@ -95,7 +105,7 @@ def _registered_apply(
         )
 
     monkeypatch.setattr(managed_flow, "execute_run", destination_forbidden)
-    return run_id, binding, calls
+    return run_id, binding, manifest.plan_checksum, calls
 
 
 @pytest.mark.parametrize(
@@ -110,15 +120,15 @@ def _registered_apply(
 def test_bound_apply_refuses_nonmatching_manifest_before_destination(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manifest_binding: tuple[str, int, str] | None
 ) -> None:
-    run_id, binding, calls = _registered_apply(tmp_path, monkeypatch, manifest_binding=manifest_binding)
+    run_id, binding, checksum, calls = _registered_apply(tmp_path, monkeypatch, manifest_binding=manifest_binding)
 
     with pytest.raises(RuntimeError, match="registered saved plan binding"):
-        managed_sync_run.fn(run_id, "apply", *binding, expected_checksum="a" * 64, confirm_writes=True)
+        managed_sync_run.fn(run_id, "apply", *binding, expected_checksum=checksum, confirm_writes=True)
 
     assert calls == []
 
 
 def test_bound_apply_accepts_an_exact_manifest_binding(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    run_id, binding, calls = _registered_apply(tmp_path, monkeypatch, manifest_binding="exact")
-    managed_sync_run.fn(run_id, "apply", *binding, expected_checksum="a" * 64, confirm_writes=True)
+    run_id, binding, checksum, calls = _registered_apply(tmp_path, monkeypatch, manifest_binding="exact")
+    managed_sync_run.fn(run_id, "apply", *binding, expected_checksum=checksum, confirm_writes=True)
     assert calls == ["execute-run"]

@@ -1,0 +1,562 @@
+"""AR6/AR8: registered apply compares the live destination schema before any write.
+
+The retained artifact is verified first, its recorded checksum must be the operator's
+approved one, and only then is the live schema read and its consumed-semantics
+fingerprint compared against the one the plan recorded. Every refusal below happens
+before `execute_run` — the one door to a source read or a write-capable destination — so
+the sentinel's empty call list is the "nothing was written" evidence.
+"""
+
+from __future__ import annotations
+
+import copy
+import inspect
+import json
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import pytest
+
+pytest.importorskip("prefect")
+pytest.importorskip("opsmill_prefect_extras")
+
+from infrahub_sync.configuration import ConfigurationPackage, parse_configuration_package
+from infrahub_sync.configuration.capabilities import DestinationSchemaReadError
+from infrahub_sync.configuration.runtime import resolve_runtime_instance
+from infrahub_sync.execution import RunResult
+from infrahub_sync.managed import flow as managed_flow
+from infrahub_sync.managed.flow import managed_sync_run
+from infrahub_sync.plan.canonical import canonical_json_bytes
+from infrahub_sync.plan.checksum import compute_plan_checksum
+from infrahub_sync.plan.config_version import resolve_config_version
+from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME, write_plan_artifact
+from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
+from infrahub_sync.runtime_schema import compute_consumed_schema_fingerprint, normalize_destination_schema
+from infrahub_sync.runtime_schema import worker as worker_module
+from tests.configuration.validation_packages import package_data
+
+if TYPE_CHECKING:
+    from infrahub_sync import SyncInstance
+
+FLOW_RUN_ID = "3f1b0d8c-1c6a-4a1e-9a52-2f8f0c0b7a11"
+WORKER_ID = "6b3a8f21-0d44-4c2f-9d5a-4d1c8e2b7f30"
+RUN_ID = "registered-schema-guard"
+
+# Short, distinctive credential values, so a scan for them in a refusal is unambiguous.
+NETBOX_CANARY = "netbox-schema-guard-canary"
+INFRAHUB_CANARY = "infrahub-schema-guard-canary"
+
+_SNAPSHOT: dict[str, Any] = {
+    "BuiltinTag": {
+        "human_friendly_id": ["name__value"],
+        "uniqueness_constraints": [["name__value"]],
+        "attributes": {
+            "name": {"kind": "Text", "optional": False, "default_value": None, "unique": True},
+            "description": {"kind": "Text", "optional": True, "default_value": None, "unique": False},
+        },
+        "relationships": {},
+    },
+    "LocationSite": {
+        "human_friendly_id": ["name__value"],
+        "uniqueness_constraints": [["name__value"]],
+        "attributes": {"name": {"kind": "Text", "optional": False, "default_value": None, "unique": True}},
+        "relationships": {"tags": {"peer": "BuiltinTag", "cardinality": "many", "optional": True, "kind": "Generic"}},
+    },
+}
+
+_MAPPING = [
+    {
+        "name": "BuiltinTag",
+        "mapping": "extras.tags",
+        "fields": [{"name": "name", "mapping": "name"}, {"name": "description", "mapping": "description"}],
+    },
+    {
+        "name": "LocationSite",
+        "mapping": "dcim.sites",
+        "fields": [{"name": "name", "mapping": "name"}, {"name": "tags", "mapping": "tags", "reference": "BuiltinTag"}],
+    },
+]
+
+
+def _package() -> ConfigurationPackage:
+    content = package_data()
+    content["configuration"]["schema_mapping"] = copy.deepcopy(_MAPPING)
+    return parse_configuration_package(content)
+
+
+def _mutated(kind: str, **changes: object) -> dict[str, Any]:
+    """Return the snapshot with one dotted path per keyword replaced on `kind`."""
+    snapshot = copy.deepcopy(_SNAPSHOT)
+    for path, value in changes.items():
+        target: Any = snapshot[kind]
+        *parents, leaf = path.split(".")
+        for step in parents:
+            target = target[step]
+        target[leaf] = value
+    return snapshot
+
+
+class _SnapshotSpy:
+    """The worker's one schema read, answering with whatever the case installed."""
+
+    def __init__(self) -> None:
+        self.snapshot: dict[str, Any] = copy.deepcopy(_SNAPSHOT)
+        self.failure: DestinationSchemaReadError | None = None
+        self.branches: list[str] = []
+
+    def __call__(self, package: ConfigurationPackage, branch: str) -> dict[str, Any]:
+        del package
+        self.branches.append(branch)
+        if self.failure is not None:
+            raise self.failure
+        return self.snapshot
+
+
+@dataclass
+class _Harness:
+    """One registered run whose retained plan is ready to apply."""
+
+    binding: tuple[str, int, str]
+    checksum: str
+    calls: list[dict[str, Any]]
+    spy: _SnapshotSpy
+    run_dir: Path
+    instance: SyncInstance
+
+
+def _fingerprint(instance: SyncInstance, snapshot: dict[str, Any]) -> str:
+    return compute_consumed_schema_fingerprint(configuration=instance, snapshot=normalize_destination_schema(snapshot))
+
+
+def _harness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    recorded_snapshot: dict[str, Any] | None = None,
+    schema_fingerprint: str | None = None,
+) -> _Harness:
+    """Register one configuration, retain one plan against it, and disarm execution."""
+    monkeypatch.setenv("NETBOX_TOKEN", NETBOX_CANARY)
+    monkeypatch.setenv("INFRAHUB_API_TOKEN", INFRAHUB_CANARY)
+    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
+    monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
+
+    package = _package()
+    projection = local_product_projection(tmp_path / "product")
+    registered = projection.create_configuration(package)
+    binding = (registered.config_id, registered.registry_version, registered.package_checksum)
+    projection.create_run(
+        ProductRun(
+            run_id=RUN_ID,
+            operation="apply",
+            configuration_reference=f"{binding[0]}@{binding[1]}",
+            config_id=binding[0],
+            registry_version=binding[1],
+            package_checksum=binding[2],
+            actor="owner",
+            started_at=datetime.now(timezone.utc),
+            phase="planned",
+        )
+    )
+    projection.add_prefect_execution(
+        RUN_ID,
+        PrefectExecutionLink(
+            flow_run_id=FLOW_RUN_ID, purpose="apply", attempt=1, submitted_at=datetime.now(timezone.utc)
+        ),
+    )
+
+    instance = resolve_runtime_instance(package, directory=str(tmp_path))
+    recorded = (
+        schema_fingerprint
+        if schema_fingerprint is not None
+        else _fingerprint(instance, recorded_snapshot if recorded_snapshot is not None else _SNAPSHOT)
+    )
+    run_dir = tmp_path / "runs" / instance.name / RUN_ID
+    manifest = write_plan_artifact(
+        run_dir=run_dir,
+        run_id=RUN_ID,
+        config_version=resolve_config_version(instance),
+        source_snapshot=[],
+        deletes_computed=True,
+        operations=[],
+        configuration_binding=binding,
+        schema_fingerprint=recorded,
+    )
+
+    spy = _SnapshotSpy()
+    monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", spy)
+    monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(managed_flow, "_run_logger", lambda: (managed_flow.logger, False))
+    monkeypatch.setattr(managed_flow, "_prefect_flow_run_id", lambda: FLOW_RUN_ID)
+
+    calls: list[dict[str, Any]] = []
+
+    def _execution_sentinel(*_args: object, **kwargs: Any) -> RunResult:  # noqa: ANN401 — the stage's own kwargs
+        calls.append(kwargs)
+        return RunResult(
+            sync_name=instance.name,
+            operation="apply",
+            run_id=RUN_ID,
+            status="no-change",
+            changed=False,
+            summary={"create": 0, "update": 0, "delete": 0},
+            artifact_path=str(run_dir),
+        )
+
+    monkeypatch.setattr(managed_flow, "execute_run", _execution_sentinel)
+    return _Harness(
+        binding=binding,
+        checksum=manifest.plan_checksum,
+        calls=calls,
+        spy=spy,
+        run_dir=run_dir,
+        instance=instance,
+    )
+
+
+def _apply(harness: _Harness, *, expected_checksum: str | None = None) -> dict[str, Any]:
+    return managed_sync_run.fn(
+        RUN_ID,
+        "apply",
+        *harness.binding,
+        expected_checksum=harness.checksum if expected_checksum is None else expected_checksum,
+        confirm_writes=True,
+    )
+
+
+def _rewrite_manifest(harness: _Harness, mapping: dict[str, Any], *, recompute_checksum: bool) -> None:
+    """Replace the retained manifest's bytes, optionally repairing its own checksum."""
+    plan_dir = harness.run_dir / PLAN_DIR_NAME
+    if recompute_checksum:
+        mapping["plan_checksum"] = compute_plan_checksum(mapping, (plan_dir / OPERATIONS_FILE_NAME).read_bytes())
+    (plan_dir / MANIFEST_FILE_NAME).write_bytes(canonical_json_bytes(mapping))
+
+
+def _retained_mapping(harness: _Harness) -> dict[str, Any]:
+    return json.loads((harness.run_dir / PLAN_DIR_NAME / MANIFEST_FILE_NAME).read_bytes())
+
+
+# ======================================================================================
+# Compatible: the retained plan applies
+# ======================================================================================
+
+
+def test_an_unchanged_consumed_schema_applies_the_retained_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = _harness(tmp_path, monkeypatch)
+
+    result = _apply(harness)
+
+    assert result["outcome"] == "no-change"
+    assert len(harness.calls) == 1
+    # The guard read the live schema on the run's effective destination branch.
+    assert harness.spy.branches == ["main"]
+
+
+@pytest.mark.parametrize(
+    "live",
+    [
+        pytest.param(
+            {
+                **_SNAPSHOT,
+                "InfraDevice": {
+                    "human_friendly_id": ["name__value"],
+                    "uniqueness_constraints": [],
+                    "attributes": {"name": {"kind": "Text", "optional": True, "default_value": None, "unique": False}},
+                    "relationships": {},
+                },
+            },
+            id="unmapped-kind-added",
+        ),
+        pytest.param(
+            _mutated(
+                "BuiltinTag",
+                **{"attributes.colour": {"kind": "Text", "optional": True, "default_value": None, "unique": False}},
+            ),
+            id="optional-unmapped-attribute-added",
+        ),
+        pytest.param(
+            _mutated(
+                "BuiltinTag",
+                **{"attributes.weight": {"kind": "Number", "optional": False, "default_value": 1, "unique": False}},
+            ),
+            id="defaulted-unmapped-attribute-added",
+        ),
+        pytest.param({kind: _SNAPSHOT[kind] for kind in reversed(list(_SNAPSHOT))}, id="kind-delivery-order"),
+    ],
+)
+def test_compatible_destination_growth_applies_the_retained_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, live: dict[str, Any]
+) -> None:
+    """Growth the configuration does not consume needs no new plan and no restart."""
+    harness = _harness(tmp_path, monkeypatch)
+    harness.spy.snapshot = live
+
+    _apply(harness)
+
+    assert len(harness.calls) == 1
+
+
+# ======================================================================================
+# Incompatible: the retained plan refuses before any write
+# ======================================================================================
+
+
+@pytest.mark.parametrize(
+    "live",
+    [
+        pytest.param(_mutated("BuiltinTag", **{"attributes.name.kind": "Number"}), id="mapped-attribute-kind"),
+        pytest.param(_mutated("BuiltinTag", **{"attributes.name.optional": True}), id="mapped-attribute-optional"),
+        pytest.param(_mutated("BuiltinTag", **{"attributes.name.unique": False}), id="mapped-attribute-uniqueness"),
+        pytest.param(
+            _mutated("BuiltinTag", **{"attributes.description.default_value": "unset"}),
+            id="mapped-attribute-default",
+        ),
+        pytest.param(
+            _mutated("LocationSite", **{"relationships.tags.cardinality": "one"}),
+            id="mapped-relationship-cardinality",
+        ),
+        pytest.param(
+            _mutated("LocationSite", **{"relationships.tags.peer": "BuiltinStatus"}),
+            id="mapped-relationship-peer",
+        ),
+        pytest.param(
+            _mutated("LocationSite", **{"relationships.tags.kind": "Attribute"}),
+            id="mapped-relationship-kind",
+        ),
+        pytest.param(
+            _mutated("BuiltinTag", human_friendly_id=["description__value"]),
+            id="destination-human-friendly-id",
+        ),
+        pytest.param(
+            _mutated("BuiltinTag", uniqueness_constraints=[["name__value", "description__value"]]),
+            id="uniqueness-constraint",
+        ),
+        pytest.param(
+            _mutated(
+                "BuiltinTag",
+                **{"attributes.owner": {"kind": "Text", "optional": False, "default_value": None, "unique": False}},
+            ),
+            id="mandatory-unmapped-attribute-added",
+        ),
+    ],
+)
+def test_an_incompatible_consumed_schema_change_refuses_before_any_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, live: dict[str, Any]
+) -> None:
+    harness = _harness(tmp_path, monkeypatch)
+    harness.spy.snapshot = live
+    retained = (harness.run_dir / PLAN_DIR_NAME / MANIFEST_FILE_NAME).read_bytes()
+
+    with pytest.raises(RuntimeError, match="PlanSchemaChangedError"):
+        _apply(harness)
+
+    assert harness.calls == []
+    # No source was read, no destination was written, and the artifact is untouched.
+    assert (harness.run_dir / PLAN_DIR_NAME / MANIFEST_FILE_NAME).read_bytes() == retained
+
+
+def test_the_refusal_names_both_fingerprints_and_the_remedy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    harness = _harness(tmp_path, monkeypatch)
+    live = _mutated("BuiltinTag", **{"attributes.name.kind": "Number"})
+    harness.spy.snapshot = live
+
+    with pytest.raises(RuntimeError) as caught:
+        _apply(harness)
+
+    message = str(caught.value)
+    assert _fingerprint(harness.instance, _SNAPSHOT) in message
+    assert _fingerprint(harness.instance, live) in message
+    assert "review" in message
+    assert "new plan" in message
+
+
+def test_the_refusal_carries_no_credential_or_endpoint_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cross-entry: credential resolution runs before the guard; nothing of it escapes."""
+    harness = _harness(tmp_path, monkeypatch)
+    harness.spy.snapshot = _mutated("BuiltinTag", **{"attributes.name.kind": "Number"})
+
+    with pytest.raises(RuntimeError) as caught:
+        _apply(harness)
+
+    rendered = repr(caught.value.args) + str(caught.value)
+    for secret in (NETBOX_CANARY, INFRAHUB_CANARY):
+        assert secret not in rendered
+
+
+# ======================================================================================
+# The schema binding itself: missing, malformed, edited, duplicated
+# ======================================================================================
+
+
+def test_a_registered_plan_with_no_schema_binding_refuses_before_any_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = _harness(tmp_path, monkeypatch)
+    mapping = _retained_mapping(harness)
+    del mapping["schema_fingerprint"]
+    _rewrite_manifest(harness, mapping, recompute_checksum=True)
+
+    with pytest.raises(RuntimeError):
+        _apply(harness, expected_checksum=_retained_mapping(harness)["plan_checksum"])
+
+    assert harness.calls == []
+
+
+def test_a_registered_plan_with_a_malformed_schema_binding_refuses_before_any_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The legacy 12-hex kind-name subhash is not a consumed-semantics fingerprint."""
+    harness = _harness(tmp_path, monkeypatch)
+    mapping = _retained_mapping(harness)
+    mapping["schema_fingerprint"] = "5f2c9b1e7a4d"
+    _rewrite_manifest(harness, mapping, recompute_checksum=True)
+
+    with pytest.raises(RuntimeError):
+        _apply(harness, expected_checksum=_retained_mapping(harness)["plan_checksum"])
+
+    assert harness.calls == []
+
+
+def test_a_schema_binding_edited_after_review_fails_the_artifact_checksum(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hostile: swapping the recorded binding leaves the artifact self-inconsistent."""
+    harness = _harness(tmp_path, monkeypatch)
+    drifted = _mutated("BuiltinTag", **{"attributes.name.kind": "Number"})
+    harness.spy.snapshot = drifted
+    mapping = _retained_mapping(harness)
+    mapping["schema_fingerprint"] = _fingerprint(harness.instance, drifted)
+    _rewrite_manifest(harness, mapping, recompute_checksum=False)
+
+    with pytest.raises(RuntimeError, match="verification failed"):
+        _apply(harness)
+
+    assert harness.calls == []
+
+
+def test_a_reswapped_binding_with_a_repaired_checksum_still_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Checksum closure: repairing `plan_checksum` breaks the operator's approved value."""
+    harness = _harness(tmp_path, monkeypatch)
+    drifted = _mutated("BuiltinTag", **{"attributes.name.kind": "Number"})
+    harness.spy.snapshot = drifted
+    mapping = _retained_mapping(harness)
+    mapping["schema_fingerprint"] = _fingerprint(harness.instance, drifted)
+    _rewrite_manifest(harness, mapping, recompute_checksum=True)
+
+    with pytest.raises(RuntimeError, match="checksum"):
+        _apply(harness)
+
+    assert harness.calls == []
+
+
+def test_a_duplicate_schema_binding_key_refuses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hostile: a second key changes what the manifest means, so it stops being approved."""
+    harness = _harness(tmp_path, monkeypatch)
+    drifted = _mutated("BuiltinTag", **{"attributes.name.kind": "Number"})
+    harness.spy.snapshot = drifted
+    plan_dir = harness.run_dir / PLAN_DIR_NAME
+    body = (plan_dir / MANIFEST_FILE_NAME).read_bytes().decode()
+    duplicated = body.replace(
+        '"schema_fingerprint"',
+        f'"schema_fingerprint": "{_fingerprint(harness.instance, drifted)}", "schema_fingerprint"',
+        1,
+    )
+    (plan_dir / MANIFEST_FILE_NAME).write_bytes(duplicated.encode())
+
+    with pytest.raises(RuntimeError):
+        _apply(harness)
+
+    assert harness.calls == []
+
+
+# ======================================================================================
+# Checksum closure across the two artifact reads
+# ======================================================================================
+
+
+def test_the_early_gate_requires_the_operator_approved_checksum(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = _harness(tmp_path, monkeypatch)
+
+    with pytest.raises(RuntimeError, match="checksum"):
+        _apply(harness, expected_checksum="a" * 64)
+
+    assert harness.calls == []
+
+
+def test_the_later_artifact_read_is_given_the_same_approved_checksum(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One operator value gates both reads, so bytes swapped between them cannot apply."""
+    harness = _harness(tmp_path, monkeypatch)
+
+    _apply(harness)
+
+    assert harness.calls[0]["expected_checksum"] == harness.checksum
+
+
+def test_no_worker_parameter_offers_a_schema_override() -> None:
+    """AR8: no flag or argument reaches the guard's decision."""
+    assert tuple(inspect.signature(managed_sync_run.fn).parameters) == (
+        "run_id",
+        "stage",
+        "config_id",
+        "registry_version",
+        "package_checksum",
+        "branch",
+        "expected_checksum",
+        "confirm_writes",
+    )
+
+
+# ======================================================================================
+# Unusable live schema
+# ======================================================================================
+
+
+@pytest.mark.parametrize(
+    "live",
+    [
+        pytest.param(_mutated("BuiltinTag", **{"attributes.name.kind": "Unicorn"}), id="unsupported-attribute-kind"),
+        pytest.param(
+            _mutated("LocationSite", **{"relationships.tags.cardinality": "several"}), id="unsupported-cardinality"
+        ),
+        pytest.param({kind: value for kind, value in _SNAPSHOT.items() if kind != "LocationSite"}, id="missing-kind"),
+    ],
+)
+def test_an_unusable_live_schema_refuses_before_any_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, live: dict[str, Any]
+) -> None:
+    harness = _harness(tmp_path, monkeypatch)
+    harness.spy.snapshot = live
+
+    with pytest.raises(RuntimeError):
+        _apply(harness)
+
+    assert harness.calls == []
+
+
+def test_a_failed_schema_read_refuses_with_only_its_short_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cross-entry: hostile accessor text stays inside the adapter boundary."""
+    harness = _harness(tmp_path, monkeypatch)
+    harness.spy.failure = DestinationSchemaReadError(
+        f"\x07token={INFRAHUB_CANARY} at https://destination.invalid/graphql", reason="unauthorized"
+    )
+
+    with pytest.raises(RuntimeError) as caught:
+        _apply(harness)
+
+    message = str(caught.value)
+    assert "unauthorized" in message
+    assert INFRAHUB_CANARY not in message
+    assert "https://destination.invalid" not in message
+    assert harness.calls == []

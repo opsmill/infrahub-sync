@@ -270,6 +270,23 @@ class PlanVerificationError(PlanArtifactError):
     next_action = "Address each failed check named above; every failure carries its own next action."
 
 
+class PlanSchemaChangedError(PlanArtifactError):
+    """The destination no longer declares the schema semantics the plan was computed against.
+
+    Raised before the apply path constructs a write-capable destination or reads a source,
+    so nothing is written and the artifact is untouched. The condition is inequality of the
+    consumed-semantics fingerprint alone, which is why the remedy is the same for every
+    change that can reach it: the plan a human reviewed no longer means what it meant.
+    Destination growth the configuration does not consume leaves the fingerprint unchanged
+    and never reaches this class.
+    """
+
+    next_action = (
+        "Create a new plan for this configuration and review it: the recorded operations were "
+        "derived from schema semantics the destination no longer declares."
+    )
+
+
 class OperationApplyFailedError(PlanArtifactError):
     """The destination rejected an operation, or transport failed while applying it (AD027).
 

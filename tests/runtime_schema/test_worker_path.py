@@ -220,6 +220,7 @@ def test_a_registered_stage_reaches_execution_with_its_models_bound(
     monkeypatch.setattr(managed_flow, "execute_run", _record)
     monkeypatch.setattr(managed_flow, "_publish_plan", _skip)
     monkeypatch.setattr(managed_flow, "_verify_registered_apply", _skip)
+    monkeypatch.setattr(managed_flow, "_require_planned_schema", _skip)
 
     result, _ = managed_flow._execute_stage(
         "run-composed-sync",

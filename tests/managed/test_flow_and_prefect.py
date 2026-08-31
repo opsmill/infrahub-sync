@@ -493,6 +493,7 @@ def test_managed_apply_failure_retains_partial_write_evidence(
     monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(managed_flow, "_require_planned_schema", lambda **_kwargs: None)
 
     def fail_apply(*_args: object, **_kwargs: object) -> NoReturn:
         msg = "destination rejected operation"
@@ -566,6 +567,7 @@ def test_success_writeback_persistence_failure_is_not_recorded_as_business_failu
     monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(managed_flow, "_require_planned_schema", lambda **_kwargs: None)
     monkeypatch.setattr(managed_flow, "_plan", lambda *_args, **_kwargs: saved)
     commits: list[str] = []
 
@@ -602,6 +604,7 @@ def test_success_writeback_commit_error_preserves_reread_committed_result(
     monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(managed_flow, "_require_planned_schema", lambda **_kwargs: None)
     monkeypatch.setattr(managed_flow, "_plan", lambda *_args, **_kwargs: saved)
     commit = projection.commit_claimed_execution
 
@@ -635,6 +638,7 @@ def test_managed_confirmed_sync_retains_the_semantic_sync_operation(
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "bounded_run_lock", lambda *_args, **_kwargs: nullcontext())
     monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(managed_flow, "_require_planned_schema", lambda **_kwargs: None)
 
     def core(_instance: object, *, operation: str, **_kwargs: object) -> SavedPlan | RunResult:
         if operation in {"plan", "verify"}:
@@ -678,6 +682,7 @@ def test_managed_plan_worker_updates_the_api_created_run_and_publishes_review(
     monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(managed_flow, "_require_planned_schema", lambda **_kwargs: None)
 
     def plan(_instance, *, run_id: str, branch: str | None, composed_sync: bool):  # noqa: ARG001
         seen.append(run_id)
@@ -752,6 +757,7 @@ def test_confirmed_managed_sync_calls_plan_verify_apply_in_order_on_one_run(
     monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(managed_flow, "_require_planned_schema", lambda **_kwargs: None)
 
     def plan(_instance, *, run_id: str, branch: str | None, composed_sync: bool):  # noqa: ARG001
         calls.append(("plan", run_id))

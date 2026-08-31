@@ -37,7 +37,8 @@ from infrahub_sync.orchestration.flow import (
     RunLoggerBridge,
 )
 from infrahub_sync.plan.config_version import resolve_config_version
-from infrahub_sync.plan.models import ApplyRecord
+from infrahub_sync.plan.errors import PlanSchemaChangedError
+from infrahub_sync.plan.models import ApplyRecord, PlanManifest
 from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes
 from infrahub_sync.plan.review import SavedPlan, resolve_run_directory
 from infrahub_sync.plan.verify import verify_plan
@@ -47,7 +48,7 @@ from infrahub_sync.product_store import (
     ExecutionWriteback,
     ProductProjection,
 )
-from infrahub_sync.runtime_schema import STAGE_RUNTIME_MODEL_SCOPE, build_runtime_model_plan
+from infrahub_sync.runtime_schema import STAGE_RUNTIME_MODEL_SCOPE, RuntimeModelPlan, build_runtime_model_plan
 
 from .liveness import LivenessPolicy
 from .models import PlanResource
@@ -63,6 +64,7 @@ _REGISTERED_VERSION_INVALID = "registered configuration version is invalid"
 _REGISTERED_CHECKSUM_MISMATCH = "registered configuration checksum does not match run binding"
 _REGISTERED_PLAN_BINDING_MISMATCH = "registered saved plan binding does not match run binding"
 _REGISTERED_PLAN_VERIFICATION_FAILED = "registered saved plan verification failed"
+_REGISTERED_PLAN_CHECKSUM_MISMATCH = "registered saved plan checksum does not match the approved expected_checksum"
 _WORKER_BINDING_PARAMETERS_INVALID = "managed worker configuration binding parameters must be all absent or all present"
 _LEGACY_RUN_IDENTITY_UNAVAILABLE = "legacy managed run identity is unavailable"
 _LEGACY_RUN_CONFIGURATION_MISMATCH = "legacy managed run configuration version does not match durable run"
@@ -178,14 +180,46 @@ def _plan(
     return saved
 
 
-def _verify_registered_apply(*, instance: Any, run_id: str, binding: tuple[str, int, str] | None) -> None:
-    """Verify an artifact before the apply path can construct a destination."""
+def _verify_registered_apply(
+    *, instance: Any, run_id: str, binding: tuple[str, int, str] | None, expected_checksum: str | None
+) -> PlanManifest:
+    """Verify a retained artifact before the apply path can construct a destination.
+
+    Returns the verified manifest. Its `plan_checksum` must already be the operator's
+    approved value, which is the same value the later `PlanApplier` read is given: one
+    approval gates both reads, so bytes swapped between them cannot reach the write loop.
+    """
     artifact = read_plan_artifact_bytes(resolve_run_directory(instance.name, run_id))
     if verify_plan(artifact=artifact, run_id=run_id, config_version=resolve_config_version(instance)):
         raise ValueError(_REGISTERED_PLAN_VERIFICATION_FAILED)
-    manifest_binding = parse_plan_artifact(artifact, run_id=run_id).manifest.configuration_binding
-    if manifest_binding != binding:
+    manifest = parse_plan_artifact(artifact, run_id=run_id).manifest
+    if manifest.configuration_binding != binding:
         raise ValueError(_REGISTERED_PLAN_BINDING_MISMATCH)
+    if manifest.plan_checksum != expected_checksum:
+        raise ValueError(_REGISTERED_PLAN_CHECKSUM_MISMATCH)
+    return manifest
+
+
+def _require_planned_schema(*, run_id: str, manifest: PlanManifest, models: RuntimeModelPlan | None) -> None:
+    """Refuse a retained registered plan whose consumed schema semantics have changed.
+
+    Both fingerprints come from the one canonical projection: the manifest's was written
+    from the snapshot that built the plan's models, and `models` carries the one this
+    stage's single live schema read produced. Compared before any adapter is constructed,
+    so a refusal has read no source and written nothing. Absent values never compare equal,
+    so the comparison fails closed rather than skipping.
+    """
+    recorded = manifest.registered_schema_fingerprint
+    live = None if models is None else models.schema_fingerprint
+    if recorded is not None and recorded == live:
+        return
+    msg = (
+        f"The saved plan of run {run_id!r} was computed against destination schema semantics "
+        f"{recorded!r} and this destination now reports {live!r}, so the plan's recorded "
+        f"operations may no longer mean what they did when it was reviewed. Nothing was "
+        f"written to the destination and no source was read."
+    )
+    raise PlanSchemaChangedError(msg)
 
 
 def _worker_binding(
@@ -356,12 +390,15 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         }
         writeback = ExecutionMergeWriteback(results={"verification": result})
     elif stage == "apply":
-        _verify_registered_apply(
+        manifest = _verify_registered_apply(
             instance=instance,
             run_id=run_id,
             binding=parameter_binding,
+            expected_checksum=expected_checksum,
         )
         if parameter_binding is not None:
+            # The live schema read, and the comparison it exists for, both before any
+            # adapter is constructed: the registered pre-write gate.
             _, instance, sync_name = _worker_execution_context(
                 run_id,
                 parameter_binding,
@@ -370,6 +407,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 run_branch=branch,
                 stage=stage,
             )
+            _require_planned_schema(run_id=run_id, manifest=manifest, models=instance._runtime_models)
         applied = execute_run(
             instance,
             operation="apply",
@@ -400,11 +438,14 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 _require_verified=True,
             )
             assert isinstance(verified, SavedPlan)
-            _verify_registered_apply(
+            manifest = _verify_registered_apply(
                 instance=instance,
                 run_id=run_id,
                 binding=parameter_binding,
+                expected_checksum=verified.manifest.plan_checksum,
             )
+            if parameter_binding is not None:
+                _require_planned_schema(run_id=run_id, manifest=manifest, models=instance._runtime_models)
             applied = execute_run(
                 instance,
                 operation="apply",

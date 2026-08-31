@@ -56,6 +56,7 @@ from infrahub_sync.plan.errors import (
     PlanFormatV1Error,
     PlanFormatVersionError,
     PlanGenerationExistsError,
+    PlanSchemaChangedError,
     PlanVerificationError,
     SourcePeerUnresolvedError,
     UnaccountedIdentityComponentError,
@@ -1142,6 +1143,7 @@ TAXONOMY_CASES: dict[str, Callable[[], PlanArtifactError]] = {
         "Operation 'o' carries null for mandatory relationship 'r'."
     ),
     "plan_verification": lambda: PlanVerificationError("The plan artifact of run 'r' cannot be applied."),
+    "plan_schema_changed": lambda: PlanSchemaChangedError("The saved plan of run 'r' records other schema semantics."),
     "operation_apply_failed": lambda: OperationApplyFailedError(
         "Applying operation 'o' failed.", apply_record=ApplyRecord()
     ),
