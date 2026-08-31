@@ -102,6 +102,7 @@ class _FakeEntryPoint:
     def __init__(self, name: str, value: type) -> None:
         self.name = name
         self._value = value
+        self.module = value.__module__
 
     def load(self) -> type:
         return self._value

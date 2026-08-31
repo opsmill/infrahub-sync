@@ -291,9 +291,10 @@ def test_the_constructed_destination_receives_the_effective_branch(
 
 
 class _EntryPoint:
-    def __init__(self, name: str, target: object) -> None:
+    def __init__(self, name: str, target: object, module: str) -> None:
         self.name = name
         self._target = target
+        self.module = module
 
     def load(self) -> object:
         return self._target
@@ -312,8 +313,18 @@ class _EntryPoints:
 
 
 def _publish_entry_point(monkeypatch: pytest.MonkeyPatch, target: object) -> str:
+    module_name = cast("type[Any]", target).__module__
+    module = sys.modules[module_name]
     monkeypatch.setattr(
-        "infrahub_sync.plugin_loader.entry_points", lambda: _EntryPoints(_EntryPoint("plugin_source", target))
+        "infrahub_sync.plugin_loader.entry_points",
+        lambda: _EntryPoints(_EntryPoint("plugin_source", target, module_name)),
+    )
+    monkeypatch.setattr(
+        "infrahub_sync.plugin_loader.is_installed_distribution_module", lambda name: name == module_name
+    )
+    monkeypatch.setattr(
+        "infrahub_sync.plugin_loader.module_origin_is_admitted",
+        lambda loaded, name: loaded is module and name == module_name,
     )
     return "plugin_source"
 

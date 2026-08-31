@@ -50,9 +50,10 @@ def _plugin_module(*, with_model: bool) -> types.ModuleType:
 
 
 class _EntryPoint:
-    def __init__(self, name: str, target: object) -> None:
+    def __init__(self, name: str, target: object, module: str) -> None:
         self.name = name
         self._target = target
+        self.module = module
 
     def load(self) -> object:
         return self._target
@@ -72,7 +73,15 @@ def _publish(monkeypatch: pytest.MonkeyPatch, module: types.ModuleType, *, value
     """Publish `value` under the plugin entry-point group, with its module importable."""
     monkeypatch.setitem(sys.modules, module.__name__, module)
     monkeypatch.setattr(
-        "infrahub_sync.plugin_loader.entry_points", lambda: _EntryPoints(_EntryPoint(ENTRY_POINT, value))
+        "infrahub_sync.plugin_loader.entry_points",
+        lambda: _EntryPoints(_EntryPoint(ENTRY_POINT, value, module.__name__)),
+    )
+    monkeypatch.setattr(
+        "infrahub_sync.plugin_loader.is_installed_distribution_module", lambda name: name == module.__name__
+    )
+    monkeypatch.setattr(
+        "infrahub_sync.plugin_loader.module_origin_is_admitted",
+        lambda loaded, name: loaded is module and name == module.__name__,
     )
 
 

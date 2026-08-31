@@ -423,15 +423,19 @@ def test_an_installed_dotted_source_with_an_infrahub_destination_may_execute(
 def test_an_entry_point_source_with_an_infrahub_destination_may_execute(
     spy: _SnapshotSpy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # An entry point is distribution metadata, so it needs no separate provenance check.
     from tests.runtime_schema.installed_source_adapter import InstalledSourceAdapter, InstalledSourceModel
 
+    module = importlib.import_module("tests.runtime_schema.installed_source_adapter")
+    monkeypatch.setattr(
+        "infrahub_sync.plugin_loader.is_installed_distribution_module", lambda name: name == module.__name__
+    )
+    monkeypatch.setattr(
+        "infrahub_sync.plugin_loader.module_origin_is_admitted",
+        lambda loaded, name: loaded is module and name == module.__name__,
+    )
     monkeypatch.setattr(
         "infrahub_sync.plugin_loader.entry_points",
-        lambda: _EntryPoints(
-            "installed_source_entry_point",
-            importlib.import_module("tests.runtime_schema.installed_source_adapter"),
-        ),
+        lambda: _EntryPoints("installed_source_entry_point", module),
     )
     content = _package_content()
     content["configuration"]["source"]["adapter"] = "installed_source_entry_point"
@@ -458,7 +462,7 @@ class _EntryPoints:
     def select(self, *, group: str, name: str) -> tuple[object, ...]:
         if group != "infrahub_sync.adapters" or name != self._name:
             return ()
-        return (SimpleNamespace(name=self._name, load=lambda: self._target),)
+        return (SimpleNamespace(name=self._name, module=self._target.__name__, load=lambda: self._target),)
 
 
 def test_a_failed_schema_read_becomes_a_typed_failure_carrying_only_its_reason(

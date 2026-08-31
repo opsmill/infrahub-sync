@@ -92,6 +92,19 @@ def module_origin_is_admitted(module: object, spec_path: str) -> bool:
     return any(candidate.resolve() == origin for candidate in installed_module_origins(spec_path))
 
 
+def _entry_point_object_origin_is_admitted(obj: object) -> bool:
+    """Whether an entry point loaded a module or class from installed code."""
+    if inspect.ismodule(obj):
+        loaded_module = obj
+        loaded_module_name = obj.__name__
+    elif inspect.isclass(obj):
+        loaded_module_name = obj.__module__
+        loaded_module = sys.modules.get(loaded_module_name)
+    else:
+        return False
+    return loaded_module is not None and module_origin_is_admitted(loaded_module, loaded_module_name)
+
+
 def _resolve_one_part(search: Sequence[Path], name: str) -> tuple[Path | None, list[Path]]:
     """Answer one dotted component against an ordered search path.
 
@@ -215,8 +228,8 @@ class PluginLoader:
         Args:
             adapter_paths: Optional list of paths to search for adapters.
             installed_only: Whether resolution is restricted to installed code. True
-                disables filesystem resolution outright and admits a dotted target only
-                when :func:`is_installed_distribution_module` owns it.
+                disables filesystem resolution outright and admits dotted and entry-point
+                module targets only when :func:`is_installed_distribution_module` owns them.
         """
         self.adapter_paths = list(adapter_paths) if adapter_paths else []
         self.installed_only = installed_only
@@ -226,8 +239,8 @@ class PluginLoader:
     def installed_only_loader(cls) -> PluginLoader:
         """Return a loader that resolves installed code and nothing else.
 
-        Entry points, bundled adapter modules, and dotted targets an installed
-        distribution owns: no configured adapter paths, no
+        Entry points with installed module targets, bundled adapter modules, and dotted
+        targets an installed distribution owns: no configured adapter paths, no
         ``INFRAHUB_SYNC_ADAPTER_PATHS``, no working directory, and no module that is
         importable only because a checkout is on ``sys.path``. This is the loader
         registered execution resolves through, so an adapter that is not installed in
@@ -367,8 +380,8 @@ class PluginLoader:
             raise PluginLoadError(msg)
         msg = (
             f"Could not resolve adapter class for spec '{spec}' from installed code. "
-            f"Tried entry point and built-in resolution, and dotted import restricted to a "
-            f"top-level package owned by an installed distribution."
+            f"Tried built-in resolution, with dotted and entry-point module imports "
+            f"restricted to files shipped by an installed distribution."
         )
         raise PluginLoadError(msg)
 
@@ -496,7 +509,11 @@ class PluginLoader:
 
             # Get the first matching entry point
             ep = next(iter(plugin_entry_points))
-            obj = ep.load()
+            obj = None
+            if not self.installed_only or is_installed_distribution_module(ep.module):
+                loaded = ep.load()
+                if not self.installed_only or _entry_point_object_origin_is_admitted(loaded):
+                    obj = loaded
 
             # If it's a module, find the class
             if inspect.ismodule(obj):
