@@ -384,3 +384,32 @@ def test_a_declared_source_class_the_plugin_does_not_provide_refuses_before_asse
 
     with pytest.raises(PluginLoadError, match="MissingAdapter"):
         _registered_instance(tmp_path, source_adapter=f"{entry_point}:MissingAdapter")
+
+
+def test_a_namespace_installed_source_reaches_engine_assembly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A PEP 420 namespace distribution is an ordinary way to ship an adapter, so one has
+    # to reach real engine assembly, not merely pass admission.
+    from tests.runtime_schema.installed_distribution import (
+        ADAPTER_SOURCE,
+        install_namespace_distribution,
+    )
+
+    installed = tmp_path / "site-packages"
+    dotted = install_namespace_distribution(
+        monkeypatch,
+        portions={installed: {"adapter": ADAPTER_SOURCE}},
+        dotted="vendor_ns.sync_plugins.adapter",
+        installed_root=installed,
+    )
+    assert not (installed / "vendor_ns" / "__init__.py").exists()
+    instance = _registered_instance(tmp_path, source_adapter=dotted)
+
+    engine = get_potenda_from_instance(sync_instance=instance, run_id="namespace-source")
+
+    module = importlib.import_module(dotted)
+    plan = instance._runtime_models
+    assert plan is not None
+    assert plan.source is not None
+    assert type(engine.source) is module.WheelAdapter
+    assert cast("Any", engine.source).BuiltinTag is plan.source.models["BuiltinTag"]
+    assert issubclass(plan.source.models["BuiltinTag"], module.WheelModel)

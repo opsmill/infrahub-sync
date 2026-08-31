@@ -92,45 +92,54 @@ def module_origin_is_admitted(module: object, spec_path: str) -> bool:
     return any(candidate.resolve() == origin for candidate in installed_module_origins(spec_path))
 
 
-def _provides_top_level(base: Path, name: str) -> bool:
-    """Whether this import-path entry answers a top-level name at all."""
-    return (base / name / "__init__.py").is_file() or (base / f"{name}.py").is_file()
+def _resolve_one_part(search: Sequence[Path], name: str) -> tuple[Path | None, list[Path]]:
+    """Answer one dotted component against an ordered search path.
 
-
-def _module_file(base: Path, parts: Sequence[str]) -> Path | None:
-    """The file this import-path entry would supply for a dotted name, or None."""
-    current = base
-    for index, part in enumerate(parts):
-        package_init = current / part / "__init__.py"
-        if index == len(parts) - 1:
-            # Packages win over same-named modules, as the import system orders them.
-            if package_init.is_file():
-                return package_init
-            module = current / f"{part}.py"
-            return module if module.is_file() else None
-        if not package_init.is_file():
-            return None
-        current /= part
-    return None
+    Returns either the file a regular package or module supplies, or the namespace
+    portions found along the way. A regular package or module ends the scan the moment it
+    is met, which is what makes an earlier checkout shadow everything behind it; bare
+    directories are recorded as PEP 420 portions and the scan continues, which is what
+    lets one namespace span several installed roots.
+    """
+    portions: list[Path] = []
+    for base in search:
+        package_init = base / name / "__init__.py"
+        if package_init.is_file():
+            return package_init, []
+        module = base / f"{name}.py"
+        if module.is_file():
+            return module, []
+        directory = base / name
+        if directory.is_dir():
+            portions.append(directory)
+    return None, portions
 
 
 def effective_module_origin(spec_path: str) -> Path | None:
     """The file an import of this dotted name would load, found without importing it.
 
-    Walks ``sys.path`` in order, the way the path finder does. The first entry that
-    answers the top-level name decides the answer even when it does not supply the
-    submodule, because that entry shadows every later one — which is exactly the case a
-    checkout creates over an installed distribution. Anything this cannot resolve — a zip
-    import, a namespace package, a custom finder — returns None and is refused.
+    Walks ``sys.path`` the way the path finder does, component by component, combining
+    namespace portions as PEP 420 does so an adapter shipped in a namespace distribution
+    is reachable. A name that resolves to no file — a namespace package, which is a set
+    of directories — returns None, as does anything this cannot resolve: a zip import or
+    a custom finder. Both are refused rather than guessed at.
     """
     parts = spec_path.split(".")
-    for entry in sys.path:
-        base = Path(entry) if entry else Path.cwd()
-        origin = _module_file(base, parts)
+    search: list[Path] = [Path(entry) if entry else Path.cwd() for entry in sys.path]
+    for index, part in enumerate(parts):
+        origin, portions = _resolve_one_part(search, part)
+        last = index == len(parts) - 1
         if origin is not None:
-            return origin
-        if _provides_top_level(base, parts[0]):
+            if last:
+                return origin
+            # A module has no submodules, so the dotted name cannot continue through one.
+            if origin.name != "__init__.py":
+                return None
+            search = [origin.parent]
+            continue
+        if last or not portions:
             return None
+        search = portions
     return None
 
 

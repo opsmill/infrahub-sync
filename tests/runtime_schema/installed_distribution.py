@@ -26,9 +26,21 @@ class WheelModel(DiffSyncModelMixin, DiffSyncModel):
 
 
 class WheelAdapter(DiffSyncMixin, Adapter):
-    """The adapter class registered resolution loads."""
+    """The adapter class registered resolution loads.
+
+    Takes the keyword arguments engine assembly passes, so this stands in for a real
+    adapter all the way through construction and not only through admission.
+    """
 
     type = "Wheel"
+
+    def __init__(self, target, adapter, config, **kwargs):
+        super().__init__(**kwargs)
+        self.target = target
+        self.config = config
+
+    def model_loader(self, model_name, model):
+        return None
 '''
 
 
@@ -78,3 +90,44 @@ def install_distribution(  # noqa: PLR0913 - one call describes a whole install 
         if name == package or name.startswith(f"{package}."):
             monkeypatch.delitem(sys.modules, name)
     return f"{package}.{module}"
+
+
+def install_namespace_distribution(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    portions: dict[Path, dict[str, str]],
+    dotted: str,
+    installed_root: Path,
+    on_import_path: bool = True,
+) -> str:
+    """Lay a PEP 420 namespace distribution out across one or more portions.
+
+    `portions` maps each site-packages-shaped root to the `{module: source}` it supplies
+    under the dotted name's parent packages, and no ``__init__.py`` is written anywhere —
+    that absence is the point. Metadata is published for `installed_root`'s files only, so
+    a module supplied by another portion is real, importable, and unowned.
+
+    Roots are prepended in the order given, so the LAST one listed ends up earliest on
+    ``sys.path``.
+    """
+    import sys
+
+    parents = dotted.split(".")[:-1]
+    owned: list[str] = []
+    for root, modules in portions.items():
+        directory = root.joinpath(*parents)
+        directory.mkdir(parents=True, exist_ok=True)
+        for module, source in modules.items():
+            (directory / f"{module}.py").write_text(source, encoding="utf-8")
+            if root == installed_root:
+                owned.append("/".join([*parents, f"{module}.py"]))
+    distribution = _FakeDistribution(root=installed_root, relative_files=tuple(owned))
+    monkeypatch.setattr("infrahub_sync.plugin_loader.distributions", lambda: [distribution])
+    if on_import_path:
+        for root in portions:
+            monkeypatch.syspath_prepend(str(root))
+    top_level = parents[0]
+    for name in list(sys.modules):
+        if name == top_level or name.startswith(f"{top_level}."):
+            monkeypatch.delitem(sys.modules, name)
+    return dotted
