@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-import uuid
 from typing import Any
 
 import httpx
@@ -27,18 +26,11 @@ def test_managed_deployment_is_applied(preview_env: dict[str, Any]) -> None:
     assert deployment["work_pool_name"] == preview_env["values"]["PREVIEW_WORK_POOL"]
 
 
-def test_the_managed_deployment_carries_a_worker_identity(preview_env: dict[str, Any]) -> None:
-    """Startup binds the registered worker id; without it every run dies at the claim gate.
-
-    A self-hosted Prefect worker never learns its own backend id, so the deployment is
-    what carries it into the flow-run process. Asserted on the deployment rather than on
-    a run so a failure names the cause instead of a downstream symptom.
-    """
+def test_the_managed_deployment_carries_no_static_worker_identity(preview_env: dict[str, Any]) -> None:
     job_variables = _managed_deployment(preview_env).get("job_variables") or {}
 
     identity = (job_variables.get("env") or {}).get("PREFECT__WORKER_ID")
-    assert identity, f"the managed deployment carries no worker identity: {sorted(job_variables)}"
-    assert str(uuid.UUID(identity)) == identity
+    assert identity is None, "worker identity must be injected per child by the executing worker"
 
 
 def test_managed_flow_runs_execute_and_complete(preview_env: dict[str, Any]) -> None:

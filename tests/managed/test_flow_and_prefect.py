@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import Event, Thread, current_thread
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol
+from unittest.mock import AsyncMock
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import httpx
@@ -254,49 +255,23 @@ def test_flow_working_directory_is_required_absolute_and_existing(
     ]
 
 
-def test_the_worker_identity_binding_is_a_canonical_uuid_or_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Preview hands the deployment a server-issued UUID; nothing else is installable.
-
-    The value becomes `PREFECT__WORKER_ID` in every managed flow-run process, and the
-    claim gate fences writebacks on it, so a non-canonical or invented identity must be
-    refused here rather than reaching a run.
-    """
+async def test_managed_deploy_only_converges_the_flow_working_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from infrahub_sync.managed import deploy
 
-    monkeypatch.delenv(deploy.MANAGED_WORKER_ID_ENV, raising=False)
-    assert deploy.declared_worker_identity() is None
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setenv(deploy.WORK_POOL_ENV, "managed-pool")
+    monkeypatch.setenv(deploy.FLOW_WORKING_DIRECTORY_ENV, str(tmp_path))
 
-    for rejected in ("not-a-uuid", "7F1D3C52-9A04-4F0F-9B7A-2C5F1E8D6A31", "7f1d3c529a044f0f9b7a2c5f1e8d6a31"):
-        monkeypatch.setenv(deploy.MANAGED_WORKER_ID_ENV, rejected)
-        with pytest.raises(ValueError, match=deploy.MANAGED_WORKER_ID_ENV):
-            deploy.declared_worker_identity()
-
-    monkeypatch.setenv(deploy.MANAGED_WORKER_ID_ENV, "7f1d3c52-9a04-4f0f-9b7a-2c5f1e8d6a31")
-    assert deploy.declared_worker_identity() == "7f1d3c52-9a04-4f0f-9b7a-2c5f1e8d6a31"
-
-
-def test_binding_the_worker_identity_preserves_unrelated_job_variables() -> None:
-    """Convergence, not replacement: the binding owns one key of one job variable."""
-    from infrahub_sync.managed import deploy
-
-    existing = {"image": "example", "env": {"EXISTING": "kept", "PREFECT__WORKER_ID": "stale"}}
-
-    bound = deploy.job_variables_with_worker_identity(existing, "7f1d3c52-9a04-4f0f-9b7a-2c5f1e8d6a31")
-
-    assert bound == {
-        "image": "example",
-        "env": {"EXISTING": "kept", "PREFECT__WORKER_ID": "7f1d3c52-9a04-4f0f-9b7a-2c5f1e8d6a31"},
-    }
-    # The caller's mapping is not edited in place; convergence compares before it writes.
-    assert existing["env"]["PREFECT__WORKER_ID"] == "stale"
-
-
-def test_binding_the_worker_identity_into_an_empty_deployment_creates_only_env() -> None:
-    from infrahub_sync.managed import deploy
-
-    assert deploy.job_variables_with_worker_identity({}, "7f1d3c52-9a04-4f0f-9b7a-2c5f1e8d6a31") == {
-        "env": {"PREFECT__WORKER_ID": "7f1d3c52-9a04-4f0f-9b7a-2c5f1e8d6a31"}
-    }
+    monkeypatch.setattr(deploy, "apply_deployments", AsyncMock(return_value=SimpleNamespace(is_successful=True)))
+    monkeypatch.setattr(
+        deploy,
+        "_ensure_flow_working_directory",
+        AsyncMock(side_effect=lambda directory: calls.append(("working-directory", directory))),
+    )
+    assert await deploy._deploy() == 0
+    assert calls == [("working-directory", str(tmp_path))]
 
 
 def test_managed_definition_entrypoint_targets_the_flow_file() -> None:
