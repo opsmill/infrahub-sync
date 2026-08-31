@@ -6,15 +6,23 @@ a directory on the worker's disk. So the smoke registers its own package first, 
 
 The package is Infrahub-to-Infrahub against the preview's own instance — `main` as the
 source, the disposable smoke branch as the destination — because the registered path
-resolves adapters through the installed loader and admits no filesystem adapter. `main`
-is empty in a fresh preview, so the plan is legitimately empty; an empty plan is a
-complete artifact and applies like any other, which is exactly the lifecycle under test.
+resolves adapters through the installed loader and admits no filesystem adapter.
+
+`main` starts **empty** and the smoke branch does not: the CLI-cycle smoke applies
+`custom-example`'s five devices into it first, and `preview.up` asserts `main` stays
+pristine. Planning an empty source against a populated destination derives a plan of
+nothing but deletes — and a v2 artifact records deletes without ever executing them, so
+the apply completes green having written nothing at all. So the smoke seeds `main` first:
+every device the destination already holds, plus one it owns. The source is then a
+superset of the destination, which is what makes the plan creates rather than deletes,
+and the assertions below insist on that rather than on terminal completion alone.
 """
 
 from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Mapping
 from typing import Any
 
 import httpx
@@ -93,6 +101,24 @@ def apply_run_request(checksum: str) -> dict[str, Any]:
     }
 
 
+def unwritten_plan_reasons(summary: Mapping[str, Any]) -> list[str]:
+    """Why this plan would write nothing at the destination, or `[]` when it would write.
+
+    The trap this smoke exists to catch: a plan of deletes alone. FR-016 records deletes
+    and never executes them, so such an apply reaches `applied` with a valid checksum and
+    a recorded schema binding while leaving the destination untouched — every signal the
+    smoke used to check stays green. A plan that exercises the approved path carries at
+    least one create or update and no delete for the apply to skip.
+    """
+    by_action = dict(summary.get("by_action", {}))
+    reasons: list[str] = []
+    if by_action.get("create", 0) + by_action.get("update", 0) == 0:
+        reasons.append(f"no create or update operation to apply (by_action={by_action})")
+    if summary.get("deletes_not_executed", 0):
+        reasons.append(f"{summary['deletes_not_executed']} delete operation(s) would be recorded and skipped")
+    return reasons
+
+
 def _client(preview_env: dict[str, Any], token: str | None) -> httpx.Client:
     headers = {}
     if token is not None:
@@ -140,6 +166,35 @@ def _registered_version(client: httpx.Client, preview_env: dict[str, Any]) -> tu
     return config_id, registry_version
 
 
+def _infrahub_client(preview_env: dict[str, Any]) -> Any:  # noqa: ANN401 — the SDK's sync client
+    from infrahub_sdk import InfrahubClientSync
+
+    return InfrahubClientSync(
+        address=preview_env["urls"]["infrahub"], config={"api_token": preview_env["infrahub_token"]}
+    )
+
+
+def _device_names(client: Any, branch: str) -> set[str]:  # noqa: ANN401 — the SDK's sync client
+    return {node.name.value for node in client.all(kind=SMOKE_KIND, branch=branch)}
+
+
+def _seed_source_branch(preview_env: dict[str, Any]) -> str:
+    """Make `main` a superset of the destination, and return the device the smoke adds.
+
+    Mirroring first is what keeps the plan free of deletes: any device the destination
+    holds and the source does not becomes a recorded, never-executed delete. Mirroring is
+    an upsert on `name`, so re-running the smoke converges rather than duplicating.
+    """
+    client = _infrahub_client(preview_env)
+    for name in _device_names(client, SMOKE_BRANCH):
+        client.create(kind=SMOKE_KIND, branch="main", data={"name": name, "type": "mirrored"}).save(allow_upsert=True)
+    smoke_device = f"preview-smoke-{uuid.uuid4().hex[:12]}"
+    client.create(kind=SMOKE_KIND, branch="main", data={"name": smoke_device, "type": "registered-smoke"}).save(
+        allow_upsert=True
+    )
+    return smoke_device
+
+
 def test_requests_without_a_bearer_token_are_refused(preview_env: dict[str, Any]) -> None:
     with _client(preview_env, token=None) as client:
         response = client.get("/runs/does-not-exist")
@@ -147,6 +202,9 @@ def test_requests_without_a_bearer_token_are_refused(preview_env: dict[str, Any]
 
 
 def test_managed_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
+    smoke_device = _seed_source_branch(preview_env)
+    assert smoke_device not in _device_names(_infrahub_client(preview_env), SMOKE_BRANCH)
+
     with _client(preview_env, token=preview_env["bearer_token"]) as client:
         config_id, registry_version = _registered_version(client, preview_env)
 
@@ -164,6 +222,9 @@ def test_managed_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
         # A registered plan records the destination schema semantics it was computed
         # against; the apply refuses before any write when they no longer match.
         assert plan_payload["schema_fingerprint"], plan_payload
+        # The plan must exercise the approved create/update path; a delete-only plan
+        # applies cleanly and writes nothing.
+        assert unwritten_plan_reasons(plan_payload["summary"]) == [], plan_payload["summary"]
         checksum = plan_payload["checksum"]
 
         apply_accepted = client.post(f"/runs/{run_id}/apply", headers=_idempotency(), json=apply_run_request(checksum))
@@ -171,6 +232,13 @@ def test_managed_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
 
         applied = _wait_for_phase(client, run_id, "applied")
         assert applied["run"]["outcome"] is not None, applied["run"]
+        # What the apply actually did, not merely that it finished.
+        applied_summary = applied["run"]["summary"]
+        assert applied_summary.get("create", 0) + applied_summary.get("update", 0) > 0, applied_summary
+        assert applied_summary.get("delete", 0) == 0, applied_summary
 
         results = client.get(f"/runs/{run_id}/results")
         assert results.status_code == 200, results.text
+
+    # The destination now holds what the plan said it would write.
+    assert smoke_device in _device_names(_infrahub_client(preview_env), SMOKE_BRANCH)

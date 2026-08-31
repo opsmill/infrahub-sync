@@ -8,6 +8,8 @@ against the model the route declares closes that gap where it is cheap to close.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from infrahub_sync.client.models import ApplyRunRequest, ConfigMutationRequest, CreateRunRequest
@@ -71,3 +73,54 @@ def test_the_registered_package_declares_no_credential_value() -> None:
     assert "$credential" in rendered
     assert "INFRAHUB_API_TOKEN" in rendered
     assert "token': '" not in rendered
+
+
+# ======================================================================================
+# A plan that writes nothing must not read as a passing smoke
+# ======================================================================================
+
+
+def plan_summary(**by_action: int) -> dict[str, Any]:
+    """One plan summary in the shape `GET /runs/{id}/plan` returns."""
+    return {
+        "by_action": dict(by_action),
+        "by_kind": {"InfraDevice": sum(by_action.values())},
+        "total": sum(by_action.values()),
+        "delete_operations_computed": True,
+        "deletes_not_executed": by_action.get("delete", 0),
+    }
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        # What the controller's live run actually produced: an empty source against a
+        # populated destination derives deletes only, a v2 apply records them without
+        # executing them, and every terminal signal stays green with nothing written.
+        pytest.param(plan_summary(delete=5), id="delete-only"),
+        pytest.param(plan_summary(), id="empty"),
+        pytest.param(plan_summary(create=1, delete=2), id="writes-but-skips-deletes"),
+    ],
+)
+def test_a_plan_that_leaves_the_destination_unwritten_is_reported(summary: dict[str, Any]) -> None:
+    assert smoke.unwritten_plan_reasons(summary) != []
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        pytest.param(plan_summary(create=1), id="create"),
+        pytest.param(plan_summary(update=1), id="update"),
+        pytest.param(plan_summary(create=2, update=3), id="create-and-update"),
+    ],
+)
+def test_a_plan_that_writes_is_accepted(summary: dict[str, Any]) -> None:
+    assert smoke.unwritten_plan_reasons(summary) == []
+
+
+def test_the_report_names_both_reasons_a_delete_only_plan_writes_nothing() -> None:
+    """Two distinct facts, so a failure says which one to fix."""
+    reasons = smoke.unwritten_plan_reasons(plan_summary(delete=5))
+
+    assert any("create or update" in reason for reason in reasons)
+    assert any("skipped" in reason for reason in reasons)
