@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from infrahub_sync.cache.cursors import CursorState
+    from infrahub_sync.runtime_schema import RuntimeModelPlan
 
 import pydantic
 
@@ -18,8 +19,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from diffsync.store import BaseStore
-
-    from infrahub_sync.runtime_schema import RuntimeModelPlan
 from diffsync.enum import DiffSyncFlags
 from jinja2 import StrictUndefined
 from jinja2.nativetypes import NativeEnvironment

@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
     from infrahub_sync.plan.models import ApplyRecord
     from infrahub_sync.plan.reader import RawPlanArtifact
+    from infrahub_sync.runtime_schema import RuntimeModelPlan
 
 
 def find_missing_schema_model(
@@ -163,6 +164,33 @@ def get_instance(
     return None
 
 
+def _adapter_classes(
+    sync_instance: SyncInstance, runtime_models: RuntimeModelPlan | None
+) -> tuple[type[Any], type[Any]]:
+    """Resolve both sides' adapter classes for one run.
+
+    A registered run resolved them from installed code when it built its model plan, so
+    nothing here reads the configuration directory. Every other run keeps the legacy
+    generated-wrapper-first resolution.
+
+    Raises:
+        ImportError: either side's adapter class could not be loaded.
+    """
+    if runtime_models is not None:
+        return runtime_models.source_adapter_class, runtime_models.destination_adapter_class
+    source = import_adapter(sync_instance=sync_instance, adapter=sync_instance.source)
+    destination = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
+    if source and destination:
+        return source, destination
+    missing = []
+    if not source:
+        missing.append(f"source adapter '{sync_instance.source.name}'")
+    if not destination:
+        missing.append(f"destination adapter '{sync_instance.destination.name}'")
+    msg = f"Could not load the following adapter(s): {', '.join(missing)}"
+    raise ImportError(msg)
+
+
 def get_potenda_from_instance(
     sync_instance: SyncInstance,
     branch: str | None = None,
@@ -178,23 +206,7 @@ def get_potenda_from_instance(
     ``generate_run_id()`` so each invocation gets its own cache directory.
     """
     runtime_models = sync_instance._runtime_models
-    if runtime_models is None:
-        source = import_adapter(sync_instance=sync_instance, adapter=sync_instance.source)
-        destination = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
-    else:
-        # A registered run resolved both classes from installed code already, so nothing
-        # here reads the configuration directory.
-        source = runtime_models.source_adapter_class
-        destination = runtime_models.destination_adapter_class
-
-    if not source or not destination:
-        missing = []
-        if not source:
-            missing.append(f"source adapter '{sync_instance.source.name}'")
-        if not destination:
-            missing.append(f"destination adapter '{sync_instance.destination.name}'")
-        msg = f"Could not load the following adapter(s): {', '.join(missing)}"
-        raise ImportError(msg)
+    source, destination = _adapter_classes(sync_instance, runtime_models)
 
     source_store = LocalStore()
     destination_store = LocalStore()
