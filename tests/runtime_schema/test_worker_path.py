@@ -36,7 +36,7 @@ from tests.configuration.validation_packages import package_data
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from infrahub_sync import SyncInstance
+    from infrahub_sync import SyncAdapter, SyncInstance
     from infrahub_sync.product_store import ProductProjection
 
 pytest.importorskip("prefect")
@@ -290,21 +290,55 @@ def test_a_saved_plan_apply_builds_no_source_requirements(spy: _SnapshotSpy, tmp
     assert spy.branches == ["main"]
 
 
-def test_an_apply_scoped_plan_never_resolves_the_source_adapter(
+def _recording_resolution(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    """Record every installed-resolution call in order, passing each one through.
+
+    Recording rather than refusing: the destination is resolved first, so a resolver that
+    always raises reports the destination call as though it were the source.
+    """
+    calls: list[tuple[str, str]] = []
+    resolve_adapter = worker_module.resolve_installed_adapter_class
+    resolve_base = worker_module.resolve_installed_model_base
+
+    def _adapter(adapter: SyncAdapter) -> type:
+        calls.append(("adapter_class", adapter.name))
+        return resolve_adapter(adapter)
+
+    def _base(adapter: SyncAdapter) -> type:
+        calls.append(("model_base", adapter.name))
+        return resolve_base(adapter)
+
+    monkeypatch.setattr(worker_module, "resolve_installed_adapter_class", _adapter)
+    monkeypatch.setattr(worker_module, "resolve_installed_model_base", _base)
+    return calls
+
+
+def test_an_apply_scoped_plan_resolves_only_destination_requirements(
     spy: _SnapshotSpy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def _forbidden(adapter: object) -> type:
-        del adapter
-        msg = "apply resolved a source adapter"
-        raise AssertionError(msg)
+    calls = _recording_resolution(monkeypatch)
 
-    monkeypatch.setattr(worker_module, "resolve_installed_adapter_class", _forbidden)
-    monkeypatch.setattr(worker_module, "resolve_installed_model_base", _forbidden)
+    plan = _plan(_package(), tmp_path, scope="destination")
 
-    with pytest.raises(AssertionError, match="apply resolved a source adapter"):
-        # The destination is still resolved, so the spy must fire for it and only it.
-        _plan(_package(), tmp_path, scope="destination")
+    assert plan.source is None
+    assert calls == [("adapter_class", "infrahub"), ("model_base", "infrahub")]
+    assert spy.branches == ["main"]
 
+
+def test_a_two_sided_plan_resolves_both_sides_so_the_oracle_can_tell_them_apart(
+    spy: _SnapshotSpy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Without this the apply case above would pass against a plan that resolves nothing.
+    calls = _recording_resolution(monkeypatch)
+
+    _plan(_package(), tmp_path, scope="both")
+
+    assert calls == [
+        ("adapter_class", "infrahub"),
+        ("model_base", "infrahub"),
+        ("adapter_class", "netbox"),
+        ("model_base", "netbox"),
+    ]
     assert spy.branches == ["main"]
 
 
