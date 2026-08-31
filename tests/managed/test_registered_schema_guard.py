@@ -12,18 +12,21 @@ from __future__ import annotations
 import copy
 import inspect
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from infrahub_sdk.schema.main import AttributeKind, NodeSchemaAPI
 
 pytest.importorskip("prefect")
 pytest.importorskip("opsmill_prefect_extras")
 
 from infrahub_sync.client.models import PlanResource
 from infrahub_sync.configuration import ConfigurationPackage, parse_configuration_package
+from infrahub_sync.configuration import capabilities as capabilities_module
 from infrahub_sync.configuration.capabilities import DestinationSchemaReadError
 from infrahub_sync.configuration.runtime import resolve_runtime_instance
 from infrahub_sync.execution import RunResult
@@ -108,13 +111,18 @@ class _SnapshotSpy:
     def __init__(self) -> None:
         self.snapshot: dict[str, Any] = copy.deepcopy(_SNAPSHOT)
         self.failure: DestinationSchemaReadError | None = None
+        # A live response to normalize through the real accessor boundary, in place of the
+        # already-normalized snapshot. Only the network call is stubbed.
+        self.raw_schema: dict[str, Any] | None = None
         self.branches: list[str] = []
 
-    def __call__(self, package: ConfigurationPackage, branch: str) -> dict[str, Any]:
+    def __call__(self, package: ConfigurationPackage, branch: str) -> Mapping[str, Any]:
         del package
         self.branches.append(branch)
         if self.failure is not None:
             raise self.failure
+        if self.raw_schema is not None:
+            return capabilities_module._normalized_schema_snapshot(self.raw_schema)
         return self.snapshot
 
 
@@ -622,3 +630,88 @@ def test_a_published_unregistered_plan_carries_no_schema_binding(
 
     assert document.schema_fingerprint is None
     assert json.loads(document.model_dump_json())["schema_fingerprint"] is None
+
+
+# ======================================================================================
+# AR4/AR8 — an ambiguous live member name refuses before any write
+# ======================================================================================
+
+
+def _live_node(*, attributes: list[dict[str, Any]], relationships: list[dict[str, Any]]) -> NodeSchemaAPI:
+    """One typed installed-SDK node, as the live destination would deliver it."""
+    return NodeSchemaAPI.model_validate(
+        {
+            "name": "Tag",
+            "namespace": "Builtin",
+            "human_friendly_id": ["name__value"],
+            "uniqueness_constraints": [["name__value"]],
+            "attributes": attributes,
+            "relationships": relationships,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        pytest.param(
+            _live_node(
+                attributes=[
+                    {"name": "name", "kind": AttributeKind.TEXT, "optional": False, "unique": True},
+                    {"name": "name", "kind": AttributeKind.NUMBER, "optional": True},
+                ],
+                relationships=[],
+            ),
+            id="duplicate-attribute-name",
+        ),
+        pytest.param(
+            _live_node(
+                attributes=[{"name": "name", "kind": AttributeKind.TEXT, "optional": False, "unique": True}],
+                relationships=[
+                    {
+                        "name": "name",
+                        "peer": "LocationSite",
+                        "cardinality": "one",
+                        "optional": True,
+                        "kind": "Attribute",
+                    }
+                ],
+            ),
+            id="attribute-relationship-conflict",
+        ),
+        pytest.param(
+            _live_node(
+                attributes=[{"name": "na\x00me\x1b[31m", "kind": AttributeKind.TEXT, "optional": True}],
+                relationships=[],
+            ),
+            id="control-bearing-name",
+        ),
+    ],
+)
+def test_an_ambiguous_live_member_name_refuses_before_any_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, node: NodeSchemaAPI
+) -> None:
+    """The guard's live read goes through the accessor boundary, so it refuses there."""
+    harness = _harness(tmp_path, monkeypatch)
+    # Every other mapped kind is well formed, so the ambiguous member name is the only
+    # thing that can refuse this apply.
+    harness.spy.raw_schema = {
+        "BuiltinTag": node,
+        "LocationSite": _live_node(
+            attributes=[{"name": "name", "kind": AttributeKind.TEXT, "optional": False, "unique": True}],
+            relationships=[
+                {"name": "tags", "peer": "BuiltinTag", "cardinality": "many", "optional": True, "kind": "Generic"}
+            ],
+        ),
+    }
+    retained = (harness.run_dir / PLAN_DIR_NAME / MANIFEST_FILE_NAME).read_bytes()
+
+    with pytest.raises(RuntimeError) as caught:
+        _apply(harness)
+
+    assert harness.calls == []
+    assert (harness.run_dir / PLAN_DIR_NAME / MANIFEST_FILE_NAME).read_bytes() == retained
+    message = str(caught.value)
+    assert "rejected" in message
+    for leaked in ("\x00", "\x1b", INFRAHUB_CANARY, NETBOX_CANARY):
+        assert leaked not in message

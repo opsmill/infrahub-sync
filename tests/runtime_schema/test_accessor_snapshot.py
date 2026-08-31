@@ -160,3 +160,102 @@ class _NonFiniteDefaultNode:
 def test_a_non_finite_declared_default_is_refused_at_the_adapter_boundary() -> None:
     with pytest.raises(DestinationSchemaReadError):
         capabilities_module._build_schema_snapshot({"InfraDevice": _NonFiniteDefaultNode()})
+
+
+# =======================================================================================
+# AR4 — one member name means one member (parent envelope section 6 hostile probes)
+# =======================================================================================
+
+
+def _node(*, attributes: list[dict[str, Any]], relationships: list[dict[str, Any]]) -> NodeSchemaAPI:
+    """A typed installed-SDK node carrying the members a case is about."""
+    return NodeSchemaAPI.model_validate(
+        {
+            "name": "Device",
+            "namespace": "Infra",
+            "human_friendly_id": ["name__value"],
+            "uniqueness_constraints": [["name__value"]],
+            "attributes": attributes,
+            "relationships": relationships,
+        }
+    )
+
+
+_TEXT = {"kind": AttributeKind.TEXT, "optional": True}
+_PEER = {"peer": "LocationSite", "cardinality": "one", "optional": True, "kind": "Attribute"}
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        pytest.param(
+            _node(
+                attributes=[{"name": "name", **_TEXT}, {"name": "name", "kind": AttributeKind.NUMBER}],
+                relationships=[],
+            ),
+            id="duplicate-attribute-name",
+        ),
+        pytest.param(
+            _node(attributes=[], relationships=[{"name": "site", **_PEER}, {"name": "site", **_PEER}]),
+            id="duplicate-relationship-name",
+        ),
+        pytest.param(
+            _node(attributes=[{"name": "site", **_TEXT}], relationships=[{"name": "site", **_PEER}]),
+            id="attribute-relationship-conflict",
+        ),
+    ],
+)
+def test_an_ambiguous_member_name_is_refused_at_the_adapter_boundary(node: NodeSchemaAPI) -> None:
+    """One name must mean one member: a dict comprehension would keep the last silently.
+
+    The typed SDK admits all three shapes, so the snapshot would be built from whichever
+    declaration arrived last — making the model, the fingerprint, and every planned write
+    depend on response ordering rather than on the schema.
+    """
+    with pytest.raises(DestinationSchemaReadError) as caught:
+        capabilities_module._build_schema_snapshot({"InfraDevice": node})
+
+    assert caught.value.reason == "rejected"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param("na\x00me", id="null"),
+        pytest.param("name\n", id="newline"),
+        pytest.param("na\x07me", id="bell"),
+        pytest.param("name\x1b[31m", id="escape"),
+        pytest.param("na\u200bme", id="zero-width"),
+        pytest.param("", id="empty"),
+    ],
+)
+def test_a_control_bearing_member_name_is_refused_at_the_adapter_boundary(name: str) -> None:
+    """A member name reaches model fields, plan payload keys, logs and refusal text."""
+    with pytest.raises(DestinationSchemaReadError) as caught:
+        capabilities_module._build_schema_snapshot(
+            {"InfraDevice": _node(attributes=[{"name": name, **_TEXT}], relationships=[])}
+        )
+
+    assert caught.value.reason == "rejected"
+
+
+def test_the_refusal_carries_no_text_from_the_rejected_member() -> None:
+    """The fixed message: a hostile name puts nothing into what the operator is shown."""
+    hostile = "canary\x1b[31m-member-name"
+
+    with pytest.raises(DestinationSchemaReadError) as caught:
+        capabilities_module._build_schema_snapshot(
+            {"InfraDevice": _node(attributes=[{"name": hostile, **_TEXT}], relationships=[])}
+        )
+
+    assert "canary" not in str(caught.value)
+
+
+def test_distinct_member_names_across_both_groups_are_still_delivered() -> None:
+    """Preservation: the rule is one name per member, not one name per kind."""
+    snapshot = capabilities_module._build_schema_snapshot(
+        {"InfraDevice": _node(attributes=[{"name": "name", **_TEXT}], relationships=[{"name": "site", **_PEER}])}
+    )
+
+    assert set(snapshot["InfraDevice"]["attributes"]) == {"name"}
+    assert set(snapshot["InfraDevice"]["relationships"]) == {"site"}
