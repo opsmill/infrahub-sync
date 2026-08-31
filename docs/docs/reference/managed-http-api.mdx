@@ -87,6 +87,33 @@ The command validates and applies `infrahub-sync-managed/run` through OpsMill Pr
 Extras, then records the declared working directory as the deployment's only pull step.
 It does not create a work pool or start a worker.
 
+## Start managed workers
+
+Start each worker through the managed entry point. The work pool must already exist:
+
+```bash
+python -m infrahub_sync.managed.worker \
+  --pool "$INFRAHUB_SYNC_MANAGED_WORK_POOL"
+```
+
+Each invocation generates a new UUID-suffixed worker name. After its Prefect heartbeat,
+the worker reads the exact Worker record for that name and work pool and records the
+server-issued UUID as its Prefect backend identity. Prefect 3.8.1 passes that identity
+to each `ProcessJobConfiguration` and injects `PREFECT__WORKER_ID` into that worker's
+flow-run child. The deployment stores no worker identity.
+
+A restarted process generates a new name and resolves its current server Worker UUID.
+It does not reuse an identity from the previous process. You can run multiple managed
+workers in one work pool because every supported invocation has a distinct name and
+resolves a distinct UUID. Use this entry point for every worker eligible to run the
+managed deployment; manually named or standard Prefect process workers are outside the
+supported topology.
+
+The worker does not poll for runs until its heartbeat is complete and the pool returns
+exactly one online record with its name, work pool, and a standard UUID string. An
+absent, malformed, offline, wrong-pool, or ambiguous record keeps polling disabled and
+fails with fixed, value-free text.
+
 Configure the worker environment before it starts:
 
 | Variable | Requirement |
@@ -244,7 +271,10 @@ curl --header "Authorization: Bearer $SYNC_API_TOKEN" \
 ```
 
 The plan response includes its checksum, checksum verification state, summary, verification
-notes, and per-object operations.
+notes, per-object operations, and `schema_fingerprint`. For a registered plan,
+`schema_fingerprint` is the 64-character SHA-256 digest of the destination-schema
+semantics consumed by that configuration. It is `null` only for a legacy unregistered
+plan.
 
 ### Verify and apply the reviewed plan
 
@@ -277,6 +307,12 @@ curl --request POST \
 
 The worker verifies the saved plan again before its first destination write. Destination
 deletes remain disabled.
+
+`PlanSchemaChangedError` means the live destination-schema semantics no longer match the
+reviewed plan's `schema_fingerprint`. The worker refuses the retained plan before any
+destination write. Create a new plan against the current schema, review its
+`schema_fingerprint`, operations, and checksum, then apply that new plan. There is no
+schema-drift override.
 
 ## Idempotency and retries
 
