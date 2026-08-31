@@ -137,6 +137,6 @@ def test_every_admitted_declaration_resolves_through_installed_only_loading(
     declared = package.configuration.source.adapter
     assert declared is not None
 
-    resolved = PluginLoader.installed_only().resolve(declared)
+    resolved = PluginLoader.installed_only_loader().resolve(declared)
 
     assert resolved is registered_entry_point

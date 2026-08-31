@@ -411,9 +411,15 @@ def test_a_non_bundled_installed_source_with_an_infrahub_destination_may_execute
     spy: _SnapshotSpy, tmp_path: Path, source_adapter: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Admitted, not qualified: an installed dotted or entry-point source runs, while a
-    # filesystem declaration never crosses registered admission at all.
+    # filesystem declaration never crosses registered admission at all. The dotted cases
+    # need this module to look like installed code, because registered resolution admits
+    # a dotted target only when a distribution owns its top-level package.
     from tests.runtime_schema.installed_source_adapter import InstalledSourceAdapter, InstalledSourceModel
 
+    monkeypatch.setattr(
+        "infrahub_sync.plugin_loader.packages_distributions",
+        lambda: {"tests": ["a-plugin-distribution"]},
+    )
     monkeypatch.setattr(
         "infrahub_sync.plugin_loader.entry_points",
         lambda: _EntryPoints(

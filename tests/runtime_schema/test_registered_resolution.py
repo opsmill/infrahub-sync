@@ -12,6 +12,7 @@ from infrahub_sync.plugin_loader import (
     resolve_installed_adapter_class,
     resolve_installed_model_base,
 )
+from infrahub_sync.utils import import_adapter
 
 _ADAPTER_SOURCE = """
 from diffsync import Adapter, DiffSyncModel
@@ -118,3 +119,46 @@ def test_a_dotted_installed_adapter_still_resolves() -> None:
     resolved = resolve_installed_adapter_class(instance.source)
 
     assert resolved.__name__ == "InfrahubAdapter"
+
+
+# --- the legacy local path keeps the resolution it had -----------------------------------
+
+
+def test_the_legacy_path_still_resolves_a_configured_adapter_path(sideloaded: Path) -> None:
+    # Registered admission is what narrowed; `import_adapter` serves the local CLI, whose
+    # adapters_path and environment resolution must keep working until it is removed.
+    instance = _instance("sideloaded", adapters_path=[str(sideloaded)])
+
+    resolved = import_adapter(sync_instance=instance, adapter=instance.source)
+
+    assert resolved is not None
+    assert resolved.__name__ == "SideloadedAdapter"
+
+
+def test_the_legacy_path_still_resolves_an_adapter_paths_environment_plugin(
+    sideloaded: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("INFRAHUB_SYNC_ADAPTER_PATHS", str(sideloaded))
+    instance = _instance("sideloaded")
+
+    resolved = import_adapter(sync_instance=instance, adapter=instance.source)
+
+    assert resolved is not None
+    assert resolved.__name__ == "SideloadedAdapter"
+
+
+def test_the_legacy_path_still_resolves_an_explicit_filesystem_spec() -> None:
+    instance = SyncInstance(
+        name="registered-resolution",
+        source=SyncAdapter(
+            name="mockdb",
+            adapter="./examples/custom_adapter/custom_adapter_src/custom_adapter.py:MockdbAdapter",
+        ),
+        destination=SyncAdapter(name="infrahub"),
+        directory="/nonexistent",
+    )
+
+    resolved = import_adapter(sync_instance=instance, adapter=instance.source)
+
+    assert resolved is not None
+    assert resolved.__name__ == "MockdbAdapter"

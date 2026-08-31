@@ -20,7 +20,7 @@ import pkgutil
 import re
 import sys
 from enum import Enum
-from importlib.metadata import entry_points
+from importlib.metadata import entry_points, packages_distributions
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -34,6 +34,32 @@ if TYPE_CHECKING:
 
 class PluginLoadError(Exception):
     """Exception raised when a plugin cannot be loaded."""
+
+
+# This distribution's own package. Its bundled adapters ship with the product, so they
+# are admitted whatever the install style reports — an editable or source checkout has no
+# distribution metadata mapping `infrahub_sync` to a distribution at all.
+BUNDLED_PACKAGE = "infrahub_sync"
+
+
+def is_installed_distribution_module(spec_path: str) -> bool:
+    """Whether a dotted target belongs to code installed into this environment.
+
+    The provenance rule registered resolution admits by: a dotted spec is admitted when
+    its top-level package is this distribution's own, or when installed distribution
+    metadata reports that package as owned by a distribution. Everything else — a module
+    that is importable only because a checkout or the working directory is on
+    ``sys.path``, and the standard library, which no distribution owns — is refused.
+
+    Deliberately conservative at one edge: a third-party adapter installed in editable
+    mode reports no owning distribution either, so it sits outside the registered profile
+    until it is installed normally. Answered from metadata alone, so the verdict is
+    reached before the target is imported.
+    """
+    top_level = spec_path.partition(".")[0]
+    if top_level == BUNDLED_PACKAGE:
+        return True
+    return bool(packages_distributions().get(top_level))
 
 
 def _target_base_class(default_class_candidates: tuple[str, ...]) -> type[Any] | None:
@@ -65,30 +91,32 @@ class PluginLoader:
     - Python entry points: group infrahub_sync.adapters
     """
 
-    def __init__(self, adapter_paths: Iterable[str] | None = None, *, allow_filesystem: bool = True) -> None:
+    def __init__(self, adapter_paths: Iterable[str] | None = None, *, installed_only: bool = False) -> None:
         """
         Initialize a new PluginLoader.
 
         Args:
             adapter_paths: Optional list of paths to search for adapters.
-            allow_filesystem: Whether filesystem resolution may run at all. False makes
-                the loader structurally incapable of loading a module from a path, an
-                adapter-path directory, or the working directory.
+            installed_only: Whether resolution is restricted to installed code. True
+                disables filesystem resolution outright and admits a dotted target only
+                when :func:`is_installed_distribution_module` owns it.
         """
         self.adapter_paths = list(adapter_paths) if adapter_paths else []
-        self.allow_filesystem = allow_filesystem
+        self.installed_only = installed_only
         self._cache: dict[str, tuple[type[Any], Plugintype]] = {}
 
     @classmethod
-    def installed_only(cls) -> PluginLoader:
+    def installed_only_loader(cls) -> PluginLoader:
         """Return a loader that resolves installed code and nothing else.
 
-        Dotted imports, entry points, and bundled adapter modules only: no configured
-        adapter paths, no ``INFRAHUB_SYNC_ADAPTER_PATHS``, and no working directory. This
-        is the loader registered execution resolves through, so an adapter that is not
-        installed in the worker's environment cannot enter a registered run.
+        Entry points, bundled adapter modules, and dotted targets an installed
+        distribution owns: no configured adapter paths, no
+        ``INFRAHUB_SYNC_ADAPTER_PATHS``, no working directory, and no module that is
+        importable only because a checkout is on ``sys.path``. This is the loader
+        registered execution resolves through, so an adapter that is not installed in
+        the worker's environment cannot enter a registered run.
         """
-        return cls(adapter_paths=None, allow_filesystem=False)
+        return cls(adapter_paths=None, installed_only=True)
 
     @classmethod
     def from_env_and_args(cls, adapter_paths: Iterable[str] | None = None) -> PluginLoader:
@@ -184,14 +212,14 @@ class PluginLoader:
         )
 
         # 1. Dotted path (if it looks like one)
-        if is_dotted:
+        if is_dotted and (not self.installed_only or is_installed_distribution_module(spec_path)):
             cls = self._resolve_from_dotted_path(spec_path, class_name, default_class_candidates)
             if cls:
                 self._cache[spec] = (cls, Plugintype.DOTTED_PATH)
                 return cls
 
         # 2. Filesystem path (search adapter_paths and CWD)
-        if self.allow_filesystem:
+        if not self.installed_only:
             cls = self._resolve_from_filesystem(
                 path=spec_path, class_name=class_name, default_class_candidates=default_class_candidates
             )
@@ -214,12 +242,17 @@ class PluginLoader:
                 return cls
 
         # If we get here, we couldn't resolve the class
-        tried = (
-            "dotted path, filesystem, entry point, and built-in"
-            if self.allow_filesystem
-            else ("dotted path, entry point, and built-in")
+        if not self.installed_only:
+            msg = (
+                f"Could not resolve adapter class for spec '{spec}'. "
+                f"Tried dotted path, filesystem, entry point, and built-in resolution."
+            )
+            raise PluginLoadError(msg)
+        msg = (
+            f"Could not resolve adapter class for spec '{spec}' from installed code. "
+            f"Tried entry point and built-in resolution, and dotted import restricted to a "
+            f"top-level package owned by an installed distribution."
         )
-        msg = f"Could not resolve adapter class for spec '{spec}'. Tried {tried} resolution."
         raise PluginLoadError(msg)
 
     def _resolve_from_dotted_path(
@@ -531,7 +564,7 @@ def resolve_installed_adapter_class(adapter: SyncAdapter) -> type[Any]:
     """Resolve one side's adapter class from installed code only.
 
     The registered worker's resolution seam. It resolves through
-    :meth:`PluginLoader.installed_only`, so neither generated Python in the configuration
+    :meth:`PluginLoader.installed_only_loader`, so neither generated Python in the configuration
     directory nor any filesystem plugin — a configured adapter path, the
     ``INFRAHUB_SYNC_ADAPTER_PATHS`` environment, or the working directory — can enter a
     registered run.
@@ -539,7 +572,7 @@ def resolve_installed_adapter_class(adapter: SyncAdapter) -> type[Any]:
     Raises:
         PluginLoadError: no installed class answers the declared adapter.
     """
-    return PluginLoader.installed_only().resolve(adapter.adapter or adapter.name)
+    return PluginLoader.installed_only_loader().resolve(adapter.adapter or adapter.name)
 
 
 def resolve_installed_model_base(adapter: SyncAdapter) -> type[Any]:
@@ -554,4 +587,4 @@ def resolve_installed_model_base(adapter: SyncAdapter) -> type[Any]:
         PluginLoadError: no installed class answers the declared adapter.
     """
     spec = adapter.adapter.split(":")[0] if adapter.adapter else adapter.name
-    return PluginLoader.installed_only().resolve(spec, default_class_candidates=("Model",))
+    return PluginLoader.installed_only_loader().resolve(spec, default_class_candidates=("Model",))
