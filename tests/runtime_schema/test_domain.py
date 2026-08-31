@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -115,3 +115,75 @@ def test_unusable_snapshot_members_refuse_with_a_typed_error(mutation: dict[str,
 
     with pytest.raises(UnsupportedSchemaSemanticsError):
         normalize_destination_schema({"InfraDevice": entry})
+
+
+# --- F7: the snapshot is immutable, so nothing derived from one can be edited under it --
+
+
+def test_the_snapshot_kind_mapping_cannot_be_reassigned() -> None:
+    snapshot = normalize_destination_schema(_SNAPSHOT)
+
+    with pytest.raises(TypeError):
+        snapshot.kinds["InfraDevice"] = snapshot.kinds["InfraDevice"]  # ty: ignore[invalid-assignment]
+
+
+def test_a_container_default_is_immutable_in_the_snapshot() -> None:
+    entry = {
+        **_SNAPSHOT["InfraDevice"],
+        "attributes": {
+            "tags": {
+                "kind": "List",
+                "optional": True,
+                "default_value": ["alpha", {"nested": ["beta"]}],
+                "unique": False,
+            }
+        },
+    }
+
+    default = normalize_destination_schema({"InfraDevice": entry}).kinds["InfraDevice"].attributes[0].default_value
+
+    assert default == ("alpha", {"nested": ("beta",)})
+    with pytest.raises((TypeError, AttributeError)):
+        default.append("gamma")
+    with pytest.raises(TypeError):
+        default[1]["nested"] = ()
+
+
+def test_an_immutable_container_default_still_reaches_a_model_and_canonical_json() -> None:
+    from diffsync import DiffSyncModel
+
+    from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncConfig
+    from infrahub_sync.plan.canonical import canonical_json_bytes
+    from infrahub_sync.runtime_schema import build_runtime_models, compute_consumed_schema_fingerprint
+
+    entry = {
+        **_SNAPSHOT["InfraDevice"],
+        "attributes": {
+            "name": {"kind": "Text", "optional": False, "default_value": None, "unique": True},
+            "tags": {"kind": "List", "optional": True, "default_value": ["alpha"], "unique": False},
+        },
+    }
+    snapshot = normalize_destination_schema({"InfraDevice": entry})
+    configuration = SyncConfig(
+        name="immutable-default",
+        source=SyncAdapter(name="netbox"),
+        destination=SyncAdapter(name="infrahub"),
+        schema_mapping=[
+            SchemaMappingModel(
+                name="InfraDevice",
+                fields=[SchemaMappingField(name="name"), SchemaMappingField(name="tags")],
+            )
+        ],
+    )
+
+    device = cast(
+        "Any",
+        build_runtime_models(snapshot=snapshot, configuration=configuration, model_base=DiffSyncModel)["InfraDevice"],
+    )
+    instance = device(name="leaf01")
+
+    assert instance.tags == ["alpha"]
+    instance.tags.append("beta")
+    assert device(name="leaf02").tags == ["alpha"]
+    assert canonical_json_bytes(snapshot.kinds["InfraDevice"].attributes[1].default_value) == b'["alpha"]'
+    assert len(compute_consumed_schema_fingerprint(configuration=configuration, snapshot=snapshot)) == 64

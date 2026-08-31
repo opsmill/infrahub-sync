@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, NoReturn, cast
 
 from .errors import UnsupportedSchemaSemanticsError
@@ -26,13 +27,22 @@ CARDINALITIES = frozenset({"one", "many"})
 
 @dataclass(frozen=True, slots=True)
 class NormalizedAttribute:
-    """One destination attribute, with every property a model or write depends on."""
+    """One destination attribute, with every property a model or write depends on.
+
+    ``default_value`` is immutable all the way down, so nothing derived from a snapshot
+    can edit the snapshot; :meth:`mutable_default` returns the mutable value a model
+    field's default has to be.
+    """
 
     name: str
     kind: str
     optional: bool
     default_value: Any
     unique: bool
+
+    def mutable_default(self) -> Any:
+        """Return this attribute's declared default as a mutable JSON-native value."""
+        return _mutable_json(self.default_value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +78,7 @@ class DestinationSchemaSnapshot:
     kinds: Mapping[str, NormalizedKind]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "kinds", dict(self.kinds))
+        object.__setattr__(self, "kinds", MappingProxyType(dict(self.kinds)))
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, DestinationSchemaSnapshot):
@@ -105,6 +115,15 @@ def _require_str(value: object, *, detail: str) -> str:
     return value
 
 
+def _mutable_json(value: Any) -> Any:
+    """Return the mutable JSON-native form of an immutable normalized value."""
+    if isinstance(value, tuple):
+        return [_mutable_json(item) for item in value]
+    if isinstance(value, Mapping):
+        return {key: _mutable_json(item) for key, item in value.items()}
+    return value
+
+
 def _require_json_default(value: object, *, detail: str) -> Any:
     """Accept only a JSON-native default, so a model default is reproducible.
 
@@ -117,11 +136,14 @@ def _require_json_default(value: object, *, detail: str) -> Any:
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        return [_require_json_default(item, detail=detail) for item in value]
+        return tuple(_require_json_default(item, detail=detail) for item in value)
     if isinstance(value, Mapping):
-        return {
-            _require_str(key, detail=detail): _require_json_default(item, detail=detail) for key, item in value.items()
-        }
+        return MappingProxyType(
+            {
+                _require_str(key, detail=detail): _require_json_default(item, detail=detail)
+                for key, item in value.items()
+            }
+        )
     _refuse(detail)
 
 

@@ -71,7 +71,9 @@ def _attribute_field(attribute: NormalizedAttribute, *, kind: str) -> tuple[Any,
         raise UnsupportedSchemaSemanticsError(msg) from None
     if not attribute.optional:
         return python_type, _REQUIRED
-    return python_type | None, attribute.default_value
+    # The snapshot holds the default immutably; a model field's default has to be the
+    # mutable value the generated file would have written.
+    return python_type | None, attribute.mutable_default()
 
 
 def _relationship_field(relationship: NormalizedRelationship) -> tuple[Any, Any]:
