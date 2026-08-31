@@ -13,6 +13,7 @@ from infrahub_sdk import Config
 
 from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
 from infrahub_sync.cache.paths import run_dir as stored_run_dir
+from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.generator import render_template
 from infrahub_sync.plan.errors import PlanVerificationError
 from infrahub_sync.plan.reader import read_plan_artifact_bytes
@@ -234,7 +235,7 @@ def get_potenda_from_instance(
         "internal_storage_engine": destination_store,
     }
     if "infrahub" in sync_instance.destination.name.lower():
-        dest_kwargs["branch"] = (sync_instance.destination.settings or {}).get("branch") or branch or "main"
+        dest_kwargs["branch"] = effective_destination_branch(sync_instance.destination.settings, branch)
 
     try:
         dst = destination(**dest_kwargs)
@@ -365,7 +366,7 @@ class PlanApplier:
             "internal_storage_engine": _destination_store(sync_instance),
         }
         if "infrahub" in sync_instance.destination.name.lower():
-            dest_kwargs["branch"] = (sync_instance.destination.settings or {}).get("branch") or branch or "main"
+            dest_kwargs["branch"] = effective_destination_branch(sync_instance.destination.settings, branch)
         try:
             destination = destination_class(**dest_kwargs)
         except (ValueError, TypeError) as exc:

@@ -41,6 +41,7 @@ from infrahub_sync.cache import compute_schema_subhash
 
 from .capabilities import BUILTIN_ADAPTER_CAPABILITIES, DestinationSchemaReadError
 from .models import ValidationFinding, sort_findings
+from .runtime import effective_destination_branch
 from .validation import _finding_message
 
 if TYPE_CHECKING:
@@ -79,19 +80,13 @@ class DestinationSchemaValidation:
 
 
 def resolve_declared_destination_branch(package: ConfigurationPackage) -> str:
-    """Resolve the destination branch from the declared setting only.
+    """Resolve the destination branch validation reads, through the shared rule.
 
-    The interim SYNC-79 helper: reads ``destination.settings.branch`` and nothing else —
-    never the ambient environment — defaulting to ``"main"``, the SDK's own default
-    branch. Its consumers are the schema read and, through the snapshot that read
-    returns, the fingerprint subhash. CF-005's shared resolver replaces this at its one
-    call site.
+    Validation judges declared content and has no run request, so it passes no run
+    branch: the result is the declared branch or ``"main"``. Execution calls the same
+    resolver with the run's branch.
     """
-    settings = package.configuration.destination.settings or {}
-    branch = settings.get("branch")
-    if isinstance(branch, str) and branch:
-        return branch
-    return "main"
+    return effective_destination_branch(package.configuration.destination.settings, None)
 
 
 def _finding(*, code: str, location: str, message: str) -> ValidationFinding:

@@ -2,14 +2,31 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from infrahub_sync import SyncInstance
 
 from .credentials import _REGISTERED_CONTEXT, resolve_reference
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from .models import ConfigurationPackage
+
+
+def effective_destination_branch(settings: Mapping[str, Any] | None, run_branch: str | None) -> str:
+    """Resolve the one destination branch a run works against.
+
+    Declared ``destination.settings.branch`` first, then the run request's branch, then
+    ``"main"`` — the SDK's own default. Schema discovery, destination adapter
+    construction, and the plan's destination binding all resolve through this, so a run
+    cannot read one branch's schema and write another's. Explicit configuration
+    validation has no run request and passes ``None``.
+    """
+    declared = (settings or {}).get("branch")
+    if isinstance(declared, str) and declared:
+        return declared
+    return run_branch or "main"
 
 
 def resolve_runtime_instance(package: ConfigurationPackage, *, directory: str) -> SyncInstance:
