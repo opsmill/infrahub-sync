@@ -74,6 +74,16 @@ def _claimed_worker_execution(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(managed_flow, "_claim_current_execution", claim)
 
 
+@pytest.fixture(autouse=True)
+def _stub_runtime_model_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep lifecycle tests focused on flow behavior, not schema composition."""
+
+    def build(*_args: object, **_kwargs: object) -> object:
+        return object()
+
+    monkeypatch.setattr(managed_flow, "build_runtime_model_plan", build)
+
+
 def _saved(run_id: str) -> SavedPlan:
     manifest = PlanManifest(
         format_version=2,
