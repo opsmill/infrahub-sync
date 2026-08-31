@@ -8,6 +8,7 @@ against the model the route declares closes that gap where it is cheap to close.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -124,3 +125,62 @@ def test_the_report_names_both_reasons_a_delete_only_plan_writes_nothing() -> No
 
     assert any("create or update" in reason for reason in reasons)
     assert any("skipped" in reason for reason in reasons)
+
+
+# ======================================================================================
+# Mirroring the destination copies values; it does not manufacture them
+# ======================================================================================
+
+
+@dataclass
+class FakeAttr:
+    """Stand-in for an ``InfrahubNodeSync`` attribute manager — only ``.value`` is read."""
+
+    value: Any
+
+
+class FakeNode:
+    """Stand-in for ``InfrahubNodeSync`` exposing its attributes by name."""
+
+    def __init__(self, **attributes: Any) -> None:  # noqa: ANN401 — an attribute holds any value
+        for name, value in attributes.items():
+            setattr(self, name, FakeAttr(value=value))
+
+
+def test_mirroring_copies_every_mapped_field_from_the_destination() -> None:
+    """The devices the destination already holds must compare equal after mirroring."""
+    nodes = [FakeNode(name="core01", type="juniper mx204"), FakeNode(name="edge02", type="cisco nexus9000")]
+
+    assert smoke.mirrored_device_payloads(nodes) == [
+        {"name": "core01", "type": "juniper mx204"},
+        {"name": "edge02", "type": "cisco nexus9000"},
+    ]
+
+
+def test_mirroring_manufactures_no_value_of_its_own() -> None:
+    """The live failure: a literal in place of the real value made every mirror an update.
+
+    An update rewriting a device's own unique attribute is rejected at the destination, so
+    the apply died on its first operation with nothing written.
+    """
+    nodes = [FakeNode(name=f"device{index:02d}", type=f"model-{index}") for index in range(5)]
+
+    payloads = smoke.mirrored_device_payloads(nodes)
+
+    assert {payload["type"] for payload in payloads} == {f"model-{index}" for index in range(5)}
+    assert len({payload["type"] for payload in payloads}) == len(payloads), "values collapsed to a constant"
+
+
+def test_mirroring_covers_exactly_the_fields_the_package_maps() -> None:
+    """A mapped field the mirror omits reappears as an update the plan cannot converge."""
+    mapped = {
+        field["name"] for field in smoke.smoke_package(INFRAHUB_URL)["configuration"]["schema_mapping"][0]["fields"]
+    }
+
+    assert set(smoke.SMOKE_FIELDS) == mapped
+    assert set(smoke.mirrored_device_payloads([FakeNode(name="core01", type="juniper mx204")])[0]) == mapped
+
+
+def test_mirroring_preserves_an_unset_value_rather_than_substituting_one() -> None:
+    """An absent value is still the destination's value; substituting one is an update."""
+    assert smoke.mirrored_device_payloads([FakeNode(name="core01", type=None)]) == [{"name": "core01", "type": None}]

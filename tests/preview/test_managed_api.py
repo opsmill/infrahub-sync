@@ -13,16 +13,22 @@ resolves adapters through the installed loader and admits no filesystem adapter.
 pristine. Planning an empty source against a populated destination derives a plan of
 nothing but deletes — and a v2 artifact records deletes without ever executing them, so
 the apply completes green having written nothing at all. So the smoke seeds `main` first:
-every device the destination already holds, plus one it owns. The source is then a
-superset of the destination, which is what makes the plan creates rather than deletes,
-and the assertions below insist on that rather than on terminal completion alone.
+every device the destination already holds — copied **verbatim**, every mapped field —
+plus one device it owns. The source is then a superset of the destination whose shared
+devices compare equal, which reduces the plan to that one create, and the assertions
+below insist on that rather than on terminal completion alone.
+
+Copying verbatim is the part that has to be exact. Seeding a mirrored device with any
+manufactured value makes it an update instead of a match, and an update that rewrites a
+device's own unique attribute is rejected by the destination's uniqueness constraint —
+so the apply fails on its first operation having written nothing.
 """
 
 from __future__ import annotations
 
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 import httpx
@@ -34,8 +40,11 @@ pytestmark = pytest.mark.preview
 
 POLL_TIMEOUT_SECONDS = 240
 
-# The kind `preview.up` loads into Infrahub before the smoke runs.
+# The kind `preview.up` loads into Infrahub before the smoke runs, and the fields the
+# package maps. A mirror has to carry all of them, or the mirrored device becomes an
+# update rather than a match.
 SMOKE_KIND = "InfraDevice"
+SMOKE_FIELDS = ("name", "type")
 
 
 def smoke_package(infrahub_url: str) -> dict[str, Any]:
@@ -67,7 +76,9 @@ def smoke_package(infrahub_url: str) -> dict[str, Any]:
                     "name": SMOKE_KIND,
                     "mapping": SMOKE_KIND,
                     "identifiers": ["name"],
-                    "fields": [{"name": "name", "mapping": "name"}, {"name": "type", "mapping": "type"}],
+                    # Derived from `SMOKE_FIELDS` so the mirror below cannot cover fewer
+                    # fields than the plan compares.
+                    "fields": [{"name": name, "mapping": name} for name in SMOKE_FIELDS],
                 }
             ],
         },
@@ -174,8 +185,25 @@ def _infrahub_client(preview_env: dict[str, Any]) -> Any:  # noqa: ANN401 — th
     )
 
 
+def mirrored_device_payloads(nodes: Iterable[Any]) -> list[dict[str, Any]]:
+    """Copy each destination device verbatim — every mapped field, not just its identity.
+
+    A mirror exists so the source and destination compare **equal** for these devices and
+    the plan reduces to the one device the smoke owns. Manufacturing any value instead of
+    copying it turns each mirrored device into an update, and an update that rewrites a
+    device's own unique attributes is rejected at the destination — which is exactly how
+    the first live replay failed. `.value` is how the adapter reads an attribute, so it is
+    how the mirror reads one too.
+    """
+    return [{name: getattr(node, name).value for name in SMOKE_FIELDS} for node in nodes]
+
+
+def _device_types(client: Any, branch: str) -> dict[str, Any]:  # noqa: ANN401 — the SDK's sync client
+    return {node.name.value: node.type.value for node in client.all(kind=SMOKE_KIND, branch=branch)}
+
+
 def _device_names(client: Any, branch: str) -> set[str]:  # noqa: ANN401 — the SDK's sync client
-    return {node.name.value for node in client.all(kind=SMOKE_KIND, branch=branch)}
+    return set(_device_types(client, branch))
 
 
 def _seed_source_branch(preview_env: dict[str, Any]) -> str:
@@ -186,8 +214,8 @@ def _seed_source_branch(preview_env: dict[str, Any]) -> str:
     an upsert on `name`, so re-running the smoke converges rather than duplicating.
     """
     client = _infrahub_client(preview_env)
-    for name in _device_names(client, SMOKE_BRANCH):
-        client.create(kind=SMOKE_KIND, branch="main", data={"name": name, "type": "mirrored"}).save(allow_upsert=True)
+    for payload in mirrored_device_payloads(client.all(kind=SMOKE_KIND, branch=SMOKE_BRANCH)):
+        client.create(kind=SMOKE_KIND, branch="main", data=payload).save(allow_upsert=True)
     smoke_device = f"preview-smoke-{uuid.uuid4().hex[:12]}"
     client.create(kind=SMOKE_KIND, branch="main", data={"name": smoke_device, "type": "registered-smoke"}).save(
         allow_upsert=True
@@ -225,6 +253,10 @@ def test_managed_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
         # The plan must exercise the approved create/update path; a delete-only plan
         # applies cleanly and writes nothing.
         assert unwritten_plan_reasons(plan_payload["summary"]) == [], plan_payload["summary"]
+        # Mirrored devices are copied verbatim, so they compare equal and the plan is
+        # creates alone. An update here means the mirror manufactured a value, and an
+        # update that rewrites a device's own unique attribute cannot converge.
+        assert plan_payload["summary"]["by_action"].get("update", 0) == 0, plan_payload["summary"]
         checksum = plan_payload["checksum"]
 
         apply_accepted = client.post(f"/runs/{run_id}/apply", headers=_idempotency(), json=apply_run_request(checksum))
