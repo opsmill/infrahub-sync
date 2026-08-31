@@ -20,6 +20,7 @@ from infrahub_sync.plan.reader import read_plan_artifact_bytes
 from infrahub_sync.plan.verify import destination_binding_failure
 from infrahub_sync.plugin_loader import PluginLoader, PluginLoadError, resolve_installed_adapter_class
 from infrahub_sync.potenda import Potenda
+from infrahub_sync.runtime_schema import bind_runtime_models
 
 logger = logging.getLogger(__name__)
 
@@ -176,8 +177,15 @@ def get_potenda_from_instance(
     When ``run_id`` is None, a fresh sortable identifier is allocated via
     ``generate_run_id()`` so each invocation gets its own cache directory.
     """
-    source = import_adapter(sync_instance=sync_instance, adapter=sync_instance.source)
-    destination = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
+    runtime_models = sync_instance._runtime_models
+    if runtime_models is None:
+        source = import_adapter(sync_instance=sync_instance, adapter=sync_instance.source)
+        destination = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
+    else:
+        # A registered run resolved both classes from installed code already, so nothing
+        # here reads the configuration directory.
+        source = runtime_models.source_adapter_class
+        destination = runtime_models.destination_adapter_class
 
     if not source or not destination:
         missing = []
@@ -214,6 +222,8 @@ def get_potenda_from_instance(
     except (ValueError, TypeError) as exc:
         msg = f"Error initializing {sync_instance.source.name.title()}Adapter: {exc}"
         raise ValueError(msg) from exc
+    if runtime_models is not None:
+        bind_runtime_models(src, runtime_models.source_models)
 
     dest_kwargs = {
         "config": sync_instance,
@@ -229,6 +239,8 @@ def get_potenda_from_instance(
     except (ValueError, TypeError) as exc:
         msg = f"Error initializing {sync_instance.destination.name.title()}Adapter: {exc}"
         raise ValueError(msg) from exc
+    if runtime_models is not None:
+        bind_runtime_models(dst, runtime_models.destination_models)
 
     # Single topological pass yields both the flat order and the tier layout
     # (tiers is None when an explicit `order` is configured).
@@ -341,7 +353,12 @@ class PlanApplier:
             ImportError: the destination adapter could not be loaded.
             ValueError: the destination adapter could not be initialized.
         """
-        destination_class = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
+        runtime_models = sync_instance._runtime_models
+        destination_class = (
+            import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
+            if runtime_models is None
+            else runtime_models.destination_adapter_class
+        )
         if not destination_class:
             msg = f"Could not load the destination adapter '{sync_instance.destination.name}'"
             raise ImportError(msg)
@@ -359,6 +376,8 @@ class PlanApplier:
         except (ValueError, TypeError) as exc:
             msg = f"Error initializing {sync_instance.destination.name.title()}Adapter: {exc}"
             raise ValueError(msg) from exc
+        if runtime_models is not None:
+            bind_runtime_models(destination, runtime_models.destination_models)
 
         top_level, tiers = sync_instance.compute_order_and_tiers()
 

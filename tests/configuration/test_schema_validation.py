@@ -22,7 +22,6 @@ import pytest
 from infrahub_sdk import exceptions as sdk_exceptions
 
 import infrahub_sync
-from infrahub_sync.cache import compute_schema_subhash
 from infrahub_sync.configuration import capabilities as capabilities_module
 from infrahub_sync.configuration import schema_validation
 from infrahub_sync.configuration import validation as validation_module
@@ -37,6 +36,7 @@ from infrahub_sync.configuration.schema_validation import (
     resolve_declared_destination_branch,
 )
 from infrahub_sync.configuration.validation import collect_findings, validate_package_credentials
+from infrahub_sync.runtime_schema import compute_consumed_schema_fingerprint, normalize_destination_schema
 from tests.configuration.validation_packages import package, package_data
 
 if TYPE_CHECKING:
@@ -45,17 +45,35 @@ if TYPE_CHECKING:
     from infrahub_sync.configuration import ConfigurationPackage
 
 
-# A real destination schema snapshot shape: kind -> attributes (name -> kind) and
-# relationships (name -> peer + cardinality), exactly what the accessor contract returns.
+# A real destination schema snapshot shape, exactly what the accessor contract returns:
+# each kind's ordered identity paths, its attributes (name -> kind, optional, default,
+# unique) and its relationships (name -> peer, cardinality, optional, kind).
+def _attribute(
+    kind: str = "Text", *, optional: bool = True, default: object = None, unique: bool = False
+) -> dict[str, Any]:
+    return {"kind": kind, "optional": optional, "default_value": default, "unique": unique}
+
+
+def _relationship(peer: str, cardinality: str, *, optional: bool = True, kind: str = "Attribute") -> dict[str, Any]:
+    return {"peer": peer, "cardinality": cardinality, "optional": optional, "kind": kind}
+
+
 _SNAPSHOT: dict[str, Any] = {
     "InfraDevice": {
-        "attributes": {"name": "Text", "description": "Text"},
+        "human_friendly_id": ["name__value"],
+        "uniqueness_constraints": [["name__value"]],
+        "attributes": {"name": _attribute(optional=False, unique=True), "description": _attribute()},
         "relationships": {
-            "site": {"peer": "LocationSite", "cardinality": "one"},
-            "tags": {"peer": "BuiltinTag", "cardinality": "many"},
+            "site": _relationship("LocationSite", "one"),
+            "tags": _relationship("BuiltinTag", "many", kind="Generic"),
         },
     },
-    "LocationSite": {"attributes": {"name": "Text"}, "relationships": {}},
+    "LocationSite": {
+        "human_friendly_id": ["name__value"],
+        "uniqueness_constraints": [["name__value"]],
+        "attributes": {"name": _attribute(optional=False, unique=True)},
+        "relationships": {},
+    },
 }
 
 
@@ -261,7 +279,9 @@ def test_a_conforming_mapping_yields_no_findings_and_a_fingerprint(monkeypatch: 
     result = collect_destination_schema_findings(parsed)
 
     assert result.findings == ()
-    assert result.schema_fingerprint == compute_schema_subhash(parsed.configuration, _SNAPSHOT)
+    assert result.schema_fingerprint == compute_consumed_schema_fingerprint(
+        configuration=parsed.configuration, snapshot=normalize_destination_schema(_SNAPSHOT)
+    )
 
 
 # --- AR2: capability gating -----------------------------------------------------------

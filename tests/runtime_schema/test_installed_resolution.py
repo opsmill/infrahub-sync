@@ -7,13 +7,22 @@ from pathlib import Path
 import pytest
 
 from infrahub_sync import SyncAdapter, SyncInstance
-from infrahub_sync.adapters.infrahub import InfrahubAdapter, InfrahubModel
 from infrahub_sync.plugin_loader import (
     PluginLoadError,
     resolve_installed_adapter_class,
     resolve_installed_model_base,
 )
 from infrahub_sync.utils import import_adapter
+
+
+def _qualified(cls: type) -> str:
+    """Name a resolved class without comparing identity.
+
+    Other suites re-import the bundled adapter modules dynamically, so two live class
+    objects for one adapter can coexist in a session; the qualified name is what this
+    test is about anyway.
+    """
+    return f"{cls.__module__}.{cls.__name__}"
 
 
 def _instance(directory: Path) -> SyncInstance:
@@ -39,7 +48,9 @@ def test_installed_resolution_ignores_a_generated_wrapper(tmp_path: Path) -> Non
     _write_generated_wrapper(tmp_path)
     instance = _instance(tmp_path)
 
-    assert resolve_installed_adapter_class(instance, instance.destination) is InfrahubAdapter
+    resolved = resolve_installed_adapter_class(instance, instance.destination)
+
+    assert _qualified(resolved) == "infrahub_sync.adapters.infrahub.InfrahubAdapter"
 
 
 def test_the_generated_wrapper_still_takes_precedence_for_the_legacy_path(tmp_path: Path) -> None:
@@ -48,14 +59,16 @@ def test_the_generated_wrapper_still_takes_precedence_for_the_legacy_path(tmp_pa
 
     resolved = import_adapter(sync_instance=instance, adapter=instance.destination)
 
-    assert resolved is not InfrahubAdapter
+    assert _qualified(resolved) != "infrahub_sync.adapters.infrahub.InfrahubAdapter"
     assert resolved.generated is True
 
 
 def test_the_installed_model_base_matches_the_generated_wrapper_spec(tmp_path: Path) -> None:
     instance = _instance(tmp_path)
 
-    assert resolve_installed_model_base(instance, instance.destination) is InfrahubModel
+    assert _qualified(resolve_installed_model_base(instance, instance.destination)) == (
+        "infrahub_sync.adapters.infrahub.InfrahubModel"
+    )
 
 
 def test_an_explicit_adapter_spec_resolves_its_module_for_the_model_base(tmp_path: Path) -> None:
@@ -66,7 +79,9 @@ def test_an_explicit_adapter_spec_resolves_its_module_for_the_model_base(tmp_pat
         directory=str(tmp_path),
     )
 
-    assert resolve_installed_model_base(instance, instance.source) is InfrahubModel
+    assert _qualified(resolve_installed_model_base(instance, instance.source)) == (
+        "infrahub_sync.adapters.infrahub.InfrahubModel"
+    )
 
 
 def test_an_unresolvable_installed_model_base_refuses(tmp_path: Path) -> None:

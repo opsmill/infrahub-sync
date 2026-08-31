@@ -85,7 +85,7 @@ def _generated_models(
     return {
         cast("type[DiffSyncModel]", obj)._modelname: cast("type[DiffSyncModel]", obj)
         for name, obj in vars(module).items()
-        if isinstance(obj, type) and issubclass(obj, InfrahubModel) and not name.startswith("_")
+        if isinstance(obj, type) and issubclass(obj, DiffSyncModel) and not name.startswith("_")
     }
 
 

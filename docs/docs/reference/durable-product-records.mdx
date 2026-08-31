@@ -95,6 +95,14 @@ only, performs no schema read and no network I/O, and never emits them. All four
 | `destination-schema-validation-unsupported` | Schema validation was explicitly requested against a destination adapter that does not declare it. A missing capability needed to determine safety is an error, not a warning. | `/configuration/destination` |
 | `unsupported-destination-write` | The configuration requests destination write operations the destination adapter does not declare support for. | `/configuration/destination` |
 
+A successful opt-in read also returns `destination_schema_fingerprint`: the full SHA-256
+digest of the schema semantics this configuration consumes — each mapped kind, its
+DiffSync identifiers, its ordered human-friendly ID and uniqueness-constraint component
+paths, every mapped field's type and required/default/unique properties, and every
+mandatory-without-default field on those kinds. Unmapped destination growth and
+differences in schema delivery order leave it unchanged. It is `null` whenever no
+snapshot was read — the default path, a non-declaring destination, or a failed read.
+
 #### Warning-channel codes
 
 The warning channel is closed: warnings are limited to intentional omissions and

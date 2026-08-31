@@ -37,7 +37,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from infrahub_sync import requested_destination_write_operations
-from infrahub_sync.cache import compute_schema_subhash
+from infrahub_sync.runtime_schema import (
+    UnsupportedSchemaSemanticsError,
+    compute_consumed_schema_fingerprint,
+    normalize_destination_schema,
+)
 
 from .capabilities import BUILTIN_ADAPTER_CAPABILITIES, DestinationSchemaReadError
 from .models import ValidationFinding, sort_findings
@@ -70,9 +74,11 @@ class DestinationSchemaOptions:
 class DestinationSchemaValidation:
     """Every schema-path finding for one package, with the judged snapshot's identity.
 
-    ``schema_fingerprint`` is the ``compute_schema_subhash`` identity of the snapshot the
-    content checks actually judged — ``None`` whenever no snapshot was read: a
-    non-declaring destination, an unknown adapter, or a failed read.
+    ``schema_fingerprint`` is the consumed-semantics identity of the snapshot the content
+    checks actually judged — ``None`` whenever no snapshot was read: a non-declaring
+    destination, an unknown adapter, or a failed read. Validation, worker construction,
+    and apply share this one projection, so a fingerprint reported here is the fingerprint
+    a plan of the same package against the same schema records.
     """
 
     findings: tuple[ValidationFinding, ...]
@@ -221,6 +227,13 @@ def collect_destination_schema_findings(package: ConfigurationPackage) -> Destin
                 )
             )
         else:
-            fingerprint = compute_schema_subhash(package.configuration, dict(snapshot))
+            try:
+                fingerprint = compute_consumed_schema_fingerprint(
+                    configuration=package.configuration, snapshot=normalize_destination_schema(snapshot)
+                )
+            except UnsupportedSchemaSemanticsError:
+                # A snapshot the accessor delivered but the closed domain refuses has no
+                # identity to report; the content checks below still judge what they can.
+                fingerprint = None
             findings.extend(_schema_content_findings(package, snapshot))
     return DestinationSchemaValidation(findings=sort_findings(findings), schema_fingerprint=fingerprint)
