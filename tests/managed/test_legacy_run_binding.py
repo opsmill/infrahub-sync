@@ -175,6 +175,7 @@ def test_legacy_apply_refuses_checksum_valid_nonlegacy_manifest_before_destinati
             deletes_computed=True,
             operations=[],
             configuration_binding=manifest_binding,
+            schema_fingerprint="c" * 64,
         )
     else:
         write_plan_artifact(

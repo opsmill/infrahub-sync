@@ -185,6 +185,7 @@ def test_registered_configuration_binding_is_written_and_covered_by_checksum(tmp
         deletes_computed=True,
         operations=[_tag("registered")],
         configuration_binding=binding,
+        schema_fingerprint="b" * 64,
     )
 
     assert manifest.configuration_binding == binding
@@ -513,10 +514,10 @@ def test_an_unknown_manifest_field_is_tolerated_on_read(tmp_path: Path) -> None:
     """The writer emits the eight; the manifest *type* tolerates a ninth (FR-027, AD028)."""
     _write(tmp_path, [_tag("prod")])
     on_disk = json.loads(_manifest_path(tmp_path).read_text(encoding="utf-8"))
-    on_disk["schema_fingerprint"] = "a later outcome adds this"
+    on_disk["a_later_outcome_field"] = "a later outcome adds this"
 
     tolerated = PlanManifest.model_validate(on_disk)
-    assert tolerated.model_dump()["schema_fingerprint"] == "a later outcome adds this"
+    assert tolerated.model_dump()["a_later_outcome_field"] == "a later outcome adds this"
 
 
 # ======================================================================================

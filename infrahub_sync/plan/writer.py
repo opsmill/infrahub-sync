@@ -178,6 +178,7 @@ def write_plan_artifact(
     operations: Sequence[PlannedOperation],
     destination_binding: DestinationBindingRecord | None = None,
     configuration_binding: tuple[str, int, str] | None = None,
+    schema_fingerprint: str | None = None,
 ) -> PlanManifest:
     """Write `<run_dir>/plan/` and return the manifest that was written.
 
@@ -190,11 +191,18 @@ def write_plan_artifact(
     (a destination that exposes none) writes a manifest without the field, exactly the
     shape older manifests carry, and the apply-time comparison skips such plans.
 
+    `schema_fingerprint` is the consumed destination-schema semantics the plan was computed
+    against. It is **required** alongside `configuration_binding`: a registered plan whose
+    caller supplies none is refused by `PlanManifest` rather than written without the
+    binding a registered apply compares against.
+
     Raises:
         PlanGenerationExistsError: the run already holds a committed plan generation, which
             is never overwritten.
         DuplicateOperationIdError: two operations share an operation identifier (FR-021).
         UnserializablePayloadValueError: a payload value is outside the canonical-value table.
+        ValidationError: the manifest the caller's values assemble is not a valid manifest —
+            a registered plan with no `schema_fingerprint`, above all.
     """
     require_uncommitted_plan(run_dir, run_id=run_id)
     _refuse_duplicate_identifiers(operations)
@@ -223,6 +231,9 @@ def write_plan_artifact(
             registry_version=configuration_binding[1],
             package_checksum=configuration_binding[2],
         )
+    if schema_fingerprint is not None:
+        # Before the checksum below, so the recorded schema identity is covered by it.
+        body["schema_fingerprint"] = schema_fingerprint
     body["plan_checksum"] = compute_plan_checksum(body, operations_bytes)
     manifest = PlanManifest.model_validate(body)
 

@@ -107,7 +107,12 @@ def test_the_two_masks_are_deliberately_different() -> None:
     "binding",
     [
         pytest.param(
-            {"config_id": "config-001", "registry_version": 1, "package_checksum": "a" * 64},
+            {
+                "config_id": "config-001",
+                "registry_version": 1,
+                "package_checksum": "a" * 64,
+                "schema_fingerprint": "b" * 64,
+            },
             id="complete",
         ),
         pytest.param({}, id="absent"),
@@ -674,6 +679,9 @@ PLAN_MANIFEST_FIELDS = {
     # Additive: the effective destination the plan is bound to. An
     # identity to compare at apply time, not a grouping of operations into write units.
     "destination_binding",
+    # Additive: the consumed destination-schema semantics a registered plan was computed
+    # against. An identity to compare at apply time, not a grouping of operations.
+    "schema_fingerprint",
 }
 
 # Vocabulary a grouping field would plausibly be named with. Belt and braces beside the
@@ -751,28 +759,29 @@ def _manifest(**overrides: Any) -> dict[str, Any]:  # noqa: ANN401 — a raw man
 
 def test_plan_manifest_tolerates_unknown_fields() -> None:
     """FR-027's forward-compatibility carve-out: a later outcome adds a field here."""
-    manifest = PlanManifest(**_manifest(schema_fingerprint="fp-1"))
-    assert manifest.schema_fingerprint == "fp-1"  # ty: ignore[unresolved-attribute]
+    manifest = PlanManifest(**_manifest(a_later_outcome_field="value-1"))
+    assert manifest.a_later_outcome_field == "value-1"  # ty: ignore[unresolved-attribute]
 
 
 def test_plan_manifest_preserves_unknown_fields_verbatim() -> None:
     """Tolerated is not enough — the value must survive the round trip unchanged."""
-    manifest = PlanManifest(**_manifest(schema_fingerprint={"kinds": ["BuiltinTag"], "hash": "abc"}))
+    manifest = PlanManifest(**_manifest(a_later_outcome_field={"kinds": ["BuiltinTag"], "hash": "abc"}))
     dumped = manifest.model_dump()
-    assert dumped["schema_fingerprint"] == {"kinds": ["BuiltinTag"], "hash": "abc"}
+    assert dumped["a_later_outcome_field"] == {"kinds": ["BuiltinTag"], "hash": "abc"}
 
 
 def test_planned_operation_rejects_unknown_fields() -> None:
     """A closed field set: an operation this version cannot fully interpret is torn."""
     record: dict[str, Any] = _operation()
-    record["schema_fingerprint"] = "fp-1"
+    record["a_later_outcome_field"] = "value-1"
     with pytest.raises(ValidationError):
         PlannedOperation(**record)
 
 
 def test_plan_manifest_still_requires_its_declared_fields() -> None:
     """`extra="allow"` does not make the declared fields optional."""
-    for missing in PLAN_MANIFEST_FIELDS - {"destination_binding", "config_id", "registry_version", "package_checksum"}:
+    optional = {"destination_binding", "config_id", "registry_version", "package_checksum", "schema_fingerprint"}
+    for missing in PLAN_MANIFEST_FIELDS - optional:
         record = _manifest()
         del record[missing]
         with pytest.raises(ValidationError):

@@ -23,6 +23,7 @@ from tests.configuration.validation_packages import package
 
 FLOW_RUN_ID = "ed4778cb-f2cf-4b1f-a87b-68be37659e93"
 WORKER_ID = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+SCHEMA_FINGERPRINT = "c" * 64
 
 
 def _registered_apply(
@@ -70,6 +71,9 @@ def _registered_apply(
         deletes_computed=True,
         operations=[],
         configuration_binding=manifest_binding,
+        # Required alongside a configuration binding; this file is about the binding
+        # comparison, which the schema guard's own suite covers separately.
+        schema_fingerprint=None if manifest_binding is None else SCHEMA_FINGERPRINT,
     )
     calls: list[str] = []
     monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))

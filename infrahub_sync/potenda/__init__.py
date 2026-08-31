@@ -159,6 +159,10 @@ class Potenda:
         self._last_plan_action_counts: dict[str, int] | None = None
         self._last_applied_plan_action_counts: dict[str, int] | None = None
         self.configuration_binding = getattr(config, "_configuration_binding", None)
+        # The schema identity of the snapshot this run's models were built from, so the plan
+        # records the semantics it was actually computed against rather than a second read.
+        runtime_models = getattr(config, "_runtime_models", None)
+        self.schema_fingerprint: str | None = None if runtime_models is None else runtime_models.schema_fingerprint
         self._did_full_extract: bool = False
         # Per-side extraction mode, recorded alongside the OR-accumulated
         # `_did_full_extract` rather than in place of it. FR-015 derives deletes only
@@ -558,6 +562,7 @@ class Potenda:
             # writes the manifest shape older plans carry.
             destination_binding=getattr(self.destination, "destination_binding", None),
             configuration_binding=self.configuration_binding,
+            schema_fingerprint=self.schema_fingerprint,
         )
         logger.info(
             "Plan artifact: wrote %d operation(s) to %s (deletes computed: %s)",

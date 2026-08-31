@@ -400,13 +400,13 @@ def test_an_unknown_manifest_field_survives_a_read_write_round_trip(tmp_path: Pa
     written = write_artifact(
         directory,
         [operation_record()],
-        schema_fingerprint="a later outcome adds this",
+        a_later_outcome_field="a later outcome adds this",
     )
 
     loaded = load_plan_artifact(directory)
 
-    assert loaded.manifest_mapping["schema_fingerprint"] == "a later outcome adds this"
-    assert loaded.manifest.model_dump()["schema_fingerprint"] == "a later outcome adds this"
+    assert loaded.manifest_mapping["a_later_outcome_field"] == "a later outcome adds this"
+    assert loaded.manifest.model_dump()["a_later_outcome_field"] == "a later outcome adds this"
     # Round trip: what was read back is what was written, key for key and value for value.
     assert loaded.manifest_mapping == written
     assert loaded.manifest_mapping == json.loads(manifest_path(directory).read_text(encoding="utf-8"))
