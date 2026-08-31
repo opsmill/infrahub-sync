@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import copy
+import importlib
 import sys
 import types
 from datetime import datetime, timezone
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -263,19 +265,56 @@ def test_a_non_infrahub_destination_refuses_before_any_schema_read(spy: _Snapsho
     assert spy.branches == []
 
 
+@pytest.mark.parametrize(
+    "source_adapter",
+    [
+        pytest.param("tests.runtime_schema.installed_source_adapter", id="dotted-module"),
+        pytest.param(
+            "tests.runtime_schema.installed_source_adapter:InstalledSourceAdapter", id="dotted-module-and-class"
+        ),
+        pytest.param("installed_source_entry_point", id="entry-point-name"),
+    ],
+)
 def test_a_non_bundled_installed_source_with_an_infrahub_destination_may_execute(
-    spy: _SnapshotSpy, tmp_path: Path
+    spy: _SnapshotSpy, tmp_path: Path, source_adapter: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Admitted, not qualified: an installed dotted or entry-point source runs, while a
+    # filesystem declaration never crosses registered admission at all.
+    from tests.runtime_schema.installed_source_adapter import InstalledSourceAdapter, InstalledSourceModel
+
+    monkeypatch.setattr(
+        "infrahub_sync.plugin_loader.entry_points",
+        lambda: _EntryPoints(
+            "installed_source_entry_point",
+            importlib.import_module("tests.runtime_schema.installed_source_adapter"),
+        ),
+    )
     content = _package_content()
-    content["configuration"]["source"] = {
-        "name": "infrahub",
-        "settings": {"url": "http://source:8000", "token": {"$credential": "infrahub-token"}},
-    }
+    content["configuration"]["source"]["adapter"] = source_adapter
 
     plan = _plan(parse_configuration_package(content), tmp_path)
 
+    assert plan.source_adapter_class is InstalledSourceAdapter
     assert set(plan.source_models) == {"BuiltinTag", "LocationSite"}
+    assert issubclass(plan.source_models["BuiltinTag"], InstalledSourceModel)
     assert spy.branches == ["main"]
+
+
+class _EntryPoints:
+    """The packaging metadata one installed plugin distribution would publish.
+
+    A real distribution points its ``infrahub_sync.adapters`` entry at the module, which
+    is what lets one entry serve both the adapter class and the model base.
+    """
+
+    def __init__(self, name: str, target: ModuleType) -> None:
+        self._name = name
+        self._target = target
+
+    def select(self, *, group: str, name: str) -> tuple[object, ...]:
+        if group != "infrahub_sync.adapters" or name != self._name:
+            return ()
+        return (SimpleNamespace(name=self._name, load=lambda: self._target),)
 
 
 def test_a_failed_schema_read_becomes_a_typed_failure_carrying_only_its_reason(

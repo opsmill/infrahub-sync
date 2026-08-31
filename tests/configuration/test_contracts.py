@@ -685,7 +685,9 @@ def test_package_rejects_machine_local_directory() -> None:
 
 
 def test_always_null_legacy_fields_stay_out_of_package_identity() -> None:
-    # Both are refused when non-null, so hashing a constant only makes removal a rehash later.
+    # Refused when non-null, or absent, so hashing a constant only makes removal a rehash
+    # later. A source adapter that IS declared is serialized and hashed; see
+    # tests/runtime_schema/test_registered_source_declaration.py.
     declared_content = _package().declared_content()
 
     assert "adapters_path" not in declared_content["configuration"]
@@ -701,12 +703,21 @@ def test_package_rejects_machine_local_adapter_path() -> None:
         ConfigurationPackage.model_validate(data)
 
 
-@pytest.mark.parametrize("role", ["source", "destination"])
-def test_package_rejects_custom_adapter_override(role: str) -> None:
+def test_package_rejects_a_custom_destination_adapter_override() -> None:
+    # The destination owns the schema-discovery and saved-plan write seams, which this
+    # release qualifies only for the bundled Infrahub adapter.
     data = _package().model_dump(mode="json")
-    data["configuration"][role]["adapter"] = "evil.module:CustomSync"
+    data["configuration"]["destination"]["adapter"] = "evil.module:CustomSync"
 
     with pytest.raises(ValidationError, match="unsupported declared fields: adapter"):
+        ConfigurationPackage.model_validate(data)
+
+
+def test_package_rejects_a_filesystem_source_adapter_override() -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["source"]["adapter"] = "./evil/module.py:CustomSync"
+
+    with pytest.raises(ValidationError, match="unsupported adapter specification"):
         ConfigurationPackage.model_validate(data)
 
 

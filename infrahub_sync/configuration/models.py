@@ -19,6 +19,7 @@ from pydantic import (
     ValidationError,
     field_serializer,
     field_validator,
+    model_serializer,
     model_validator,
 )
 from pydantic_core import PydanticCustomError
@@ -61,6 +62,13 @@ _UNSUPPORTED_DECLARED_FIELDS_ERROR = "unsupported_declared_fields"
 _INVALID_UNICODE_SURROGATE_ERROR = "invalid_unicode_surrogate"
 _INVALID_JSON_VALUE_ERROR = "invalid_json_value"
 _INVALID_DIFFSYNC_FLAG_NAME_ERROR = "invalid_diffsync_flag_name"
+_UNSUPPORTED_ADAPTER_SPEC_ERROR = "unsupported_adapter_spec"
+# An installed source adapter is one Python import target: dot-separated identifiers,
+# optionally naming a class after a colon. Every filesystem form a plugin loader would
+# otherwise accept fails this by construction — a path separator, a leading "." or "~",
+# an empty segment, a space — and a ".py" module tail is refused alongside it, because a
+# loader reads that as a file rather than a module.
+_INSTALLED_ADAPTER_SPEC = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_][A-Za-z0-9_-]*)*(:[A-Za-z_][A-Za-z0-9_]*)?$")
 _SAFE_PYDANTIC_FAILURE_REASONS = {
     "missing": "required field is missing",
     "literal_error": "unsupported value",
@@ -152,6 +160,7 @@ def _require_known_fields(value: Any, model: type[BaseModel], *, location: str) 
         _raise_unsupported_declared_fields(location=location, fields=unknown)
 
 
+_SOURCE_LOCATION = "configuration.source"
 _STRICT_CONFIGURATION_CHILDREN: dict[type[BaseModel], dict[str, tuple[type[BaseModel], bool]]] = {
     SyncConfig: {
         "store": (SyncStore, False),
@@ -168,6 +177,29 @@ _STRICT_CONFIGURATION_CHILDREN: dict[type[BaseModel], dict[str, tuple[type[BaseM
 }
 
 
+def _raise_unsupported_adapter_spec(*, location: str) -> None:
+    """Raise one structured error for a source adapter outside installed resolution."""
+    pointer = "/" + location.replace(".", "/")
+    raise PydanticCustomError(
+        _UNSUPPORTED_ADAPTER_SPEC_ERROR,
+        "{location} contains an unsupported adapter specification",  # noqa: RUF027
+        {"location": location, "pointer": pointer},
+    )
+
+
+def _require_installed_adapter_spec(value: Any, *, location: str) -> None:
+    """Refuse a declared source adapter a registered worker could not safely resolve.
+
+    Registered execution resolves through installed-only loading, so a declaration is
+    admitted when it names a dotted import target or an entry point and refused when it
+    names anything on a filesystem.
+    """
+    if type(value) is not str or _INSTALLED_ADAPTER_SPEC.fullmatch(value) is None:  # pylint: disable=unidiomatic-typecheck
+        _raise_unsupported_adapter_spec(location=location)
+    if value.partition(":")[0].endswith(".py"):
+        _raise_unsupported_adapter_spec(location=location)
+
+
 def _require_strict_model(value: Any, model: type[BaseModel], *, location: str) -> None:
     """Apply extra-forbid semantics to one registered legacy model node."""
     if not isinstance(value, Mapping):
@@ -176,7 +208,12 @@ def _require_strict_model(value: Any, model: type[BaseModel], *, location: str) 
     if model is SyncConfig and value.get("adapters_path") is not None:
         _raise_unsupported_declared_fields(location=location, fields=("adapters_path",))
     if model is SyncAdapter and value.get("adapter") is not None:
-        _raise_unsupported_declared_fields(location=location, fields=("adapter",))
+        # The source may name an installed adapter; the destination may not, because the
+        # destination owns the schema-discovery and saved-plan write seams this release
+        # qualifies only for the bundled Infrahub adapter.
+        if location != _SOURCE_LOCATION:
+            _raise_unsupported_declared_fields(location=location, fields=("adapter",))
+        _require_installed_adapter_spec(value["adapter"], location=f"{location}.adapter")
     for field_name, (child_model, many) in _STRICT_CONFIGURATION_CHILDREN.get(model, {}).items():
         child = value.get(field_name)
         child_location = f"{location}.{field_name}"
@@ -345,6 +382,26 @@ class _ImmutableSyncAdapter(SyncAdapter):
         return cast("dict[str, Any] | None", _thaw_json(value))
 
 
+class _ImmutableSyncSourceAdapter(_ImmutableSyncAdapter):
+    """The source adapter, which may declare one installed resolution target.
+
+    ``adapter`` is serialized — and so covered by the package checksum — whenever it is
+    declared, because two packages that resolve different source code are not the same
+    package. It is omitted when absent, so a package that declares no source adapter keeps
+    the exact declared content, and the exact checksum, it had before the field was
+    admitted.
+    """
+
+    adapter: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_adapter(self, handler: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
+        content = handler(self)
+        if content.get("adapter") is None:
+            content.pop("adapter", None)
+        return content
+
+
 class _ImmutableSyncStore(SyncStore):
     """Package-local immutable form of legacy store settings."""
 
@@ -374,7 +431,7 @@ class _ImmutableSyncConfig(SyncConfig):
     model_config = ConfigDict(frozen=True)
 
     store: _ImmutableSyncStore | None = None
-    source: _ImmutableSyncAdapter
+    source: _ImmutableSyncSourceAdapter
     destination: _ImmutableSyncAdapter
     # Refused when non-null by _require_strict_model, so the value is always null. Excluded
     # from the dump: carrying a constant into the checksum makes removing it a rehash later.
@@ -768,12 +825,23 @@ def _decode_diffsync_failure(record: dict[object, object], location: str) -> tup
     return ((location, "invalid diffsync flag name"),)
 
 
+def _decode_adapter_spec_failure(record: dict[object, object], location: str) -> tuple[tuple[str, str], ...]:
+    """Decode one closed unsupported-adapter-specification custom error context."""
+    context = _closed_context(record)
+    if context is not None:
+        pointer = _safe_context_pointer(context.get("pointer"))
+        if pointer is not None:
+            return ((pointer, "unsupported adapter specification"),)
+    return ((location, "unsupported adapter specification"),)
+
+
 _CustomFailureDecoder = Callable[[dict[object, object], str], tuple[tuple[str, str], ...]]
 _CUSTOM_FAILURE_DECODERS: dict[str, _CustomFailureDecoder] = {
     _INVALID_JSON_VALUE_ERROR: _decode_json_failure,
     _INVALID_UNICODE_SURROGATE_ERROR: _decode_unicode_failure,
     _UNSUPPORTED_DECLARED_FIELDS_ERROR: _decode_unsupported_field_failures,
     _INVALID_DIFFSYNC_FLAG_NAME_ERROR: _decode_diffsync_failure,
+    _UNSUPPORTED_ADAPTER_SPEC_ERROR: _decode_adapter_spec_failure,
 }
 
 
