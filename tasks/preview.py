@@ -469,7 +469,7 @@ def up(context: Context) -> None:
     print(f"     Sync API: {urls['sync_api']}  (bearer principals: {', '.join(sorted(tokens))})")
     print(f"     Config directory: {env['INFRAHUB_SYNC_CONFIG_DIRECTORY']}")
     print(f"     Runtime state:    {STATE_DIR}")
-    print("     Next: docs/docs/reference/managed-http-api.mdx and `uv run invoke preview.status`")
+    print("     Next: docs/docs/reference/sync-http-api.mdx and `uv run invoke preview.status`")
 
 
 def _run_smoke(context: Context, *, expect_main_empty: bool) -> None:

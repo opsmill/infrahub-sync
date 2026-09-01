@@ -16,7 +16,7 @@ SERVICE_STORAGE_SETTINGS = frozenset(
 )
 
 
-@pytest.mark.parametrize("name", ["durable-product-records.mdx", "managed-http-api.mdx"])
+@pytest.mark.parametrize("name", ["durable-product-records.mdx", "sync-http-api.mdx"])
 def test_managed_storage_operator_references_state_the_complete_deployed_contract(name: str) -> None:
     """Every service-storage reference names one PostgreSQL/S3 deployment shape."""
     text = (REFERENCE_ROOT / name).read_text(encoding="utf-8")
@@ -34,5 +34,5 @@ def test_durable_records_reference_limits_the_local_projection_to_the_injected_s
     """The local projection is not presented as a deployed service profile."""
     text = (REFERENCE_ROOT / "durable-product-records.mdx").read_text(encoding="utf-8")
 
-    assert "injected standalone/test seam" in text
-    assert "managed Sync HTTP API and its worker use the local profile" not in text
+    assert "injected test seam" in text
+    assert "Sync HTTP API and its worker use the local profile" not in text

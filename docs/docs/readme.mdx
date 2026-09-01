@@ -71,11 +71,11 @@ Three `diffsync_flags` (`SKIP_UNMATCHED_DST` by default, `SKIP_UNMATCHED_SRC`, `
 | CLI | Configuration and run operations through the Sync API | Base installation and Sync API access |
 | Python client | Typed access to every shipped Sync API resource | Base installation and Sync API access |
 | Direct Prefect deployment | Starting and observing one plan or confirmed sync through Prefect's API | `prefect` extra and a Prefect server |
-| Managed Sync HTTP API | Authenticated remote runs, durable records and artifacts, reviewed apply, idempotency, and cancellation | `managed` extra, Prefect, a work pool, a worker, and shared durable storage |
+| Sync HTTP API | Authenticated remote runs, durable records and artifacts, reviewed apply, idempotency, and cancellation | `service` extra, Prefect, a work pool, a worker, and shared durable storage |
 
 Use the [Python API](./reference/python-api.mdx),
 [Prefect remote run](./reference/prefect-remote-run.mdx), or
-[managed HTTP API](./reference/managed-http-api.mdx) reference for setup and contracts.
+[Sync HTTP API](./reference/sync-http-api.mdx) reference for setup and contracts.
 
 ## Who it's for
 
@@ -167,7 +167,7 @@ Yes. Each sync project is independent — a separate directory, configuration, a
 | Run a sync | [Run a sync](./running-a-sync.mdx) |
 | Use the Python API | [Python API](./reference/python-api.mdx) |
 | Run through Prefect | [Prefect remote run](./reference/prefect-remote-run.mdx) |
-| Operate the managed HTTP API | [Managed Sync HTTP API](./reference/managed-http-api.mdx) |
+| Operate the Sync HTTP API | [Sync HTTP API](./reference/sync-http-api.mdx) |
 | CLI reference | [Sync CLI](./reference/cli.mdx) |
 | All adapters | See the **Adapters** section in the sidebar |
 | Custom CA certificates | [Use custom CA certificates](./custom-certificates.mdx) |

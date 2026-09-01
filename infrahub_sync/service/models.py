@@ -75,7 +75,7 @@ def public_execution_link(link: PrefectExecutionLink) -> PublicExecutionLink:
 
 
 def public_run_resource(run: ProductRun) -> PublicRunResource:
-    """Project a store run into the standalone public wire resource."""
+    """Project a store run into the self-contained public wire resource."""
     return PublicRunResource.model_validate(
         {
             **run.model_dump(exclude={"prefect_executions"}),

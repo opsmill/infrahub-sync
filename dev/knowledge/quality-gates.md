@@ -72,7 +72,7 @@ at commit `697b2f4`, using Python 3.13.3, Pylint 4.0.5, and an environment synce
 The Invoke task reads Pylint's JSON report and makes this inherited set an executable
 no-regression gate. A new diagnostic code or a count above the table's maximum fails;
 fewer findings pass, so an improvement never blocks the gate. On Python 3.10 the task
-excludes `infrahub_sync/managed`, mirroring the ty exclusion: the managed tree imports
+excludes `infrahub_sync/service`, mirroring the ty exclusion: the service tree imports
 optional dependencies that only install on Python 3.11+, and analysing it without them
 would add import-error diagnostics rather than remove findings.
 
@@ -100,15 +100,15 @@ Two mistakes cost real time on this repository, both worth avoiding by rule:
   has repeated basenames across adapter directories (`infrahub/sync_adapter.py`,
   `netbox/sync_adapter.py`), and flattening makes the collision look like a diff.
 
-## `infrahub-sync generate` rewrites generated files
+## Regenerating an example rewrites committed files
 
-`infrahub-sync generate --name from-netbox --directory examples/` is prescribed as a CLI
-sanity check, and it **rewrites committed files**. The generator sorts schema nodes,
-attributes, and relationships before rendering, so API response order does not affect the
-output. Generation can still update files when the live schema differs from the schema used
-for the committed example.
+The internal `render_adapter` helper is the only way to regenerate a committed example, and
+it **rewrites committed files**. The generator sorts schema nodes, attributes, and
+relationships before rendering, so API response order does not affect the output.
+Regeneration can still update files when the live schema differs from the schema used for
+the committed example.
 
-Review the diff after a live generation check. Preserve intentional schema-driven changes;
+Review the diff after a live regeneration. Preserve intentional schema-driven changes;
 restore incidental generated-file changes before committing unrelated work.
 
 ## CI
@@ -122,10 +122,10 @@ required.
 Python 3.10 linting uses `--extra dev --extra prefect` and runs:
 
 ```bash
-uv run ty check --exclude infrahub_sync/managed --exclude tests/managed .
+uv run ty check --exclude infrahub_sync/service --exclude tests/service .
 ```
 
-Managed Sync supports Python 3.11–3.13 only, so this exclusion is the supported direct
+Sync supports Python 3.11–3.13 only, so this exclusion is the supported direct
 Prefect profile rather than a reduced full-service check. `invoke linter.lint-ty` selects
 the same command from the active Python version.
 

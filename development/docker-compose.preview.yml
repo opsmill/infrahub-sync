@@ -6,9 +6,9 @@
 #
 # This file remaps host ports so the preview never collides with another local
 # Infrahub stack, drops host port publications the preview does not need, and
-# adds a dedicated Prefect server for Infrahub Sync's managed execution path —
+# adds a dedicated Prefect server for Infrahub Sync's service execution path —
 # separate from Infrahub's internal task-manager, and pinned to the same Prefect
-# version as the `managed` extra (prefect==3.8.1).
+# version as the `service` extra (prefect==3.8.1).
 services:
   sync-postgres:
     image: "postgres:16-alpine"

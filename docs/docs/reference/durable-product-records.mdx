@@ -8,12 +8,12 @@ artifacts. It is independent of Prefect: a product run can retain any number of
 purpose-labelled execution links after Prefect no longer has the corresponding flow-run
 detail.
 
-The managed Sync HTTP API and its worker store records in PostgreSQL and immutable
+The Sync HTTP API and its worker store records in PostgreSQL and immutable
 artifacts in S3-compatible object storage. Each process creates its own clients from the
 same environment settings. CLI and public Python callers access these records only through
 the Sync API.
 
-Managed execution continues to use `INFRAHUB_SYNC_CACHE_DIR` as the absolute shared cache
+Service execution continues to use `INFRAHUB_SYNC_CACHE_DIR` as the absolute shared cache
 root for saved plans. This PH-2 seam is separate from product records and artifacts.
 
 This is minimum product-projection configuration. It does not select a new provider type or
@@ -110,9 +110,9 @@ explicitly unqualified optional features, and nothing else.
 
 ## Storage profiles
 
-### Managed deployment
+### Service deployment
 
-The managed API and worker construct the PostgreSQL/S3 profile from these settings:
+The Sync API and worker construct the PostgreSQL/S3 profile from these settings:
 
 | Variable | Requirement |
 | --- | --- |
@@ -126,14 +126,14 @@ S3 credentials use Boto3's standard credential-provider chain. Configure credent
 the API, worker, CLI, or smoke-process environment that constructs the client. Sync does
 not define access-key or secret-key settings.
 
-Constructing a managed process initializes the PostgreSQL schema. The PostgreSQL role must
+Constructing a service process initializes the PostgreSQL schema. The PostgreSQL role must
 have the DDL privileges required to create the product-record tables in its configured
 schema, plus permission to read and write their rows.
 
 ### Test injection
 
-The local SQLite/filesystem projection is an injected standalone/test seam. It is not a
-managed deployment option or a public CLI/Python execution mode. In-process service and
+The local SQLite/filesystem projection is an injected test seam. It is not a
+service deployment option or a public CLI/Python execution mode. In-process service and
 store tests can inject it directly:
 
 ```python
@@ -162,7 +162,7 @@ records = production_product_projection(
 )
 ```
 
-Psycopg and Boto3 are installed only by the managed extra. The record-store and
+Psycopg and Boto3 are installed only by the service extra. The record-store and
 artifact-store protocols accepted by `ProductProjection` are internal implementation
 seams, not a public custom-provider compatibility contract.
 
@@ -196,7 +196,7 @@ results, phase, and Prefect-link metadata. It rejects records that already have 
 timestamp, outcome, or artifact reference; those completion fields must be added through
 the publication and finish operations so their integrity checks cannot be bypassed.
 
-Managed mutations reserve a `MutationReceipt` unique by actor and SHA-256 digest of the
+Sync API mutations reserve a `MutationReceipt` unique by actor and SHA-256 digest of the
 client idempotency key. A receipt binds the operation, target, request fingerprint, reason,
 Sync run, opaque Prefect key, state, and exact accepted response. The raw client key is not
 stored. Run creation commits its receipt and unfinished product run in one relational
@@ -204,7 +204,7 @@ transaction. `AuditEvent` records secret-safe actor, reason, operation, and outc
 for accepted mutations and refusals.
 
 `record_results` updates retained result evidence without changing product phase, outcome,
-or finish time. Managed verification uses this operation because verification is read-only
+or finish time. Service verification uses this operation because verification is read-only
 for both the destination and product lifecycle.
 
 ## Artifact publication and lookup
@@ -213,7 +213,7 @@ Artifact keys contain their SHA-256 digest and never change. Publication first r
 non-readable relational reference for the run-owned artifact identity. It then writes
 artifact data and its manifest, and finally marks that exact reference published in a
 second relational transaction. The injected local seam commits data and manifest using an
-atomic directory rename. The managed S3-compatible profile copies staged data to its immutable key
+atomic directory rename. The service S3-compatible profile copies staged data to its immutable key
 and uses a create-only manifest put as the object-store commit point. A crash before the
 final relational mark leaves durable pending evidence rather than exposing the artifact.
 The run cannot be finished successfully while any pending publication exists. It can be
@@ -277,7 +277,7 @@ Observed on macOS with Python 3.13.3 on 2026-08-09:
 | VAL-8 88k | 88,117 / 87,868 | 23,015,700 B | 2,732 B | 40,960 B | 11 | 23,059,392 B |
 | Representative 10k | 10,051 / 10,023 | 2,722,700 B | 2,877 B | 40,960 B | 11 | 2,766,537 B |
 
-The standalone/test fixture stores ten object files (data plus manifest) and one SQLite
-run/reference/link database. Filesystem allocation, database page size, and managed
+The test fixture stores ten object files (data plus manifest) and one SQLite
+run/reference/link database. Filesystem allocation, database page size, and service
 object-store metadata can change physical billing; the payload and manifest byte counts
 are the portable sizing inputs.

@@ -1,21 +1,21 @@
 ---
-title: Managed Sync HTTP API
+title: Sync HTTP API
 sidebar_position: 7
 ---
 
-The managed Sync HTTP API accepts authenticated run requests, records a stable Sync run
+The Sync HTTP API accepts authenticated run requests, records a stable Sync run
 identity, and delegates execution to a separate Prefect deployment. Sync owns the HTTP,
 authorization, plan, result, artifact, audit, and idempotency contracts. Prefect owns live
 execution state, workers, retries, logs, and cancellation.
 
 The [direct Prefect remote run](./prefect-remote-run.mdx) remains a
-separate four-parameter deployment. Use the managed API when a trusted automation client
+separate four-parameter deployment. Use the Sync API when a trusted automation client
 needs reviewed-plan apply, durable results, artifact retrieval, or actor-scoped mutation
 control.
 
-## Install the managed profile
+## Install the service profile
 
-The managed profile requires Python 3.11 or later. No published package carries this
+The service profile requires Python 3.11 or later. No published package carries this
 profile yet, so install from a repository checkout on the API host and every worker
 that can run its deployment:
 
@@ -23,7 +23,7 @@ that can run its deployment:
 uv sync --extra dev --extra prefect --extra service
 ```
 
-Once a release with the managed profile is published, `pip install
+Once a release with the service profile is published, `pip install
 'infrahub-sync[service]'` becomes the deployment path.
 
 The profile directly installs FastAPI, HTTPX, Uvicorn, Prefect 3.8.1, Psycopg, and Boto3. The OpsMill
@@ -70,29 +70,29 @@ Any authenticated principal can create and inspect a run. Only the initiating ac
 administrator can verify, apply, or cancel it. Every accepted mutation and authorization
 refusal records secret-safe actor, reason, and outcome evidence.
 
-## Deploy the managed flow
+## Deploy the service flow
 
-Set the work pool name and the absolute directory managed flow runs execute from —
-relative paths in Sync configurations resolve against it — then apply the managed
+Set the work pool name and the absolute directory service flow runs execute from —
+relative paths in Sync configurations resolve against it — then apply the service
 deployment:
 
 ```bash
 export PREFECT_API_URL="http://127.0.0.1:4200/api"
 export INFRAHUB_SYNC_SERVICE_WORK_POOL="sync-process-pool"
 export INFRAHUB_SYNC_SERVICE_FLOW_WORKING_DIRECTORY="/path/to/checkout"
-python -m infrahub_sync.managed.deploy
+python -m infrahub_sync.service.deploy
 ```
 
-The command validates and applies `infrahub-sync-managed/run` through OpsMill Prefect
+The command validates and applies `infrahub-sync-service/run` through OpsMill Prefect
 Extras, then records the declared working directory as the deployment's only pull step.
 It does not create a work pool or start a worker.
 
-## Start managed workers
+## Start service workers
 
-Start each worker through the managed entry point. The work pool must already exist:
+Start each worker through the service entry point. The work pool must already exist:
 
 ```bash
-python -m infrahub_sync.managed.worker \
+python -m infrahub_sync.service.worker \
   --pool "$INFRAHUB_SYNC_SERVICE_WORK_POOL"
 ```
 
@@ -105,13 +105,13 @@ flow-run child. The deployment stores no worker identity.
 A restarted process generates a new name and resolves its current server Worker UUID.
 It does not reuse an identity from the previous process.
 
-The validated support boundary is one host running one managed worker process. Worker
+The validated support boundary is one host running one service worker process. Worker
 identity is not what limits this: every supported invocation has a distinct name and
 resolves a distinct UUID. Plan and apply exchange saved plans through the
 `INFRAHUB_SYNC_CACHE_DIR` filesystem, so an apply must run where its plan was written. A
-work pool with more than one managed worker, and scheduling across more than one host,
+work pool with more than one service worker, and scheduling across more than one host,
 are outside the validated boundary. Use this entry point for every worker eligible to run
-the managed deployment; manually named or standard Prefect process workers are outside the
+the service deployment; manually named or standard Prefect process workers are outside the
 supported topology.
 
 The worker does not poll for runs until its heartbeat is complete and the pool returns
@@ -136,7 +136,7 @@ Configure the worker environment before it starts:
 | `PREFECT_WORKER_QUERY_SECONDS` | Prefect worker polling interval. It must be a finite positive decimal no greater than 3600; the API derives its liveness thresholds from the same value. |
 | Adapter credential variables | Credentials required by the selected Sync configuration. Keep them in the worker environment or its secret provider. |
 
-The managed flow accepts exactly eight bounded parameters:
+The service flow accepts exactly eight bounded parameters:
 
 | Parameter | Type | Purpose |
 | --- | --- | --- |
@@ -166,7 +166,7 @@ export INFRAHUB_SYNC_DATABASE_URL="postgresql://sync:replace-me@postgres/infrahu
 export INFRAHUB_SYNC_S3_BUCKET="infrahub-sync-artifacts"
 export INFRAHUB_SYNC_S3_PREFIX="infrahub-sync"
 export INFRAHUB_SYNC_SERVICE_HOST="127.0.0.1"
-python -m infrahub_sync.managed.serve
+python -m infrahub_sync.service.serve
 ```
 
 :::warning First startup after upgrading a legacy product store

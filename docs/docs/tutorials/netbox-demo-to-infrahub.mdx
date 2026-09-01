@@ -85,8 +85,8 @@ You should see the Infrahub web interface with a navigation menu on the left sid
 
 ## Install infrahub-sync
 
-1. Clone Infrahub Sync beside the automation project, then install the managed profile
-   from that checkout. The managed profile is not published to PyPI yet, so the checkout
+1. Clone Infrahub Sync beside the automation project, then install the service profile
+   from that checkout. The service profile is not published to PyPI yet, so the checkout
    keeps the executable, this tutorial, and its example package at one revision:
 
 ```bash
@@ -224,7 +224,7 @@ For a fuller explanation of this file, see [Create a sync project](../creating-a
 
 The CLI sends configuration and run requests to a Sync API. A Prefect worker performs the
 adapter work. This local tutorial starts both; a production deployment should follow the
-[managed HTTP API reference](../reference/managed-http-api.mdx).
+[Sync HTTP API reference](../reference/sync-http-api.mdx).
 
 Infrahub already listens on `127.0.0.1:8000`, so the commands below bind the Sync API to
 `127.0.0.2:8000`.
@@ -305,12 +305,12 @@ export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
 Use the complete NetBox token created earlier. The worker, not the CLI, reads the NetBox
 and Infrahub adapter credentials.
 
-4. In terminal 2, create the process pool, deploy the managed flow, and start its worker:
+4. In terminal 2, create the process pool, deploy the service flow, and start its worker:
 
 ```bash
 uv run prefect work-pool create --type process sync-process-pool
 uv run python -m infrahub_sync.service.deploy
-uv run prefect worker start --pool sync-process-pool
+uv run python -m infrahub_sync.service.worker --pool sync-process-pool
 ```
 
 5. In terminal 3, start the Sync API:

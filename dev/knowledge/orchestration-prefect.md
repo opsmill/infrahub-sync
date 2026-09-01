@@ -13,10 +13,10 @@ by the optional `prefect` extra, and nothing in the base package imports it — 
 The flow calls [the shared execution surface](execution-surface.md) in-process. It never
 spawns the CLI.
 
-`infrahub_sync/managed/` is a separate, optional operational profile. Its managed flow
+`infrahub_sync/service/` is a separate, optional operational profile. Its service flow
 consumes the API-created product run ID and delegates deployment catalogue validation,
 deployment convergence, and native submission idempotency to OpsMill Prefect Extras pinned
-at commit `97465e75137f6121d0377cd637383cfb3530d734`. The managed HTTP service owns the
+at commit `97465e75137f6121d0377cd637383cfb3530d734`. The Sync HTTP service owns the
 public contract; Prefect remains authoritative for live execution, logs, retries, workers,
 and cancellation.
 
@@ -36,13 +36,13 @@ Exactly those four parameters. None of them accepts a path, a CLI fragment, a cr
 an environment override. Everything else the run needs comes from the serving process's own
 environment.
 
-The separate `infrahub-sync-managed/run` deployment accepts exactly seven parameters:
+The separate `infrahub-sync-service/run` deployment accepts exactly seven parameters:
 `run_id`, `sync_name`, `stage`, `configuration_reference`, `branch`, `expected_checksum`,
 and `confirm_writes`. It does not replace or extend the four-parameter direct Prefect
 flow. Credentials, endpoints, adapter instances, product-cache locations, and saved-plan
-cache locations stay in the managed worker environment.
+cache locations stay in the service worker environment.
 
-When the managed flow runs outside Prefect context in offline executor tests,
+When the service flow runs outside Prefect context in offline executor tests,
 `get_run_logger()` raises `MissingContextError`. The flow catches only that exception and
 uses its module logger. It does not construct `RunLoggerBridge` in the fallback path.
 

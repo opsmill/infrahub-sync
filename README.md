@@ -136,11 +136,11 @@ may change.
 | CLI | Configuration registration, plan review, run admission, and reviewed-plan apply | Base installation and Sync API access |
 | Python client | Typed access to every shipped Sync API resource | Base installation and Sync API access |
 | Direct Prefect deployment | Starting and observing one plan or confirmed sync through Prefect's API | `prefect` extra and a Prefect server |
-| Managed Sync HTTP API | Authenticated remote runs, durable records and artifacts, reviewed apply, idempotency, and cancellation | `managed` extra, Prefect, a work pool, a worker, and shared durable storage |
+| Sync HTTP API | Authenticated remote runs, durable records and artifacts, reviewed apply, idempotency, and cancellation | `service` extra, Prefect, a work pool, a worker, and shared durable storage |
 
 See the [Python API](https://docs.infrahub.app/sync/reference/python-api),
 [Prefect remote run](https://docs.infrahub.app/sync/reference/prefect-remote-run), and
-[managed HTTP API](https://docs.infrahub.app/sync/reference/managed-http-api) references
+[Sync HTTP API](https://docs.infrahub.app/sync/reference/sync-http-api) references
 for their contracts and setup. For a bounded checkout-based live review, follow the
 [`custom-example` plan and apply guide](examples/custom_adapter/README.md). Its source
 fixture is deterministic; the review still uses a live, writable Infrahub destination.
