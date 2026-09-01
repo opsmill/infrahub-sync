@@ -339,7 +339,11 @@ def test_the_smoke_task_seeds_before_it_checks(monkeypatch: pytest.MonkeyPatch) 
     cast("Task", preview.smoke).body(context)
 
     assert events == [
-        ("run", f"uv run infrahubctl schema load {preview.SCHEMA_FILE}", environment),
+        (
+            "run",
+            f"uv run infrahubctl schema load --wait {preview.SCHEMA_CONVERGE_SECONDS} {preview.SCHEMA_FILE}",
+            environment,
+        ),
         ("branch", environment),
         ("run", "uv run pytest -m preview tests/preview -q", environment),
     ]
@@ -364,7 +368,11 @@ def test_the_seed_task_loads_the_schema_before_it_creates_the_device(monkeypatch
     cast("Task", preview.seed).body(context)
 
     assert events == [
-        ("run", f"uv run infrahubctl schema load {preview.SCHEMA_FILE}", environment),
+        (
+            "run",
+            f"uv run infrahubctl schema load --wait {preview.SCHEMA_CONVERGE_SECONDS} {preview.SCHEMA_FILE}",
+            environment,
+        ),
         ("branch", environment),
     ]
 
@@ -426,7 +434,11 @@ def test_the_smoke_task_leaves_an_unreachable_environment_to_pytest(monkeypatch:
     cast("Task", preview.smoke).body(context)
 
     assert events == [
-        ("run", f"uv run infrahubctl schema load {preview.SCHEMA_FILE}", environment),
+        (
+            "run",
+            f"uv run infrahubctl schema load --wait {preview.SCHEMA_CONVERGE_SECONDS} {preview.SCHEMA_FILE}",
+            environment,
+        ),
         ("run", "uv run pytest -m preview tests/preview -q", environment),
     ]
 

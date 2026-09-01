@@ -63,6 +63,10 @@ SERVICE_PROCESSES = {
     "prefect-worker": "infrahub_sync.service.worker",
 }
 WAIT_TIMEOUT_SECONDS = 420
+# Infrahub applies a loaded schema asynchronously, and the seed immediately creates a node
+# of the kind it just loaded. Without waiting for the schema to converge across Infrahub's
+# workers, that create fails with `SchemaNotFoundError` on a fresh instance.
+SCHEMA_CONVERGE_SECONDS = 120
 # The pre-stability names this preview used to register and run under. `preview.up`
 # reuses volumes and tolerates existing Prefect state, so a checkout that ran the old
 # names can still hold a live deployment, work pool, worker, or host process under them.
@@ -477,7 +481,7 @@ def seed(context: Context) -> None:
     print(f" - [{NAMESPACE}]   the schema in {SCHEMA_FILE}")
     print(f" - [{NAMESPACE}]   {SMOKE_KIND} {SHARED_DEVICE_NAME} on main, then the {SMOKE_BRANCH} branch")
     context.run(
-        f"uv run infrahubctl schema load {shlex.quote(str(SCHEMA_FILE))}",
+        f"uv run infrahubctl schema load --wait {SCHEMA_CONVERGE_SECONDS} {shlex.quote(str(SCHEMA_FILE))}",
         env={"INFRAHUB_ADDRESS": env["INFRAHUB_ADDRESS"], "INFRAHUB_API_TOKEN": env["INFRAHUB_API_TOKEN"]},
     )
     ensure_smoke_branch(env)
