@@ -181,6 +181,21 @@ def test_active_sources_do_not_teach_removed_commands() -> None:
     assert offenders == {}
 
 
+def test_workflows_tasks_and_unreleased_changelog_do_not_invoke_removed_commands() -> None:
+    files = list((ROOT / ".github").rglob("*.yml"))
+    files.extend((ROOT / ".github").rglob("*.yaml"))
+    files.extend((ROOT / "tasks").rglob("*.py"))
+    files.extend((ROOT / "changelog").glob("*.md"))
+
+    offenders = {
+        str(path.relative_to(ROOT)): match.group(0)
+        for path in files
+        if (match := REMOVED_COMMAND.search(path.read_text(encoding="utf-8"))) is not None
+    }
+
+    assert offenders == {}
+
+
 def test_configuration_docs_describe_registered_worker_execution() -> None:
     config = " ".join((ROOT / "docs/docs/reference/config.mdx").read_text(encoding="utf-8").split())
     migration = " ".join(

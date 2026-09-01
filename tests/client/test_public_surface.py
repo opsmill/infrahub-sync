@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 import infrahub_sync.client as client_package
-from infrahub_sync.client import SyncClient
+from infrahub_sync.client import SyncClient, SyncClientError
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -51,6 +51,27 @@ def test_public_client_surface_has_concise_docstrings() -> None:
     for name, operation in inspect.getmembers(SyncClient, inspect.isfunction):
         if not name.startswith("_"):
             assert operation.__doc__, name
+
+
+def test_client_originated_exception_taxonomy_is_closed() -> None:
+    pending = list(SyncClientError.__subclasses__())
+    subclasses: set[type[SyncClientError]] = set()
+    while pending:
+        error_type = pending.pop()
+        subclasses.add(error_type)
+        pending.extend(error_type.__subclasses__())
+
+    assert {error_type.__name__ for error_type in subclasses} == {
+        "APIError",
+        "ClientInputError",
+        "ClientTimeoutError",
+        "CompatibilityError",
+        "ConfigsAPIError",
+        "ProtocolError",
+        "RunTerminalError",
+        "RunWaitTimeoutError",
+        "TransportError",
+    }
 
 
 def test_pr_workflow_can_be_dispatched_manually() -> None:
