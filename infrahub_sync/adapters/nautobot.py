@@ -53,6 +53,51 @@ def _is_unknown_filter_error(exc: pynautobot.core.query.RequestError, field: str
     return field in text and "filter" in text.lower()
 
 
+def _topologically_sort_self_referencing(*, records: list[dict], self_ref_fields: list) -> list[dict]:
+    """Order `records` so a self-referenced peer within this same batch precedes it.
+
+    Kahn's algorithm over the (record -> its same-batch self-ref peer id) edges. A record
+    whose peer is absent from this batch (external, filtered out, or simply None) has no
+    edge here and is free to sort wherever a stable pass places it -- same as a true root.
+
+    A cycle can't be resolved by any ordering; the records forming one are appended in
+    their original relative order at the end, unchanged, and left for model_loader's
+    reconciliation pass (or a load-time warning) to handle -- this function's job is only
+    to make that pass unnecessary in the ordinary acyclic case.
+    """
+    by_id = {str(record["id"]): record for record in records if record.get("id") is not None}
+    depends_on: dict[str, set[str]] = {}
+    for record in records:
+        record_id = str(record.get("id"))
+        peers: set[str] = set()
+        for field in self_ref_fields:
+            peer_stub = get_value(record, field.mapping)
+            peer_id = peer_stub.get("id") if peer_stub else None
+            if peer_id is not None and str(peer_id) != record_id and str(peer_id) in by_id:
+                peers.add(str(peer_id))
+        depends_on[record_id] = peers
+
+    ordered: list[dict] = []
+    placed: set[str] = set()
+    remaining = list(records)
+    # Bounded to len(records) rounds: worst case each round places exactly one record.
+    for _ in range(len(records)):
+        if not remaining:
+            break
+        ready, still_waiting = [], []
+        for record in remaining:
+            (ready if depends_on[str(record.get("id"))] <= placed else still_waiting).append(record)
+        if not ready:
+            break
+        ordered.extend(ready)
+        placed.update(str(record.get("id")) for record in ready)
+        remaining = still_waiting
+
+    # Whatever never became "ready" sits in a cycle; keep it in place rather than drop it.
+    ordered.extend(remaining)
+    return ordered
+
+
 class NautobotAdapter(DiffSyncMixin, Adapter):
     type = "Nautobot"
 
@@ -215,6 +260,16 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                 for field in element.fields or []
                 if field.reference == element.name and not model.is_list(name=field.name)
             ]
+            if self_ref_fields:
+                # Order records so a self-referenced peer within this same batch is always
+                # added to the store before the record that points at it. This is what the
+                # destination write path actually needs: it applies creates in the order this
+                # adapter's store holds them, and a create whose relationship input names a
+                # peer that doesn't exist there yet is rejected server-side (not just locally
+                # unresolved, an outright `NODE_NOT_FOUND` from Infrahub). The reconciliation
+                # pass below remains a safety net for records this sort can't place (a genuine
+                # cycle, or a peer outside this batch entirely).
+                filtered = _topologically_sort_self_referencing(records=filtered, self_ref_fields=self_ref_fields)
             pending_self_refs: list[tuple[dict, NautobotModel]] = []
 
             # Records are already filtered above; don't filter again.
