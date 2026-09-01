@@ -4127,20 +4127,30 @@ def test_postgresql_legacy_mutation_receipt_nullability_migrates_once() -> None:
     assert _drop_not_null_statements(database) == []
 
 
-def test_postgresql_initialization_refuses_a_malformed_column_catalog_row() -> None:
-    """A catalog answer that cannot report nullability fails closed.
+@pytest.mark.parametrize(
+    "catalog_rows",
+    [
+        pytest.param((("run_id",), ("prefect_key", "YES")), id="row-narrower-than-two-cells"),
+        pytest.param((("run_id", "UNKNOWN"), ("prefect_key", "YES")), id="value-outside-the-yes-no-domain"),
+        pytest.param((("run_id", None), ("prefect_key", "YES")), id="null-value"),
+        pytest.param((("run_id", 0), ("prefect_key", "YES")), id="non-string-value"),
+    ],
+)
+def test_postgresql_initialization_refuses_a_malformed_column_catalog_row(
+    catalog_rows: tuple[tuple[Any, ...], ...],
+) -> None:
+    """A catalog answer outside the closed nullability domain fails closed.
 
-    ``information_schema.columns`` is selected with two projected columns, so a narrower row
-    means the provider did not answer the statement that was issued. Reading it as "already
-    nullable" would silently skip the one-time legacy migration and leave a real ``NOT NULL``
-    column in place, which no later construction would ever repair.
+    The store selects ``information_schema.columns`` as exactly (column_name, is_nullable),
+    and PostgreSQL declares ``is_nullable`` over the ``yes_or_no`` domain, so the only two
+    readable answers are ``"YES"`` and ``"NO"``. Anything else -- a narrower row, a value
+    outside that domain, or a non-string -- means the provider did not answer the statement
+    that was issued. Accepting it as "not NO" would silently skip the one-time legacy
+    migration and leave a real ``NOT NULL`` column in place, which no later construction
+    would ever repair.
     """
     connection = MagicMock()
-    connection.cursor.return_value.fetchall.side_effect = [
-        (),
-        (),
-        (("run_id",), ("prefect_key",)),
-    ]
+    connection.cursor.return_value.fetchall.side_effect = [(), (), catalog_rows]
     connection.cursor.return_value.fetchone.return_value = (1,)
 
     with pytest.raises(product_store.ProductStoreProviderError):
