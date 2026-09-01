@@ -29,11 +29,11 @@ The Infrahub schema does not have to mirror the source system one-to-one. Migrat
 
 For a concrete NetBox starting point, follow the
 [NetBox demo tutorial](./tutorials/netbox-demo-to-infrahub.mdx). It provisions a
-fresh Infrahub instance, loads the matching schema-library revision, creates a
-current NetBox demo token, installs the adapter dependency, and generates the
-`from-netbox` sync code. Use `examples/nautobot_to_infrahub/` as a configuration
-reference for Nautobot, and replace its model and field names with the equivalents
-in your Infrahub schema.
+fresh Infrahub instance, loads the matching schema-library revision, configures the
+Sync API and service worker, creates a current NetBox demo token, installs the adapter
+dependency, and registers the `from-netbox` configuration package. Use
+`examples/nautobot_to_infrahub/` as a configuration reference for Nautobot, and replace
+its model and field names with the equivalents in your Infrahub schema.
 
 ## Phase 2 — Build the sync project
 
@@ -67,10 +67,11 @@ For each model, define how source fields map to Infrahub fields. The schema mapp
 
 ## Phase 3 — Seed Infrahub with initial data
 
-Run `infrahub-sync diff` to verify what the sync will do before applying changes:
+Register the package, then use its immutable identity to verify what the sync will do:
 
 ```shell
-infrahub-sync diff --name <project> --directory <dir>
+infrahub-sync configs register <package.yml> --reason "register migration"
+infrahub-sync diff --config-id <config-id> --version <version> --reason "review migration"
 ```
 
 :::warning Current NetBox saved-plan limits
@@ -102,7 +103,7 @@ The diff prints the proposed changes to the terminal without modifying Infrahub.
 When the diff looks correct, run the sync:
 
 ```shell
-infrahub-sync sync --name <project> --directory <dir>
+infrahub-sync sync --config-id <config-id> --version <version> --reason "seed Infrahub"
 ```
 
 The sync applies changes in the order defined by the project's `order` key. Independent models are created first, then dependent models, then models that reference earlier ones.
@@ -123,7 +124,7 @@ By default, the `SKIP_UNMATCHED_DST` flag is enabled — Infrahub objects withou
 
 To change this behavior for `sync` — for example, removing Infrahub objects when they're deleted in the source system — adjust the `diffsync_flags` in the sync configuration. See [Sync instance configuration](./reference/config.mdx).
 
-The saved-plan path behaves differently and the flags do not change it. A plan **records** a delete for every Infrahub object missing from the source, but `apply` never executes one: it applies the non-deletes, completes successfully, and reports how many deletes it skipped. Reviewing a plan against a destination holding Infrahub-only data will therefore show a non-zero delete count that no apply will act on. See [Deletes are recorded, never executed](./running-a-sync#deletes-are-recorded-never-executed).
+The saved-plan path behaves differently and the flags do not change it. A plan **records** a delete for every Infrahub object missing from the source, but `apply` never executes one: it applies the non-deletes, completes successfully, and reports how many deletes it skipped. Reviewing a plan against a destination holding Infrahub-only data will therefore show a non-zero delete count that no apply will act on. See [Deletes in a plan](./reference/cache-layout#deletes-in-a-plan).
 
 ### Decide on conflict policy early
 

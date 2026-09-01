@@ -106,7 +106,7 @@ These flags govern the live comparison that `diff` prints and that `sync` writes
 govern the saved plan artifact: a plan records a `delete` for every destination object missing from
 the source regardless of `SKIP_UNMATCHED_DST`. Recording one is not executing it — `apply` never
 executes a delete, and completes successfully while reporting how many it skipped. See
-[Deletes are recorded, never executed](./running-a-sync#deletes-are-recorded-never-executed).
+[Deletes in a plan](./reference/cache-layout#deletes-in-a-plan).
 
 :::
 

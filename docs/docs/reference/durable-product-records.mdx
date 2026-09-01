@@ -4,24 +4,17 @@ sidebar_position: 6
 ---
 
 Infrahub Sync provides one storage contract for compact product records and immutable
-artifacts. It is independent of Prefect: a standalone run has no Prefect links, and a
-managed run can retain any number of purpose-labelled execution links after Prefect no
-longer has the corresponding flow-run detail.
+artifacts. It is independent of Prefect: a product run can retain any number of
+purpose-labelled execution links after Prefect no longer has the corresponding flow-run
+detail.
 
 The managed Sync HTTP API and its worker store records in PostgreSQL and immutable
 artifacts in S3-compatible object storage. Each process creates its own clients from the
-same environment settings. Standalone CLI and public Python operations can opt into the
-same product-run and plan-review contract by setting an explicit product-cache location.
-Their established run-directory and saved-plan cache remains the execution artifact source.
+same environment settings. CLI and public Python callers access these records only through
+the Sync API.
 
 Managed execution continues to use `INFRAHUB_SYNC_CACHE_DIR` as the absolute shared cache
 root for saved plans. This PH-2 seam is separate from product records and artifacts.
-
-For Python, pass `product_cache_location` on each version 1 request. For the CLI, pass
-`--product-cache-location` to `diff`, `sync`, and `apply`; the same option is available when
-reviewing a saved plan through `diff --from-plan`. The path must be absolute after user
-expansion, an unresolvable `~user` is rejected as invalid configuration, and every stage
-continuing a plan must use the same location.
 
 This is minimum product-projection configuration. It does not select a new provider type or
 add a release-management API.
@@ -137,11 +130,11 @@ Constructing a managed process initializes the PostgreSQL schema. The PostgreSQL
 have the DDL privileges required to create the product-record tables in its configured
 schema, plus permission to read and write their rows.
 
-### Standalone and test injection
+### Test injection
 
 The local SQLite/filesystem projection is an injected standalone/test seam. It is not a
-managed deployment option. Standalone CLI and Python callers select it only by supplying an
-explicit absolute product-cache location; in-process tests can inject it directly:
+managed deployment option or a public CLI/Python execution mode. In-process service and
+store tests can inject it directly:
 
 ```python
 from pathlib import Path

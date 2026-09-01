@@ -10,7 +10,9 @@ Any tool that can run a CLI command on a schedule and capture its output works. 
 
 ### Cron
 
-The most direct option. A cron entry runs `infrahub-sync sync` on a defined schedule. Output and exit codes are captured by your normal cron logging.
+The most direct option. A cron entry submits `infrahub-sync sync --config-id <id>
+--version <version> --reason "scheduled sync"` on a defined schedule. Output and exit
+codes are captured by your normal cron logging.
 
 **When this works well:**
 

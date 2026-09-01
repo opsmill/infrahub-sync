@@ -135,12 +135,21 @@ def _plan_row(action: str, source_id: str) -> dict[str, Any]:
     return {"action": action, "resource": "InfraDevice", "source_id": source_id, **PLAN_ROW_DEFAULTS}
 
 
+PlanRows = list[dict[str, Any]]
+
+
 class _FakeDiff:
-    def __init__(self, rows: list[dict[str, Any]]) -> None:  # ty: ignore[invalid-type-form]
+    def __init__(
+        self,
+        rows: PlanRows,
+        *,
+        has_diffs: bool | None = None,
+    ) -> None:
         self.rows = rows
+        self._has_diffs = bool(rows) if has_diffs is None else has_diffs
 
     def has_diffs(self) -> bool:
-        return bool(self.rows)
+        return self._has_diffs
 
     def str(self) -> str:  # ty: ignore[invalid-type-form]
         return f"fake-diff({len(self.rows)} rows)"
@@ -149,12 +158,13 @@ class _FakeDiff:
 class _FakePotenda:
     """The engine surface `execute_run` actually touches — nothing more."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         *,
         run_dir: Path,
         rows: list[dict[str, Any]],
         factory_kwargs: dict[str, object],
+        has_diffs: bool | None = None,
         load_error: BaseException | None = None,
         write_result: object = None,
     ) -> None:
@@ -165,6 +175,7 @@ class _FakePotenda:
         self.force_full_extract = False
         self.factory_kwargs = factory_kwargs
         self.rows = rows
+        self.has_diffs_override = has_diffs
         self.load_error = load_error
         self.write_result = write_result
         self.loaded = False
@@ -181,7 +192,7 @@ class _FakePotenda:
         self.loaded = True
 
     def diff(self) -> _FakeDiff:
-        return _FakeDiff(list(self.rows))
+        return _FakeDiff(list(self.rows), has_diffs=self.has_diffs_override)
 
     def _diff_to_rows(self, diff: _FakeDiff) -> list[dict[str, Any]]:
         self.diff_rows_materialized += 1
@@ -206,6 +217,22 @@ class _FakePotenda:
         self.synced = bool(self.rows)
         self.baseline_persisted = True
         return {action: sum(row["action"] == action for row in self.rows) for action in ("create", "update", "delete")}
+
+
+def _factory(
+    run_dir: Path,
+    rows: list[dict[str, Any]],
+    *,
+    has_diffs: bool | None = None,
+) -> Any:  # noqa: ANN401
+    """Return one prepared fake engine from every factory call."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    engine = _FakePotenda(run_dir=run_dir, rows=rows, factory_kwargs={}, has_diffs=has_diffs)
+
+    def build(**_kwargs: object) -> Any:  # noqa: ANN401
+        return engine
+
+    return build
 
 
 class _SpyFactory:
@@ -1524,6 +1551,39 @@ def test_empty_plan_reports_no_change(config_dir: str, cache_root: Path) -> None
     assert result.changed is False
     assert dict(result.summary) == {"create": 0, "update": 0, "delete": 0}
     assert RunFile.load_or_default(cache_root / RUN_ID / "run.json").status == "dry-run"
+
+
+def test_nested_only_diff_reports_no_change_even_though_the_sync_ran(
+    config_dir: Path, cache_root: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Materialized rows are the result contract's fidelity boundary (contract step 7).
+
+    `Potenda._diff_to_rows` walks only the diff root's direct children while
+    `Diff.has_diffs()` is recursive, so a diff whose only changes sit in nested
+    child elements gates the sync ON but materializes ZERO rows — and the result
+    fields, which derive from the rows, therefore report no change.
+    """
+    from infrahub_sync.utils import get_instance
+
+    sync_instance: SyncInstance | None = get_instance(name=SYNC_NAME, directory=str(config_dir))
+    assert sync_instance is not None
+    run_dir = cache_root / RUN_ID
+    factory = _factory(run_dir, [], has_diffs=True)
+
+    with caplog.at_level(logging.INFO, logger="infrahub_sync.execution"):
+        result = execute_run(
+            sync_instance,
+            operation="sync",
+            confirm_writes=True,
+            potenda_factory=factory,
+        )
+
+    engine = factory()
+    assert engine.synced is True, "has_diffs() gates execution exactly as it does today"
+    assert result.status == "no-change"
+    assert result.changed is False
+    assert dict(result.summary) == {"create": 0, "update": 0, "delete": 0}
+    assert "No difference found. Nothing to sync" not in [record.getMessage() for record in caplog.records]
 
 
 def test_plan_uses_a_valid_writer_summary_without_materializing_fallback_rows(

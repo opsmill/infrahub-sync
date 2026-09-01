@@ -77,6 +77,33 @@ def _run(run_id: str = "run-1") -> dict[str, object]:
     }
 
 
+def _plan_response() -> dict[str, object]:
+    return {
+        "run_id": "run-1",
+        "checksum": "a" * 64,
+        "checksum_ok": True,
+        "verification_notes": [],
+        "summary": {
+            "by_action": {"create": 1},
+            "by_kind": {"Device": 1},
+            "total": 1,
+            "delete_operations_computed": True,
+            "deletes_not_executed": 0,
+        },
+        "operations": [
+            {
+                "operation_id": "op-001",
+                "action": "create",
+                "kind": "Device",
+                "identity": {"name": "edge-01"},
+                "tier": 0,
+                "payload": {"name": "edge-01"},
+                "relationships": [],
+            }
+        ],
+    }
+
+
 def _config_version() -> dict[str, object]:
     return {
         "config_id": "cfg",
@@ -199,14 +226,7 @@ def test_all_route_methods_send_the_frozen_contract() -> None:
         ("GET", "/runs/run-1"): (200, _run()),
         ("GET", "/runs/run-1/plan"): (
             200,
-            {
-                "run_id": "run-1",
-                "checksum": "a" * 64,
-                "checksum_ok": True,
-                "verification_notes": [],
-                "summary": {},
-                "operations": [],
-            },
+            _plan_response(),
         ),
         ("GET", "/runs/run-1/results"): (200, {"run_id": "run-1", "results": {}}),
         ("GET", "/runs/run-1/artifacts"): (200, {"run_id": "run-1", "artifacts": []}),
@@ -287,6 +307,32 @@ def test_all_route_methods_send_the_frozen_contract() -> None:
         },
         "/runs/run-1/cancel": {"reason": "test"},
     }
+
+
+def test_get_results_parses_schema_drift_apply_failure() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(
+            200,
+            json={
+                "run_id": "run-1",
+                "results": {
+                    "apply_failure": {
+                        "stage": "apply",
+                        "outcome": "failed",
+                        "error_type": "PlanSchemaChangedError",
+                    }
+                },
+            },
+        )
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+
+    failure = cast("dict[str, object]", client.get_results("run-1").results["apply_failure"])
+
+    assert failure["stage"] == "apply"
+    assert failure["error_type"] == "PlanSchemaChangedError"
 
 
 def test_register_config_403_retains_machine_fields_and_discards_secrets() -> None:
@@ -430,6 +476,42 @@ def test_partial_execution_terminal_fields_are_a_protocol_error() -> None:
     with pytest.raises(ProtocolError) as raised:
         client.get_run("run-1")
     assert raised.value.operation == "get_run"
+    assert raised.value.status == 200
+
+
+def test_malformed_plan_summary_is_a_protocol_error() -> None:
+    response = _plan_response()
+    summary = cast("dict[str, object]", response["summary"])
+    del summary["total"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(200, json=response)
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+
+    with pytest.raises(ProtocolError) as raised:
+        client.get_plan("run-1")
+    assert raised.value.operation == "get_plan"
+    assert raised.value.status == 200
+
+
+def test_malformed_plan_operation_is_a_protocol_error() -> None:
+    response = _plan_response()
+    operations = cast("list[dict[str, object]]", response["operations"])
+    del operations[0]["kind"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(200, json=response)
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+
+    with pytest.raises(ProtocolError) as raised:
+        client.get_plan("run-1")
+    assert raised.value.operation == "get_plan"
     assert raised.value.status == 200
 
 

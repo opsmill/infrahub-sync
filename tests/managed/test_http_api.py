@@ -35,7 +35,14 @@ from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.managed import flow as managed_flow
 from infrahub_sync.managed.app import create_app
 from infrahub_sync.managed.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
-from infrahub_sync.managed.models import CreateRunRequest, PlanResource, PublicRunResource, public_run_resource
+from infrahub_sync.managed.models import (
+    CreateRunRequest,
+    PlanOperationResource,
+    PlanResource,
+    PlanSummaryResource,
+    PublicRunResource,
+    public_run_resource,
+)
 from infrahub_sync.managed.orchestration import (
     CancellationResult,
     Observation,
@@ -241,14 +248,23 @@ def _publish_plan(projection: ProductProjection, run_id: str, *, checksum: str =
         checksum=checksum,
         checksum_ok=True,
         verification_notes=(),
-        summary={"by_action": {"create": 1}, "by_kind": {"Device": 1}, "total": 1},
+        summary=PlanSummaryResource(
+            by_action={"create": 1},
+            by_kind={"Device": 1},
+            total=1,
+            delete_operations_computed=True,
+            deletes_not_executed=0,
+        ),
         operations=(
-            {
-                "operation_id": "op-001",
-                "action": "create",
-                "kind": "Device",
-                "identity": {"name": "edge-01"},
-            },
+            PlanOperationResource(
+                operation_id="op-001",
+                action="create",
+                kind="Device",
+                identity={"name": "edge-01"},
+                tier=0,
+                payload={"name": "edge-01"},
+                relationships=(),
+            ),
         ),
     )
     projection.publish_artifact(

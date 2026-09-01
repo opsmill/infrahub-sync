@@ -5,9 +5,7 @@ from typing import Any
 from infrahub_sync.adapters.nautobot import NautobotModel
 
 # -------------------------------------------------------
-# AUTO-GENERATED FILE, DO NOT MODIFY
-#  This file has been generated with the command `infrahub-sync generate`
-#  All modifications will be lost the next time you reexecute this command
+# Generated file - do not edit.
 # -------------------------------------------------------
 
 

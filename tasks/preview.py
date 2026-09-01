@@ -3,7 +3,7 @@
 `invoke preview.up` brings up a disposable Infrahub instance and a dedicated
 Prefect server (Docker), loads the example schema, starts the managed Sync HTTP
 API and a Prefect worker from this checkout, applies the managed deployment,
-creates a first saved plan, and finishes by running the preview smoke suite so a
+and finishes by running the preview smoke suite so a
 tester never receives an environment that has not just proven its own basics.
 
 Configuration ships in `development/preview.env` (no secrets — local-only
@@ -333,9 +333,6 @@ def up(context: Context) -> None:
     )
     _wait_for_http(f"{urls['sync_api']}/openapi.json", "managed Sync API", timeout=90)
 
-    print(f" - [{NAMESPACE}] Creating a first saved plan (custom-example)")
-    context.run("uv run infrahub-sync diff --name custom-example --directory examples/", env=env)
-
     _run_smoke(context, expect_main_empty=True)
 
     tokens = json.loads(values["PREVIEW_BEARER_TOKENS"])
@@ -409,7 +406,7 @@ def logs(context: Context, name: str = "sync-api", lines: int = 50) -> None:
 
 
 @task
-def down(context: Context, volumes: bool = False) -> None:  # noqa: FBT001, FBT002 -- invoke flag idiom, as in bench.py
+def down(context: Context, volumes: bool = False) -> None:  # noqa: FBT001, FBT002 -- Invoke boolean flag idiom
     """Stop the preview: host processes, then containers (add --volumes to reset data)."""
     values = load_preview_env()
     for name in MANAGED_PROCESSES:

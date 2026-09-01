@@ -80,6 +80,7 @@ kbps
 Keycloak
 LibreNMS
 liveness
+loopback
 Loopbacks
 markdownlint
 max_count

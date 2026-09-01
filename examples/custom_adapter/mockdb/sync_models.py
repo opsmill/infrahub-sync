@@ -7,7 +7,7 @@ from infrahub_sync.plugin_loader import PluginLoader
 # Load model class dynamically at runtime (honor adapters_path, safe fallback)
 try:
     _loader = PluginLoader.from_env_and_args(adapter_paths=[])
-    _spec = "./examples/custom_adapter/custom_adapter_src/custom_adapter.py"
+    _spec = "examples.custom_adapter.custom_adapter_src.custom_adapter"
     _ModelBaseClass = _loader.resolve(_spec, default_class_candidates=("Model",))
 except Exception:  # noqa: BLE001 -- generated adapters need a safe import fallback
     # Fallback: use DiffSyncModel to avoid import-time failure
@@ -17,9 +17,7 @@ except Exception:  # noqa: BLE001 -- generated adapters need a safe import fallb
 
 
 # -------------------------------------------------------
-# AUTO-GENERATED FILE, DO NOT MODIFY
-#  This file has been generated with the command `infrahub-sync generate`
-#  All modifications will be lost the next time you reexecute this command
+# Generated file - do not edit.
 # -------------------------------------------------------
 class _GeneratedModelBase(_ModelBaseClass):
     if "local_id" not in getattr(_ModelBaseClass, "model_fields", {}):

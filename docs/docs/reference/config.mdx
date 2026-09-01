@@ -5,8 +5,12 @@ title: Sync instance configuration
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-The configuration file allows you to define the resources needs for the sync.
-The file should be formatted as a Yaml file, have the filename `config.yml`. During the generation phase, the Sync adapters, and models will be generated in the same folder.
+A configuration package defines the source, destination, and resources for a sync.
+Write the package as YAML or JSON and register it with `infrahub-sync configs register`.
+For a complete package, see `examples/netbox_to_infrahub/package.yml`.
+The service worker resolves the registered configuration and loads installed or
+pre-rendered adapter classes. Run commands select the package by the immutable
+configuration ID and registry version returned during registration.
 
 The following settings can be defined:
 
@@ -33,19 +37,12 @@ field and groups kinds into **tiers**:
 - Tier 0: kinds with no outgoing references.
 - Tier N: kinds whose references all live in tiers `0..N-1`.
 
-The flattened tier order replaces the manual `order:` list. Tiers and any
-optional edges dropped to break cycles are logged at `INFO` level when
-`diff` or `sync` runs.
+The flattened tier order replaces the manual `order:` list. During worker execution, the
+engine narrows the destination's `top_level` to one tier at a time so no tier starts before
+the previous tier's writes have completed.
 
-`infrahub-sync sync` runs with `--parallel` on by default: the engine
-narrows the destination's `top_level` to one tier at a time so no tier
-starts before the previous tier's writes have completed. Pass
-`--no-parallel` to disable the tier boundary and fall back to the legacy
-single-pass code path.
-
-If you must override the computed order (because it doesn't match an
-adapter quirk), keep the `order:` list — it always wins, and `--parallel`
-will warn and fall back to serial when an explicit order is set.
+If you must override the computed order because it does not match an adapter quirk, keep
+the `order:` list. It always wins and selects serial worker execution.
 
 ### Sync store
 

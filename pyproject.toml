@@ -19,6 +19,7 @@ dependencies = [
     "structlog>=25.1,<26.0",
     "typing-extensions>=4.4",
     "httpx>=0.27,<1",
+    "pyyaml>=6,<7",
     # The `[redis]` extra is deliberately dropped: it caps `redis<5.0`, which is
     # unsatisfiable next to the optional `prefect` extra below
     # (prefect>=3.6 -> pydocket -> redis>=5). diffsync's cap is stale rather than

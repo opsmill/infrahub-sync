@@ -179,10 +179,11 @@ Adapters can also register custom Jinja filters via a `_add_custom_filters` clas
 
 ## Validating a mapping
 
-Validate the mapping with the diff command before applying any changes:
+Register and validate the package before creating a plan:
 
 ```shell
-infrahub-sync diff --name <project> --directory <dir>
+infrahub-sync configs validate <config-id> <version>
+infrahub-sync diff --config-id <config-id> --version <version> --reason "review mapping"
 ```
 
 The diff prints every proposed create, update, and delete. Review it model by model:
@@ -195,13 +196,13 @@ The diff prints every proposed create, update, and delete. Review it model by mo
 The same run also saves a plan artifact you can review on its own, per operation and per kind:
 
 ```shell
-infrahub-sync diff --name <project> --directory <dir> --from-plan <run-id> --detail
+infrahub-sync runs plan <run-id> --detail
 ```
 
 A plan **records** deletes but `apply` never executes one — it applies the non-deletes, completes
 successfully, and reports how many deletes it skipped. Deletes are also only computed when the
 destination side ran a full extract; both review depths say which of the two happened. See
-[Reviewing and applying a cached plan](../running-a-sync#reviewing-and-applying-a-cached-plan).
+[Create and review a plan](../running-a-sync#create-and-review-a-plan).
 
 Adjust the mapping and re-run the diff until it matches expectations. Only then run the sync.
 

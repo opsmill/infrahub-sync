@@ -1,7 +1,7 @@
 """Fixtures for the preview smoke suite.
 
 These tests run against the environment `invoke preview.up` starts and confirm
-the simple things on every preview surface (CLI, Python API, managed HTTP API,
+the simple things on every preview surface (Python API, managed HTTP API,
 Prefect) so a tester never starts from a broken environment. They are not a
 replacement for human testing, and they skip — never fail — when the preview
 environment is not running.
@@ -10,7 +10,6 @@ environment is not running.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -59,13 +58,3 @@ def preview_env(preview_settings: dict[str, Any]) -> dict[str, Any]:
         if response.status_code >= 500:
             pytest.skip(f"preview {description} unhealthy (HTTP {response.status_code})")
     return preview_settings
-
-
-@pytest.fixture
-def cli_environment(preview_env: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
-    """Point the in-process CLI and Python API at the preview instance."""
-    monkeypatch.setenv("INFRAHUB_ADDRESS", preview_env["urls"]["infrahub"])
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", preview_env["infrahub_token"])
-    cache_dir = tmp_path / "sync-cache"
-    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(cache_dir))
-    return {**preview_env, "cache_dir": cache_dir}

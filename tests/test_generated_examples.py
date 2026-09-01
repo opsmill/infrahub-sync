@@ -4,14 +4,14 @@ Each snapshot in ``tests/data/generator_schema_snapshots/`` records the destinat
 schema kinds an example's ``schema_mapping`` names, captured from a live Infrahub
 instance loaded with the schema revision its documentation pins. Rendering the
 example's generated files from that snapshot must reproduce the committed bytes
-exactly; otherwise `infrahub-sync generate` would rewrite checked-in files and the
-generator's determinism claim would not cover what the repository ships.
+exactly; otherwise the internal generator helper would rewrite checked-in files and
+the generator's determinism claim would not cover what the repository ships.
 
 To refresh a snapshot after an intentional template or schema change: load the
 example's documented schema revision into a disposable Infrahub instance or branch,
 capture ``client.schema.all()`` for the mapped kinds with ``model_dump(mode="json")``,
-and rerun ``infrahub-sync generate`` for the example so the committed files and the
-snapshot move together.
+then call the internal ``render_adapter`` helper with the example directory as the
+instance directory so the committed files and the snapshot move together.
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SNAPSHOT_DIR = Path(__file__).resolve().parent / "data" / "generator_schema_snapshots"
 GENERATED_FILES = ("sync_models.py", "sync_adapter.py")
+NEUTRAL_BANNER = "# Generated file - do not edit."
 
 
 def _load_snapshot(snapshot_name: str) -> dict[str, NodeSchema | GenericSchema]:
@@ -72,5 +73,17 @@ def test_regenerating_the_committed_example_is_a_no_op(
             committed = (committed_root / adapter_name / file_name).read_bytes()
             assert rendered == committed, (
                 f"{example_dir}/{adapter_name}/{file_name} drifted from generator output; "
-                "rerun `infrahub-sync generate` for this example and commit the result"
+                "regenerate this example through the internal render_adapter helper "
+                "and commit the result"
             )
+
+
+def test_every_committed_generated_file_has_only_the_neutral_banner() -> None:
+    generated = [path for name in GENERATED_FILES for path in (REPO_ROOT / "examples").rglob(name)]
+
+    assert generated
+    for path in generated:
+        text = path.read_text(encoding="utf-8")
+        assert text.count(NEUTRAL_BANNER) == 1, path.relative_to(REPO_ROOT)
+        assert "AUTO-GENERATED FILE" not in text
+        assert "Produced by" not in text

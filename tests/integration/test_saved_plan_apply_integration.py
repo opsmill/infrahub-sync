@@ -97,7 +97,6 @@ arranged after it exists:
 
 from __future__ import annotations
 
-import logging
 import os
 import uuid
 from contextlib import contextmanager
@@ -109,12 +108,9 @@ from unittest.mock import patch
 import pytest
 import yaml
 from diffsync import Adapter
-from typer.testing import CliRunner
 
 from infrahub_sync import DiffSyncMixin
 from infrahub_sync.adapters.infrahub import InfrahubAdapter
-from infrahub_sync.cache.sidecars import RunFile
-from infrahub_sync.cli import app
 from infrahub_sync.plan import read_saved_plan
 from infrahub_sync.plan.errors import OperationApplyFailedError, PeerAmbiguousError
 from infrahub_sync.utils import find_missing_schema_model, get_instance, get_potenda_from_instance, render_adapter
@@ -1216,84 +1212,6 @@ def test_the_write_class_conformance_matrix(live_plan: LivePlan, write_class: st
             f"A crash injected {window} the destination write of {operation.operation_id!r} left the "
             f"{write_class} class off its clean-single-run state after re-applying."
         )
-
-
-# ---------------------------------------------------------------------------------------
-# T078 — SC-007's live half: a delete-bearing plan applies and skips the delete
-# ---------------------------------------------------------------------------------------
-
-
-def test_a_delete_bearing_plan_applies_and_records_the_skipped_deletes(
-    live_plan: LivePlan,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """SC-007 live half: the delete target survives and the run ends `applied` (AD055).
-
-    Run through the `apply` command, because the command is the single writer of `run.json`
-    (AD069) and the criterion reads the run state back from it. Run under `--quiet`, because
-    the criterion is about the warning surviving the verbosity floor rather than about its
-    text: `--quiet` sets the package logger to `WARNING`, so an `INFO` emission would satisfy
-    every prose description of the obligation and vanish here.
-
-    **A run state of `failed` fails this test (AD055).** Not executing a delete is a designed
-    known limitation; the criterion measures that the limitation is disclosed, not
-    that the run is reported as broken.
-    """
-    deletes = [operation for operation in live_plan.plan.operations() if operation.action == "delete"]
-    assert deletes, "The plan under test carries no delete, so this test would measure nothing."
-
-    before = _counts_by_kind(live_plan)
-    absent_before = {
-        operation.operation_id
-        for operation in live_plan.plan.operations()
-        if operation.action != "delete" and _resolve_at_most_one(live_plan, operation.kind, operation.identity) is None
-    }
-
-    with caplog.at_level(logging.WARNING, logger="infrahub_sync"):
-        result = CliRunner().invoke(
-            app,
-            ["--quiet", "apply", "--config-file", str(live_plan.config_path), "--run-id", live_plan.run_id],
-        )
-    assert result.exit_code == 0, f"`apply` exited {result.exit_code}: {result.output}\n{result.exception}"
-
-    # Nothing was removed: each kind grew by exactly the number of its planned objects that
-    # were absent beforehand, which is what a completed apply that executes no delete does.
-    after = _counts_by_kind(live_plan)
-    for kind, count in before.items():
-        created = sum(
-            1 for operation in live_plan.plan.operations(kind=kind) if operation.operation_id in absent_before
-        )
-        assert after[kind] == count + created, (
-            f"Destination count for {kind!r} went from {count} to {after[kind]} while {created} of its planned "
-            "objects were absent beforehand, so the apply removed something."
-        )
-
-    for operation in deletes:
-        assert _resolve_at_most_one(live_plan, operation.kind, operation.identity) is not None, (
-            f"The object named by delete operation {operation.operation_id!r} is gone from the destination. "
-            "Applying deletes is not supported, so it had to survive."
-        )
-
-    run_file = RunFile.load_or_default(live_plan.run_dir / "run.json")
-    assert run_file.status == "applied", (
-        f"The run ended {run_file.status!r}. A delete-bearing plan ends 'applied' with the limitation "
-        "disclosed; 'failed' fails this criterion (AD055)."
-    )
-    assert run_file.summary["skipped_delete_count"] == len(deletes)
-    assert set(run_file.summary["skipped_delete_operations"]) == {operation.operation_id for operation in deletes}
-    assert set(run_file.summary["applied_operations"]) | set(run_file.summary["skipped_delete_operations"]) == (
-        _all_operation_ids(live_plan)
-    ), "The applied and skipped identifiers do not account for every operation the plan contained."
-
-    warnings = [
-        record.getMessage()
-        for record in caplog.records
-        if record.levelno >= logging.WARNING and str(len(deletes)) in record.getMessage()
-    ]
-    assert warnings, (
-        f"No warning at WARNING or above named the skipped-delete count {len(deletes)}. Captured: "
-        f"{[record.getMessage() for record in caplog.records]}"
-    )
 
 
 # ---------------------------------------------------------------------------------------
