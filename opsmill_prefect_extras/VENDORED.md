@@ -35,7 +35,7 @@ Local lint/format tooling must exclude this directory rather than rewrite it.
 When upstream `opsmill/prefect-extras` is merged and published, delete this
 directory and `tests/vendored_prefect_extras/`, remove
 `"opsmill_prefect_extras"` from `[tool.hatch.build.targets.wheel] packages`,
-restore the dependency in the `managed` extra, and drop the vendoring entries
+restore the dependency in the `service` extra, and drop the vendoring entries
 from the Ruff exclude list, `[tool.ty.src]` exclude, the isort
 `known-third-party` pin, and `.github/file-filters.yml`.
 `tests/test_vendoring_consistency.py` fails on any half-executed re-adoption.
@@ -43,7 +43,7 @@ from the Ruff exclude list, `[tool.ty.src]` exclude, the isort
 ### CI authentication on re-adoption
 
 Restoring the dependency reintroduces a problem vendoring removed: `opsmill/prefect-extras`
-is a private repository, so CI can no longer install the `managed` extra with the default
+is a private repository, so CI can no longer install the `service` extra with the default
 job token.
 
 Two approaches to this were written before vendoring was chosen, and both were dropped
