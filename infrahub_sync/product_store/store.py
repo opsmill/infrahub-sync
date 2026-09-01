@@ -582,18 +582,20 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
     def _migrate_mutation_receipts(self, cursor: _Cursor) -> None:
         """Add resource identity columns and preserve every legacy receipt in place."""
+        column_nullability: dict[str, str] = {}
         if self._dialect == "sqlite":
             cursor.execute("PRAGMA table_info(mutation_receipts)")
             columns = frozenset(str(row[1]) for row in cursor.fetchall())
         else:
             cursor.execute(
                 self._sql(
-                    "SELECT column_name FROM information_schema.columns "
+                    "SELECT column_name, is_nullable FROM information_schema.columns "
                     "WHERE table_name = ? AND table_schema = current_schema()"
                 ),
                 ("mutation_receipts",),
             )
-            columns = frozenset(str(row[0]) for row in cursor.fetchall())
+            column_nullability = {str(row[0]): str(row[1]) for row in cursor.fetchall()}
+            columns = frozenset(column_nullability)
         if "resource_kind" not in columns:
             cursor.execute("ALTER TABLE mutation_receipts ADD COLUMN resource_kind TEXT")
         if "resource_id" not in columns:
@@ -614,8 +616,10 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             )
             cursor.execute("PRAGMA writable_schema = OFF")
         else:
-            cursor.execute("ALTER TABLE mutation_receipts ALTER COLUMN run_id DROP NOT NULL")
-            cursor.execute("ALTER TABLE mutation_receipts ALTER COLUMN prefect_key DROP NOT NULL")
+            if column_nullability.get("run_id") == "NO":
+                cursor.execute("ALTER TABLE mutation_receipts ALTER COLUMN run_id DROP NOT NULL")
+            if column_nullability.get("prefect_key") == "NO":
+                cursor.execute("ALTER TABLE mutation_receipts ALTER COLUMN prefect_key DROP NOT NULL")
 
     def _mutation_receipt_resource_constraint_exists(self, cursor: _Cursor) -> bool:
         if self._dialect == "sqlite":
