@@ -931,6 +931,19 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             include = list(model._attributes)
             nodes = self.client.all(kind=model_name, include=include, populate_store=True)
 
+            # `client.all(..., populate_store=True)` can leave the store's own entry for
+            # one of these nodes stale: while the SDK parses this same bulk response, a
+            # *reference* to that node from another record's relationship (e.g. Room-05
+            # as Aisle-06's `parent`, both `LocationLocation`) is written to the store as
+            # a shallow stub, and when that write lands after the node's own full entry,
+            # it silently overwrites it. `store.get()` then returns the stub for a
+            # same-kind self-reference, and the stub's cardinality-one relationships come
+            # back empty -- exactly what a same-kind self-referencing peer lookup needs.
+            # Re-set every node explicitly so the store holds this call's own,
+            # fully-populated objects regardless of what order the SDK wrote them in.
+            for node in nodes:
+                self.client.store.set(node=node, key=str(node.id))
+
             # Transform the list of InfrahubNodeSync into a list of (node, dict) tuples
             node_dict_pairs = [(node, self.infrahub_node_to_diffsync(node=node)) for node in nodes]
             total = len(node_dict_pairs)
