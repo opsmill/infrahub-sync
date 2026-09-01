@@ -81,6 +81,7 @@ def _registered_apply(
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (managed_flow.logger, False))
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
     monkeypatch.setattr(managed_flow, "_prefect_flow_run_id", lambda: FLOW_RUN_ID)
+    monkeypatch.setattr(managed_flow, "_require_current_worker_identity", lambda *_args: None)
     monkeypatch.setattr(
         managed_flow,
         "build_runtime_model_plan",

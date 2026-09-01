@@ -10,11 +10,14 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Literal, cast
 from uuid import UUID
 
+import httpx
 import pytest
+from typing_extensions import Self
 
 pytest.importorskip("prefect")
 
 from prefect import __version__ as prefect_version
+from prefect.client.schemas.objects import WorkerStatus
 from prefect.workers.process import ProcessJobConfiguration, ProcessWorker
 
 from infrahub_sync.managed import flow as managed_flow
@@ -25,6 +28,52 @@ if TYPE_CHECKING:
 
 FLOW_ID = "ed4778cb-f2cf-4b1f-a87b-68be37659e93"
 WORKER_ID = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+WORKER_NAME = "infrahub-sync-managed-test"
+POOL_ID = "e0679e8a-9460-4ca7-8bf1-70bf967eed2d"
+POOL_NAME = "managed-pool"
+
+
+class _PrefectWorkerClient:
+    """Synchronous Prefect 3.8.1 worker-registry seam used immediately before claim."""
+
+    def __init__(self, worker_id: str = WORKER_ID) -> None:
+        self.worker_id = worker_id
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read_flow_run(self, flow_run_id: UUID) -> SimpleNamespace:  # noqa: PLR6301 - fake client protocol.
+        assert isinstance(flow_run_id, UUID)
+        return SimpleNamespace(work_pool_id=UUID(POOL_ID), work_pool_name=POOL_NAME)
+
+    def read_workers_for_work_pool(
+        self,
+        work_pool_name: str,
+        worker_filter: object = None,  # noqa: ARG002 - pinned Prefect client shape.
+        offset: int | None = None,
+        limit: int | None = None,
+    ) -> list[SimpleNamespace]:
+        assert work_pool_name == POOL_NAME
+        assert offset == 0
+        assert limit == 200
+        return [
+            SimpleNamespace(
+                id=UUID(self.worker_id),
+                name=WORKER_NAME,
+                work_pool_id=UUID(POOL_ID),
+                status=WorkerStatus.ONLINE,
+            )
+        ]
+
+
+@pytest.fixture(autouse=True)
+def _current_prefect_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _PrefectWorkerClient()
+    monkeypatch.setenv("PREFECT__WORKER_NAME", WORKER_NAME)
+    monkeypatch.setattr(managed_flow, "get_client", lambda **_kwargs: client, raising=False)
 
 
 def _projection(tmp_path: Path, *, submitted_at: datetime | None = None, migrated: bool = False):
@@ -107,6 +156,31 @@ def test_worker_claims_canonical_prefect_execution_before_runtime_work(
 
     link = projection.lookup_run("run-worker-claim").value.prefect_executions[0]  # type: ignore[union-attr]
     assert link.claiming_worker_id == WORKER_ID
+
+
+def test_worker_registry_failure_is_value_free_and_does_not_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    projection = _projection(tmp_path)
+    client = _PrefectWorkerClient()
+    canary = "worker-registry-secret-canary"
+
+    def _fail(_flow_run_id: UUID) -> SimpleNamespace:
+        raise httpx.ConnectError(canary)
+
+    monkeypatch.setattr(client, "read_flow_run", _fail)
+    monkeypatch.setattr(managed_flow, "get_client", lambda **_kwargs: client)
+    monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
+    monkeypatch.setattr(managed_flow, "_prefect_flow_run_id", lambda: FLOW_ID)
+
+    with pytest.raises(RuntimeError) as caught:
+        managed_flow._claim_current_execution(projection, "run-worker-claim")
+
+    assert str(caught.value) == "managed worker execution identity is unavailable"
+    assert canary not in repr(caught.value)
+    link = projection.lookup_run("run-worker-claim").value.prefect_executions[0]  # type: ignore[union-attr]
+    assert link.claimed_at is None
 
 
 @pytest.mark.parametrize("stage", ["plan", "verify", "apply", "sync"])

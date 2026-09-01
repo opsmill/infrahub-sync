@@ -14,8 +14,11 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
+import httpx
 from prefect import flow, get_run_logger
-from prefect.exceptions import MissingContextError
+from prefect.client.orchestration import get_client
+from prefect.client.schemas.objects import WorkerStatus
+from prefect.exceptions import MissingContextError, ObjectNotFound
 
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
 from infrahub_sync.configuration.runtime import resolve_runtime_instance
@@ -70,7 +73,9 @@ _LEGACY_RUN_IDENTITY_UNAVAILABLE = "legacy managed run identity is unavailable"
 _LEGACY_RUN_CONFIGURATION_MISMATCH = "legacy managed run configuration version does not match durable run"
 _WORKER_EXECUTION_REFUSED = "managed worker execution claim was refused"
 _WORKER_EXECUTION_ID_INVALID = "managed worker execution identity is invalid"
+_WORKER_EXECUTION_IDENTITY_UNAVAILABLE = "managed worker execution identity is unavailable"
 _WORKER_EXECUTION_WRITEBACK_REFUSED = "managed worker execution writeback was refused"
+_WORKER_PAGE_SIZE = 200
 
 
 def _raise_writeback_refused() -> None:
@@ -239,13 +244,68 @@ def _worker_binding(
 
 
 def _canonical_uuid(value: object) -> str | None:
-    """Return the value only when it is already a canonical UUID string."""
+    """Return the canonical text of a UUID object or already-canonical UUID string."""
+    if isinstance(value, UUID):
+        return str(value)
     if not isinstance(value, str):
         return None
     try:
         return value if str(UUID(value)) == value else None
     except ValueError:
         return None
+
+
+def _require_worker_page(value: object) -> list[Any]:
+    if not isinstance(value, list):
+        raise TypeError
+    return value
+
+
+def _require_work_pool_binding(flow_run: object) -> tuple[str, str]:
+    work_pool_name = getattr(flow_run, "work_pool_name", None)
+    work_pool_id = _canonical_uuid(getattr(flow_run, "work_pool_id", None))
+    if not isinstance(work_pool_name, str) or not work_pool_name or work_pool_id is None:
+        raise ValueError
+    return work_pool_name, work_pool_id
+
+
+def _require_current_worker_identity(flow_run_id: str, worker_id: str) -> None:
+    """Require the child's worker UUID to remain canonical immediately before claim."""
+    worker_name = os.environ.get("PREFECT__WORKER_NAME")
+    if not worker_name:
+        raise RuntimeError(_WORKER_EXECUTION_IDENTITY_UNAVAILABLE)
+    try:
+        client = get_client(sync_client=True)
+        with client:
+            flow_run = client.read_flow_run(UUID(flow_run_id))
+            work_pool_name, work_pool_id = _require_work_pool_binding(flow_run)
+            records: list[Any] = []
+            offset = 0
+            while True:
+                page = _require_worker_page(
+                    client.read_workers_for_work_pool(
+                        work_pool_name,
+                        offset=offset,
+                        limit=_WORKER_PAGE_SIZE,
+                    )
+                )
+                records.extend(page)
+                if len(page) < _WORKER_PAGE_SIZE:
+                    break
+                offset += _WORKER_PAGE_SIZE
+    except (httpx.HTTPError, ObjectNotFound, AttributeError, RuntimeError, TypeError, ValueError):
+        raise RuntimeError(_WORKER_EXECUTION_IDENTITY_UNAVAILABLE) from None
+
+    matches = [record for record in records if record.name == worker_name]
+    if len(matches) != 1:
+        raise RuntimeError(_WORKER_EXECUTION_IDENTITY_UNAVAILABLE)
+    record = matches[0]
+    if (
+        _canonical_uuid(record.id) != worker_id
+        or _canonical_uuid(record.work_pool_id) != work_pool_id
+        or record.status != WorkerStatus.ONLINE
+    ):
+        raise RuntimeError(_WORKER_EXECUTION_IDENTITY_UNAVAILABLE)
 
 
 def _prefect_flow_run_id() -> str:
@@ -264,6 +324,7 @@ def _claim_current_execution(projection: ProductProjection, run_id: str) -> tupl
     flow_run_id = _prefect_flow_run_id()
     if worker_id is None:
         raise RuntimeError(_WORKER_EXECUTION_ID_INVALID)
+    _require_current_worker_identity(flow_run_id, worker_id)
     admission_ttl_seconds = LivenessPolicy.from_environment().admission_ttl_seconds
     if not projection.claim_execution(
         run_id,

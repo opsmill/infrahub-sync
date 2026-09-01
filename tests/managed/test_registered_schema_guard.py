@@ -204,6 +204,7 @@ def _harness(
     monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (managed_flow.logger, False))
     monkeypatch.setattr(managed_flow, "_prefect_flow_run_id", lambda: FLOW_RUN_ID)
+    monkeypatch.setattr(managed_flow, "_require_current_worker_identity", lambda *_args: None)
 
     calls: list[dict[str, Any]] = []
 

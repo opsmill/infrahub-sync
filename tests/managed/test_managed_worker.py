@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock
@@ -11,6 +13,7 @@ from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
+from typing_extensions import Self
 
 pytest.importorskip("prefect")
 
@@ -20,7 +23,9 @@ from prefect.logging.handlers import APILogHandler
 from prefect.server.schemas.actions import LogCreate as ServerLogCreate
 from prefect.workers.process import ProcessWorker
 
+from infrahub_sync.managed import flow as managed_flow
 from infrahub_sync.managed.worker import ManagedProcessWorker, ManagedWorkerIdentityError, managed_worker_name
+from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 
 if TYPE_CHECKING:
     from prefect.client.schemas.objects import FlowRun, WorkPool
@@ -66,6 +71,35 @@ class _WorkerClient:
 
     async def read_flow(self, flow_id: UUID) -> SimpleNamespace:  # noqa: PLR6301 - Prefect client protocol.
         return SimpleNamespace(id=flow_id, name="managed-flow", labels={})
+
+
+class _FlowWorkerRegistryClient:
+    """The synchronous worker-registry view available inside the process child."""
+
+    def __init__(self, records: list[object]) -> None:
+        self.records = records
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read_flow_run(self, flow_run_id: UUID) -> SimpleNamespace:  # noqa: PLR6301 - fake client protocol.
+        assert flow_run_id == FLOW_ID
+        return SimpleNamespace(work_pool_id=POOL_ID, work_pool_name=POOL_NAME)
+
+    def read_workers_for_work_pool(
+        self,
+        work_pool_name: str,
+        worker_filter: object = None,  # noqa: ARG002 - pinned Prefect client shape.
+        offset: int | None = None,
+        limit: int | None = None,
+    ) -> list[object]:
+        assert work_pool_name == POOL_NAME
+        start = offset or 0
+        stop = None if limit is None else start + limit
+        return self.records[start:stop]
 
 
 def _worker(name: str, records: list[Any]) -> ManagedProcessWorker:
@@ -322,3 +356,88 @@ async def test_prefect_381_injects_the_resolved_worker_uuid_into_the_actual_chil
     assert not isinstance(result, Exception)
     assert result.status_code == 0
     assert runner.child_environments[0]["PREFECT__WORKER_ID"] == str(FIRST_WORKER_ID)
+    assert runner.child_environments[0]["PREFECT__WORKER_NAME"] == "managed-a"
+
+
+async def test_child_refuses_stale_identity_after_start_before_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Force child start, server W1→W2, then the production managed-flow claim."""
+    run_id = "run-child-identity-race"
+    now = datetime.now(timezone.utc)
+    projection = local_product_projection(tmp_path / "product")
+    projection.create_run(
+        ProductRun(
+            run_id=run_id,
+            operation="plan",
+            configuration_reference="legacy",
+            started_at=now,
+            phase="accepted",
+        )
+    )
+    projection.add_prefect_execution(
+        run_id,
+        PrefectExecutionLink(flow_run_id=str(FLOW_ID), purpose="plan", attempt=1, submitted_at=now),
+    )
+
+    worker = _worker("managed-a", [_record("managed-a", FIRST_WORKER_ID)])
+    await worker._refresh_worker_identity()
+    _stub_submission(worker)
+    registry = _FlowWorkerRegistryClient([_record("managed-a", FIRST_WORKER_ID)])
+    child_started = asyncio.Event()
+    release_claim = asyncio.Event()
+    claim_errors: list[RuntimeError] = []
+    post_claim_work: list[bool] = []
+
+    class _ClaimRunner:
+        async def execute_flow_run(self, **kwargs: Any) -> SimpleNamespace:  # noqa: ANN401, PLR6301
+            child_environment = kwargs["env"]
+            kwargs["task_status"].started(42)
+            child_started.set()
+            await release_claim.wait()
+            with monkeypatch.context() as child:
+                child.setenv("PREFECT__WORKER_ID", child_environment["PREFECT__WORKER_ID"])
+                child.setenv("PREFECT__WORKER_NAME", child_environment["PREFECT__WORKER_NAME"])
+                child.setattr(managed_flow, "get_client", lambda **_kwargs: registry, raising=False)
+                child.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
+                child.setattr(managed_flow, "_prefect_flow_run_id", lambda: str(FLOW_ID))
+
+                def _post_claim(*_args: object, **_kwargs: object) -> None:
+                    post_claim_work.append(True)
+
+                child.setattr(managed_flow, "_execute_stage", _post_claim)
+                try:
+                    managed_flow.managed_sync_run.fn(run_id, "plan")
+                except RuntimeError as exc:
+                    claim_errors.append(exc)
+            return SimpleNamespace(returncode=0, pid=42)
+
+    worker._runner = cast("Any", _ClaimRunner())
+
+    async def _base_sync(self: ProcessWorker) -> None:
+        await self._initialize_after_sync()
+
+    async def _base_initialize(self: ProcessWorker) -> None:  # noqa: RUF029 - Prefect lifecycle hook.
+        self._has_successfully_synced = True
+
+    monkeypatch.setattr(ProcessWorker, "sync_with_backend", _base_sync)
+    monkeypatch.setattr(ProcessWorker, "_initialize_after_sync", _base_initialize)
+
+    child = asyncio.create_task(worker._submit_run_and_capture_errors(cast("FlowRun", _flow_run())))
+    await child_started.wait()
+    cast("_WorkerClient", worker._client).records = [_record("managed-a", SECOND_WORKER_ID)]
+    registry.records = [_record("managed-a", SECOND_WORKER_ID)]
+    await worker.sync_with_backend()
+    release_claim.set()
+    result = await child
+
+    assert not isinstance(result, Exception)
+    assert len(claim_errors) == 1
+    assert str(claim_errors[0]) == "managed worker execution identity is unavailable"
+    assert post_claim_work == []
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    link = stored.prefect_executions[0]
+    assert link.claimed_at is None
+    assert link.claiming_worker_id is None
