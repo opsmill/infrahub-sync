@@ -204,9 +204,24 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                 logger.info("%s: Loading all %d %s", self.type, total, resource_name)
 
             continue_on_error = getattr(self, "continue_on_error", False)
+            # A self-referencing scalar field (e.g. Location.parent -> Location) can only
+            # resolve once every sibling record has been added to the store: on this first
+            # pass, a record whose peer sorts later in `filtered` finds no match yet and
+            # `nautobot_obj_to_diffsync` leaves the field out of `data` entirely (see the
+            # `continue` in its reference-resolution branch). Track those misses so a second
+            # pass below can retry them once the full set exists.
+            self_ref_fields = [
+                field
+                for field in element.fields or []
+                if field.reference == element.name and not model.is_list(name=field.name)
+            ]
+            pending_self_refs: list[tuple[dict, NautobotModel]] = []
+
             # Records are already filtered above; don't filter again.
-            for data in self._records_to_diffsync(
-                element=element, model=model, raw_records=filtered, already_filtered=True
+            for obj, data in zip(
+                filtered,
+                self._records_to_diffsync(element=element, model=model, raw_records=filtered, already_filtered=True),
+                strict=True,
             ):
                 try:
                     item = model(**data)
@@ -222,6 +237,47 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                     )
                     continue
                 self.add(item)
+                if any(field.name not in data for field in self_ref_fields):
+                    pending_self_refs.append((obj, item))
+
+            if pending_self_refs:
+                self._resolve_self_references(
+                    element=element, self_ref_fields=self_ref_fields, pending=pending_self_refs
+                )
+
+    def _resolve_self_references(
+        self,
+        *,
+        element: SchemaMappingModel,
+        self_ref_fields: list,
+        pending: list[tuple[dict, NautobotModel]],
+    ) -> None:
+        """Retry the self-referencing fields `model_loader` couldn't resolve on the first pass.
+
+        Every record of `element.name` is now in the store regardless of whether its own
+        self-reference resolved (the first pass adds each item unconditionally), so a peer
+        that was missing before is guaranteed to be there now -- one retry pass is enough,
+        no need to loop until stable.
+        """
+        by_local_id = {node.local_id: node for node in self.store.get_all(model=element.name)}  # ty: ignore[unresolved-attribute]
+        for obj, item in pending:
+            for field in self_ref_fields:
+                if getattr(item, field.name, None) is not None:
+                    continue
+                peer_stub = get_value(obj, field.mapping)
+                peer_id = peer_stub.get("id") if peer_stub else None
+                if not peer_id:
+                    continue
+                peer_item = by_local_id.get(str(peer_id))
+                if peer_item is None:
+                    logger.warning(
+                        "Reconciliation pass: still unable to locate the node %s %s for %s",
+                        field.name,
+                        peer_id,
+                        item.get_unique_id(),
+                    )
+                    continue
+                setattr(item, field.name, peer_item.get_unique_id())
 
     def nautobot_obj_to_diffsync(
         self, obj: dict[str, Any], mapping: SchemaMappingModel, model: type[NautobotModel]
