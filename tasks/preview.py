@@ -406,7 +406,7 @@ def logs(context: Context, name: str = "sync-api", lines: int = 50) -> None:
 
 
 @task
-def down(context: Context, volumes: bool = False) -> None:  # noqa: FBT001, FBT002 -- invoke flag idiom, as in bench.py
+def down(context: Context, volumes: bool = False) -> None:  # noqa: FBT001, FBT002 -- Invoke boolean flag idiom
     """Stop the preview: host processes, then containers (add --volumes to reset data)."""
     values = load_preview_env()
     for name in MANAGED_PROCESSES:

@@ -15,7 +15,7 @@ node_modules/*
 .envrc
 dist/
 .infrahub-sync-cache/
-# invoke bench.run artifacts (default to repo root)
+# Local benchmark artifacts
 bench-results.csv
 .bench-filtered-config.yml
 # spec-kit transient download cache (extensions/presets)

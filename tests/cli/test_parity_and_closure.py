@@ -198,6 +198,7 @@ def test_workflows_tasks_and_unreleased_changelog_do_not_invoke_removed_commands
     files = list((ROOT / ".github").rglob("*.yml"))
     files.extend((ROOT / ".github").rglob("*.yaml"))
     files.extend((ROOT / "tasks").rglob("*.py"))
+    files.extend(path for path in (ROOT / "scripts").rglob("*") if path.is_file())
     files.extend((ROOT / "changelog").glob("*.md"))
 
     offenders = {
