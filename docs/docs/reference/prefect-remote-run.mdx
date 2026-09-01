@@ -182,9 +182,9 @@ originating logger name preserved.
 The direct deployment does not provide a Sync-owned HTTP API, remote reviewed-plan apply,
 per-stage tasks, work pools, workers, triggers, or an overlap policy. Saved-plan review and
 apply remain available through the CLI. Use the separate
-[managed Sync HTTP API](./managed-http-api.mdx) when an automation client needs a stable
+[Sync HTTP API](./sync-http-api.mdx) when an automation client needs a stable
 Sync-owned API, durable results and artifacts, reviewed-plan apply, actor authorization,
-or managed worker execution.
+or service worker execution.
 
 Concurrency guarantees for this direct deployment are limited to the per-configuration
 lock on one runner host. A second run of the same configuration waits for that lock and

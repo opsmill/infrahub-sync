@@ -1,7 +1,7 @@
 """Fixtures for the preview smoke suite.
 
 These tests run against the environment `invoke preview.up` starts and confirm
-the simple things on every preview surface (Python API, managed HTTP API,
+the simple things on every preview surface (Python API, Sync HTTP API,
 Prefect) so a tester never starts from a broken environment. They are not a
 replacement for human testing, and they skip — never fail — when the preview
 environment is not running.
@@ -10,12 +10,36 @@ environment is not running.
 from __future__ import annotations
 
 import json
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
 
 from tasks.preview import REPO_ROOT, PreviewError, load_preview_env, preview_urls
+
+if TYPE_CHECKING:
+    from _pytest.nodes import Item
+
+_HERE = Path(__file__).parent
+# The Prefect surface smoke asserts on the flow runs the Sync API smoke creates, so it
+# has to run after it. Filename collation is not a dependency this suite may rest on:
+# renaming either module silently reverses them and the surface smoke then polls a
+# deployment that nothing has submitted to yet.
+_RUN_CREATOR = _HERE / "test_service_api.py"
+_RUN_OBSERVER = _HERE / "test_prefect_surface.py"
+
+
+def pytest_collection_modifyitems(items: list[Item]) -> None:
+    """Run the Sync API smoke before the Prefect surface smoke that observes it."""
+    observers = [item for item in items if item.path == _RUN_OBSERVER]
+    creators = [item for item in items if item.path == _RUN_CREATOR]
+    if not observers or not creators or items.index(creators[-1]) < items.index(observers[0]):
+        return
+    for observer in observers:
+        items.remove(observer)
+    resume_at = items.index(creators[-1]) + 1
+    items[resume_at:resume_at] = observers
 
 
 @pytest.fixture(scope="session")
@@ -48,7 +72,7 @@ def preview_env(preview_settings: dict[str, Any]) -> dict[str, Any]:
     probes = {
         "Infrahub": f"{preview_settings['urls']['infrahub']}/api/config",
         "Prefect": f"{preview_settings['urls']['prefect']}/api/health",
-        "managed Sync API": f"{preview_settings['urls']['sync_api']}/openapi.json",
+        "Sync API": f"{preview_settings['urls']['sync_api']}/openapi.json",
     }
     for description, url in probes.items():
         try:

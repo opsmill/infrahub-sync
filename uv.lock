@@ -1133,22 +1133,22 @@ dev = [
     { name = "types-ujson" },
     { name = "yamllint" },
 ]
-managed = [
+prefect = [
+    { name = "prefect" },
+]
+service = [
     { name = "boto3", marker = "python_full_version >= '3.11'" },
     { name = "fastapi", marker = "python_full_version >= '3.11'" },
     { name = "prefect", marker = "python_full_version >= '3.11'" },
     { name = "psycopg", extra = ["binary"], marker = "python_full_version >= '3.11'" },
     { name = "uvicorn", marker = "python_full_version >= '3.11'" },
 ]
-prefect = [
-    { name = "prefect" },
-]
 
 [package.metadata]
 requires-dist = [
-    { name = "boto3", marker = "python_full_version >= '3.11' and extra == 'managed'", specifier = ">=1.35,<2" },
+    { name = "boto3", marker = "python_full_version >= '3.11' and extra == 'service'", specifier = ">=1.35,<2" },
     { name = "diffsync", specifier = ">=2.1,<3.0" },
-    { name = "fastapi", marker = "python_full_version >= '3.11' and extra == 'managed'", specifier = ">=0.115,<1" },
+    { name = "fastapi", marker = "python_full_version >= '3.11' and extra == 'service'", specifier = ">=0.115,<1" },
     { name = "filelock", specifier = ">=3.13" },
     { name = "fsspec", specifier = ">=2024.6" },
     { name = "httpx", specifier = ">=0.27,<1" },
@@ -1157,9 +1157,9 @@ requires-dist = [
     { name = "ipython", marker = "extra == 'dev'" },
     { name = "netutils", specifier = ">=1.9,<2.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0,<5.0" },
-    { name = "prefect", marker = "python_full_version >= '3.11' and extra == 'managed'", specifier = "==3.8.1" },
+    { name = "prefect", marker = "python_full_version >= '3.11' and extra == 'service'", specifier = "==3.8.1" },
     { name = "prefect", marker = "extra == 'prefect'", specifier = "==3.8.1" },
-    { name = "psycopg", extras = ["binary"], marker = "python_full_version >= '3.11' and extra == 'managed'", specifier = ">=3.2,<4" },
+    { name = "psycopg", extras = ["binary"], marker = "python_full_version >= '3.11' and extra == 'service'", specifier = ">=3.2,<4" },
     { name = "pyarrow", specifier = ">=17,<22" },
     { name = "pylint", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.2,<10" },
@@ -1182,10 +1182,10 @@ requires-dist = [
     { name = "types-toml", marker = "extra == 'dev'" },
     { name = "types-ujson", marker = "extra == 'dev'" },
     { name = "typing-extensions", specifier = ">=4.4" },
-    { name = "uvicorn", marker = "python_full_version >= '3.11' and extra == 'managed'", specifier = ">=0.34,<1" },
+    { name = "uvicorn", marker = "python_full_version >= '3.11' and extra == 'service'", specifier = ">=0.34,<1" },
     { name = "yamllint", marker = "extra == 'dev'", specifier = ">=1.37.1" },
 ]
-provides-extras = ["prefect", "managed", "dev"]
+provides-extras = ["prefect", "service", "dev"]
 
 [[package]]
 name = "iniconfig"

@@ -83,7 +83,7 @@ def test_root_help_closes_removed_commands_and_adds_resource_groups() -> None:
     assert "--api-token" not in help_text
 
 
-def test_all_standalone_only_options_are_absent_from_live_command_help() -> None:
+def test_all_retired_local_execution_options_are_absent_from_live_command_help() -> None:
     help_text = "\n".join(
         (
             _help("diff"),
@@ -123,7 +123,6 @@ def test_cli_imports_only_the_shared_client_boundary() -> None:
         "httpx",
         "Authorization",
         "Bearer ",
-        "execute_standalone",
         "execute_run",
         "product_store",
         "get_potenda_from_instance",
@@ -253,12 +252,12 @@ def test_netbox_tutorial_starts_and_authenticates_the_service_boundary() -> None
     text = (ROOT / "docs/docs/tutorials/netbox-demo-to-infrahub.mdx").read_text(encoding="utf-8")
 
     required = (
-        "infrahub-sync[managed]",
+        "infrahub-sync[service]",
         "prefect server start",
-        "prefect worker start",
-        "infrahub_sync.managed.deploy",
-        "infrahub_sync.managed.serve",
-        "INFRAHUB_SYNC_MANAGED_BEARER_TOKENS",
+        "infrahub_sync.service.deploy",
+        "infrahub_sync.service.worker --pool",
+        "infrahub_sync.service.serve",
+        "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS",
         "INFRAHUB_SYNC_API_URL",
         "INFRAHUB_SYNC_API_TOKEN",
         "The worker, not the CLI, reads the NetBox",

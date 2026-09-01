@@ -1,0 +1,397 @@
+---
+title: Sync HTTP API
+sidebar_position: 7
+---
+
+The Sync HTTP API accepts authenticated run requests, records a stable Sync run
+identity, and delegates execution to a separate Prefect deployment. Sync owns the HTTP,
+authorization, plan, result, artifact, audit, and idempotency contracts. Prefect owns live
+execution state, workers, retries, logs, and cancellation.
+
+The [direct Prefect remote run](./prefect-remote-run.mdx) remains a
+separate four-parameter deployment. Use the Sync API when a trusted automation client
+needs reviewed-plan apply, durable results, artifact retrieval, or actor-scoped mutation
+control.
+
+## Install the service profile
+
+The service profile requires Python 3.11 or later. No published package carries this
+profile yet, so install from a repository checkout on the API host and every worker
+that can run its deployment:
+
+```bash
+uv sync --extra dev --extra prefect --extra service
+```
+
+Once a release with the service profile is published, `pip install
+'infrahub-sync[service]'` becomes the deployment path.
+
+The profile directly installs FastAPI, HTTPX, Uvicorn, Prefect 3.8.1, Psycopg, and Boto3. The OpsMill
+Prefect Extras integration ships with the package itself as a vendored copy of upstream
+commit `97465e75137f6121d0377cd637383cfb3530d734`. The base installation does not import
+any of these modules. Ordinary CLI and Python API imports remain Prefect-free.
+
+You also need:
+
+- a Prefect API and an existing process work pool;
+- a worker with access to the allowed Sync configuration directory;
+- an absolute saved-plan cache path shared by worker processes;
+- PostgreSQL for product records; and
+- an S3-compatible bucket for immutable artifacts.
+
+The API and worker each create a process-local client from the same PostgreSQL/S3 settings.
+They share durable records and artifacts through those services, not through a product filesystem.
+S3 credentials use Boto3's standard credential-provider chain.
+
+## Configure principals
+
+`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` contains a non-empty JSON object keyed by actor. Each
+entry has a bearer token of at least 16 characters and an optional administrator flag:
+
+```bash
+export INFRAHUB_SYNC_SERVICE_BEARER_TOKENS='{
+  "automation@example.com": {
+    "token": "replace-with-a-secret-token",
+    "administrator": false
+  },
+  "sync-admin@example.com": {
+    "token": "replace-with-another-secret-token",
+    "administrator": true
+  }
+}'
+```
+
+Inject this value through your deployment's secret mechanism. Do not put a real token in a
+shell history, Sync configuration, request body, idempotency key, or Prefect parameter.
+Tokens must be unique. The resolver compares them with a timing-safe operation and never
+persists, returns, or submits them to Prefect.
+
+Any authenticated principal can create and inspect a run. Only the initiating actor or an
+administrator can verify, apply, or cancel it. Every accepted mutation and authorization
+refusal records secret-safe actor, reason, and outcome evidence.
+
+## Deploy the service flow
+
+Set the work pool name and the absolute directory service flow runs execute from —
+relative paths in Sync configurations resolve against it — then apply the service
+deployment:
+
+```bash
+export PREFECT_API_URL="http://127.0.0.1:4200/api"
+export INFRAHUB_SYNC_SERVICE_WORK_POOL="sync-process-pool"
+export INFRAHUB_SYNC_SERVICE_FLOW_WORKING_DIRECTORY="/path/to/checkout"
+python -m infrahub_sync.service.deploy
+```
+
+The command validates and applies `infrahub-sync-service/run` through OpsMill Prefect
+Extras, then records the declared working directory as the deployment's only pull step.
+It does not create a work pool or start a worker.
+
+## Start service workers
+
+Start each worker through the service entry point. The work pool must already exist:
+
+```bash
+python -m infrahub_sync.service.worker \
+  --pool "$INFRAHUB_SYNC_SERVICE_WORK_POOL"
+```
+
+Each invocation generates a new UUID-suffixed worker name. After its Prefect heartbeat,
+the worker reads the exact Worker record for that name and work pool and records the
+server-issued UUID as its Prefect backend identity. Prefect 3.8.1 passes that identity
+to each `ProcessJobConfiguration` and injects `PREFECT__WORKER_ID` into that worker's
+flow-run child. The deployment stores no worker identity.
+
+A restarted process generates a new name and resolves its current server Worker UUID.
+It does not reuse an identity from the previous process.
+
+The validated support boundary is one host running one service worker process. Worker
+identity is not what limits this: every supported invocation has a distinct name and
+resolves a distinct UUID. Plan and apply exchange saved plans through the
+`INFRAHUB_SYNC_CACHE_DIR` filesystem, so an apply must run where its plan was written. A
+work pool with more than one service worker, and scheduling across more than one host,
+are outside the validated boundary. Use this entry point for every worker eligible to run
+the service deployment; manually named or standard Prefect process workers are outside the
+supported topology.
+
+The worker does not poll for runs until its heartbeat is complete and the pool returns
+exactly one online record with its name, work pool, and a standard UUID string. An
+absent, malformed, offline, wrong-pool, or ambiguous record keeps polling disabled and
+fails with fixed, value-free text.
+
+Configure the worker environment before it starts:
+
+| Variable | Requirement |
+| --- | --- |
+| `PREFECT_API_URL` | Prefect API used by the deployment and worker. |
+| `INFRAHUB_SYNC_CONFIG_DIRECTORY` | Existing directory containing the Sync configurations allowed on this worker. |
+| `INFRAHUB_SYNC_CACHE_DIR` | Absolute shared cache root for saved plans. This PH-2 seam remains unchanged. |
+| `INFRAHUB_SYNC_DATABASE_URL` | Non-empty PostgreSQL connection string accepted by Psycopg for product records. |
+| `INFRAHUB_SYNC_S3_BUCKET` | Non-empty bucket for immutable product artifacts. |
+| `INFRAHUB_SYNC_S3_PREFIX` | Optional object-key prefix; defaults to `infrahub-sync`. |
+| `INFRAHUB_SYNC_S3_ENDPOINT_URL` | Optional absolute `http` or `https` URL with no userinfo. The value reaches Boto3 unchanged; Boto3 owns any narrower SDK compatibility. |
+| `INFRAHUB_SYNC_S3_REGION` | Optional region passed to Boto3. |
+| `INFRAHUB_SYNC_SERVICE_WORK_POOL` | Name of the existing Prefect pool used by the deployment, worker, and API reconciliation. It is never returned by the API. |
+| `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | Optional decimal integer from 1 through 86400; defaults to 300. An unclaimed execution becomes abandoned at this inclusive deadline. |
+| `PREFECT_WORKER_QUERY_SECONDS` | Prefect worker polling interval. It must be a finite positive decimal no greater than 3600; the API derives its liveness thresholds from the same value. |
+| Adapter credential variables | Credentials required by the selected Sync configuration. Keep them in the worker environment or its secret provider. |
+
+The service flow accepts exactly eight bounded parameters:
+
+| Parameter | Type | Purpose |
+| --- | --- | --- |
+| `run_id` | `str` | API-created Sync run identity. |
+| `stage` | `plan`, `verify`, `apply`, or `sync` | Execution stage accepted by the API. |
+| `config_id` | `str` or `null` | Registered configuration identity. |
+| `registry_version` | `int` or `null` | Immutable version of the registered configuration. |
+| `package_checksum` | `str` or `null` | Checksum bound to the registered configuration package. |
+| `branch` | `str` or `null` | Optional Infrahub branch. |
+| `expected_checksum` | SHA-256 string or `null` | Reviewed checksum required by `apply`. |
+| `confirm_writes` | `bool` | Required for `apply` and composed `sync`. |
+
+`config_id`, `registry_version`, and `package_checksum` must be all present for a
+registered execution or all `null` for a legacy execution.
+
+The API rejects configured secret values in flow-bound request fields. Credentials,
+endpoints, adapter instances, and filesystem paths are never flow parameters.
+
+## Start the API
+
+Set the same durable-store contract used by the worker and start Uvicorn through the packaged
+entry point:
+
+```bash
+export PREFECT_API_URL="http://127.0.0.1:4200/api"
+export INFRAHUB_SYNC_DATABASE_URL="postgresql://sync:replace-me@postgres/infrahub_sync"
+export INFRAHUB_SYNC_S3_BUCKET="infrahub-sync-artifacts"
+export INFRAHUB_SYNC_S3_PREFIX="infrahub-sync"
+export INFRAHUB_SYNC_SERVICE_HOST="127.0.0.1"
+python -m infrahub_sync.service.serve
+```
+
+:::warning First startup after upgrading a legacy product store
+
+A validated single legacy startup migrates `mutation_receipts.run_id` and
+`mutation_receipts.prefect_key` from `is_nullable=NO/NO` to nullable. Two simultaneous
+first startups while the PostgreSQL catalog is still legacy can deadlock one startup.
+The failed startup fails closed before worker claim or admission, writes no Sync data,
+and the catalog converges through the successful startup.
+
+Restart the failed process after the first migration converges. Repeated or concurrent
+startups against an already-migrated nullable catalog are supported. The failed startup
+does not retry automatically.
+
+:::
+
+The server listens on port `8000`. Its host defaults to `127.0.0.1`. Put TLS and any
+network access controls at your ingress boundary. The bearer-token provider is the MVP
+application authentication boundary, not a replacement for transport security.
+
+Open `http://127.0.0.1:8000/docs`, select **Authorize**, and enter the configured token
+without the `Bearer` prefix; Swagger UI adds the complete `Authorization` header.
+
+## Discovery and liveness
+
+`GET /status` and `GET /version` are the two unauthenticated lifecycle and
+server-discovery routes. They intentionally disclose neither a configured work-pool
+name, worker or run identity, credential, nor Prefect endpoint. All run and
+configuration routes remain bearer-authenticated.
+
+`GET /version` returns the installed server version and the currently supported
+unstable API identifier:
+
+```json
+{"server_version":"<installed version>","api_versions":["v3-unstable"],"stability":"unstable"}
+```
+
+It is a discovery resource only. This server does not yet reject clients based on a
+claimed compatibility range.
+
+`GET /status` describes the configured work pool without exposing its identity:
+
+```json
+{
+  "service": "ready",
+  "worker": {
+    "state": "ready",
+    "detail_available": true,
+    "live_workers": 1,
+    "queue_depth": 0,
+    "observed_at": "2026-08-29T12:00:00+00:00"
+  }
+}
+```
+
+The worker state is `ready` when at least one fresh ONLINE worker has no queued
+runs, `busy` when one is fresh and the queue is non-empty, and `no-live-worker`
+when pool detail was read but no worker is fresh. A fresh worker has a heartbeat no
+older than `max(3 × heartbeat interval, 30 seconds)`. If Prefect cannot provide a
+usable pool result, the state is `unavailable`, `detail_available` is `false`, and
+`live_workers`, `queue_depth`, and `observed_at` are all `null`. This value-free
+response does not expose provider errors or values.
+
+Each submitted Prefect execution is claimed by its worker before it resolves a
+configuration or builds adapters. The API derives the stall threshold as
+`max(3 × PREFECT_WORKER_QUERY_SECONDS, 30 seconds)`, and reconciles no less often
+than that threshold permits (at most five seconds, with a 0.25-second lower bound).
+An unclaimed execution is marked stalled at that threshold and becomes abandoned at
+the admission TTL. A claimed execution whose exact owner is no longer fresh becomes
+`interrupted` with an `ambiguous` outcome; it is not retried automatically.
+
+Cancellation is also bounded. Sync persists cancellation intent before contacting
+Prefect. A successful Prefect acknowledgement is recorded separately. Until the
+same liveness threshold expires, that intent fences claim, abandonment, and orphan
+adjudication. At the inclusive deadline, an unconfirmed cancellation settles as
+unavailable and the execution becomes abandoned or interrupted/ambiguous according
+to whether it was claimed. An acknowledged request retains its accepted response,
+but still reaches that terminal verdict unless Prefect is durably observed as
+terminally cancelled first.
+
+## Routes
+
+Every route below requires `Authorization: Bearer <token>`. Every `POST` route also requires a
+non-empty `Idempotency-Key` header and a non-empty `reason` in its JSON body.
+
+| Route | Behavior |
+| --- | --- |
+| `POST /runs` | Create one Sync run and accept `plan` or confirmed composed `sync`. |
+| `GET /runs/{run_id}` | Return the durable product record with current linked Prefect detail when available. |
+| `GET /runs/{run_id}/plan` | Return retained saved-plan review data. |
+| `GET /runs/{run_id}/results` | Return retained results independently of Prefect result retention. |
+| `GET /runs/{run_id}/artifacts` | List immutable run-owned artifact references. |
+| `GET /runs/{run_id}/artifacts/{artifact_id}` | Return verified artifact bytes with their media type and `Digest` header. |
+| `POST /runs/{run_id}/verify` | Accept read-only saved-plan verification without changing product lifecycle state. |
+| `POST /runs/{run_id}/apply` | Accept a confirmed apply for the exact retained reviewed checksum. |
+| `POST /runs/{run_id}/cancel` | Ask Prefect to cancel only the latest active linked execution. |
+
+### Create a plan
+
+Supply a stable non-secret reference for the exact configuration revision you intend the
+worker to resolve:
+
+```bash
+curl --request POST http://127.0.0.1:8000/runs \
+  --header "Authorization: Bearer $SYNC_API_TOKEN" \
+  --header "Idempotency-Key: plan-inventory-2026-08-10" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "sync_name": "inventory",
+    "operation": "plan",
+    "configuration_reference": "sha256:7a15c1e2",
+    "reason": "review inventory changes"
+  }'
+```
+
+Acceptance returns `202` with the durable `ProductRun` and its first orchestration link.
+The `run_id` in that response is the identity for every later stage, result, artifact, and
+Prefect execution link.
+
+Read the plan after the worker publishes it:
+
+```bash
+curl --header "Authorization: Bearer $SYNC_API_TOKEN" \
+  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/plan
+```
+
+The plan response includes its checksum, checksum verification state, summary, verification
+notes, per-object operations, and `schema_fingerprint`. For a registered plan,
+`schema_fingerprint` is the 64-character SHA-256 digest of the destination-schema
+semantics consumed by that configuration. It is `null` only for a legacy unregistered
+plan.
+
+### Verify and apply the reviewed plan
+
+Verification is read-only and retains verification evidence without finishing or otherwise
+advancing the product run:
+
+```bash
+curl --request POST \
+  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/verify \
+  --header "Authorization: Bearer $SYNC_API_TOKEN" \
+  --header "Idempotency-Key: verify-20260810T1500-0123abcd" \
+  --header "Content-Type: application/json" \
+  --data '{"reason":"verify the reviewed plan"}'
+```
+
+Apply requires the exact retained checksum and explicit write confirmation:
+
+```bash
+curl --request POST \
+  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/apply \
+  --header "Authorization: Bearer $SYNC_API_TOKEN" \
+  --header "Idempotency-Key: apply-20260810T1500-0123abcd" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "expected_checksum": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "confirm_writes": true,
+    "reason": "change approved"
+  }'
+```
+
+The worker verifies the saved plan again before its first destination write. Destination
+deletes remain disabled.
+
+`PlanSchemaChangedError` means the live destination-schema semantics no longer match the
+reviewed plan's `schema_fingerprint`. The worker refuses the retained plan before any
+destination write. Create a new plan against the current schema, review its
+`schema_fingerprint`, operations, and checksum, then apply that new plan. There is no
+schema-drift override.
+
+## Idempotency and retries
+
+An exact retry by the same actor with the same `Idempotency-Key`, target, and JSON body
+returns the stored status and body. A different request using that actor and key returns
+`409 idempotency-conflict`.
+
+Sync stores a SHA-256 digest of the client key, never the raw key. Before dispatch, it
+atomically reserves a durable mutation receipt; run creation reserves the receipt and
+product run in one transaction. The receipt owns a separate opaque key passed to Prefect's
+native idempotency field. If an HTTP or Prefect response is lost after submission, retry the
+exact request. The retry reuses the receipt, opaque Prefect key, Sync run ID, and Prefect
+flow-run ID.
+
+Do not change the request body, including `reason`, while retrying. Use a new idempotency key
+for a new intent.
+
+The first confirmed composed `sync` or reviewed `apply` permanently consumes that run's
+single write admission, including when the execution later fails, crashes, or is cancelled.
+Retry an uncertain request with its original idempotency key. To make another write attempt
+after a terminal failure or cancellation, create and review a new plan run; a new key on the
+old run returns `409 apply-already-admitted`.
+
+## Errors and retained state
+
+Every error uses the same envelope:
+
+```json
+{
+  "error": {
+    "code": "checksum-conflict",
+    "message": "expected_checksum does not match the retained reviewed plan",
+    "status": 409,
+    "run_id": "20260810T1500-0123abcd",
+    "mutation_id": null
+  }
+}
+```
+
+| Status | Meaning |
+| --- | --- |
+| `401` | Missing or invalid authentication. |
+| `403` | The actor does not own the mutation and is not an administrator. |
+| `404` | The Sync run or run-owned artifact does not exist. |
+| `409` | Idempotency conflict, missing confirmation, stale checksum, or non-cancellable execution. |
+| `410` | The retained plan or artifact has expired. |
+| `422` | Invalid request schema, missing idempotency key, or a secret-bearing flow parameter. |
+| `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved. |
+
+Prefect detail can expire or become unavailable while the durable Sync record, results,
+and published artifacts remain readable. Cancellation never deletes the product record or
+its execution history. The API does not add a Sync-owned queue, retry policy, scheduler,
+recovery state machine, or overlap policy.
+
+## Related
+
+- [Durable product records](./durable-product-records.mdx)
+- [Saved-plan review and apply](../running-a-sync.mdx)
+- [Prefect remote run](./prefect-remote-run.mdx)

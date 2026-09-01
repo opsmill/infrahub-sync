@@ -20,7 +20,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_ROOT = REPO_ROOT / "infrahub_sync"
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "workflow-tests.yml"
-OPTIONAL_PACKAGE_NAMES = frozenset({"managed", "orchestration"})
+OPTIONAL_PACKAGE_NAMES = frozenset({"service", "orchestration"})
 OPTIONAL_PACKAGE_PREFIXES = tuple(f"infrahub_sync.{name}" for name in sorted(OPTIONAL_PACKAGE_NAMES))
 OPTIONAL_DISTRIBUTION_NAMES = frozenset(
     {"boto3", "botocore", "fastapi", "opsmill_prefect_extras", "prefect", "psycopg", "uvicorn"}
@@ -56,7 +56,7 @@ assert configs_help_result.exit_code == 0, configs_help_result.output
 optional_roots = {sorted(OPTIONAL_DISTRIBUTION_NAMES)!r}
 leaked = sorted(m for m in sys.modules if m.partition(".")[0] in optional_roots)
 assert not leaked, f"optional service modules imported by the base package: {{leaked}}"
-print("NO-OPTIONAL-MANAGED-IMPORT-OK")
+print("NO-OPTIONAL-SERVICE-IMPORT-OK")
 """
 
 
@@ -102,8 +102,8 @@ def _imported_names(path: Path, *, root: Path = REPO_ROOT) -> set[str]:
     return names
 
 
-def test_base_package_imports_and_runs_without_managed_dependencies_in_a_fresh_interpreter() -> None:
-    """Base imports and CLI sanity must not pull in managed dependencies."""
+def test_base_package_imports_and_runs_without_service_dependencies_in_a_fresh_interpreter() -> None:
+    """Base imports and CLI sanity must not pull in service dependencies."""
     completed = subprocess.run(  # noqa: S603 - fixed argv, this interpreter, no shell
         [sys.executable, "-c", PROBE_SCRIPT],
         capture_output=True,
@@ -112,10 +112,10 @@ def test_base_package_imports_and_runs_without_managed_dependencies_in_a_fresh_i
         cwd=str(REPO_ROOT),
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert "NO-OPTIONAL-MANAGED-IMPORT-OK" in completed.stdout
+    assert "NO-OPTIONAL-SERVICE-IMPORT-OK" in completed.stdout
 
 
-def test_execution_surface_imports_no_optional_managed_runtime() -> None:
+def test_execution_surface_imports_no_optional_service_runtime() -> None:
     """The shared surface imports no optional runtime distribution or package."""
     imported = _imported_names(PACKAGE_ROOT / "execution.py")
     assert not [name for name in imported if name.partition(".")[0] in OPTIONAL_DISTRIBUTION_NAMES]
@@ -135,7 +135,7 @@ def test_no_base_package_module_imports_an_optional_runtime_package() -> None:
     assert not {path: names for path, names in offenders.items() if names}
 
 
-def test_base_install_workflow_proves_external_managed_runtimes_are_unavailable() -> None:
+def test_base_install_workflow_proves_external_service_runtimes_are_unavailable() -> None:
     """The real base-profile leg checks the exact AR6 external dependency set."""
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
     match = re.search(r"for module in (?P<modules>[^;\n]+); do", workflow)
@@ -151,8 +151,8 @@ def test_base_install_workflow_proves_external_managed_runtimes_are_unavailable(
         ("infrahub_sync/probe.py", "from . import orchestration\n"),
         ("infrahub_sync/adapters/probe.py", "from ..orchestration import flow\n"),
         ("infrahub_sync/adapters/__init__.py", "from ..orchestration import flow\n"),
-        ("infrahub_sync/probe.py", "from .managed import app\n"),
-        ("infrahub_sync/adapters/probe.py", "from ..managed import app\n"),
+        ("infrahub_sync/probe.py", "from .service import app\n"),
+        ("infrahub_sync/adapters/probe.py", "from ..service import app\n"),
     ],
 )
 def test_the_scan_resolves_relative_imports_of_optional_runtime_packages(

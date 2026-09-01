@@ -641,7 +641,7 @@ def provider(request, tmp_path: Path) -> ProductProjection:
     )
 
 
-def test_zero_link_standalone_round_trip(provider: ProductProjection) -> None:
+def test_zero_link_run_round_trip(provider: ProductProjection) -> None:
     expected = _run()
     provider.create_run(expected)
 
@@ -1155,7 +1155,7 @@ def test_execution_link_refuses_noncanonical_worker_identity_with_fixed_error() 
             }
         )
     errors = caught.value.errors(include_input=False)
-    assert errors[0]["msg"] == "Value error, managed worker identity is invalid"
+    assert errors[0]["msg"] == "Value error, service worker identity is invalid"
 
 
 def test_new_execution_requires_submitted_at_without_persistence(provider: ProductProjection) -> None:
@@ -1528,7 +1528,7 @@ def test_execution_claim_refuses_invalid_worker_identity_without_mutation(provid
         "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
     )
 
-    with pytest.raises(ValueError, match="managed worker identity is invalid"):
+    with pytest.raises(ValueError, match="service worker identity is invalid"):
         provider.claim_execution("run-001", "flow-001", worker_id="not-a-uuid", claimed_at=now)
 
     loaded = provider.lookup_run("run-001").value
@@ -2391,7 +2391,7 @@ def test_prefect_position_conflict_retries_without_misreporting_a_duplicate(tmp_
     assert [link.flow_run_id for link in loaded.prefect_executions] == ["flow-001"]
 
 
-def test_managed_prefect_attempt_ordinals_are_allocated_atomically(provider: ProductProjection) -> None:
+def test_service_prefect_attempt_ordinals_are_allocated_atomically(provider: ProductProjection) -> None:
     provider.create_run(_run())
 
     def append(position: int) -> PrefectExecutionLink:
@@ -4235,7 +4235,7 @@ def test_postgresql_schema_bootstrap_propagates_a_non_duplicate_alter_failure() 
 def _reachable_postgresql_dsn() -> str | None:
     """Return a reachable PostgreSQL DSN from ``PRODUCT_STORE_TEST_POSTGRESQL_DSN``, or None.
 
-    The managed extra supplies ``psycopg``; an absent driver or unreachable endpoint still
+    The service extra supplies ``psycopg``; an absent driver or unreachable endpoint still
     skips this opt-in test before it can contact a service.
     """
     dsn = os.environ.get("PRODUCT_STORE_TEST_POSTGRESQL_DSN")
@@ -4243,7 +4243,7 @@ def _reachable_postgresql_dsn() -> str | None:
         return None
     try:
         # pylint: disable-next=import-outside-toplevel,import-error
-        import psycopg  # ty: ignore[unresolved-import] - TODO: optional managed dependency
+        import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
     except ImportError:
         return None
     try:
@@ -4281,9 +4281,9 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
     if dsn is None:
         pytest.skip("psycopg is not installed, or PRODUCT_STORE_TEST_POSTGRESQL_DSN is unset/unreachable")
     # pylint: disable-next=import-outside-toplevel,import-error
-    import psycopg  # ty: ignore[unresolved-import] - TODO: optional managed dependency
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
 
-    from infrahub_sync.managed.storage import PsycopgConnectionFactory
+    from infrahub_sync.service.storage import PsycopgConnectionFactory
 
     def connect() -> DBAPIConnection:
         return PsycopgConnectionFactory(psycopg.connect)(dsn)
@@ -4364,7 +4364,7 @@ def _assert_real_postgresql_refuses_partial_configuration_binding(dsn: str) -> N
     reasonable; it has exactly one caller.
     """
     # pylint: disable-next=import-outside-toplevel,import-error
-    import psycopg  # ty: ignore[unresolved-import] - TODO: optional managed dependency
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
 
     def raw_insert(
         run_id: str, *, config_id: str | None, registry_version: int | None, package_checksum: str | None

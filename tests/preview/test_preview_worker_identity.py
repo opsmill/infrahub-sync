@@ -1,4 +1,4 @@
-"""Preview starts the supported managed worker without static identity plumbing."""
+"""Preview starts the supported service worker without static identity plumbing."""
 
 from __future__ import annotations
 
@@ -43,6 +43,7 @@ def _staged_up(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any
     )
     monkeypatch.setattr(preview, "_compose", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(preview, "_wait_for_http", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(preview, "assert_no_legacy_state", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(preview, "_run_smoke", lambda *_args, **_kwargs: None)
 
     def _start(name: str, argv: list[str], env: dict[str, str]) -> None:
@@ -53,14 +54,14 @@ def _staged_up(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any
 
     class _RecordingContext(Context):
         def run(self, command: str, **kwargs: Any) -> None:  # noqa: ANN401, PLR6301 - Invoke surface.
-            if "managed.deploy" in command:
+            if "service.deploy" in command:
                 captured["deploy_env"] = kwargs.get("env", {})
 
     cast("Task", preview.up).body(_RecordingContext())
     return captured
 
 
-def test_preview_starts_the_supported_managed_worker_entrypoint(
+def test_preview_starts_the_supported_service_worker_entrypoint(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     captured = _staged_up(monkeypatch, tmp_path)
@@ -71,7 +72,7 @@ def test_preview_starts_the_supported_managed_worker_entrypoint(
         "run",
         "python",
         "-m",
-        "infrahub_sync.managed.worker",
+        "infrahub_sync.service.worker",
         "--pool",
         "preview-pool",
     ]

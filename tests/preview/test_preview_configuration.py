@@ -40,8 +40,8 @@ def test_preview_routes_prefect_ui_to_the_published_host_port() -> None:
     assert 'PREFECT_SERVER_UI_API_URL: "http://localhost:${PREVIEW_PREFECT_PORT:-4210}/api"' in compose
 
 
-def test_preview_declares_the_managed_postgresql_and_minio_storage_shape() -> None:
-    """Preview supplies storage and liveness settings to both managed processes."""
+def test_preview_declares_the_service_postgresql_and_minio_storage_shape() -> None:
+    """Preview supplies storage and liveness settings to both service processes."""
     compose = (DEV_DIR / "docker-compose.preview.yml").read_text(encoding="utf-8")
     environment = preview._runtime_env(
         {
@@ -73,8 +73,7 @@ def test_preview_declares_the_managed_postgresql_and_minio_storage_shape() -> No
     assert environment["AWS_ACCESS_KEY_ID"] == "preview-minio-access"
     assert environment["AWS_SECRET_ACCESS_KEY"] == PREVIEW_MINIO_SECRET
     assert "INFRAHUB_SYNC_CACHE_DIR" in environment
-    assert "INFRAHUB_SYNC_MANAGED_CACHE_LOCATION" not in environment
-    assert environment["INFRAHUB_SYNC_MANAGED_WORK_POOL"] == "preview-pool"
+    assert environment["INFRAHUB_SYNC_SERVICE_WORK_POOL"] == "preview-pool"
     assert environment["INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS"] == "600"
     assert environment["PREFECT_WORKER_QUERY_SECONDS"] == "15"
 
@@ -266,7 +265,7 @@ def test_the_seeded_device_is_one_the_cli_smoke_source_already_owns() -> None:
     assert SHARED_DEVICE_NAME in {device["name"] for device in devices}
 
 
-def test_standalone_smoke_ensures_its_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_smoke_task_ensures_its_branch(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[object] = []
     context = Context()
     values = {"COMPOSE_PROJECT_NAME": "preview-test"}
@@ -356,7 +355,7 @@ def test_actual_smoke_path_receives_the_preview_aws_credential_chain(monkeypatch
     assert smoke_environment["AWS_SECRET_ACCESS_KEY"] == PREVIEW_MINIO_SECRET
 
 
-def test_standalone_smoke_leaves_an_unreachable_environment_to_pytest(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_smoke_task_leaves_an_unreachable_environment_to_pytest(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[object] = []
     context = Context()
     values = {"COMPOSE_PROJECT_NAME": "preview-test"}
@@ -385,6 +384,6 @@ def test_netbox_tutorial_uses_one_checkout_for_code_and_configuration() -> None:
     tutorial = (REPO_ROOT / "docs/docs/tutorials/netbox-demo-to-infrahub.mdx").read_text(encoding="utf-8")
 
     assert "git clone https://github.com/opsmill/infrahub-sync.git ../infrahub-sync" in tutorial
-    assert 'uv add --editable "../infrahub-sync[managed]"' in tutorial
+    assert 'uv add --editable "../infrahub-sync[service]"' in tutorial
     assert "cp ../infrahub-sync/examples/netbox_to_infrahub/config.yml" in tutorial
     assert "v3-preview.1" not in tutorial

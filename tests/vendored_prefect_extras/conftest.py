@@ -3,7 +3,7 @@
 Three adaptations, all confined to this file so no vendored test changes:
 
 1. Skip the whole directory when the prefect extra is absent — the vendored
-   package imports prefect at module scope, matching `tests/managed/` guards.
+   package imports prefect at module scope, matching `tests/service/` guards.
 2. Alias the `tests.workflows` package to the vendored location in
    `sys.modules`. Upstream fixture definitions reference their flow modules by
    the dotted paths `tests.workflows.flows` / `tests.workflows.sentinel` and

@@ -6,7 +6,7 @@
 ## Agent Operating Principles
 
 1. **Plan → Ask → Act → Verify → Record** — plan briefly, ask for missing context, act with the smallest change, verify locally, then record with a concise commit or PR note.
-2. **Default to read-only and dry runs** — prefer `list`, `diff`, and `generate` before `sync`. Write/apply only with explicit instruction and human approval.
+2. **Default to read-only and dry runs** — prefer `configs` inspection, `runs plan`, and `diff` before `sync`. Write/apply only with explicit instruction and human approval.
 3. **Be specific and reversible** — small, scoped commits. Don't mix large refactors with behavior changes in one PR.
 4. **Match existing patterns** — keep CLI, adapters, examples, and directory structure consistent with the codebase.
 5. **Idempotency and safety** — favor operations safe to re-run. Never print or guess secrets. Handle timeouts, auth, and network errors explicitly.
@@ -18,10 +18,10 @@ Use Python 3.11–3.13 for the full development profile. The former private
 (frozen; see its `VENDORED.md`), so no special repository access is required:
 
 ```bash
-uv sync --extra dev --extra prefect --extra managed
+uv sync --extra dev --extra prefect --extra service
 ```
 
-On Python 3.10, install the direct Prefect profile instead. Managed Sync supports Python
+On Python 3.10, install the direct Prefect profile instead. Sync supports Python
 3.11–3.13 only:
 
 ```bash
@@ -47,25 +47,25 @@ documented in [`dev/knowledge/quality-gates.md`](dev/knowledge/quality-gates.md)
 
 The `prefect` extra is not optional for development: without it `ty` cannot resolve
 `infrahub_sync/orchestration/`'s imports and `tests/orchestration/test_flow.py` skips
-itself whole. On Python 3.11–3.13, the `managed` extra is required too; otherwise `ty`
-cannot resolve the managed service's FastAPI and Prefect imports. On Python 3.10,
-`invoke linter.lint-ty` and `invoke linter.lint-pylint` exclude `infrahub_sync/managed`
-(ty also excludes `tests/managed`), matching CI's direct Prefect gate. CI also runs a base-install job that keeps the Prefect-free
+itself whole. On Python 3.11–3.13, the `service` extra is required too; otherwise `ty`
+cannot resolve the Sync service's FastAPI and Prefect imports. On Python 3.10,
+`invoke linter.lint-ty` and `invoke linter.lint-pylint` exclude `infrahub_sync/service`
+(ty also excludes `tests/service`), matching CI's direct Prefect gate. CI also runs a base-install job that keeps the Prefect-free
 guarantee honest.
 
 **CLI sanity after changes:**
 
 ```bash
 uv run infrahub-sync --help
-uv run infrahub-sync list --directory examples/
-uv run infrahub-sync generate --name from-netbox --directory examples/
+uv run infrahub-sync configs --help
+uv run infrahub-sync runs --help
 ```
 
-The `from-netbox` generation check is integration-backed. Before running it,
+The `from-netbox` example check is integration-backed. Before running it,
 follow the [NetBox demo tutorial](docs/docs/tutorials/netbox-demo-to-infrahub.mdx)
-through **Generate the sync code**. That setup uses a fresh Infrahub instance,
-loads the matching schema library, creates a current `nbt_...` NetBox demo
-token, and installs `pynetbox`. The public demo data changes over time; the
+through **Register the configuration package**. That setup uses a fresh Infrahub
+instance, loads the matching schema library, creates a current `nbt_...` NetBox
+demo token, and installs `pynetbox`. The public demo data changes over time; the
 bounded live acceptance test records its current data preconditions in
 `tests/integration/test_saved_plan_apply_integration.py`.
 
@@ -79,7 +79,7 @@ uv run invoke docs.docusaurus
 **Policy:**
 
 - New or changed code is Ruff-clean and typed where touched (docstrings, specific exceptions).
-- The codebase is clean under ty with no `[[tool.ty.overrides]]` blocks in `pyproject.toml`. Don't reintroduce overrides to mask type errors — fix the underlying issue, or use a targeted `# ty: ignore[<rule>]` with a short TODO at the call site. Run `uv run ty check .` in the full Python 3.11–3.13 profile (the frozen vendored upstream tests are excluded via `[tool.ty.src]` in `pyproject.toml`; the vendored package itself stays checked). On Python 3.10, run `uv run ty check --exclude infrahub_sync/managed --exclude tests/managed .`.
+- The codebase is clean under ty with no `[[tool.ty.overrides]]` blocks in `pyproject.toml`. Don't reintroduce overrides to mask type errors — fix the underlying issue, or use a targeted `# ty: ignore[<rule>]` with a short TODO at the call site. Run `uv run ty check .` in the full Python 3.11–3.13 profile (the frozen vendored upstream tests are excluded via `[tool.ty.src]` in `pyproject.toml`; the vendored package itself stays checked). On Python 3.10, run `uv run ty check --exclude infrahub_sync/service --exclude tests/service .`.
 - If you add tests, run `uv run pytest -q`.
 
 ## Repository Structure
@@ -104,10 +104,11 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 
 ## CLI Commands
 
-- `infrahub-sync list` — show available sync projects (safe).
-- `infrahub-sync diff` — compute differences (safe).
-- `infrahub-sync generate` — generate Python from YAML config (servers required).
-- `infrahub-sync sync` — perform synchronization (servers and approval required).
+- `infrahub-sync configs` — register and inspect configuration packages (safe).
+- `infrahub-sync runs plan` — review a saved plan (safe).
+- `infrahub-sync diff` — create a plan run and review its summary (Sync API required).
+- `infrahub-sync sync` — perform synchronization (Sync API and approval required).
+- `infrahub-sync apply` — apply a reviewed plan by checksum (Sync API and approval required).
 
 ## Configuration and Examples
 
@@ -176,7 +177,7 @@ uv run rumdl fmt .     # fix
 ## Known Issues and Limitations
 
 - Optional dependencies (e.g. `pynetbox`, `pynautobot`) may be missing, producing import warnings.
-- `generate` and `sync` require running servers (Infrahub, NetBox, Nautobot).
+- `diff`, `sync`, and `apply` require a running Sync API and its destination servers.
 - Docs npm audit may flag dev-only vulnerabilities; they do not affect the Python package.
 
 ## Git and PR Process
@@ -192,7 +193,7 @@ uv run rumdl fmt .     # fix
 
 - [ ] Format and lint clean on changed areas.
 - [ ] The type-check command for the active Python profile exits 0; new code typed.
-- [ ] CLI behaviors validated (`--help`, `list`, targeted `generate`).
+- [ ] CLI behaviors validated (`--help`, `configs --help`, `runs --help`).
 - [ ] Docs updated if flags or config changed.
 - [ ] Error handling uses specific exception types and clear messages.
 
@@ -223,7 +224,7 @@ step-by-step procedure. Supporting developer reference lives under `dev/`:
 - [Adapter guidelines](dev/guidelines/README.md) — the rules for writing and testing an adapter.
 - [Adapter guides](dev/guides/README.md) — adding and testing an adapter, step by step.
 
-Core rule unchanged: provide read-only `list` / `diff` pathways and validate them before enabling `sync`.
+Core rule unchanged: provide a read-only `diff` pathway and validate it before enabling `sync`.
 
 ## Beyond Adapters
 

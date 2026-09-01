@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from infrahub_sync.execution import Operation  # noqa: TC001 - Pydantic resolves this annotation at runtime.
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
-_INVALID_MANAGED_WORKER_ID = "managed worker identity is invalid"
+_INVALID_SERVICE_WORKER_ID = "service worker identity is invalid"
 _LEGAL_EXECUTION_VERDICTS = {
     ("completed", "succeeded"),
     ("failed", "failed"),
@@ -116,13 +116,13 @@ class PrefectExecutionLink(BaseModel):
         if value is None:
             return None
         if not isinstance(value, str):
-            raise ValueError(_INVALID_MANAGED_WORKER_ID)  # noqa: TRY004 - Pydantic reports ValueError.
+            raise ValueError(_INVALID_SERVICE_WORKER_ID)  # noqa: TRY004 - Pydantic reports ValueError.
         try:
             canonical = str(UUID(value))
         except ValueError:
-            raise ValueError(_INVALID_MANAGED_WORKER_ID) from None
+            raise ValueError(_INVALID_SERVICE_WORKER_ID) from None
         if canonical != value:
-            raise ValueError(_INVALID_MANAGED_WORKER_ID)
+            raise ValueError(_INVALID_SERVICE_WORKER_ID)
         return value
 
     @model_validator(mode="after")
@@ -257,7 +257,7 @@ ExecutionWriteback: TypeAlias = Annotated[
 
 
 class MutationReceipt(BaseModel):
-    """Durable actor/key reservation for one managed HTTP mutation."""
+    """Durable actor/key reservation for one Sync API mutation."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -349,7 +349,7 @@ class ConfigurationVersion(BaseModel):
 
 
 class AuditEvent(BaseModel):
-    """Secret-safe durable evidence for one managed API decision."""
+    """Secret-safe durable evidence for one Sync API decision."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

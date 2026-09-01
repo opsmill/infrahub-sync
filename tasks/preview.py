@@ -1,8 +1,8 @@
 """Preview environment: one command from a fresh clone to a testable v3 stack.
 
 `invoke preview.up` brings up a disposable Infrahub instance and a dedicated
-Prefect server (Docker), loads the example schema, starts the managed Sync HTTP
-API and a Prefect worker from this checkout, applies the managed deployment,
+Prefect server (Docker), loads the example schema, starts the Sync HTTP
+API and a Prefect worker from this checkout, applies the service deployment,
 and finishes by running the preview smoke suite so a
 tester never receives an environment that has not just proven its own basics.
 
@@ -22,10 +22,14 @@ import signal
 import subprocess  # noqa: S404 -- fixed argv process management for the local preview stack
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from invoke import Context, task
 
 from .utils import ESCAPED_REPO_PATH
+
+if TYPE_CHECKING:
+    import httpx
 
 NAMESPACE = "INFRAHUB-SYNC-PREVIEW"
 REPO_ROOT = Path(__file__).parent.parent.resolve()
@@ -51,11 +55,20 @@ SHARED_DEVICE_SEED_TYPE = "preview-seed"
 EXPECT_MAIN_EMPTY_ENV = "INFRAHUB_SYNC_PREVIEW_EXPECT_MAIN_EMPTY"
 # Process name -> substring its command line must contain before a recorded pid
 # is treated as ours (guards against pid recycling by unrelated processes).
-MANAGED_PROCESSES = {
-    "sync-api": "infrahub_sync.managed.serve",
-    "prefect-worker": "infrahub_sync.managed.worker",
+SERVICE_PROCESSES = {
+    "sync-api": "infrahub_sync.service.serve",
+    "prefect-worker": "infrahub_sync.service.worker",
 }
 WAIT_TIMEOUT_SECONDS = 420
+# The pre-stability names this preview used to register and run under. `preview.up`
+# reuses volumes and tolerates existing Prefect state, so a checkout that ran the old
+# names can still hold a live deployment, work pool, worker, or host process under them.
+# Nothing reads these to keep working: they exist only so the preview can refuse and
+# name the reset that removes them.
+LEGACY_FLOW_NAME = "infrahub-sync-managed"
+LEGACY_WORKER_NAME_PREFIX = "infrahub-sync-managed-"
+LEGACY_PROCESS_COMMANDS = ("infrahub_sync.managed.serve", "infrahub_sync.managed.worker")
+RESET_COMMAND = "uv run invoke preview.down --volumes"
 
 
 class PreviewError(RuntimeError):
@@ -107,7 +120,7 @@ def preview_urls(values: dict[str, str]) -> dict[str, str]:
 
 
 def _runtime_env(values: dict[str, str]) -> dict[str, str]:
-    """Environment for Sync processes: worker, managed API, CLI, and smoke."""
+    """Environment for Sync processes: worker, Sync API, CLI, and smoke."""
     urls = preview_urls(values)
     env = dict(os.environ)
     env.update(
@@ -126,11 +139,11 @@ def _runtime_env(values: dict[str, str]) -> dict[str, str]:
             "INFRAHUB_SYNC_S3_REGION": "us-east-1",
             "AWS_ACCESS_KEY_ID": values["PREVIEW_MINIO_ACCESS_KEY"],
             "AWS_SECRET_ACCESS_KEY": values["PREVIEW_MINIO_SECRET_KEY"],
-            "INFRAHUB_SYNC_MANAGED_BEARER_TOKENS": values["PREVIEW_BEARER_TOKENS"],
-            "INFRAHUB_SYNC_MANAGED_WORK_POOL": values["PREVIEW_WORK_POOL"],
+            "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": values["PREVIEW_BEARER_TOKENS"],
+            "INFRAHUB_SYNC_SERVICE_WORK_POOL": values["PREVIEW_WORK_POOL"],
             "INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS": values["PREVIEW_RUN_ADMISSION_TTL_SECONDS"],
             "PREFECT_WORKER_QUERY_SECONDS": values["PREVIEW_PREFECT_WORKER_QUERY_SECONDS"],
-            "INFRAHUB_SYNC_MANAGED_FLOW_WORKING_DIRECTORY": str(REPO_ROOT),
+            "INFRAHUB_SYNC_SERVICE_FLOW_WORKING_DIRECTORY": str(REPO_ROOT),
         }
     )
     return env
@@ -178,10 +191,12 @@ def ensure_smoke_branch(env: dict[str, str]) -> None:
 
 
 _SERVER_ERROR_FLOOR = 500
+_OK = 200
+_NOT_FOUND = 404
 
 
 def _wait_for_http(url: str, description: str, timeout: int = WAIT_TIMEOUT_SECONDS) -> None:
-    import httpx  # noqa: PLC0415 -- lazy so importing the tasks package never requires the managed extras
+    import httpx  # noqa: PLC0415 -- lazy so importing the tasks package never requires the service extras
 
     print(f" - [{NAMESPACE}] Waiting for {description} at {url}")
     deadline = time.monotonic() + timeout
@@ -201,6 +216,117 @@ def _wait_for_http(url: str, description: str, timeout: int = WAIT_TIMEOUT_SECON
         time.sleep(3)
     msg = f"{description} did not become ready within {timeout}s (last: {last_error})"
     raise PreviewError(msg)
+
+
+def _prefect_call(method: str, url: str) -> httpx.Response:
+    """Read one Prefect resource; an unreachable server cannot prove the preview is clean."""
+    import httpx  # noqa: PLC0415 -- lazy so importing the tasks package never requires the service extras
+
+    try:
+        return httpx.post(url, json={}, timeout=15) if method == "POST" else httpx.get(url, timeout=15)
+    except httpx.HTTPError as exc:
+        msg = f"Prefect could not be read for retired preview state at {url}: {exc}"
+        raise PreviewError(msg) from None
+
+
+def _require_ok(response: httpx.Response, url: str) -> None:
+    if response.status_code != _OK:
+        msg = f"Prefect answered {response.status_code} for retired preview state at {url}: {response.text}"
+        raise PreviewError(msg)
+
+
+def _prefect_holds(url: str) -> bool:
+    """Report whether Prefect still holds the named resource."""
+    response = _prefect_call("GET", url)
+    if response.status_code == _NOT_FOUND:
+        return False
+    _require_ok(response, url)
+    return True
+
+
+def _prefect_records(url: str, *, allow_missing: bool = False) -> list[dict[str, str]]:
+    """Return one Prefect filter result, or none when its container is absent."""
+    response = _prefect_call("POST", url)
+    if allow_missing and response.status_code == _NOT_FOUND:
+        return []
+    _require_ok(response, url)
+    return response.json()
+
+
+def _legacy_prefect_state(prefect_api_url: str, work_pool_name: str) -> list[str]:
+    """Return every retired-name Prefect registration this server still holds."""
+    base = prefect_api_url.rstrip("/")
+    findings: list[str] = []
+    if _prefect_holds(f"{base}/deployments/name/{LEGACY_FLOW_NAME}/run"):
+        findings.append(f"deployment {LEGACY_FLOW_NAME}/run")
+    pools = _prefect_records(f"{base}/work_pools/filter")
+    legacy_pools = [pool["name"] for pool in pools if pool["name"].startswith(LEGACY_FLOW_NAME)]
+    findings.extend(f"work pool {name}" for name in legacy_pools)
+    for pool in (work_pool_name, *legacy_pools):
+        workers = _prefect_records(f"{base}/work_pools/{pool}/workers/filter", allow_missing=True)
+        findings.extend(
+            f"worker {worker['name']} in work pool {pool}"
+            for worker in workers
+            if worker["name"].startswith(LEGACY_WORKER_NAME_PREFIX)
+        )
+    return findings
+
+
+def _legacy_processes() -> tuple[tuple[int, str], ...]:
+    """Return running host processes whose command line names a retired module path."""
+    probe = subprocess.run(
+        ["/bin/ps", "-A", "-o", "pid=,command="],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if probe.returncode != 0:
+        msg = "the running process list could not be read, so retired preview processes cannot be ruled out"
+        raise PreviewError(msg)
+    matches: list[tuple[int, str]] = []
+    for line in probe.stdout.splitlines():
+        pid_text, _, command_line = line.strip().partition(" ")
+        if any(legacy in command_line for legacy in LEGACY_PROCESS_COMMANDS):
+            matches.append((int(pid_text), command_line))
+    return tuple(matches)
+
+
+def assert_no_legacy_state(prefect_api_url: str, work_pool_name: str) -> None:
+    """Refuse to start the preview while any retired-name state or process survives."""
+    findings = [
+        *_legacy_prefect_state(prefect_api_url, work_pool_name),
+        *(f"process {pid} ({command_line})" for pid, command_line in _legacy_processes()),
+    ]
+    if not findings:
+        return
+    detail = "; ".join(findings)
+    msg = (
+        f"the preview still holds state from before the service rename ({detail}). "
+        f"Reset it with `{RESET_COMMAND}`, then run `invoke preview.up` again."
+    )
+    raise PreviewError(msg)
+
+
+def _stop_legacy_processes() -> None:
+    """Stop retired-name host processes no recorded pid names any more."""
+    by_command: dict[str, list[int]] = {}
+    for pid, command_line in _legacy_processes():
+        for legacy in LEGACY_PROCESS_COMMANDS:
+            if legacy in command_line:
+                by_command.setdefault(legacy, []).append(pid)
+    ambiguous = {command: pids for command, pids in by_command.items() if len(pids) > 1}
+    if ambiguous:
+        detail = "; ".join(f"{command}: pids {sorted(pids)}" for command, pids in sorted(ambiguous.items()))
+        msg = (
+            f"more than one running process matches a retired preview module path ({detail}), "
+            "so the reset cannot tell which one is the preview's; stop them by hand and reset again"
+        )
+        raise PreviewError(msg)
+    for command, pids in sorted(by_command.items()):
+        pid = pids[0]
+        print(f" - [{NAMESPACE}] Stopping retired process {command} (pid {pid})")
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
 
 
 def _pid_file(name: str) -> Path:
@@ -227,7 +353,7 @@ def _process_running(name: str) -> int | None:
         check=False,
     )
     command_line = probe.stdout.strip()
-    if probe.returncode != 0 or MANAGED_PROCESSES[name] not in command_line:
+    if probe.returncode != 0 or SERVICE_PROCESSES[name] not in command_line:
         return None
     return pid
 
@@ -282,6 +408,7 @@ def up(context: Context) -> None:
     _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS} --quiet-pull", values)
     _wait_for_http(f"{urls['infrahub']}/api/config", "Infrahub")
     _wait_for_http(f"{urls['prefect']}/api/health", "Prefect")
+    assert_no_legacy_state(env["PREFECT_API_URL"], values["PREVIEW_WORK_POOL"])
 
     print(f" - [{NAMESPACE}] Loading the example schema")
     context.run(
@@ -303,16 +430,16 @@ def up(context: Context) -> None:
             "run",
             "python",
             "-m",
-            "infrahub_sync.managed.worker",
+            "infrahub_sync.service.worker",
             "--pool",
             values["PREVIEW_WORK_POOL"],
         ],
         env,
     )
 
-    print(f" - [{NAMESPACE}] Applying the managed deployment")
+    print(f" - [{NAMESPACE}] Applying the service deployment")
     context.run(
-        "uv run python -m infrahub_sync.managed.deploy",
+        "uv run python -m infrahub_sync.service.deploy",
         env=env,
     )
 
@@ -323,7 +450,7 @@ def up(context: Context) -> None:
             "run",
             "uvicorn",
             "--factory",
-            "infrahub_sync.managed.serve:build_app",
+            "infrahub_sync.service.serve:build_app",
             "--host",
             "127.0.0.1",
             "--port",
@@ -331,7 +458,7 @@ def up(context: Context) -> None:
         ],
         env,
     )
-    _wait_for_http(f"{urls['sync_api']}/openapi.json", "managed Sync API", timeout=90)
+    _wait_for_http(f"{urls['sync_api']}/openapi.json", "Sync API", timeout=90)
 
     _run_smoke(context, expect_main_empty=True)
 
@@ -339,10 +466,10 @@ def up(context: Context) -> None:
     print(f" - [{NAMESPACE}] Preview environment ready")
     print(f"     Infrahub UI:      {urls['infrahub']}  (admin / infrahub)")
     print(f"     Prefect UI:       {urls['prefect']}")
-    print(f"     Managed Sync API: {urls['sync_api']}  (bearer principals: {', '.join(sorted(tokens))})")
+    print(f"     Sync API: {urls['sync_api']}  (bearer principals: {', '.join(sorted(tokens))})")
     print(f"     Config directory: {env['INFRAHUB_SYNC_CONFIG_DIRECTORY']}")
     print(f"     Runtime state:    {STATE_DIR}")
-    print("     Next: docs/docs/reference/managed-http-api.mdx and `uv run invoke preview.status`")
+    print("     Next: docs/docs/reference/sync-http-api.mdx and `uv run invoke preview.status`")
 
 
 def _run_smoke(context: Context, *, expect_main_empty: bool) -> None:
@@ -381,7 +508,7 @@ def status(context: Context) -> None:
     values = load_preview_env()
     urls = preview_urls(values)
     _compose(context, "ps", values)
-    for name in MANAGED_PROCESSES:
+    for name in SERVICE_PROCESSES:
         pid = _process_running(name)
         state = f"running (pid {pid})" if pid else "stopped"
         print(f" - [{NAMESPACE}] {name}: {state}")
@@ -391,10 +518,10 @@ def status(context: Context) -> None:
 
 @task
 def logs(context: Context, name: str = "sync-api", lines: int = 50) -> None:
-    """Print the tail of a managed host process log (sync-api or prefect-worker)."""
+    """Print the tail of a service host process log (sync-api or prefect-worker)."""
     del context
-    if name not in MANAGED_PROCESSES:
-        msg = f"unknown process {name!r}; expected one of {sorted(MANAGED_PROCESSES)}"
+    if name not in SERVICE_PROCESSES:
+        msg = f"unknown process {name!r}; expected one of {sorted(SERVICE_PROCESSES)}"
         raise PreviewError(msg)
     log_path = _log_file(name)
     if not log_path.exists():
@@ -409,8 +536,10 @@ def logs(context: Context, name: str = "sync-api", lines: int = 50) -> None:
 def down(context: Context, volumes: bool = False) -> None:  # noqa: FBT001, FBT002 -- Invoke boolean flag idiom
     """Stop the preview: host processes, then containers (add --volumes to reset data)."""
     values = load_preview_env()
-    for name in MANAGED_PROCESSES:
+    for name in SERVICE_PROCESSES:
         _stop_process(name)
+    if volumes:
+        _stop_legacy_processes()
     arguments = "down --volumes" if volumes else "down"
     _compose(context, arguments, values)
     print(f" - [{NAMESPACE}] Preview stopped{' and data volumes removed' if volumes else ''}")

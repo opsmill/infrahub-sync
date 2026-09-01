@@ -42,10 +42,10 @@ Infrahub Sync provides two Prefect-backed execution surfaces:
   requests through Prefect's API. Sync output is forwarded into the flow-run log. See the
   [Prefect remote run reference](./reference/prefect-remote-run.mdx) and
   `examples/prefect_remote_run/README.md` in the repository.
-- Install the `managed` extra when an automation client needs a Sync-owned authenticated
+- Install the `service` extra when an automation client needs a Sync-owned authenticated
   HTTP API, durable records and artifacts, reviewed-plan apply, idempotency, cancellation,
   and worker execution. See the
-  [managed Sync HTTP API reference](./reference/managed-http-api.mdx).
+  [Sync HTTP API reference](./reference/sync-http-api.mdx).
 
 **When this works well:**
 
@@ -57,7 +57,7 @@ Infrahub Sync provides two Prefect-backed execution surfaces:
 operational surface area. The direct deployment runs and observes one plan or confirmed
 sync; it does not add scheduling, retry, queue, or overlap policy.
 
-Use the managed API for the supported worker-backed run lifecycle. For schedules, retry
+Use the Sync API for the supported worker-backed run lifecycle. For schedules, retry
 policies, triggers, or composing several syncs into a larger workflow, configure Prefect
 around either packaged surface or wrap the CLI in a flow you own.
 

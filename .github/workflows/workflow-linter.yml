@@ -82,10 +82,10 @@ jobs:
         if: matrix.python-version == '3.10'
         run: uv sync --python 3.10 --frozen --extra dev --extra prefect
 
-      # Optional managed imports resolve only on their supported Python range.
-      - name: "Install managed dependencies on Python 3.11+"
+      # Optional service imports resolve only on their supported Python range.
+      - name: "Install service dependencies on Python 3.11+"
         if: matrix.python-version != '3.10'
-        run: uv sync --python ${{ matrix.python-version }} --frozen --extra dev --extra prefect --extra managed
+        run: uv sync --python ${{ matrix.python-version }} --frozen --extra dev --extra prefect --extra service
 
       - name: "Linting: ruff check"
         run: "uv run ruff check ."
@@ -95,9 +95,9 @@ jobs:
 
       - name: "Linting: ty check (direct Prefect Python 3.10)"
         if: matrix.python-version == '3.10'
-        run: "uv run ty check --exclude infrahub_sync/managed --exclude tests/managed ."
+        run: "uv run ty check --exclude infrahub_sync/service --exclude tests/service ."
 
-      - name: "Linting: ty check (managed Python 3.11+)"
+      - name: "Linting: ty check (service Python 3.11+)"
         if: matrix.python-version != '3.10'
         run: "uv run ty check ."
 

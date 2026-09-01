@@ -34,11 +34,13 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import NoReturn
 
+    from infrahub_sync.product_store import ProductProjection
 
-def _store(tmp_path: Path) -> str:
+
+def _store(tmp_path: Path) -> ProductProjection:
     root = tmp_path / "product-cache"
     root.mkdir()
-    return str(root)
+    return local_product_projection(root)
 
 
 def _registered_configuration_count(root: Path) -> int:
@@ -67,9 +69,9 @@ def _invalid_package_data() -> dict[str, Any]:
 
 
 def test_register_returns_the_configuration_and_its_first_version(tmp_path: Path) -> None:
-    location = _store(tmp_path)
+    projection = _store(tmp_path)
 
-    registered = configs_service.register(package=package_data(), product_cache_location=location)
+    registered = configs_service.register(package=package_data(), projection=projection)
 
     assert registered.version.registry_version == 1
     assert registered.configuration.config_id == registered.version.config_id
@@ -81,10 +83,10 @@ def test_register_returns_the_configuration_and_its_first_version(tmp_path: Path
 
 
 def test_register_refuses_an_invalid_package_and_persists_nothing(tmp_path: Path) -> None:
-    location = _store(tmp_path)
+    projection = _store(tmp_path)
 
     with pytest.raises(configs_service.ConfigsValidationError) as raised:
-        configs_service.register(package=_invalid_package_data(), product_cache_location=location)
+        configs_service.register(package=_invalid_package_data(), projection=projection)
 
     assert raised.value.family == "validation"
     codes = [finding.code for finding in raised.value.findings]
@@ -96,22 +98,22 @@ def test_register_refuses_an_invalid_package_and_persists_nothing(tmp_path: Path
 def test_a_warning_only_package_registers_and_reports_its_warnings(tmp_path: Path) -> None:
     # Errors prevent execution; warnings do not. A package whose only findings are
     # warnings registers, versions, and validates error-free through the whole service.
-    location = _store(tmp_path)
+    projection = _store(tmp_path)
     data = package_data()
     data["omissions"] = [{"kind": "InfraDevice", "fields": ["serial_number"]}]
     changed = package_data()
     changed["omissions"] = [{"kind": "InfraDevice"}]
 
-    registered = configs_service.register(package=data, product_cache_location=location)
+    registered = configs_service.register(package=data, projection=projection)
     versioned = configs_service.create_version(
         config_id=registered.configuration.config_id,
         package=changed,
-        product_cache_location=location,
+        projection=projection,
     )
     report = configs_service.validate(
         config_id=registered.configuration.config_id,
         registry_version=registered.version.registry_version,
-        product_cache_location=location,
+        projection=projection,
     )
 
     assert versioned.created
@@ -122,13 +124,13 @@ def test_a_warning_only_package_registers_and_reports_its_warnings(tmp_path: Pat
 
 
 def test_create_version_is_idempotent_for_an_identical_package(tmp_path: Path) -> None:
-    location = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), product_cache_location=location)
+    projection = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), projection=projection)
 
     repeated = configs_service.create_version(
         config_id=registered.version.config_id,
         package=package_data(),
-        product_cache_location=location,
+        projection=projection,
     )
 
     assert repeated.created is False
@@ -136,15 +138,15 @@ def test_create_version_is_idempotent_for_an_identical_package(tmp_path: Path) -
 
 
 def test_create_version_allocates_the_next_ordinal_for_new_content(tmp_path: Path) -> None:
-    location = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), product_cache_location=location)
+    projection = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), projection=projection)
     changed = package_data()
     changed["configuration"]["source"]["settings"]["url"] = "https://second.netbox.test"
 
     added = configs_service.create_version(
         config_id=registered.version.config_id,
         package=changed,
-        product_cache_location=location,
+        projection=projection,
     )
 
     assert added.created is True
@@ -156,7 +158,7 @@ def test_create_version_refuses_an_unregistered_configuration(tmp_path: Path) ->
         configs_service.create_version(
             config_id="20260808T1200-aaaaaaaa",
             package=package_data(),
-            product_cache_location=_store(tmp_path),
+            projection=_store(tmp_path),
         )
 
     assert raised.value.family == "not-found"
@@ -165,8 +167,8 @@ def test_create_version_refuses_an_unregistered_configuration(tmp_path: Path) ->
 def test_validate_reports_every_defect_of_a_registered_version_in_sorted_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    location = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), product_cache_location=location)
+    projection = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), projection=projection)
     # A registered package was valid when it was registered; re-validating it against a
     # different adapter set is the whole reason this surface exists.
     monkeypatch.setattr("infrahub_sync.configuration.validation.BUILTIN_ADAPTER_CAPABILITIES", {})
@@ -174,7 +176,7 @@ def test_validate_reports_every_defect_of_a_registered_version_in_sorted_order(
     report = configs_service.validate(
         config_id=registered.version.config_id,
         registry_version=1,
-        product_cache_location=location,
+        projection=projection,
     )
 
     assert [(finding.code, finding.location) for finding in report.findings] == [
@@ -185,13 +187,13 @@ def test_validate_reports_every_defect_of_a_registered_version_in_sorted_order(
 
 
 def test_validate_reports_no_findings_for_a_still_valid_version(tmp_path: Path) -> None:
-    location = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), product_cache_location=location)
+    projection = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), projection=projection)
 
     report = configs_service.validate(
         config_id=registered.version.config_id,
         registry_version=1,
-        product_cache_location=location,
+        projection=projection,
     )
 
     assert report.findings == ()
@@ -199,14 +201,14 @@ def test_validate_reports_no_findings_for_a_still_valid_version(tmp_path: Path) 
 
 
 def test_validate_refuses_an_unregistered_version(tmp_path: Path) -> None:
-    location = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), product_cache_location=location)
+    projection = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), projection=projection)
 
     with pytest.raises(configs_service.ConfigsNotFoundError) as raised:
         configs_service.validate(
             config_id=registered.version.config_id,
             registry_version=7,
-            product_cache_location=location,
+            projection=projection,
         )
 
     assert raised.value.family == "not-found"
@@ -214,7 +216,7 @@ def test_validate_refuses_an_unregistered_version(tmp_path: Path) -> None:
 
 def test_unparseable_package_content_is_a_request_refusal(tmp_path: Path) -> None:
     with pytest.raises(configs_service.ConfigsRequestError) as raised:
-        configs_service.register(package={"format_version": 99}, product_cache_location=_store(tmp_path))
+        configs_service.register(package={"format_version": 99}, projection=_store(tmp_path))
 
     assert raised.value.family == "request"
 
@@ -243,16 +245,6 @@ def test_the_error_vocabulary_is_one_closed_family_set() -> None:
     assert configs_service.describe(configs_service.ConfigsNotFoundError("gone"), ()) == "not-found: gone"
 
 
-def test_a_missing_store_location_is_a_refusal_rather_than_a_fallback() -> None:
-    with pytest.raises(configs_service.ConfigsRequestError, match="product_cache_location is required"):
-        configs_service.validate(config_id="c", registry_version=1, product_cache_location="")
-
-
-def test_a_relative_store_location_is_refused() -> None:
-    with pytest.raises(configs_service.ConfigsRequestError, match="must be absolute after user expansion"):
-        configs_service.validate(config_id="c", registry_version=1, product_cache_location="relative/product-cache")
-
-
 # --- Registry reads ---------------------------------------------------------------------
 #
 # The rows below are chosen so raw insertion order disagrees with the declared listing order
@@ -268,24 +260,24 @@ _OUT_OF_ORDER_REGISTRATIONS: tuple[tuple[str, datetime], ...] = (
 )
 
 
-def _register_out_of_order(location: str, monkeypatch: pytest.MonkeyPatch) -> None:
+def _register_out_of_order(projection: ProductProjection, monkeypatch: pytest.MonkeyPatch) -> None:
     """Register the rows above through the service, with generated IDs and clock pinned."""
     ids = iter([config_id for config_id, _ in _OUT_OF_ORDER_REGISTRATIONS])
     clock = iter([created_at for _, created_at in _OUT_OF_ORDER_REGISTRATIONS])
     monkeypatch.setattr(product_store_store, "_generate_config_id", lambda: next(ids))
     monkeypatch.setattr(product_store_store, "datetime", SimpleNamespace(now=lambda tz: next(clock)))  # noqa: ARG005
     for _ in _OUT_OF_ORDER_REGISTRATIONS:
-        configs_service.register(package=package_data(), product_cache_location=location)
+        configs_service.register(package=package_data(), projection=projection)
 
 
 def test_list_configs_returns_every_configuration_in_created_at_then_config_id_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Every registered configuration exactly once, in the one declared deterministic order."""
-    location = _store(tmp_path)
-    _register_out_of_order(location, monkeypatch)
+    projection = _store(tmp_path)
+    _register_out_of_order(projection, monkeypatch)
 
-    listed = configs_service.list_configs(product_cache_location=location)
+    listed = configs_service.list_configs(projection=projection)
 
     assert [(summary.config_id, summary.created_at) for summary in listed] == [
         ("config-z", datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)),
@@ -293,7 +285,7 @@ def test_list_configs_returns_every_configuration_in_created_at_then_config_id_o
         ("config-b", datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
     ]
     # Order determinism: a re-read of the same store returns the identical sequence.
-    assert configs_service.list_configs(product_cache_location=location) == listed
+    assert configs_service.list_configs(projection=projection) == listed
 
 
 def test_get_config_and_list_versions_return_one_configurations_own_records(tmp_path: Path) -> None:
@@ -302,24 +294,24 @@ def test_get_config_and_list_versions_return_one_configurations_own_records(tmp_
     A second, unrelated configuration is registered into the same store so an unscoped read
     would be caught leaking its rows.
     """
-    location = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), product_cache_location=location)
+    projection = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), projection=projection)
     changed = package_data()
     changed["configuration"]["source"]["settings"]["url"] = "https://second.netbox.test"
     added = configs_service.create_version(
         config_id=registered.version.config_id,
         package=changed,
-        product_cache_location=location,
+        projection=projection,
     )
-    unrelated = configs_service.register(package=package_data(), product_cache_location=location)
+    unrelated = configs_service.register(package=package_data(), projection=projection)
 
     summary = configs_service.get_config(
         config_id=registered.version.config_id,
-        product_cache_location=location,
+        projection=projection,
     )
     versions = configs_service.list_versions(
         config_id=registered.version.config_id,
-        product_cache_location=location,
+        projection=projection,
     )
 
     assert summary == registered.configuration
@@ -334,7 +326,7 @@ def test_get_version_on_a_missing_configuration_names_the_configuration_as_absen
         configs_service.get_version(
             config_id="missing-configuration",
             registry_version=1,
-            product_cache_location=_store(tmp_path),
+            projection=_store(tmp_path),
         )
 
     assert raised.value.family == "not-found"
@@ -349,20 +341,20 @@ def test_get_version_on_a_missing_version_is_distinct_from_a_missing_configurati
     two-step read is race-safe) and the two absences surface as distinct machine-readable
     values -- what service-boundary later maps to two different status codes.
     """
-    location = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), product_cache_location=location)
+    projection = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), projection=projection)
 
     with pytest.raises(configs_service.ConfigsNotFoundError) as missing_version:
         configs_service.get_version(
             config_id=registered.version.config_id,
             registry_version=7,
-            product_cache_location=location,
+            projection=projection,
         )
     with pytest.raises(configs_service.ConfigsNotFoundError) as missing_configuration:
         configs_service.get_version(
             config_id="missing-configuration",
             registry_version=7,
-            product_cache_location=location,
+            projection=projection,
         )
 
     assert missing_version.value.family == "not-found"
@@ -373,19 +365,19 @@ def test_get_version_on_a_missing_version_is_distinct_from_a_missing_configurati
 # The two reads whose store queries return a tuple, so a missing configuration's natural
 # defect is a silent empty result -- indistinguishable from a real answer about a registered
 # configuration with no rows to show.
-_MISSING_CONFIGURATION_READS: tuple[tuple[str, Callable[[str], object]], ...] = (
+_MISSING_CONFIGURATION_READS: tuple[tuple[str, Callable[[ProductProjection], object]], ...] = (
     (
         "get_config",
-        lambda location: configs_service.get_config(
+        lambda projection: configs_service.get_config(
             config_id="missing-configuration",
-            product_cache_location=location,
+            projection=projection,
         ),
     ),
     (
         "list_versions",
-        lambda location: configs_service.list_versions(
+        lambda projection: configs_service.list_versions(
             config_id="missing-configuration",
-            product_cache_location=location,
+            projection=projection,
         ),
     ),
 )
@@ -394,7 +386,7 @@ _MISSING_CONFIGURATION_READS: tuple[tuple[str, Callable[[str], object]], ...] = 
 @pytest.mark.parametrize("call", [pytest.param(call, id=name) for name, call in _MISSING_CONFIGURATION_READS])
 def test_a_read_of_a_missing_configuration_refuses_rather_than_answering_empty(
     tmp_path: Path,
-    call: Callable[[str], object],
+    call: Callable[[ProductProjection], object],
 ) -> None:
     with pytest.raises(configs_service.ConfigsNotFoundError) as raised:
         call(_store(tmp_path))
@@ -405,13 +397,13 @@ def test_a_read_of_a_missing_configuration_refuses_rather_than_answering_empty(
 
 def test_get_version_round_trips_the_registered_content_and_checksum(tmp_path: Path) -> None:
     """A read returns exactly what registration reported -- field equality, not "no error"."""
-    location = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), product_cache_location=location)
+    projection = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), projection=projection)
 
     stored = configs_service.get_version(
         config_id=registered.version.config_id,
         registry_version=1,
-        product_cache_location=location,
+        projection=projection,
     )
 
     assert stored.declared_content == registered.version.declared_content
@@ -419,94 +411,63 @@ def test_get_version_round_trips_the_registered_content_and_checksum(tmp_path: P
     assert stored == registered.version
 
 
-# The read entry points, each reached with a syntactically fine request, so the only thing a
-# raised refusal can be about is the store location (envelope OES-21's evidence pattern).
-_READ_ENTRY_POINTS: tuple[tuple[str, Callable[[str | None], object]], ...] = (
-    ("list_configs", lambda location: configs_service.list_configs(product_cache_location=location)),
-    ("get_config", lambda location: configs_service.get_config(config_id="c", product_cache_location=location)),
-    ("list_versions", lambda location: configs_service.list_versions(config_id="c", product_cache_location=location)),
-    (
-        "get_version",
-        lambda location: configs_service.get_version(
-            config_id="c",
-            registry_version=1,
-            product_cache_location=location,
-        ),
-    ),
-)
-
-
-@pytest.mark.parametrize("call", [pytest.param(call, id=name) for name, call in _READ_ENTRY_POINTS])
-def test_a_read_with_a_missing_store_location_is_a_refusal_rather_than_a_fallback(
-    call: Callable[[str | None], object],
-) -> None:
-    with pytest.raises(configs_service.ConfigsRequestError, match="product_cache_location is required"):
-        call(None)
-
-
-@pytest.mark.parametrize("call", [pytest.param(call, id=name) for name, call in _READ_ENTRY_POINTS])
-def test_a_read_with_a_relative_store_location_is_refused(call: Callable[[str | None], object]) -> None:
-    with pytest.raises(configs_service.ConfigsRequestError, match="must be absolute after user expansion"):
-        call("relative/product-cache")
-
-
 # A value of the wrong type entirely, annotated ``Any`` so the calls below type-check. That is
 # the only way it reaches the service: a caller's own defect that got past static checking.
 _WRONG_TYPED_VALUE: Any = object()
 
-_WRONG_TYPED_CALLS: tuple[tuple[str, Callable[[str], object]], ...] = (
+_WRONG_TYPED_CALLS: tuple[tuple[str, Callable[[ProductProjection], object]], ...] = (
     (
         "validate-config-id",
-        lambda location: configs_service.validate(
+        lambda projection: configs_service.validate(
             config_id=_WRONG_TYPED_VALUE,
             registry_version=1,
-            product_cache_location=location,
+            projection=projection,
         ),
     ),
     (
         "validate-registry-version",
-        lambda location: configs_service.validate(
+        lambda projection: configs_service.validate(
             config_id="c",
             registry_version=_WRONG_TYPED_VALUE,
-            product_cache_location=location,
+            projection=projection,
         ),
     ),
     (
         "create-version-config-id",
-        lambda location: configs_service.create_version(
+        lambda projection: configs_service.create_version(
             config_id=_WRONG_TYPED_VALUE,
             package=package_data(),
-            product_cache_location=location,
+            projection=projection,
         ),
     ),
     (
         "get-config-config-id",
-        lambda location: configs_service.get_config(
+        lambda projection: configs_service.get_config(
             config_id=_WRONG_TYPED_VALUE,
-            product_cache_location=location,
+            projection=projection,
         ),
     ),
     (
         "list-versions-config-id",
-        lambda location: configs_service.list_versions(
+        lambda projection: configs_service.list_versions(
             config_id=_WRONG_TYPED_VALUE,
-            product_cache_location=location,
+            projection=projection,
         ),
     ),
     (
         "get-version-config-id",
-        lambda location: configs_service.get_version(
+        lambda projection: configs_service.get_version(
             config_id=_WRONG_TYPED_VALUE,
             registry_version=1,
-            product_cache_location=location,
+            projection=projection,
         ),
     ),
     (
         "get-version-registry-version",
-        lambda location: configs_service.get_version(
+        lambda projection: configs_service.get_version(
             config_id="c",
             registry_version=_WRONG_TYPED_VALUE,
-            product_cache_location=location,
+            projection=projection,
         ),
     ),
 )
@@ -515,7 +476,7 @@ _WRONG_TYPED_CALLS: tuple[tuple[str, Callable[[str], object]], ...] = (
 @pytest.mark.parametrize("call", [pytest.param(call, id=name) for name, call in _WRONG_TYPED_CALLS])
 def test_a_wrong_typed_identifier_is_the_callers_input_and_not_the_store(
     tmp_path: Path,
-    call: Callable[[str], object],
+    call: Callable[[ProductProjection], object],
 ) -> None:
     """A wrong-typed identifier must not send an operator to look at their own disk.
 
@@ -533,56 +494,9 @@ def test_a_wrong_typed_identifier_is_the_callers_input_and_not_the_store(
 def test_a_well_typed_identifier_still_gets_the_stores_own_answer(tmp_path: Path) -> None:
     """The type guard checks the type and nothing else, so absence is still the store's verdict."""
     with pytest.raises(configs_service.ConfigsNotFoundError) as raised:
-        configs_service.validate(config_id="c", registry_version=1, product_cache_location=_store(tmp_path))
+        configs_service.validate(config_id="c", registry_version=1, projection=_store(tmp_path))
 
     assert raised.value.family == "not-found"
-
-
-_ENTRY_POINTS: tuple[tuple[str, Callable[[str], object]], ...] = (
-    ("register", lambda location: configs_service.register(package=package_data(), product_cache_location=location)),
-    (
-        "create_version",
-        lambda location: configs_service.create_version(
-            config_id="c",
-            package=package_data(),
-            product_cache_location=location,
-        ),
-    ),
-    (
-        "validate",
-        lambda location: configs_service.validate(config_id="c", registry_version=1, product_cache_location=location),
-    ),
-    ("list_configs", lambda location: configs_service.list_configs(product_cache_location=location)),
-    ("get_config", lambda location: configs_service.get_config(config_id="c", product_cache_location=location)),
-    ("list_versions", lambda location: configs_service.list_versions(config_id="c", product_cache_location=location)),
-    (
-        "get_version",
-        lambda location: configs_service.get_version(
-            config_id="c",
-            registry_version=1,
-            product_cache_location=location,
-        ),
-    ),
-)
-
-
-@pytest.mark.parametrize("call", [pytest.param(call, id=name) for name, call in _ENTRY_POINTS])
-def test_a_store_the_filesystem_refuses_is_a_storage_refusal(
-    tmp_path: Path,
-    call: Callable[[str], object],
-) -> None:
-    # A real store failure, not a monkeypatched raise. Opening the registry creates its own
-    # directories, and the filesystem is what refuses here, so this test can see which base
-    # class the service catches - which a faked raise cannot. A plain file where the registry
-    # wants a directory is the form that needs no permission change, so it behaves identically
-    # as root and under CI, where an unwritable-directory test would not fail at all.
-    occupied = tmp_path / "product-cache"
-    occupied.write_text("not a directory\n", encoding="utf-8")
-
-    with pytest.raises(configs_service.ConfigsStorageError) as raised:
-        call(str(occupied))
-
-    assert raised.value.family == "storage"
 
 
 def test_a_package_file_is_loaded_from_json_or_yaml(tmp_path: Path) -> None:
@@ -697,20 +611,51 @@ def test_a_package_file_whose_key_json_cannot_hold_is_a_request_refusal(tmp_path
     assert raised.value.family == "request"
 
 
-def _corrupt_registry(tmp_path: Path) -> str:
-    """Return a store location whose registry file exists, is readable, and is not a database."""
+def _corrupt_registry(tmp_path: Path) -> ProductProjection:
+    """Return an opened projection whose registry file is no longer a database."""
     root = tmp_path / "product-cache"
     root.mkdir()
+    projection = local_product_projection(root)
     (root / "product-records.sqlite3").write_bytes(b"this file is not a database\n")
-    return str(root)
+    return projection
+
+
+_ENTRY_POINTS: tuple[tuple[str, Callable[[ProductProjection], object]], ...] = (
+    ("register", lambda projection: configs_service.register(package=package_data(), projection=projection)),
+    (
+        "create_version",
+        lambda projection: configs_service.create_version(
+            config_id="c",
+            package=package_data(),
+            projection=projection,
+        ),
+    ),
+    (
+        "validate",
+        lambda projection: configs_service.validate(config_id="c", registry_version=1, projection=projection),
+    ),
+    ("list_configs", lambda projection: configs_service.list_configs(projection=projection)),
+    ("get_config", lambda projection: configs_service.get_config(config_id="c", projection=projection)),
+    ("list_versions", lambda projection: configs_service.list_versions(config_id="c", projection=projection)),
+    (
+        "get_version",
+        lambda projection: configs_service.get_version(
+            config_id="c",
+            registry_version=1,
+            projection=projection,
+        ),
+    ),
+)
 
 
 @pytest.mark.parametrize("call", [pytest.param(call, id=name) for name, call in _ENTRY_POINTS])
-def test_a_corrupt_registry_file_is_a_storage_refusal(tmp_path: Path, call: Callable[[str], object]) -> None:
-    # A real failure, and a cheap one: SQLite does not read the file header when it opens, so
-    # the store is constructed successfully and every *query* raises sqlite3.DatabaseError
-    # afterwards. The arms around each store call name the store's own error types, so all
-    # three operations handed the caller a raw sqlite3 traceback.
+def test_a_corrupt_registry_file_is_a_storage_refusal(
+    tmp_path: Path, call: Callable[[ProductProjection], object]
+) -> None:
+    # A real failure, and a cheap one: the registry is replaced after the store opened it, so
+    # every *query* raises sqlite3.DatabaseError. The arms around each store call name the
+    # store's own error types, so all three operations handed the caller a raw sqlite3
+    # traceback.
     with pytest.raises(configs_service.ConfigsStorageError) as raised:
         call(_corrupt_registry(tmp_path))
 
@@ -724,79 +669,17 @@ def _load_a_written_package(tmp_path: Path) -> object:
     return configs_service.load_package_content(path)
 
 
-_PUBLIC_OPERATIONS: tuple[tuple[str, Callable[[pytest.MonkeyPatch], None], Callable[[Path], object]], ...] = (
-    (
-        "load_package_content",
-        lambda patch: patch.setattr(configs_service.yaml, "safe_load", _raise_unforeseen),
-        _load_a_written_package,
-    ),
-    (
-        "register",
-        lambda patch: patch.setattr(configs_service, "local_product_projection", _raise_unforeseen),
-        lambda tmp_path: configs_service.register(package=package_data(), product_cache_location=_store(tmp_path)),
-    ),
-    (
-        "create_version",
-        lambda patch: patch.setattr(configs_service, "local_product_projection", _raise_unforeseen),
-        lambda tmp_path: configs_service.create_version(
-            config_id="c",
-            package=package_data(),
-            product_cache_location=_store(tmp_path),
-        ),
-    ),
-    (
-        "validate",
-        lambda patch: patch.setattr(configs_service, "local_product_projection", _raise_unforeseen),
-        lambda tmp_path: configs_service.validate(
-            config_id="c",
-            registry_version=1,
-            product_cache_location=_store(tmp_path),
-        ),
-    ),
-    (
-        "list_configs",
-        lambda patch: patch.setattr(configs_service, "local_product_projection", _raise_unforeseen),
-        lambda tmp_path: configs_service.list_configs(product_cache_location=_store(tmp_path)),
-    ),
-    (
-        "get_config",
-        lambda patch: patch.setattr(configs_service, "local_product_projection", _raise_unforeseen),
-        lambda tmp_path: configs_service.get_config(config_id="c", product_cache_location=_store(tmp_path)),
-    ),
-    (
-        "list_versions",
-        lambda patch: patch.setattr(configs_service, "local_product_projection", _raise_unforeseen),
-        lambda tmp_path: configs_service.list_versions(config_id="c", product_cache_location=_store(tmp_path)),
-    ),
-    (
-        "get_version",
-        lambda patch: patch.setattr(configs_service, "local_product_projection", _raise_unforeseen),
-        lambda tmp_path: configs_service.get_version(
-            config_id="c",
-            registry_version=1,
-            product_cache_location=_store(tmp_path),
-        ),
-    ),
-)
-
-
-@pytest.mark.parametrize(
-    ("patch_dependency", "call"),
-    [pytest.param(patch, call, id=name) for name, patch, call in _PUBLIC_OPERATIONS],
-)
-def test_a_failing_dependency_leaves_a_public_operation_inside_the_declared_vocabulary(
+def test_a_failing_text_helper_leaves_a_public_operation_inside_the_declared_vocabulary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    patch_dependency: Callable[[pytest.MonkeyPatch], None],
-    call: Callable[[Path], object],
 ) -> None:
     # The one place a monkeypatched raise is the right tool: this drives the *unforeseen* arm,
     # and an exception type the service has never met is by definition one no real dependency
     # raises today. Every other failure in this section is caused for real.
-    patch_dependency(monkeypatch)
+    monkeypatch.setattr(configs_service.yaml, "safe_load", _raise_unforeseen)
 
     with pytest.raises(configs_service.ConfigsError) as raised:
-        call(tmp_path)
+        _load_a_written_package(tmp_path)
 
     assert raised.value.family in _DECLARED_FAMILIES
     # The documented default: neither the caller's input nor the store, and it says so rather
@@ -809,18 +692,20 @@ def _raise_interrupt(*args: object, **kwargs: object) -> object:
     raise KeyboardInterrupt
 
 
-def test_an_interrupt_is_not_caught_by_the_error_boundary(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+class _InterruptingProjection:
+    """A projection whose every operation raises the interrupt the boundary must not catch."""
+
+    def __getattr__(self, _name: str) -> Callable[..., object]:
+        return _raise_interrupt
+
+
+def test_an_interrupt_is_not_caught_by_the_error_boundary() -> None:
     # The boundary catches Exception, never BaseException, so an interrupt reaches the
     # interpreter instead of being reported as a registry refusal. Widening it would swallow
     # Ctrl-C and SystemExit, which is the decision the run boundary already made explicitly,
     # and nothing else here would notice.
-    monkeypatch.setattr(configs_service, "local_product_projection", _raise_interrupt)
-
     with pytest.raises(KeyboardInterrupt):
-        configs_service.register(package=package_data(), product_cache_location=_store(tmp_path))
+        configs_service.register(package=package_data(), projection=cast("Any", _InterruptingProjection()))
 
 
 def _public_service_functions() -> dict[str, Any]:
@@ -1355,32 +1240,30 @@ def test_register_refuses_a_prebuilt_package_instance(tmp_path: Path, instance: 
     # Any instance — the exact class included — can carry behavior validation never judged:
     # a subclass overriding ``declared_content()``, or ``model_construct`` skipping
     # validation entirely. The boundary accepts declared JSON-native content only.
-    location = _store(tmp_path)
+    projection = _store(tmp_path)
     # Typed away deliberately: the whole point is a call the signature no longer admits.
     prebuilt = cast("Any", instance)
 
     with pytest.raises(configs_service.ConfigsRequestError, match="must be a JSON-native dict"):
-        configs_service.register(package=prebuilt, product_cache_location=location)
+        configs_service.register(package=prebuilt, projection=projection)
 
     assert _registered_configuration_count(tmp_path / "product-cache") == 0
 
 
 @pytest.mark.parametrize("instance", [pytest.param(instance, id=name) for name, instance in _prebuilt_instances()])
 def test_create_version_refuses_a_prebuilt_package_instance(tmp_path: Path, instance: ConfigurationPackage) -> None:
-    location = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), product_cache_location=location)
+    projection = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), projection=projection)
     prebuilt = cast("Any", instance)
 
     with pytest.raises(configs_service.ConfigsRequestError, match="must be a JSON-native dict"):
         configs_service.create_version(
             config_id=registered.configuration.config_id,
             package=prebuilt,
-            product_cache_location=location,
+            projection=projection,
         )
 
-    versions = configs_service.list_versions(
-        config_id=registered.configuration.config_id, product_cache_location=location
-    )
+    versions = configs_service.list_versions(config_id=registered.configuration.config_id, projection=projection)
     assert [version.registry_version for version in versions] == [1]
 
 
@@ -1391,11 +1274,11 @@ def test_a_hostile_declared_content_override_cannot_reach_the_store(tmp_path: Pa
     inline canary landed in the durable store row. Now the instance itself is refused as
     the caller's own input, and nothing is written.
     """
-    location = _store(tmp_path)
+    projection = _store(tmp_path)
     hostile = cast("Any", _HostileDeclaredContent.model_validate(package_data()))
 
     with pytest.raises(configs_service.ConfigsRequestError):
-        configs_service.register(package=hostile, product_cache_location=location)
+        configs_service.register(package=hostile, projection=projection)
 
     root = tmp_path / "product-cache"
     assert _registered_configuration_count(root) == 0
@@ -1406,7 +1289,7 @@ def test_a_hostile_declared_content_override_cannot_reach_the_store(tmp_path: Pa
 
 def test_a_non_mapping_package_is_the_callers_input_not_an_internal_error(tmp_path: Path) -> None:
     with pytest.raises(configs_service.ConfigsRequestError, match="package must be a JSON-native dict"):
-        configs_service.register(package=_WRONG_TYPED_VALUE, product_cache_location=_store(tmp_path))
+        configs_service.register(package=_WRONG_TYPED_VALUE, projection=_store(tmp_path))
 
 
 # --- Property closure P1: the write boundary accepts exactly JSON-native data -----------
@@ -1499,17 +1382,17 @@ def test_only_recursively_exact_json_data_enters_the_write_boundary(tmp_path: Pa
     # The closed acceptance property: a package is either recursively exact JSON-native
     # data — exact dict/list containers, exact str/int/float/bool/None leaves — or it is
     # the caller's own input, refused request-class before any protocol operation runs.
-    location = _store(tmp_path)
+    projection = _store(tmp_path)
 
     with pytest.raises(configs_service.ConfigsRequestError) as raised:
-        configs_service.register(package=cast("Any", value), product_cache_location=location)
+        configs_service.register(package=cast("Any", value), projection=projection)
 
     assert raised.value.family == "request"
     assert _registered_configuration_count(tmp_path / "product-cache") == 0
 
 
 def test_an_exact_dict_package_is_the_accepted_domain(tmp_path: Path) -> None:
-    registered = configs_service.register(package=package_data(), product_cache_location=_store(tmp_path))
+    registered = configs_service.register(package=package_data(), projection=_store(tmp_path))
 
     assert registered.version.registry_version == 1
 
@@ -1520,7 +1403,7 @@ def test_a_refused_package_is_never_invoked(tmp_path: Path) -> None:
     sentinel = _ProtocolRecordingPackage()
 
     with pytest.raises(configs_service.ConfigsRequestError):
-        configs_service.register(package=cast("Any", sentinel), product_cache_location=_store(tmp_path))
+        configs_service.register(package=cast("Any", sentinel), projection=_store(tmp_path))
 
     assert sentinel.consulted == []
 
@@ -1549,7 +1432,7 @@ def test_a_rejected_package_never_has_its_class_metadata_read(tmp_path: Path) ->
         """An out-of-domain value whose class metadata is executable behavior."""
 
     with pytest.raises(configs_service.ConfigsRequestError) as raised:
-        configs_service.register(package=cast("Any", _MetadataProbe()), product_cache_location=_store(tmp_path))
+        configs_service.register(package=cast("Any", _MetadataProbe()), projection=_store(tmp_path))
 
     assert raised.value.family == "request"
     assert "must be a JSON-native dict" in str(raised.value)
@@ -1578,20 +1461,20 @@ def _hostile_metadata_instance() -> tuple[object, list[str]]:
     "call",
     [
         pytest.param(
-            lambda location, value: configs_service.get_config(config_id=value, product_cache_location=location),
+            lambda projection, value: configs_service.get_config(config_id=value, projection=projection),
             id="config-id",
         ),
         pytest.param(
-            lambda location, value: configs_service.get_version(
-                config_id="c", registry_version=value, product_cache_location=location
+            lambda projection, value: configs_service.get_version(
+                config_id="c", registry_version=value, projection=projection
             ),
             id="registry-version",
         ),
         pytest.param(
-            lambda location, value: configs_service.validate(
+            lambda projection, value: configs_service.validate(
                 config_id="c",
                 registry_version=1,
-                product_cache_location=location,
+                projection=projection,
                 destination_schema=value,
             ),
             id="destination-schema",
@@ -1599,7 +1482,7 @@ def _hostile_metadata_instance() -> tuple[object, list[str]]:
     ],
 )
 def test_a_wrong_typed_argument_never_has_its_class_metadata_read(
-    tmp_path: Path, call: Callable[[str, Any], object]
+    tmp_path: Path, call: Callable[[ProductProjection, Any], object]
 ) -> None:
     # The package boundary's rule applied to every argument guard: the refusals
     # formatted type(value).__name__, and a metaclass executes on that read — the
@@ -1628,18 +1511,17 @@ def test_a_wrong_typed_argument_with_a_raising_class_property_is_the_callers_inp
             raise RuntimeError(msg)
 
     with pytest.raises(configs_service.ConfigsRequestError) as raised:
-        configs_service.get_config(config_id=cast("Any", _RaisingClassProbe()), product_cache_location=_store(tmp_path))
+        configs_service.get_config(config_id=cast("Any", _RaisingClassProbe()), projection=_store(tmp_path))
 
     assert raised.value.family == "request"
     assert reads == []
 
 
-def test_the_boundary_classifies_without_consulting_an_exceptions_class_property(tmp_path: Path) -> None:
+def test_the_boundary_classifies_without_consulting_an_exceptions_class_property() -> None:
     # The boundary's isinstance classification consulted exc.__class__ — an instance
     # read a hostile property executes on — so an exception a hostile caller argument
-    # constructs escaped list_configs() as a raw RuntimeError, outside the declared
-    # vocabulary. Except clauses match the actual type without touching the instance.
-    del tmp_path
+    # an injected dependency raises escaped list_configs() as a raw RuntimeError, outside the
+    # declared vocabulary. Except clauses match the actual type without touching the instance.
     reads: list[str] = []
 
     class _HostileError(Exception):
@@ -1649,26 +1531,27 @@ def test_the_boundary_classifies_without_consulting_an_exceptions_class_property
             msg = "__class__ was consulted"
             raise RuntimeError(msg)
 
-    class _RaisingLocation:
-        def __str__(self) -> str:
-            msg = "str() exploded: third-party secret text"
-            raise _HostileError(msg)
+    class _RaisingProjection:
+        def __getattr__(self, _name: str) -> Callable[..., object]:
+            def fail(*_args: object, **_kwargs: object) -> object:
+                msg = "the store exploded: third-party secret text"
+                raise _HostileError(msg)
+
+            return fail
 
     with pytest.raises(configs_service.ConfigsInternalError) as raised:
-        configs_service.list_configs(product_cache_location=cast("Any", _RaisingLocation()))
+        configs_service.list_configs(projection=cast("Any", _RaisingProjection()))
 
     assert raised.value.family == "internal"
     assert str(raised.value) == "configs list_configs failed"
     assert reads == []
 
 
-def test_the_boundary_reads_nothing_from_an_exception_it_did_not_name(tmp_path: Path) -> None:
+def test_the_boundary_reads_nothing_from_an_exception_it_did_not_name() -> None:
     # The boundary's own refusal formatted type(exc).__name__ — but an exception a
-    # hostile caller argument constructs (here: a product_cache_location whose
-    # __str__ raises it) has an untrusted class, and the metaclass executing on that
+    # an injected dependency raises has an untrusted class, and the metaclass executing on that
     # read escaped the module as a raw RuntimeError, outside the declared vocabulary
     # entirely. The boundary reads nothing: family by isinstance, one fixed message.
-    del tmp_path
     reads: list[str] = []
 
     class _ExecutingMeta(type):
@@ -1681,13 +1564,16 @@ def test_the_boundary_reads_nothing_from_an_exception_it_did_not_name(tmp_path: 
     class _HostileError(Exception, metaclass=_ExecutingMeta):
         """An exception whose class name read is executable behavior."""
 
-    class _RaisingLocation:
-        def __str__(self) -> str:
-            msg = "str() exploded: third-party secret text"
-            raise _HostileError(msg)
+    class _RaisingProjection:
+        def __getattr__(self, _name: str) -> Callable[..., object]:
+            def fail(*_args: object, **_kwargs: object) -> object:
+                msg = "the store exploded: third-party secret text"
+                raise _HostileError(msg)
+
+            return fail
 
     with pytest.raises(configs_service.ConfigsInternalError) as raised:
-        configs_service.list_configs(product_cache_location=cast("Any", _RaisingLocation()))
+        configs_service.list_configs(projection=cast("Any", _RaisingProjection()))
 
     assert raised.value.family == "internal"
     assert str(raised.value) == "configs list_configs failed"
@@ -1726,15 +1612,15 @@ _OUT_OF_DOMAIN_REGISTRY_VERSIONS: tuple[tuple[str, object], ...] = (
 def test_an_out_of_domain_registry_version_is_the_callers_input(
     tmp_path: Path, operation: str, registry_version: object
 ) -> None:
-    location = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), product_cache_location=location)
+    projection = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), projection=projection)
     call = getattr(configs_service, operation)
 
     with pytest.raises(configs_service.ConfigsRequestError) as raised:
         call(
             config_id=registered.configuration.config_id,
             registry_version=registry_version,
-            product_cache_location=location,
+            projection=projection,
         )
 
     assert raised.value.family == "request"
@@ -1743,14 +1629,14 @@ def test_an_out_of_domain_registry_version_is_the_callers_input(
 def test_the_domain_maximum_is_still_the_stores_own_answer(tmp_path: Path) -> None:
     # The property's upper edge from the inside: 2**63 - 1 is the last version the
     # registry could ever allocate, so it reaches the store and is its own not-found.
-    location = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), product_cache_location=location)
+    projection = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), projection=projection)
 
     with pytest.raises(configs_service.ConfigsNotFoundError) as raised:
         configs_service.get_version(
             config_id=registered.configuration.config_id,
             registry_version=2**63 - 1,
-            product_cache_location=location,
+            projection=projection,
         )
 
     assert raised.value.reason == configs_service.CONFIGURATION_VERSION_NOT_FOUND_REASON
@@ -1759,14 +1645,14 @@ def test_the_domain_maximum_is_still_the_stores_own_answer(tmp_path: Path) -> No
 def test_a_large_valid_registry_version_is_still_the_stores_own_answer(tmp_path: Path) -> None:
     # The guard checks the domain and nothing else: a well-formed version the registry has
     # not allocated is still absence, reported by the store's own not-found.
-    location = _store(tmp_path)
-    registered = configs_service.register(package=package_data(), product_cache_location=location)
+    projection = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), projection=projection)
 
     with pytest.raises(configs_service.ConfigsNotFoundError) as raised:
         configs_service.get_version(
             config_id=registered.configuration.config_id,
             registry_version=10**12,
-            product_cache_location=location,
+            projection=projection,
         )
 
     assert raised.value.reason == configs_service.CONFIGURATION_VERSION_NOT_FOUND_REASON

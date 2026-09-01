@@ -1,8 +1,8 @@
 # Preview environment
 
 One command from a fresh clone to a complete, testable Infrahub Sync v3 stack:
-a disposable Infrahub instance, a dedicated Prefect server, the managed Sync
-HTTP API, a Prefect worker running the managed deployment, a loaded example
+a disposable Infrahub instance, a dedicated Prefect server, the Sync
+HTTP API, a Prefect worker running the service deployment, a loaded example
 schema, and a first saved plan — finished with an automatic smoke run across
 every preview surface so you never start from a broken environment.
 
@@ -18,11 +18,11 @@ the walkthrough, rerun `preview.smoke`, or reset volumes before running
 ## Start
 
 ```bash
-uv sync --extra dev --extra prefect --extra managed
+uv sync --extra dev --extra prefect --extra service
 uv run invoke preview.up
 ```
 
-The final summary prints the Infrahub UI, Prefect UI, and managed Sync API
+The final summary prints the Infrahub UI, Prefect UI, and Sync API
 addresses, the bearer principals, and where runtime state lives. Requires
 Docker and Python 3.11+.
 
@@ -34,9 +34,9 @@ all data).
 
 The preview exists to gather feedback on the two new v3 interfaces:
 
-- **Managed HTTP API** — the primary focus. Consume the native endpoints
-  ([reference](../docs/docs/reference/managed-http-api.mdx)) and drive
-  executions through Prefect directly (deployment `infrahub-sync-managed/run`,
+- **Sync HTTP API** — the primary focus. Consume the native endpoints
+  ([reference](../docs/docs/reference/sync-http-api.mdx)) and drive
+  executions through Prefect directly (deployment `infrahub-sync-service/run`,
   Prefect UI address in the summary).
 - **Python API** — the documented plan → verify → apply cycle
   ([reference](../docs/docs/reference/python-api.mdx)).

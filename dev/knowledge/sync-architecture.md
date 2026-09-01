@@ -72,8 +72,9 @@ Adapters do not hand-write a model class per object type. Instead:
 
 1. You write the adapter module (the connector logic) and a `config.yml` whose
    `schema_mapping` describes which source resources map to which destination models.
-2. `infrahub-sync generate` (in `infrahub_sync/generator/`) reads the config and the
-   destination schema and renders DiffSync model classes from Jinja2 templates.
+2. The internal generator (`infrahub_sync/generator/`, reached through
+   `infrahub_sync.utils.render_adapter`) reads the config and the destination schema and
+   renders DiffSync model classes from Jinja2 templates.
 3. `infrahub_sync/plugin_loader.py` resolves the adapter class — built-in by `name`, a
    dotted import path, a filesystem path, or an installed entry point — and wires the
    generated models onto the adapter instance at run time.
