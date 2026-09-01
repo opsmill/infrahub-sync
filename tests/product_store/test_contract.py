@@ -4024,6 +4024,38 @@ def test_postgresql_initialize_succeeds_twice_on_a_fresh_catalog() -> None:
     assert {"configurations", "configuration_versions"} <= database.tables
 
 
+def test_postgresql_repeated_initialization_skips_completed_mutation_receipt_nullability_ddl() -> None:
+    connections: list[MagicMock] = []
+
+    def connect() -> MagicMock:
+        connection = MagicMock()
+        connection.cursor.return_value.fetchall.side_effect = [
+            (),
+            (),
+            (
+                ("prefect_key", "YES"),
+                ("resource_id", "NO"),
+                ("resource_kind", "NO"),
+                ("run_id", "YES"),
+            ),
+        ]
+        connection.cursor.return_value.fetchone.return_value = (1,)
+        connections.append(connection)
+        return connection
+
+    PostgreSQLRunStore(connect)
+    PostgreSQLRunStore(connect)
+
+    recurring_ddl = [
+        call.args[0].strip()
+        for connection in connections
+        for call in connection.cursor.return_value.execute.call_args_list
+        if call.args[0].strip().startswith("ALTER TABLE mutation_receipts ALTER COLUMN")
+        and call.args[0].strip().endswith("DROP NOT NULL")
+    ]
+    assert recurring_ddl == []
+
+
 def test_postgresql_initialize_succeeds_twice_on_a_prepopulated_parent_catalog() -> None:
     """The realistic upgrade path: every parent table already exists, the two registry tables
     do not yet. Regression coverage for the silent partial-initialization defect, where the old
