@@ -9,7 +9,7 @@ from .sync_models import (
 # Load adapter class dynamically at runtime
 
 _loader = PluginLoader()
-_AdapterBaseClass = _loader.resolve("./examples/custom_adapter/custom_adapter_src/custom_adapter.py:MockdbAdapter")
+_AdapterBaseClass = _loader.resolve("examples.custom_adapter.custom_adapter_src.custom_adapter:MockdbAdapter")
 
 
 # -------------------------------------------------------
