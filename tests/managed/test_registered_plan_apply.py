@@ -67,6 +67,7 @@ def _registered_apply(
     runtime = resolve_runtime_instance(
         ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path)
     )
+    runtime._configuration_binding = binding
     manifest = write_plan_artifact(
         run_dir=tmp_path / "runs" / runtime.name / run_id,
         run_id=run_id,
@@ -183,6 +184,7 @@ def test_a_registered_saved_apply_runs_without_the_source_credential(
     runtime = resolve_runtime_instance(
         ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path)
     )
+    runtime._configuration_binding = binding
     planned = PlannedOperation.model_validate(operation_record(identity={"name": "prod"}))
     manifest = write_plan_artifact(
         run_dir=tmp_path / "runs" / runtime.name / run_id,
