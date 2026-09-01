@@ -24,16 +24,18 @@ LEGACY_WORKER = f"{preview.LEGACY_WORKER_NAME_PREFIX}0f0c2f0e-0000-4000-8000-000
 LEGACY_SERVE_COMMAND = f"python -m {preview.LEGACY_PROCESS_COMMANDS[0]}"
 LEGACY_WORKER_COMMAND = f"python -m {preview.LEGACY_PROCESS_COMMANDS[1]} --pool {WORK_POOL}"
 
+_Payload = dict[str, str] | list[dict[str, str]]
+
 
 class _Response:
     """Minimal stand-in for the Prefect responses the preflight reads."""
 
-    def __init__(self, status_code: int, payload: Any = None) -> None:
+    def __init__(self, status_code: int, payload: _Payload) -> None:
         self.status_code = status_code
         self._payload = payload
         self.text = json.dumps(payload)
 
-    def json(self) -> Any:
+    def json(self) -> _Payload:
         return self._payload
 
 
@@ -47,11 +49,11 @@ def _prefect_server(
     """Answer the preflight's three Prefect reads from a declared server state."""
     registrations = workers or {}
 
-    def _get(url: str, **_kwargs: Any) -> _Response:
+    def _get(url: str, **_kwargs: object) -> _Response:
         assert url.endswith(f"/deployments/name/{preview.LEGACY_FLOW_NAME}/run")
         return _Response(200, {"id": "d-1"}) if deployment else _Response(404, {})
 
-    def _post(url: str, **_kwargs: Any) -> _Response:
+    def _post(url: str, **_kwargs: object) -> _Response:
         if url.endswith("/work_pools/filter"):
             return _Response(200, [{"name": name} for name in pools])
         pool = url.removeprefix(f"{PREFECT_API}/work_pools/").removesuffix("/workers/filter")
@@ -68,9 +70,9 @@ def _process_list(monkeypatch: pytest.MonkeyPatch, *entries: tuple[int, str]) ->
     monkeypatch.setattr(preview, "_legacy_processes", lambda: tuple(entries))
 
 
-def _staged_up(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
+def _staged_up(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, started: list[str] | None = None) -> list[str]:
     """Run `preview.up` far enough to reach the preflight, recording what it starts."""
-    started: list[str] = []
+    started = [] if started is None else started
     monkeypatch.setattr(preview, "STATE_DIR", tmp_path / ".preview")
     monkeypatch.setattr(
         preview,
@@ -111,14 +113,16 @@ def _staged_up(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[str]:
 def test_up_refuses_a_legacy_deployment_and_names_the_reset_command(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    started: list[str] = []
     _prefect_server(monkeypatch, deployment=True)
     _process_list(monkeypatch)
 
     with pytest.raises(PreviewError) as refusal:
-        _staged_up(monkeypatch, tmp_path)
+        _staged_up(monkeypatch, tmp_path, started)
 
     assert f"{preview.LEGACY_FLOW_NAME}/run" in str(refusal.value)
     assert RESET_COMMAND in str(refusal.value)
+    assert started == []
 
 
 def test_up_refuses_a_running_legacy_host_process(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -130,15 +134,6 @@ def test_up_refuses_a_running_legacy_host_process(monkeypatch: pytest.MonkeyPatc
 
     assert "4242" in str(refusal.value)
     assert RESET_COMMAND in str(refusal.value)
-
-
-def test_up_starts_nothing_when_it_refuses(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    _prefect_server(monkeypatch, deployment=True)
-    _process_list(monkeypatch)
-
-    with pytest.raises(PreviewError):
-        started = _staged_up(monkeypatch, tmp_path)
-        assert started == []
 
 
 def test_up_proceeds_from_a_legacy_clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

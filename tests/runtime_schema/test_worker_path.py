@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 pytest.importorskip("prefect")
 pytest.importorskip("opsmill_prefect_extras")
 
-from infrahub_sync.managed import flow as managed_flow
+from infrahub_sync.service import flow as service_flow
 
 _SNAPSHOT: dict[str, Any] = {
     "BuiltinTag": {
@@ -161,7 +161,7 @@ def test_registered_composition_attaches_the_plan_to_the_runtime_instance(spy: _
     binding = ("cfg-runtime-models", 1, package.checksum())
     projection = _StubProjection(package, binding)
 
-    _, instance, name = managed_flow._worker_execution_context(
+    _, instance, name = service_flow._worker_execution_context(
         "run-runtime-models",
         binding,
         config_directory=str(tmp_path),
@@ -187,7 +187,7 @@ def test_a_legacy_unregistered_run_builds_no_runtime_models(spy: _SnapshotSpy, t
     reference = resolve_config_version(resolve_sync_instance("from-netbox", directory=str(tmp_path)))
     projection = _StubProjection(package, None, sync_name="from-netbox", configuration_reference=reference)
 
-    _, instance, _ = managed_flow._worker_execution_context(
+    _, instance, _ = service_flow._worker_execution_context(
         "legacy-run",
         None,
         config_directory=str(tmp_path),
@@ -217,19 +217,19 @@ def test_a_registered_stage_reaches_execution_with_its_models_bound(
     def _skip(*_args: object, **_kwargs: object) -> None:
         return None
 
-    monkeypatch.setattr(managed_flow, "execute_run", _record)
-    monkeypatch.setattr(managed_flow, "_publish_plan", _skip)
-    monkeypatch.setattr(managed_flow, "_verify_registered_apply", _skip)
-    monkeypatch.setattr(managed_flow, "_require_planned_schema", _skip)
+    monkeypatch.setattr(service_flow, "execute_run", _record)
+    monkeypatch.setattr(service_flow, "_publish_plan", _skip)
+    monkeypatch.setattr(service_flow, "_verify_registered_apply", _skip)
+    monkeypatch.setattr(service_flow, "_require_planned_schema", _skip)
 
-    result, _ = managed_flow._execute_stage(
+    result, _ = service_flow._execute_stage(
         "run-composed-sync",
         "sync",
         *binding,
         None,
         None,
         confirm_writes=True,
-        run_logger=managed_flow.logger,
+        run_logger=service_flow.logger,
         secrets=[],
         config_directory=str(tmp_path),
         projection=cast("ProductProjection", projection),
@@ -256,7 +256,7 @@ def test_only_stages_that_construct_adapters_read_the_schema(
     binding = ("cfg-runtime-models", 1, package.checksum())
     projection = _StubProjection(package, binding)
 
-    _, instance, _ = managed_flow._worker_execution_context(
+    _, instance, _ = service_flow._worker_execution_context(
         f"run-{stage}",
         binding,
         config_directory=str(tmp_path),
@@ -276,7 +276,7 @@ def test_a_saved_plan_apply_builds_no_source_requirements(spy: _SnapshotSpy, tmp
     binding = ("cfg-runtime-models", 1, package.checksum())
     projection = _StubProjection(package, binding)
 
-    _, instance, _ = managed_flow._worker_execution_context(
+    _, instance, _ = service_flow._worker_execution_context(
         "run-apply",
         binding,
         config_directory=str(tmp_path),
@@ -563,7 +563,7 @@ def test_the_plan_binds_onto_adapters_without_reading_generated_python(
 
 
 def _saved_plan() -> SavedPlan:
-    """The smallest real saved plan the managed stage's assertions accept."""
+    """The smallest real saved plan the service stage's assertions accept."""
     return SavedPlan(
         manifest=PlanManifest(
             format_version=1,

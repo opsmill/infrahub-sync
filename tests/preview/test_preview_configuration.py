@@ -41,7 +41,7 @@ def test_preview_routes_prefect_ui_to_the_published_host_port() -> None:
 
 
 def test_preview_declares_the_managed_postgresql_and_minio_storage_shape() -> None:
-    """Preview supplies storage and liveness settings to both managed processes."""
+    """Preview supplies storage and liveness settings to both service processes."""
     compose = (DEV_DIR / "docker-compose.preview.yml").read_text(encoding="utf-8")
     environment = preview._runtime_env(
         {

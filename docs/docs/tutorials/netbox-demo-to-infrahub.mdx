@@ -233,7 +233,7 @@ On macOS, create that loopback alias first with
 `sudo ifconfig lo0 alias 127.0.0.2 up`. If a process is bound to port 8000 on all
 interfaces, the second address cannot reuse that port; stop the conflicting process or
 start the Sync API on another port with
-`uv run uvicorn --factory infrahub_sync.managed.serve:build_app --host 127.0.0.2 --port 8001`,
+`uv run uvicorn --factory infrahub_sync.service.serve:build_app --host 127.0.0.2 --port 8001`,
 then use that port in `INFRAHUB_SYNC_API_URL`.
 
 1. Save this local service definition as `sync-services.yml`:
@@ -309,7 +309,7 @@ and Infrahub adapter credentials.
 
 ```bash
 uv run prefect work-pool create --type process sync-process-pool
-uv run python -m infrahub_sync.managed.deploy
+uv run python -m infrahub_sync.service.deploy
 uv run prefect worker start --pool sync-process-pool
 ```
 
@@ -317,7 +317,7 @@ uv run prefect worker start --pool sync-process-pool
 
 ```bash
 export INFRAHUB_SYNC_MANAGED_HOST="127.0.0.2"
-uv run python -m infrahub_sync.managed.serve
+uv run python -m infrahub_sync.service.serve
 ```
 
 6. In the terminal where you will run the CLI, configure the API credentials and verify

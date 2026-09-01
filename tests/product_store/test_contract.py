@@ -1155,7 +1155,7 @@ def test_execution_link_refuses_noncanonical_worker_identity_with_fixed_error() 
             }
         )
     errors = caught.value.errors(include_input=False)
-    assert errors[0]["msg"] == "Value error, managed worker identity is invalid"
+    assert errors[0]["msg"] == "Value error, service worker identity is invalid"
 
 
 def test_new_execution_requires_submitted_at_without_persistence(provider: ProductProjection) -> None:
@@ -1528,7 +1528,7 @@ def test_execution_claim_refuses_invalid_worker_identity_without_mutation(provid
         "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
     )
 
-    with pytest.raises(ValueError, match="managed worker identity is invalid"):
+    with pytest.raises(ValueError, match="service worker identity is invalid"):
         provider.claim_execution("run-001", "flow-001", worker_id="not-a-uuid", claimed_at=now)
 
     loaded = provider.lookup_run("run-001").value
@@ -2391,7 +2391,7 @@ def test_prefect_position_conflict_retries_without_misreporting_a_duplicate(tmp_
     assert [link.flow_run_id for link in loaded.prefect_executions] == ["flow-001"]
 
 
-def test_managed_prefect_attempt_ordinals_are_allocated_atomically(provider: ProductProjection) -> None:
+def test_service_prefect_attempt_ordinals_are_allocated_atomically(provider: ProductProjection) -> None:
     provider.create_run(_run())
 
     def append(position: int) -> PrefectExecutionLink:
@@ -4283,7 +4283,7 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
     # pylint: disable-next=import-outside-toplevel,import-error
     import psycopg  # ty: ignore[unresolved-import] - TODO: optional managed dependency
 
-    from infrahub_sync.managed.storage import PsycopgConnectionFactory
+    from infrahub_sync.service.storage import PsycopgConnectionFactory
 
     def connect() -> DBAPIConnection:
         return PsycopgConnectionFactory(psycopg.connect)(dsn)

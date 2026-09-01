@@ -95,7 +95,7 @@ jobs:
 
       - name: "Linting: ty check (direct Prefect Python 3.10)"
         if: matrix.python-version == '3.10'
-        run: "uv run ty check --exclude infrahub_sync/managed --exclude tests/managed ."
+        run: "uv run ty check --exclude infrahub_sync/service --exclude tests/service ."
 
       - name: "Linting: ty check (managed Python 3.11+)"
         if: matrix.python-version != '3.10'

@@ -15,7 +15,7 @@ import pytest
 
 from infrahub_sync.client.models import ApplyRunRequest, ConfigMutationRequest, CreateRunRequest
 from tasks.preview import SHARED_DEVICE_NAME
-from tests.preview import test_managed_api as smoke
+from tests.preview import test_service_api as smoke
 
 INFRAHUB_URL = "http://localhost:8080"
 CHECKSUM = "a" * 64

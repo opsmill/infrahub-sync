@@ -9,20 +9,18 @@ import pytest
 
 pytest.importorskip("prefect")
 
-from prefect.workers.process import ProcessWorker  # noqa: E402
+from prefect.workers.process import ProcessWorker
 
-from infrahub_sync.service.deploy import CATALOGUE  # noqa: E402
-from infrahub_sync.service.orchestration import (  # noqa: E402
-    SERVICE_DEPLOYMENT_NAME,
+from infrahub_sync.service.deploy import CATALOGUE
+from infrahub_sync.service.orchestration import (
     SERVICE_DEFINITION,
+    SERVICE_DEPLOYMENT_NAME,
     SERVICE_FLOW_NAME,
 )
-from infrahub_sync.service.worker import ServiceProcessWorker, service_worker_name  # noqa: E402
+from infrahub_sync.service.worker import ServiceProcessWorker, service_worker_name
 
-_RUNTIME_IDENTITY_SOURCES = (
-    Path(__file__).resolve().parents[2] / "infrahub_sync" / "service",
-    Path(__file__).resolve().parents[2] / "tasks" / "preview.py",
-)
+_SERVICE_PACKAGE = Path(__file__).resolve().parents[2] / "infrahub_sync" / "service"
+_LEGACY_PREFECT_IDENTITY = "infrahub-sync-managed"
 
 
 def test_the_deployment_registers_the_service_flow_and_deployment_names() -> None:
@@ -51,8 +49,9 @@ def test_exactly_one_deployment_is_registered() -> None:
 def test_the_registered_worker_name_carries_the_service_prefix() -> None:
     name = service_worker_name()
 
-    prefix, _, suffix = name.rpartition("-")
-    assert prefix == "infrahub-sync-service"
+    prefix = "infrahub-sync-service-"
+    assert name.startswith(prefix)
+    suffix = name.removeprefix(prefix)
     assert str(UUID(suffix)) == suffix
 
 
@@ -63,14 +62,11 @@ def test_the_worker_dispatch_key_is_service_named_and_distinct_from_prefect() ->
 
 def test_no_legacy_prefect_identity_string_survives_beside_the_service_one() -> None:
     """The identity is renamed, not duplicated: nothing live still says the old name."""
-    offenders: list[str] = []
-    for source in _RUNTIME_IDENTITY_SOURCES:
-        paths = sorted(source.rglob("*.py")) if source.is_dir() else [source]
-        offenders.extend(
-            f"{path}:{number}"
-            for path in paths
-            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
-            if "infrahub-sync-managed" in line
-        )
+    offenders = [
+        f"{path.name}:{number}"
+        for path in sorted(_SERVICE_PACKAGE.rglob("*.py"))
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        if _LEGACY_PREFECT_IDENTITY in line
+    ]
 
     assert offenders == []

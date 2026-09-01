@@ -1,7 +1,7 @@
 """Fixtures for the preview smoke suite.
 
 These tests run against the environment `invoke preview.up` starts and confirm
-the simple things on every preview surface (Python API, managed HTTP API,
+the simple things on every preview surface (Python API, Sync HTTP API,
 Prefect) so a tester never starts from a broken environment. They are not a
 replacement for human testing, and they skip — never fail — when the preview
 environment is not running.
@@ -48,7 +48,7 @@ def preview_env(preview_settings: dict[str, Any]) -> dict[str, Any]:
     probes = {
         "Infrahub": f"{preview_settings['urls']['infrahub']}/api/config",
         "Prefect": f"{preview_settings['urls']['prefect']}/api/health",
-        "managed Sync API": f"{preview_settings['urls']['sync_api']}/openapi.json",
+        "Sync API": f"{preview_settings['urls']['sync_api']}/openapi.json",
     }
     for description, url in probes.items():
         try:

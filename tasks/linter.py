@@ -29,18 +29,18 @@ PYLINT_BASELINE_MAX_COUNTS = {
 def _ty_check_command(python_major: int, python_minor: int) -> str:
     """Return the type-check command for the active supported runtime profile."""
     if (python_major, python_minor) == (3, 10):
-        return "uv run ty check --exclude infrahub_sync/managed --exclude tests/managed ."
+        return "uv run ty check --exclude infrahub_sync/service --exclude tests/service ."
     return "uv run ty check ."
 
 
 def _pylint_command(python_major: int, python_minor: int) -> str:
     """Return the Pylint command for the active supported runtime profile.
 
-    The managed tree imports optional dependencies that only install on Python
+    The service tree imports optional dependencies that only install on Python
     3.11+, so the documented 3.10 profile excludes it, mirroring the ty exclusion.
     """
     if (python_major, python_minor) == (3, 10):
-        return "pylint --output-format=json2 --ignore-paths='^infrahub_sync/managed/' infrahub_sync/"
+        return "pylint --output-format=json2 --ignore-paths='^infrahub_sync/service/' infrahub_sync/"
     return "pylint --output-format=json2 infrahub_sync/"
 
 

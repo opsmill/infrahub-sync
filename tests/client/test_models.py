@@ -11,8 +11,8 @@ import pytest
 from pydantic import ValidationError
 
 from infrahub_sync.client.models import OrchestrationSummary, PublicRunResource
-from infrahub_sync.managed.models import public_run_resource
 from infrahub_sync.product_store.models import PrefectExecutionLink, ProductRun
+from infrahub_sync.service.models import public_run_resource
 
 
 def _package_imports(root: Path, package: str) -> set[str]:
@@ -38,7 +38,7 @@ def test_client_package_imports_no_product_or_service_module() -> None:
     imports = _package_imports(Path("infrahub_sync/client"), "infrahub_sync.client")
 
     assert not {name for name in imports if name.startswith("infrahub_sync.product_store")}
-    assert not {name for name in imports if name.startswith("infrahub_sync.managed")}
+    assert not {name for name in imports if name.startswith("infrahub_sync.service")}
     assert not {name for name in imports if name.startswith("infrahub_sync.adapters")}
     assert not {name for name in imports if name.startswith("infrahub_sync.execution")}
     assert not {

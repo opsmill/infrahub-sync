@@ -56,17 +56,17 @@ def _envelope(surface: Surface) -> CanonicalEnvelope:
 
 
 def test_oracle_normalizes_only_generated_ids_and_timestamps() -> None:
-    assert_equivalent([_envelope("cli"), _envelope("python"), _envelope("managed")])
+    assert_equivalent([_envelope("cli"), _envelope("python"), _envelope("service")])
 
 
 def test_oracle_refuses_to_hide_a_named_product_field_disagreement() -> None:
     cli = _envelope("cli")
-    managed_data = dict(deepcopy(_envelope("managed").product_record))
-    managed_data["configuration_reference"] = "different-configuration"
-    managed = replace(_envelope("managed"), product_record=managed_data)
+    service_data = dict(deepcopy(_envelope("service").product_record))
+    service_data["configuration_reference"] = "different-configuration"
+    service = replace(_envelope("service"), product_record=service_data)
 
     with pytest.raises(AssertionError, match="canonical interface disagreement"):
-        assert_equivalent([cli, managed])
+        assert_equivalent([cli, service])
 
 
 @pytest.mark.parametrize(
@@ -75,17 +75,17 @@ def test_oracle_refuses_to_hide_a_named_product_field_disagreement() -> None:
 )
 def test_oracle_does_not_normalize_semantic_payload_keys(container: str, nested_field: str) -> None:
     cli = _envelope("cli")
-    managed = _envelope("managed")
+    service = _envelope("service")
     cli_data = dict(deepcopy(getattr(cli, container)))
-    managed_data = dict(deepcopy(getattr(managed, container)))
+    service_data = dict(deepcopy(getattr(service, container)))
     cli_data["payload"] = {nested_field: "semantic-a"}
-    managed_data["payload"] = {nested_field: "semantic-b"}
+    service_data["payload"] = {nested_field: "semantic-b"}
 
     with pytest.raises(AssertionError, match="canonical interface disagreement"):
         assert_equivalent(
             [
                 replace(cli, **{container: cli_data}),
-                replace(managed, **{container: managed_data}),
+                replace(service, **{container: service_data}),
             ]
         )
 

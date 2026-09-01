@@ -230,7 +230,7 @@ _SCHEMA_INITIALIZATION_ATTEMPTS = 2
 # supports up to 8 concurrent writers with margin above that observed worst case.
 _CONFIGURATION_VERSION_ATTEMPTS = 8
 _JSON_MAPPING_ADAPTER = TypeAdapter(dict[str, Any])
-_INVALID_MANAGED_WORKER_ID = "managed worker identity is invalid"
+_INVALID_SERVICE_WORKER_ID = "service worker identity is invalid"
 
 _INSERT_CONFIGURATION = "INSERT INTO configurations (config_id, created_at) VALUES (?, ?)"
 _SELECT_CONFIGURATION = "SELECT config_id, created_at FROM configurations WHERE config_id = ?"
@@ -2298,7 +2298,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
     ) -> bool:
         """Claim one pending execution; only a canonical Prefect worker UUID is accepted."""
         if not _is_canonical_uuid(worker_id):
-            raise ValueError(_INVALID_MANAGED_WORKER_ID)
+            raise ValueError(_INVALID_SERVICE_WORKER_ID)
         effective_claimed_at = claimed_at if claimed_at is not None else datetime.now(timezone.utc)
         _require_execution_timestamp(effective_claimed_at)
         admission_deadline_at = effective_claimed_at - timedelta(seconds=admission_ttl_seconds)
@@ -2342,7 +2342,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
     ) -> bool:
         """Atomically commit one claimed verdict and its business writeback."""
         if not _is_canonical_uuid(worker_id):
-            raise ValueError(_INVALID_MANAGED_WORKER_ID)
+            raise ValueError(_INVALID_SERVICE_WORKER_ID)
         if (terminal_state, terminal_outcome) not in {("completed", "succeeded"), ("failed", "failed")}:
             msg = "claimed execution terminal verdict is invalid"
             raise ValueError(msg)
@@ -2737,9 +2737,9 @@ def _run_from_rows(
     row: Sequence[Any],
     references: Sequence[Sequence[Any]],
     links: Sequence[Sequence[Any]],
-    managed_audit_links: Sequence[Sequence[Any]],
+    service_audit_links: Sequence[Sequence[Any]],
 ) -> ProductRun:
-    audit_links = tuple(dict.fromkeys((*json.loads(row[4]), *(str(item[0]) for item in managed_audit_links))))
+    audit_links = tuple(dict.fromkeys((*json.loads(row[4]), *(str(item[0]) for item in service_audit_links))))
     return ProductRun.model_validate(
         {
             "run_id": row[0],
@@ -2833,7 +2833,7 @@ def _cancellation_terminal_response(run_id: str, receipt_id: str) -> dict[str, A
     return {
         "error": {
             "code": "execution-terminal",
-            "message": "the managed execution is already terminal",
+            "message": "the service execution is already terminal",
             "status": 409,
             "run_id": run_id,
             "mutation_id": receipt_id,
