@@ -22,10 +22,10 @@ def test_embedded_v1_api_is_removed() -> None:
 def test_httpx_is_a_base_dependency_only() -> None:
     metadata = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     base, optional = metadata.split("[project.optional-dependencies]", maxsplit=1)
-    managed, _dev = optional.split("dev = [", maxsplit=1)
+    service, _dev = optional.split("dev = [", maxsplit=1)
 
     assert '"httpx>=0.27,<1"' in base
-    assert "httpx" not in managed
+    assert "httpx" not in service
 
 
 def test_typing_extensions_supports_the_python_310_client_tests() -> None:

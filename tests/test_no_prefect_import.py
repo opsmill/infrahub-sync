@@ -102,7 +102,7 @@ def _imported_names(path: Path, *, root: Path = REPO_ROOT) -> set[str]:
     return names
 
 
-def test_base_package_imports_and_runs_without_managed_dependencies_in_a_fresh_interpreter() -> None:
+def test_base_package_imports_and_runs_without_service_dependencies_in_a_fresh_interpreter() -> None:
     """Base imports and CLI sanity must not pull in service dependencies."""
     completed = subprocess.run(  # noqa: S603 - fixed argv, this interpreter, no shell
         [sys.executable, "-c", PROBE_SCRIPT],
@@ -115,7 +115,7 @@ def test_base_package_imports_and_runs_without_managed_dependencies_in_a_fresh_i
     assert "NO-OPTIONAL-SERVICE-IMPORT-OK" in completed.stdout
 
 
-def test_execution_surface_imports_no_optional_managed_runtime() -> None:
+def test_execution_surface_imports_no_optional_service_runtime() -> None:
     """The shared surface imports no optional runtime distribution or package."""
     imported = _imported_names(PACKAGE_ROOT / "execution.py")
     assert not [name for name in imported if name.partition(".")[0] in OPTIONAL_DISTRIBUTION_NAMES]
@@ -135,7 +135,7 @@ def test_no_base_package_module_imports_an_optional_runtime_package() -> None:
     assert not {path: names for path, names in offenders.items() if names}
 
 
-def test_base_install_workflow_proves_external_managed_runtimes_are_unavailable() -> None:
+def test_base_install_workflow_proves_external_service_runtimes_are_unavailable() -> None:
     """The real base-profile leg checks the exact AR6 external dependency set."""
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
     match = re.search(r"for module in (?P<modules>[^;\n]+); do", workflow)

@@ -196,7 +196,7 @@ _NOT_FOUND = 404
 
 
 def _wait_for_http(url: str, description: str, timeout: int = WAIT_TIMEOUT_SECONDS) -> None:
-    import httpx  # noqa: PLC0415 -- lazy so importing the tasks package never requires the managed extras
+    import httpx  # noqa: PLC0415 -- lazy so importing the tasks package never requires the service extras
 
     print(f" - [{NAMESPACE}] Waiting for {description} at {url}")
     deadline = time.monotonic() + timeout

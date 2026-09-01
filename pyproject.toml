@@ -60,14 +60,14 @@ infrahub-sync = "infrahub_sync.cli:app"
 prefect = [
     "prefect==3.8.1",
 ]
-# Managed HTTP service and worker profile (Python 3.11-3.13). Every runtime
-# imported directly by `infrahub_sync.managed` is declared here; the reusable
+# Sync HTTP service and worker profile (Python 3.11-3.13). Every runtime
+# imported directly by `infrahub_sync.service` is declared here; the reusable
 # Prefect integration is pinned to the reviewed DB-102/103/104 stack exactly.
 # The previous `opsmill-prefect-extras` private Git pin is vendored instead: the
 # package ships from this repository at `opsmill_prefect_extras/`, byte-identical to
 # upstream commit 97465e75137f6121d0377cd637383cfb3530d734. See
 # `opsmill_prefect_extras/VENDORED.md` for the freeze and re-adoption rules.
-managed = [
+service = [
     "boto3>=1.35,<2; python_version >= '3.11'",
     "fastapi>=0.115,<1; python_version >= '3.11'",
     "prefect==3.8.1; python_version >= '3.11'",

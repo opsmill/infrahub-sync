@@ -18,7 +18,7 @@ Use Python 3.11–3.13 for the full development profile. The former private
 (frozen; see its `VENDORED.md`), so no special repository access is required:
 
 ```bash
-uv sync --extra dev --extra prefect --extra managed
+uv sync --extra dev --extra prefect --extra service
 ```
 
 On Python 3.10, install the direct Prefect profile instead. Managed Sync supports Python

@@ -54,7 +54,7 @@ Use `rumdl check .` and fix violations by hand. When you only want the Python fo
 
 Raw `pylint infrahub_sync/` reports inherited findings. Measured directly on this repository
 at commit `697b2f4`, using Python 3.13.3, Pylint 4.0.5, and an environment synced with
-`--extra dev --extra prefect --extra managed`:
+`--extra dev --extra prefect --extra service`:
 
 - exit code **28**, which is pylint's bitmask for warning (4) + refactor (8) + convention
   (16) — not a count;
@@ -114,7 +114,7 @@ restore incidental generated-file changes before committing unrelated work.
 ## CI
 
 Python 3.11–3.13 linting runs in an environment synced with
-`--extra dev --extra prefect --extra managed`. The type gate checks the full tree except
+`--extra dev --extra prefect --extra service`. The type gate checks the full tree except
 the frozen vendored upstream tests (excluded via `[tool.ty.src]`); the former private
 `opsmill/prefect-extras` Git dependency is vendored in-repo, so no special access is
 required.

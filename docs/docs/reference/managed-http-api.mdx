@@ -20,11 +20,11 @@ profile yet, so install from a repository checkout on the API host and every wor
 that can run its deployment:
 
 ```bash
-uv sync --extra dev --extra prefect --extra managed
+uv sync --extra dev --extra prefect --extra service
 ```
 
 Once a release with the managed profile is published, `pip install
-'infrahub-sync[managed]'` becomes the deployment path.
+'infrahub-sync[service]'` becomes the deployment path.
 
 The profile directly installs FastAPI, HTTPX, Uvicorn, Prefect 3.8.1, Psycopg, and Boto3. The OpsMill
 Prefect Extras integration ships with the package itself as a vendored copy of upstream

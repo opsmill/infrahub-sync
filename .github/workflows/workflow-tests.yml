@@ -63,11 +63,11 @@ jobs:
         if: matrix.python-version == '3.10'
         run: uv sync --python 3.10 --frozen --extra dev --extra prefect
 
-      # Managed HTTP support is Python 3.11+; the separate 3.10 leg still proves
+      # The Sync HTTP service is Python 3.11+; the separate 3.10 leg still proves
       # the direct Prefect orchestration profile.
-      - name: "Install managed dependencies on Python 3.11+"
+      - name: "Install service dependencies on Python 3.11+"
         if: matrix.python-version != '3.10'
-        run: uv sync --python ${{ matrix.python-version }} --frozen --extra dev --extra prefect --extra managed
+        run: uv sync --python ${{ matrix.python-version }} --frozen --extra dev --extra prefect --extra service
 
       # Runs only `-m "not integration"`. Integration tests need a live
       # Infrahub instance and are opted into via `invoke tests-integration`
@@ -81,7 +81,7 @@ jobs:
     # the base package neither imports nor needs Prefect; only an install where
     # Prefect is genuinely absent proves the base install still imports and the CLI
     # still runs. The flow suite skips here, by design.
-    name: "Unit Tests (base install, Python 3.10, no managed runtimes)"
+    name: "Unit Tests (base install, Python 3.10, no service runtimes)"
     needs: ["files-changed"]
     if: needs.files-changed.outputs.sync == 'true'
     runs-on: "ubuntu-22.04"
@@ -106,9 +106,9 @@ jobs:
 
       # opsmill_prefect_extras is vendored first-party code shipped with the package,
       # so it is present on disk in every install; the base-package guarantee that
-      # nothing imports it without the managed extra is enforced by
+      # nothing imports it without the service extra is enforced by
       # tests/test_no_prefect_import.py.
-      - name: "Assert managed runtime dependencies are absent from this environment"
+      - name: "Assert service runtime dependencies are absent from this environment"
         run: |
           for module in boto3 botocore fastapi prefect psycopg; do
             if uv run --no-sync python -c "import ${module}" 2>/dev/null; then

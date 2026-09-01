@@ -4235,7 +4235,7 @@ def test_postgresql_schema_bootstrap_propagates_a_non_duplicate_alter_failure() 
 def _reachable_postgresql_dsn() -> str | None:
     """Return a reachable PostgreSQL DSN from ``PRODUCT_STORE_TEST_POSTGRESQL_DSN``, or None.
 
-    The managed extra supplies ``psycopg``; an absent driver or unreachable endpoint still
+    The service extra supplies ``psycopg``; an absent driver or unreachable endpoint still
     skips this opt-in test before it can contact a service.
     """
     dsn = os.environ.get("PRODUCT_STORE_TEST_POSTGRESQL_DSN")
@@ -4243,7 +4243,7 @@ def _reachable_postgresql_dsn() -> str | None:
         return None
     try:
         # pylint: disable-next=import-outside-toplevel,import-error
-        import psycopg  # ty: ignore[unresolved-import] - TODO: optional managed dependency
+        import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
     except ImportError:
         return None
     try:
@@ -4281,7 +4281,7 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
     if dsn is None:
         pytest.skip("psycopg is not installed, or PRODUCT_STORE_TEST_POSTGRESQL_DSN is unset/unreachable")
     # pylint: disable-next=import-outside-toplevel,import-error
-    import psycopg  # ty: ignore[unresolved-import] - TODO: optional managed dependency
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
 
     from infrahub_sync.service.storage import PsycopgConnectionFactory
 
@@ -4364,7 +4364,7 @@ def _assert_real_postgresql_refuses_partial_configuration_binding(dsn: str) -> N
     reasonable; it has exactly one caller.
     """
     # pylint: disable-next=import-outside-toplevel,import-error
-    import psycopg  # ty: ignore[unresolved-import] - TODO: optional managed dependency
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
 
     def raw_insert(
         run_id: str, *, config_id: str | None, registry_version: int | None, package_checksum: str | None

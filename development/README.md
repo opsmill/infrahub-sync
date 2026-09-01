@@ -18,7 +18,7 @@ the walkthrough, rerun `preview.smoke`, or reset volumes before running
 ## Start
 
 ```bash
-uv sync --extra dev --extra prefect --extra managed
+uv sync --extra dev --extra prefect --extra service
 uv run invoke preview.up
 ```
 

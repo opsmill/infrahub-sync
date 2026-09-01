@@ -252,7 +252,7 @@ def test_netbox_tutorial_starts_and_authenticates_the_service_boundary() -> None
     text = (ROOT / "docs/docs/tutorials/netbox-demo-to-infrahub.mdx").read_text(encoding="utf-8")
 
     required = (
-        "infrahub-sync[managed]",
+        "infrahub-sync[service]",
         "prefect server start",
         "prefect worker start",
         "infrahub_sync.service.deploy",

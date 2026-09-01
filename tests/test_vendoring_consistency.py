@@ -30,8 +30,8 @@ def test_vendored_package_state_is_consistent() -> None:
     vendored = VENDORED_DIR.is_dir()
 
     wheel_packages = data["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]
-    managed_deps = data["project"]["optional-dependencies"]["managed"]
-    has_git_dep = any("prefect-extras.git" in dep for dep in managed_deps)
+    service_deps = data["project"]["optional-dependencies"]["service"]
+    has_git_dep = any("prefect-extras.git" in dep for dep in service_deps)
 
     if vendored:
         assert "opsmill_prefect_extras" in wheel_packages, "vendored dir present but not shipped in the wheel"
@@ -44,12 +44,12 @@ def test_vendored_package_state_is_consistent() -> None:
         assert not VENDORED_TESTS_DIR.exists(), "vendored tests remain after the package was re-adopted"
 
 
-def test_managed_storage_drivers_are_not_base_dependencies() -> None:
-    """Only the managed profile carries PostgreSQL and S3 client dependencies."""
+def test_service_storage_drivers_are_not_base_dependencies() -> None:
+    """Only the service profile carries PostgreSQL and S3 client dependencies."""
     data = _pyproject()
     base_dependencies = data["project"]["dependencies"]
-    managed_dependencies = data["project"]["optional-dependencies"]["managed"]
+    service_dependencies = data["project"]["optional-dependencies"]["service"]
 
     for package in ("boto3", "psycopg"):
         assert not any(dependency.lower().startswith(package) for dependency in base_dependencies)
-        assert any(dependency.lower().startswith(package) for dependency in managed_dependencies)
+        assert any(dependency.lower().startswith(package) for dependency in service_dependencies)
