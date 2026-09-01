@@ -99,8 +99,14 @@ def _saved(run_id: str) -> SavedPlan:
     return SavedPlan(manifest=manifest, operations=[], checksum_ok=True, verification_notes=[])
 
 
-def _instance(configuration: ConfigurationPackage, *, directory: str) -> SimpleNamespace:  # noqa: ARG001
+def _instance(
+    configuration: ConfigurationPackage,
+    *,
+    directory: str,
+    resolve_source_credentials: bool = True,
+) -> SimpleNamespace:
     """Build the flow's minimal runtime fake from a registered package."""
+    del directory, resolve_source_credentials
     return SimpleNamespace(name=configuration.configuration.name)
 
 
@@ -451,7 +457,13 @@ def test_managed_flow_redacts_worker_logs_exception_chain_and_failed_state(
     monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (run_logger, True))
 
-    def resolve(_sync_name: str, *, directory: str):  # noqa: ARG001
+    def resolve(
+        _sync_name: str,
+        *,
+        directory: str,
+        resolve_source_credentials: bool = True,
+    ):
+        del directory, resolve_source_credentials
         logging.getLogger("infrahub_sync.managed.worker").warning(
             "resolution used %s",
             environment_canary,

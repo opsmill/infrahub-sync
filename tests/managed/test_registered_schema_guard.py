@@ -182,6 +182,7 @@ def _harness(
     )
 
     instance = resolve_runtime_instance(package, directory=str(tmp_path))
+    instance._configuration_binding = binding
     recorded = (
         schema_fingerprint
         if schema_fingerprint is not None
