@@ -31,6 +31,7 @@ from infrahub_sync.client import (
     PublicRunResource,
     RegisteredConfigurationResource,
     RegisteredVersionResource,
+    ResultsResource,
     RunResource,
     RunTerminalError,
     RunWaitTimeoutError,
@@ -333,6 +334,49 @@ def test_apply_sends_only_reviewed_checksum_and_shipped_fields(client: MagicMock
     assert key == "retry-apply"
 
 
+@pytest.mark.parametrize(
+    ("error_type", "expects_hint"),
+    [("PlanSchemaChangedError", True), ("OperationApplyFailedError", False)],
+)
+def test_failed_apply_renders_recorded_failure_with_only_the_schema_drift_hint(
+    client: MagicMock,
+    error_type: str,
+    expects_hint: bool,
+) -> None:
+    client.wait_for_run.side_effect = RunTerminalError(
+        "service-run-1",
+        terminal_state="failed",
+        terminal_outcome="failed",
+        phase="apply-failed",
+        outcome="failed",
+    )
+    client.get_results.return_value = ResultsResource(
+        run_id="service-run-1",
+        results={
+            "apply_failure": {
+                "stage": "apply",
+                "outcome": "failed",
+                "error_type": error_type,
+            }
+        },
+    )
+
+    result = _invoke(
+        client,
+        "apply",
+        "service-run-1",
+        "--expected-checksum",
+        CHECKSUM,
+        "--reason",
+        "apply reviewed plan",
+    )
+
+    assert result.exit_code == 1
+    client.get_results.assert_called_once_with("service-run-1")
+    assert f"apply failed: {error_type}" in result.output
+    assert ("hint: create and review a new plan before applying again" in result.output) is expects_hint
+
+
 def test_runs_plan_filters_detail_and_marks_deletes_not_executed(client: MagicMock) -> None:
     result = _invoke(client, "runs", "plan", "service-run-1", "--detail", "--kind", "Site")
 
@@ -342,6 +386,16 @@ def test_runs_plan_filters_detail_and_marks_deletes_not_executed(client: MagicMo
     assert "op-delete" in result.output
     assert "(not executed)" in result.output
     assert "op-create" not in result.output
+
+
+def test_runs_plan_renders_schema_fingerprint_when_present(client: MagicMock) -> None:
+    fingerprint = "b" * 64
+    client.get_plan.return_value = _plan().model_copy(update={"schema_fingerprint": fingerprint})
+
+    result = _invoke(client, "runs", "plan", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert f"schema_fingerprint: {fingerprint}" in result.output
 
 
 def test_runs_plan_unfiltered_detail_renders_every_operation(client: MagicMock) -> None:

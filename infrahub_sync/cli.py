@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from contextlib import contextmanager
+from enum import Enum
 from math import isfinite
 from pathlib import Path  # noqa: TC003 - Typer resolves command annotations at runtime.
 from typing import TYPE_CHECKING, Any, cast
@@ -46,6 +48,7 @@ if TYPE_CHECKING:
 
 DEFAULT_WAIT_TIMEOUT = 30 * 60.0
 DEFAULT_POLL_INTERVAL = 2.0
+VERBOSITY_MAP = {"quiet": logging.WARNING, "default": logging.INFO, "verbose": logging.DEBUG}
 _REQUEST_ARG = "request"
 _PACKAGE_ARG = "package"
 _KIND_ARG = "kind"
@@ -57,6 +60,24 @@ app.add_typer(configs_app, name="configs")
 app.add_typer(runs_app, name="runs")
 
 
+class Verbosity(str, Enum):
+    """Supported package logging levels for CLI calls."""
+
+    quiet = "quiet"
+    default = "default"
+    verbose = "verbose"
+
+
+def _setup_logging(level: int = logging.INFO) -> None:
+    """Configure package logging for one CLI invocation."""
+    package_logger = logging.getLogger("infrahub_sync")
+    package_logger.setLevel(level)
+    if not package_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s | %(name)s | %(message)s"))
+        package_logger.addHandler(handler)
+
+
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
@@ -66,10 +87,21 @@ def main(
         envvar="INFRAHUB_SYNC_API_URL",
         help="Absolute URL of the Sync API. Defaults to INFRAHUB_SYNC_API_URL.",
     ),
+    verbosity: Verbosity = typer.Option(Verbosity.default, "--verbosity", help="Log verbosity level."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Shorthand for --verbosity verbose."),  # noqa: FBT003
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Shorthand for --verbosity quiet."),  # noqa: FBT003
 ) -> None:
     """Synchronize registered configurations through the Sync API."""
+    if quiet:
+        level = logging.WARNING
+    elif verbose:
+        level = logging.DEBUG
+    else:
+        level = VERBOSITY_MAP[verbosity.value]
+    _setup_logging(level=level)
     ctx.ensure_object(dict)
     ctx.obj["api_url"] = api_url or ""
+    ctx.obj["verbosity"] = level
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
 
@@ -461,16 +493,17 @@ def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = N
         operations = [operation for operation in operations if operation.kind == kind]
         if not operations:
             raise ClientInputError(_KIND_ARG)
-    _echo_fields(
-        (
-            ("run_id", plan.run_id),
-            ("plan_checksum", plan.checksum),
-            ("checksum_ok", plan.checksum_ok),
-            ("checksum_source", "Sync API saved plan"),
-            ("operations", plan.summary.total),
-            ("delete_operations_computed", plan.summary.delete_operations_computed),
-        )
-    )
+    fields: list[tuple[str, object]] = [
+        ("run_id", plan.run_id),
+        ("plan_checksum", plan.checksum),
+        ("checksum_ok", plan.checksum_ok),
+        ("checksum_source", "Sync API saved plan"),
+        ("operations", plan.summary.total),
+        ("delete_operations_computed", plan.summary.delete_operations_computed),
+    ]
+    if plan.schema_fingerprint is not None:
+        fields.append(("schema_fingerprint", plan.schema_fingerprint))
+    _echo_fields(tuple(fields))
     for note in plan.verification_notes:
         typer.echo(f"verification_note: {note}")
     _echo_counts("by_action", plan.summary.by_action)
@@ -608,13 +641,30 @@ def apply_cmd(
         )
         accepted = client.apply(run_id, request, key)
         _echo_run(accepted)
-        completed = _wait(
-            client,
-            accepted,
-            wait=wait,
-            wait_timeout=wait_timeout,
-            poll_interval=poll_interval,
-        )
+        try:
+            completed = _wait(
+                client,
+                accepted,
+                wait=wait,
+                wait_timeout=wait_timeout,
+                poll_interval=poll_interval,
+            )
+        except RunTerminalError as error:
+            failure = client.get_results(error.run_id).results.get("apply_failure")
+            if isinstance(failure, dict):
+                stage = failure.get("stage")
+                error_type = failure.get("error_type")
+                if (
+                    stage == "apply"
+                    and isinstance(error_type, str)
+                    and len(error_type) <= 128
+                    and error_type.isascii()
+                    and error_type.isidentifier()
+                ):
+                    typer.echo(f"{stage} failed: {error_type}", err=True)
+                    if error_type == "PlanSchemaChangedError":
+                        typer.echo("hint: create and review a new plan before applying again", err=True)
+            raise
         if wait:
             _echo_run(completed)
 

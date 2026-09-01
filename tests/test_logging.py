@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import ast
+import logging
 from pathlib import Path
+
+import pytest
 
 PACKAGE_DIR = Path(__file__).resolve().parent.parent / "infrahub_sync"
 
@@ -95,3 +98,28 @@ def test_modules_have_logger() -> None:
     }
     missing_core = [f for f in missing if f in core_files]
     assert not missing_core, "Core modules missing logger definition:\n" + "\n".join(missing_core)
+
+
+@pytest.mark.parametrize(
+    ("global_options", "command", "expected_level"),
+    [
+        (("-v",), ("configs", "--help"), logging.DEBUG),
+        (("-q",), ("runs", "plan", "--help"), logging.WARNING),
+        (("--verbosity", "default"), ("diff", "--help"), logging.INFO),
+        (("--verbosity", "verbose"), ("sync", "--help"), logging.DEBUG),
+        (("--verbosity", "quiet"), ("apply", "--help"), logging.WARNING),
+    ],
+)
+def test_logging_flags_remain_active_on_converted_commands(
+    global_options: tuple[str, ...],
+    command: tuple[str, ...],
+    expected_level: int,
+) -> None:
+    from typer.testing import CliRunner
+
+    from infrahub_sync.cli import app
+
+    result = CliRunner().invoke(app, [*global_options, *command])
+
+    assert result.exit_code == 0, result.output
+    assert logging.getLogger("infrahub_sync").level == expected_level

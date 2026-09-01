@@ -309,6 +309,32 @@ def test_all_route_methods_send_the_frozen_contract() -> None:
     }
 
 
+def test_get_results_parses_schema_drift_apply_failure() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(
+            200,
+            json={
+                "run_id": "run-1",
+                "results": {
+                    "apply_failure": {
+                        "stage": "apply",
+                        "outcome": "failed",
+                        "error_type": "PlanSchemaChangedError",
+                    }
+                },
+            },
+        )
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+
+    failure = cast("dict[str, object]", client.get_results("run-1").results["apply_failure"])
+
+    assert failure["stage"] == "apply"
+    assert failure["error_type"] == "PlanSchemaChangedError"
+
+
 def test_register_config_403_retains_machine_fields_and_discards_secrets() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/version":
