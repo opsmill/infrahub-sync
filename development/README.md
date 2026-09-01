@@ -1,19 +1,20 @@
 # Preview environment
 
 One command from a fresh clone to a complete, testable Infrahub Sync v3 stack:
-a disposable Infrahub instance, a dedicated Prefect server, the Sync
-HTTP API, a Prefect worker running the service deployment, a loaded example
-schema, and a first saved plan — finished with an automatic smoke run across
-every preview surface so you never start from a broken environment.
+a disposable Infrahub instance, a dedicated Prefect server, the Sync HTTP API,
+and a Prefect worker running the service deployment.
 
-The smoke run writes its five example devices only to the `preview-smoke`
-Infrahub branch. `main` stays empty, so the custom-example CLI walkthrough
-starts with five creates; after applying that reviewed plan, the next plan has
-zero operations.
+`preview.up` starts that stack and stops there. It writes nothing to Infrahub
+and admits no Sync run, so repeating it against an environment somebody is
+already using changes none of their data.
 
-`preview.up` checks that pristine `main` state during startup. After completing
-the walkthrough, rerun `preview.smoke`, or reset volumes before running
-`preview.up` again.
+Two commands write, and each says what it will write before writing:
+
+- `preview.seed` loads the example schema, creates the `InfraDevice` named
+  `core01` on `main`, then forks the `preview-smoke` branch from it. Running it
+  again on an environment that already holds the branch changes nothing.
+- `preview.smoke` seeds, then runs the smoke suite. That suite mutates `core01`
+  on `main` and creates and applies real Sync runs against `preview-smoke`.
 
 ## Start
 
@@ -26,7 +27,7 @@ The final summary prints the Infrahub UI, Prefect UI, and Sync API
 addresses, the bearer principals, and where runtime state lives. Requires
 Docker and Python 3.11+.
 
-Other commands: `preview.status`, `preview.smoke`, `preview.logs`
+Other commands: `preview.status`, `preview.seed`, `preview.smoke`, `preview.logs`
 (`--name sync-api|prefect-worker`), `preview.down` (add `--volumes` to reset
 all data).
 
