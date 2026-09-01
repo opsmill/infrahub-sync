@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from invoke import Context, UnexpectedExit, task
+from invoke import Context, task
 
 from .utils import ESCAPED_REPO_PATH
 
@@ -223,6 +223,22 @@ def _wait_for_http(url: str, description: str, timeout: int = WAIT_TIMEOUT_SECON
         time.sleep(3)
     msg = f"{description} did not become ready within {timeout}s (last: {last_error})"
     raise PreviewError(msg)
+
+
+def _infrahub_reachable(infrahub_address: str) -> bool:
+    """Report whether Infrahub answers at all, on the endpoint `up` waits for.
+
+    A stopped stack is the one condition under which the smoke skips seeding: the suite
+    then reports the unreachable endpoint itself. Every other seed failure is a real
+    failure and belongs to the caller.
+    """
+    import httpx  # noqa: PLC0415 -- lazy so importing the tasks package never requires the service extras
+
+    try:
+        httpx.get(f"{infrahub_address}/api/config", timeout=5)
+    except httpx.HTTPError:
+        return False
+    return True
 
 
 def _prefect_call(method: str, url: str) -> httpx.Response:
@@ -490,18 +506,12 @@ def seed(context: Context) -> None:
 @task
 def smoke(context: Context) -> None:
     """Seed the smoke dataset, then run the smoke suite against the running environment."""
-    from infrahub_sdk.exceptions import (  # noqa: PLC0415 -- keep Invoke task imports lightweight
-        ServerNotReachableError,
-    )
-
     env = _runtime_env(load_preview_env())
-    print(f" - [{NAMESPACE}] The smoke suite writes, so it seeds first")
-    try:
+    if _infrahub_reachable(env["INFRAHUB_ADDRESS"]):
+        print(f" - [{NAMESPACE}] The smoke suite writes, so it seeds first")
         seed(context)
-    except (ServerNotReachableError, UnexpectedExit):
-        # Preserve the suite's polite stopped-environment behavior: its session
-        # fixture reports the unavailable endpoint and skips the preview tests.
-        print(f" - [{NAMESPACE}] The preview could not be seeded; smoke tests will report the environment state")
+    else:
+        print(f" - [{NAMESPACE}] Infrahub is not reachable; smoke tests will report the environment state")
     print(f" - [{NAMESPACE}] Running the preview smoke suite")
     with context.cd(ESCAPED_REPO_PATH):
         # Single-process deliberately: the suite's modules share one Infrahub branch and

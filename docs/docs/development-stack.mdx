@@ -89,10 +89,12 @@ different ones.
 
 ## The stack refuses to start on retired state
 
-`preview.up` reads Prefect and the host process list before starting anything, and
-refuses when it finds state left under the names this service used before its rename:
-the `infrahub-sync-managed` deployment, a work pool or worker whose name starts with it,
-or a host process running `infrahub_sync.managed.serve` or `infrahub_sync.managed.worker`.
+`preview.up` starts the containers and waits for Infrahub and Prefect to answer, then
+reads Prefect and the host process list before it starts the worker, the deployment, and
+the Sync API. It refuses at that point when it finds state left under the names this
+service used before its rename: the `infrahub-sync-managed` deployment, a work pool or
+worker whose name starts with it, or a host process running `infrahub_sync.managed.serve`
+or `infrahub_sync.managed.worker`.
 
 The refusal names its own fix:
 
