@@ -2515,3 +2515,37 @@ def test_a_none_valued_cardinality_one_reference_is_absent_from_the_plan() -> No
     # And there is no shape it could have taken: a `one` reference must name a peer.
     with pytest.raises(ValidationError):
         RelationshipReference(field="site", peer_kind="LocationSite", cardinality="one", peers=[])
+
+
+# =======================================================================================
+# AR7 — a registered plan run records the schema its models were built from
+# =======================================================================================
+
+
+def test_a_registered_plan_run_records_the_runtime_snapshot_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The recorded binding comes from the run's own model-building snapshot, not a re-read."""
+    from infrahub_sync.runtime_schema import RuntimeModelPlan, RuntimeSideModels
+
+    binding = ("config-001", 1, "a" * 64)
+    fingerprint = "b" * 64
+    config = build_config()
+    config._configuration_binding = binding
+    config._runtime_models = RuntimeModelPlan(
+        branch="main",
+        schema_fingerprint=fingerprint,
+        destination=RuntimeSideModels(adapter_class=object, models={}),
+        source=None,
+    )
+
+    pin_extraction_decisions(monkeypatch, [False, False])
+    potenda = build_potenda(
+        config=config,
+        source=qualified_source(),
+        destination=destination_with_orphan(),
+        run_id="20260731T1200-ab01cd02",
+    )
+    run_plan(potenda)
+
+    manifest = read_manifest(plan_run_dir(potenda))
+    assert manifest["schema_fingerprint"] == fingerprint
+    assert set(manifest) == MANIFEST_KEYS | {"config_id", "registry_version", "package_checksum", "schema_fingerprint"}

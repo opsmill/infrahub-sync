@@ -19,6 +19,7 @@ import pytest
 
 from infrahub_sync.configuration import capabilities as capabilities_module
 from infrahub_sync.configuration import parse_configuration_package
+from infrahub_sync.runtime_schema import CARDINALITIES, normalize_destination_schema
 
 INFRAHUB_ADDRESS = os.environ.get("INFRAHUB_ADDRESS")
 INFRAHUB_API_TOKEN = os.environ.get("INFRAHUB_API_TOKEN")
@@ -48,13 +49,40 @@ def _live_package_data() -> dict[str, Any]:
 
 
 def test_the_live_accessor_returns_a_judgeable_snapshot() -> None:
+    """The live read delivers every property the consumed-semantics projection reads.
+
+    `human_friendly_id` and `uniqueness_constraints` are part of that projection — a
+    change to either invalidates a saved plan — so a snapshot carrying only attributes and
+    relationships would leave the plan guard comparing less than it claims to.
+    """
     package = parse_configuration_package(_live_package_data())
 
     snapshot = capabilities_module._read_infrahub_destination_schema(package, "main")
 
     assert snapshot
     for entry in snapshot.values():
-        assert set(entry) == {"attributes", "relationships"}
-        assert all(isinstance(kind, str) for kind in entry["attributes"].values())
+        assert set(entry) == {"human_friendly_id", "uniqueness_constraints", "attributes", "relationships"}
+        assert all(isinstance(component, str) for component in entry["human_friendly_id"])
+        for constraint in entry["uniqueness_constraints"]:
+            assert all(isinstance(component, str) for component in constraint)
+        for attribute in entry["attributes"].values():
+            assert set(attribute) == {"kind", "optional", "default_value", "unique"}
+            assert isinstance(attribute["kind"], str)
+            assert isinstance(attribute["optional"], bool)
+            assert isinstance(attribute["unique"], bool)
         for relationship in entry["relationships"].values():
-            assert set(relationship) == {"peer", "cardinality"}
+            assert set(relationship) == {"peer", "cardinality", "optional", "kind"}
+            assert isinstance(relationship["peer"], str)
+            assert relationship["cardinality"] in CARDINALITIES
+            assert isinstance(relationship["optional"], bool)
+            assert isinstance(relationship["kind"], str)
+
+
+def test_the_live_snapshot_normalizes_into_the_closed_domain() -> None:
+    """The property the guard depends on: a live read is consumable without coercion."""
+    package = parse_configuration_package(_live_package_data())
+
+    snapshot = capabilities_module._read_infrahub_destination_schema(package, "main")
+    normalized = normalize_destination_schema(snapshot)
+
+    assert set(normalized.kinds) == set(snapshot)

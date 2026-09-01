@@ -41,7 +41,13 @@ from infrahub_sync.plan.models import (
     VerificationFailure,
     require_run_relative_path,
 )
-from infrahub_sync.plan.reader import operation_record_lines, stat_or_unreadable, supported_versions_text
+from infrahub_sync.plan.reader import (
+    DuplicateManifestKeyError,
+    load_manifest_mapping,
+    operation_record_lines,
+    stat_or_unreadable,
+    supported_versions_text,
+)
 from infrahub_sync.plan.writer import OPERATIONS_FILE_NAME, PLAN_DIR_NAME
 
 if TYPE_CHECKING:
@@ -88,12 +94,17 @@ def manifest_mapping_or_none(manifest_bytes: bytes | None) -> dict[str, Any] | N
 
     Named `..._or_none` rather than `manifest_mapping`, which `plan_checksum_failure` below
     already uses for the parameter that receives this function's result.
+
+    Decoding is the reader's strict `load_manifest_mapping`, so a manifest declaring one key
+    twice is *unparseable* here rather than silently resolved to its last value. Both readers
+    of the manifest share that one rule, which is what stops a duplicated binding being
+    re-checksummed into an artifact this gate would pass.
     """
     if manifest_bytes is None:
         return None
     try:
-        mapping = json.loads(manifest_bytes)
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        mapping = load_manifest_mapping(manifest_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError, DuplicateManifestKeyError):
         return None
     return mapping if isinstance(mapping, dict) else None
 

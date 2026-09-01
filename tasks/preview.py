@@ -39,12 +39,21 @@ COMPOSE_FILES = (
 )
 SCHEMA_FILE = REPO_ROOT / "examples" / "prefect_remote_run" / "schemas" / "infra_device.yml"
 SMOKE_BRANCH = "preview-smoke"
+# The kind the preview schema defines, and the one device both branches share. It is
+# seeded on `main` *before* the smoke branch forks, so the branch inherits it; the
+# registered smoke then mutates it on `main` alone and has a real update to plan and
+# apply rather than only a create. Its name is one `custom-example`'s own source
+# already owns, so the CLI-cycle smoke still converges to zero operations instead of
+# carrying a recorded, never-executed delete for it on every re-plan.
+SMOKE_KIND = "InfraDevice"
+SHARED_DEVICE_NAME = "core01"
+SHARED_DEVICE_SEED_TYPE = "preview-seed"
 EXPECT_MAIN_EMPTY_ENV = "INFRAHUB_SYNC_PREVIEW_EXPECT_MAIN_EMPTY"
 # Process name -> substring its command line must contain before a recorded pid
 # is treated as ours (guards against pid recycling by unrelated processes).
 MANAGED_PROCESSES = {
     "sync-api": "infrahub_sync.managed.serve",
-    "prefect-worker": "prefect worker",
+    "prefect-worker": "infrahub_sync.managed.worker",
 }
 WAIT_TIMEOUT_SECONDS = 420
 
@@ -140,15 +149,32 @@ def _compose(context: Context, arguments: str, values: dict[str, str]) -> None:
 
 
 def ensure_smoke_branch(env: dict[str, str]) -> None:
-    """Create the disposable smoke branch when it is not already present."""
+    """Seed the shared device on `main`, then fork the disposable smoke branch.
+
+    The order is the point. A branch inherits what `main` held when it forked, so
+    seeding first is what leaves one device present on both sides — which is what gives
+    the registered smoke an update to plan. Seeded afterwards the device would reach
+    `main` alone and that smoke would plan a create instead.
+
+    Both steps are skipped once the branch exists: seeding then could no longer reach
+    it, and re-forking would discard the destination the smokes have been writing to.
+    The seed itself upserts on the device's unique name, so a reset environment that
+    kept its data converges rather than duplicating.
+    """
     from infrahub_sdk import InfrahubClientSync  # noqa: PLC0415 -- keep Invoke task imports lightweight
 
     client = InfrahubClientSync(
         address=env["INFRAHUB_ADDRESS"],
         config={"api_token": env["INFRAHUB_API_TOKEN"]},
     )
-    if SMOKE_BRANCH not in client.branch.all():
-        client.branch.create(SMOKE_BRANCH, sync_with_git=False)
+    if SMOKE_BRANCH in client.branch.all():
+        return
+    client.create(
+        kind=SMOKE_KIND,
+        branch="main",
+        data={"name": SHARED_DEVICE_NAME, "type": SHARED_DEVICE_SEED_TYPE},
+    ).save(allow_upsert=True)
+    client.branch.create(SMOKE_BRANCH, sync_with_git=False)
 
 
 _SERVER_ERROR_FLOOR = 500
@@ -270,14 +296,26 @@ def up(context: Context) -> None:
         warn=True,  # already-exists is fine
     )
 
-    print(f" - [{NAMESPACE}] Applying the managed deployment")
-    context.run("uv run python -m infrahub_sync.managed.deploy", env=env)
-
     _start_process(
         "prefect-worker",
-        ["uv", "run", "prefect", "worker", "start", "--pool", values["PREVIEW_WORK_POOL"]],
+        [
+            "uv",
+            "run",
+            "python",
+            "-m",
+            "infrahub_sync.managed.worker",
+            "--pool",
+            values["PREVIEW_WORK_POOL"],
+        ],
         env,
     )
+
+    print(f" - [{NAMESPACE}] Applying the managed deployment")
+    context.run(
+        "uv run python -m infrahub_sync.managed.deploy",
+        env=env,
+    )
+
     _start_process(
         "sync-api",
         [

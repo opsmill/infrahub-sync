@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -27,6 +28,10 @@ _SCHEMA_READ_REASON = re.compile(r"^[a-z]{1,32}$")
 _ADAPTER_NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
 _ADAPTER_ROLES: frozenset[AdapterRole] = frozenset({"source", "destination"})
 _WRITE_OPERATIONS: frozenset[WriteOperation] = frozenset({"create", "update", "delete"})
+# The Unicode top-level categories a schema member name may not draw from: "Other"
+# (control, format, surrogate, private-use, unassigned) and "Separator" (spaces, line and
+# paragraph separators).
+_UNUSABLE_NAME_CATEGORIES = frozenset("CZ")
 
 
 class DestinationSchemaReadError(Exception):
@@ -308,30 +313,88 @@ def _build_schema_snapshot(schema: object) -> dict[str, Any]:
     for kind, node in schema.items():
         if not isinstance(kind, str):
             raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
+        # One namespace per kind, shared by both groups, so a relationship cannot reuse an
+        # attribute's name any more than another attribute can.
+        claimed: set[str] = set()
         snapshot[kind] = {
             "human_friendly_id": _optional_string_path(getattr(node, "human_friendly_id", None)),
             "uniqueness_constraints": _optional_string_paths(getattr(node, "uniqueness_constraints", None)),
-            "attributes": {
-                attribute.name: {
-                    "kind": _member_text(attribute.kind),
-                    "optional": _exact_bool(attribute.optional),
-                    "default_value": _json_native_default(attribute.default_value),
-                    "unique": _exact_bool(attribute.unique),
-                }
-                for attribute in getattr(node, "attributes", ()) or ()
-            },
-            "relationships": {
-                relationship.name: {
-                    "peer": relationship.peer,
-                    "cardinality": _member_text(relationship.cardinality),
-                    "optional": _exact_bool(relationship.optional),
-                    "kind": _member_text(relationship.kind),
-                }
-                for relationship in getattr(node, "relationships", ()) or ()
-            },
+            "attributes": _collected_members(
+                getattr(node, "attributes", None), claimed=claimed, shape=_attribute_shape
+            ),
+            "relationships": _collected_members(
+                getattr(node, "relationships", None), claimed=claimed, shape=_relationship_shape
+            ),
         }
     _require_usable_snapshot(snapshot)
     return snapshot
+
+
+def _attribute_shape(attribute: Any) -> dict[str, Any]:
+    """The attribute properties that can change a runtime model or a planned write."""
+    return {
+        "kind": _member_text(attribute.kind),
+        "optional": _exact_bool(attribute.optional),
+        "default_value": _json_native_default(attribute.default_value),
+        "unique": _exact_bool(attribute.unique),
+    }
+
+
+def _relationship_shape(relationship: Any) -> dict[str, Any]:
+    """The relationship properties that can change a runtime model or a planned write."""
+    return {
+        "peer": relationship.peer,
+        "cardinality": _member_text(relationship.cardinality),
+        "optional": _exact_bool(relationship.optional),
+        "kind": _member_text(relationship.kind),
+    }
+
+
+def _is_usable_member_name(name: object) -> bool:
+    """Whether a name is text that means one member everywhere Sync carries it.
+
+    Non-empty, and no character in a Unicode "Other" category (Cc, Cf, Cs, Co, Cn) or a
+    Unicode "Separator" category (Zs, Zl, Zp). ``str.isprintable()`` is deliberately not
+    the rule: it admits U+0020, so ``"bad name"`` would pass — and as an optional unmapped
+    attribute such a name is compatible growth that never changes the consumed-semantics
+    fingerprint, so no later check would look at it again.
+    """
+    if not isinstance(name, str) or not name:
+        return False
+    return not any(unicodedata.category(character)[0] in _UNUSABLE_NAME_CATEGORIES for character in name)
+
+
+def _collected_members(
+    members: Any,
+    *,
+    claimed: set[str],
+    shape: Callable[[Any], dict[str, Any]],
+) -> dict[str, Any]:
+    """Collect one kind's members by name, refusing a name that cannot mean one member.
+
+    A dict comprehension over a third-party response keeps the **last** of two members
+    sharing a name, silently. The typed SDK admits that — duplicate attribute names,
+    duplicate relationship names, and an attribute and a relationship sharing one name are
+    all constructible — so the model built, the fingerprint computed from it, and every
+    write planned against it would depend on the order the destination happened to answer
+    in. A name is claimed once per kind across both groups, and a second claim is a
+    response this adapter cannot read rather than a choice to make.
+
+    A member name also becomes a model field name, a plan payload key, and text in logs and
+    refusals, so a name that is not usable text — see :func:`_is_usable_member_name` — is
+    refused here for the same reason: it is not a name Sync can carry through to those
+    places intact.
+    """
+    collected: dict[str, Any] = {}
+    for member in members or ():
+        name = member.name
+        if not _is_usable_member_name(name):
+            raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
+        if name in claimed:
+            raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
+        claimed.add(name)
+        collected[name] = shape(member)
+    return collected
 
 
 def _optional_string_path(value: object) -> list[str]:
@@ -399,10 +462,10 @@ def _require_usable_snapshot(snapshot: Mapping[str, Any]) -> None:
     """Refuse a built snapshot that is not the string shape its consumers expect.
 
     The last step inside the normalization boundary: the members were read without
-    raising and every kind is already a string, but the snapshot is usable only when
-    every member name and every declared text property is a string too — the shape the
-    SDK contract promises and the content checks and the normalized runtime domain rely
-    on.
+    raising, every kind is a string and `_collected_members` has already settled every
+    member *name*, but the snapshot is usable only when each declared text property is a
+    string too — the shape the SDK contract promises and the content checks and the
+    normalized runtime domain rely on.
     """
     for entry in snapshot.values():
         attributes: dict[str, Any] = entry["attributes"]
@@ -412,13 +475,12 @@ def _require_usable_snapshot(snapshot: Mapping[str, Any]) -> None:
             *(component for constraint in entry["uniqueness_constraints"] for component in constraint),
         ]
         usable = (
-            all(isinstance(name, str) and isinstance(attribute["kind"], str) for name, attribute in attributes.items())
+            all(isinstance(attribute["kind"], str) for attribute in attributes.values())
             and all(
-                isinstance(name, str)
-                and isinstance(relationship["peer"], str)
+                isinstance(relationship["peer"], str)
                 and isinstance(relationship["cardinality"], str)
                 and isinstance(relationship["kind"], str)
-                for name, relationship in relationships.items()
+                for relationship in relationships.values()
             )
             and all(isinstance(component, str) for component in paths)
         )

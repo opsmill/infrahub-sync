@@ -96,6 +96,7 @@ Netbox
 Newsfragment
 Nornir
 npm
+nullable
 o'brian
 Observium
 openconfig

@@ -6,11 +6,10 @@ on-disk encoding and the data model fixes the rules they enforce, both under
 `dev/specs/archive/001-plan-artifact-saved-apply/`.
 
 Two asymmetries are deliberate. `PlanManifest` tolerates unknown fields — FR-027's
-forward-compatibility carve-out is written about the manifest, where a later outcome adds
-a schema-fingerprint field — while `PlannedOperation` is a **closed** field set, so an
-operation record this version cannot fully interpret is a torn record rather than a
-silently truncated one. And no field at either level groups operations into write units
-(FR-026).
+forward-compatibility carve-out is written about the manifest — while `PlannedOperation` is
+a **closed** field set, so an operation record this version cannot fully interpret is a
+torn record rather than a silently truncated one. And no field at either level groups
+operations into write units (FR-026).
 """
 
 from __future__ import annotations
@@ -309,7 +308,7 @@ class PlanManifest(BaseModel):
     """The artifact's header, and the format contract (FR-027).
 
     Unknown fields are tolerated, preserved verbatim, and included in the checksummed
-    bytes, because a later outcome adds a schema-fingerprint field here (AD028).
+    bytes (AD028).
     """
 
     model_config = ConfigDict(extra="allow")
@@ -331,6 +330,11 @@ class PlanManifest(BaseModel):
     # Additive: manifests written before this field exists carry no
     # binding, and the apply-time destination comparison skips them.
     destination_binding: DestinationBindingRecord | None = None
+    # The consumed destination-schema semantics the plan was computed against, as the full
+    # SHA-256 digest of the canonical projection (`infrahub_sync.runtime_schema`).  Required
+    # on a registered plan and absent from an unregistered one, so a registered apply always
+    # has something to compare the live schema against and legacy manifests keep reading.
+    schema_fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @field_validator("registry_version", mode="before")
     @classmethod
@@ -350,6 +354,20 @@ class PlanManifest(BaseModel):
             raise ValueError(msg)
         return self
 
+    @model_validator(mode="after")
+    def _require_registered_schema_binding(self) -> PlanManifest:
+        """A registered plan records the schema semantics it was computed against.
+
+        Refused here rather than at the apply gate so the rule holds on both sides of the
+        artifact: the writer cannot emit a registered plan without the binding, and a
+        registered manifest that lost it reads as torn instead of reaching an apply that has
+        nothing to compare.
+        """
+        if self.config_id is not None and self.schema_fingerprint is None:
+            msg = "a registered plan manifest must record its schema_fingerprint"
+            raise ValueError(msg)
+        return self
+
     @property
     def configuration_binding(self) -> tuple[str, int, str] | None:
         """Return the complete registered package identity, never a partial tuple."""
@@ -358,6 +376,14 @@ class PlanManifest(BaseModel):
         assert self.registry_version is not None
         assert self.package_checksum is not None
         return self.config_id, self.registry_version, self.package_checksum
+
+    @property
+    def registered_schema_fingerprint(self) -> str | None:
+        """Return a registered plan's recorded schema identity, `None` when unregistered."""
+        if self.configuration_binding is None:
+            return None
+        assert self.schema_fingerprint is not None
+        return self.schema_fingerprint
 
     @model_serializer(mode="wrap")
     def _serialize_without_absent_binding(self, handler: Any) -> dict[str, Any]:
@@ -370,6 +396,8 @@ class PlanManifest(BaseModel):
         data: dict[str, Any] = handler(self)
         if data.get("destination_binding") is None:
             data.pop("destination_binding", None)
+        if self.schema_fingerprint is None:
+            data.pop("schema_fingerprint", None)
         if self.configuration_binding is None:
             data.pop("config_id", None)
             data.pop("registry_version", None)

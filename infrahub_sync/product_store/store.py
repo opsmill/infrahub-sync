@@ -215,6 +215,12 @@ END
 _SQLITE_UNIQUE_CONSTRAINT_CODES = frozenset({1555, 2067})
 _POSTGRESQL_SCHEMA_CONFLICT_CODES = frozenset({"23505", "42P07", "42710"})
 _POSTGRESQL_DUPLICATE_COLUMN_CODE = "42701"
+# ``_migrate_mutation_receipts`` is the one catalog read that needs nullability, and it projects
+# exactly (column_name, is_nullable). The other two read column names alone. PostgreSQL declares
+# ``information_schema.columns.is_nullable`` over the ``yes_or_no`` domain, so these two strings
+# are the whole set of readable answers.
+_CATALOG_NULLABILITY_ROW_WIDTH = 2
+_CATALOG_NULLABILITY_VALUES = frozenset({"YES", "NO"})
 _PREFECT_POSITION_ATTEMPTS = 3
 _RESULT_MERGE_ATTEMPTS = 5
 _SCHEMA_INITIALIZATION_ATTEMPTS = 2
@@ -582,18 +588,20 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
     def _migrate_mutation_receipts(self, cursor: _Cursor) -> None:
         """Add resource identity columns and preserve every legacy receipt in place."""
+        column_nullability: dict[str, str] = {}
         if self._dialect == "sqlite":
             cursor.execute("PRAGMA table_info(mutation_receipts)")
             columns = frozenset(str(row[1]) for row in cursor.fetchall())
         else:
             cursor.execute(
                 self._sql(
-                    "SELECT column_name FROM information_schema.columns "
+                    "SELECT column_name, is_nullable FROM information_schema.columns "
                     "WHERE table_name = ? AND table_schema = current_schema()"
                 ),
                 ("mutation_receipts",),
             )
-            columns = frozenset(str(row[0]) for row in cursor.fetchall())
+            column_nullability = _catalog_nullability(cursor.fetchall())
+            columns = frozenset(column_nullability)
         if "resource_kind" not in columns:
             cursor.execute("ALTER TABLE mutation_receipts ADD COLUMN resource_kind TEXT")
         if "resource_id" not in columns:
@@ -614,8 +622,10 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             )
             cursor.execute("PRAGMA writable_schema = OFF")
         else:
-            cursor.execute("ALTER TABLE mutation_receipts ALTER COLUMN run_id DROP NOT NULL")
-            cursor.execute("ALTER TABLE mutation_receipts ALTER COLUMN prefect_key DROP NOT NULL")
+            if column_nullability.get("run_id") == "NO":
+                cursor.execute("ALTER TABLE mutation_receipts ALTER COLUMN run_id DROP NOT NULL")
+            if column_nullability.get("prefect_key") == "NO":
+                cursor.execute("ALTER TABLE mutation_receipts ALTER COLUMN prefect_key DROP NOT NULL")
 
     def _mutation_receipt_resource_constraint_exists(self, cursor: _Cursor) -> bool:
         if self._dialect == "sqlite":
@@ -2979,6 +2989,27 @@ def _require_result_row(row: Sequence[Any] | None, run_id: str) -> Sequence[Any]
         msg = f"Cannot merge results for unavailable Sync run ID {run_id!r}"
         raise RunNotFoundError(msg)
     return row
+
+
+def _catalog_nullability(rows: Sequence[Sequence[Any]]) -> dict[str, str]:
+    """Read ``(column_name, is_nullable)`` catalog rows, refusing any other row.
+
+    A row qualifies only as exactly two cells whose second cell is already one of the
+    ``yes_or_no`` strings; nothing is coerced into that domain. Nullability decides whether
+    the legacy ``DROP NOT NULL`` migration still has work to do, so an answer that cannot
+    report it is a provider failure rather than a default. Reading any such answer as "not
+    NO" would skip the one-time migration and leave a real ``NOT NULL`` column in place,
+    which no later construction would repair.
+    """
+    nullability: dict[str, str] = {}
+    for row in rows:
+        if len(row) != _CATALOG_NULLABILITY_ROW_WIDTH:
+            raise ProductStoreProviderError
+        is_nullable = row[1]
+        if not isinstance(is_nullable, str) or is_nullable not in _CATALOG_NULLABILITY_VALUES:
+            raise ProductStoreProviderError
+        nullability[str(row[0])] = is_nullable
+    return nullability
 
 
 def _require_cancellation_receipt_row(row: Sequence[Any] | None) -> Sequence[Any]:

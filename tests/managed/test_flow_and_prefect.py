@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import Event, Thread, current_thread
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol
+from unittest.mock import AsyncMock
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import httpx
@@ -98,8 +99,14 @@ def _saved(run_id: str) -> SavedPlan:
     return SavedPlan(manifest=manifest, operations=[], checksum_ok=True, verification_notes=[])
 
 
-def _instance(configuration: ConfigurationPackage, *, directory: str) -> SimpleNamespace:  # noqa: ARG001
+def _instance(
+    configuration: ConfigurationPackage,
+    *,
+    directory: str,
+    resolve_source_credentials: bool = True,
+) -> SimpleNamespace:
     """Build the flow's minimal runtime fake from a registered package."""
+    del directory, resolve_source_credentials
     return SimpleNamespace(name=configuration.configuration.name)
 
 
@@ -252,6 +259,25 @@ def test_flow_working_directory_is_required_absolute_and_existing(
     assert deploy.flow_pull_steps(str(tmp_path)) == [
         {"prefect.deployments.steps.set_working_directory": {"directory": str(tmp_path)}}
     ]
+
+
+async def test_managed_deploy_only_converges_the_flow_working_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from infrahub_sync.managed import deploy
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setenv(deploy.WORK_POOL_ENV, "managed-pool")
+    monkeypatch.setenv(deploy.FLOW_WORKING_DIRECTORY_ENV, str(tmp_path))
+
+    monkeypatch.setattr(deploy, "apply_deployments", AsyncMock(return_value=SimpleNamespace(is_successful=True)))
+    monkeypatch.setattr(
+        deploy,
+        "_ensure_flow_working_directory",
+        AsyncMock(side_effect=lambda directory: calls.append(("working-directory", directory))),
+    )
+    assert await deploy._deploy() == 0
+    assert calls == [("working-directory", str(tmp_path))]
 
 
 def test_managed_definition_entrypoint_targets_the_flow_file() -> None:
@@ -431,7 +457,13 @@ def test_managed_flow_redacts_worker_logs_exception_chain_and_failed_state(
     monkeypatch.setattr(managed_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(managed_flow, "_run_logger", lambda: (run_logger, True))
 
-    def resolve(_sync_name: str, *, directory: str):  # noqa: ARG001
+    def resolve(
+        _sync_name: str,
+        *,
+        directory: str,
+        resolve_source_credentials: bool = True,
+    ):
+        del directory, resolve_source_credentials
         logging.getLogger("infrahub_sync.managed.worker").warning(
             "resolution used %s",
             environment_canary,
@@ -493,6 +525,7 @@ def test_managed_apply_failure_retains_partial_write_evidence(
     monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(managed_flow, "_require_planned_schema", lambda **_kwargs: None)
 
     def fail_apply(*_args: object, **_kwargs: object) -> NoReturn:
         msg = "destination rejected operation"
@@ -566,6 +599,7 @@ def test_success_writeback_persistence_failure_is_not_recorded_as_business_failu
     monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(managed_flow, "_require_planned_schema", lambda **_kwargs: None)
     monkeypatch.setattr(managed_flow, "_plan", lambda *_args, **_kwargs: saved)
     commits: list[str] = []
 
@@ -602,6 +636,7 @@ def test_success_writeback_commit_error_preserves_reread_committed_result(
     monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(managed_flow, "_require_planned_schema", lambda **_kwargs: None)
     monkeypatch.setattr(managed_flow, "_plan", lambda *_args, **_kwargs: saved)
     commit = projection.commit_claimed_execution
 
@@ -635,6 +670,7 @@ def test_managed_confirmed_sync_retains_the_semantic_sync_operation(
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "bounded_run_lock", lambda *_args, **_kwargs: nullcontext())
     monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(managed_flow, "_require_planned_schema", lambda **_kwargs: None)
 
     def core(_instance: object, *, operation: str, **_kwargs: object) -> SavedPlan | RunResult:
         if operation in {"plan", "verify"}:
@@ -678,6 +714,7 @@ def test_managed_plan_worker_updates_the_api_created_run_and_publishes_review(
     monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(managed_flow, "_require_planned_schema", lambda **_kwargs: None)
 
     def plan(_instance, *, run_id: str, branch: str | None, composed_sync: bool):  # noqa: ARG001
         seen.append(run_id)
@@ -752,6 +789,7 @@ def test_confirmed_managed_sync_calls_plan_verify_apply_in_order_on_one_run(
     monkeypatch.setattr(managed_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(managed_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(managed_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(managed_flow, "_require_planned_schema", lambda **_kwargs: None)
 
     def plan(_instance, *, run_id: str, branch: str | None, composed_sync: bool):  # noqa: ARG001
         calls.append(("plan", run_id))

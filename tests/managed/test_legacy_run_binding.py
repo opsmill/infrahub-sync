@@ -57,6 +57,7 @@ def _worker_execution_context(monkeypatch: pytest.MonkeyPatch) -> None:
     """Give direct worker calls the durable Prefect identity now required before parsing."""
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
     monkeypatch.setattr(managed_flow, "_prefect_flow_run_id", lambda: FLOW_RUN_ID)
+    monkeypatch.setattr(managed_flow, "_require_current_worker_identity", lambda *_args: None)
 
 
 def _legacy_saved(run_id: str) -> SavedPlan:
@@ -175,6 +176,7 @@ def test_legacy_apply_refuses_checksum_valid_nonlegacy_manifest_before_destinati
             deletes_computed=True,
             operations=[],
             configuration_binding=manifest_binding,
+            schema_fingerprint="c" * 64,
         )
     else:
         write_plan_artifact(
