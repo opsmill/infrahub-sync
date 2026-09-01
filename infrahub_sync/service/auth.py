@@ -9,7 +9,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-PRINCIPALS_ENV = "INFRAHUB_SYNC_MANAGED_BEARER_TOKENS"
+PRINCIPALS_ENV = "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"
 
 
 class Principal(BaseModel):

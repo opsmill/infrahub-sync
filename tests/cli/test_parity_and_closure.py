@@ -257,7 +257,7 @@ def test_netbox_tutorial_starts_and_authenticates_the_service_boundary() -> None
         "prefect worker start",
         "infrahub_sync.service.deploy",
         "infrahub_sync.service.serve",
-        "INFRAHUB_SYNC_MANAGED_BEARER_TOKENS",
+        "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS",
         "INFRAHUB_SYNC_API_URL",
         "INFRAHUB_SYNC_API_TOKEN",
         "The worker, not the CLI, reads the NetBox",

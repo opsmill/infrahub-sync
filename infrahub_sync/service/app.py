@@ -142,7 +142,7 @@ def create_app(
     @application.get("/status")
     async def get_status() -> ServiceStatusResource:
         """Return unauthenticated lifecycle state without provider identifiers."""
-        return await service.status(os.environ.get("INFRAHUB_SYNC_MANAGED_WORK_POOL", "default"))
+        return await service.status(os.environ.get("INFRAHUB_SYNC_SERVICE_WORK_POOL", "default"))
 
     @application.middleware("http")
     async def contain_unhandled_error(

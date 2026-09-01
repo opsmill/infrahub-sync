@@ -291,11 +291,11 @@ export INFRAHUB_SYNC_S3_ENDPOINT_URL="http://127.0.0.1:9000"
 export INFRAHUB_SYNC_S3_REGION="us-east-1"
 export AWS_ACCESS_KEY_ID="sync-local"
 export AWS_SECRET_ACCESS_KEY="sync-local-secret"
-export INFRAHUB_SYNC_MANAGED_WORK_POOL="sync-process-pool"
-export INFRAHUB_SYNC_MANAGED_FLOW_WORKING_DIRECTORY="$PWD"
+export INFRAHUB_SYNC_SERVICE_WORK_POOL="sync-process-pool"
+export INFRAHUB_SYNC_SERVICE_FLOW_WORKING_DIRECTORY="$PWD"
 export INFRAHUB_SYNC_CONFIG_DIRECTORY="$PWD/sync-projects"
 export INFRAHUB_SYNC_CACHE_DIR="$PWD/.infrahub-sync-cache"
-export INFRAHUB_SYNC_MANAGED_BEARER_TOKENS='{"tutorial-admin":{"token":"tutorial-sync-api-token","administrator":true}}'
+export INFRAHUB_SYNC_SERVICE_BEARER_TOKENS='{"tutorial-admin":{"token":"tutorial-sync-api-token","administrator":true}}'
 export NETBOX_URL="https://demo.netbox.dev"
 export NETBOX_TOKEN="nbt_..."
 export INFRAHUB_ADDRESS="http://localhost:8000"
@@ -316,7 +316,7 @@ uv run prefect worker start --pool sync-process-pool
 5. In terminal 3, start the Sync API:
 
 ```bash
-export INFRAHUB_SYNC_MANAGED_HOST="127.0.0.2"
+export INFRAHUB_SYNC_SERVICE_HOST="127.0.0.2"
 uv run python -m infrahub_sync.service.serve
 ```
 

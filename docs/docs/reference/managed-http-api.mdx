@@ -45,11 +45,11 @@ S3 credentials use Boto3's standard credential-provider chain.
 
 ## Configure principals
 
-`INFRAHUB_SYNC_MANAGED_BEARER_TOKENS` contains a non-empty JSON object keyed by actor. Each
+`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` contains a non-empty JSON object keyed by actor. Each
 entry has a bearer token of at least 16 characters and an optional administrator flag:
 
 ```bash
-export INFRAHUB_SYNC_MANAGED_BEARER_TOKENS='{
+export INFRAHUB_SYNC_SERVICE_BEARER_TOKENS='{
   "automation@example.com": {
     "token": "replace-with-a-secret-token",
     "administrator": false
@@ -78,8 +78,8 @@ deployment:
 
 ```bash
 export PREFECT_API_URL="http://127.0.0.1:4200/api"
-export INFRAHUB_SYNC_MANAGED_WORK_POOL="sync-process-pool"
-export INFRAHUB_SYNC_MANAGED_FLOW_WORKING_DIRECTORY="/path/to/checkout"
+export INFRAHUB_SYNC_SERVICE_WORK_POOL="sync-process-pool"
+export INFRAHUB_SYNC_SERVICE_FLOW_WORKING_DIRECTORY="/path/to/checkout"
 python -m infrahub_sync.managed.deploy
 ```
 
@@ -93,7 +93,7 @@ Start each worker through the managed entry point. The work pool must already ex
 
 ```bash
 python -m infrahub_sync.managed.worker \
-  --pool "$INFRAHUB_SYNC_MANAGED_WORK_POOL"
+  --pool "$INFRAHUB_SYNC_SERVICE_WORK_POOL"
 ```
 
 Each invocation generates a new UUID-suffixed worker name. After its Prefect heartbeat,
@@ -131,7 +131,7 @@ Configure the worker environment before it starts:
 | `INFRAHUB_SYNC_S3_PREFIX` | Optional object-key prefix; defaults to `infrahub-sync`. |
 | `INFRAHUB_SYNC_S3_ENDPOINT_URL` | Optional absolute `http` or `https` URL with no userinfo. The value reaches Boto3 unchanged; Boto3 owns any narrower SDK compatibility. |
 | `INFRAHUB_SYNC_S3_REGION` | Optional region passed to Boto3. |
-| `INFRAHUB_SYNC_MANAGED_WORK_POOL` | Name of the existing Prefect pool used by the deployment, worker, and API reconciliation. It is never returned by the API. |
+| `INFRAHUB_SYNC_SERVICE_WORK_POOL` | Name of the existing Prefect pool used by the deployment, worker, and API reconciliation. It is never returned by the API. |
 | `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | Optional decimal integer from 1 through 86400; defaults to 300. An unclaimed execution becomes abandoned at this inclusive deadline. |
 | `PREFECT_WORKER_QUERY_SECONDS` | Prefect worker polling interval. It must be a finite positive decimal no greater than 3600; the API derives its liveness thresholds from the same value. |
 | Adapter credential variables | Credentials required by the selected Sync configuration. Keep them in the worker environment or its secret provider. |
@@ -165,7 +165,7 @@ export PREFECT_API_URL="http://127.0.0.1:4200/api"
 export INFRAHUB_SYNC_DATABASE_URL="postgresql://sync:replace-me@postgres/infrahub_sync"
 export INFRAHUB_SYNC_S3_BUCKET="infrahub-sync-artifacts"
 export INFRAHUB_SYNC_S3_PREFIX="infrahub-sync"
-export INFRAHUB_SYNC_MANAGED_HOST="127.0.0.1"
+export INFRAHUB_SYNC_SERVICE_HOST="127.0.0.1"
 python -m infrahub_sync.managed.serve
 ```
 

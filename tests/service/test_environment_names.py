@@ -10,7 +10,7 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("prefect")
 
-from infrahub_sync.service import auth, deploy, serve  # noqa: E402
+from infrahub_sync.service import auth, deploy, serve
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -44,9 +44,7 @@ def test_a_retired_bearer_token_name_is_ignored(monkeypatch: pytest.MonkeyPatch)
         auth.EnvironmentPrincipalResolver.from_environment()
 
 
-def test_a_retired_flow_working_directory_name_is_ignored(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_a_retired_flow_working_directory_name_is_ignored(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("INFRAHUB_SYNC_MANAGED_FLOW_WORKING_DIRECTORY", str(tmp_path))
 
     with pytest.raises(ValueError, match=deploy.FLOW_WORKING_DIRECTORY_ENV):
@@ -59,12 +57,12 @@ def test_a_retired_work_pool_name_is_ignored_by_the_reconciler(monkeypatch: pyte
     captured: dict[str, Any] = {}
 
     class _Reconciler:
-        def __init__(self, _projection: Any, _orchestration: Any, _policy: Any, work_pool: str) -> None:
+        def __init__(self, _projection: object, _orchestration: object, _policy: object, work_pool: str) -> None:
             captured["work_pool"] = work_pool
 
     monkeypatch.setattr(serve, "RunLivenessReconciler", _Reconciler)
     serve.build_app(
-        projection_factory=lambda: object(),
+        projection_factory=object,
         run_service_factory=lambda *_args, **_kwargs: object(),
         configuration_routes_factory=lambda **_kwargs: object(),
         app_factory=lambda *args: args,
@@ -75,7 +73,7 @@ def test_a_retired_work_pool_name_is_ignored_by_the_reconciler(monkeypatch: pyte
 
 def test_a_retired_host_name_is_ignored_by_the_server(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("INFRAHUB_SYNC_MANAGED_HOST", "10.0.0.1")
-    monkeypatch.setattr(serve, "build_app", lambda: object())
+    monkeypatch.setattr(serve, "build_app", object)
     captured: dict[str, Any] = {}
     monkeypatch.setattr(serve.uvicorn, "run", lambda app, **kwargs: captured.update(app=app, **kwargs))
 

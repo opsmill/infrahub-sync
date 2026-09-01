@@ -73,8 +73,7 @@ def test_preview_declares_the_managed_postgresql_and_minio_storage_shape() -> No
     assert environment["AWS_ACCESS_KEY_ID"] == "preview-minio-access"
     assert environment["AWS_SECRET_ACCESS_KEY"] == PREVIEW_MINIO_SECRET
     assert "INFRAHUB_SYNC_CACHE_DIR" in environment
-    assert "INFRAHUB_SYNC_MANAGED_CACHE_LOCATION" not in environment
-    assert environment["INFRAHUB_SYNC_MANAGED_WORK_POOL"] == "preview-pool"
+    assert environment["INFRAHUB_SYNC_SERVICE_WORK_POOL"] == "preview-pool"
     assert environment["INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS"] == "600"
     assert environment["PREFECT_WORKER_QUERY_SECONDS"] == "15"
 

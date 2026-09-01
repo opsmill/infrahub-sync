@@ -64,14 +64,14 @@ def build_app(
         projection,
         orchestration,
         policy,
-        os.environ.get("INFRAHUB_SYNC_MANAGED_WORK_POOL", "default"),
+        os.environ.get("INFRAHUB_SYNC_SERVICE_WORK_POOL", "default"),
     )
     return app_factory(service, resolver, configuration_routes, reconciler)
 
 
 def main() -> None:
     """Serve the Sync API; Prefect workers and deployments are separate."""
-    uvicorn.run(build_app(), host=os.environ.get("INFRAHUB_SYNC_MANAGED_HOST", "127.0.0.1"), port=8000)
+    uvicorn.run(build_app(), host=os.environ.get("INFRAHUB_SYNC_SERVICE_HOST", "127.0.0.1"), port=8000)
 
 
 if __name__ == "__main__":

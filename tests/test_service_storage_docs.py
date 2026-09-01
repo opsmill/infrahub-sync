@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 REFERENCE_ROOT = Path(__file__).resolve().parents[1] / "docs" / "docs" / "reference"
-MANAGED_STORAGE_SETTINGS = frozenset(
+SERVICE_STORAGE_SETTINGS = frozenset(
     {
         "INFRAHUB_SYNC_DATABASE_URL",
         "INFRAHUB_SYNC_S3_BUCKET",
@@ -21,13 +21,12 @@ def test_managed_storage_operator_references_state_the_complete_deployed_contrac
     """Every service-storage reference names one PostgreSQL/S3 deployment shape."""
     text = (REFERENCE_ROOT / name).read_text(encoding="utf-8")
 
-    assert not {setting for setting in MANAGED_STORAGE_SETTINGS if f"`{setting}`" not in text}
+    assert not {setting for setting in SERVICE_STORAGE_SETTINGS if f"`{setting}`" not in text}
     assert "standard credential-provider chain" in text
     assert "absolute `http` or `https` URL with no userinfo" in text
     assert "reaches Boto3 unchanged" in text
     assert "`INFRAHUB_SYNC_CACHE_DIR`" in text
     assert "PH-2" in text
-    assert "INFRAHUB_SYNC_MANAGED_CACHE_LOCATION" not in text
     assert not [claim for claim in ("backup", "restore", "production hardening") if claim in text.lower()]
 
 
