@@ -16,6 +16,11 @@ Two commands write, and each says what it will write before writing:
 - `preview.smoke` seeds, then runs the smoke suite. That suite mutates `core01`
   on `main` and creates and applies real Sync runs against `preview-smoke`.
 
+The published page for this stack is
+[Local development stack](../docs/docs/development-stack.mdx). It covers the same
+commands plus the addresses, the development-only credentials, the startup refusal on
+retired state, and how to run the tests.
+
 ## Start
 
 ```bash

@@ -89,6 +89,7 @@ const sidebars: SidebarsConfig = {
         },
       ],
     },
+    'development-stack',
     'contributing',
   ]
 };
