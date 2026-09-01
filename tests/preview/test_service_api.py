@@ -181,6 +181,7 @@ def _registered_version(client: httpx.Client, preview_env: dict[str, Any]) -> tu
 
 
 def infrahub_client(preview_env: dict[str, Any]) -> Any:  # noqa: ANN401 — the SDK's sync client
+    """An Infrahub SDK client for the preview instance, used as the smokes' own oracle."""
     from infrahub_sdk import InfrahubClientSync
 
     return InfrahubClientSync(
@@ -221,6 +222,7 @@ def mutation_payload(mutated_type: str) -> dict[str, Any]:
 
 
 def device_types(client: Any, branch: str) -> dict[str, Any]:  # noqa: ANN401 — the SDK's sync client
+    """The mapped `type` of every device on one branch, keyed by the device's name."""
     return {node.name.value: node.type.value for node in client.all(kind=SMOKE_KIND, branch=branch)}
 
 
