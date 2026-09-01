@@ -11,6 +11,9 @@ $ infrahub-sync [OPTIONS] COMMAND [ARGS]...
 **Options**:
 
 * `--api-url TEXT`: Absolute URL of the Sync API. Defaults to INFRAHUB_SYNC_API_URL.  [env var: INFRAHUB_SYNC_API_URL]
+* `--verbosity [quiet|default|verbose]`: Log verbosity level.  [default: default]
+* `-v, --verbose`: Shorthand for --verbosity verbose.
+* `-q, --quiet`: Shorthand for --verbosity quiet.
 * `--install-completion`: Install completion for the current shell.
 * `--show-completion`: Show completion for the current shell, to copy it or customize the installation.
 * `--help`: Show this message and exit.
