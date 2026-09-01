@@ -5,6 +5,11 @@ the simple things on every preview surface (Python API, Sync HTTP API,
 Prefect) so a tester never starts from a broken environment. They are not a
 replacement for human testing, and they skip — never fail — when the preview
 environment is not running.
+
+They share one Infrahub branch and one Prefect deployment, and the collection
+hook below orders them against each other, so the suite runs single-process:
+under `pytest-xdist` the hook would order one worker's share of the modules and
+the shared branch would take concurrent writes.
 """
 
 from __future__ import annotations
@@ -22,18 +27,22 @@ if TYPE_CHECKING:
     from _pytest.nodes import Item
 
 _HERE = Path(__file__).parent
-# The Prefect surface smoke asserts on the flow runs the Sync API smoke creates, so it
-# has to run after it. Filename collation is not a dependency this suite may rest on:
-# renaming either module silently reverses them and the surface smoke then polls a
+# The Prefect surface smoke asserts on the flow runs every client smoke creates, so it
+# has to run after all of them. Filename collation is not a dependency this suite may
+# rest on: renaming any module silently reorders them and the surface smoke then polls a
 # deployment that nothing has submitted to yet.
-_RUN_CREATOR = _HERE / "test_service_api.py"
+_RUN_CREATORS = (
+    _HERE / "test_service_api.py",
+    _HERE / "test_cli_client.py",
+    _HERE / "test_python_client.py",
+)
 _RUN_OBSERVER = _HERE / "test_prefect_surface.py"
 
 
 def pytest_collection_modifyitems(items: list[Item]) -> None:
-    """Run the Sync API smoke before the Prefect surface smoke that observes it."""
+    """Run every run-creating smoke before the Prefect surface smoke that observes them."""
     observers = [item for item in items if item.path == _RUN_OBSERVER]
-    creators = [item for item in items if item.path == _RUN_CREATOR]
+    creators = [item for item in items if item.path in _RUN_CREATORS]
     if not observers or not creators or items.index(creators[-1]) < items.index(observers[0]):
         return
     for observer in observers:

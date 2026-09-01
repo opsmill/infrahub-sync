@@ -504,6 +504,9 @@ def smoke(context: Context) -> None:
         print(f" - [{NAMESPACE}] The preview could not be seeded; smoke tests will report the environment state")
     print(f" - [{NAMESPACE}] Running the preview smoke suite")
     with context.cd(ESCAPED_REPO_PATH):
+        # Single-process deliberately: the suite's modules share one Infrahub branch and
+        # one Prefect deployment, and its collection hook orders them against each other.
+        # A distributed run would split that ordering across workers.
         context.run("uv run pytest -m preview tests/preview -q", env=env)
 
 
