@@ -216,8 +216,11 @@ _SQLITE_UNIQUE_CONSTRAINT_CODES = frozenset({1555, 2067})
 _POSTGRESQL_SCHEMA_CONFLICT_CODES = frozenset({"23505", "42P07", "42710"})
 _POSTGRESQL_DUPLICATE_COLUMN_CODE = "42701"
 # ``_migrate_mutation_receipts`` is the one catalog read that needs nullability, and it projects
-# exactly (column_name, is_nullable). The other two read column names alone.
+# exactly (column_name, is_nullable). The other two read column names alone. PostgreSQL declares
+# ``information_schema.columns.is_nullable`` over the ``yes_or_no`` domain, so these two strings
+# are the whole set of readable answers.
 _CATALOG_NULLABILITY_ROW_WIDTH = 2
+_CATALOG_NULLABILITY_VALUES = frozenset({"YES", "NO"})
 _PREFECT_POSITION_ATTEMPTS = 3
 _RESULT_MERGE_ATTEMPTS = 5
 _SCHEMA_INITIALIZATION_ATTEMPTS = 2
@@ -2989,18 +2992,23 @@ def _require_result_row(row: Sequence[Any] | None, run_id: str) -> Sequence[Any]
 
 
 def _catalog_nullability(rows: Sequence[Sequence[Any]]) -> dict[str, str]:
-    """Read ``(column_name, is_nullable)`` catalog rows, refusing any other row shape.
+    """Read ``(column_name, is_nullable)`` catalog rows, refusing any other row.
 
-    Nullability decides whether the legacy ``DROP NOT NULL`` migration still has work to do,
-    so a row that cannot report it is a provider failure rather than a default. Treating a
-    narrower row as "already nullable" would skip the one-time migration and leave a real
-    ``NOT NULL`` column in place, which no later construction would repair.
+    A row qualifies only as exactly two cells whose second cell is already one of the
+    ``yes_or_no`` strings; nothing is coerced into that domain. Nullability decides whether
+    the legacy ``DROP NOT NULL`` migration still has work to do, so an answer that cannot
+    report it is a provider failure rather than a default. Reading any such answer as "not
+    NO" would skip the one-time migration and leave a real ``NOT NULL`` column in place,
+    which no later construction would repair.
     """
     nullability: dict[str, str] = {}
     for row in rows:
         if len(row) != _CATALOG_NULLABILITY_ROW_WIDTH:
             raise ProductStoreProviderError
-        nullability[str(row[0])] = str(row[1])
+        is_nullable = row[1]
+        if not isinstance(is_nullable, str) or is_nullable not in _CATALOG_NULLABILITY_VALUES:
+            raise ProductStoreProviderError
+        nullability[str(row[0])] = is_nullable
     return nullability
 
 
