@@ -203,19 +203,19 @@ def test_a_registered_saved_apply_runs_without_the_source_credential(
     class _RecordingDestination:
         """The one adapter a saved-plan apply constructs, recording every planned write."""
 
-        def __init__(self, **kwargs: Any) -> None:
+        def __init__(self, **kwargs: Any) -> None:  # noqa: ANN401
             constructed.append(kwargs)
 
         def new_peer_resolver(self) -> object:  # noqa: PLR6301
             """The per-apply resolver factory; nothing below this double's surface reads it."""
             return object()
 
-        def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:
+        def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401, PLR6301
             del peers
             writes.append(operation.operation_id)
             return f"node-{len(writes)}"
 
-    def _refuse_adapter_import(*, sync_instance: Any, adapter: Any) -> type:
+    def _refuse_adapter_import(*, sync_instance: Any, adapter: Any) -> type:  # noqa: ANN401
         del sync_instance
         msg = f"a saved-plan apply imported the {adapter.name!r} adapter"
         raise AssertionError(msg)
