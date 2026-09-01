@@ -117,6 +117,9 @@ own extraction, guardrails, ordering, and destination calls.
 - A successful selected execution returns the latest product record.
 - A failed, cancelled, abandoned, or ambiguous selected execution exits nonzero and keeps
   the service run ID and terminal fields.
+- A failed waited apply also reports recorded failure evidence as
+  `apply failed: <ErrorClass>` when the result is available. `PlanSchemaChangedError`
+  adds a hint to create and review a new plan before applying again.
 - A timeout exits nonzero with the run ID and last product phase, outcome, and execution
   state. It does not cancel the remote run.
 - Ctrl-C stops local polling, prints the last observed product record, exits 130, and does

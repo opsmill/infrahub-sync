@@ -15,7 +15,7 @@ Connect the CLI to that service and register the package:
 export INFRAHUB_SYNC_API_URL=https://sync.example.com
 export INFRAHUB_SYNC_API_TOKEN=<token>
 
-uv run infrahub-sync configs register examples/custom_adapter/config.yml \
+uv run infrahub-sync configs register examples/custom_adapter/package.yml \
   --reason "register custom adapter example"
 uv run infrahub-sync diff --config-id <config-id> --version <version> \
   --reason "review custom adapter plan"

@@ -53,14 +53,14 @@ infrahub-sync --help
 ## Example: NetBox → Infrahub
 
 The repository includes a NetBox configuration package at
-`examples/netbox_to_infrahub/config.yml`. Register it once, then address the immutable
+`examples/netbox_to_infrahub/package.yml`. Register it once, then address the immutable
 configuration version returned by the service:
 
 ```bash
 export INFRAHUB_SYNC_API_URL=https://sync.example.com
 export INFRAHUB_SYNC_API_TOKEN=<token>
 
-infrahub-sync configs register examples/netbox_to_infrahub/config.yml \
+infrahub-sync configs register examples/netbox_to_infrahub/package.yml \
   --reason "register NetBox import"
 infrahub-sync diff --config-id <config-id> --version <version> \
   --reason "review NetBox import"

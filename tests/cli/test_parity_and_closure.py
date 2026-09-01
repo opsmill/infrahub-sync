@@ -5,13 +5,24 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import yaml
 from typer.testing import CliRunner
 
 from infrahub_sync.cli import app
+from infrahub_sync.configuration import ConfigurationPackage
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = CliRunner()
-REMOVED_COMMAND = re.compile(r"(?<![\w-])infrahub-sync\s+(?:generate|list)(?![\w-])")
+_RETIRED_OPTION = (
+    r"--(?:directory|config-file|adapter-path|product-cache-location|from-plan|concurrent-load|full-extract|parallel|"
+    r"allow-rowcount-drop|continue-on-error|show-progress|allow-destination-change|run-id)"
+)
+_CLI_INVOCATION = r"(?<![\w.-])(?:uv\s+run\s+)?infrahub-sync\s+(?=(?:configs|runs|diff|sync|apply|generate|list)\b)"
+REMOVED_COMMAND = re.compile(
+    rf"{_CLI_INVOCATION}(?:generate|list)(?![\w-])"
+    rf"|(?<![\w-]){_RETIRED_OPTION}(?![\w-])"
+    rf"|{_CLI_INVOCATION}(?:(?!infrahub-sync|```|\n\s*\n)[\s\S])*?(?<![\w-])--(?:name|diff)(?![\w-])"
+)
 
 # One row for every CLI consumer in envelope section 12. The HTTP details stay owned by
 # tests/client/test_client.py; this matrix closes the command-to-client side of the boundary.
@@ -27,6 +38,7 @@ CLI_CLIENT_PARITY = (
     ("sync", "sync", "POST /runs"),
     ("runs plan RUN_ID", "get_plan", "GET /runs/{run_id}/plan"),
     ("apply RUN_ID", "apply", "POST /runs/{run_id}/apply"),
+    ("apply RUN_ID failure evidence", "get_results", "GET /runs/{run_id}/results"),
 )
 
 
@@ -49,6 +61,7 @@ def test_parity_matrix_is_exactly_the_accepted_cli_surface() -> None:
         "sync",
         "get_plan",
         "apply",
+        "get_results",
     ]
 
 
@@ -194,6 +207,27 @@ def test_workflows_tasks_and_unreleased_changelog_do_not_invoke_removed_commands
     }
 
     assert offenders == {}
+
+
+def test_documented_example_packages_use_and_parse_the_registry_envelope() -> None:
+    files = [ROOT / "README.md"]
+    files.extend(path for path in (ROOT / "docs/docs").rglob("*.mdx") if "release-notes" not in path.parts)
+    files.extend((ROOT / "examples").rglob("*.md"))
+    text = "\n".join(path.read_text(encoding="utf-8") for path in files)
+    bare_registration = re.compile(
+        r"configs register(?:[ \t]*\\)?\s+(?:\"[^\"]*/config\.ya?ml\"|[^\s\\]+/config\.ya?ml)"
+    )
+    assert bare_registration.search(text) is None
+
+    package_paths = sorted((ROOT / "examples").glob("*/package.yml"))
+    assert package_paths
+    for package_path in package_paths:
+        relative_path = package_path.relative_to(ROOT).as_posix()
+        assert relative_path in text
+        package_document = yaml.safe_load(package_path.read_text(encoding="utf-8"))
+        config_document = yaml.safe_load(package_path.with_name("config.yml").read_text(encoding="utf-8"))
+        assert package_document["configuration"] == config_document
+        ConfigurationPackage.model_validate(package_document)
 
 
 def test_configuration_docs_describe_registered_worker_execution() -> None:

@@ -383,6 +383,36 @@ def test_failed_apply_renders_recorded_failure_with_only_the_schema_drift_hint(
         assert expected_hint in result.output
 
 
+def test_failed_apply_keeps_terminal_verdict_when_failure_evidence_is_unavailable(client: MagicMock) -> None:
+    client.wait_for_run.side_effect = RunTerminalError(
+        "service-run-1",
+        terminal_state="failed",
+        terminal_outcome="failed",
+        phase="apply-failed",
+        outcome="failed",
+    )
+    client.get_results.side_effect = TransportError("get_results")
+
+    result = _invoke(
+        client,
+        "apply",
+        "service-run-1",
+        "--expected-checksum",
+        CHECKSUM,
+        "--reason",
+        "apply reviewed plan",
+    )
+
+    assert result.exit_code == 1
+    client.get_results.assert_called_once_with("service-run-1")
+    assert "error: run-terminal" in result.output
+    assert "run_id: service-run-1" in result.output
+    assert "terminal_state: failed" in result.output
+    assert "terminal_outcome: failed" in result.output
+    assert "phase: apply-failed" in result.output
+    assert "outcome: failed" in result.output
+
+
 def test_runs_plan_filters_detail_and_marks_deletes_not_executed(client: MagicMock) -> None:
     result = _invoke(client, "runs", "plan", "service-run-1", "--detail", "--kind", "Site")
 

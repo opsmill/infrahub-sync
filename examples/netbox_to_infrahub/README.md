@@ -13,7 +13,7 @@ Connect to a Sync service whose worker has `pynetbox` installed, then register, 
 review, and apply:
 
 ```bash
-uv run infrahub-sync configs register examples/netbox_to_infrahub/config.yml \
+uv run infrahub-sync configs register examples/netbox_to_infrahub/package.yml \
   --reason "register NetBox demo import"
 uv run infrahub-sync diff --config-id <config-id> --version <version> \
   --reason "review NetBox demo import"

@@ -1,6 +1,5 @@
 ---
 name: from-cisco-aci
-description: "Sync Cisco ACI fabric data to Infrahub"
 
 source:
   name: aci

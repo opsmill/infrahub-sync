@@ -230,7 +230,7 @@ def _idempotency_key(explicit: str | None) -> str:
 
 
 def _positive_duration(value: float, argument: str) -> None:
-    if isinstance(value, bool) or not isfinite(value) or value <= 0:
+    if not isfinite(value) or value <= 0:
         raise ClientInputError(argument)
 
 
@@ -650,7 +650,10 @@ def apply_cmd(
                 poll_interval=poll_interval,
             )
         except RunTerminalError as error:
-            failure = client.get_results(error.run_id).results.get("apply_failure")
+            try:
+                failure = client.get_results(error.run_id).results.get("apply_failure")
+            except SyncClientError:
+                failure = None
             if isinstance(failure, dict):
                 stage = failure.get("stage")
                 error_type = failure.get("error_type")
@@ -674,7 +677,11 @@ def runs_plan(
     ctx: typer.Context,
     run_id: str = typer.Argument(..., help="Service-issued run ID."),
     detail: bool = typer.Option(False, "--detail", help="Render every saved operation."),  # noqa: FBT003
-    kind: str | None = typer.Option(None, "--kind", help="Filter the detailed operation list by destination kind."),
+    kind: str | None = typer.Option(
+        None,
+        "--kind",
+        help="Filter the detailed operation list by destination kind; requires --detail.",
+    ),
 ) -> None:
     """Review a saved plan summary, checksum, and operations."""
     with _client_errors():

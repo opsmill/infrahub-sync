@@ -1,5 +1,5 @@
 ---
-# from-netbox — a configuration package for the service-backed Sync workflow:
+# from-netbox — the sync configuration body used by the service-backed workflow:
 #
 # Setup and current limitations:
 #   - README.md
@@ -16,7 +16,7 @@
 #
 # Usage from this repository's root, after configuring the Sync API URL and
 # bearer token as documented in the tutorial:
-#   uv run infrahub-sync configs register examples/netbox_to_infrahub/config.yml \
+#   uv run infrahub-sync configs register examples/netbox_to_infrahub/package.yml \
 #     --reason "register NetBox import"
 #   uv run infrahub-sync diff --config-id <config-id> --version <version> \
 #     --reason "review NetBox import"

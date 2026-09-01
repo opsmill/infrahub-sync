@@ -338,7 +338,7 @@ class PlanApplier:
     credentials applies a reviewed plan without the source's dependencies, credentials or
     reachability. It locates the stored run directory without creating anything (AD026)
     and writes none of the run's sidecars: a stored run's files are the immutable
-    provenance of the plan under apply. `run.json` remains the CLI's to write (AD069).
+    provenance of the plan under apply. The worker execution path owns `run.json`.
     """
 
     def __init__(self, engine: Potenda, *, run_dir: Path, run_id: str) -> None:

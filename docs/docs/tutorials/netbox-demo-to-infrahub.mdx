@@ -199,6 +199,8 @@ From your project directory (`infrahub-automation`), create a sync project direc
 mkdir -p sync-projects/netbox-demo
 cp ../infrahub-sync/examples/netbox_to_infrahub/config.yml \
   sync-projects/netbox-demo/config.yml
+cp ../infrahub-sync/examples/netbox_to_infrahub/package.yml \
+  sync-projects/netbox-demo/package.yml
 ```
 
 The copied configuration is named `from-netbox`. It maps selected NetBox objects onto the Infrahub schema.
@@ -226,6 +228,11 @@ adapter work. This local tutorial starts both; a production deployment should fo
 
 Infrahub already listens on `127.0.0.1:8000`, so the commands below bind the Sync API to
 `127.0.0.2:8000`.
+
+On macOS, create that loopback alias first with
+`sudo ifconfig lo0 alias 127.0.0.2 up`. If a process is bound to port 8000 on all
+interfaces, the second address cannot reuse that port; stop the conflicting process or
+choose another Sync API port and use the same port in `INFRAHUB_SYNC_API_URL`.
 
 1. Save this local service definition as `sync-services.yml`:
 
@@ -328,7 +335,7 @@ The API token authenticates the CLI to the Sync API. It is separate from
 Register the downloaded package with the Sync API.
 
 ```bash
-uv run infrahub-sync configs register sync-projects/netbox-demo/config.yml \
+uv run infrahub-sync configs register sync-projects/netbox-demo/package.yml \
   --reason "register NetBox demo import"
 ```
 

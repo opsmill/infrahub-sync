@@ -1,0 +1,30 @@
+format_version: 1
+configuration:
+  name: custom-example
+
+  source:
+    name: mockdb
+    adapter: examples.custom_adapter.custom_adapter_src.custom_adapter:MockdbAdapter
+    settings:
+      db_path: "./examples/custom_adapter/custom_adapter_src/mock_db.json"
+
+  destination:
+    name: infrahub
+    settings:
+      url: "http://localhost:8000"
+
+  # order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
+  # Uncomment and edit only if you need to override the computed order:
+  # order: [
+  #   "InfraDevice",
+  # ]
+
+  schema_mapping:
+    - name: InfraDevice
+      mapping: devices
+      identifiers: ["name"]
+      fields:
+        - name: name
+          mapping: name
+        - name: type
+          mapping: device_type
