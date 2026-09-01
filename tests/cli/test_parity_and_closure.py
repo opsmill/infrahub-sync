@@ -198,9 +198,7 @@ def test_workflows_tasks_and_unreleased_changelog_do_not_invoke_removed_commands
 
 def test_configuration_docs_describe_registered_worker_execution() -> None:
     config = " ".join((ROOT / "docs/docs/reference/config.mdx").read_text(encoding="utf-8").split())
-    migration = " ".join(
-        (ROOT / "docs/docs/migrating-from-netbox-or-nautobot.mdx").read_text(encoding="utf-8").split()
-    )
+    migration = " ".join((ROOT / "docs/docs/migrating-from-netbox-or-nautobot.mdx").read_text(encoding="utf-8").split())
 
     assert "register it with `infrahub-sync configs register`" in config
     assert "service worker resolves the registered configuration" in config

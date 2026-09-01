@@ -335,13 +335,16 @@ def test_apply_sends_only_reviewed_checksum_and_shipped_fields(client: MagicMock
 
 
 @pytest.mark.parametrize(
-    ("error_type", "expects_hint"),
-    [("PlanSchemaChangedError", True), ("OperationApplyFailedError", False)],
+    ("error_type", "expected_hint"),
+    [
+        ("PlanSchemaChangedError", "hint: create and review a new plan before applying again"),
+        ("OperationApplyFailedError", None),
+    ],
 )
 def test_failed_apply_renders_recorded_failure_with_only_the_schema_drift_hint(
     client: MagicMock,
     error_type: str,
-    expects_hint: bool,
+    expected_hint: str | None,
 ) -> None:
     client.wait_for_run.side_effect = RunTerminalError(
         "service-run-1",
@@ -374,7 +377,10 @@ def test_failed_apply_renders_recorded_failure_with_only_the_schema_drift_hint(
     assert result.exit_code == 1
     client.get_results.assert_called_once_with("service-run-1")
     assert f"apply failed: {error_type}" in result.output
-    assert ("hint: create and review a new plan before applying again" in result.output) is expects_hint
+    if expected_hint is None:
+        assert "hint:" not in result.output
+    else:
+        assert expected_hint in result.output
 
 
 def test_runs_plan_filters_detail_and_marks_deletes_not_executed(client: MagicMock) -> None:
