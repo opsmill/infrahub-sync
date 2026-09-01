@@ -99,7 +99,7 @@ def create_app(
         return value
 
     @application.exception_handler(ServiceAPIError)
-    async def managed_error(_request: Request, exc: ServiceAPIError) -> JSONResponse:  # noqa: RUF029
+    async def service_error(_request: Request, exc: ServiceAPIError) -> JSONResponse:  # noqa: RUF029
         envelope = ErrorEnvelope(
             error=ErrorDetail(
                 code=exc.code,

@@ -26,7 +26,7 @@ def _local_projection_references(path: Path) -> tuple[str, ...]:
     return tuple(references)
 
 
-def test_deployed_managed_runtime_cannot_import_or_reference_the_local_projection() -> None:
+def test_deployed_service_runtime_cannot_import_or_reference_the_local_projection() -> None:
     """API and worker runtime modules must stay on the service storage factory."""
     offenders = {
         str(path.relative_to(SERVICE_PACKAGE)): references
@@ -37,7 +37,7 @@ def test_deployed_managed_runtime_cannot_import_or_reference_the_local_projectio
     assert offenders == {}
 
 
-def test_deployed_runtime_defaults_bind_the_managed_projection_call_boundary() -> None:
+def test_deployed_runtime_defaults_bind_the_service_projection_call_boundary() -> None:
     """API and worker defaults call the service factory while retaining explicit injection."""
     pytest.importorskip("boto3")
     pytest.importorskip("prefect")

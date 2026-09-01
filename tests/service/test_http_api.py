@@ -953,7 +953,7 @@ def test_run_resource_exposes_liveness_without_private_worker_or_receipt_ids(
     assert summary["terminal_outcome"] is None
 
 
-def test_public_run_resource_is_a_standalone_projection_of_the_product_run_contract(
+def test_public_run_resource_is_a_self_contained_projection_of_the_product_run_contract(
     service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
 ) -> None:
     """The server copies the store record into a neutral wire model."""

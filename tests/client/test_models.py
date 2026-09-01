@@ -96,7 +96,7 @@ def test_orchestration_timestamps_require_a_timezone(field: str) -> None:
         OrchestrationSummary.model_validate(payload)
 
 
-def test_server_projects_store_run_into_standalone_resource() -> None:
+def test_server_projects_store_run_into_a_self_contained_resource() -> None:
     now = datetime.now(timezone.utc)
     stored = ProductRun(
         run_id="run-1",

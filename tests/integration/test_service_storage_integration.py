@@ -37,7 +37,7 @@ def _settings_or_skip() -> dict[str, str]:
     }
 
 
-def test_independent_managed_projections_share_configurations_runs_and_artifacts() -> None:
+def test_independent_service_projections_share_configurations_runs_and_artifacts() -> None:
     """API-like and worker-like composition roots observe one PostgreSQL/S3 record set."""
     settings = _settings_or_skip()
     api_projection = service_product_projection(environ=settings)

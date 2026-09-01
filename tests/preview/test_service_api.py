@@ -255,7 +255,7 @@ def test_requests_without_a_bearer_token_are_refused(preview_env: dict[str, Any]
     assert response.status_code == 401
 
 
-def test_managed_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
+def test_service_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
     mutated_type = _seed_source_branch(preview_env)
     assert _device_types(_infrahub_client(preview_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] != mutated_type
 

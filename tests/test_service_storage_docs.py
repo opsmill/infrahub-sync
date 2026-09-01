@@ -17,7 +17,7 @@ SERVICE_STORAGE_SETTINGS = frozenset(
 
 
 @pytest.mark.parametrize("name", ["durable-product-records.mdx", "sync-http-api.mdx"])
-def test_managed_storage_operator_references_state_the_complete_deployed_contract(name: str) -> None:
+def test_service_storage_operator_references_state_the_complete_deployed_contract(name: str) -> None:
     """Every service-storage reference names one PostgreSQL/S3 deployment shape."""
     text = (REFERENCE_ROOT / name).read_text(encoding="utf-8")
 

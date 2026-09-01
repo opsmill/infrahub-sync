@@ -11,7 +11,7 @@ import pytest
 pytestmark = pytest.mark.preview
 
 
-def _managed_deployment(preview_env: dict[str, Any]) -> dict[str, Any]:
+def _service_deployment(preview_env: dict[str, Any]) -> dict[str, Any]:
     response = httpx.get(
         f"{preview_env['urls']['prefect']}/api/deployments/name/infrahub-sync-service/run",
         timeout=15,
@@ -20,20 +20,20 @@ def _managed_deployment(preview_env: dict[str, Any]) -> dict[str, Any]:
     return response.json()
 
 
-def test_managed_deployment_is_applied(preview_env: dict[str, Any]) -> None:
-    deployment = _managed_deployment(preview_env)
+def test_service_deployment_is_applied(preview_env: dict[str, Any]) -> None:
+    deployment = _service_deployment(preview_env)
 
     assert deployment["work_pool_name"] == preview_env["values"]["PREVIEW_WORK_POOL"]
 
 
-def test_the_managed_deployment_carries_no_static_worker_identity(preview_env: dict[str, Any]) -> None:
-    job_variables = _managed_deployment(preview_env).get("job_variables") or {}
+def test_the_service_deployment_carries_no_static_worker_identity(preview_env: dict[str, Any]) -> None:
+    job_variables = _service_deployment(preview_env).get("job_variables") or {}
 
     identity = (job_variables.get("env") or {}).get("PREFECT__WORKER_ID")
     assert identity is None, "worker identity must be injected per child by the executing worker"
 
 
-def test_managed_flow_runs_execute_and_complete(preview_env: dict[str, Any]) -> None:
+def test_service_flow_runs_execute_and_complete(preview_env: dict[str, Any]) -> None:
     """After the Sync API smoke, the service deployment must hold a completed run.
 
     Scoped to the service deployment's own flow runs: an unrelated run — a CLI-driven
@@ -45,7 +45,7 @@ def test_managed_flow_runs_execute_and_complete(preview_env: dict[str, Any]) -> 
     states a moment after the Sync record finishes, and an apply may legitimately still
     be running when this test starts. The timeout matches the Sync API run budget.
     """
-    deployment_id = _managed_deployment(preview_env)["id"]
+    deployment_id = _service_deployment(preview_env)["id"]
     newest: dict[str, Any] = {}
     flow_runs: list[dict[str, Any]] = []
     deadline = time.monotonic() + 240

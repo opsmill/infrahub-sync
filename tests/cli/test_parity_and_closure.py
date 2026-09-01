@@ -83,7 +83,7 @@ def test_root_help_closes_removed_commands_and_adds_resource_groups() -> None:
     assert "--api-token" not in help_text
 
 
-def test_all_standalone_only_options_are_absent_from_live_command_help() -> None:
+def test_all_retired_local_execution_options_are_absent_from_live_command_help() -> None:
     help_text = "\n".join(
         (
             _help("diff"),

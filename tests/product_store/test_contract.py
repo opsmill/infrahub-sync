@@ -641,7 +641,7 @@ def provider(request, tmp_path: Path) -> ProductProjection:
     )
 
 
-def test_zero_link_standalone_round_trip(provider: ProductProjection) -> None:
+def test_zero_link_run_round_trip(provider: ProductProjection) -> None:
     expected = _run()
     provider.create_run(expected)
 

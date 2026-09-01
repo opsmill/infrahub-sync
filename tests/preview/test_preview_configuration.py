@@ -40,7 +40,7 @@ def test_preview_routes_prefect_ui_to_the_published_host_port() -> None:
     assert 'PREFECT_SERVER_UI_API_URL: "http://localhost:${PREVIEW_PREFECT_PORT:-4210}/api"' in compose
 
 
-def test_preview_declares_the_managed_postgresql_and_minio_storage_shape() -> None:
+def test_preview_declares_the_service_postgresql_and_minio_storage_shape() -> None:
     """Preview supplies storage and liveness settings to both service processes."""
     compose = (DEV_DIR / "docker-compose.preview.yml").read_text(encoding="utf-8")
     environment = preview._runtime_env(
@@ -265,7 +265,7 @@ def test_the_seeded_device_is_one_the_cli_smoke_source_already_owns() -> None:
     assert SHARED_DEVICE_NAME in {device["name"] for device in devices}
 
 
-def test_standalone_smoke_ensures_its_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_smoke_task_ensures_its_branch(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[object] = []
     context = Context()
     values = {"COMPOSE_PROJECT_NAME": "preview-test"}
@@ -355,7 +355,7 @@ def test_actual_smoke_path_receives_the_preview_aws_credential_chain(monkeypatch
     assert smoke_environment["AWS_SECRET_ACCESS_KEY"] == PREVIEW_MINIO_SECRET
 
 
-def test_standalone_smoke_leaves_an_unreachable_environment_to_pytest(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_smoke_task_leaves_an_unreachable_environment_to_pytest(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[object] = []
     context = Context()
     values = {"COMPOSE_PROJECT_NAME": "preview-test"}

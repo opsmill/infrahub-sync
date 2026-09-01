@@ -61,7 +61,7 @@ def _staged_up(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any
     return captured
 
 
-def test_preview_starts_the_supported_managed_worker_entrypoint(
+def test_preview_starts_the_supported_service_worker_entrypoint(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     captured = _staged_up(monkeypatch, tmp_path)

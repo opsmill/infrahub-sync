@@ -1135,7 +1135,7 @@ def test_build_app_binds_one_projection_and_passes_configuration_dependency() ->
     assert received[-1] is route_dependency
 
 
-def test_build_app_composes_one_managed_projection_for_runs_and_configurations() -> None:
+def test_build_app_composes_one_service_projection_for_runs_and_configurations() -> None:
     """The deployed API has one environment-owned product projection."""
     projection = object()
     received: list[object] = []

@@ -134,14 +134,14 @@ class _LoggerOwnershipProbe:
     def __init__(self, delegate: _LockDelegate) -> None:
         self._delegate = delegate
         self.events: list[str] = []
-        self.managed_acquire_attempted = Event()
+        self.service_acquire_attempted = Event()
 
     def acquire(self) -> None:
         """Signal from inside the contender's acquisition attempt, then delegate."""
         thread_name = current_thread().name
         self.events.append(f"{thread_name}:acquire-attempted")
         if thread_name == "test-service-flow":
-            self.managed_acquire_attempted.set()
+            self.service_acquire_attempted.set()
         self._delegate.acquire()
         self.events.append(f"{thread_name}:acquired")
 
@@ -220,7 +220,7 @@ def test_worker_rejects_missing_registered_package_before_runtime_construction(
     assert constructed == []
 
 
-def test_managed_and_direct_prefect_flow_schemas_are_separate_and_exact() -> None:
+def test_service_and_direct_prefect_flow_schemas_are_separate_and_exact() -> None:
     assert tuple(inspect.signature(service_sync_run.fn).parameters) == (
         "run_id",
         "stage",
@@ -261,7 +261,7 @@ def test_flow_working_directory_is_required_absolute_and_existing(
     ]
 
 
-async def test_managed_deploy_only_converges_the_flow_working_directory(
+async def test_service_deploy_only_converges_the_flow_working_directory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from infrahub_sync.service import deploy
@@ -280,7 +280,7 @@ async def test_managed_deploy_only_converges_the_flow_working_directory(
     assert calls == [("working-directory", str(tmp_path))]
 
 
-def test_managed_definition_entrypoint_targets_the_flow_file() -> None:
+def test_service_definition_entrypoint_targets_the_flow_file() -> None:
     """The applied deployment must carry an executable entrypoint.
 
     Without one, a Prefect process worker refuses every service flow run with
@@ -315,7 +315,7 @@ def test_missing_context_uses_local_logger_without_constructing_a_bridge(monkeyp
     assert prefect_context is False
 
 
-def test_direct_and_managed_log_bridges_serialize_ownership_and_restore_state(  # noqa: PLR0914, PLR0915
+def test_direct_and_service_log_bridges_serialize_ownership_and_restore_state(  # noqa: PLR0914, PLR0915
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -323,7 +323,7 @@ def test_direct_and_managed_log_bridges_serialize_ownership_and_restore_state(  
     direct_canary = "direct-flow-secret-canary"
     service_canary = "service-flow-secret-canary"
     direct_logger = _RecordingRunLogger()
-    managed_logger = _RecordingRunLogger()
+    service_logger = _RecordingRunLogger()
     source_logger = logging.getLogger(service_flow.SOURCE_LOGGER_NAME)
     child_logger = logging.getLogger(f"{service_flow.SOURCE_LOGGER_NAME}.concurrency-test")
     sentinel_handler = logging.NullHandler()
@@ -332,10 +332,10 @@ def test_direct_and_managed_log_bridges_serialize_ownership_and_restore_state(  
     original_propagate = source_logger.propagate
     direct_entered = Event()
     release_direct = Event()
-    managed_entered = Event()
-    release_managed = Event()
+    service_entered = Event()
+    release_service = Event()
     direct_failures: list[BaseException] = []
-    managed_failures: list[BaseException] = []
+    service_failures: list[BaseException] = []
 
     def fail_direct_request(*_args: object, **_kwargs: object) -> NoReturn:
         direct_entered.set()
@@ -352,15 +352,15 @@ def test_direct_and_managed_log_bridges_serialize_ownership_and_restore_state(  
     def run_service_bridge() -> None:
         try:
             with service_flow._remote_log_bridge(
-                managed_logger,
+                service_logger,
                 prefect_context=True,
                 secrets=(service_canary,),
             ):
-                managed_entered.set()
+                service_entered.set()
                 child_logger.warning("service record used %s", service_canary)
-                assert release_managed.wait(timeout=5)
+                assert release_service.wait(timeout=5)
         except BaseException as exc:  # noqa: BLE001 - retain thread failure for the main test.
-            managed_failures.append(exc)
+            service_failures.append(exc)
 
     monkeypatch.setattr("infrahub_sync.orchestration.flow.get_run_logger", lambda: direct_logger)
     monkeypatch.setattr("infrahub_sync.orchestration.flow.collect_secret_values", lambda: (direct_canary,))
@@ -381,18 +381,18 @@ def test_direct_and_managed_log_bridges_serialize_ownership_and_restore_state(  
         direct_thread.start()
         assert direct_entered.wait(timeout=5)
         service_thread.start()
-        assert ownership_probe.managed_acquire_attempted.wait(timeout=5)
+        assert ownership_probe.service_acquire_attempted.wait(timeout=5)
         child_logger.warning("direct record used %s", direct_canary)
 
         release_direct.set()
         direct_thread.join(timeout=5)
         assert not direct_thread.is_alive()
-        assert managed_entered.wait(timeout=5)
-        release_managed.set()
+        assert service_entered.wait(timeout=5)
+        release_service.set()
         service_thread.join(timeout=5)
         assert not service_thread.is_alive()
 
-        rendered = "\n".join((*direct_logger.rendered, *managed_logger.rendered))
+        rendered = "\n".join((*direct_logger.rendered, *service_logger.rendered))
         expected_acquisition_order = [
             "test-direct-flow:acquire-attempted",
             "test-direct-flow:acquired",
@@ -411,7 +411,7 @@ def test_direct_and_managed_log_bridges_serialize_ownership_and_restore_state(  
                 ),
                 (
                     "service bridge received the direct record",
-                    any("direct record" in line for line in managed_logger.rendered),
+                    any("direct record" in line for line in service_logger.rendered),
                 ),
                 ("direct canary reached a run logger", direct_canary in rendered),
                 ("service canary reached a run logger", service_canary in rendered),
@@ -425,10 +425,10 @@ def test_direct_and_managed_log_bridges_serialize_ownership_and_restore_state(  
         assert len(direct_failures) == 1
         assert isinstance(direct_failures[0], RuntimeError)
         assert str(direct_failures[0]) == "direct flow failed"
-        assert managed_failures == []
+        assert service_failures == []
     finally:
         release_direct.set()
-        release_managed.set()
+        release_service.set()
         for thread in (direct_thread, service_thread):
             if thread.ident is not None:
                 thread.join(timeout=5)
@@ -438,7 +438,7 @@ def test_direct_and_managed_log_bridges_serialize_ownership_and_restore_state(  
 
 
 @pytest.mark.usefixtures("_claimed_worker_execution")
-def test_managed_flow_redacts_worker_logs_exception_chain_and_failed_state(
+def test_service_flow_redacts_worker_logs_exception_chain_and_failed_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -513,7 +513,7 @@ def test_managed_flow_redacts_worker_logs_exception_chain_and_failed_state(
 
 
 @pytest.mark.usefixtures("_claimed_worker_execution")
-def test_managed_apply_failure_retains_partial_write_evidence(
+def test_service_apply_failure_retains_partial_write_evidence(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -557,7 +557,7 @@ def test_managed_apply_failure_retains_partial_write_evidence(
 
 
 @pytest.mark.usefixtures("_claimed_worker_execution")
-def test_managed_verify_failure_merges_evidence_and_terminalizes_exact_link(
+def test_service_verify_failure_merges_evidence_and_terminalizes_exact_link(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -657,7 +657,7 @@ def test_success_writeback_commit_error_preserves_reread_committed_result(
 
 
 @pytest.mark.usefixtures("_claimed_worker_execution")
-def test_managed_confirmed_sync_retains_the_semantic_sync_operation(
+def test_service_confirmed_sync_retains_the_semantic_sync_operation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -702,7 +702,7 @@ def test_managed_confirmed_sync_retains_the_semantic_sync_operation(
 
 
 @pytest.mark.usefixtures("_claimed_worker_execution")
-def test_managed_plan_worker_updates_the_api_created_run_and_publishes_review(
+def test_service_plan_worker_updates_the_api_created_run_and_publishes_review(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     run_id = "run-service-plan"
@@ -740,7 +740,7 @@ def test_managed_plan_worker_updates_the_api_created_run_and_publishes_review(
 
 
 @pytest.mark.usefixtures("_claimed_worker_execution")
-def test_managed_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_service_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     run_id = "run-service-verify"
     projection = _create_product_run(tmp_path.resolve(), run_id)
     before = projection.lookup_run(run_id).value
@@ -776,7 +776,7 @@ def test_managed_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.M
 
 
 @pytest.mark.usefixtures("_claimed_worker_execution")
-def test_confirmed_managed_sync_calls_plan_verify_apply_in_order_on_one_run(
+def test_confirmed_service_sync_calls_plan_verify_apply_in_order_on_one_run(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     run_id = "run-service-sync"
@@ -1066,7 +1066,7 @@ class _DeploymentClient:
 
 
 @pytest.mark.asyncio
-async def test_prefect_extras_deployment_converges_the_managed_catalogue_offline() -> None:
+async def test_prefect_extras_deployment_converges_the_service_catalogue_offline() -> None:
     client = _DeploymentClient()
 
     report = await apply_deployments(CATALOGUE, work_pool_name="service-pool", client=client)

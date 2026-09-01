@@ -196,7 +196,7 @@ def test_s3_get_accepts_only_exact_bytes_and_only_exact_missing_object() -> None
         assert error.value.__cause__ is None
 
 
-def test_managed_storage_factory_validates_settings_and_hides_startup_details() -> None:
+def test_service_storage_factory_validates_settings_and_hides_startup_details() -> None:
     """The factory has one value-free environment contract and startup failure."""
     from infrahub_sync.service import storage
 
@@ -248,7 +248,7 @@ def test_managed_storage_factory_validates_settings_and_hides_startup_details() 
     assert error.value.__cause__ is None
 
 
-def test_managed_storage_settings_refuse_absence_and_normalize_the_prefix_deterministically() -> None:
+def test_service_storage_settings_refuse_absence_and_normalize_the_prefix_deterministically() -> None:
     """Every setting refuses absence or emptiness, and no refusal reflects its value."""
     from infrahub_sync.service import storage
 
@@ -310,7 +310,7 @@ def test_managed_storage_settings_refuse_absence_and_normalize_the_prefix_determ
         "postgresql://db/sync?unknown-option=database-secret-canary",
     ],
 )
-def test_managed_storage_rejects_non_postgresql_conninfo_before_any_construction(database_url: str) -> None:
+def test_service_storage_rejects_non_postgresql_conninfo_before_any_construction(database_url: str) -> None:
     """Database URL acceptance is exactly Psycopg's non-empty conninfo domain."""
     from infrahub_sync.service import storage
 
@@ -337,7 +337,7 @@ def test_managed_storage_rejects_non_postgresql_conninfo_before_any_construction
     assert calls == []
 
 
-def test_managed_storage_contains_sdk_client_construction_failures() -> None:
+def test_service_storage_contains_sdk_client_construction_failures() -> None:
     """SDK construction details become the fixed unchained startup refusal."""
     from infrahub_sync.service import storage
 
@@ -381,7 +381,7 @@ def test_managed_storage_contains_sdk_client_construction_failures() -> None:
         "https://user:secret-canary@s3.example.test",
     ],
 )
-def test_managed_storage_endpoint_rejects_non_urls_and_userinfo_before_construction(endpoint: str) -> None:
+def test_service_storage_endpoint_rejects_non_urls_and_userinfo_before_construction(endpoint: str) -> None:
     """A rejected endpoint never reaches a builder and never reflects its own value."""
     from infrahub_sync.service import storage
 
@@ -429,7 +429,7 @@ def test_managed_storage_endpoint_rejects_non_urls_and_userinfo_before_construct
         "HTTP://s3.example.test:9000/path%20with%20encoding?query=@value#fragment",
     ],
 )
-def test_managed_storage_endpoint_accepts_valid_authorities(endpoint: str) -> None:
+def test_service_storage_endpoint_accepts_valid_authorities(endpoint: str) -> None:
     """An accepted endpoint reaches Boto3 as the operator's own unmodified string."""
     from infrahub_sync.service import storage
 

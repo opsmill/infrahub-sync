@@ -1,24 +1,24 @@
 from tasks import linter
 
 
-def test_ty_check_command_excludes_managed_on_python_310() -> None:
+def test_ty_check_command_excludes_service_on_python_310() -> None:
     assert linter._ty_check_command(3, 10) == (
         "uv run ty check --exclude infrahub_sync/service --exclude tests/service ."
     )
 
 
-def test_ty_check_command_checks_managed_on_supported_python() -> None:
+def test_ty_check_command_checks_service_on_supported_python() -> None:
     assert linter._ty_check_command(3, 11) == "uv run ty check ."
     assert linter._ty_check_command(3, 13) == "uv run ty check ."
 
 
-def test_pylint_command_excludes_managed_on_python_310() -> None:
+def test_pylint_command_excludes_service_on_python_310() -> None:
     assert linter._pylint_command(3, 10) == (
         "pylint --output-format=json2 --ignore-paths='^infrahub_sync/service/' infrahub_sync/"
     )
 
 
-def test_pylint_command_checks_managed_on_supported_python() -> None:
+def test_pylint_command_checks_service_on_supported_python() -> None:
     assert linter._pylint_command(3, 11) == "pylint --output-format=json2 infrahub_sync/"
     assert linter._pylint_command(3, 13) == "pylint --output-format=json2 infrahub_sync/"
 
