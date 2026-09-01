@@ -42,10 +42,15 @@ CLI_CLIENT_PARITY = (
 )
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
 def _help(*args: str) -> str:
-    result = RUNNER.invoke(app, [*args, "--help"])
+    # Rich force-enables ANSI on CI runners, which splits option strings mid-token
+    # and makes plain-text help assertions pass or fail vacuously.
+    result = RUNNER.invoke(app, [*args, "--help"], env={"NO_COLOR": "1", "COLUMNS": "200"})
     assert result.exit_code == 0, result.output
-    return result.output
+    return _ANSI.sub("", result.output)
 
 
 def test_parity_matrix_is_exactly_the_accepted_cli_surface() -> None:
