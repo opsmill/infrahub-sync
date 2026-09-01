@@ -3,7 +3,6 @@
 from datetime import datetime, timezone
 from functools import wraps
 from hashlib import sha256
-from pathlib import Path
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 
@@ -75,29 +74,22 @@ def _strict_integer(value: str, *, minimum: int, maximum: int) -> int:
 
 
 class ConfigurationRoutes:
-    """Bind configuration operations to this server's durable cache location."""
+    """Bind configuration operations to this server's durable product projection."""
 
     def __init__(
         self,
-        product_cache_location: Path | None = None,
         *,
-        product_projection: ProductProjection | None = None,
+        product_projection: ProductProjection,
         service: Any = configs,
         secrets: tuple[str, ...] = (),
     ) -> None:
-        if (product_cache_location is None) == (product_projection is None):
-            msg = "provide exactly one product projection or product_cache_location"
-            raise ValueError(msg)
-        self._location = product_cache_location
         self._projection = product_projection
         self._service = service
         self._secrets = secrets
 
     def _call(self, operation: Any, **kwargs: Any) -> Any:
         try:
-            if self._projection is not None:
-                return operation(projection=self._projection, **kwargs)
-            return operation(product_cache_location=self._location, **kwargs)
+            return operation(projection=self._projection, **kwargs)
         except self._service.ConfigsError as error:
             error_type = type(error)
             if error_type is self._service.ConfigsRequestError:
@@ -271,11 +263,8 @@ class ConfigurationRoutes:
         )
 
     def _store_projection(self) -> ProductProjection:
-        """Return the injected projection or the explicit local compatibility projection."""
-        if self._projection is not None:
-            return self._projection
-        assert self._location is not None
-        return configs._standalone_projection(self._location)
+        """Return the injected durable projection this server writes receipts and audit to."""
+        return self._projection
 
 
 def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempotency_key: Any) -> APIRouter:

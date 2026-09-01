@@ -52,14 +52,12 @@ from infrahub_sync.configuration.schema_validation import (
 )
 from infrahub_sync.configuration.validation import _location_digest
 from infrahub_sync.execution import REDACTED, redact
-from infrahub_sync.product_store.standalone import ProductCacheLocationError, resolve_product_cache_location
 from infrahub_sync.product_store.store import (
     ConfigurationNotFoundError,
     ConfigurationVersionAllocationError,
     DuplicateConfigurationError,
     ProductProjection,
     ProductStoreProviderError,
-    local_product_projection,
 )
 
 if TYPE_CHECKING:
@@ -156,9 +154,9 @@ def _service_boundary(operation: Callable[_P, _R]) -> Callable[_P, _R]:
     Classification is by ``except`` clause only, which matches the exception's actual type
     without touching the instance. ``isinstance`` is itself inspection — it consults the
     instance's ``__class__``, a read a hostile property executes on — and an exception no
-    arm named can have been constructed by a hostile caller argument (a
-    ``product_cache_location`` whose ``__str__`` raises it), so a runtime classification
-    table lets a hostile value escape this module as a raw untyped error. Nothing reaches
+    arm named can have been constructed by a hostile caller argument (a declared package
+    value whose ``__str__`` raises it), so a runtime classification table lets a hostile
+    value escape this module as a raw untyped error. Nothing reaches
     the text from the exception either: one fixed message per operation.
 
     The boundary infers only two families from an exception no arm named, and nothing
@@ -595,48 +593,6 @@ def _needs_json_coercion(content: Mapping[str, Any]) -> bool:
     return False
 
 
-def _projection(
-    product_cache_location: str | Path | None,
-    projection: ProductProjection | None,
-) -> ProductProjection:
-    """Open the configuration registry, refusing an absent or non-absolute store location.
-
-    Absence is a refusal rather than a fallback: unlike a run, a registry has nowhere to live
-    without an explicit store. Only the absoluteness half of the rule is shared with the
-    run commands.
-    """
-    if projection is not None:
-        if product_cache_location is not None:
-            msg = "provide exactly one product projection or product_cache_location"
-            raise ConfigsRequestError(msg)
-        return projection
-    if product_cache_location is None or not str(product_cache_location).strip():
-        msg = "product_cache_location is required: the configuration registry has no store without one"
-        raise ConfigsRequestError(msg)
-    try:
-        location = resolve_product_cache_location(product_cache_location)
-    except ProductCacheLocationError as exc:
-        raise ConfigsRequestError(str(exc)) from None
-    try:
-        return local_product_projection(location)
-    except ValueError as exc:
-        raise ConfigsStorageError(str(exc)) from None
-    except OSError as exc:
-        # Opening the registry creates the store's own directories, so the filesystem refuses
-        # here before any query runs: a file where a directory belongs, or a cache root nothing
-        # may write to. That is a storage refusal, not a raw traceback out of the one declared
-        # vocabulary both interfaces map. Only the exception type is carried, matching
-        # ``load_package_content`` - the errno text names paths the caller already supplied and
-        # adds nothing an operator can act on.
-        msg = f"product cache location {str(location)!r} could not be opened as a store: {type(exc).__name__}"
-        raise ConfigsStorageError(msg) from None
-
-
-def _standalone_projection(product_cache_location: Path) -> ProductProjection:
-    """Open the explicit local compatibility seam for managed route tests."""
-    return local_product_projection(product_cache_location)
-
-
 # The two machine-readable absence values the read operations distinguish.
 # ``CONFIGURATION_NOT_FOUND_REASON`` matches the store's own lookup reason for the same
 # absence; the version value names the case the store cannot: the configuration exists and
@@ -759,8 +715,7 @@ def _validation_refusal(exc: CredentialConfigurationError, package: Configuratio
 def register(
     *,
     package: Mapping[str, Any],
-    product_cache_location: str | Path | None = None,
-    projection: ProductProjection | None = None,
+    projection: ProductProjection,
 ) -> RegisteredConfiguration:
     """Register a brand-new declared configuration and return it with its first version.
 
@@ -769,7 +724,6 @@ def register(
     an invalid package raises and is never registered. The findings surface is
     :func:`validate`.
     """
-    projection = _projection(product_cache_location, projection)
     parsed = _parse(package)
     try:
         version = projection.create_configuration(parsed)
@@ -789,8 +743,7 @@ def create_version(
     *,
     config_id: str,
     package: Mapping[str, Any],
-    product_cache_location: str | Path | None = None,
-    projection: ProductProjection | None = None,
+    projection: ProductProjection,
 ) -> RegisteredVersion:
     """Add one version to an existing configuration, or return the identical stored one.
 
@@ -798,7 +751,6 @@ def create_version(
     (:func:`_parse`).
     """
     _require_argument_type(config_id, name="config_id", expected=str)
-    projection = _projection(product_cache_location, projection)
     parsed = _parse(package)
     try:
         version, created = projection.add_configuration_version(config_id, parsed)
@@ -812,16 +764,13 @@ def create_version(
 
 
 @_service_boundary
-def list_configs(
-    *, product_cache_location: str | Path | None = None, projection: ProductProjection | None = None
-) -> tuple[ConfigurationSummary, ...]:
+def list_configs(*, projection: ProductProjection) -> tuple[ConfigurationSummary, ...]:
     """Return every registered configuration exactly once, oldest first with an ID tiebreak.
 
     The order is the store's own ``ORDER BY created_at, config_id`` — deterministic and total,
     never a re-sort in this layer. An empty registry is a real answer here, unlike the scoped
     reads: there is no identifier whose absence could make it a not-found.
     """
-    projection = _projection(product_cache_location, projection)
     return projection.list_configurations()
 
 
@@ -829,12 +778,10 @@ def list_configs(
 def get_config(
     *,
     config_id: str,
-    product_cache_location: str | Path | None = None,
-    projection: ProductProjection | None = None,
+    projection: ProductProjection,
 ) -> ConfigurationSummary:
     """Return one registered configuration's summary, refusing absence rather than guessing."""
     _require_argument_type(config_id, name="config_id", expected=str)
-    projection = _projection(product_cache_location, projection)
     return _require_configuration(projection, config_id)
 
 
@@ -842,8 +789,7 @@ def get_config(
 def list_versions(
     *,
     config_id: str,
-    product_cache_location: str | Path | None = None,
-    projection: ProductProjection | None = None,
+    projection: ProductProjection,
 ) -> tuple[ConfigurationVersion, ...]:
     """Return every version of one configuration, ordered by ``registry_version`` ascending.
 
@@ -852,7 +798,6 @@ def list_versions(
     store's own ``ORDER BY registry_version``, not a re-sort in this layer.
     """
     _require_argument_type(config_id, name="config_id", expected=str)
-    projection = _projection(product_cache_location, projection)
     _require_configuration(projection, config_id)
     return projection.list_configuration_versions(config_id)
 
@@ -862,8 +807,7 @@ def get_version(
     *,
     config_id: str,
     registry_version: int,
-    product_cache_location: str | Path | None = None,
-    projection: ProductProjection | None = None,
+    projection: ProductProjection,
 ) -> ConfigurationVersion:
     """Return one immutable registered version exactly as it was persisted.
 
@@ -875,7 +819,6 @@ def get_version(
     """
     _require_argument_type(config_id, name="config_id", expected=str)
     _require_registry_version(registry_version)
-    projection = _projection(product_cache_location, projection)
     _require_configuration(projection, config_id)
     stored = projection.lookup_configuration_version(config_id, registry_version).value
     if stored is None:
@@ -889,8 +832,7 @@ def validate(
     *,
     config_id: str,
     registry_version: int,
-    product_cache_location: str | Path | None = None,
-    projection: ProductProjection | None = None,
+    projection: ProductProjection,
     destination_schema: DestinationSchemaOptions | None = None,
 ) -> ValidationReport:
     """Report every declared defect in one registered version, in contract order.
@@ -909,7 +851,6 @@ def validate(
     _require_registry_version(registry_version)
     if destination_schema is not None:
         _require_argument_type(destination_schema, name="destination_schema", expected=DestinationSchemaOptions)
-    projection = _projection(product_cache_location, projection)
     lookup = projection.lookup_configuration_version(config_id, registry_version)
     stored = lookup.value
     if stored is None:

@@ -24,6 +24,7 @@ from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIE
 from infrahub_sync.configuration.schema_validation import DestinationSchemaOptions
 from infrahub_sync.configuration.validation import collect_findings
 from infrahub_sync.product_store import configs as configs_service
+from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.runtime_schema import compute_consumed_schema_fingerprint, normalize_destination_schema
 from tests.configuration.validation_packages import package, package_data
 
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from collections.abc import ItemsView, Iterator
 
     from infrahub_sync.configuration import ConfigurationPackage
+    from infrahub_sync.product_store import ProductProjection
 
 _SNAPSHOT: dict[str, Any] = {
     "InfraDevice": {
@@ -64,25 +66,26 @@ def _inject_accessor(monkeypatch: pytest.MonkeyPatch) -> _SpiedAccessor:
     return accessor
 
 
-def _registered(tmp_path: Path, data: dict[str, Any] | None = None) -> tuple[str, str]:
-    location = str(tmp_path / "product-cache")
-    Path(location).mkdir()
+def _registered(tmp_path: Path, data: dict[str, Any] | None = None) -> tuple[str, ProductProjection]:
+    root = tmp_path / "product-cache"
+    root.mkdir()
+    projection = local_product_projection(root)
     registered = configs_service.register(
         package=package_data() if data is None else data,
-        product_cache_location=location,
+        projection=projection,
     )
-    return registered.version.config_id, location
+    return registered.version.config_id, projection
 
 
 def _validate(
     config_id: str,
-    location: str,
+    projection: ProductProjection,
     destination_schema: DestinationSchemaOptions | None = None,
 ) -> configs_service.ValidationReport:
     return configs_service.validate(
         config_id=config_id,
         registry_version=1,
-        product_cache_location=location,
+        projection=projection,
         destination_schema=destination_schema,
     )
 
@@ -100,9 +103,9 @@ def test_a_default_validate_never_calls_the_accessor_and_carries_no_fingerprint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     accessor = _inject_accessor(monkeypatch)
-    config_id, location = _registered(tmp_path)
+    config_id, projection = _registered(tmp_path)
 
-    report = _validate(config_id, location)
+    report = _validate(config_id, projection)
 
     assert accessor.calls == []
     assert report.destination_schema_fingerprint is None
@@ -110,7 +113,7 @@ def test_a_default_validate_never_calls_the_accessor_and_carries_no_fingerprint(
 
 
 def test_a_default_validate_performs_no_network_io(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    config_id, location = _registered(tmp_path)
+    config_id, projection = _registered(tmp_path)
 
     def _refuse(*args: object, **kwargs: object) -> object:
         del args, kwargs
@@ -119,7 +122,7 @@ def test_a_default_validate_performs_no_network_io(tmp_path: Path, monkeypatch: 
 
     monkeypatch.setattr(socket, "socket", _refuse)
 
-    report = _validate(config_id, location)
+    report = _validate(config_id, projection)
 
     assert report.findings == ()
 
@@ -128,7 +131,7 @@ def test_the_opt_in_performs_no_network_io_when_the_snapshot_is_injected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     accessor = _inject_accessor(monkeypatch)
-    config_id, location = _registered(tmp_path)
+    config_id, projection = _registered(tmp_path)
 
     def _refuse(*args: object, **kwargs: object) -> object:
         del args, kwargs
@@ -137,7 +140,7 @@ def test_the_opt_in_performs_no_network_io_when_the_snapshot_is_injected(
 
     monkeypatch.setattr(socket, "socket", _refuse)
 
-    report = _validate(config_id, location, destination_schema=DestinationSchemaOptions())
+    report = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
 
     assert accessor.calls == ["main"]
     assert report.findings == ()
@@ -169,9 +172,9 @@ def test_the_service_and_schema_modules_construct_no_adapters() -> None:
 
 def test_the_opt_in_records_the_snapshot_fingerprint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _inject_accessor(monkeypatch)
-    config_id, location = _registered(tmp_path)
+    config_id, projection = _registered(tmp_path)
 
-    report = _validate(config_id, location, destination_schema=DestinationSchemaOptions())
+    report = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
 
     assert report.destination_schema_fingerprint == compute_consumed_schema_fingerprint(
         configuration=package(package_data()).configuration, snapshot=normalize_destination_schema(_SNAPSHOT)
@@ -180,10 +183,10 @@ def test_the_opt_in_records_the_snapshot_fingerprint(tmp_path: Path, monkeypatch
 
 def test_the_opt_in_report_is_identical_across_invocations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _inject_accessor(monkeypatch)
-    config_id, location = _registered(tmp_path, _mapping_package_data("NopeKind"))
+    config_id, projection = _registered(tmp_path, _mapping_package_data("NopeKind"))
 
-    first = _validate(config_id, location, destination_schema=DestinationSchemaOptions())
-    second = _validate(config_id, location, destination_schema=DestinationSchemaOptions())
+    first = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
+    second = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
 
     assert first.findings == second.findings
     assert first.findings != ()
@@ -203,11 +206,11 @@ def test_core_and_schema_findings_merge_in_the_stable_sort_order(
     table["infrahub"] = replace(table["infrahub"], destination_schema_accessor=accessor)
     del table["netbox"]
     data = _mapping_package_data("NopeKind")
-    config_id, location = _registered(tmp_path, data)
+    config_id, projection = _registered(tmp_path, data)
     monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
     monkeypatch.setattr(validation_module, "BUILTIN_ADAPTER_CAPABILITIES", table)
 
-    report = _validate(config_id, location, destination_schema=DestinationSchemaOptions())
+    report = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
 
     assert [(finding.code, finding.location) for finding in report.findings] == [
         ("destination-schema-mismatch", "/configuration/schema_mapping/0/name"),
@@ -234,9 +237,9 @@ def test_a_failed_schema_read_returns_a_report_rather_than_a_refusal(
     table = dict(BUILTIN_ADAPTER_CAPABILITIES)
     table["infrahub"] = replace(table["infrahub"], destination_schema_accessor=_raising)
     monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
-    config_id, location = _registered(tmp_path)
+    config_id, projection = _registered(tmp_path)
 
-    report = _validate(config_id, location, destination_schema=DestinationSchemaOptions())
+    report = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
 
     assert [(finding.code, finding.location) for finding in report.findings] == [
         ("destination-schema-read-failed", "/configuration/destination")
@@ -248,11 +251,11 @@ def test_a_failed_schema_read_returns_a_report_rather_than_a_refusal(
 
 
 def test_a_wrong_typed_opt_in_is_a_request_refusal(tmp_path: Path) -> None:
-    config_id, location = _registered(tmp_path)
+    config_id, projection = _registered(tmp_path)
 
     wrong_typed = cast("DestinationSchemaOptions", True)  # noqa: FBT003 - the wrong type is the fixture
     with pytest.raises(configs_service.ConfigsRequestError) as raised:
-        _validate(config_id, location, destination_schema=wrong_typed)
+        _validate(config_id, projection, destination_schema=wrong_typed)
 
     assert raised.value.family == "request"
 
@@ -262,9 +265,9 @@ def test_the_opt_in_against_a_non_declaring_destination_reports_both_gate_findin
 ) -> None:
     data = package_data()
     data["configuration"]["destination"]["name"] = "peeringmanager"
-    config_id, location = _registered(tmp_path, data)
+    config_id, projection = _registered(tmp_path, data)
 
-    report = _validate(config_id, location, destination_schema=DestinationSchemaOptions())
+    report = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
 
     assert [(finding.code, finding.location) for finding in report.findings] == [
         ("destination-schema-validation-unsupported", "/configuration/destination"),
@@ -339,9 +342,9 @@ def test_a_metaclass_raising_response_exception_lands_as_a_rejected_finding(
             raise _HostileError(msg)
 
     _mock_live_schema_read(monkeypatch, _RaisingItems())
-    config_id, location = _registered(tmp_path)
+    config_id, projection = _registered(tmp_path)
 
-    report = _validate(config_id, location, destination_schema=DestinationSchemaOptions())
+    report = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
 
     assert [(finding.code, finding.location) for finding in report.findings] == [
         ("destination-schema-read-failed", "/configuration/destination")
@@ -367,9 +370,9 @@ def test_a_response_cannot_forge_its_own_schema_read_reason(tmp_path: Path, monk
             raise DestinationSchemaReadError(msg, reason="unauthorized")
 
     _mock_live_schema_read(monkeypatch, {"InfraDevice": _ForgingNode()})
-    config_id, location = _registered(tmp_path)
+    config_id, projection = _registered(tmp_path)
 
-    report = _validate(config_id, location, destination_schema=DestinationSchemaOptions())
+    report = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
 
     assert [(finding.code, finding.location) for finding in report.findings] == [
         ("destination-schema-read-failed", "/configuration/destination")

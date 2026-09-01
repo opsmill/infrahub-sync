@@ -67,7 +67,7 @@ def test_configuration_routes_register_then_read(tmp_path: Path, monkeypatch: py
     resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection(tmp_path)
     runs = RunService(projection, _Orchestration(), secrets=resolver.secret_values)
-    routes = ConfigurationRoutes(tmp_path, secrets=resolver.secret_values)
+    routes = ConfigurationRoutes(product_projection=local_product_projection(tmp_path), secrets=resolver.secret_values)
     client = TestClient(create_app(runs, resolver, routes))
     response = client.post(
         "/configs",
@@ -87,16 +87,11 @@ def test_configuration_routes_use_the_injected_projection_for_services_receipts_
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Every configuration path uses the one projection supplied at composition."""
-    from infrahub_sync.service import config_routes
 
     bearer = "admin-token-canary-0003"
     monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
     resolver = EnvironmentPrincipalResolver.from_environment()
     delegate = local_product_projection(tmp_path)
-    message = "configuration routes reopened a local product projection"
-
-    def local_projection_forbidden(*_args: object, **_kwargs: object) -> NoReturn:
-        raise AssertionError(message)
 
     class ProjectionSentinel:
         def __init__(self) -> None:
@@ -114,8 +109,6 @@ def test_configuration_routes_use_the_injected_projection_for_services_receipts_
             return record
 
     projection = ProjectionSentinel()
-    monkeypatch.setattr(config_routes, "local_product_projection", local_projection_forbidden, raising=False)
-    monkeypatch.setattr(configs_service, "local_product_projection", local_projection_forbidden)
     client = TestClient(
         create_app(
             RunService(cast("ProductProjection", projection), _Orchestration(), secrets=resolver.secret_values),
@@ -156,8 +149,6 @@ def test_configuration_routes_use_the_injected_projection_for_services_receipts_
     }.issubset(projection.calls)
     assert projection.calls.count("reserve_mutation") == 2
     assert projection.calls.count("create_configuration") == 1
-    with pytest.raises(AssertionError, match=message):
-        configs_service._standalone_projection(tmp_path)
 
 
 def test_configuration_receipt_and_audit_provider_errors_are_storage_failures() -> None:
@@ -385,7 +376,7 @@ def test_configuration_mutation_replays_exact_response_and_rejects_changed_conte
         create_app(
             RunService(projection, _Orchestration(), secrets=resolver.secret_values),
             resolver,
-            ConfigurationRoutes(tmp_path, secrets=resolver.secret_values),
+            ConfigurationRoutes(product_projection=local_product_projection(tmp_path), secrets=resolver.secret_values),
         )
     )
     headers = {"Authorization": "Bearer admin-token-canary-0003", "Idempotency-Key": "register-once"}
@@ -416,7 +407,7 @@ def test_duplicate_configuration_version_checksum_returns_existing_version_witho
         create_app(
             RunService(projection, _Orchestration(), secrets=resolver.secret_values),
             resolver,
-            ConfigurationRoutes(tmp_path, secrets=resolver.secret_values),
+            ConfigurationRoutes(product_projection=local_product_projection(tmp_path), secrets=resolver.secret_values),
         )
     )
     package = package_data()
@@ -452,7 +443,7 @@ def test_configuration_mutation_audits_accepted_replayed_and_refused_idempotency
         create_app(
             RunService(projection, _Orchestration(), secrets=resolver.secret_values),
             resolver,
-            ConfigurationRoutes(tmp_path, secrets=resolver.secret_values),
+            ConfigurationRoutes(product_projection=local_product_projection(tmp_path), secrets=resolver.secret_values),
         )
     )
     headers = {"Authorization": f"Bearer {bearer}", "Idempotency-Key": "audit-once"}
@@ -513,7 +504,9 @@ def test_configuration_mutation_releases_only_proven_pre_effect_error_families(
         create_app(
             RunService(projection, _Orchestration(), secrets=resolver.secret_values),
             resolver,
-            ConfigurationRoutes(tmp_path, service=service, secrets=resolver.secret_values),
+            ConfigurationRoutes(
+                product_projection=local_product_projection(tmp_path), service=service, secrets=resolver.secret_values
+            ),
         )
     )
     headers = {"Authorization": f"Bearer {bearer}", "Idempotency-Key": "retry-after-service-failure"}
@@ -534,9 +527,7 @@ def test_configuration_mutation_releases_only_proven_pre_effect_error_families(
     assert all(bearer not in event.model_dump_json() for event in projection.audit_events())
 
 
-def test_post_commit_readback_failure_blocks_same_key_retry_without_a_second_configuration(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_post_commit_readback_failure_blocks_same_key_retry_without_a_second_configuration(tmp_path: Path) -> None:
     """Contain an unknown post-commit outcome; this is not crash recovery or exactly-once execution."""
     projection = local_product_projection(tmp_path)
     writes = 0
@@ -554,8 +545,7 @@ def test_post_commit_readback_failure_blocks_same_key_retry_without_a_second_con
             message = "read-back failed after configuration commit"
             raise OSError(message)
 
-    monkeypatch.setattr(configs_service, "local_product_projection", lambda _location: PostCommitReadbackFailure())
-    routes = ConfigurationRoutes(tmp_path)
+    routes = ConfigurationRoutes(product_projection=cast("ProductProjection", PostCommitReadbackFailure()))
     request = {
         "actor": "admin",
         "idempotency_key": "post-commit-readback-failure",
@@ -614,7 +604,7 @@ def test_concurrent_configuration_mutation_does_not_invoke_service_twice(tmp_pat
             }
 
     service = Service()
-    routes = ConfigurationRoutes(tmp_path, service=service)
+    routes = ConfigurationRoutes(product_projection=local_product_projection(tmp_path), service=service)
 
     def mutate() -> tuple[int, dict[str, object]]:
         return routes.mutate(
@@ -643,7 +633,7 @@ def test_concurrent_configuration_mutation_does_not_invoke_service_twice(tmp_pat
 
 def test_configuration_receipts_use_semantic_resource_identities(tmp_path: Path) -> None:
     """Registration and version receipts are keyed by domain resource, not HTTP path."""
-    routes = ConfigurationRoutes(tmp_path)
+    routes = ConfigurationRoutes(product_projection=local_product_projection(tmp_path))
     register = routes.mutate(
         actor="admin",
         idempotency_key="semantic-registration",
@@ -689,7 +679,7 @@ def test_unrelated_service_assertion_is_not_reclassified_as_configuration_refusa
             raise AssertionError("unrelated defect")  # noqa: EM101, TRY003 - the assertion is the transport boundary probe.
 
     with pytest.raises(AssertionError, match="unrelated defect"):
-        ConfigurationRoutes(tmp_path, service=Service()).list_configs()
+        ConfigurationRoutes(product_projection=local_product_projection(tmp_path), service=Service()).list_configs()
 
 
 def test_configuration_mutation_refuses_unauthenticated_and_non_admin_calls(
@@ -711,7 +701,7 @@ def test_configuration_mutation_refuses_unauthenticated_and_non_admin_calls(
         create_app(
             RunService(projection, _Orchestration(), secrets=resolver.secret_values),
             resolver,
-            ConfigurationRoutes(tmp_path, secrets=resolver.secret_values),
+            ConfigurationRoutes(product_projection=local_product_projection(tmp_path), secrets=resolver.secret_values),
         )
     )
     body = {"package": package_data(), "reason": "register this package"}
@@ -776,7 +766,9 @@ def test_configuration_route_grammar_refuses_hostile_values_before_service_class
         create_app(
             RunService(local_product_projection(tmp_path), _Orchestration(), secrets=resolver.secret_values),
             resolver,
-            ConfigurationRoutes(tmp_path, service=service, secrets=resolver.secret_values),
+            ConfigurationRoutes(
+                product_projection=local_product_projection(tmp_path), service=service, secrets=resolver.secret_values
+            ),
         )
     )
     headers = {
@@ -840,7 +832,9 @@ def test_validation_pages_are_bounded_and_concatenate_to_the_single_snapshot(
         create_app(
             RunService(local_product_projection(tmp_path), _Orchestration(), secrets=resolver.secret_values),
             resolver,
-            ConfigurationRoutes(tmp_path, service=Service(), secrets=resolver.secret_values),
+            ConfigurationRoutes(
+                product_projection=local_product_projection(tmp_path), service=Service(), secrets=resolver.secret_values
+            ),
         )
     )
     headers = {"Authorization": f"Bearer {bearer}"}
@@ -909,7 +903,9 @@ def test_configuration_and_version_lists_return_every_service_result(
         create_app(
             RunService(local_product_projection(tmp_path), _Orchestration(), secrets=resolver.secret_values),
             resolver,
-            ConfigurationRoutes(tmp_path, service=Service(), secrets=resolver.secret_values),
+            ConfigurationRoutes(
+                product_projection=local_product_projection(tmp_path), service=Service(), secrets=resolver.secret_values
+            ),
         )
     )
     headers = {"Authorization": f"Bearer {bearer}"}
@@ -953,7 +949,7 @@ def test_configuration_error_matrix_preserves_only_declared_fields(  # noqa: PLR
     )
     resolver = EnvironmentPrincipalResolver.from_environment()
     runs = RunService(local_product_projection(tmp_path), _Orchestration(), secrets=resolver.secret_values)
-    routes = ConfigurationRoutes(tmp_path)
+    routes = ConfigurationRoutes(product_projection=local_product_projection(tmp_path))
 
     def fail(**_kwargs: object) -> None:
         raise failure
@@ -996,7 +992,7 @@ def test_unknown_configs_subclass_uses_fixed_base_family(tmp_path: Path) -> None
             raise Hostile(message)
 
     with pytest.raises(ConfigurationAPIError) as raised:
-        ConfigurationRoutes(tmp_path, service=Service()).list_configs()
+        ConfigurationRoutes(product_projection=local_product_projection(tmp_path), service=Service()).list_configs()
     assert raised.value.family == "configs"
 
 
@@ -1019,7 +1015,7 @@ def test_configs_request_subclass_uses_base_fallback_without_reflecting_metadata
             raise Hostile("do not disclose")  # noqa: EM101, TRY003
 
     with pytest.raises(ConfigurationAPIError) as raised:
-        ConfigurationRoutes(tmp_path, service=Service()).list_configs()
+        ConfigurationRoutes(product_projection=local_product_projection(tmp_path), service=Service()).list_configs()
     assert raised.value.status == 503
     assert raised.value.family == "configs"
 
@@ -1045,7 +1041,7 @@ def test_configs_not_found_subclass_cannot_leak_reason(tmp_path: Path) -> None:
             raise Hostile("do not disclose", reason="secret-reason")  # noqa: EM101, TRY003
 
     with pytest.raises(ConfigurationAPIError) as raised:
-        ConfigurationRoutes(tmp_path, service=Service()).list_configs()
+        ConfigurationRoutes(product_projection=local_product_projection(tmp_path), service=Service()).list_configs()
     assert raised.value.status == 503
     assert raised.value.family == "configs"
     assert raised.value.reason is None
@@ -1092,7 +1088,7 @@ def test_create_app_keeps_run_and_configuration_dependencies_separate(tmp_path: 
         create_app(
             cast("RunService", runs),
             cast("PrincipalResolver", Resolver()),
-            ConfigurationRoutes(tmp_path, service=config_service),
+            ConfigurationRoutes(product_projection=local_product_projection(tmp_path), service=config_service),
         )
     )
     headers = {"Authorization": "Bearer accepted"}

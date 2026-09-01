@@ -123,7 +123,6 @@ def test_cli_imports_only_the_shared_client_boundary() -> None:
         "httpx",
         "Authorization",
         "Bearer ",
-        "execute_standalone",
         "execute_run",
         "product_store",
         "get_potenda_from_instance",
