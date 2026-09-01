@@ -594,8 +594,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 ),
                 ("mutation_receipts",),
             )
-            column_nullability = {str(row[0]): str(row[1]) for row in cursor.fetchall()}
-            columns = frozenset(column_nullability)
+            column_rows = cursor.fetchall()
+            columns = frozenset(str(row[0]) for row in column_rows)
+            column_nullability = {str(row[0]): str(row[1]) for row in column_rows if len(row) > 1}
         if "resource_kind" not in columns:
             cursor.execute("ALTER TABLE mutation_receipts ADD COLUMN resource_kind TEXT")
         if "resource_id" not in columns:
