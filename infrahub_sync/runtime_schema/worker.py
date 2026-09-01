@@ -141,7 +141,9 @@ def build_runtime_model_plan(
             snapshot. Carries the accessor's short reason and nothing else from the read.
         UnsupportedSchemaSemanticsError: the snapshot, or a mapped attribute's kind, is
             outside the closed schema domain.
-        MissingMappedKindError: the schema declares no kind for a configured mapping.
+        MissingMappedKindError: a plan or sync schema declares no kind for a configured
+            mapping. Apply preserves that absence in its live fingerprint so the retained
+            plan guard can classify it as schema drift.
         PluginLoadError: an installed adapter class or model base does not resolve.
     """
     _require_admitted_destination(instance)
@@ -152,7 +154,9 @@ def build_runtime_model_plan(
         msg = f"destination schema for branch {branch!r} could not be read: {exc.reason}"
         raise DestinationSchemaUnavailableError(msg, reason=exc.reason) from None
     snapshot = normalize_destination_schema(raw)
-    _require_mapped_kinds(instance, snapshot.kinds)
+    schema_fingerprint = compute_consumed_schema_fingerprint(configuration=instance, snapshot=snapshot)
+    if scope == "both":
+        _require_mapped_kinds(instance, snapshot.kinds)
 
     def side(adapter: SyncAdapter) -> RuntimeSideModels:
         return RuntimeSideModels(
@@ -166,7 +170,7 @@ def build_runtime_model_plan(
 
     return RuntimeModelPlan(
         branch=branch,
-        schema_fingerprint=compute_consumed_schema_fingerprint(configuration=instance, snapshot=snapshot),
+        schema_fingerprint=schema_fingerprint,
         destination=side(instance.destination),
         source=side(instance.source) if scope == "both" else None,
     )

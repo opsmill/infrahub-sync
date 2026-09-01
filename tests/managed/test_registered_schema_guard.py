@@ -36,6 +36,7 @@ from infrahub_sync.managed.service import PLAN_ARTIFACT_ID
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.config_version import resolve_config_version
+from infrahub_sync.plan.errors import PlanSchemaChangedError
 from infrahub_sync.plan.review import read_saved_plan
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME, write_plan_artifact
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
@@ -240,6 +241,22 @@ def _apply(harness: _Harness, *, expected_checksum: str | None = None) -> dict[s
     )
 
 
+def _execute_apply_stage(harness: _Harness) -> tuple[dict[str, Any], Any]:
+    """Drive the production stage boundary before remote exception sanitization."""
+    return managed_flow._execute_stage(
+        RUN_ID,
+        "apply",
+        *harness.binding,
+        None,
+        harness.checksum,
+        confirm_writes=True,
+        run_logger=managed_flow.logger,
+        secrets=[],
+        config_directory=str(harness.run_dir.parents[2]),
+        projection=harness.projection,
+    )
+
+
 def _rewrite_manifest(harness: _Harness, mapping: dict[str, Any], *, recompute_checksum: bool) -> None:
     """Replace the retained manifest's bytes, optionally repairing its own checksum."""
     plan_dir = harness.run_dir / PLAN_DIR_NAME
@@ -356,6 +373,7 @@ def test_compatible_destination_growth_applies_the_retained_plan(
             ),
             id="mandatory-unmapped-attribute-added",
         ),
+        pytest.param({"BuiltinTag": _SNAPSHOT["BuiltinTag"]}, id="consumed-kind-removed"),
     ],
 )
 def test_an_incompatible_consumed_schema_change_refuses_before_any_write(
@@ -365,8 +383,8 @@ def test_an_incompatible_consumed_schema_change_refuses_before_any_write(
     harness.spy.snapshot = live
     retained = (harness.run_dir / PLAN_DIR_NAME / MANIFEST_FILE_NAME).read_bytes()
 
-    with pytest.raises(RuntimeError, match="PlanSchemaChangedError"):
-        _apply(harness)
+    with pytest.raises(PlanSchemaChangedError):
+        _execute_apply_stage(harness)
 
     assert harness.calls == []
     # No source was read, no destination was written, and the artifact is untouched.
@@ -378,8 +396,8 @@ def test_the_refusal_names_both_fingerprints_and_the_remedy(tmp_path: Path, monk
     live = _mutated("BuiltinTag", **{"attributes.name.kind": "Number"})
     harness.spy.snapshot = live
 
-    with pytest.raises(RuntimeError) as caught:
-        _apply(harness)
+    with pytest.raises(PlanSchemaChangedError) as caught:
+        _execute_apply_stage(harness)
 
     message = str(caught.value)
     assert _fingerprint(harness.instance, _SNAPSHOT) in message
