@@ -169,6 +169,20 @@ export INFRAHUB_SYNC_MANAGED_HOST="127.0.0.1"
 python -m infrahub_sync.managed.serve
 ```
 
+:::warning First startup after upgrading a legacy product store
+
+A validated single legacy startup migrates `mutation_receipts.run_id` and
+`mutation_receipts.prefect_key` from `is_nullable=NO/NO` to nullable. Two simultaneous
+first startups while the PostgreSQL catalog is still legacy can deadlock one startup.
+The failed startup fails closed before worker claim or admission, writes no Sync data,
+and the catalog converges through the successful startup.
+
+Restart the failed process after the first migration converges. Repeated or concurrent
+startups against an already-migrated nullable catalog are supported. The failed startup
+does not retry automatically.
+
+:::
+
 The server listens on port `8000`. Its host defaults to `127.0.0.1`. Put TLS and any
 network access controls at your ingress boundary. The bearer-token provider is the MVP
 application authentication boundary, not a replacement for transport security.
