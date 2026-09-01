@@ -103,7 +103,10 @@ class _CursorAdapter:
         if "information_schema.columns" in stripped:
             table_name = parameters[0] if parameters else "product_runs"
             self._cursor.execute(f"PRAGMA table_info({table_name})")
-            self._fake_rows = tuple((str(row[1]),) for row in self._cursor.fetchall())
+            # ``information_schema.columns`` is always selected as (column_name, is_nullable);
+            # PRAGMA's ``notnull`` flag carries the same fact for the literal table. The
+            # ``DROP NOT NULL`` below is a no-op here, so a legacy column keeps reporting "NO".
+            self._fake_rows = tuple((str(row[1]), "NO" if row[3] else "YES") for row in self._cursor.fetchall())
             return self
         if "information_schema.table_constraints" in stripped:
             self._cursor.execute(
@@ -3864,11 +3867,12 @@ def test_existing_run_lifecycle_is_unaffected_by_the_new_binding_columns(provide
 
 
 class _FakePostgreSQLDatabase:
-    """In-memory PostgreSQL catalog modelling the three semantics a literal SQLite file
-    cannot: transactional DDL, transaction abort on error, and ``ADD CONSTRAINT`` raising
-    ``42710`` when the named constraint already exists. This is what proves the schema
+    """In-memory PostgreSQL catalog modelling the four semantics a literal SQLite file
+    cannot: transactional DDL, transaction abort on error, ``ADD CONSTRAINT`` raising
+    ``42710`` when the named constraint already exists, and per-column ``is_nullable`` that
+    ``ALTER COLUMN ... DROP NOT NULL`` actually changes. This is what proves the schema
     bootstrap fix itself; the general CRUD tests above use the real-SQLite-backed
-    ``_ConnectionAdapter`` instead, which does not model those three semantics.
+    ``_ConnectionAdapter`` instead, which does not model those four semantics.
     """
 
     def __init__(
@@ -3876,10 +3880,13 @@ class _FakePostgreSQLDatabase:
         *,
         tables: frozenset[str] = frozenset(),
         columns: dict[str, frozenset[str]] | None = None,
+        not_null: dict[str, frozenset[str]] | None = None,
     ) -> None:
         self.tables: set[str] = set(tables)
         self.columns: dict[str, set[str]] = {name: set(cols) for name, cols in (columns or {}).items()}
+        self.not_null: dict[str, set[str]] = {name: set(cols) for name, cols in (not_null or {}).items()}
         self.constraints: set[str] = set()
+        self.statements: list[str] = []
 
     def connect(self) -> _FakePostgreSQLConnection:
         return _FakePostgreSQLConnection(self)
@@ -3890,6 +3897,7 @@ class _FakePostgreSQLConnection:
         self.database = database
         self.pending_tables: set[str] = set()
         self.pending_columns: dict[str, set[str]] = {}
+        self.pending_dropped_not_null: dict[str, set[str]] = {}
         self.pending_constraints: set[str] = set()
         self.aborted = False
 
@@ -3900,6 +3908,8 @@ class _FakePostgreSQLConnection:
         self.database.tables |= self.pending_tables
         for table, added in self.pending_columns.items():
             self.database.columns.setdefault(table, set()).update(added)
+        for table, relaxed in self.pending_dropped_not_null.items():
+            self.database.not_null.setdefault(table, set()).difference_update(relaxed)
         self.database.constraints |= self.pending_constraints
         self._discard_pending()
 
@@ -3909,6 +3919,7 @@ class _FakePostgreSQLConnection:
     def _discard_pending(self) -> None:
         self.pending_tables = set()
         self.pending_columns = {}
+        self.pending_dropped_not_null = {}
         self.pending_constraints = set()
         self.aborted = False
 
@@ -3919,6 +3930,7 @@ class _FakePostgreSQLConnection:
 _FAKE_CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)")
 _FAKE_ALTER_ADD_COLUMN = re.compile(r"^ALTER TABLE (\w+) ADD COLUMN (\w+)")
 _FAKE_ALTER_ADD_CONSTRAINT = re.compile(r"^ALTER TABLE \w+ ADD CONSTRAINT (\w+)")
+_FAKE_ALTER_DROP_NOT_NULL = re.compile(r"^ALTER TABLE (\w+) ALTER COLUMN (\w+) DROP NOT NULL")
 
 
 class _FakePostgreSQLCursor:
@@ -3932,6 +3944,7 @@ class _FakePostgreSQLCursor:
         connection = self._connection
         if connection.aborted:
             raise _FakeDriverError(sqlstate="25P02")  # current transaction is aborted
+        connection.database.statements.append(operation.strip())
         try:
             self._rows = self._dispatch(operation.strip(), parameters)
         except _FakeDriverError:
@@ -3954,7 +3967,8 @@ class _FakePostgreSQLCursor:
         if "information_schema.columns" in operation:
             table = parameters[0]
             visible = database.columns.get(table, set()) | connection.pending_columns.get(table, set())
-            return tuple((name,) for name in sorted(visible))
+            not_null = database.not_null.get(table, set()) - connection.pending_dropped_not_null.get(table, set())
+            return tuple((name, "NO" if name in not_null else "YES") for name in sorted(visible))
         if match := _FAKE_ALTER_ADD_COLUMN.match(operation):
             table, column = match.groups()
             if table not in (database.tables | connection.pending_tables):
@@ -3963,7 +3977,9 @@ class _FakePostgreSQLCursor:
             return ()
         if operation.startswith("UPDATE mutation_receipts SET resource_kind"):
             return ()
-        if "ALTER COLUMN" in operation and "DROP NOT NULL" in operation:
+        if match := _FAKE_ALTER_DROP_NOT_NULL.match(operation):
+            table, column = match.groups()
+            connection.pending_dropped_not_null.setdefault(table, set()).add(column)
             return ()
         if "information_schema.table_constraints" in operation:
             name = parameters[-1]
@@ -4012,6 +4028,31 @@ _PARENT_PRODUCT_RUNS_COLUMNS = frozenset(
 _PARENT_TABLES = frozenset(
     {"product_runs", "artifact_refs", "prefect_executions", "mutation_receipts", "write_admissions", "audit_events"}
 )
+# The pre-resource-identity ``mutation_receipts`` shape, whose ``run_id`` and ``prefect_key``
+# are still declared NOT NULL.
+_LEGACY_MUTATION_RECEIPT_COLUMNS = frozenset(
+    {
+        "receipt_id",
+        "actor",
+        "key_digest",
+        "operation",
+        "target_run_id",
+        "request_fingerprint",
+        "reason",
+        "run_id",
+        "prefect_key",
+        "state",
+        "response_status",
+        "response_body",
+        "flow_run_id",
+        "created_at",
+        "updated_at",
+    }
+)
+
+
+def _drop_not_null_statements(database: _FakePostgreSQLDatabase) -> list[str]:
+    return [statement for statement in database.statements if "DROP NOT NULL" in statement]
 
 
 def test_postgresql_initialize_succeeds_twice_on_a_fresh_catalog() -> None:
@@ -4054,6 +4095,58 @@ def test_postgresql_repeated_initialization_skips_completed_mutation_receipt_nul
         and call.args[0].strip().endswith("DROP NOT NULL")
     ]
     assert recurring_ddl == []
+
+
+def test_postgresql_legacy_mutation_receipt_nullability_migrates_once() -> None:
+    """A legacy ``NO`` catalog is relaxed on the first construction and left alone afterwards.
+
+    The two halves belong together: skipping the DDL only because a column is already nullable
+    is correct, skipping it while a real ``NOT NULL`` column survives is the legacy-migration
+    regression the idempotency work must not cause.
+    """
+    database = _FakePostgreSQLDatabase(
+        tables=_PARENT_TABLES,
+        columns={
+            "product_runs": _PARENT_PRODUCT_RUNS_COLUMNS,
+            "mutation_receipts": _LEGACY_MUTATION_RECEIPT_COLUMNS,
+        },
+        not_null={"mutation_receipts": frozenset({"run_id", "prefect_key"})},
+    )
+
+    PostgreSQLRunStore(database.connect)
+
+    assert _drop_not_null_statements(database) == [
+        "ALTER TABLE mutation_receipts ALTER COLUMN run_id DROP NOT NULL",
+        "ALTER TABLE mutation_receipts ALTER COLUMN prefect_key DROP NOT NULL",
+    ]
+    assert database.not_null["mutation_receipts"] == set()
+
+    database.statements.clear()
+    PostgreSQLRunStore(database.connect)
+
+    assert _drop_not_null_statements(database) == []
+
+
+def test_postgresql_initialization_refuses_a_malformed_column_catalog_row() -> None:
+    """A catalog answer that cannot report nullability fails closed.
+
+    ``information_schema.columns`` is selected with two projected columns, so a narrower row
+    means the provider did not answer the statement that was issued. Reading it as "already
+    nullable" would silently skip the one-time legacy migration and leave a real ``NOT NULL``
+    column in place, which no later construction would ever repair.
+    """
+    connection = MagicMock()
+    connection.cursor.return_value.fetchall.side_effect = [
+        (),
+        (),
+        (("run_id",), ("prefect_key",)),
+    ]
+    connection.cursor.return_value.fetchone.return_value = (1,)
+
+    with pytest.raises(product_store.ProductStoreProviderError):
+        PostgreSQLRunStore(lambda: connection)
+
+    connection.rollback.assert_called_once_with()
 
 
 def test_postgresql_initialize_succeeds_twice_on_a_prepopulated_parent_catalog() -> None:
