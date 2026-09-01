@@ -103,10 +103,15 @@ to each `ProcessJobConfiguration` and injects `PREFECT__WORKER_ID` into that wor
 flow-run child. The deployment stores no worker identity.
 
 A restarted process generates a new name and resolves its current server Worker UUID.
-It does not reuse an identity from the previous process. You can run multiple managed
-workers in one work pool because every supported invocation has a distinct name and
-resolves a distinct UUID. Use this entry point for every worker eligible to run the
-managed deployment; manually named or standard Prefect process workers are outside the
+It does not reuse an identity from the previous process.
+
+The validated support boundary is one host running one managed worker process. Worker
+identity is not what limits this: every supported invocation has a distinct name and
+resolves a distinct UUID. Plan and apply exchange saved plans through the
+`INFRAHUB_SYNC_CACHE_DIR` filesystem, so an apply must run where its plan was written. A
+work pool with more than one managed worker, and scheduling across more than one host,
+are outside the validated boundary. Use this entry point for every worker eligible to run
+the managed deployment; manually named or standard Prefect process workers are outside the
 supported topology.
 
 The worker does not poll for runs until its heartbeat is complete and the pool returns
