@@ -1,16 +1,26 @@
 """The configuration-version value a saved plan is bound to (FR-011, AD041, PD-003).
 
 The value is **opaque**: it is compared for equality at apply time and never parsed
-(AD013). Two ways of obtaining one:
+(AD013). Three ways of obtaining one:
 
-- the default rule — `sha256` over the canonical JSON of the parsed configuration with
-  `directory` excluded and `settings` included (PD-003). `directory` is an absolute
-  filesystem path, so including it would make the value machine-dependent and a plan
-  produced in CI could never be applied from a developer's checkout. `settings` is
-  included because a changed destination address is a changed configuration; only the
-  one-way digest is written, so no credential is disclosed (FR-018). The stated
-  consequence: **rotating a credential invalidates every saved plan for that
-  configuration** (AD041).
+- a registered instance's declared package checksum. An instance carrying a configuration
+  binding was resolved from one immutable registered package version, whose checksum
+  already identifies that configuration exactly — so the binding answers the question the
+  default rule exists to answer, without hashing resolved credential values. It has to: a
+  saved-plan apply constructs the destination only and resolves no source credential, so a
+  rule that hashed resolved settings would compute a different value on the apply host
+  than the plan host recorded, and no reviewed registered plan could ever be applied. The
+  registry version and package checksum remain the immutable binding they were, recorded
+  separately in the manifest and compared separately; nothing here relaxes them.
+- the default rule, for every unregistered instance — `sha256` over the canonical JSON of
+  the parsed configuration with `directory` excluded and `settings` included (PD-003).
+  `directory` is an absolute filesystem path, so including it would make the value
+  machine-dependent and a plan produced in CI could never be applied from a developer's
+  checkout. `settings` is included because a changed destination address is a changed
+  configuration; only the one-way digest is written, so no credential is disclosed
+  (FR-018). The stated consequence: **rotating a credential invalidates every saved plan
+  for that configuration** (AD041). A registered configuration expresses that same
+  invalidation by publishing a new package version, which changes the checksum.
 - a caller-supplied value, validated as non-empty printable ASCII and stored verbatim.
 """
 
@@ -37,11 +47,20 @@ CONFIG_VERSION_EXCLUDED_FIELDS = frozenset({"directory"})
 def default_config_version(config: SyncConfig) -> str:
     """Compute the default configuration version for `config` (AD041, PD-003).
 
-    `sha256` over the canonical JSON of `config.model_dump(mode="json")` with `directory`
-    excluded, lowercase hex. Parsing before hashing makes the value insensitive to YAML
-    comments, key order and whitespace, which is the strongest stability available without
-    a version registry.
+    A registered instance — one carrying a configuration binding — answers with that
+    binding's declared package checksum, which identifies its immutable package version
+    exactly and reads the same on the plan host and on an apply host that resolves no
+    source credential.
+
+    Every other instance answers with `sha256` over the canonical JSON of
+    `config.model_dump(mode="json")` with `directory` excluded, lowercase hex. Parsing
+    before hashing makes the value insensitive to YAML comments, key order and whitespace,
+    which is the strongest stability available without a version registry.
     """
+    # `SyncInstance`'s worker-only binding; a plain `SyncConfig` never carries one.
+    binding: tuple[str, int, str] | None = getattr(config, "_configuration_binding", None)
+    if binding is not None:
+        return binding[2]
     payload = config.model_dump(mode="json", exclude=set(CONFIG_VERSION_EXCLUDED_FIELDS))
     return hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
 

@@ -381,7 +381,10 @@ def _worker_execution_context(
         raise ValueError(_REGISTERED_VERSION_INVALID) from None
     if registered.package_checksum != package_checksum or package.checksum() != package_checksum:
         raise ValueError(_REGISTERED_CHECKSUM_MISMATCH)
-    instance = resolve_runtime_instance(package, directory=config_directory)
+    # A saved-plan apply constructs the destination only, so it resolves no source credential.
+    instance = resolve_runtime_instance(
+        package, directory=config_directory, resolve_source_credentials=stage != "apply"
+    )
     instance._configuration_binding = binding
     scope = STAGE_RUNTIME_MODEL_SCOPE.get(stage)
     if scope is not None and build_models:
