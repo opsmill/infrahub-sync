@@ -215,6 +215,9 @@ END
 _SQLITE_UNIQUE_CONSTRAINT_CODES = frozenset({1555, 2067})
 _POSTGRESQL_SCHEMA_CONFLICT_CODES = frozenset({"23505", "42P07", "42710"})
 _POSTGRESQL_DUPLICATE_COLUMN_CODE = "42701"
+# ``_migrate_mutation_receipts`` is the one catalog read that needs nullability, and it projects
+# exactly (column_name, is_nullable). The other two read column names alone.
+_CATALOG_NULLABILITY_ROW_WIDTH = 2
 _PREFECT_POSITION_ATTEMPTS = 3
 _RESULT_MERGE_ATTEMPTS = 5
 _SCHEMA_INITIALIZATION_ATTEMPTS = 2
@@ -594,9 +597,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 ),
                 ("mutation_receipts",),
             )
-            column_rows = cursor.fetchall()
-            columns = frozenset(str(row[0]) for row in column_rows)
-            column_nullability = {str(row[0]): str(row[1]) for row in column_rows if len(row) > 1}
+            column_nullability = _catalog_nullability(cursor.fetchall())
+            columns = frozenset(column_nullability)
         if "resource_kind" not in columns:
             cursor.execute("ALTER TABLE mutation_receipts ADD COLUMN resource_kind TEXT")
         if "resource_id" not in columns:
@@ -2984,6 +2986,22 @@ def _require_result_row(row: Sequence[Any] | None, run_id: str) -> Sequence[Any]
         msg = f"Cannot merge results for unavailable Sync run ID {run_id!r}"
         raise RunNotFoundError(msg)
     return row
+
+
+def _catalog_nullability(rows: Sequence[Sequence[Any]]) -> dict[str, str]:
+    """Read ``(column_name, is_nullable)`` catalog rows, refusing any other row shape.
+
+    Nullability decides whether the legacy ``DROP NOT NULL`` migration still has work to do,
+    so a row that cannot report it is a provider failure rather than a default. Treating a
+    narrower row as "already nullable" would skip the one-time migration and leave a real
+    ``NOT NULL`` column in place, which no later construction would repair.
+    """
+    nullability: dict[str, str] = {}
+    for row in rows:
+        if len(row) != _CATALOG_NULLABILITY_ROW_WIDTH:
+            raise ProductStoreProviderError
+        nullability[str(row[0])] = str(row[1])
+    return nullability
 
 
 def _require_cancellation_receipt_row(row: Sequence[Any] | None) -> Sequence[Any]:
