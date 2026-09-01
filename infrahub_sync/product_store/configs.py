@@ -722,7 +722,8 @@ def register(
     ``package`` is declared JSON-native content; a prebuilt package instance is refused
     (:func:`_parse`). Validation happens inside the store, before anything is persisted, so
     an invalid package raises and is never registered. The findings surface is
-    :func:`validate`.
+    :func:`validate`. The caller supplies the durable-store :class:`ProductProjection`
+    through ``projection``.
     """
     parsed = _parse(package)
     try:
@@ -748,7 +749,8 @@ def create_version(
     """Add one version to an existing configuration, or return the identical stored one.
 
     ``package`` is declared JSON-native content; a prebuilt package instance is refused
-    (:func:`_parse`).
+    (:func:`_parse`). The caller supplies the durable-store :class:`ProductProjection`
+    through ``projection``.
     """
     _require_argument_type(config_id, name="config_id", expected=str)
     parsed = _parse(package)
@@ -769,7 +771,8 @@ def list_configs(*, projection: ProductProjection) -> tuple[ConfigurationSummary
 
     The order is the store's own ``ORDER BY created_at, config_id`` — deterministic and total,
     never a re-sort in this layer. An empty registry is a real answer here, unlike the scoped
-    reads: there is no identifier whose absence could make it a not-found.
+    reads: there is no identifier whose absence could make it a not-found. The caller
+    supplies the durable-store :class:`ProductProjection` through ``projection``.
     """
     return projection.list_configurations()
 
@@ -780,7 +783,10 @@ def get_config(
     config_id: str,
     projection: ProductProjection,
 ) -> ConfigurationSummary:
-    """Return one registered configuration's summary, refusing absence rather than guessing."""
+    """Return one registered configuration's summary, refusing absence rather than guessing.
+
+    The caller supplies the durable-store :class:`ProductProjection` through ``projection``.
+    """
     _require_argument_type(config_id, name="config_id", expected=str)
     return _require_configuration(projection, config_id)
 
@@ -795,7 +801,8 @@ def list_versions(
 
     A missing configuration refuses — never a silent empty tuple, which would be
     indistinguishable from a real answer about a registered configuration. The order is the
-    store's own ``ORDER BY registry_version``, not a re-sort in this layer.
+    store's own ``ORDER BY registry_version``, not a re-sort in this layer. The caller
+    supplies the durable-store :class:`ProductProjection` through ``projection``.
     """
     _require_argument_type(config_id, name="config_id", expected=str)
     _require_configuration(projection, config_id)
@@ -815,7 +822,9 @@ def get_version(
     refuses with :data:`CONFIGURATION_NOT_FOUND_REASON` — then the version, whose absence
     on an existing configuration refuses with
     :data:`CONFIGURATION_VERSION_NOT_FOUND_REASON`. Deletion does not exist, so the two steps
-    cannot race. The store's blended single-lookup reason is untouched; ``validate`` keeps it.
+    cannot race. The store's blended single-lookup reason is untouched; ``validate`` keeps
+    it. The caller supplies the durable-store :class:`ProductProjection` through
+    ``projection``.
     """
     _require_argument_type(config_id, name="config_id", expected=str)
     _require_registry_version(registry_version)
@@ -845,7 +854,8 @@ def validate(
     ``None`` — the default — keeps the declared-content-only behavior byte-identical, with
     zero schema reads and zero network I/O. An explicit options object adds the destination
     schema checks, merges their findings under the same ``sort_findings`` contract, and
-    records the judged snapshot's fingerprint.
+    records the judged snapshot's fingerprint. The caller supplies the durable-store
+    :class:`ProductProjection` through ``projection``.
     """
     _require_argument_type(config_id, name="config_id", expected=str)
     _require_registry_version(registry_version)

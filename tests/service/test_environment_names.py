@@ -27,7 +27,13 @@ PRINCIPALS = json.dumps({"admin": {"token": "service-token-canary-0001", "admini
 
 @pytest.fixture(autouse=True)
 def _clear_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in (*RETIRED_NAMES, auth.PRINCIPALS_ENV, deploy.WORK_POOL_ENV, deploy.FLOW_WORKING_DIRECTORY_ENV):
+    for name in (
+        *RETIRED_NAMES,
+        auth.PRINCIPALS_ENV,
+        deploy.WORK_POOL_ENV,
+        deploy.FLOW_WORKING_DIRECTORY_ENV,
+        "INFRAHUB_SYNC_SERVICE_HOST",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
