@@ -73,7 +73,7 @@ def create_app(
                 with suppress(CancelledError):
                     await task
 
-    application = FastAPI(title="Infrahub Sync Sync API", version=installed_server_version(), lifespan=lifespan)
+    application = FastAPI(title="Infrahub Sync API", version=installed_server_version(), lifespan=lifespan)
     bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
 
     def authenticate(

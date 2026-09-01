@@ -2,7 +2,7 @@
 
 > Part of: `dev/knowledge/` | Related: [The shared execution surface](execution-surface.md)
 
-<!-- Extracted from dev/specs/archive/001-prefect-managed-remote-run on 2026-07-31 -->
+<!-- Extracted from the archived prefect remote-run spec (dev/specs/archive/001, commit 33817cf) on 2026-07-31 -->
 
 `infrahub_sync/orchestration/` is the direct Prefect integration: a flow that runs one plan
 or one confirmed sync, and a serve entrypoint that exposes it as a locally served

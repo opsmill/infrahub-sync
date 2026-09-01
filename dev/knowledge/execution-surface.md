@@ -2,7 +2,7 @@
 
 > Part of: `dev/knowledge/` | Related: [Sync architecture](sync-architecture.md), [Prefect orchestration](orchestration-prefect.md)
 
-<!-- Extracted from dev/specs/archive/001-prefect-managed-remote-run on 2026-07-31 -->
+<!-- Extracted from the archived prefect remote-run spec (dev/specs/archive/001, commit 33817cf) on 2026-07-31 -->
 
 `infrahub_sync/execution.py` is the typed Python entry point to a single sync run. It exists
 because the plan and serial-sync lifecycles need more than one caller: the CLI drives them
