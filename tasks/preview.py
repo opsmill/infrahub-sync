@@ -1,10 +1,14 @@
 """Preview environment: one command from a fresh clone to a testable v3 stack.
 
 `invoke preview.up` brings up a disposable Infrahub instance and a dedicated
-Prefect server (Docker), loads the example schema, starts the Sync HTTP
-API and a Prefect worker from this checkout, applies the service deployment,
-and finishes by running the preview smoke suite so a
-tester never receives an environment that has not just proven its own basics.
+Prefect server (Docker), starts the Sync HTTP API and a Prefect worker from
+this checkout, and applies the service deployment. It writes nothing to
+Infrahub and admits no Sync run: bringing the stack up is safe to repeat on an
+environment somebody is already using.
+
+The two write-bearing actions are explicit. `invoke preview.seed` puts the
+smoke dataset into Infrahub, and `invoke preview.smoke` seeds and then runs the
+smoke suite, which admits real Sync runs.
 
 Configuration ships in `development/preview.env` (no secrets — local-only
 defaults); personal overrides belong in the gitignored
@@ -52,7 +56,6 @@ SMOKE_BRANCH = "preview-smoke"
 SMOKE_KIND = "InfraDevice"
 SHARED_DEVICE_NAME = "core01"
 SHARED_DEVICE_SEED_TYPE = "preview-seed"
-EXPECT_MAIN_EMPTY_ENV = "INFRAHUB_SYNC_PREVIEW_EXPECT_MAIN_EMPTY"
 # Process name -> substring its command line must contain before a recorded pid
 # is treated as ours (guards against pid recycling by unrelated processes).
 SERVICE_PROCESSES = {
@@ -60,6 +63,10 @@ SERVICE_PROCESSES = {
     "prefect-worker": "infrahub_sync.service.worker",
 }
 WAIT_TIMEOUT_SECONDS = 420
+# Infrahub applies a loaded schema asynchronously, and the seed immediately creates a node
+# of the kind it just loaded. Without waiting for the schema to converge across Infrahub's
+# workers, that create fails with `SchemaNotFoundError` on a fresh instance.
+SCHEMA_CONVERGE_SECONDS = 120
 # The pre-stability names this preview used to register and run under. `preview.up`
 # reuses volumes and tolerates existing Prefect state, so a checkout that ran the old
 # names can still hold a live deployment, work pool, worker, or host process under them.
@@ -216,6 +223,22 @@ def _wait_for_http(url: str, description: str, timeout: int = WAIT_TIMEOUT_SECON
         time.sleep(3)
     msg = f"{description} did not become ready within {timeout}s (last: {last_error})"
     raise PreviewError(msg)
+
+
+def _infrahub_reachable(infrahub_address: str) -> bool:
+    """Report whether Infrahub answers at all, on the endpoint `up` waits for.
+
+    A stopped stack is the one condition under which the smoke skips seeding: the suite
+    then reports the unreachable endpoint itself. Every other seed failure is a real
+    failure and belongs to the caller.
+    """
+    import httpx  # noqa: PLC0415 -- lazy so importing the tasks package never requires the service extras
+
+    try:
+        httpx.get(f"{infrahub_address}/api/config", timeout=5)
+    except httpx.HTTPError:
+        return False
+    return True
 
 
 def _prefect_call(method: str, url: str) -> httpx.Response:
@@ -397,7 +420,7 @@ def _stop_process(name: str) -> None:
 
 @task
 def up(context: Context) -> None:
-    """Bring up the full preview stack, prove it with the smoke suite, print URLs."""
+    """Bring up the full preview stack without writing to it, then print URLs."""
     values = load_preview_env()
     urls = preview_urls(values)
     env = _runtime_env(values)
@@ -409,12 +432,6 @@ def up(context: Context) -> None:
     _wait_for_http(f"{urls['infrahub']}/api/config", "Infrahub")
     _wait_for_http(f"{urls['prefect']}/api/health", "Prefect")
     assert_no_legacy_state(env["PREFECT_API_URL"], values["PREVIEW_WORK_POOL"])
-
-    print(f" - [{NAMESPACE}] Loading the example schema")
-    context.run(
-        f"uv run infrahubctl schema load {shlex.quote(str(SCHEMA_FILE))}",
-        env={"INFRAHUB_ADDRESS": env["INFRAHUB_ADDRESS"], "INFRAHUB_API_TOKEN": env["INFRAHUB_API_TOKEN"]},
-    )
 
     print(f" - [{NAMESPACE}] Ensuring the Prefect work pool exists")
     context.run(
@@ -460,8 +477,6 @@ def up(context: Context) -> None:
     )
     _wait_for_http(f"{urls['sync_api']}/openapi.json", "Sync API", timeout=90)
 
-    _run_smoke(context, expect_main_empty=True)
-
     tokens = json.loads(values["PREVIEW_BEARER_TOKENS"])
     print(f" - [{NAMESPACE}] Preview environment ready")
     print(f"     Infrahub UI:      {urls['infrahub']}  (admin / infrahub)")
@@ -469,37 +484,40 @@ def up(context: Context) -> None:
     print(f"     Sync API: {urls['sync_api']}  (bearer principals: {', '.join(sorted(tokens))})")
     print(f"     Config directory: {env['INFRAHUB_SYNC_CONFIG_DIRECTORY']}")
     print(f"     Runtime state:    {STATE_DIR}")
-    print("     Next: docs/docs/reference/sync-http-api.mdx and `uv run invoke preview.status`")
+    print("     Nothing has been written to Infrahub; `preview.seed` and `preview.smoke` write.")
+    print("     Next: `uv run invoke preview.seed`, `preview.smoke`, or `preview.status`")
 
 
-def _run_smoke(context: Context, *, expect_main_empty: bool) -> None:
-    """Run reusable smoke checks, optionally including startup acceptance."""
-    from infrahub_sdk.exceptions import (  # noqa: PLC0415 -- keep Invoke task imports lightweight
-        ServerNotReachableError,
-    )
-
+@task
+def seed(context: Context) -> None:
+    """Write the smoke dataset into the running preview: schema, branch, shared device."""
     values = load_preview_env()
     env = _runtime_env(values)
-    if expect_main_empty:
-        env[EXPECT_MAIN_EMPTY_ENV] = "1"
-    else:
-        env.pop(EXPECT_MAIN_EMPTY_ENV, None)
-    print(f" - [{NAMESPACE}] Ensuring the {SMOKE_BRANCH} Infrahub branch exists")
-    try:
-        ensure_smoke_branch(env)
-    except ServerNotReachableError:
-        # Preserve the suite's polite stopped-environment behavior: its session
-        # fixture reports the unavailable endpoint and skips the preview tests.
-        print(f" - [{NAMESPACE}] Infrahub is not reachable; smoke tests will report the environment state")
-    print(f" - [{NAMESPACE}] Running the preview smoke suite")
-    with context.cd(ESCAPED_REPO_PATH):
-        context.run("uv run pytest -m preview tests/preview -q", env=env)
+    print(f" - [{NAMESPACE}] Seeding {env['INFRAHUB_ADDRESS']}, which writes:")
+    print(f" - [{NAMESPACE}]   the schema in {SCHEMA_FILE}")
+    print(f" - [{NAMESPACE}]   {SMOKE_KIND} {SHARED_DEVICE_NAME} on main, then the {SMOKE_BRANCH} branch")
+    context.run(
+        f"uv run infrahubctl schema load --wait {SCHEMA_CONVERGE_SECONDS} {shlex.quote(str(SCHEMA_FILE))}",
+        env={"INFRAHUB_ADDRESS": env["INFRAHUB_ADDRESS"], "INFRAHUB_API_TOKEN": env["INFRAHUB_API_TOKEN"]},
+    )
+    ensure_smoke_branch(env)
 
 
 @task
 def smoke(context: Context) -> None:
-    """Run reusable smoke checks against the running environment."""
-    _run_smoke(context, expect_main_empty=False)
+    """Seed the smoke dataset, then run the smoke suite against the running environment."""
+    env = _runtime_env(load_preview_env())
+    if _infrahub_reachable(env["INFRAHUB_ADDRESS"]):
+        print(f" - [{NAMESPACE}] The smoke suite writes, so it seeds first")
+        seed(context)
+    else:
+        print(f" - [{NAMESPACE}] Infrahub is not reachable; smoke tests will report the environment state")
+    print(f" - [{NAMESPACE}] Running the preview smoke suite")
+    with context.cd(ESCAPED_REPO_PATH):
+        # Single-process deliberately: the suite's modules share one Infrahub branch and
+        # one Prefect deployment, and its collection hook orders them against each other.
+        # A distributed run would split that ordering across workers.
+        context.run("uv run pytest -m preview tests/preview -q", env=env)
 
 
 @task

@@ -8,15 +8,13 @@ from typing import TYPE_CHECKING, cast
 
 import infrahub_sdk
 import pytest
-from infrahub_sdk.exceptions import ServerNotReachableError
-from invoke import Context
+from invoke import Context, Result, UnexpectedExit
 
 from tasks import preview
 from tasks.preview import (
     COMPOSE_FILES,
     DEV_DIR,
     ENV_FILE,
-    EXPECT_MAIN_EMPTY_ENV,
     REPO_ROOT,
     SHARED_DEVICE_NAME,
     SHARED_DEVICE_SEED_TYPE,
@@ -26,6 +24,14 @@ from tasks.preview import (
 )
 
 PREVIEW_MINIO_SECRET = "preview-minio-secret"  # noqa: S105 - disposable local contract canary.
+UP_VALUES = {
+    "COMPOSE_PROJECT_NAME": "preview-test",
+    "PREVIEW_INFRAHUB_PORT": "8080",
+    "PREVIEW_PREFECT_PORT": "4210",
+    "PREVIEW_SYNC_API_PORT": "8090",
+    "PREVIEW_WORK_POOL": "preview-pool",
+    "PREVIEW_BEARER_TOKENS": '{"tester@local": {"token": "t", "administrator": true}}',
+}
 SMOKE_ENVIRONMENT = {"INFRAHUB_ADDRESS": "http://127.0.0.1:8080", "INFRAHUB_API_TOKEN": "local-token"}
 # The source the CLI-cycle smoke plans against the same branch.
 CLI_SMOKE_SOURCE = REPO_ROOT / "examples" / "custom_adapter" / "custom_adapter_src" / "mock_db.json"
@@ -142,6 +148,49 @@ def test_preview_up_uses_a_bounded_compose_wait(monkeypatch: pytest.MonkeyPatch,
         cast("Task", preview.up).body(context)
 
     assert compose_calls == ["up --detach --wait --wait-timeout 420 --quiet-pull"]
+
+
+def test_bringing_the_preview_up_writes_nothing_to_infrahub(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """`up` starts the stack and nothing else; `seed` and `smoke` own every write.
+
+    The daily bring-up must leave the disposable Infrahub exactly as it found it, so the
+    commands `up` issues are pinned in full: no schema load, no seeded branch or device,
+    and no smoke suite -- the one path that admits a Sync run.
+    """
+    started: list[str] = []
+    commands: list[str] = []
+    seeded: list[dict[str, str]] = []
+    context = Context()
+
+    monkeypatch.setattr(preview, "STATE_DIR", tmp_path / ".preview")
+    monkeypatch.setattr(preview, "load_preview_env", lambda: UP_VALUES)
+    monkeypatch.setattr(
+        preview,
+        "_runtime_env",
+        lambda _values: {
+            "INFRAHUB_ADDRESS": "http://localhost:8080",
+            "INFRAHUB_API_TOKEN": "local-token",
+            "PREFECT_API_URL": "http://localhost:4210/api",
+            "INFRAHUB_SYNC_CONFIG_DIRECTORY": str(tmp_path / "examples"),
+            "INFRAHUB_SYNC_CACHE_DIR": str(tmp_path / "sync-cache"),
+        },
+    )
+    monkeypatch.setattr(preview, "_compose", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(preview, "_wait_for_http", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(preview, "assert_no_legacy_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(preview, "_start_process", lambda name, _argv, _env: started.append(name))
+    monkeypatch.setattr(preview, "ensure_smoke_branch", seeded.append)
+    monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
+    monkeypatch.setattr(context, "run", lambda command, **_kwargs: commands.append(command))
+
+    cast("Task", preview.up).body(context)
+
+    assert started == ["prefect-worker", "sync-api"]
+    assert commands == [
+        "uv run prefect work-pool create preview-pool --type process",
+        "uv run python -m infrahub_sync.service.deploy",
+    ]
+    assert seeded == []
 
 
 def test_compose_receives_merged_local_preview_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -265,18 +314,20 @@ def test_the_seeded_device_is_one_the_cli_smoke_source_already_owns() -> None:
     assert SHARED_DEVICE_NAME in {device["name"] for device in devices}
 
 
-def test_the_smoke_task_ensures_its_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_smoke_task_seeds_before_it_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The suite writes, so `smoke` puts the dataset in place before running it.
+
+    Order is the property: seeded afterwards, the suite would plan against an Infrahub
+    that holds neither the schema nor the shared device it asserts on.
+    """
     events: list[object] = []
     context = Context()
     values = {"COMPOSE_PROJECT_NAME": "preview-test"}
-    environment = {
-        "INFRAHUB_ADDRESS": "http://localhost:8080",
-        "INFRAHUB_API_TOKEN": "local-token",
-        EXPECT_MAIN_EMPTY_ENV: "1",
-    }
+    environment = {"INFRAHUB_ADDRESS": "http://localhost:8080", "INFRAHUB_API_TOKEN": "local-token"}
 
     monkeypatch.setattr(preview, "load_preview_env", lambda: values)
     monkeypatch.setattr(preview, "_runtime_env", lambda _values: environment)
+    monkeypatch.setattr(preview, "_infrahub_reachable", lambda _address: True)
     monkeypatch.setattr(preview, "ensure_smoke_branch", lambda env: events.append(("branch", env)))
     monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
     monkeypatch.setattr(
@@ -287,14 +338,19 @@ def test_the_smoke_task_ensures_its_branch(monkeypatch: pytest.MonkeyPatch) -> N
 
     cast("Task", preview.smoke).body(context)
 
-    assert EXPECT_MAIN_EMPTY_ENV not in environment
     assert events == [
+        (
+            "run",
+            f"uv run infrahubctl schema load --wait {preview.SCHEMA_CONVERGE_SECONDS} {preview.SCHEMA_FILE}",
+            environment,
+        ),
         ("branch", environment),
         ("run", "uv run pytest -m preview tests/preview -q", environment),
     ]
 
 
-def test_startup_smoke_requests_the_pristine_main_check(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_seed_task_loads_the_schema_before_it_creates_the_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`ensure_smoke_branch` creates a node of the kind the schema defines, so it comes second."""
     events: list[object] = []
     context = Context()
     values = {"COMPOSE_PROJECT_NAME": "preview-test"}
@@ -302,22 +358,54 @@ def test_startup_smoke_requests_the_pristine_main_check(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(preview, "load_preview_env", lambda: values)
     monkeypatch.setattr(preview, "_runtime_env", lambda _values: environment)
-    monkeypatch.setattr(preview, "ensure_smoke_branch", lambda _env: None)
-    monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
+    monkeypatch.setattr(preview, "ensure_smoke_branch", lambda env: events.append(("branch", env)))
     monkeypatch.setattr(
         context,
         "run",
-        lambda command, *, env: events.append((command, env.copy())),
+        lambda command, *, env: events.append(("run", command, env)),
     )
 
-    preview._run_smoke(context, expect_main_empty=True)
+    cast("Task", preview.seed).body(context)
 
     assert events == [
         (
-            "uv run pytest -m preview tests/preview -q",
-            {**environment, EXPECT_MAIN_EMPTY_ENV: "1"},
-        )
+            "run",
+            f"uv run infrahubctl schema load --wait {preview.SCHEMA_CONVERGE_SECONDS} {preview.SCHEMA_FILE}",
+            environment,
+        ),
+        ("branch", environment),
     ]
+
+
+def test_the_smoke_task_does_not_run_the_suite_when_the_seed_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A seed that fails against a reachable Infrahub must stop the smoke, not be absorbed.
+
+    A rejected schema, an edit the destination refuses, or a wrong credential override
+    all fail here. Running the suite anyway would check the state the seed failed to
+    replace, and that state can still satisfy every assertion.
+    """
+    commands: list[str] = []
+    context = Context()
+    values = {"COMPOSE_PROJECT_NAME": "preview-test"}
+    environment = {"INFRAHUB_ADDRESS": "http://localhost:8080", "INFRAHUB_API_TOKEN": "local-token"}
+
+    def _refuse_the_schema_load(command: str, *, env: dict[str, str]) -> None:
+        del env
+        commands.append(command)
+        if "schema load" in command:
+            raise UnexpectedExit(Result(exited=1))
+
+    monkeypatch.setattr(preview, "load_preview_env", lambda: values)
+    monkeypatch.setattr(preview, "_runtime_env", lambda _values: environment)
+    monkeypatch.setattr(preview, "_infrahub_reachable", lambda _address: True)
+    monkeypatch.setattr(preview, "ensure_smoke_branch", lambda _env: commands.append("branch"))
+    monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
+    monkeypatch.setattr(context, "run", _refuse_the_schema_load)
+
+    with pytest.raises(UnexpectedExit):
+        cast("Task", preview.smoke).body(context)
+
+    assert [command for command in commands if "pytest" in command] == [], commands
 
 
 def test_actual_smoke_path_receives_the_preview_aws_credential_chain(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -342,20 +430,21 @@ def test_actual_smoke_path_receives_the_preview_aws_credential_chain(monkeypatch
     }
 
     monkeypatch.setattr(preview, "load_preview_env", lambda: values)
+    monkeypatch.setattr(preview, "_infrahub_reachable", lambda _address: True)
     monkeypatch.setattr(preview, "ensure_smoke_branch", lambda _env: None)
     monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
     monkeypatch.setattr(context, "run", lambda command, *, env: events.append((command, env.copy())))
 
-    preview._run_smoke(context, expect_main_empty=False)
+    cast("Task", preview.smoke).body(context)
 
-    assert len(events) == 1
-    command, smoke_environment = events[0]
-    assert command == "uv run pytest -m preview tests/preview -q"
-    assert smoke_environment["AWS_ACCESS_KEY_ID"] == "preview-minio-access"
-    assert smoke_environment["AWS_SECRET_ACCESS_KEY"] == PREVIEW_MINIO_SECRET
+    smoke_environments = [env for command, env in events if "pytest" in command]
+    assert len(smoke_environments) == 1
+    assert smoke_environments[0]["AWS_ACCESS_KEY_ID"] == "preview-minio-access"
+    assert smoke_environments[0]["AWS_SECRET_ACCESS_KEY"] == PREVIEW_MINIO_SECRET
 
 
 def test_the_smoke_task_leaves_an_unreachable_environment_to_pytest(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A stopped stack is not seeded at all; the suite reports the unreachable endpoint."""
     events: list[object] = []
     context = Context()
     values = {"COMPOSE_PROJECT_NAME": "preview-test"}
@@ -363,11 +452,8 @@ def test_the_smoke_task_leaves_an_unreachable_environment_to_pytest(monkeypatch:
 
     monkeypatch.setattr(preview, "load_preview_env", lambda: values)
     monkeypatch.setattr(preview, "_runtime_env", lambda _values: environment)
-    monkeypatch.setattr(
-        preview,
-        "ensure_smoke_branch",
-        lambda _env: (_ for _ in ()).throw(ServerNotReachableError(environment["INFRAHUB_ADDRESS"])),
-    )
+    monkeypatch.setattr(preview, "_infrahub_reachable", lambda _address: False)
+    monkeypatch.setattr(preview, "ensure_smoke_branch", lambda env: events.append(("branch", env)))
     monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
     monkeypatch.setattr(
         context,

@@ -99,7 +99,6 @@ def _staged_up(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, started: list[st
     )
     monkeypatch.setattr(preview, "_compose", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(preview, "_wait_for_http", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(preview, "_run_smoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(preview, "_start_process", lambda name, _argv, _env: started.append(name))
 
     class _SilentContext(Context):

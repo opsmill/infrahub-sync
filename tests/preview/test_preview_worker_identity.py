@@ -44,7 +44,6 @@ def _staged_up(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any
     monkeypatch.setattr(preview, "_compose", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(preview, "_wait_for_http", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(preview, "assert_no_legacy_state", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(preview, "_run_smoke", lambda *_args, **_kwargs: None)
 
     def _start(name: str, argv: list[str], env: dict[str, str]) -> None:
         captured[f"argv:{name}"] = argv
