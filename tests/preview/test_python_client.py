@@ -21,6 +21,7 @@ import pytest
 from infrahub_sync.client import SyncClient
 from infrahub_sync.client.models import ApplyRunRequest, ConfigMutationRequest, CreateRunRequest
 from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH
+from tests.preview.evidence import canary_leaks
 from tests.preview.test_service_api import (
     device_types,
     infrahub_client,
@@ -98,5 +99,22 @@ def test_sync_client_registers_plans_and_applies_against_the_service(preview_env
         applied_summary = results.results["summary"]
         assert applied_summary.get("update", 0) > 0, applied_summary
         assert applied_summary.get("delete", 0) == 0, applied_summary
+
+    assert (
+        canary_leaks(
+            preview_env["infrahub_token"],
+            {
+                "Python lifecycle register resource": registered,
+                "Python lifecycle validation resource": report,
+                "Python lifecycle plan accepted resource": accepted,
+                "Python lifecycle planned resource": planned,
+                "Python lifecycle plan resource": plan,
+                "Python lifecycle apply accepted resource": apply_accepted,
+                "Python lifecycle applied resource": applied,
+                "Python lifecycle results resource": results,
+            },
+        )
+        == []
+    )
 
     assert device_types(infrahub_client(preview_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] == mutated_type

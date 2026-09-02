@@ -52,6 +52,18 @@ def pytest_collection_modifyitems(items: list[Item]) -> None:
 
 
 @pytest.fixture(scope="session")
+def evidence_dir() -> Path:
+    """Where the qualification rows write their captured HTTP transcripts.
+
+    Under the preview's own gitignored runtime state, next to the service logs, so one
+    directory holds everything a run of the matrix leaves behind for a reader.
+    """
+    path = REPO_ROOT / ".preview" / "evidence"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@pytest.fixture(scope="session")
 def preview_settings() -> dict[str, Any]:
     """Shipped-plus-local preview settings, with derived URLs and tokens.
 

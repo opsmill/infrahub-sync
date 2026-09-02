@@ -35,14 +35,19 @@ configuration:
     name: netbox
     settings:
       url: "https://demo.netbox.dev"
+      token:
+        $credential: netbox-token
 
   destination:
     name: infrahub
     settings:
       url: "http://localhost:8000"
+      token:
+        $credential: infrahub-token
 
-  # Adapter credentials are read by the service worker, not by the CLI and not
-  # from this file:
+  # Each token above is a reference, resolved by the service worker from its own
+  # environment. No credential value is ever written here, posted to the Sync
+  # API, or recorded in a registered version. Export before starting the worker:
   #   export NETBOX_URL="https://demo.netbox.dev"
   #   export NETBOX_TOKEN="nbt_..."
   #   export INFRAHUB_ADDRESS="http://localhost:8000"
@@ -673,3 +678,13 @@ configuration:
     #   - IpamSVLAN / IpamCVLAN (schemas/extensions/qinq): Infrahub-only
     #     concept (802.1ad Q-in-Q split), no equivalent Netbox source field.
     # -----------------------------------------------------------------------
+
+# What each `$credential` above points at. `env` is the installed provider; the
+# identifier is the exact environment variable name the worker reads.
+credentials:
+  netbox-token:
+    provider: env
+    identifier: NETBOX_TOKEN
+  infrahub-token:
+    provider: env
+    identifier: INFRAHUB_API_TOKEN

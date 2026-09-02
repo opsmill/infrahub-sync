@@ -303,7 +303,10 @@ export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
 ```
 
 Use the complete NetBox token created earlier. The worker, not the CLI, reads the NetBox
-and Infrahub adapter credentials.
+and Infrahub adapter credentials. The package declares them as references — `$credential`
+entries under `credentials` naming `NETBOX_TOKEN` and `INFRAHUB_API_TOKEN` — so the worker
+resolves the values from these variables. No NetBox or Infrahub adapter credential value is
+written into the package or sent to the Sync API.
 
 4. In terminal 2, create the process pool, deploy the service flow, and start its worker:
 
@@ -457,9 +460,11 @@ docker compose -f sync-services.yml down
 ERROR | infrahub_sync.cli | Failed to initialize the Sync Instance: Error initializing InfrahubAdapter: Both url and token must be specified!
 ```
 
-The service worker cannot find a NetBox or Infrahub adapter credential. Adapter credentials
-belong in the worker environment, not the CLI environment or `config.yml`. Export these
-variables before starting the Prefect worker:
+The service worker cannot resolve a credential reference declared by the package. The
+package and `config.yml` contain credential references and declarations, but secret
+credential values belong only in the worker environment. The package names `NETBOX_TOKEN`
+and `INFRAHUB_API_TOKEN`, and the worker reads their values. Export these variables before
+starting the Prefect worker:
 
 ```bash
 export NETBOX_URL="https://demo.netbox.dev"

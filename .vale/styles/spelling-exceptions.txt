@@ -120,6 +120,7 @@ REST
 RIRs
 rowcount
 Rowcount
+rumdl
 schema_mapping
 sdk
 Slurp'it
