@@ -34,14 +34,20 @@ source:
   name: netbox
   settings:
     url: "https://demo.netbox.dev"
+    token:
+      $credential: netbox-token
 
 destination:
   name: infrahub
   settings:
     url: "http://localhost:8000"
+    token:
+      $credential: infrahub-token
 
-# Adapter credentials are read by the service worker, not by the CLI and not
-# from this file:
+# This file is the `configuration` body of package.yml, byte for byte, which is
+# where the `credentials` block naming these two references lives. Each token is
+# a reference, resolved by the service worker from its own environment. No
+# credential value is ever written here. Export before starting the worker:
 #   export NETBOX_URL="https://demo.netbox.dev"
 #   export NETBOX_TOKEN="nbt_..."
 #   export INFRAHUB_ADDRESS="http://localhost:8000"
