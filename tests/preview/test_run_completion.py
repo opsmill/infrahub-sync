@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import json
 import time
-import uuid
 from typing import TYPE_CHECKING, Any
 
+import httpx
 import pytest
 
 from infrahub_sync.client import APIError, SyncClient
@@ -28,6 +28,7 @@ from tests.preview.test_service_api import (
     authenticated_client,
     create_run_request,
     device_types,
+    idempotency_headers,
     infrahub_client,
     register_request,
     seed_source_branch,
@@ -50,11 +51,6 @@ CLAIM_TIMEOUT_SECONDS = 120.0
 TERMINAL_EXECUTION_STATES = frozenset({"cancelled", "completed", "crashed", "failed"})
 
 
-def _key() -> str:
-    """A fresh key per mutation, so a re-run never replays an earlier session's response."""
-    return f"preview-completion-{uuid.uuid4()}"
-
-
 def _sync_request(config_id: str, registry_version: int) -> dict[str, Any]:
     """The `POST /runs` body for the confirmed one-run synchronization."""
     return {
@@ -71,14 +67,7 @@ def _record_cancellation(evidence_dir: Path, interface: str, outcome: str) -> No
 
 
 def _await_claimed_execution(read_state: Callable[[], str | None], run_id: str) -> str | None:
-    """Poll until the admitted execution is running, or has already finished without us.
-
-    Cancellation is defined against a claimed execution. Prefect refuses the
-    scheduled-to-cancelling transition outright, and the service reports that refusal as an
-    unavailable orchestration — a third answer neither documented outcome covers. Waiting
-    for the worker to claim the run is what puts the request inside the window the two
-    outcomes describe; the run finishing first is the second of them.
-    """
+    """Poll until the admitted execution is claimed or already terminal."""
     deadline = time.monotonic() + CLAIM_TIMEOUT_SECONDS
     state: str | None = None
     while time.monotonic() < deadline:
@@ -89,9 +78,24 @@ def _await_claimed_execution(read_state: Callable[[], str | None], run_id: str) 
     return pytest.fail(f"run {run_id} was not claimed within {CLAIM_TIMEOUT_SECONDS}s (last state {state!r})")
 
 
-def test_the_cli_synchronizes_in_one_run(preview_env: dict[str, Any], tmp_path: Path) -> None:
+def _await_prefect_terminal_state(preview_env: dict[str, Any], flow_run_id: str) -> str:
+    """Read the row's own Prefect run until it reaches a terminal state."""
+    deadline = time.monotonic() + WAIT_TIMEOUT_SECONDS
+    state = ""
+    while time.monotonic() < deadline:
+        response = httpx.get(f"{preview_env['urls']['prefect']}/api/flow_runs/{flow_run_id}", timeout=15)
+        assert response.status_code == 200, response.text
+        state = response.json()["state_type"]
+        if state not in {"PENDING", "RUNNING", "SCHEDULED", "CANCELLING"}:
+            return state
+        time.sleep(POLL_INTERVAL_SECONDS)
+    return pytest.fail(f"Prefect flow run {flow_run_id} stayed non-terminal ({state})")
+
+
+def test_the_cli_synchronizes_in_one_run(preview_env: dict[str, Any], tmp_path: Path, evidence_dir: Path) -> None:
     """`sync` plans and applies under one run id, and the destination carries the value."""
     mutated_type = seed_source_branch(preview_env)
+    artifacts: dict[str, object] = {}
     registered = run_cli(
         preview_env,
         "configs",
@@ -99,6 +103,8 @@ def test_the_cli_synchronizes_in_one_run(preview_env: dict[str, Any], tmp_path: 
         str(package_file(preview_env, tmp_path)),
         "--reason",
         SYNC_REASON,
+        artifacts=artifacts,
+        artifact_name="CLI sync configs register",
     )
 
     completed = run_cli(
@@ -116,11 +122,14 @@ def test_the_cli_synchronizes_in_one_run(preview_env: dict[str, Any], tmp_path: 
         str(int(WAIT_TIMEOUT_SECONDS)),
         "--poll-interval",
         str(int(POLL_INTERVAL_SECONDS)),
+        artifacts=artifacts,
+        artifact_name="CLI sync",
     )
     assert completed["operation"] == "sync"
     assert completed["phase"] == "applied"
 
-    with authenticated_client(preview_env) as client:
+    oracle_transcript = evidence_dir / "run-sync-cli-oracle-http.jsonl"
+    with authenticated_client(preview_env, transcript=oracle_transcript) as client:
         results = client.get(f"/runs/{completed['run_id']}/results")
         assert results.status_code == 200, results.text
         recorded = results.json()["results"]
@@ -128,7 +137,9 @@ def test_the_cli_synchronizes_in_one_run(preview_env: dict[str, Any], tmp_path: 
         assert recorded["summary"]["update"] > 0, recorded
 
     assert device_types(infrahub_client(preview_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] == mutated_type
-    assert canary_leaks(preview_env["infrahub_token"], {"sync stdout": json.dumps(completed)}) == []
+    artifacts[str(oracle_transcript)] = oracle_transcript.read_text(encoding="utf-8")
+    artifacts["CLI sync results body"] = results.content
+    assert canary_leaks(preview_env["infrahub_token"], artifacts) == []
 
 
 def test_the_python_client_synchronizes_in_one_run(preview_env: dict[str, Any]) -> None:
@@ -138,7 +149,7 @@ def test_the_python_client_synchronizes_in_one_run(preview_env: dict[str, Any]) 
     with SyncClient(preview_env["urls"]["sync_api"], preview_env["bearer_token"], timeout=30.0) as client:
         registered = client.register_config(
             ConfigMutationRequest(package=smoke_package(preview_env["urls"]["infrahub"]), reason=SYNC_REASON),
-            _key(),
+            idempotency_headers("preview-completion")["Idempotency-Key"],
         )
         accepted = client.sync(
             CreateRunRequest(
@@ -149,7 +160,7 @@ def test_the_python_client_synchronizes_in_one_run(preview_env: dict[str, Any]) 
                 confirm_writes=True,
                 reason=SYNC_REASON,
             ),
-            _key(),
+            idempotency_headers("preview-completion")["Idempotency-Key"],
         )
         applied = client.wait_for_run(accepted, timeout=WAIT_TIMEOUT_SECONDS, poll_interval=POLL_INTERVAL_SECONDS)
         assert applied.run.phase == "applied", applied.run
@@ -159,7 +170,18 @@ def test_the_python_client_synchronizes_in_one_run(preview_env: dict[str, Any]) 
         assert results.results["summary"]["update"] > 0, results.results
 
     assert device_types(infrahub_client(preview_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] == mutated_type
-    assert canary_leaks(preview_env["infrahub_token"], {"sync run resource": applied, "results": results}) == []
+    assert (
+        canary_leaks(
+            preview_env["infrahub_token"],
+            {
+                "sync register resource": registered,
+                "sync accepted resource": accepted,
+                "sync run resource": applied,
+                "sync results resource": results,
+            },
+        )
+        == []
+    )
 
 
 def test_raw_http_synchronizes_in_one_run(preview_env: dict[str, Any], evidence_dir: Path) -> None:
@@ -170,7 +192,7 @@ def test_raw_http_synchronizes_in_one_run(preview_env: dict[str, Any], evidence_
     with authenticated_client(preview_env, transcript=transcript) as client:
         registered = client.post(
             "/configs",
-            headers={"Idempotency-Key": _key()},
+            headers=idempotency_headers("preview-completion"),
             json=register_request(preview_env["urls"]["infrahub"]),
         )
         assert registered.status_code == 201, registered.text
@@ -178,7 +200,7 @@ def test_raw_http_synchronizes_in_one_run(preview_env: dict[str, Any], evidence_
 
         created = client.post(
             "/runs",
-            headers={"Idempotency-Key": _key()},
+            headers=idempotency_headers("preview-completion"),
             json=_sync_request(version["config_id"], version["registry_version"]),
         )
         assert created.status_code == 202, created.text
@@ -197,16 +219,14 @@ def test_raw_http_synchronizes_in_one_run(preview_env: dict[str, Any], evidence_
     assert canary_leaks(preview_env["infrahub_token"], {str(transcript): captured}) == []
 
 
-def test_the_python_client_cancels_a_run_it_has_just_admitted(
-    preview_env: dict[str, Any], evidence_dir: Path, deliberate_terminal_flow_runs: dict[str, str]
-) -> None:
+def test_the_python_client_cancels_a_run_it_has_just_admitted(preview_env: dict[str, Any], evidence_dir: Path) -> None:
     """Either the run reaches the cancelled terminal state, or the cancel is refused as late."""
     seed_source_branch(preview_env)
 
     with SyncClient(preview_env["urls"]["sync_api"], preview_env["bearer_token"], timeout=30.0) as client:
         registered = client.register_config(
             ConfigMutationRequest(package=smoke_package(preview_env["urls"]["infrahub"]), reason=CANCEL_REASON),
-            _key(),
+            idempotency_headers("preview-completion")["Idempotency-Key"],
         )
         accepted = client.plan(
             CreateRunRequest(
@@ -216,36 +236,60 @@ def test_the_python_client_cancels_a_run_it_has_just_admitted(
                 branch=SMOKE_BRANCH,
                 reason=CANCEL_REASON,
             ),
-            _key(),
+            idempotency_headers("preview-completion")["Idempotency-Key"],
         )
         run_id = accepted.run.run_id
         flow_run_id = accepted.orchestration[-1].flow_run_id
-        _await_claimed_execution(lambda: client.get_run(run_id).orchestration[-1].state, run_id)
+        claimed_state = _await_claimed_execution(lambda: client.get_run(run_id).orchestration[-1].state, run_id)
 
         refusal: APIError | None = None
+        cancel_accepted: object | None = None
         try:
-            client.cancel_run(run_id, CancelRunRequest(reason=CANCEL_REASON), _key())
+            cancel_accepted = client.cancel_run(
+                run_id,
+                CancelRunRequest(reason=CANCEL_REASON),
+                idempotency_headers("preview-completion")["Idempotency-Key"],
+            )
         except APIError as error:
             refusal = error
 
+    evidence = evidence_dir / "cancellation-python.txt"
+    artifacts: dict[str, object] = {
+        "Python cancellation register resource": registered,
+        "Python cancellation accepted resource": accepted,
+        "Python cancellation claimed state": claimed_state,
+    }
     if refusal is not None:
         # The execution finished between admission and this request. The refusal, not a
         # retry, is the contract for that: the service will not cancel a terminal run.
         assert refusal.status == 409, refusal
         assert refusal.code == "execution-terminal", refusal
         _record_cancellation(evidence_dir, "python", "refused: execution-terminal")
-        return
+        artifacts["Python cancellation refusal"] = refusal
+        assert _await_prefect_terminal_state(preview_env, flow_run_id) in {
+            "CANCELLED",
+            "COMPLETED",
+            "CRASHED",
+            "FAILED",
+        }
+    else:
+        transcript = evidence_dir / "run-cancel-python-oracle-http.jsonl"
+        with authenticated_client(preview_env, transcript=transcript) as api:
+            cancelled = wait_for_phase(api, run_id, "cancelled")
+        assert cancelled["run"]["outcome"] == "cancelled", cancelled["run"]
+        assert _await_prefect_terminal_state(preview_env, flow_run_id) == "CANCELLED"
+        _record_cancellation(evidence_dir, "python", "accepted: run cancelled")
+        artifacts.update(
+            {
+                "Python cancellation response resource": cancel_accepted,
+                str(transcript): transcript.read_text(encoding="utf-8"),
+            }
+        )
+    artifacts[str(evidence)] = evidence.read_bytes()
+    assert canary_leaks(preview_env["infrahub_token"], artifacts) == []
 
-    with authenticated_client(preview_env) as api:
-        cancelled = wait_for_phase(api, run_id, "cancelled")
-    assert cancelled["run"]["outcome"] == "cancelled", cancelled["run"]
-    deliberate_terminal_flow_runs[flow_run_id] = "CANCELLED"
-    _record_cancellation(evidence_dir, "python", "accepted: run cancelled")
 
-
-def test_raw_http_cancels_a_run_it_has_just_admitted(
-    preview_env: dict[str, Any], evidence_dir: Path, deliberate_terminal_flow_runs: dict[str, str]
-) -> None:
+def test_raw_http_cancels_a_run_it_has_just_admitted(preview_env: dict[str, Any], evidence_dir: Path) -> None:
     """The same two outcomes over the wire: 202 then cancelled, or 409 `execution-terminal`."""
     seed_source_branch(preview_env)
     transcript = evidence_dir / "run-cancel-http.jsonl"
@@ -253,7 +297,7 @@ def test_raw_http_cancels_a_run_it_has_just_admitted(
     with authenticated_client(preview_env, transcript=transcript) as client:
         registered = client.post(
             "/configs",
-            headers={"Idempotency-Key": _key()},
+            headers=idempotency_headers("preview-completion"),
             json=register_request(preview_env["urls"]["infrahub"]),
         )
         assert registered.status_code == 201, registered.text
@@ -261,7 +305,7 @@ def test_raw_http_cancels_a_run_it_has_just_admitted(
 
         created = client.post(
             "/runs",
-            headers={"Idempotency-Key": _key()},
+            headers=idempotency_headers("preview-completion"),
             json=create_run_request(version["config_id"], version["registry_version"]),
         )
         assert created.status_code == 202, created.text
@@ -272,17 +316,23 @@ def test_raw_http_cancels_a_run_it_has_just_admitted(
 
         cancel = client.post(
             f"/runs/{run_id}/cancel",
-            headers={"Idempotency-Key": _key()},
+            headers=idempotency_headers("preview-completion"),
             json={"reason": CANCEL_REASON},
         )
         assert cancel.status_code in {202, 409}, cancel.text
         if cancel.status_code == 409:
             assert cancel.json()["error"]["code"] == "execution-terminal", cancel.text
+            assert _await_prefect_terminal_state(preview_env, flow_run_id) in {
+                "CANCELLED",
+                "COMPLETED",
+                "CRASHED",
+                "FAILED",
+            }
             _record_cancellation(evidence_dir, "http", "refused: execution-terminal")
         else:
             cancelled = wait_for_phase(client, run_id, "cancelled")
             assert cancelled["run"]["outcome"] == "cancelled", cancelled["run"]
-            deliberate_terminal_flow_runs[flow_run_id] = "CANCELLED"
+            assert _await_prefect_terminal_state(preview_env, flow_run_id) == "CANCELLED"
             _record_cancellation(evidence_dir, "http", "accepted: run cancelled")
 
     captured = transcript.read_text(encoding="utf-8")
@@ -290,4 +340,11 @@ def test_raw_http_cancels_a_run_it_has_just_admitted(
         (json.loads(line)["method"], json.loads(line)["path"], json.loads(line)["status"])
         for line in captured.splitlines()
     }
-    assert canary_leaks(preview_env["infrahub_token"], {str(transcript): captured}) == []
+    evidence = evidence_dir / "cancellation-http.txt"
+    assert (
+        canary_leaks(
+            preview_env["infrahub_token"],
+            {str(transcript): captured, str(evidence): evidence.read_bytes()},
+        )
+        == []
+    )

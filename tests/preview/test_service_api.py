@@ -30,6 +30,7 @@ so the apply fails on its first operation having written nothing.
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from collections.abc import Iterable, Mapping
@@ -39,7 +40,7 @@ import httpx
 import pytest
 
 from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
-from tests.preview.evidence import transcript_hooks
+from tests.preview.evidence import canary_leaks, transcript_hooks
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -144,21 +145,16 @@ def _client(preview_env: dict[str, Any], token: str | None) -> httpx.Client:
     return httpx.Client(base_url=preview_env["urls"]["sync_api"], headers=headers, timeout=30)
 
 
-def authenticated_client(preview_env: dict[str, Any], *, transcript: Path | None = None) -> httpx.Client:
-    """The bearer-authenticated raw client, optionally recording its exchanges.
-
-    The qualification rows drive the routes through this client and read the transcript
-    back as their evidence; the lifecycle smoke above drives the same routes untranscribed.
-    """
+def authenticated_client(preview_env: dict[str, Any], *, transcript: Path) -> httpx.Client:
+    """The bearer-authenticated raw client, recording every exchange."""
     client = _client(preview_env, preview_env["bearer_token"])
-    if transcript is not None:
-        client.event_hooks = transcript_hooks(transcript)
+    client.event_hooks = transcript_hooks(transcript)
     return client
 
 
-def _idempotency() -> dict[str, str]:
+def idempotency_headers(prefix: str = "preview-smoke") -> dict[str, str]:
     """A fresh key per mutation, so a re-run never replays an earlier smoke's response."""
-    return {"Idempotency-Key": f"preview-smoke-{uuid.uuid4()}"}
+    return {"Idempotency-Key": f"{prefix}-{uuid.uuid4()}"}
 
 
 def wait_for_phase(client: httpx.Client, run_id: str, target_phase: str) -> dict[str, Any]:
@@ -185,7 +181,9 @@ def wait_for_phase(client: httpx.Client, run_id: str, target_phase: str) -> dict
 
 def _registered_version(client: httpx.Client, preview_env: dict[str, Any]) -> tuple[str, int]:
     """Register the smoke package and prove the returned version validates cleanly."""
-    registered = client.post("/configs", headers=_idempotency(), json=register_request(preview_env["urls"]["infrahub"]))
+    registered = client.post(
+        "/configs", headers=idempotency_headers(), json=register_request(preview_env["urls"]["infrahub"])
+    )
     assert registered.status_code == 201, registered.text
     version = registered.json()["version"]
     config_id, registry_version = version["config_id"], version["registry_version"]
@@ -274,14 +272,17 @@ def test_requests_without_a_bearer_token_are_refused(preview_env: dict[str, Any]
     assert response.status_code == 401
 
 
-def test_service_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
+def test_service_plan_and_apply_lifecycle(preview_env: dict[str, Any], evidence_dir: Path) -> None:  # noqa: PLR0914 — the row scans every direct-HTTP artifact
     mutated_type = seed_source_branch(preview_env)
     assert device_types(infrahub_client(preview_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] != mutated_type
 
-    with _client(preview_env, token=preview_env["bearer_token"]) as client:
+    transcript = evidence_dir / "service-lifecycle-http.jsonl"
+    with authenticated_client(preview_env, transcript=transcript) as client:
         config_id, registry_version = _registered_version(client, preview_env)
 
-        created = client.post("/runs", headers=_idempotency(), json=create_run_request(config_id, registry_version))
+        created = client.post(
+            "/runs", headers=idempotency_headers(), json=create_run_request(config_id, registry_version)
+        )
         assert created.status_code == 202, created.text
         run_id = created.json()["run"]["run_id"]
 
@@ -308,7 +309,9 @@ def test_service_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
         assert summary.get("deletes_not_executed", 0) == 0, summary
         checksum = plan_payload["checksum"]
 
-        apply_accepted = client.post(f"/runs/{run_id}/apply", headers=_idempotency(), json=apply_run_request(checksum))
+        apply_accepted = client.post(
+            f"/runs/{run_id}/apply", headers=idempotency_headers(), json=apply_run_request(checksum)
+        )
         assert apply_accepted.status_code == 202, apply_accepted.text
 
         applied = wait_for_phase(client, run_id, "applied")
@@ -324,6 +327,24 @@ def test_service_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
         # The applied-operation identifiers stay on the worker's own run file; over HTTP
         # the recorded action counts are the positive-applied evidence.
         assert results.json()["results"]["summary"]["update"] > 0, results.text
+
+    captured = transcript.read_text(encoding="utf-8")
+    exchanges = {(entry["method"], entry["path"], entry["status"]) for entry in map(json.loads, captured.splitlines())}
+    assert exchanges >= {
+        ("POST", "/configs", 201),
+        ("POST", f"/configs/{config_id}/versions/{registry_version}/validate", 200),
+        ("POST", "/runs", 202),
+        ("GET", f"/runs/{run_id}/plan", 200),
+        ("POST", f"/runs/{run_id}/apply", 202),
+        ("GET", f"/runs/{run_id}/results", 200),
+    }
+    assert (
+        canary_leaks(
+            preview_env["infrahub_token"],
+            {str(transcript): captured, "service lifecycle results body": results.content},
+        )
+        == []
+    )
 
     # The destination now carries the value the source was mutated to.
     assert device_types(infrahub_client(preview_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] == mutated_type

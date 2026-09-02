@@ -15,7 +15,6 @@ version must be the second version of a configuration this module owns.
 from __future__ import annotations
 
 import json
-import uuid
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -24,7 +23,7 @@ from infrahub_sync.client import SyncClient
 from infrahub_sync.client.models import ConfigMutationRequest
 from tests.preview.evidence import canary_leaks
 from tests.preview.test_cli_client import ANSI, package_file, run_cli, run_cli_command
-from tests.preview.test_service_api import authenticated_client, register_request, smoke_package
+from tests.preview.test_service_api import authenticated_client, idempotency_headers, register_request, smoke_package
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -32,11 +31,6 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.preview
 
 REASON = "preview qualification: exercise the configuration registry"
-
-
-def _key() -> str:
-    """A fresh key per mutation, so a re-run never replays an earlier session's response."""
-    return f"preview-config-{uuid.uuid4()}"
 
 
 def revised_package(infrahub_url: str) -> dict[str, Any]:
@@ -59,37 +53,118 @@ def test_the_cli_drives_the_registry_and_checks_compatibility_first(
     first = package_file(preview_env, tmp_path)
     second = tmp_path / "revised-package.json"
     second.write_text(json.dumps(revised_package(preview_env["urls"]["infrahub"])), encoding="utf-8")
-    key = _key()
+    artifacts: dict[str, object] = {}
+    key = idempotency_headers("preview-config")["Idempotency-Key"]
 
-    registered = run_cli(preview_env, "configs", "register", str(first), "--reason", REASON, "--idempotency-key", key)
+    registered = run_cli(
+        preview_env,
+        "configs",
+        "register",
+        str(first),
+        "--reason",
+        REASON,
+        "--idempotency-key",
+        key,
+        artifacts=artifacts,
+        artifact_name="config lifecycle register",
+    )
     config_id = registered["config_id"]
-    replayed = run_cli(preview_env, "configs", "register", str(first), "--reason", REASON, "--idempotency-key", key)
+    replayed = run_cli(
+        preview_env,
+        "configs",
+        "register",
+        str(first),
+        "--reason",
+        REASON,
+        "--idempotency-key",
+        key,
+        artifacts=artifacts,
+        artifact_name="config lifecycle register replay",
+    )
     # A replayed key returns the stored response, so every field — the created timestamp
     # above all — is the first one, not a second registration that happens to look alike.
     assert replayed == registered
 
-    identical = run_cli(preview_env, "configs", "version", config_id, str(first), "--reason", REASON)
+    identical = run_cli(
+        preview_env,
+        "configs",
+        "version",
+        config_id,
+        str(first),
+        "--reason",
+        REASON,
+        artifacts=artifacts,
+        artifact_name="config lifecycle identical version",
+    )
     assert identical["created"] == "false"
     assert identical["registry_version"] == "1"
     assert identical["package_checksum"] == registered["package_checksum"]
-    revised = run_cli(preview_env, "configs", "version", config_id, str(second), "--reason", REASON)
+    revised = run_cli(
+        preview_env,
+        "configs",
+        "version",
+        config_id,
+        str(second),
+        "--reason",
+        REASON,
+        artifacts=artifacts,
+        artifact_name="config lifecycle revised version",
+    )
     assert revised["created"] == "true"
     assert revised["registry_version"] == "2"
 
-    listed = run_cli_command(preview_env, "configs", "list")
+    listed = run_cli_command(
+        preview_env,
+        "configs",
+        "list",
+        artifacts=artifacts,
+        artifact_name="config lifecycle list",
+    )
     assert listed.returncode == 0, listed.stderr
     assert f"config_id: {config_id}" in ANSI.sub("", listed.stdout)
 
-    assert run_cli(preview_env, "configs", "show", config_id)["config_id"] == config_id
-    shown_version = run_cli(preview_env, "configs", "show", config_id, "--version", "1")
+    shown = run_cli(
+        preview_env,
+        "configs",
+        "show",
+        config_id,
+        artifacts=artifacts,
+        artifact_name="config lifecycle show",
+    )
+    assert shown["config_id"] == config_id
+    shown_version = run_cli(
+        preview_env,
+        "configs",
+        "show",
+        config_id,
+        "--version",
+        "1",
+        artifacts=artifacts,
+        artifact_name="config lifecycle show version",
+    )
     assert shown_version["package_checksum"] == registered["package_checksum"]
 
-    versions = run_cli_command(preview_env, "configs", "versions", config_id)
+    versions = run_cli_command(
+        preview_env,
+        "configs",
+        "versions",
+        config_id,
+        artifacts=artifacts,
+        artifact_name="config lifecycle versions",
+    )
     assert versions.returncode == 0, versions.stderr
     # The replay must not have added a row: exactly the two versions created above.
     assert ANSI.sub("", versions.stdout).count("registry_version: ") == 2
 
-    validated = run_cli(preview_env, "configs", "validate", config_id, "1")
+    validated = run_cli(
+        preview_env,
+        "configs",
+        "validate",
+        config_id,
+        "1",
+        artifacts=artifacts,
+        artifact_name="config lifecycle validate",
+    )
     assert validated["total_findings"] == "0"
     assert validated["destination_schema_fingerprint"] == "<none>"
 
@@ -101,32 +176,22 @@ def test_the_cli_drives_the_registry_and_checks_compatibility_first(
         f"{preview_env['urls']['sync_api']}/not-the-sync-api",
         "configs",
         "list",
+        artifacts=artifacts,
+        artifact_name="config lifecycle compatibility refusal",
     )
     assert misdirected.returncode == 1
     assert "error: compatibility" in ANSI.sub("", misdirected.stderr)
 
-    assert (
-        canary_leaks(
-            preview_env["infrahub_token"],
-            {
-                "configs register stdout": json.dumps(registered),
-                "configs version stdout": json.dumps(revised),
-                "configs list stdout": listed.stdout,
-                "configs show --version stdout": json.dumps(shown_version),
-                "configs versions stdout": versions.stdout,
-                "configs validate stdout": json.dumps(validated),
-                "compatibility refusal stderr": misdirected.stderr,
-            },
-        )
-        == []
-    )
+    assert canary_leaks(preview_env["infrahub_token"], artifacts) == []
 
 
-def test_the_python_client_drives_the_registry_and_both_public_resources(preview_env: dict[str, Any]) -> None:
+def test_the_python_client_drives_the_registry_and_both_public_resources(  # noqa: PLR0914
+    preview_env: dict[str, Any],
+) -> None:
     """`/version`, `/status`, and all seven registry methods through the typed client."""
     package = smoke_package(preview_env["urls"]["infrahub"])
     revised = revised_package(preview_env["urls"]["infrahub"])
-    key = _key()
+    key = idempotency_headers("preview-config")["Idempotency-Key"]
 
     with SyncClient(preview_env["urls"]["sync_api"], preview_env["bearer_token"], timeout=30.0) as client:
         version = client.get_version()
@@ -140,21 +205,31 @@ def test_the_python_client_drives_the_registry_and_both_public_resources(preview
 
         request = ConfigMutationRequest(package=package, reason=REASON)
         registered = client.register_config(request, key)
-        assert client.register_config(request, key) == registered
+        replayed = client.register_config(request, key)
+        assert replayed == registered
         config_id = registered.version.config_id
 
         identical = client.create_config_version(
-            config_id, ConfigMutationRequest(package=package, reason=REASON), _key()
+            config_id,
+            ConfigMutationRequest(package=package, reason=REASON),
+            idempotency_headers("preview-config")["Idempotency-Key"],
         )
         assert identical.created is False
         assert identical.version.registry_version == 1
-        created = client.create_config_version(config_id, ConfigMutationRequest(package=revised, reason=REASON), _key())
+        created = client.create_config_version(
+            config_id,
+            ConfigMutationRequest(package=revised, reason=REASON),
+            idempotency_headers("preview-config")["Idempotency-Key"],
+        )
         assert created.created is True
         assert created.version.registry_version == 2
 
-        assert config_id in {summary.config_id for summary in client.list_configs()}
-        assert client.get_config(config_id).config_id == config_id
-        assert [entry.registry_version for entry in client.list_config_versions(config_id)] == [1, 2]
+        listed = client.list_configs()
+        assert config_id in {summary.config_id for summary in listed}
+        shown = client.get_config(config_id)
+        assert shown.config_id == config_id
+        versions = client.list_config_versions(config_id)
+        assert [entry.registry_version for entry in versions] == [1, 2]
         fetched = client.get_config_version(config_id, 1)
         assert fetched == registered.version
 
@@ -173,7 +248,12 @@ def test_the_python_client_drives_the_registry_and_both_public_resources(preview
                 "get_version resource": version,
                 "get_status resource": status,
                 "register_config resource": registered,
+                "register_config replay resource": replayed,
+                "identical create_config_version resource": identical,
                 "create_config_version resource": created,
+                "list_configs resource": listed,
+                "get_config resource": shown,
+                "list_config_versions resource": versions,
                 "get_config_version resource": fetched,
                 "validate_config resource": report,
             },
@@ -189,7 +269,7 @@ def test_raw_http_drives_the_registry_and_records_the_transcript(
     transcript = evidence_dir / "config-lifecycle-http.jsonl"
     package = smoke_package(preview_env["urls"]["infrahub"])
     body = register_request(preview_env["urls"]["infrahub"])
-    key = {"Idempotency-Key": _key()}
+    key = idempotency_headers("preview-config")
 
     with authenticated_client(preview_env, transcript=transcript) as client:
         assert client.get("/version").status_code == 200
@@ -206,14 +286,14 @@ def test_raw_http_drives_the_registry_and_records_the_transcript(
 
         identical = client.post(
             f"/configs/{config_id}/versions",
-            headers={"Idempotency-Key": _key()},
+            headers=idempotency_headers("preview-config"),
             json={"package": package, "reason": REASON},
         )
         assert identical.status_code == 200, identical.text
         assert identical.json()["created"] is False
         revised = client.post(
             f"/configs/{config_id}/versions",
-            headers={"Idempotency-Key": _key()},
+            headers=idempotency_headers("preview-config"),
             json={"package": revised_package(preview_env["urls"]["infrahub"]), "reason": REASON},
         )
         assert revised.status_code == 201, revised.text

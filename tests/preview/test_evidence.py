@@ -10,11 +10,16 @@ apply them; this module proves they work.
 from __future__ import annotations
 
 import json
+from inspect import Parameter, signature
 from typing import TYPE_CHECKING, Any
 
 import httpx
+import pytest
 
+from tasks.preview import REPO_ROOT
 from tests.preview.evidence import canary_leaks, transcript_hooks
+from tests.preview.test_cli_client import run_cli, run_cli_command
+from tests.preview.test_service_api import authenticated_client
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -85,3 +90,72 @@ def test_canary_leaks_reports_nothing_when_no_artifact_carries_the_token() -> No
     leaks = canary_leaks(CANARY, {"cli stdout": "config_id: c-1", "artifact bytes": b'{"summary":{}}'})
 
     assert leaks == []
+
+
+def test_authenticated_qualification_clients_require_a_transcript_path() -> None:
+    """A direct-HTTP row cannot silently opt out of its required evidence."""
+    transcript = signature(authenticated_client).parameters["transcript"]
+
+    assert transcript.default is Parameter.empty
+
+
+def test_cli_helpers_capture_stdout_and_stderr_before_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The success helper must not discard stderr while returning parsed fields."""
+    completed = __import__("subprocess").CompletedProcess(
+        args=["infrahub-sync", "configs", "list"],
+        returncode=0,
+        stdout="config_id: config-1\n",
+        stderr="diagnostic\n",
+    )
+
+    def completed_run(*_args: object, **_kwargs: object) -> object:
+        return completed
+
+    monkeypatch.setattr("tests.preview.test_cli_client.subprocess.run", completed_run)
+    artifacts: dict[str, object] = {}
+    preview_env = {"urls": {"sync_api": "http://sync.invalid"}, "bearer_token": "test-bearer"}
+
+    parsed = run_cli(
+        preview_env,
+        "configs",
+        "list",
+        artifacts=artifacts,
+        artifact_name="configs list",
+    )
+
+    assert parsed == {"config_id": "config-1"}
+    assert artifacts == {
+        "configs list stdout": "config_id: config-1\n",
+        "configs list stderr": "diagnostic\n",
+    }
+
+    direct_artifacts: dict[str, object] = {}
+    run_cli_command(
+        preview_env,
+        "configs",
+        "list",
+        artifacts=direct_artifacts,
+        artifact_name="direct configs list",
+    )
+    assert direct_artifacts == {
+        "direct configs list stdout": "config_id: config-1\n",
+        "direct configs list stderr": "diagnostic\n",
+    }
+
+
+@pytest.mark.parametrize(("original", "counterpart"), [("Text", "TextArea"), ("TextArea", "Text")])
+def test_schema_drift_selects_the_reversible_counterpart(original: str, counterpart: str) -> None:
+    """The live kind, not a seeded-schema assumption, selects the temporary mutation."""
+    from tests.preview.test_schema_drift import _reversible_kind
+
+    assert _reversible_kind(original) == counterpart
+
+
+def test_contributing_uses_the_locked_pnpm_install() -> None:
+    """The contributor setup command matches the pinned package manager and CI."""
+    contributing = (REPO_ROOT / "docs/docs/contributing.mdx").read_text(encoding="utf-8")
+
+    assert "pnpm install --frozen-lockfile" in contributing
+    assert "cd docs && npm install" not in contributing

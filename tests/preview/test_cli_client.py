@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from tasks.preview import REPO_ROOT, SHARED_DEVICE_NAME, SMOKE_BRANCH
+from tests.preview.evidence import canary_leaks
 from tests.preview.test_service_api import (
     authenticated_client,
     device_types,
@@ -38,6 +39,7 @@ from tests.preview.test_service_api import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import MutableMapping
     from pathlib import Path
 
 pytestmark = pytest.mark.preview
@@ -77,13 +79,18 @@ def fields(output: str) -> dict[str, str]:
     return fields
 
 
-def run_cli_command(preview_env: dict[str, Any], *arguments: str) -> subprocess.CompletedProcess[str]:
+def run_cli_command(
+    preview_env: dict[str, Any],
+    *arguments: str,
+    artifacts: MutableMapping[str, object],
+    artifact_name: str,
+) -> subprocess.CompletedProcess[str]:
     """Run the installed console script and return the completed process, whatever it did.
 
     The exit code is part of the shipped contract for several rows — a refused `--kind`
     filter, an expired bounded wait — so the process is returned rather than asserted on.
     """
-    return subprocess.run(  # noqa: S603
+    completed = subprocess.run(  # noqa: S603
         ["uv", "run", "infrahub-sync", *arguments],  # noqa: S607 — resolved from PATH by design
         cwd=REPO_ROOT,
         env=cli_environment(preview_env),
@@ -92,11 +99,24 @@ def run_cli_command(preview_env: dict[str, Any], *arguments: str) -> subprocess.
         timeout=PROCESS_TIMEOUT_SECONDS,
         check=False,
     )
+    artifacts[f"{artifact_name} stdout"] = completed.stdout
+    artifacts[f"{artifact_name} stderr"] = completed.stderr
+    return completed
 
 
-def run_cli(preview_env: dict[str, Any], *arguments: str) -> dict[str, str]:
+def run_cli(
+    preview_env: dict[str, Any],
+    *arguments: str,
+    artifacts: MutableMapping[str, object],
+    artifact_name: str,
+) -> dict[str, str]:
     """Run the installed console script to success and return its parsed fields."""
-    completed = run_cli_command(preview_env, *arguments)
+    completed = run_cli_command(
+        preview_env,
+        *arguments,
+        artifacts=artifacts,
+        artifact_name=artifact_name,
+    )
     assert completed.returncode == 0, (
         f"`infrahub-sync {' '.join(arguments)}` exited {completed.returncode}\n"
         f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
@@ -111,12 +131,13 @@ def package_file(preview_env: dict[str, Any], directory: Path) -> Path:
     return path
 
 
-def test_cli_registers_plans_reviews_and_applies_against_the_service(
-    preview_env: dict[str, Any], tmp_path: Path
+def test_cli_registers_plans_reviews_and_applies_against_the_service(  # noqa: PLR0914
+    preview_env: dict[str, Any], tmp_path: Path, evidence_dir: Path
 ) -> None:
     """`configs register` → `diff` → `runs plan` → `apply`, proved through the API."""
     mutated_type = seed_source_branch(preview_env)
     assert device_types(infrahub_client(preview_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] != mutated_type
+    artifacts: dict[str, object] = {}
 
     registered = run_cli(
         preview_env,
@@ -127,6 +148,8 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(
         "preview CLI smoke: register the smoke configuration",
         "--idempotency-key",
         f"preview-cli-{uuid.uuid4()}",
+        artifacts=artifacts,
+        artifact_name="CLI lifecycle configs register",
     )
     config_id, registry_version = registered["config_id"], registered["registry_version"]
 
@@ -147,10 +170,13 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(
         str(WAIT_TIMEOUT_SECONDS),
         "--poll-interval",
         str(POLL_INTERVAL_SECONDS),
+        artifacts=artifacts,
+        artifact_name="CLI lifecycle diff",
     )
     run_id, checksum = planned["run_id"], planned["plan_checksum"]
 
-    with authenticated_client(preview_env) as client:
+    oracle_transcript = evidence_dir / "cli-lifecycle-oracle-http.jsonl"
+    with authenticated_client(preview_env, transcript=oracle_transcript) as client:
         plan = client.get(f"/runs/{run_id}/plan")
         assert plan.status_code == 200, plan.text
         summary = plan.json()["summary"]
@@ -159,7 +185,14 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(
         assert unwritten_plan_reasons(summary) == [], summary
         assert summary["by_action"].get("update", 0) == 1, summary
 
-    reviewed = run_cli(preview_env, "runs", "plan", run_id)
+    reviewed = run_cli(
+        preview_env,
+        "runs",
+        "plan",
+        run_id,
+        artifacts=artifacts,
+        artifact_name="CLI lifecycle runs plan",
+    )
     assert reviewed["run_id"] == run_id
     assert reviewed["plan_checksum"] == checksum
     assert reviewed["checksum_ok"] == "true"
@@ -180,9 +213,14 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(
         str(WAIT_TIMEOUT_SECONDS),
         "--poll-interval",
         str(POLL_INTERVAL_SECONDS),
+        artifacts=artifacts,
+        artifact_name="CLI lifecycle apply",
     )
 
-    with authenticated_client(preview_env) as client:
+    with authenticated_client(
+        preview_env,
+        transcript=evidence_dir / "cli-lifecycle-results-oracle-http.jsonl",
+    ) as client:
         recorded = client.get(f"/runs/{run_id}")
         assert recorded.status_code == 200, recorded.text
         assert recorded.json()["run"]["phase"] == "applied", recorded.text
@@ -191,5 +229,15 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(
         applied_summary = results.json()["results"]["summary"]
         assert applied_summary.get("update", 0) > 0, applied_summary
         assert applied_summary.get("delete", 0) == 0, applied_summary
+
+    artifacts.update(
+        {
+            str(oracle_transcript): oracle_transcript.read_text(encoding="utf-8"),
+            "CLI lifecycle results body": results.content,
+        }
+    )
+    results_transcript = evidence_dir / "cli-lifecycle-results-oracle-http.jsonl"
+    artifacts[str(results_transcript)] = results_transcript.read_text(encoding="utf-8")
+    assert canary_leaks(preview_env["infrahub_token"], artifacts) == []
 
     assert device_types(infrahub_client(preview_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] == mutated_type

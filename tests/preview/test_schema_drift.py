@@ -13,6 +13,7 @@ failure mid-test cannot leave the branch on a schema the other modules do not ex
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -22,6 +23,7 @@ from infrahub_sync.client import SyncClient
 from tasks.preview import SCHEMA_FILE, SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
 from tests.preview.evidence import canary_leaks
 from tests.preview.test_cli_client import ANSI, package_file, run_cli, run_cli_command
+from tests.preview.test_run_completion import _await_prefect_terminal_state
 from tests.preview.test_service_api import (
     authenticated_client,
     device_types,
@@ -39,8 +41,13 @@ REASON = "preview qualification: refuse an apply whose destination schema moved"
 # covers. Text and TextArea both hold the seeded string values, so the conversion is
 # reversible in either direction and no device loses its `type`.
 DRIFTED_ATTRIBUTE = "type"
-ORIGINAL_KIND = "Text"
-DRIFTED_KIND = "TextArea"
+REVERSIBLE_KINDS = {"Text": "TextArea", "TextArea": "Text"}
+
+
+def _reversible_kind(original: str) -> str:
+    """Return the supported temporary counterpart for the live schema kind."""
+    assert original in REVERSIBLE_KINDS, f"{DRIFTED_ATTRIBUTE} has unsupported live kind {original!r}"
+    return REVERSIBLE_KINDS[original]
 
 
 def _attribute_kind(client: Any, attribute: str) -> str:  # noqa: ANN401 — the SDK's sync client
@@ -65,13 +72,15 @@ def _load_attribute_kind(client: Any, kind: str) -> None:  # noqa: ANN401 — th
     assert _attribute_kind(client, DRIFTED_ATTRIBUTE) == kind
 
 
-def test_an_apply_refuses_a_plan_whose_destination_schema_changed(
-    preview_env: dict[str, Any], tmp_path: Path, deliberate_terminal_flow_runs: dict[str, str]
+def test_an_apply_refuses_a_plan_whose_destination_schema_changed(  # noqa: PLR0914
+    preview_env: dict[str, Any], tmp_path: Path, evidence_dir: Path
 ) -> None:
     """`PlanSchemaChangedError` through CLI rendering, `get_results`, and the raw body."""
     seed_source_branch(preview_env)
     sdk = infrahub_client(preview_env)
-    assert _attribute_kind(sdk, DRIFTED_ATTRIBUTE) == ORIGINAL_KIND
+    original_kind = _attribute_kind(sdk, DRIFTED_ATTRIBUTE)
+    drifted_kind = _reversible_kind(original_kind)
+    artifacts: dict[str, object] = {}
 
     registered = run_cli(
         preview_env,
@@ -80,6 +89,8 @@ def test_an_apply_refuses_a_plan_whose_destination_schema_changed(
         str(package_file(preview_env, tmp_path)),
         "--reason",
         REASON,
+        artifacts=artifacts,
+        artifact_name="schema drift configs register",
     )
     planned = run_cli(
         preview_env,
@@ -92,13 +103,15 @@ def test_an_apply_refuses_a_plan_whose_destination_schema_changed(
         SMOKE_BRANCH,
         "--reason",
         REASON,
+        artifacts=artifacts,
+        artifact_name="schema drift diff",
     )
     run_id, checksum = planned["run_id"], planned["plan_checksum"]
     assert planned["schema_fingerprint"], planned
     before = device_types(sdk, SMOKE_BRANCH)[SHARED_DEVICE_NAME]
 
     try:
-        _load_attribute_kind(sdk, DRIFTED_KIND)
+        _load_attribute_kind(sdk, drifted_kind)
         refused = run_cli_command(
             preview_env,
             "apply",
@@ -109,9 +122,11 @@ def test_an_apply_refuses_a_plan_whose_destination_schema_changed(
             SMOKE_BRANCH,
             "--reason",
             REASON,
+            artifacts=artifacts,
+            artifact_name="schema drift apply refusal",
         )
     finally:
-        _load_attribute_kind(sdk, ORIGINAL_KIND)
+        _load_attribute_kind(sdk, original_kind)
 
     assert refused.returncode == 1, refused.stdout
     rendered = ANSI.sub("", refused.stderr)
@@ -126,26 +141,39 @@ def test_an_apply_refuses_a_plan_whose_destination_schema_changed(
     # The gate runs before any adapter is constructed, so a refusal cannot have written.
     assert failure.get("may_have_partially_written") in {None, False}, failure
 
-    with authenticated_client(preview_env) as api:
+    transcript = evidence_dir / "schema-drift-results-http.jsonl"
+    with authenticated_client(preview_env, transcript=transcript) as api:
         recorded = api.get(f"/runs/{run_id}")
         assert recorded.status_code == 200, recorded.text
         assert recorded.json()["run"]["phase"] == "apply-failed", recorded.text
         body = api.get(f"/runs/{run_id}/results")
         assert body.status_code == 200, body.text
         assert body.json()["results"]["apply_failure"]["error_type"] == "PlanSchemaChangedError", body.text
-        deliberate_terminal_flow_runs[recorded.json()["orchestration"][-1]["flow_run_id"]] = "FAILED"
+        flow_run_id = recorded.json()["orchestration"][-1]["flow_run_id"]
+
+    assert _await_prefect_terminal_state(preview_env, flow_run_id) == "FAILED"
 
     assert device_types(sdk, SMOKE_BRANCH)[SHARED_DEVICE_NAME] == before
-    assert _attribute_kind(sdk, DRIFTED_ATTRIBUTE) == ORIGINAL_KIND
+    assert _attribute_kind(sdk, DRIFTED_ATTRIBUTE) == original_kind
+    captured = transcript.read_text(encoding="utf-8")
+    exchanges = {
+        (record["method"], record["path"], record["status"]) for record in map(json.loads, captured.splitlines())
+    }
+    assert exchanges >= {
+        ("GET", f"/runs/{run_id}", 200),
+        ("GET", f"/runs/{run_id}/results", 200),
+    }
+    artifacts.update(
+        {
+            "schema drift get_results resource": results,
+            str(transcript): captured,
+            "schema drift raw results body": body.content,
+        }
+    )
     assert (
         canary_leaks(
             preview_env["infrahub_token"],
-            {
-                "apply stdout": refused.stdout,
-                "apply stderr": refused.stderr,
-                "get_results resource": results,
-                "raw results body": body.text,
-            },
+            artifacts,
         )
         == []
     )
