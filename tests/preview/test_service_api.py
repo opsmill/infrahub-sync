@@ -33,12 +33,16 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
 
 from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
+from tests.preview.evidence import transcript_hooks
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.preview
 
@@ -140,12 +144,24 @@ def _client(preview_env: dict[str, Any], token: str | None) -> httpx.Client:
     return httpx.Client(base_url=preview_env["urls"]["sync_api"], headers=headers, timeout=30)
 
 
+def authenticated_client(preview_env: dict[str, Any], *, transcript: Path | None = None) -> httpx.Client:
+    """The bearer-authenticated raw client, optionally recording its exchanges.
+
+    The qualification rows drive the routes through this client and read the transcript
+    back as their evidence; the lifecycle smoke above drives the same routes untranscribed.
+    """
+    client = _client(preview_env, preview_env["bearer_token"])
+    if transcript is not None:
+        client.event_hooks = transcript_hooks(transcript)
+    return client
+
+
 def _idempotency() -> dict[str, str]:
     """A fresh key per mutation, so a re-run never replays an earlier smoke's response."""
     return {"Idempotency-Key": f"preview-smoke-{uuid.uuid4()}"}
 
 
-def _wait_for_phase(client: httpx.Client, run_id: str, target_phase: str) -> dict[str, Any]:
+def wait_for_phase(client: httpx.Client, run_id: str, target_phase: str) -> dict[str, Any]:
     """Poll until the durable record reaches the target phase.
 
     Polling ``finished_at`` is not enough: an admitted apply continues the
@@ -269,7 +285,7 @@ def test_service_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
         assert created.status_code == 202, created.text
         run_id = created.json()["run"]["run_id"]
 
-        planned = _wait_for_phase(client, run_id, "planned")
+        planned = wait_for_phase(client, run_id, "planned")
         assert planned["run"]["outcome"] is not None, planned["run"]
 
         plan_view = client.get(f"/runs/{run_id}/plan")
@@ -295,7 +311,7 @@ def test_service_plan_and_apply_lifecycle(preview_env: dict[str, Any]) -> None:
         apply_accepted = client.post(f"/runs/{run_id}/apply", headers=_idempotency(), json=apply_run_request(checksum))
         assert apply_accepted.status_code == 202, apply_accepted.text
 
-        applied = _wait_for_phase(client, run_id, "applied")
+        applied = wait_for_phase(client, run_id, "applied")
         assert applied["run"]["outcome"] is not None, applied["run"]
         # What the apply actually did, not merely that it finished.
         applied_summary = applied["run"]["summary"]

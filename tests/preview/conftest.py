@@ -35,6 +35,9 @@ _RUN_CREATORS = (
     _HERE / "test_service_api.py",
     _HERE / "test_cli_client.py",
     _HERE / "test_python_client.py",
+    _HERE / "test_run_review.py",
+    _HERE / "test_run_completion.py",
+    _HERE / "test_schema_drift.py",
 )
 _RUN_OBSERVER = _HERE / "test_prefect_surface.py"
 
@@ -49,6 +52,30 @@ def pytest_collection_modifyitems(items: list[Item]) -> None:
         items.remove(observer)
     resume_at = items.index(creators[-1]) + 1
     items[resume_at:resume_at] = observers
+
+
+@pytest.fixture(scope="session")
+def evidence_dir() -> Path:
+    """Where the qualification rows write their captured HTTP transcripts.
+
+    Under the preview's own gitignored runtime state, next to the service logs, so one
+    directory holds everything a run of the matrix leaves behind for a reader.
+    """
+    path = REPO_ROOT / ".preview" / "evidence"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@pytest.fixture(scope="session")
+def deliberate_terminal_flow_runs() -> dict[str, str]:
+    """Service flow runs a row drove to a non-completed terminal state, by id and state.
+
+    The Prefect surface smoke exists to catch a fresh, unexplained service failure. The
+    cancellation and schema-drift rows produce cancelled and failed service flow runs by
+    design, so each records the one it produced and the observer excludes exactly those —
+    rather than the assertion being widened to tolerate any failure.
+    """
+    return {}
 
 
 @pytest.fixture(scope="session")

@@ -25,11 +25,11 @@ import subprocess  # noqa: S404 -- fixed argv invocation of this repository's ow
 import uuid
 from typing import TYPE_CHECKING, Any
 
-import httpx
 import pytest
 
 from tasks.preview import REPO_ROOT, SHARED_DEVICE_NAME, SMOKE_BRANCH
 from tests.preview.test_service_api import (
+    authenticated_client,
     device_types,
     infrahub_client,
     seed_source_branch,
@@ -48,10 +48,10 @@ WAIT_TIMEOUT_SECONDS = 240
 POLL_INTERVAL_SECONDS = 3
 PROCESS_TIMEOUT_SECONDS = WAIT_TIMEOUT_SECONDS + 60
 
-_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
-def _cli_environment(preview_env: dict[str, Any]) -> dict[str, str]:
+def cli_environment(preview_env: dict[str, Any]) -> dict[str, str]:
     """The settings one CLI invocation needs, with the renderer pinned.
 
     `NO_COLOR` and a fixed `COLUMNS` remove the only two things that make the shipped
@@ -67,44 +67,45 @@ def _cli_environment(preview_env: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def _fields(output: str) -> dict[str, str]:
+def fields(output: str) -> dict[str, str]:
     """Parse the CLI's `name: value` field lines, ignoring anything else it prints."""
     fields: dict[str, str] = {}
-    for line in _ANSI.sub("", output).splitlines():
+    for line in ANSI.sub("", output).splitlines():
         name, separator, value = line.partition(": ")
         if separator and name.isidentifier():
             fields[name] = value.strip()
     return fields
 
 
-def _run_cli(preview_env: dict[str, Any], *arguments: str) -> dict[str, str]:
-    """Run the installed console script to success and return its parsed fields."""
-    completed = subprocess.run(  # noqa: S603
+def run_cli_command(preview_env: dict[str, Any], *arguments: str) -> subprocess.CompletedProcess[str]:
+    """Run the installed console script and return the completed process, whatever it did.
+
+    The exit code is part of the shipped contract for several rows — a refused `--kind`
+    filter, an expired bounded wait — so the process is returned rather than asserted on.
+    """
+    return subprocess.run(  # noqa: S603
         ["uv", "run", "infrahub-sync", *arguments],  # noqa: S607 — resolved from PATH by design
         cwd=REPO_ROOT,
-        env=_cli_environment(preview_env),
+        env=cli_environment(preview_env),
         capture_output=True,
         text=True,
         timeout=PROCESS_TIMEOUT_SECONDS,
         check=False,
     )
+
+
+def run_cli(preview_env: dict[str, Any], *arguments: str) -> dict[str, str]:
+    """Run the installed console script to success and return its parsed fields."""
+    completed = run_cli_command(preview_env, *arguments)
     assert completed.returncode == 0, (
         f"`infrahub-sync {' '.join(arguments)}` exited {completed.returncode}\n"
         f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
     )
-    return _fields(completed.stdout)
+    return fields(completed.stdout)
 
 
-def _api(preview_env: dict[str, Any]) -> httpx.Client:
-    """The HTTP oracle: what the service recorded, read independently of the CLI."""
-    return httpx.Client(
-        base_url=preview_env["urls"]["sync_api"],
-        headers={"Authorization": f"Bearer {preview_env['bearer_token']}"},
-        timeout=30,
-    )
-
-
-def _package_file(preview_env: dict[str, Any], directory: Path) -> Path:
+def package_file(preview_env: dict[str, Any], directory: Path) -> Path:
+    """Write the smoke package where `configs register` can read it as an argument."""
     path = directory / "preview-smoke-package.json"
     path.write_text(json.dumps(smoke_package(preview_env["urls"]["infrahub"])), encoding="utf-8")
     return path
@@ -117,11 +118,11 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(
     mutated_type = seed_source_branch(preview_env)
     assert device_types(infrahub_client(preview_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] != mutated_type
 
-    registered = _run_cli(
+    registered = run_cli(
         preview_env,
         "configs",
         "register",
-        str(_package_file(preview_env, tmp_path)),
+        str(package_file(preview_env, tmp_path)),
         "--reason",
         "preview CLI smoke: register the smoke configuration",
         "--idempotency-key",
@@ -129,7 +130,7 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(
     )
     config_id, registry_version = registered["config_id"], registered["registry_version"]
 
-    planned = _run_cli(
+    planned = run_cli(
         preview_env,
         "diff",
         "--config-id",
@@ -149,7 +150,7 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(
     )
     run_id, checksum = planned["run_id"], planned["plan_checksum"]
 
-    with _api(preview_env) as client:
+    with authenticated_client(preview_env) as client:
         plan = client.get(f"/runs/{run_id}/plan")
         assert plan.status_code == 200, plan.text
         summary = plan.json()["summary"]
@@ -158,12 +159,12 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(
         assert unwritten_plan_reasons(summary) == [], summary
         assert summary["by_action"].get("update", 0) == 1, summary
 
-    reviewed = _run_cli(preview_env, "runs", "plan", run_id)
+    reviewed = run_cli(preview_env, "runs", "plan", run_id)
     assert reviewed["run_id"] == run_id
     assert reviewed["plan_checksum"] == checksum
     assert reviewed["checksum_ok"] == "true"
 
-    _run_cli(
+    run_cli(
         preview_env,
         "apply",
         run_id,
@@ -181,7 +182,7 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(
         str(POLL_INTERVAL_SECONDS),
     )
 
-    with _api(preview_env) as client:
+    with authenticated_client(preview_env) as client:
         recorded = client.get(f"/runs/{run_id}")
         assert recorded.status_code == 200, recorded.text
         assert recorded.json()["run"]["phase"] == "applied", recorded.text
