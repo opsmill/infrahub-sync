@@ -22,6 +22,7 @@ from tests.preview.test_cli_client import run_cli, run_cli_command
 from tests.preview.test_service_api import authenticated_client
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 CANARY = "06438eb2-8019-4776-878c-0941b1f1d1ec"
@@ -31,10 +32,10 @@ def _records(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
-def _client(path: Path, handler: object) -> httpx.Client:
+def _client(path: Path, handler: Callable[[httpx.Request], httpx.Response]) -> httpx.Client:
     return httpx.Client(
         base_url="http://sync.invalid",
-        transport=httpx.MockTransport(handler),  # ty: ignore[invalid-argument-type]
+        transport=httpx.MockTransport(handler),
         event_hooks=transcript_hooks(path),
     )
 
@@ -87,6 +88,7 @@ def test_canary_leaks_names_every_captured_artifact_carrying_the_token() -> None
 
 
 def test_canary_leaks_reports_nothing_when_no_artifact_carries_the_token() -> None:
+    """No leak is reported when the canary token is absent from every artifact."""
     leaks = canary_leaks(CANARY, {"cli stdout": "config_id: c-1", "artifact bytes": b'{"summary":{}}'})
 
     assert leaks == []

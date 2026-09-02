@@ -217,10 +217,8 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(  # noqa: P
         artifact_name="CLI lifecycle apply",
     )
 
-    with authenticated_client(
-        preview_env,
-        transcript=evidence_dir / "cli-lifecycle-results-oracle-http.jsonl",
-    ) as client:
+    results_transcript = evidence_dir / "cli-lifecycle-results-oracle-http.jsonl"
+    with authenticated_client(preview_env, transcript=results_transcript) as client:
         recorded = client.get(f"/runs/{run_id}")
         assert recorded.status_code == 200, recorded.text
         assert recorded.json()["run"]["phase"] == "applied", recorded.text
@@ -236,7 +234,6 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(  # noqa: P
             "CLI lifecycle results body": results.content,
         }
     )
-    results_transcript = evidence_dir / "cli-lifecycle-results-oracle-http.jsonl"
     artifacts[str(results_transcript)] = results_transcript.read_text(encoding="utf-8")
     assert canary_leaks(preview_env["infrahub_token"], artifacts) == []
 

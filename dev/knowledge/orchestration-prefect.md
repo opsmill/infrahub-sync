@@ -59,8 +59,9 @@ def service_sync_run(
 ) -> dict[str, Any]: ...
 ```
 
-The three registry parameters travel together: all three set names the registered version
-the run is bound to, all three unset is the legacy path, and a partial carrier is refused.
+The three registry parameters travel together: when all three are set, they name the
+registered version the run is bound to; when all three are unset, the run uses the legacy
+path; and a partial carrier is refused.
 This flow does not replace or extend the four-parameter direct Prefect flow. Credentials,
 endpoints, adapter instances, product-cache locations, and saved-plan cache locations stay
 in the service worker environment.

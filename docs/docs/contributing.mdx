@@ -59,8 +59,10 @@ uv run infrahub-sync configs --help
 Before committing any changes, run the following commands in order:
 
 ```bash
-uv run invoke format    # Format Python with ruff and Markdown with rumdl
-uv run invoke lint      # rumdl, then ruff, pylint, yamllint and ty, stopping at the first failure
+# Run `rumdl fmt .`, then Ruff formatting and safe fixes.
+uv run invoke format
+# Run `rumdl check .`, then Ruff, Pylint, yamllint, and ty; stop at the first failure.
+uv run invoke lint
 ```
 
 `invoke lint` stops after the first gate that fails. Pylint does not pass on a clean
@@ -144,8 +146,8 @@ Markdown structure is checked with [rumdl](https://github.com/rvben/rumdl), conf
 `pyproject.toml`:
 
 ```bash
-uv run rumdl check .   # check
-uv run rumdl fmt .     # fix
+uv run invoke docs.format-rumdl   # run `rumdl fmt .`
+uv run invoke docs.rumdl          # run `rumdl check .`
 ```
 
 Prose style is checked with [Vale](https://vale.sh/), configured in `.vale.ini`. Run it on
@@ -181,8 +183,9 @@ Common tasks:
 | `linter.lint-pylint` | Lint Python code with pylint |
 | `linter.lint-yaml` | Lint YAML files with yamllint |
 | `linter.lint-ty` | Type-check with ty |
+| `docs.format-rumdl` | Format Markdown and MDX with rumdl |
 | `docs.rumdl` | Lint Markdown and MDX with rumdl |
 | `docs.generate` | Generate CLI documentation |
 | `docs.docusaurus` | Build documentation website |
-| `format` | Alias for ruff format |
-| `lint` | Run all linters |
+| `format` | Run rumdl formatting, then Ruff formatting and safe fixes |
+| `lint` | Run rumdl, Ruff, Pylint, yamllint, and ty in order |
