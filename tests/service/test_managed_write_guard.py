@@ -443,3 +443,20 @@ def test_a_managed_apply_without_an_ownership_boundary_is_refused() -> None:
             run_id="managed-apply",
             confirm_writes=True,
         )
+
+
+def test_a_stale_approved_checksum_is_refused_before_any_guard_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A request that was never going to succeed must not make another writer wait."""
+    prepared = _prepare(tmp_path, monkeypatch)
+
+    with pytest.raises(RuntimeError, match="checksum"):
+        service_sync_run.fn(
+            prepared.run_id, "apply", *prepared.binding, expected_checksum="b" * 64, confirm_writes=True
+        )
+
+    assert prepared.session is None
+    assert prepared.events == []
+    run = _stored(prepared)
+    assert run.reconciliation_required is False
