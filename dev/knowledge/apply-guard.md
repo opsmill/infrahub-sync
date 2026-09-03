@@ -74,13 +74,34 @@ the advisory locks it held, so retirement also frees the configuration.
 ## Confirmed release and cleanup precedence
 
 Leaving the `hold_apply_guard` block confirms release, and callers may confirm it
-explicitly before publishing any success. Confirmation means `pg_advisory_unlock`
-returned true on the same backend session; a false result, a driver failure, or a failed
-close all fail the guard use even though the body succeeded.
+explicitly before publishing any success. A release means two things happened:
+`pg_advisory_unlock` returned true on the same backend session, **and** the dedicated
+session then closed. A false result, a provider failure, or a failed close all fail the
+guard use even though the body succeeded, and all leave the guard permanently retired —
+so a caller that catches one cannot let the block exit as a success.
 
 When the body raises, that exception is preserved and the cleanup detail is dropped. This
 holds for `BaseException` as well as `Exception`, so a cancellation is not replaced by a
 cleanup failure. A cleanup-only failure, with no body exception to preserve, is raised.
+
+## Containing every exception class
+
+A boundary that catches only `psycopg.Error` is not a boundary. The connection the guard
+receives is injected, so its `connect`, `execute`, and `close` may be any implementation
+and may raise an ordinary `Exception`; an interrupt or a cancellation can also arrive
+mid-statement. Three rules cover it:
+
+- A provider `Exception` — driver or not — becomes a sanitized guard failure. Only a
+  `psycopg.Error` carrying SQLSTATE `55P03` is contention, so an unrelated class that
+  merely exposes a `sqlstate` attribute is reported as unavailability.
+- A `BaseException` that is not an `Exception` is contained rather than converted: the
+  session is retired first, then the original propagates unchanged. Converting a
+  cancellation into a guard failure would defeat the cancellation, and leaving the session
+  open would leave the configuration held by a session nobody owns.
+- `close` never raises. It reports its outcome, because a cleanup failure must not be able
+  to replace the body exception or the primary provider failure a caller is already
+  unwinding on. The cost is that an interrupt delivered during that one `close` call is
+  absorbed; losing the primary failure instead is worse.
 
 ## Sanitizing the whole failure graph
 
