@@ -820,6 +820,7 @@ def _run_apply_lifecycle(  # pylint: disable=too-many-arguments
     allow_destination_change: bool,
     expected_checksum: str | None,
     ownership: WriteOwnership,
+    record_applied: Callable[[ApplyRecord], None],
     _plan_applier_factory: Callable[..., PlanApplier] | None,
     run_directory: Path,
     sidecar_mode: Literal["sync", "apply"],
@@ -855,8 +856,10 @@ def _run_apply_lifecycle(  # pylint: disable=too-many-arguments
 
     # Reported to the write scope before anything else can fail: the sidecar write, the
     # guard's release, and the product success commit all happen after this point, and each
-    # of them is a failure after a dispatch that still has to say what was written.
-    ownership.record_applied(record)
+    # of them is a failure after a dispatch that still has to say what was written. The sink
+    # is separate from `ownership` on purpose — that boundary authorizes the write, and
+    # saying what the write did is not its question to answer.
+    record_applied(record)
     try:
         _save_run_transition(run_directory, mode=sidecar_mode, status="applied", record=record, run_file=run_file)
     except BaseException as exc:
@@ -926,6 +929,7 @@ def _execute_apply_operation(
     allow_destination_change: bool,
     expected_checksum: str | None,
     ownership: WriteOwnership,
+    record_applied: Callable[[ApplyRecord], None],
     plan_applier_factory: Callable[..., PlanApplier] | None,
     lock_timeout: float,
     lock_already_held: bool,
@@ -952,6 +956,7 @@ def _execute_apply_operation(
             allow_destination_change=allow_destination_change,
             expected_checksum=expected_checksum,
             ownership=ownership,
+            record_applied=record_applied,
             _plan_applier_factory=plan_applier_factory,
             run_directory=run_directory,
             sidecar_mode=sidecar_mode,
@@ -959,7 +964,12 @@ def _execute_apply_operation(
 
 
 def _validate_operation_request(
-    *, operation: Operation, confirm_writes: bool, run_id: str | None, ownership: WriteOwnership | None
+    *,
+    operation: Operation,
+    confirm_writes: bool,
+    run_id: str | None,
+    ownership: WriteOwnership | None,
+    record_applied: Callable[[ApplyRecord], None] | None,
 ) -> None:
     """Refuse invalid operation inputs before any adapter or run state is constructed."""
     if operation not in OPERATIONS:
@@ -980,6 +990,9 @@ def _validate_operation_request(
         raise RunValidationError(msg)
     if operation == "apply" and ownership is None:
         msg = "an explicit write-ownership boundary is required to run operation=apply"
+        raise RunValidationError(msg)
+    if operation == "apply" and record_applied is None:
+        msg = "a completion sink is required to run operation=apply"
         raise RunValidationError(msg)
 
 
@@ -1005,6 +1018,7 @@ def execute_run(
     *,
     operation: Literal["apply"],
     ownership: WriteOwnership,
+    record_applied: Callable[[ApplyRecord], None],
     **kwargs: Any,
 ) -> RunResult: ...
 
@@ -1038,6 +1052,7 @@ def execute_run(
     allow_destination_change: bool = False,
     expected_checksum: str | None = None,
     ownership: WriteOwnership | None = None,
+    record_applied: Callable[[ApplyRecord], None] | None = None,
     # Private seams — not part of the remote contract; run_remote_request never sets them.
     _plan_applier_factory: Callable[..., PlanApplier] | None = None,
     _lock_timeout: float = 60.0,
@@ -1064,7 +1079,13 @@ def execute_run(
             missing saved-plan id, an unconfirmed write, or an apply with no
             write-ownership boundary (all refused before an adapter is built).
     """
-    _validate_operation_request(operation=operation, confirm_writes=confirm_writes, run_id=run_id, ownership=ownership)
+    _validate_operation_request(
+        operation=operation,
+        confirm_writes=confirm_writes,
+        run_id=run_id,
+        ownership=ownership,
+        record_applied=record_applied,
+    )
 
     if operation == "verify":
         assert run_id is not None  # narrowed above; verification never allocates a run.
@@ -1078,6 +1099,7 @@ def execute_run(
     if operation == "apply":
         assert run_id is not None  # narrowed above; keeps the saved-plan boundary explicit.
         assert ownership is not None  # narrowed above; an apply never runs unguarded.
+        assert record_applied is not None  # narrowed above; an apply always reports what it did.
         return _execute_apply_operation(
             sync_instance=sync_instance,
             run_id=run_id,
@@ -1086,6 +1108,7 @@ def execute_run(
             allow_destination_change=allow_destination_change,
             expected_checksum=expected_checksum,
             ownership=ownership,
+            record_applied=record_applied,
             plan_applier_factory=_plan_applier_factory,
             lock_timeout=_lock_timeout,
             lock_already_held=_lock_already_held,

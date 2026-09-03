@@ -520,6 +520,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 expected_checksum=expected_checksum,
                 confirm_writes=True,
                 ownership=ownership,
+                record_applied=tracker.record_applied,
                 _lock_already_held=True,
             )
         assert isinstance(applied, RunResult)
@@ -569,6 +570,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 expected_checksum=verified.manifest.plan_checksum,
                 confirm_writes=True,
                 ownership=ownership,
+                record_applied=tracker.record_applied,
                 _lock_already_held=True,
                 _run_file_mode="sync",
             )

@@ -25,6 +25,7 @@ from infrahub_sync.potenda import Potenda
 from tests.plan.artifact_fixtures import CONFIG_VERSION, operation_record, write_artifact
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from infrahub_sync.plan.models import PlannedOperation
@@ -41,7 +42,6 @@ class RecordingOwnership:
 
     def __init__(self, events: list[str], *, lose_after: int | None = None) -> None:
         self.events = events
-        self.applied: ApplyRecord | None = None
         self._lose_after = lose_after
         self._proofs = 0
 
@@ -54,9 +54,6 @@ class RecordingOwnership:
 
     def after_final_operation(self) -> None:
         self.events.append("final-prove")
-
-    def record_applied(self, record: ApplyRecord) -> None:
-        self.applied = record
 
 
 class RecordingDestination:
@@ -309,7 +306,13 @@ class _EngineApplier:
         )
 
 
-def _lifecycle(directory: Path, ownership: object, destination: object) -> object:
+def _lifecycle(
+    directory: Path,
+    ownership: object,
+    destination: object,
+    *,
+    record_applied: Callable[[ApplyRecord], None] = lambda _record: None,
+) -> object:
     """Run the core-owned apply lifecycle over one real engine and one real sidecar."""
     from infrahub_sync import execution  # pylint: disable=import-outside-toplevel
 
@@ -322,6 +325,7 @@ def _lifecycle(directory: Path, ownership: object, destination: object) -> objec
         allow_destination_change=False,
         expected_checksum=None,
         ownership=ownership,  # ty: ignore[invalid-argument-type]
+        record_applied=record_applied,
         _plan_applier_factory=lambda *_args, **_kwargs: applier,  # ty: ignore[invalid-argument-type]
         run_directory=directory,
         sidecar_mode="apply",
@@ -351,23 +355,29 @@ def test_the_final_proof_precedes_the_applied_sidecar(tmp_path: Path) -> None:
     assert events[-1] == "final-prove"
 
 
-def test_the_apply_lifecycle_reports_its_completed_record_to_the_write_scope(tmp_path: Path) -> None:
+def test_the_apply_lifecycle_reports_its_completed_record_to_its_sink(tmp_path: Path) -> None:
     """The scope learns what was written before anything downstream of the engine can fail.
 
     Everything after this point — the applied sidecar, the guard's release, the product
     success commit — can fail without carrying a record of its own, and the scope's copy is
-    the only account of the write those failures have.
+    the only account of the write those failures have. It arrives through a sink of its
+    own: the ownership boundary authorizes the write and is not asked what it did.
     """
     directory = _run_dir(tmp_path)
     alpha, bravo, charlie = _three_operations(directory)
     events: list[str] = []
-    ownership = RecordingOwnership(events)
+    reported: list[ApplyRecord] = []
 
-    _lifecycle(directory, ownership, RecordingDestination(events))
+    _lifecycle(
+        directory,
+        RecordingOwnership(events),
+        RecordingDestination(events),
+        record_applied=reported.append,
+    )
 
-    assert isinstance(ownership.applied, ApplyRecord)
-    assert ownership.applied.applied_operations == (alpha, charlie)
-    assert ownership.applied.skipped_delete_operations == (bravo,)
+    assert len(reported) == 1
+    assert reported[0].applied_operations == (alpha, charlie)
+    assert reported[0].skipped_delete_operations == (bravo,)
 
 
 def test_a_failed_applied_sidecar_still_carries_the_completed_record(

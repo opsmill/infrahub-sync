@@ -18,6 +18,11 @@ apply that returns cleanly can still fail while writing its sidecar, while relea
 guard, or while committing product success, and every one of those is a failure after a
 dispatch. Keeping the record on the scope, rather than on whichever exception happens to
 be unwinding, is what lets one exit path report all of them the same way.
+
+`WriteOwnership` deliberately stays two operations wide. It answers one question — does
+this process still hold the right to write — and reporting a result is a different
+concern; an apply hands its completed record to `WriteDispatchTracker.record_applied`
+through a separate sink, not through the interface that authorizes it.
 """
 
 from __future__ import annotations
@@ -42,9 +47,6 @@ class WriteOwnership(Protocol):
 
     def after_final_operation(self) -> None:
         """Prove the hold once more, after the last operation and before any success."""
-
-    def record_applied(self, record: ApplyRecord) -> None:
-        """Keep what the engine completed, for a failure that happens after it returns."""
 
 
 class WriteDispatchTracker:
@@ -94,7 +96,3 @@ class ProvenWriteOwnership:
     def after_final_operation(self) -> None:
         """Prove the hold after the last operation; this alone is not a dispatch."""
         self._prove()
-
-    def record_applied(self, record: ApplyRecord) -> None:
-        """Hand the engine's completed record to the scope's failure boundary."""
-        self._tracker.record_applied(record)

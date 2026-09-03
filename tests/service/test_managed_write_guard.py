@@ -540,14 +540,14 @@ def test_a_stale_approved_checksum_is_refused_before_any_guard_session(
 def _dispatch_and_complete(kwargs: dict[str, Any]) -> None:
     """Stand in for the engine: dispatch once, then report what it completed.
 
-    `_run_apply_lifecycle` reports the completed record to the write scope before its own
+    `_run_apply_lifecycle` reports the completed record through its own sink before its own
     sidecar write, which is the only reason a failure raised *after* the engine returned can
     still say what was written. The double does the same thing at the same point.
     """
     ownership = kwargs["ownership"]
     ownership.before_operation()
     ownership.after_final_operation()
-    ownership.record_applied(ApplyRecord(applied_operations=("op-live-1",), skipped_delete_operations=("op-live-2",)))
+    kwargs["record_applied"](ApplyRecord(applied_operations=("op-live-1",), skipped_delete_operations=("op-live-2",)))
 
 
 @pytest.mark.parametrize("stage", ["apply", "sync"])
