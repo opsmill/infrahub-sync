@@ -461,13 +461,13 @@ def test_the_direct_sync_writer_is_refused_instead_of_running_unguarded() -> Non
         execute_run(object(), operation="sync", confirm_writes=True)  # ty: ignore[no-matching-overload]
 
 
-def test_the_apply_overload_requires_a_write_ownership_boundary() -> None:
+def test_the_apply_overload_requires_its_boundary_and_its_completion_sink() -> None:
     """The declaration the type checker reads is what refuses an unguarded apply first.
 
-    Plan and verify write nothing, so making the keyword unconditionally required would be
-    worse than the defect it fixes. Declaring it required on the apply overload alone — and
-    leaving `apply` out of every other overload — is what makes the gate's own type check
-    reject an omitted boundary, before any of this runs.
+    Plan and verify write nothing, so making either keyword unconditionally required would
+    be worse than the defect it fixes. Declaring both required on the apply overload alone
+    — and leaving `apply` out of every other overload — is what makes the gate's own type
+    check reject an apply that proves nothing or reports nowhere, before any of this runs.
     """
     module = ast.parse(Path(execution.__file__).read_text(encoding="utf-8"))
     overloads = [
@@ -486,13 +486,12 @@ def test_the_apply_overload_requires_a_write_ownership_boundary() -> None:
     )
     keywords = accepting_apply[0].args.kwonlyargs
     defaults = accepting_apply[0].args.kw_defaults
-    ownership = next(
-        (argument for argument, default in zip(keywords, defaults, strict=True) if argument.arg == "ownership"),
-        None,
-    )
-    assert ownership is not None, "the apply overload does not declare an ownership boundary"
-    required = [argument.arg for argument, default in zip(keywords, defaults, strict=True) if default is None]
-    assert "ownership" in required, "the apply overload's ownership boundary has a default"
+    declared = {argument.arg for argument in keywords}
+    required = {argument.arg for argument, default in zip(keywords, defaults, strict=True) if default is None}
+
+    for name, what in (("ownership", "write-ownership boundary"), ("record_applied", "completion sink")):
+        assert name in declared, f"the apply overload does not declare a {what}"
+        assert name in required, f"the apply overload's {what} has a default, so it can be omitted"
 
 
 def _operation_literals(node: ast.FunctionDef) -> set[str]:
