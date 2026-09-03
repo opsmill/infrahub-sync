@@ -24,6 +24,8 @@ pytest.importorskip("prefect")
 pytest.importorskip("opsmill_prefect_extras")
 psycopg: Any = pytest.importorskip("psycopg")
 
+from pathlib import Path  # noqa: E402
+
 from infrahub_sync.configuration import ConfigurationPackage  # noqa: E402
 from infrahub_sync.configuration.runtime import resolve_runtime_instance  # noqa: E402
 from infrahub_sync.execution import RunResult, RunValidationError, execute_run  # noqa: E402
@@ -44,7 +46,6 @@ from tests.configuration.validation_packages import package  # noqa: E402
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
 FLOW_RUN_ID = "b0c0a2d4-6f31-4a58-9b0e-2d4e6f318a55"
 WORKER_ID = "4d9a1c77-2f8e-4d3b-9c11-6a0e7b2f9d40"
@@ -416,21 +417,22 @@ def test_a_managed_write_without_a_registered_binding_is_refused(
 
 def test_the_managed_write_path_takes_no_local_pipeline_lock() -> None:
     """One correctness guard, not two: the file lock is gone from the supported path."""
-    source = service_flow.__loader__.get_source(service_flow.__name__)  # ty: ignore[possibly-unbound-attribute]
-    assert source is not None
+    assert service_flow.__file__ is not None
+    source = Path(service_flow.__file__).read_text(encoding="utf-8")
+
     assert "bounded_run_lock" not in source
 
 
 def test_the_direct_sync_writer_is_refused_instead_of_running_unguarded() -> None:
     """The unsupported direct write path cannot prove any per-operation ownership."""
     with pytest.raises(RunValidationError, match="sync"):
-        execute_run(object(), operation="sync", confirm_writes=True)  # ty: ignore[invalid-argument-type]
+        execute_run(object(), operation="sync", confirm_writes=True)  # ty: ignore[no-matching-overload]
 
 
 def test_a_managed_apply_without_an_ownership_boundary_is_refused() -> None:
     """`execute_run` refuses a write it cannot prove, before it builds anything."""
     with pytest.raises(RunValidationError, match="ownership"):
-        execute_run(  # ty: ignore[invalid-argument-type]
+        execute_run(  # ty: ignore[no-matching-overload]
             object(),
             operation="apply",
             run_id="managed-apply",

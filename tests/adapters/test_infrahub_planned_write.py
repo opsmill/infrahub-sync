@@ -59,6 +59,7 @@ from infrahub_sync.plan.review import read_saved_plan
 from infrahub_sync.plan.write_surface import PlannedWriteDestination
 from infrahub_sync.potenda import Potenda
 from tests.plan.artifact_fixtures import CONFIG_VERSION, SYNC_NAME, operation_record, write_artifact
+from tests.plan.ownership_fixtures import granted_ownership
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -1153,7 +1154,7 @@ def apply_and_record_state(engine: Potenda) -> tuple[str, ApplyRecord | Exceptio
     fails, rather than an inference from the absence of an exception (AD055).
     """
     try:
-        record = engine.apply_plan(config_version=CONFIG_VERSION)
+        record = engine.apply_plan(ownership=granted_ownership(), config_version=CONFIG_VERSION)
     except Exception as exc:  # noqa: BLE001 — the CLI catches exactly this broadly
         return "failed", exc
     return "applied", record
@@ -1511,7 +1512,7 @@ def test_a_graphql_query_and_variables_never_reach_the_operator_message(tmp_path
 
     with pytest.raises(OperationApplyFailedError) as caught:
         engine_over(directory, RecordingApplyDestination(reject_at=0, rejection=rejection)).apply_plan(
-            config_version=CONFIG_VERSION
+            ownership=granted_ownership(), config_version=CONFIG_VERSION
         )
 
     assert secret not in str(caught.value)

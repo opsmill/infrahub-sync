@@ -37,6 +37,7 @@ from infrahub_sync.plan.reader import parse_plan_artifact
 from infrahub_sync.plan.verify import GATED_CHECKS
 from infrahub_sync.potenda import Potenda
 from tests.plan.artifact_fixtures import CONFIG_VERSION, operation_record, write_artifact
+from tests.plan.ownership_fixtures import granted_ownership
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -113,7 +114,7 @@ def test_apply_plan_executes_the_stored_operations_in_stored_order(tmp_path: Pat
     assert stored_order != sorted(stored_order), "the fixture must not already be in sorted order"
 
     destination = RecordingDestination()
-    record = _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+    record = _potenda(directory, destination).apply_plan(ownership=granted_ownership(), config_version=CONFIG_VERSION)
 
     assert destination.dispatched == stored_order
     assert record.applied_operations == tuple(stored_order)
@@ -133,7 +134,9 @@ def test_apply_plan_writes_no_run_file(tmp_path: Path) -> None:
     run_file = directory / "run.json"
     run_file.write_text(SENTINEL_RUN_FILE, encoding="utf-8")
 
-    record = _potenda(directory, RecordingDestination()).apply_plan(config_version=CONFIG_VERSION)
+    record = _potenda(directory, RecordingDestination()).apply_plan(
+        ownership=granted_ownership(), config_version=CONFIG_VERSION
+    )
 
     assert run_file.read_text(encoding="utf-8") == SENTINEL_RUN_FILE
     assert record.as_summary_keys() == {
@@ -151,7 +154,9 @@ def test_a_destination_without_the_write_surface_is_refused_before_any_write(tmp
     write_artifact(directory, [operation_record()], run_id=RUN_ID, source_snapshot=[])
 
     with pytest.raises(PlanVerificationError) as caught:
-        _potenda(directory, SurfacelessDestination()).apply_plan(config_version=CONFIG_VERSION)
+        _potenda(directory, SurfacelessDestination()).apply_plan(
+            ownership=granted_ownership(), config_version=CONFIG_VERSION
+        )
 
     message = str(caught.value)
     assert "write_surface" in message
@@ -168,7 +173,9 @@ def test_a_recorded_delete_is_collected_and_never_dispatched(tmp_path: Path, cap
 
     destination = RecordingDestination()
     with caplog.at_level(logging.DEBUG, logger="infrahub_sync.potenda"):
-        record = _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+        record = _potenda(directory, destination).apply_plan(
+            ownership=granted_ownership(), config_version=CONFIG_VERSION
+        )
 
     assert destination.dispatched == [create["operation_id"]]
     assert record.applied_operations == (create["operation_id"],)
@@ -193,7 +200,7 @@ def test_an_action_outside_the_vocabulary_fails_before_any_dispatch(tmp_path: Pa
 
     destination = RecordingDestination()
     with pytest.raises(UnsupportedOperationActionError) as caught:
-        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+        _potenda(directory, destination).apply_plan(ownership=granted_ownership(), config_version=CONFIG_VERSION)
 
     assert destination.dispatched == [], "Nothing is dispatched: the refusal precedes the first write."
     message = str(caught.value)
@@ -211,7 +218,9 @@ def test_a_changed_configuration_version_refuses_the_apply(tmp_path: Path) -> No
 
     destination = RecordingDestination()
     with pytest.raises(PlanVerificationError) as caught:
-        _potenda(directory, destination).apply_plan(config_version="a-different-configuration-version")
+        _potenda(directory, destination).apply_plan(
+            ownership=granted_ownership(), config_version="a-different-configuration-version"
+        )
 
     assert "config_version" in str(caught.value)
     assert destination.dispatched == []
@@ -231,7 +240,7 @@ def test_an_approved_checksum_matching_the_artifact_applies(tmp_path: Path) -> N
 
     destination = RecordingDestination()
     applied = _potenda(directory, destination).apply_plan(
-        config_version=CONFIG_VERSION, expected_checksum=_recorded_checksum(directory)
+        ownership=granted_ownership(), config_version=CONFIG_VERSION, expected_checksum=_recorded_checksum(directory)
     )
 
     assert destination.dispatched == [record_written["operation_id"]]
@@ -251,7 +260,9 @@ def test_an_unapproved_artifact_is_refused_by_the_engine_before_any_dispatch(tmp
 
     destination = RecordingDestination()
     with pytest.raises(PlanVerificationError) as caught:
-        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION, expected_checksum="0" * 64)
+        _potenda(directory, destination).apply_plan(
+            ownership=granted_ownership(), config_version=CONFIG_VERSION, expected_checksum="0" * 64
+        )
 
     assert destination.dispatched == [], "nothing may be dispatched for a plan no approval named"
     message = str(caught.value)
@@ -269,7 +280,9 @@ def test_an_unhashable_artifact_refuses_an_approval_rather_than_passing_it(tmp_p
 
     destination = RecordingDestination()
     with pytest.raises(PlanVerificationError):
-        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION, expected_checksum="0" * 64)
+        _potenda(directory, destination).apply_plan(
+            ownership=granted_ownership(), config_version=CONFIG_VERSION, expected_checksum="0" * 64
+        )
 
     assert destination.dispatched == []
 
@@ -283,7 +296,7 @@ def test_no_configuration_and_no_supplied_version_refuses_before_any_write(tmp_p
     with pytest.raises(
         ValueError, match="needs a configuration version to compare the plan artifact against"
     ) as caught:
-        _potenda(directory, destination).apply_plan()
+        _potenda(directory, destination).apply_plan(ownership=granted_ownership())
 
     message = str(caught.value)
     assert "construct Potenda with a parsed configuration, or pass `config_version`" in message, message
@@ -298,13 +311,17 @@ def test_an_empty_plan_applies_as_a_successful_no_op(tmp_path: Path) -> None:
     directory = _run_dir(tmp_path)
     write_artifact(directory, [], run_id=RUN_ID, source_snapshot=[])
 
-    record = _potenda(directory, RecordingDestination()).apply_plan(config_version=CONFIG_VERSION)
+    record = _potenda(directory, RecordingDestination()).apply_plan(
+        ownership=granted_ownership(), config_version=CONFIG_VERSION
+    )
 
     assert record.applied_operations == ()
     assert record.skipped_delete_count == 0
 
     with pytest.raises(PlanVerificationError):
-        _potenda(directory, SurfacelessDestination()).apply_plan(config_version=CONFIG_VERSION)
+        _potenda(directory, SurfacelessDestination()).apply_plan(
+            ownership=granted_ownership(), config_version=CONFIG_VERSION
+        )
 
 
 # ======================================================================================
@@ -320,7 +337,7 @@ def test_an_identity_value_disagreement_refuses_the_apply_before_any_destination
     destination = RecordingDestination()
 
     with pytest.raises(PlanArtifactTornError):
-        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+        _potenda(directory, destination).apply_plan(ownership=granted_ownership(), config_version=CONFIG_VERSION)
 
     assert destination.dispatched == []
 
@@ -333,7 +350,9 @@ def test_a_tear_and_a_config_version_mismatch_are_both_reported_by_one_apply_att
     destination = RecordingDestination()
 
     with pytest.raises(PlanVerificationError) as caught:
-        _potenda(directory, destination).apply_plan(config_version="a-different-configuration-version")
+        _potenda(directory, destination).apply_plan(
+            ownership=granted_ownership(), config_version="a-different-configuration-version"
+        )
 
     message = str(caught.value)
     assert "torn_operations" in message
@@ -349,7 +368,9 @@ def test_the_format_version_gate_tells_the_operator_what_it_did_not_evaluate(tmp
     destination = RecordingDestination()
 
     with pytest.raises(PlanVerificationError) as caught:
-        _potenda(directory, destination).apply_plan(config_version="a-different-configuration-version")
+        _potenda(directory, destination).apply_plan(
+            ownership=granted_ownership(), config_version="a-different-configuration-version"
+        )
 
     message = str(caught.value)
     assert "1 pre-apply check(s) failed" in message
@@ -366,7 +387,7 @@ def test_a_run_holding_no_plan_artifact_keeps_its_own_verdict(tmp_path: Path) ->
     destination = RecordingDestination()
 
     with pytest.raises(PlanFormatV1Error) as caught:
-        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+        _potenda(directory, destination).apply_plan(ownership=granted_ownership(), config_version=CONFIG_VERSION)
 
     assert "holds no plan artifact" in str(caught.value)
     assert destination.dispatched == []
@@ -393,7 +414,9 @@ def test_an_artifact_substituted_after_verification_is_not_what_gets_applied(tmp
 
     destination = RecordingDestination()
     with patch("infrahub_sync.plan.verify.verify_plan", _substituting_verify):
-        record = _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+        record = _potenda(directory, destination).apply_plan(
+            ownership=granted_ownership(), config_version=CONFIG_VERSION
+        )
 
     assert destination.dispatched == [verified[0]["operation_id"]]
     assert record.applied_operations == (verified[0]["operation_id"],)
@@ -429,7 +452,7 @@ def test_a_failure_after_the_base_write_names_the_operation_and_marks_the_partia
     destination = PartiallyWritingDestination()
 
     with pytest.raises(OperationApplyFailedError) as caught:
-        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+        _potenda(directory, destination).apply_plan(ownership=granted_ownership(), config_version=CONFIG_VERSION)
 
     failing_id = str(records[1]["operation_id"])
     assert destination.base_writes == [str(records[0]["operation_id"]), failing_id], (
@@ -489,7 +512,7 @@ def test_a_known_destination_failure_is_wrapped_with_the_operation_and_run_conte
     destination = DefectiveDestination(rejection)
 
     with pytest.raises(OperationApplyFailedError) as caught:
-        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+        _potenda(directory, destination).apply_plan(ownership=granted_ownership(), config_version=CONFIG_VERSION)
 
     message = str(caught.value)
     assert str(records[1]["operation_id"]) in message, "the refusal names the operation that failed"
@@ -526,7 +549,7 @@ def test_a_code_defect_escapes_the_apply_unchanged_and_still_carries_the_partial
     destination = DefectiveDestination(defect)
 
     with pytest.raises(type(defect)) as caught:
-        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+        _potenda(directory, destination).apply_plan(ownership=granted_ownership(), config_version=CONFIG_VERSION)
 
     assert caught.value is defect, "the defect reached the caller as itself, not as a copy or a wrapper"
     carried = getattr(caught.value, "apply_record", None)
@@ -553,7 +576,7 @@ def test_an_interrupt_mid_apply_propagates_as_itself_and_carries_the_partial_rec
     destination = InterruptingDestination()
 
     with pytest.raises(KeyboardInterrupt) as caught:
-        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+        _potenda(directory, destination).apply_plan(ownership=granted_ownership(), config_version=CONFIG_VERSION)
 
     assert destination.dispatched == [records[0]["operation_id"]]
     partial = getattr(caught.value, "apply_record", None)
@@ -582,7 +605,7 @@ def test_the_invariant_error_carries_the_record_of_what_was_actually_written(tmp
         patch("infrahub_sync.plan.reader.parse_plan_artifact", _inflated_count),
         pytest.raises(ApplyRecordInvariantError) as caught,
     ):
-        _potenda(directory, destination).apply_plan(config_version=CONFIG_VERSION)
+        _potenda(directory, destination).apply_plan(ownership=granted_ownership(), config_version=CONFIG_VERSION)
 
     assert destination.dispatched == list(applied_ids)
     assert caught.value.apply_record.applied_operations == applied_ids

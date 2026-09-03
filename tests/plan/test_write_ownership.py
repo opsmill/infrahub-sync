@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from infrahub_sdk.exceptions import ServerNotResponsiveError
 
 from infrahub_sync.plan.errors import OperationApplyFailedError
 from infrahub_sync.plan.models import ApplyRecord
@@ -74,7 +75,7 @@ class RejectingDestination(RecordingDestination):
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
         super().apply_planned_operation(operation=operation, peers=peers)
         msg = "the destination rejected the operation"
-        raise ValueError(msg)
+        raise ServerNotResponsiveError(msg)
 
 
 def _potenda(run_directory: Path, destination: object) -> Potenda:

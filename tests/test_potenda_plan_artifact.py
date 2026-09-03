@@ -861,8 +861,13 @@ def test_delete_only_saved_plan_drives_the_execution_result(monkeypatch: pytest.
     assert dict(result.summary) == {"create": 0, "update": 0, "delete": 1}
 
 
-def test_delete_only_serial_sync_reports_the_live_no_change_result(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A derived delete is saved, but default serial sync neither executes nor reports it."""
+def test_delete_only_live_sync_saves_the_delete_and_executes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A derived delete is saved, and a live sync over that diff executes nothing.
+
+    Driven on the engine directly: the destination-only object reaches the saved plan,
+    while the diff rows a live sync acts on stay empty, so the destination is never
+    asked to synchronize anything.
+    """
     config = build_config(order=["BuiltinTag"])
     run_id = "20260726T1151-de1e7e02"
     destination = destination_with_orphan()
@@ -875,18 +880,17 @@ def test_delete_only_serial_sync_reports_the_live_no_change_result(monkeypatch: 
     )
     pin_extraction_decisions(monkeypatch, [False, False])
 
-    def factory(**_kwargs: object) -> Potenda:
-        return potenda
-
-    result = execute_run(config, operation="sync", confirm_writes=True, potenda_factory=factory)
+    potenda.load_both_sides()
+    live_diff = potenda.diff()
+    potenda.write_plan(live_diff)
+    if live_diff.has_diffs():
+        potenda.sync(diff=live_diff)
     saved_summary = read_saved_plan(sync_name=config.name, run_id=run_id, config=config).summary()
 
     assert saved_summary.total == 1
     assert saved_summary.by_action == {"delete": 1}
     assert destination.sync_calls == []
-    assert result.status == "no-change"
-    assert result.changed is False
-    assert dict(result.summary) == {"create": 0, "update": 0, "delete": 0}
+    assert potenda._diff_to_rows(live_diff) == []
 
 
 # =======================================================================================

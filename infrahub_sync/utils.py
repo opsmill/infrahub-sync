@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from infrahub_sdk.schema import GenericSchema, NodeSchema
 
     from infrahub_sync.plan.models import ApplyRecord
+    from infrahub_sync.plan.ownership import WriteOwnership
     from infrahub_sync.plan.reader import RawPlanArtifact
     from infrahub_sync.runtime_schema import RuntimeModelPlan
 
@@ -418,6 +419,7 @@ class PlanApplier:
     def apply_plan(
         self,
         *,
+        ownership: WriteOwnership,
         config_version: str | None = None,
         allow_destination_change: bool = False,
         expected_checksum: str | None = None,
@@ -437,6 +439,9 @@ class PlanApplier:
 
         `expected_checksum` travels to the engine rather than being answered here, so the
         operator's approval is decided against the artifact the apply loop consumes.
+        `ownership` travels with it, required and without a default, because this seam
+        assembles the apply and an apply assembled without a write-ownership boundary is
+        an unguarded write.
 
         Raises:
             PlanVerificationError: the plan was computed against a different destination
@@ -445,7 +450,10 @@ class PlanApplier:
         artifact = read_plan_artifact_bytes(self.run_dir)
         self._require_recorded_destination(artifact=artifact, allow_destination_change=allow_destination_change)
         return self.engine.apply_plan(
-            config_version=config_version, artifact=artifact, expected_checksum=expected_checksum
+            ownership=ownership,
+            config_version=config_version,
+            artifact=artifact,
+            expected_checksum=expected_checksum,
         )
 
     def _require_recorded_destination(self, *, artifact: RawPlanArtifact, allow_destination_change: bool) -> None:
