@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import inspect
 import logging
-from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event, Thread, current_thread
@@ -49,7 +48,7 @@ from infrahub_sync.service.orchestration import (
     PrefectOrchestration,
 )
 from tests.configuration.validation_packages import package
-from tests.service.execution_fixtures import append_execution
+from tests.service.execution_fixtures import append_execution, bind_granting_guard
 
 if TYPE_CHECKING:
     from prefect.client.schemas.actions import DeploymentUpdate
@@ -214,6 +213,7 @@ def test_worker_rejects_missing_registered_package_before_runtime_construction(
     )
     constructed = []
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", lambda *_args, **_kwargs: constructed.append(True))
 
@@ -457,6 +457,7 @@ def test_service_flow_redacts_worker_logs_exception_chain_and_failed_state(
     )
     monkeypatch.setenv("NETBOX_TOKEN", environment_canary)
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (run_logger, True))
 
     def resolve(
@@ -523,6 +524,7 @@ def test_service_apply_failure_retains_partial_write_evidence(
     projection = _create_product_run(tmp_path.resolve(), run_id)
     partial = ApplyRecord(applied_operations=("op-applied",), failed_operation="op-failed")
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
@@ -567,6 +569,7 @@ def test_service_verify_failure_merges_evidence_and_terminalizes_exact_link(
     run_id = "run-service-verify-failure"
     projection = _create_product_run(tmp_path.resolve(), run_id, operation="verify")
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
@@ -597,6 +600,7 @@ def test_success_writeback_persistence_failure_is_not_recorded_as_business_failu
     projection = _create_product_run(tmp_path.resolve(), run_id)
     saved = _saved(run_id)
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
@@ -634,6 +638,7 @@ def test_success_writeback_commit_error_preserves_reread_committed_result(
     projection = _create_product_run(tmp_path.resolve(), run_id)
     saved = _saved(run_id)
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
@@ -667,10 +672,10 @@ def test_service_confirmed_sync_retains_the_semantic_sync_operation(
     projection = _create_product_run(tmp_path.resolve(), run_id, operation="sync")
     saved = _saved(run_id)
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
-    monkeypatch.setattr(service_flow, "bounded_run_lock", lambda *_args, **_kwargs: nullcontext())
     monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)
     monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
 
@@ -712,6 +717,7 @@ def test_service_plan_worker_updates_the_api_created_run_and_publishes_review(
     saved = _saved(run_id)
     seen: list[str] = []
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
@@ -748,6 +754,7 @@ def test_service_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.M
     before = projection.lookup_run(run_id).value
     saved = _saved(run_id)
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
@@ -786,8 +793,8 @@ def test_confirmed_service_sync_calls_plan_verify_apply_in_order_on_one_run(
     saved = _saved(run_id)
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
-    monkeypatch.setattr(service_flow, "bounded_run_lock", lambda *_args, **_kwargs: nullcontext())
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)

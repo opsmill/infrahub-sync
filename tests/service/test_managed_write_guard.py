@@ -40,7 +40,6 @@ from infrahub_sync.product_store import (  # noqa: E402
 )
 from infrahub_sync.runtime_schema import RuntimeModelPlan, RuntimeSideModels  # noqa: E402
 from infrahub_sync.service import flow as service_flow  # noqa: E402
-from infrahub_sync.service.apply_guard import ApplyGuardContentionError  # noqa: E402
 from infrahub_sync.service.flow import service_sync_run  # noqa: E402
 from tests.configuration.validation_packages import package  # noqa: E402
 
@@ -280,7 +279,7 @@ def test_guard_contention_touches_no_destination_and_creates_no_success_evidence
     """Another writer's hold is a clean refusal: nothing read, nothing written, no ambiguity."""
     prepared = _prepare(tmp_path, monkeypatch, acquire_failure=_lock_timeout())
 
-    with pytest.raises(ApplyGuardContentionError):
+    with pytest.raises(RuntimeError, match="ApplyGuardContentionError"):
         _apply(prepared)
 
     assert "live-schema-read" not in prepared.events
@@ -301,7 +300,7 @@ def test_a_failure_before_the_first_dispatch_stays_an_ordinary_failed_run(
 
     prepared = _prepare(tmp_path, monkeypatch, engine=refuse)
 
-    with pytest.raises(ValueError, match="before any operation"):
+    with pytest.raises(RuntimeError, match="before any operation"):
         _apply(prepared)
 
     run = _stored(prepared)
@@ -323,7 +322,7 @@ def test_a_failure_after_the_first_dispatch_becomes_durable_ambiguity(
 
     prepared = _prepare(tmp_path, monkeypatch, engine=dispatch_then_fail)
 
-    with pytest.raises(ValueError, match="after the first operation"):
+    with pytest.raises(RuntimeError, match="after the first operation"):
         _apply(prepared)
 
     run = _stored(prepared)
@@ -409,7 +408,7 @@ def test_a_managed_write_without_a_registered_binding_is_refused(
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (service_flow.logger, False))
     monkeypatch.setattr(service_flow, "service_guard_session", lambda: guard_sessions.append(object()))
 
-    with pytest.raises(ValueError, match="registered configuration"):
+    with pytest.raises(RuntimeError, match="registered configuration binding"):
         service_sync_run.fn(run_id, "apply", expected_checksum="a" * 64, confirm_writes=True)
 
     assert guard_sessions == []

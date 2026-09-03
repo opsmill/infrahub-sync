@@ -61,3 +61,42 @@ def append_execution(
     return projection.add_prefect_execution(
         run_id, link, receipt_id=receipt.receipt_id, allocate_attempt=allocate_attempt
     )
+
+
+class GrantingGuardSession:
+    """A direct-session double that always grants the configuration write guard.
+
+    Stage-driving tests whose subject is something else — binding, schema, ordering —
+    still cross the guard, so they need a session that answers its three statements. What
+    the guard does with a session that does not grant is
+    `tests/service/test_managed_write_guard.py`'s subject, not theirs.
+    """
+
+    def execute(self, query: str, params: object = None) -> _GrantingCursor:  # noqa: PLR6301
+        """Answer the acquire, ownership, and release statements the guard issues."""
+        _ = params
+        if "pg_locks" in query:
+            return _GrantingCursor((_BACKEND_PID, True))
+        if "pg_advisory_unlock" in query:
+            return _GrantingCursor((True, _BACKEND_PID))
+        return _GrantingCursor((None,))
+
+    def close(self) -> None:
+        """Close the dedicated session."""
+
+
+class _GrantingCursor:
+    def __init__(self, row: tuple[object, ...]) -> None:
+        self._row = row
+
+    def fetchone(self) -> tuple[object, ...]:
+        return self._row
+
+
+_BACKEND_PID = 4242
+
+
+def bind_granting_guard(monkeypatch: object, flow_module: object) -> None:
+    """Bind a granting configuration write guard onto one service flow module."""
+    monkeypatch.setattr(flow_module, "service_guard_session", GrantingGuardSession)  # ty: ignore[unresolved-attribute]
+    monkeypatch.setattr(flow_module, "service_guard_secrets", lambda: ())  # ty: ignore[unresolved-attribute]

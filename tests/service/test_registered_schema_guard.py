@@ -34,6 +34,7 @@ from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.errors import PlanSchemaChangedError
+from infrahub_sync.plan.ownership import WriteDispatchTracker
 from infrahub_sync.plan.review import read_saved_plan
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME, write_plan_artifact
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
@@ -44,7 +45,7 @@ from infrahub_sync.service.flow import service_sync_run
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID
 from tests.configuration.validation_packages import package_data
 from tests.plan.artifact_fixtures import duplicated_key_manifest_bytes
-from tests.service.execution_fixtures import append_execution
+from tests.service.execution_fixtures import append_execution, bind_granting_guard
 
 if TYPE_CHECKING:
     from infrahub_sync import SyncInstance
@@ -205,6 +206,7 @@ def _harness(
     spy = _SnapshotSpy()
     monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", spy)
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (service_flow.logger, False))
     monkeypatch.setattr(service_flow, "_prefect_flow_run_id", lambda: FLOW_RUN_ID)
     monkeypatch.setattr(service_flow, "_require_current_worker_identity", lambda *_args: None)
@@ -258,6 +260,7 @@ def _execute_apply_stage(harness: _Harness) -> tuple[dict[str, Any], Any]:
         secrets=[],
         config_directory=str(harness.run_dir.parents[2]),
         projection=harness.projection,
+        tracker=WriteDispatchTracker(),
     )
 
 

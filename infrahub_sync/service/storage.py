@@ -17,6 +17,7 @@ from infrahub_sync.product_store import (
     ProductStoreProviderError,
     production_product_projection,
 )
+from infrahub_sync.service.apply_guard import connect_guard_session, dsn_secret_values
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -163,6 +164,29 @@ def _database_url(values: Mapping[str, str]) -> str:
         msg = f"{DATABASE_URL_ENV} must be a PostgreSQL connection string"
         raise ValueError(msg) from None
     return database_url
+
+
+def service_guard_session(*, environ: Mapping[str, str] | None = None) -> psycopg.Connection[Any]:
+    """Open the configuration write guard's own direct PostgreSQL session.
+
+    The guard holds a session-level advisory lock across a whole write, so it needs a
+    dedicated direct session rather than a product-store connection. It reuses the one
+    service database setting: there is no separate guard connection string, and this
+    session is never handed to an adapter or to the product store.
+    """
+    values: Mapping[str, str] = os.environ if environ is None else environ
+    return connect_guard_session(_database_url(values))
+
+
+def service_guard_secrets(*, environ: Mapping[str, str] | None = None) -> tuple[str, ...]:
+    """Return the redaction values the service database setting itself carries.
+
+    A keyword connection string is not URL-shaped, so the environment collector cannot see
+    its password; without this, a driver message could carry it out through a guard
+    failure's cause chain.
+    """
+    values: Mapping[str, str] = os.environ if environ is None else environ
+    return dsn_secret_values(_database_url(values))
 
 
 def _endpoint(values: Mapping[str, str]) -> str | None:

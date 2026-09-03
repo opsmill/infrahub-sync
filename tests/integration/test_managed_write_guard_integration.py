@@ -66,11 +66,12 @@ _WORKER_SCRIPT = textwrap.dedent(
     """
     import sys
 
-    from infrahub_sync.plan.ownership import WriteDispatchTracker
-    from infrahub_sync.service.flow import _managed_write_guard
+    from infrahub_sync.plan.ownership import ProvenWriteOwnership, WriteDispatchTracker
+    from infrahub_sync.service.flow import _configuration_write_guard
 
     configuration_id = sys.argv[1]
-    with _managed_write_guard(configuration_id, tracker=WriteDispatchTracker()) as ownership:
+    with _configuration_write_guard(configuration_id) as guard:
+        ownership = ProvenWriteOwnership(prove=guard.require_ownership, tracker=WriteDispatchTracker())
         print("HELD", flush=True)
         sys.stdin.readline()
         ownership.after_final_operation()
