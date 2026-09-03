@@ -356,8 +356,56 @@ for a new intent.
 The first confirmed composed `sync` or reviewed `apply` permanently consumes that run's
 single write admission, including when the execution later fails, crashes, or is cancelled.
 Retry an uncertain request with its original idempotency key. To make another write attempt
-after a terminal failure or cancellation, create and review a new plan run; a new key on the
-old run returns `409 apply-already-admitted`.
+after a terminal failure or cancellation, create and review a new plan run.
+
+A run admits its one write only while nothing else is in flight on it: no other write
+admission, no other unresolved plan, verify, apply, or sync submission, and no unfinished
+execution. Whichever request wins is decided before either competitor is submitted to
+Prefect, so the loser never starts work. It is answered with `409 run-execution-conflict`
+stored on its own receipt, and replaying that idempotency key replays the refusal. Once a
+run has admitted its write, every later plan, verify, apply, and sync submission on that run
+gets the same refusal — including after the write becomes terminal, because terminal write
+evidence is not reopened.
+
+A submission stays unresolved until it has a stored response, a stored refusal included. If
+a client abandons one — the process dies before it reads the reply, and the key is never
+replayed — that run cannot admit another stage. There is no receipt-expiry mechanism; create
+a new plan or sync run instead.
+
+## Write safety and reconciliation
+
+A managed apply or sync holds one PostgreSQL advisory guard for the registered configuration
+it writes, so two workers cannot write the same configuration at once. The guard is held
+across the destination-sensitive checks and the whole write loop, and its release is
+confirmed before any success is published.
+
+Public run resources carry `reconciliation_required`. It is `false` on every new run and
+becomes `true` only when a write execution ends without proving what reached the
+destination. Nothing sets it back to `false`.
+
+| What happened | Durable outcome | Your next step |
+| --- | --- | --- |
+| Another writer held the guard for the whole deadline | `failed`; no destination was contacted and nothing was written | Create a new plan: the other writer may have changed the destination |
+| A destination-sensitive check failed under the guard | The existing specific refusal; nothing was written | Fix the cause and create a new plan |
+| The adapter failed after the first operation was dispatched | `interrupted` / `ambiguous`, `reconciliation_required: true`, with the partial `ApplyRecord` in the retained results | Inspect the destination, then create a new plan |
+| You cancelled a run whose worker already held the write | `interrupted` / `ambiguous`, `reconciliation_required: true`; the cancel request answers `409 cancellation-ambiguous` | Inspect the destination, then create a new plan |
+| The worker or its guard session was lost | `interrupted` / `ambiguous`, `reconciliation_required: true` | Inspect the destination, then create a new plan |
+| The run completed normally | The existing succeeded result | Nothing; this run accepts no further write |
+
+Cancellation is not a clean-stop guarantee for a write. A worker that has already begun
+dispatching may have changed the destination before the cancellation reached it, so Sync
+records the conservative answer rather than a cancelled one — unless the normal completion
+path won first.
+
+### Reconcile an uncertain write
+
+Sync never calls an adapter or infers success after an uncertain result, and there is no
+endpoint that clears `reconciliation_required`. Reconcile by planning again:
+
+1. create a new plan run on the same registered configuration;
+2. read its summary. An empty diff means the desired state is already present, and the
+   uncertain run in fact completed its work; and
+3. otherwise review the remaining operations and apply that new plan.
 
 ## Errors and retained state
 
@@ -380,7 +428,7 @@ Every error uses the same envelope:
 | `401` | Missing or invalid authentication. |
 | `403` | The actor does not own the mutation and is not an administrator. |
 | `404` | The Sync run or run-owned artifact does not exist. |
-| `409` | Idempotency conflict, missing confirmation, stale checksum, or non-cancellable execution. |
+| `409` | Idempotency conflict, missing confirmation, stale checksum, non-cancellable execution, a run that cannot admit another stage (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). |
 | `410` | The retained plan or artifact has expired. |
 | `422` | Invalid request schema, missing idempotency key, or a secret-bearing flow parameter. |
 | `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved. |

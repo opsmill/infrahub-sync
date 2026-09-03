@@ -170,8 +170,18 @@ seams, not a public custom-provider compatibility contract.
 
 `ProductRun` owns the stable Sync `run_id`, requested operation, immutable configuration
 reference, actor and audit links, product phase and outcome, timings, summary and results,
-artifact references, and Prefect correlations. Relational child tables store artifact
-references and Prefect execution links separately from the compact run row.
+write-safety evidence, artifact references, and Prefect correlations. Relational child
+tables store artifact references and Prefect execution links separately from the compact
+run row.
+
+`reconciliation_required` is the run's one authoritative write-safety fact: a non-null
+Boolean, `false` on every new run, exposed directly on the public run resource rather than
+buried in `results`. It becomes `true` in the same transaction that makes a claimed apply or
+sync execution terminal as `interrupted` / `ambiguous` — whether that verdict is written by
+the worker itself, by liveness reconciliation, or by cancellation. The store derives the
+condition from the verdict and the execution's purpose rather than taking it as an argument,
+so no caller can write it `false`, and no result merge, replacement, or later terminal
+transition clears it.
 
 Each `PrefectExecutionLink` records:
 
@@ -184,8 +194,15 @@ Each `PrefectExecutionLink` records:
 Duplicate Sync run IDs and duplicate flow-run IDs within one record are rejected. A
 confirmed sync creates its own record. A reviewed-plan apply instead advances the original
 planning record and attaches its result artifacts to the same `run_id`; it does not create
-a second Sync identity. `add_prefect_execution` appends stage and retry links as they become
-known without changing the Sync record's identity.
+a second Sync identity. `add_prefect_execution` appends stage links as they become known
+without changing the Sync record's identity.
+
+Every execution link names the unresolved mutation receipt that appended it, through an
+internal uniquely-constrained column that appears in no public resource. That relation is
+the one-append rule: a receipt appends at most one execution, an execution belongs to a
+submission still in flight, a write append additionally requires the run's write-admission
+row to name that exact receipt and that exact operation, and a run holding a write admission
+accepts no further append at all.
 
 Mutations against a missing Sync run raise `RunNotFoundError`. Read operations continue
 to return `LookupResult` with `reason="run-not-found"`, so absence remains a normal,
@@ -200,7 +217,17 @@ Sync API mutations reserve a `MutationReceipt` unique by actor and SHA-256 diges
 client idempotency key. A receipt binds the operation, target, request fingerprint, reason,
 Sync run, opaque Prefect key, state, and exact accepted response. The raw client key is not
 stored. Run creation commits its receipt and unfinished product run in one relational
-transaction. `AuditEvent` records secret-safe actor, reason, operation, and outcome evidence
+transaction.
+
+Reserving a stage against an existing run arbitrates it in that same transaction, after
+locking the run's authoritative row: a write reservation requires no existing write
+admission, no other unresolved plan, verify, apply, or sync receipt, and no unfinished
+execution, while a plan or verify reservation requires only that no write has been admitted.
+A cancellation is deliberately outside this arbitration, so a claimed write stays
+cancellable. A losing request never reaches Prefect; its receipt is stored already answered,
+carrying `409 run-execution-conflict`, so replaying that client key replays the refusal. An
+accepted run receipt therefore carries a Prefect flow-run ID only when its stored response is
+a successful submission. `AuditEvent` records secret-safe actor, reason, operation, and outcome evidence
 for accepted mutations and refusals.
 
 `record_results` updates retained result evidence without changing product phase, outcome,

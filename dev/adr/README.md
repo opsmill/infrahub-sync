@@ -1,7 +1,7 @@
-# Decision Records (ADRs)
+# Decision records
 
 MADR-format decision records. Name each file `nnnn-title.md`: a zero-padded 4-digit
-sequence and a lowercase kebab-case title, no `adr-` prefix (e.g. `0001-use-uv.md`).
+sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-use-uv.md`.
 
 ## Current records
 
@@ -15,7 +15,7 @@ sequence and a lowercase kebab-case title, no `adr-` prefix (e.g. `0001-use-uv.m
   — why no whole-node re-render can flush a reconciled peer set, and the live test that pins the
   destination's replace semantics.
 - [0004 — Deletes are recorded but never executed](0004-deletes-are-recorded-but-never-executed.md)
-  — the delete contract and the knowability invariant that backs it.
+  — the delete contract and the rule that a plan may only record what it can know.
 - [0005 — Translate run failures only at the remote boundary](0005-translate-run-failures-only-at-the-remote-boundary.md)
   — how the shared execution surface gains typed sanitized failures without changing CLI
   behaviour.
@@ -24,11 +24,14 @@ sequence and a lowercase kebab-case title, no `adr-` prefix (e.g. `0001-use-uv.m
   the eager CLI lookup.
 - [0007 — A canonical plan fingerprint is the equivalence oracle between run paths](0007-canonical-plan-fingerprint-as-equivalence-oracle.md)
   — how "the remote path produced the same plan" becomes a testable claim.
-- [0008 — Declare redis directly instead of using the diffsync `[redis]` extra](0008-declare-redis-directly-instead-of-the-diffsync-extra.md)
+- [0008 — Declare Redis directly instead of using the diffsync extra](0008-declare-redis-directly-instead-of-the-diffsync-extra.md)
   — the dependency conflict that forced a base declaration change, and why the floor is
   permissive.
 - [0009 — Optional integrations live in their own package and are proven absent in CI](0009-optional-integrations-live-in-their-own-package.md)
   — the import boundary for an optional integration and the three mechanisms that enforce it.
+- [0010 — A managed write holds one configuration guard and ends in a verdict, not a retry](0010-a-managed-write-ends-in-a-verdict-not-a-retry.md)
+  — how a configuration's writes are serialized, why the ownership boundary is required rather
+  than optional, and why an uncertain write is terminal evidence instead of a retry.
 
 ## Related
 
