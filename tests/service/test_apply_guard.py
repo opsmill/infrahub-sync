@@ -411,6 +411,32 @@ def test_a_lost_or_uncertain_hold_refuses_ownership_and_retires_the_session(loss
     assert session.executed("pg_advisory_unlock") == []
 
 
+def test_a_failed_ownership_proof_retires_the_session_immediately() -> None:
+    """A caller that catches the refusal must not be able to keep using the session.
+
+    Retiring only while the hold unwinds would leave a caught refusal followed by
+    another destination operation on a session that no longer owns the key.
+    """
+    session = _FakeSession()
+    hold = _Hold(session)
+
+    def prove_twice(guard: ApplyGuard) -> None:
+        session.held = False
+        with pytest.raises(ApplyGuardOwnershipError):
+            guard.require_ownership()
+        assert guard.retired is True
+        assert session.close_calls == 1
+        quiescent = len(session.statements)
+        with pytest.raises(ApplyGuardOwnershipError):
+            guard.require_ownership()
+        assert len(session.statements) == quiescent
+
+    with pytest.raises(ApplyGuardReleaseError):
+        hold.run(prove_twice)
+
+    assert session.close_calls == 1
+
+
 def test_a_retired_guard_refuses_ownership_and_release_without_touching_the_session() -> None:
     """A retired session is never consulted again, and can never report success."""
     session = _FakeSession()
