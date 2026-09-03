@@ -50,7 +50,7 @@ from operator import itemgetter
 from typing import TYPE_CHECKING, Any
 
 import httpx
-import psycopg
+import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
 import pytest
 from typing_extensions import Self
 
