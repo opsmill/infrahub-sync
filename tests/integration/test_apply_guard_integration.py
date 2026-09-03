@@ -31,9 +31,11 @@ import pytest
 pytest.importorskip("psycopg")
 
 import psycopg
+
 from infrahub_sync.service.apply_guard import (
     ApplyGuardContentionError,
     ApplyGuardOwnershipError,
+    ApplyGuardReleaseError,
     advisory_lock_key,
     connect_guard_session,
     hold_apply_guard,
@@ -72,6 +74,7 @@ _HOLDER_SCRIPT = textwrap.dedent(
 )
 
 _LOCK_TIMEOUT_SETTING = "SELECT setting FROM pg_settings WHERE name = 'lock_timeout'"
+_UNLOCK = "SELECT pg_advisory_unlock(%s)"
 _ADVISORY_HOLDERS = """
 SELECT pid FROM pg_locks
 WHERE locktype = 'advisory' AND granted
@@ -139,11 +142,26 @@ def test_a_hold_registers_exactly_its_own_key_on_one_live_session(dsn: str, admi
 
 
 def test_repeated_ownership_proofs_never_stack_a_second_lock(dsn: str, admin: _Session) -> None:
-    """A proof that reacquired would leave the key held after one confirmed unlock."""
-    with hold_apply_guard(_ALPHA, connect=_connect(dsn)) as guard:
-        for _ in range(5):
-            guard.require_ownership()
+    """Session advisory locks are counted, so one unlock must fully release the key.
 
+    Counting the hold levels from the guard's own session is what makes this
+    discriminating: closing the session releases every level at once, so a proof
+    that reacquired would leave no trace once the hold ended.
+    """
+    captured: list[_Session] = []
+    unlocks: list[tuple[Any, ...] | None] = []
+
+    def prove_repeatedly() -> None:
+        with hold_apply_guard(_ALPHA, connect=_capturing_connect(dsn, captured)) as guard:
+            for _ in range(5):
+                guard.require_ownership()
+            unlocks.append(captured[0].execute(_UNLOCK, (guard.key,)).fetchone())
+            unlocks.append(captured[0].execute(_UNLOCK, (guard.key,)).fetchone())
+
+    with pytest.raises(ApplyGuardReleaseError):
+        prove_repeatedly()
+
+    assert unlocks == [(True,), (False,)]
     assert _advisory_holders(admin, _ALPHA_KEY) == []
 
 
@@ -175,7 +193,7 @@ def test_an_external_unlock_breaks_the_ownership_proof(dsn: str, admin: _Session
 
     def unlock_then_prove() -> None:
         with hold_apply_guard(_ALPHA, connect=_capturing_connect(dsn, captured)) as guard:
-            captured[0].execute("SELECT pg_advisory_unlock(%s)", (guard.key,))
+            captured[0].execute(_UNLOCK, (guard.key,))
             guard.require_ownership()
 
     with pytest.raises(ApplyGuardOwnershipError):
