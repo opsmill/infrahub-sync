@@ -28,6 +28,7 @@ from .models import (
     ArtifactListResource,
     CancelRunRequest,
     CreateRunRequest,
+    EmittedPlanResource,
     OrchestrationSummary,
     PlanResource,
     ResultsResource,
@@ -820,7 +821,7 @@ class RunService:
                 raise self._error(410, "artifact-expired", "the retained plan has expired", run_id=run_id)
             raise self._error(503, "plan-unavailable", "the retained plan cannot be retrieved", run_id=run_id)
         try:
-            return PlanResource.model_validate_json(result.value)
+            return EmittedPlanResource.model_validate_json(result.value)
         except (ValidationError, ValueError):
             raise self._error(503, "plan-unavailable", "the retained plan is invalid", run_id=run_id) from None
 

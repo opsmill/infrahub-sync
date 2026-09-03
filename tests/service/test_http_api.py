@@ -1597,3 +1597,53 @@ def test_a_run_that_never_wrote_reports_no_reconciliation_requirement(
     resource = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {OWNER_TOKEN}"}).json()
 
     assert resource["run"]["reconciliation_required"] is False
+
+
+def test_the_server_cannot_emit_a_field_its_public_resource_does_not_declare() -> None:
+    """An internal record field may not become an operator-facing one by accident.
+
+    The projection copies a store record's fields wholesale, so a field added to the
+    durable record for internal reasons would otherwise appear on the wire with nobody
+    deciding to publish it. The strict emitted variant is what turns that into a refusal at
+    the boundary, where the change is being made.
+    """
+    from pydantic import ValidationError
+
+    from infrahub_sync.service.models import public_run_resource
+
+    class _FutureProductRun(ProductRun):
+        """A store record that gained an internal field a later change did not publish."""
+
+        internal_canary: str = "internal-only"
+
+    record = _FutureProductRun(
+        run_id="run-strict-boundary",
+        operation="plan",
+        configuration_reference="config-001@1",
+        started_at=datetime.now(timezone.utc),
+        phase="accepted",
+    )
+
+    with pytest.raises(ValidationError, match="internal_canary"):
+        public_run_resource(record)
+
+
+def test_the_client_still_reads_a_run_resource_from_a_newer_server() -> None:
+    """Strictness belongs to the emitter; a client has to survive a server that grew.
+
+    The same model parses a payload carrying a field this client does not know, because
+    refusing it would break every reader the day a field is added.
+    """
+    payload = {
+        "run_id": "run-forward-compatible",
+        "operation": "plan",
+        "configuration_reference": "config-001@1",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "phase": "accepted",
+        "field_from_a_newer_server": "readable",
+    }
+
+    parsed = PublicRunResource.model_validate(payload)
+
+    assert parsed.run_id == "run-forward-compatible"
+    assert parsed.model_extra == {"field_from_a_newer_server": "readable"}
