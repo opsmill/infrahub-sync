@@ -853,6 +853,10 @@ def _run_apply_lifecycle(  # pylint: disable=too-many-arguments
         _save_failed_run(run_directory, mode=sidecar_mode, record=partial, run_file=run_file)
         raise
 
+    # Reported to the write scope before anything else can fail: the sidecar write, the
+    # guard's release, and the product success commit all happen after this point, and each
+    # of them is a failure after a dispatch that still has to say what was written.
+    ownership.record_applied(record)
     try:
         _save_run_transition(run_directory, mode=sidecar_mode, status="applied", record=record, run_file=run_file)
     except BaseException as exc:
@@ -996,11 +1000,24 @@ def execute_run(
 
 
 @overload
-def execute_run(sync_instance: SyncInstance, *, operation: Literal["plan", "apply"], **kwargs: Any) -> RunResult: ...
+def execute_run(
+    sync_instance: SyncInstance,
+    *,
+    operation: Literal["apply"],
+    ownership: WriteOwnership,
+    **kwargs: Any,
+) -> RunResult: ...
+
+
+# `apply` is deliberately absent from the remaining overloads: it is the only operation that
+# writes, so the type checker — not just the runtime refusal below — is what rejects an apply
+# with no write-ownership boundary.
+@overload
+def execute_run(sync_instance: SyncInstance, *, operation: Literal["plan"], **kwargs: Any) -> RunResult: ...
 
 
 @overload
-def execute_run(sync_instance: SyncInstance, *, operation: Operation, **kwargs: Any) -> RunResult | SavedPlan: ...
+def execute_run(sync_instance: SyncInstance, *, operation: Literal["plan", "sync"], **kwargs: Any) -> RunResult: ...
 
 
 def execute_run(
@@ -1162,7 +1179,7 @@ def _missing_credential_hint(detail: str) -> str:
 
 def run_remote_request(
     sync_name: str,
-    operation: Operation = "plan",
+    operation: Literal["plan", "sync"] = "plan",
     confirm_writes: bool = False,
     branch: str | None = None,
     *,

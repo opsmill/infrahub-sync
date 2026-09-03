@@ -81,6 +81,9 @@ _UNREGISTERED_WRITE_REFUSED = (
     "guard serializes writers per registered configuration"
 )
 _WORKER_PAGE_SIZE = 200
+# The stages the managed write scope covers. A read stage has nothing to be uncertain
+# about, so it keeps its own deliberate handling where the two differ.
+_WRITE_STAGES = ("apply", "sync")
 
 
 def _raise_writeback_refused() -> None:
@@ -587,15 +590,23 @@ def _failure_evidence(
     exc: Exception,
     *,
     outcome: str,
+    record: ApplyRecord | None,
 ) -> dict[str, Any]:
+    """Describe one failure, with whatever is known about what it wrote.
+
+    A failure raised by the engine carries its own partial record; a failure raised after
+    the engine returned — a sidecar write, the guard's release, the product commit — carries
+    none, and the scope's record is what that one wrote.
+    """
     evidence: dict[str, Any] = {
         "stage": stage,
         "outcome": outcome,
         "error_type": type(exc).__name__,
     }
-    apply_record = getattr(exc, "apply_record", None)
-    if isinstance(apply_record, ApplyRecord):
-        evidence.update(apply_record.as_summary_keys())
+    carried = getattr(exc, "apply_record", None)
+    written = carried if isinstance(carried, ApplyRecord) else record
+    if written is not None:
+        evidence.update(written.as_summary_keys())
     return evidence
 
 
@@ -610,6 +621,7 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
     worker_id: str,
     *,
     dispatch_started: bool,
+    record: ApplyRecord | None,
 ) -> None:
     """Best-effort durable product evidence without masking the worker failure.
 
@@ -624,7 +636,7 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
         if stored is None:
             return
         terminal_state, terminal_outcome = ("interrupted", "ambiguous") if dispatch_started else ("failed", "failed")
-        evidence = _failure_evidence(stage, exc, outcome=terminal_outcome)
+        evidence = _failure_evidence(stage, exc, outcome=terminal_outcome, record=record)
         results: dict[str, Any] = {f"{stage}_failure": evidence}
         if stage == "verify":
             writeback: ExecutionWriteback = ExecutionMergeWriteback(results=results)
@@ -704,24 +716,58 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 tracker=tracker,
             )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-        # Rebuilt after the original exception context exits.
-        _record_failure(
-            run_id,
-            stage,
-            exc,
-            run_logger,
-            secrets,
-            projection,
-            flow_run_id,
-            worker_id,
-            dispatch_started=tracker.dispatch_started,
-        )
-        failure = sanitize_exception_chain(exc, secrets)
+        failure = exc
+    record_terminal = True
+    if failure is None:
+        try:
+            _commit_success(projection, run_id, flow_run_id, worker_id=worker_id, writeback=writeback, secrets=secrets)
+        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            failure = exc
+            # A read stage whose success did not store stays nonterminal on purpose: it
+            # wrote nothing, so reconciliation decides it rather than this worker.
+            record_terminal = stage in _WRITE_STAGES
     if failure is not None:
+        # The one exit for the whole managed write scope. Everything after the first proven
+        # dispatch reaches it — a failed operation, a lost hold, a sidecar that could not
+        # record the applied transition, a release that could not be confirmed, and a
+        # product commit that did not store its success — so all of them commit the same
+        # ambiguous verdict, the same evidence, the record the scope kept, and
+        # `reconciliation_required` together.
+        if record_terminal:
+            _record_failure(
+                run_id,
+                stage,
+                failure,
+                run_logger,
+                secrets,
+                projection,
+                flow_run_id,
+                worker_id,
+                dispatch_started=tracker.dispatch_started,
+                record=tracker.applied_record,
+            )
+        # Rebuilt after the original exception context exits.
+        sanitized = sanitize_exception_chain(failure, secrets)
         secrets.clear()
-        raise failure
+        raise sanitized
+    return result
 
-    persistence_failure: Exception | None = None
+
+def _commit_success(
+    projection: ProductProjection,
+    run_id: str,
+    flow_run_id: str,
+    *,
+    worker_id: str,
+    writeback: ExecutionWriteback,
+    secrets: Sequence[str],
+) -> None:
+    """Commit this stage's success, tolerating only a commit that actually landed.
+
+    A commit can succeed and still fail to answer. Rereading the link is what tells those
+    apart: a stored success is this stage's success whatever the call reported, and
+    anything else is a failure the scope's one exit path has to handle.
+    """
     try:
         if not projection.commit_claimed_execution(
             run_id,
@@ -734,22 +780,24 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
             secrets=secrets,
         ):
             _raise_writeback_refused()
-    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-        try:
-            stored = projection.lookup_run(run_id).value
-            link = (
-                None
-                if stored is None
-                else next(
-                    (candidate for candidate in stored.prefect_executions if candidate.flow_run_id == flow_run_id),
-                    None,
-                )
+    except Exception:
+        if _stored_success(projection, run_id, flow_run_id):
+            return
+        raise
+
+
+def _stored_success(projection: ProductProjection, run_id: str, flow_run_id: str) -> bool:
+    """Answer whether this execution's success is already durable."""
+    try:
+        stored = projection.lookup_run(run_id).value
+        link = (
+            None
+            if stored is None
+            else next(
+                (candidate for candidate in stored.prefect_executions if candidate.flow_run_id == flow_run_id),
+                None,
             )
-        except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-            link = None
-        if link is None or (link.terminal_state, link.terminal_outcome) != ("completed", "succeeded"):
-            persistence_failure = sanitize_exception_chain(exc, secrets)
-    if persistence_failure is not None:
-        secrets.clear()
-        raise persistence_failure
-    return result
+        )
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        return False
+    return link is not None and (link.terminal_state, link.terminal_outcome) == ("completed", "succeeded")

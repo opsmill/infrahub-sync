@@ -7,10 +7,17 @@ dispatches and once after the last one. There is no default, no `None`, and no n
 implementation: an apply assembled without a boundary is refused where it is called,
 because a boundary that could be absent would be absent exactly when it mattered.
 
-`WriteDispatchTracker` is the one in-memory Boolean that separates "this failure certainly
-wrote nothing" from "this failure may have written something". It is process-local
-diagnostic state for one worker's own failure boundary — never a receipt, a durable row, a
-state machine, or an authority to replay anything.
+`WriteDispatchTracker` is what one worker's own failure boundary reads: the Boolean that
+separates "this failure certainly wrote nothing" from "this failure may have written
+something", and the `ApplyRecord` of what the engine actually did. Both are process-local
+diagnostic state — never a receipt, a durable row, a state machine, or an authority to
+replay anything.
+
+The record lives here because the window that needs it is wider than the engine call. An
+apply that returns cleanly can still fail while writing its sidecar, while releasing the
+guard, or while committing product success, and every one of those is a failure after a
+dispatch. Keeping the record on the scope, rather than on whichever exception happens to
+be unwinding, is what lets one exit path report all of them the same way.
 """
 
 from __future__ import annotations
@@ -19,6 +26,8 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from infrahub_sync.plan.models import ApplyRecord
 
 
 class WriteOwnership(Protocol):
@@ -34,21 +43,34 @@ class WriteOwnership(Protocol):
     def after_final_operation(self) -> None:
         """Prove the hold once more, after the last operation and before any success."""
 
+    def record_applied(self, record: ApplyRecord) -> None:
+        """Keep what the engine completed, for a failure that happens after it returns."""
+
 
 class WriteDispatchTracker:
-    """One worker's process-local record that a destination dispatch may have begun."""
+    """What one worker's failure boundary knows about its own destination writes."""
 
     def __init__(self) -> None:
         self._dispatch_started = False
+        self._applied_record: ApplyRecord | None = None
 
     @property
     def dispatch_started(self) -> bool:
         """Whether a proven dispatch has started, so a later failure is uncertain."""
         return self._dispatch_started
 
+    @property
+    def applied_record(self) -> ApplyRecord | None:
+        """What the engine completed, if it returned before anything else failed."""
+        return self._applied_record
+
     def record_dispatch(self) -> None:
         """Record that one destination operation is about to be dispatched."""
         self._dispatch_started = True
+
+    def record_applied(self, record: ApplyRecord) -> None:
+        """Keep the completed record so a later failure can still report it."""
+        self._applied_record = record
 
 
 class ProvenWriteOwnership:
@@ -72,3 +94,7 @@ class ProvenWriteOwnership:
     def after_final_operation(self) -> None:
         """Prove the hold after the last operation; this alone is not a dispatch."""
         self._prove()
+
+    def record_applied(self, record: ApplyRecord) -> None:
+        """Hand the engine's completed record to the scope's failure boundary."""
+        self._tracker.record_applied(record)

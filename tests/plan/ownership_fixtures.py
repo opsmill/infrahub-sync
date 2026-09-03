@@ -10,6 +10,11 @@ Not a test module: no assertions live here.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from infrahub_sync.plan.models import ApplyRecord
+
 
 class GrantedOwnership:
     """A write-ownership boundary that always grants."""
@@ -19,6 +24,9 @@ class GrantedOwnership:
 
     def after_final_operation(self) -> None:
         """Grant the closing proof."""
+
+    def record_applied(self, record: ApplyRecord) -> None:
+        """Accept the engine's completed record; no case here reads it back."""
 
 
 def granted_ownership() -> GrantedOwnership:

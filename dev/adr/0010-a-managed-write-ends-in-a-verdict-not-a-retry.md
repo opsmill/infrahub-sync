@@ -39,10 +39,16 @@ sidecar becomes product success. Managed sync acquires the guard before destinat
 extraction and holds it across plan, verify, and apply, so the plan it applies cannot go
 stale behind another writer.
 
-The ownership boundary is a required argument with no default, no `None`, and no no-op
-implementation. `Potenda.apply_plan`, `PlanApplier.apply_plan`, and
-`execute_run(operation="apply")` each refuse without one. Tests pass an explicit fake; a
-boundary that could be absent would be absent exactly when it mattered.
+The ownership boundary is required wherever an apply is assembled, and there is no no-op
+implementation to reach for. `Potenda.apply_plan` and `PlanApplier.apply_plan` declare it
+as a keyword with no default, so omitting it is a `TypeError` at the call. The shared
+`execute_run` serves four operations and only one of them writes, so requiring the keyword
+unconditionally would force plan and verify to carry a write-ownership value they have no
+use for; instead the `operation="apply"` overload declares it required and no other
+overload accepts `apply`, which is what makes the type checker in the repository's lint
+gate reject an unguarded apply. A runtime refusal stands behind that for a caller who
+ignores the type, and tests pass an explicit fake. A boundary that could be absent would
+be absent exactly when it mattered.
 
 One run admits one write. The reservation is decided inside a single store transaction on
 the run's own locked row, before either competitor can submit anything to Prefect: a write
@@ -52,14 +58,24 @@ run-execution-conflict` on its own receipt, so replaying its client key replays 
 Each execution names the unresolved receipt that appended it, uniquely, so the admitted
 receipt spends its admission exactly once.
 
-A write that may have started ends in a verdict. One in-memory Boolean, owned by the worker
-that ran the stage, separates a failure that certainly wrote nothing from one that may have.
-Before the first proven dispatch a failure is an ordinary failed run. After it, every
-non-success outcome — an adapter failure, a lost session, a failed final proof, a failed
-applied sidecar, cancellation, or losing the worker entirely — is `interrupted` /
-`ambiguous`, and `product_runs.reconciliation_required` is set in the same transaction that
-makes the execution terminal. That column is derived from the verdict and the execution's
-purpose rather than passed in, so no caller can write it false, and nothing clears it.
+A write that may have started ends in a verdict. The worker that ran the stage keeps two
+things for its own failure boundary: one in-memory Boolean separating a failure that
+certainly wrote nothing from one that may have, and the `ApplyRecord` of what the engine
+completed. The record is kept on that scope rather than on whichever exception is
+unwinding, because the window that needs it is wider than the engine call — a sidecar that
+cannot record the applied transition, an unlock that cannot be confirmed, and a product
+success that did not store are all failures after a dispatch, and none of them carries a
+record of its own.
+
+That gives the scope one exit. Before the first proven dispatch a failure is an ordinary
+failed run. After it, every non-success outcome — an adapter failure, a lost session, a
+failed final proof, a failed applied sidecar, a release that could not be confirmed, a product
+success that did not store, cancellation, or losing the worker entirely — is `interrupted` /
+`ambiguous`, committed together with the evidence, the record, and
+`product_runs.reconciliation_required`. That column is derived from the verdict and the
+execution's purpose rather than passed in, so no caller can write it false, and nothing
+clears it. A commit that succeeded but could not answer is not a failure: rereading the
+link is what tells a lost response from a lost write.
 
 The operator reconciles by planning again. An empty diff shows the desired state is already
 present; anything else is reviewed and applied as a new run.

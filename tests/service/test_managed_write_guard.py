@@ -14,6 +14,7 @@ own unit suite drives. Its provider facts are proven against a real server in
 
 from __future__ import annotations
 
+import ast
 from datetime import datetime, timezone
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any
@@ -31,6 +32,7 @@ from infrahub_sync.configuration import ConfigurationPackage  # noqa: E402
 from infrahub_sync.configuration.runtime import resolve_runtime_instance  # noqa: E402
 from infrahub_sync.execution import RunResult, RunValidationError, execute_run  # noqa: E402
 from infrahub_sync.plan.config_version import resolve_config_version  # noqa: E402
+from infrahub_sync.plan.models import ApplyRecord  # noqa: E402
 from infrahub_sync.plan.review import read_saved_plan  # noqa: E402
 from infrahub_sync.plan.writer import write_plan_artifact  # noqa: E402
 from infrahub_sync.product_store import (  # noqa: E402
@@ -63,10 +65,17 @@ class _FakeCursor:
 class _FakeGuardSession:
     """One scripted direct-PostgreSQL session that records the guard's statements."""
 
-    def __init__(self, events: list[str], *, acquire_failure: BaseException | None = None) -> None:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        acquire_failure: BaseException | None = None,
+        release_failure: BaseException | None = None,
+    ) -> None:
         self.events = events
         self.held = True
         self._acquire_failure = acquire_failure
+        self._release_failure = release_failure
 
     def execute(self, query: str, params: Sequence[Any] | None = None) -> _FakeCursor:
         _ = params
@@ -79,6 +88,8 @@ class _FakeGuardSession:
             self.events.append("guard-proved")
             return _FakeCursor((1234, self.held))
         if "pg_advisory_unlock" in query:
+            if self._release_failure is not None:
+                raise self._release_failure
             self.events.append("guard-released")
             return _FakeCursor((True, 1234))
         return _FakeCursor(("configured",))
@@ -122,12 +133,14 @@ class _ManagedStage:
         self.projection: Any = None
 
 
-def _prepare(
+def _prepare(  # noqa: PLR0913 - one harness knob per collaborator a case scripts.
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
     stage: str = "apply",
     acquire_failure: BaseException | None = None,
+    release_failure: BaseException | None = None,
+    commit_failure: BaseException | None = None,
     engine: Any = None,  # noqa: ANN401 - the double receives the engine's own keyword mapping.
 ) -> _ManagedStage:
     """Wire one bound managed run whose guard, schema read, and engine are observable."""
@@ -182,7 +195,7 @@ def _prepare(
     prepared.projection = projection
 
     def guard_session() -> _FakeGuardSession:
-        session = _FakeGuardSession(events, acquire_failure=acquire_failure)
+        session = _FakeGuardSession(events, acquire_failure=acquire_failure, release_failure=release_failure)
         prepared.session = session
         return session
 
@@ -230,13 +243,43 @@ def _prepare(
     monkeypatch.setattr(service_flow, "_publish_plan", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(service_flow, "service_guard_session", guard_session)
     monkeypatch.setattr(service_flow, "service_guard_secrets", lambda: ())
+    if commit_failure is not None:
+        prepared.projection = _FailingSuccessCommit(projection, commit_failure)
+        monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), prepared.projection))
     return prepared
+
+
+class _FailingSuccessCommit:
+    """A projection whose *success* commit fails, and whose every other call passes through.
+
+    Only the succeeded verdict is refused, so the failure boundary's own terminal commit —
+    the ambiguous one — still reaches the store, which is exactly the path under test.
+    """
+
+    def __init__(self, projection: Any, failure: BaseException) -> None:  # noqa: ANN401 - the real projection.
+        self._projection = projection
+        self._failure = failure
+
+    def commit_claimed_execution(self, *args: Any, **kwargs: Any) -> bool:  # noqa: ANN401 - the store's own shape.
+        if kwargs.get("terminal_outcome") == "succeeded":
+            raise self._failure
+        return self._projection.commit_claimed_execution(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:  # noqa: ANN401 - every other call is the real one.
+        return getattr(self._projection, name)
 
 
 def _stored(prepared: _ManagedStage) -> ProductRun:
     run = prepared.projection.lookup_run(prepared.run_id).value
     assert run is not None
     return run
+
+
+def _drive(prepared: _ManagedStage, stage: str) -> dict[str, Any]:
+    """Run whichever managed write stage this case prepared."""
+    if stage == "apply":
+        return _apply(prepared)
+    return service_sync_run.fn(prepared.run_id, "sync", *prepared.binding, confirm_writes=True)
 
 
 def _apply(prepared: _ManagedStage) -> dict[str, Any]:
@@ -418,8 +461,56 @@ def test_the_direct_sync_writer_is_refused_instead_of_running_unguarded() -> Non
         execute_run(object(), operation="sync", confirm_writes=True)  # ty: ignore[no-matching-overload]
 
 
-def test_a_managed_apply_without_an_ownership_boundary_is_refused() -> None:
-    """`execute_run` refuses a write it cannot prove, before it builds anything."""
+def test_the_apply_overload_requires_a_write_ownership_boundary() -> None:
+    """The declaration the type checker reads is what refuses an unguarded apply first.
+
+    Plan and verify write nothing, so making the keyword unconditionally required would be
+    worse than the defect it fixes. Declaring it required on the apply overload alone — and
+    leaving `apply` out of every other overload — is what makes the gate's own type check
+    reject an omitted boundary, before any of this runs.
+    """
+    module = ast.parse(Path(execution.__file__).read_text(encoding="utf-8"))
+    overloads = [
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "execute_run"
+        and any(isinstance(item, ast.Name) and item.id == "overload" for item in node.decorator_list)
+    ]
+    assert overloads, "execute_run declares no overloads for the type checker to read"
+
+    accepting_apply = [node for node in overloads if "apply" in _operation_literals(node)]
+    assert len(accepting_apply) == 1, (
+        f"{len(accepting_apply)} overloads accept operation='apply'; one of them would let an "
+        f"unguarded apply type-check"
+    )
+    keywords = accepting_apply[0].args.kwonlyargs
+    defaults = accepting_apply[0].args.kw_defaults
+    ownership = next(
+        (argument for argument, default in zip(keywords, defaults, strict=True) if argument.arg == "ownership"),
+        None,
+    )
+    assert ownership is not None, "the apply overload does not declare an ownership boundary"
+    required = [argument.arg for argument, default in zip(keywords, defaults, strict=True) if default is None]
+    assert "ownership" in required, "the apply overload's ownership boundary has a default"
+
+
+def _operation_literals(node: ast.FunctionDef) -> set[str]:
+    """Return the operation names one overload's `operation` annotation admits."""
+    annotation = next((argument.annotation for argument in node.args.kwonlyargs if argument.arg == "operation"), None)
+    return (
+        {
+            element.value
+            for element in ast.walk(annotation)
+            if isinstance(element, ast.Constant) and isinstance(element.value, str)
+        }
+        if annotation is not None
+        else set()
+    )
+
+
+def test_a_managed_apply_without_an_ownership_boundary_is_refused_at_run_time() -> None:
+    """The runtime refusal stands behind the type-level one, for a caller that ignores it."""
     with pytest.raises(RunValidationError, match="ownership"):
         execute_run(  # ty: ignore[no-matching-overload]
             object(),
@@ -444,3 +535,76 @@ def test_a_stale_approved_checksum_is_refused_before_any_guard_session(
     assert prepared.events == []
     run = _stored(prepared)
     assert run.reconciliation_required is False
+
+
+def _dispatch_and_complete(kwargs: dict[str, Any]) -> None:
+    """Stand in for the engine: dispatch once, then report what it completed.
+
+    `_run_apply_lifecycle` reports the completed record to the write scope before its own
+    sidecar write, which is the only reason a failure raised *after* the engine returned can
+    still say what was written. The double does the same thing at the same point.
+    """
+    ownership = kwargs["ownership"]
+    ownership.before_operation()
+    ownership.after_final_operation()
+    ownership.record_applied(ApplyRecord(applied_operations=("op-live-1",), skipped_delete_operations=("op-live-2",)))
+
+
+@pytest.mark.parametrize("stage", ["apply", "sync"])
+def test_a_release_that_cannot_be_confirmed_after_a_dispatch_is_ambiguous(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    """An unconfirmable unlock after a write is uncertainty, and it still names the write.
+
+    The engine returned cleanly and the applied sidecar is written, so nothing in the
+    failure that unwinds carries a record — only the scope does. Losing it here would leave
+    an operator an ambiguous run with no account of what reached the destination.
+    """
+    prepared = _prepare(
+        tmp_path,
+        monkeypatch,
+        stage=stage,
+        release_failure=psycopg.OperationalError("the guard session died before it could unlock"),
+        engine=_dispatch_and_complete,
+    )
+
+    with pytest.raises(RuntimeError, match="ApplyGuardReleaseError"):
+        _drive(prepared, stage)
+
+    run = _stored(prepared)
+    assert run.reconciliation_required is True
+    assert run.outcome == "ambiguous"
+    assert run.prefect_executions[0].terminal_state == "interrupted"
+    failure = run.results[f"{stage}_failure"]
+    assert failure["applied_operations"] == ["op-live-1"]
+    assert failure["skipped_delete_operations"] == ["op-live-2"]
+
+
+@pytest.mark.parametrize("stage", ["apply", "sync"])
+def test_a_success_writeback_that_stores_nothing_after_a_dispatch_is_ambiguous(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    """A product commit that did not land is not a run left for someone else to notice.
+
+    The guard released cleanly and the write is done; only the success record failed. The
+    run has to reach a terminal ambiguous verdict here, carrying the same record, rather
+    than sitting non-terminal until a liveness pass eventually interrupts it.
+    """
+    prepared = _prepare(
+        tmp_path,
+        monkeypatch,
+        stage=stage,
+        commit_failure=RuntimeError("the product store refused the success commit"),
+        engine=_dispatch_and_complete,
+    )
+
+    with pytest.raises(RuntimeError, match="refused the success commit"):
+        _drive(prepared, stage)
+
+    run = _stored(prepared)
+    assert run.reconciliation_required is True
+    assert run.outcome == "ambiguous"
+    assert run.prefect_executions[0].terminal_state == "interrupted"
+    failure = run.results[f"{stage}_failure"]
+    assert failure["applied_operations"] == ["op-live-1"]
+    assert failure["skipped_delete_operations"] == ["op-live-2"]

@@ -1183,7 +1183,9 @@ def test_unconfirmed_apply_is_refused(config_dir: str, cache_root: Path) -> None
     instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
     factory = _SpyFactory(cache_root=cache_root)
     with pytest.raises(RunValidationError):
-        execute_run(instance, operation="apply", potenda_factory=factory)
+        # Deliberately ill-typed: the apply overload requires a write-ownership boundary, and
+        # this case is about the runtime refusal that stands behind that type-level one.
+        execute_run(instance, operation="apply", potenda_factory=factory)  # ty: ignore[no-matching-overload]
     assert factory.calls == []
 
 

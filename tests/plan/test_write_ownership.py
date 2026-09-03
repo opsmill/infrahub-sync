@@ -41,6 +41,7 @@ class RecordingOwnership:
 
     def __init__(self, events: list[str], *, lose_after: int | None = None) -> None:
         self.events = events
+        self.applied: ApplyRecord | None = None
         self._lose_after = lose_after
         self._proofs = 0
 
@@ -53,6 +54,9 @@ class RecordingOwnership:
 
     def after_final_operation(self) -> None:
         self.events.append("final-prove")
+
+    def record_applied(self, record: ApplyRecord) -> None:
+        self.applied = record
 
 
 class RecordingDestination:
@@ -345,6 +349,25 @@ def test_the_final_proof_precedes_the_applied_sidecar(tmp_path: Path) -> None:
     assert observed == ["running"]
     assert RunFile.load_or_default(directory / "run.json").status == "applied"
     assert events[-1] == "final-prove"
+
+
+def test_the_apply_lifecycle_reports_its_completed_record_to_the_write_scope(tmp_path: Path) -> None:
+    """The scope learns what was written before anything downstream of the engine can fail.
+
+    Everything after this point — the applied sidecar, the guard's release, the product
+    success commit — can fail without carrying a record of its own, and the scope's copy is
+    the only account of the write those failures have.
+    """
+    directory = _run_dir(tmp_path)
+    alpha, bravo, charlie = _three_operations(directory)
+    events: list[str] = []
+    ownership = RecordingOwnership(events)
+
+    _lifecycle(directory, ownership, RecordingDestination(events))
+
+    assert isinstance(ownership.applied, ApplyRecord)
+    assert ownership.applied.applied_operations == (alpha, charlie)
+    assert ownership.applied.skipped_delete_operations == (bravo,)
 
 
 def test_a_failed_applied_sidecar_still_carries_the_completed_record(
