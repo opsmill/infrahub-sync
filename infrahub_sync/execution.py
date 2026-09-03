@@ -721,13 +721,6 @@ def _run_lock(sync_name: str, *, timeout: float) -> Iterator[None]:
         yield
 
 
-@contextmanager
-def bounded_run_lock(sync_name: str, *, timeout: float = 60.0) -> Iterator[None]:
-    """Expose the shared bounded run lock to in-process product compositions."""
-    with _run_lock(sync_name, timeout=timeout):
-        yield
-
-
 def _require_applicable_plan(*, sync_name: str, run_id: str) -> Path:
     """Locate an existing saved plan before constructing an apply destination."""
     directory = require_stored_run(sync_name, run_id)

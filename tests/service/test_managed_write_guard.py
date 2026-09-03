@@ -26,6 +26,7 @@ psycopg: Any = pytest.importorskip("psycopg")
 
 from pathlib import Path  # noqa: E402
 
+from infrahub_sync import execution  # noqa: E402
 from infrahub_sync.configuration import ConfigurationPackage  # noqa: E402
 from infrahub_sync.configuration.runtime import resolve_runtime_instance  # noqa: E402
 from infrahub_sync.execution import RunResult, RunValidationError, execute_run  # noqa: E402
@@ -415,11 +416,16 @@ def test_a_managed_write_without_a_registered_binding_is_refused(
 
 
 def test_the_managed_write_path_takes_no_local_pipeline_lock() -> None:
-    """One correctness guard, not two: the file lock is gone from the supported path."""
-    assert service_flow.__file__ is not None
-    source = Path(service_flow.__file__).read_text(encoding="utf-8")
+    """One correctness guard, not two: the file lock is gone from the supported path.
 
-    assert "bounded_run_lock" not in source
+    Asserted on the shared execution surface as well, because the composition the managed
+    path used to reach the pipeline lock through no longer exists at all.
+    """
+    assert service_flow.__file__ is not None
+    flow_source = Path(service_flow.__file__).read_text(encoding="utf-8")
+
+    assert "bounded_run_lock" not in flow_source
+    assert not hasattr(execution, "bounded_run_lock")
 
 
 def test_the_direct_sync_writer_is_refused_instead_of_running_unguarded() -> None:
