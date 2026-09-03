@@ -179,8 +179,8 @@ def _reachable_text(error: BaseException) -> str:
     return "\n".join(parts)
 
 
-def _hostile_driver_error(sqlstate: str | None = None) -> psycopg.Error:
-    """Return a driver error carrying a distinct canary in every graph carrier.
+def _hostile_error(error_type: type[BaseException]) -> BaseException:
+    """Return an `error_type` carrying a distinct canary in every graph carrier.
 
     All four carriers reach a rendered traceback: `str(error)` prints the whole
     argument tuple, and `__notes__` prints after the message line.
@@ -188,13 +188,20 @@ def _hostile_driver_error(sqlstate: str | None = None) -> psycopg.Error:
     context = RuntimeError(_CANARY_ENVIRONMENT["GUARD_CANARY_CONTEXT_PASSWORD"])
     cause = ValueError(_CANARY_ENVIRONMENT["GUARD_CANARY_CAUSE_PASSWORD"])
     cause.__context__ = context
-    error_type = psycopg.errors.LockNotAvailable if sqlstate == "55P03" else psycopg.OperationalError
     error = error_type(_CANARY_ENVIRONMENT["GUARD_CANARY_MESSAGE_PASSWORD"])
     error.args = (*error.args, {"password": _CANARY_ENVIRONMENT["GUARD_CANARY_ARGUMENT_PASSWORD"]})
     # `BaseException.add_note` exists from Python 3.11; the type gate targets 3.10.
     cast("Any", error).add_note(_CANARY_ENVIRONMENT["GUARD_CANARY_NOTE_PASSWORD"])
     error.__cause__ = cause
     return error
+
+
+def _inject(session: _FakeSession, site: str, error: BaseException) -> _Hold:
+    """Return one hold with `error` injected at one provider site."""
+    if site == "connect":
+        return _Hold(session, connect_failure=error)
+    session.failures[site] = error
+    return _Hold(session)
 
 
 def _leaked_canaries(error: BaseException) -> list[str]:
@@ -574,22 +581,22 @@ def test_a_body_exception_retires_the_session_without_attempting_an_unlock() -> 
 
 
 @pytest.mark.parametrize(
-    ("site", "sqlstate", "expected"),
+    ("site", "error_type", "expected"),
     [
-        ("pg_advisory_lock", None, ApplyGuardUnavailableError),
-        ("pg_advisory_lock", "55P03", ApplyGuardContentionError),
-        ("pg_locks", None, ApplyGuardUnavailableError),
-        ("pg_advisory_unlock", None, ApplyGuardReleaseError),
+        ("pg_advisory_lock", psycopg.OperationalError, ApplyGuardUnavailableError),
+        ("pg_advisory_lock", psycopg.errors.LockNotAvailable, ApplyGuardContentionError),
+        ("pg_locks", psycopg.OperationalError, ApplyGuardUnavailableError),
+        ("pg_advisory_unlock", psycopg.OperationalError, ApplyGuardReleaseError),
     ],
 )
 def test_no_guard_failure_graph_reaches_a_driver_canary(
-    monkeypatch: pytest.MonkeyPatch, site: str, sqlstate: str | None, expected: type[ApplyGuardError]
+    monkeypatch: pytest.MonkeyPatch, site: str, error_type: type[BaseException], expected: type[ApplyGuardError]
 ) -> None:
     """Arguments, notes, cause, and context must all be sanitized or unreachable."""
     for name, value in _CANARY_ENVIRONMENT.items():
         monkeypatch.setenv(name, value)
     session = _FakeSession()
-    session.failures[site] = _hostile_driver_error(sqlstate)
+    session.failures[site] = _hostile_error(error_type)
 
     with pytest.raises(expected) as caught:
         _Hold(session).run()
@@ -603,7 +610,7 @@ def test_an_ownership_failure_graph_reaches_no_driver_canary(monkeypatch: pytest
     session = _FakeSession()
 
     def lose_then_prove(guard: ApplyGuard) -> None:
-        session.failures["pg_locks"] = _hostile_driver_error()
+        session.failures["pg_locks"] = _hostile_error(psycopg.OperationalError)
         guard.require_ownership()
 
     with pytest.raises(ApplyGuardOwnershipError) as caught:
@@ -651,3 +658,176 @@ def test_explicitly_supplied_secret_values_are_redacted_from_a_guard_failure() -
 def test_dsn_secret_values_collects_only_a_usable_password(dsn: str, expected: tuple[str, ...]) -> None:
     """Short values are dropped: redacting them would shred unrelated diagnostics."""
     assert dsn_secret_values(dsn) == expected
+
+
+# --------------------------------------------------------------------------- #
+# Provider and cleanup boundary containment
+# --------------------------------------------------------------------------- #
+
+_PROVIDER_SITES = ("connect", "pg_advisory_lock", "pg_locks", "pg_advisory_unlock")
+_CLEANUP_FAILURES = [
+    pytest.param(psycopg.OperationalError("close-canary"), id="driver-error"),
+    pytest.param(RuntimeError("close-canary"), id="ordinary-exception"),
+    pytest.param(KeyboardInterrupt("close-canary"), id="base-exception"),
+]
+
+
+@pytest.mark.parametrize(
+    ("site", "expected"),
+    [
+        ("connect", ApplyGuardUnavailableError),
+        ("pg_advisory_lock", ApplyGuardUnavailableError),
+        ("pg_locks", ApplyGuardUnavailableError),
+        ("pg_advisory_unlock", ApplyGuardReleaseError),
+    ],
+)
+def test_a_non_driver_provider_exception_becomes_a_sanitized_guard_failure(
+    monkeypatch: pytest.MonkeyPatch, site: str, expected: type[ApplyGuardError]
+) -> None:
+    """A connection, cursor, or protocol implementation may raise more than `psycopg.Error`."""
+    for name, value in _CANARY_ENVIRONMENT.items():
+        monkeypatch.setenv(name, value)
+    injected = _hostile_error(RuntimeError)
+    session = _FakeSession()
+    hold = _inject(session, site, injected)
+
+    with pytest.raises(expected) as caught:
+        hold.run()
+
+    assert caught.value.__cause__ is not injected
+    assert caught.value.__context__ is None
+    assert caught.value.__suppress_context__ is True
+    assert _leaked_canaries(caught.value) == []
+    assert session.close_calls == (0 if site == "connect" else 1)
+
+
+@pytest.mark.parametrize("site", _PROVIDER_SITES)
+def test_a_provider_base_exception_propagates_and_still_closes_the_session(site: str) -> None:
+    """Cancellation must not be converted, and must not leave the session uncertain."""
+    injected = KeyboardInterrupt("interrupt-canary")
+    session = _FakeSession()
+    hold = _inject(session, site, injected)
+
+    with pytest.raises(KeyboardInterrupt) as caught:
+        hold.run()
+
+    assert caught.value is injected
+    assert session.close_calls == (0 if site == "connect" else 1)
+
+
+def test_only_a_driver_lock_timeout_counts_as_contention() -> None:
+    """A non-driver error that merely carries a 55P03 attribute is not contention."""
+
+    class _ImpostorError(RuntimeError):
+        sqlstate = "55P03"
+
+    session = _FakeSession()
+    hold = _inject(session, "pg_advisory_lock", _ImpostorError("not a driver error"))
+
+    with pytest.raises(ApplyGuardUnavailableError) as caught:
+        hold.run()
+
+    assert not isinstance(caught.value, ApplyGuardContentionError)
+
+
+@pytest.mark.parametrize(
+    ("injected", "expected"),
+    [
+        pytest.param(psycopg.OperationalError("driver"), ApplyGuardOwnershipError, id="driver-error"),
+        pytest.param(RuntimeError("ordinary"), ApplyGuardOwnershipError, id="ordinary-exception"),
+        pytest.param(KeyboardInterrupt("interrupt"), KeyboardInterrupt, id="base-exception"),
+    ],
+)
+def test_an_ownership_proof_failure_of_any_class_retires_the_session(
+    injected: BaseException, expected: type[BaseException]
+) -> None:
+    """A proof that cannot complete leaves no usable session behind."""
+    session = _FakeSession()
+    hold = _Hold(session)
+
+    def prove(guard: ApplyGuard) -> None:
+        session.failures["pg_locks"] = injected
+        guard.require_ownership()
+
+    with pytest.raises(expected):
+        hold.run(prove)
+
+    assert hold.guard is not None
+    assert hold.guard.retired is True
+    assert session.close_calls == 1
+
+
+@pytest.mark.parametrize("close_error", _CLEANUP_FAILURES)
+def test_a_close_failure_of_any_class_never_replaces_the_body_exception(close_error: BaseException) -> None:
+    """Retiring a session must not be able to lose the caller's own failure."""
+    session = _FakeSession()
+    session.close_failure = close_error
+    message = "body-canary"
+
+    def fail_body(guard: ApplyGuard) -> None:
+        del guard
+        raise ValueError(message)
+
+    with pytest.raises(ValueError, match=message) as caught:
+        _Hold(session).run(fail_body)
+
+    assert "close-canary" not in _reachable_text(caught.value)
+    assert session.close_calls == 1
+
+
+@pytest.mark.parametrize("close_error", _CLEANUP_FAILURES)
+@pytest.mark.parametrize(
+    ("site", "expected"),
+    [
+        ("pg_advisory_lock", ApplyGuardUnavailableError),
+        ("pg_locks", ApplyGuardUnavailableError),
+        ("pg_advisory_unlock", ApplyGuardReleaseError),
+    ],
+)
+def test_a_close_failure_never_replaces_a_primary_provider_failure(
+    site: str, expected: type[ApplyGuardError], close_error: BaseException
+) -> None:
+    """The failure that caused the discard is the one the caller needs."""
+    session = _FakeSession()
+    session.close_failure = close_error
+    hold = _inject(session, site, psycopg.OperationalError("primary-failure"))
+
+    with pytest.raises(expected) as caught:
+        hold.run()
+
+    assert "close-canary" not in _reachable_text(caught.value)
+    assert session.close_calls == 1
+
+
+@pytest.mark.parametrize("close_error", _CLEANUP_FAILURES)
+def test_retiring_a_guard_never_raises_whatever_the_session_does(close_error: BaseException) -> None:
+    session = _FakeSession()
+    session.close_failure = close_error
+    guard = ApplyGuard(connection=session, key=_ALPHA_KEY, backend_pid=_BACKEND_PID, secrets=())
+
+    guard.retire()
+
+    assert guard.retired is True
+    assert session.close_calls == 1
+
+
+def test_a_close_failure_after_a_confirmed_unlock_leaves_the_guard_permanently_retired() -> None:
+    """A caught release failure must not let the hold exit as a success.
+
+    The unlock was confirmed, but the dedicated session was never closed, so the
+    hold is not a clean release and a later confirmation must refuse.
+    """
+    session = _FakeSession()
+    session.close_failure = psycopg.OperationalError("close failed")
+    hold = _Hold(session)
+
+    def release_and_swallow(guard: ApplyGuard) -> None:
+        with pytest.raises(ApplyGuardReleaseError):
+            guard.release()
+
+    with pytest.raises(ApplyGuardReleaseError):
+        hold.run(release_and_swallow)
+
+    assert hold.guard is not None
+    assert hold.guard.retired is True
+    assert session.close_calls == 1
