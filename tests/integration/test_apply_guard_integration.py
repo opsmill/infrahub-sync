@@ -28,11 +28,11 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-pytest.importorskip("psycopg")
+psycopg: Any = pytest.importorskip("psycopg")
 
-import psycopg
-
-from infrahub_sync.service.apply_guard import (
+# Imported after the skip: the guard module imports psycopg itself, so a static
+# import here would raise instead of skipping where the service extra is absent.
+from infrahub_sync.service.apply_guard import (  # noqa: E402
     ApplyGuardContentionError,
     ApplyGuardOwnershipError,
     ApplyGuardReleaseError,
