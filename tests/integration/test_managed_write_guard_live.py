@@ -31,9 +31,14 @@ an observed waiting request.
 
 These legs need the live preview stack (`invoke preview.up` plus `invoke preview.seed`).
 An absent stack is the only thing they skip for, and the skip names the missing service.
-Psycopg is imported outright rather than skipped past: it ships with the service profile
-these legs exercise, so a missing driver is a broken environment, not a reason to report
-green.
+
+Psycopg and the guard's key derivation are imported inside the functions that use them,
+never at module scope. The service extra installs psycopg only on the Python versions the
+Sync service supports, while this module is collected on every version the project
+supports — a module-scope import would make the whole suite uncollectable on the others,
+where these `integration`-marked legs are deselected anyway. What it is *not* is a
+dependency skip: a missing driver here raises, so it can never masquerade as an absent
+stack.
 """
 
 from __future__ import annotations
@@ -50,11 +55,9 @@ from operator import itemgetter
 from typing import TYPE_CHECKING, Any
 
 import httpx
-import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
 import pytest
 from typing_extensions import Self
 
-from infrahub_sync.service.apply_guard import advisory_lock_key
 from tasks.preview import (
     SHARED_DEVICE_NAME,
     SMOKE_BRANCH,
@@ -111,6 +114,9 @@ class LiveStack:
 @pytest.fixture(name="live_stack", scope="session")
 def live_stack_fixture() -> LiveStack:
     """Return the running preview stack, or skip naming exactly what is missing."""
+    # pylint: disable-next=import-outside-toplevel
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
+
     try:
         values = load_preview_env()
     except PreviewError as exc:
@@ -298,6 +304,9 @@ class _KeySampler:
     """
 
     def __init__(self, database_url: str, configuration_id: str, run_ids: list[str] | None = None) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        from infrahub_sync.service.apply_guard import advisory_lock_key
+
         key = advisory_lock_key(configuration_id)
         self._columns = ((key >> 32) & 0xFFFFFFFF, key & 0xFFFFFFFF)
         self._database_url = database_url
@@ -317,6 +326,9 @@ class _KeySampler:
         self._thread.join(timeout=10)
 
     def _run(self) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
+
         with psycopg.connect(self._database_url, autocommit=True) as connection:
             while not self._stop.is_set():
                 rows = connection.execute(_HELD_KEY_SAMPLE, self._columns).fetchall()
@@ -360,6 +372,12 @@ class _KeyHolder:
     """
 
     def __init__(self, database_url: str, configuration_id: str) -> None:
+        # pylint: disable-next=import-outside-toplevel
+        import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
+
+        # pylint: disable-next=import-outside-toplevel
+        from infrahub_sync.service.apply_guard import advisory_lock_key
+
         self._key = advisory_lock_key(configuration_id)
         self._connection = psycopg.connect(database_url, autocommit=True)
         row = self._connection.execute(_TAKE_KEY, (self._key,)).fetchone()

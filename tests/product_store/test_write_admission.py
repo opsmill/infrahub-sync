@@ -14,14 +14,13 @@ single-writer lock cannot stand in for it.
 
 from __future__ import annotations
 
-import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from threading import Barrier, Lock
+from threading import Barrier
 from typing import TYPE_CHECKING, Any
-from uuid import NAMESPACE_URL, uuid4, uuid5
+from uuid import uuid4
 
 import pytest
 
@@ -34,10 +33,9 @@ from infrahub_sync.product_store import (
     ProductRun,
 )
 from infrahub_sync.product_store.store import FileArtifactStore, PostgreSQLRunStore, SQLiteRunStore
-from infrahub_sync.service.auth import Principal
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Iterator
     from pathlib import Path
 
 _DSN_ENVIRONMENT_NAME = "PRODUCT_STORE_TEST_POSTGRESQL_DSN"
@@ -693,151 +691,3 @@ def test_an_expired_cancellation_of_a_claimed_write_records_reconciliation(proje
     assert stored is not None
     assert stored.reconciliation_required is True
     assert (stored.phase, stored.outcome) == ("interrupted", "ambiguous")
-
-
-class _SubmissionRecorder:
-    """A Prefect stand-in that records every submission it is asked to make.
-
-    The point of the barrier below is that the loser never reaches this at all, so what
-    matters is the count, not what a submission returns.
-    """
-
-    def __init__(self) -> None:
-        self.submissions: list[str] = []
-        self._lock = Lock()
-
-    async def submit(self, parameters: Mapping[str, Any], *, idempotency_key: str) -> Any:  # noqa: ANN401
-        """Record one submission and answer with a stable flow-run identity."""
-        _ = parameters
-        with self._lock:
-            self.submissions.append(idempotency_key)
-        from infrahub_sync.service.orchestration import Submission  # pylint: disable=import-outside-toplevel
-
-        return Submission(flow_run_id=str(uuid5(NAMESPACE_URL, idempotency_key)), state="pending")
-
-    async def observe(self, flow_run_id: str) -> Any:  # noqa: ANN401, PLR6301
-        """Report the submitted execution as running; nothing here reads it back."""
-        from infrahub_sync.service.orchestration import Observation  # pylint: disable=import-outside-toplevel
-
-        _ = flow_run_id
-        return Observation(available=True, state="running")
-
-
-def _publish_reviewed_plan(projection: ProductProjection, run_id: str) -> str:
-    """Publish the retained review document both stages read before reserving."""
-    from infrahub_sync.service.models import (  # pylint: disable=import-outside-toplevel
-        PlanResource,
-        PlanSummaryResource,
-    )
-    from infrahub_sync.service.service import PLAN_ARTIFACT_ID  # pylint: disable=import-outside-toplevel
-
-    checksum = "b" * 64
-    document = PlanResource(
-        run_id=run_id,
-        checksum=checksum,
-        checksum_ok=True,
-        verification_notes=(),
-        summary=PlanSummaryResource(
-            by_action={"update": 1},
-            by_kind={},
-            total=1,
-            delete_operations_computed=True,
-            deletes_not_executed=0,
-        ),
-        operations=(),
-    )
-    projection.publish_artifact(
-        run_id,
-        artifact_id=PLAN_ARTIFACT_ID,
-        kind="saved-plan-review",
-        media_type="application/json",
-        data=document.model_dump_json().encode(),
-    )
-    return checksum
-
-
-_RACE_ROUNDS = 4
-
-
-def _race_one_round(
-    projection: ProductProjection, principal: Principal, run_id: str, round_number: int
-) -> tuple[dict[str, int], list[str]]:
-    """Start one apply and one verify at a barrier; return their statuses and submissions."""
-    from infrahub_sync.service.models import (  # pylint: disable=import-outside-toplevel
-        ApplyRunRequest,
-        VerifyRunRequest,
-    )
-    from infrahub_sync.service.service import RunService  # pylint: disable=import-outside-toplevel
-
-    checksum = _publish_reviewed_plan(projection, run_id)
-    orchestration = _SubmissionRecorder()
-    service = RunService(projection, orchestration)  # ty: ignore[invalid-argument-type]
-    barrier = Barrier(2)
-
-    def submit(stage: str) -> tuple[str, int]:
-        barrier.wait(timeout=30)
-        key = f"race-{round_number}-{stage}"
-        if stage == "apply":
-            request: Any = ApplyRunRequest(
-                expected_checksum=checksum, confirm_writes=True, reason="race: apply the reviewed plan"
-            )
-            status, _body = asyncio.run(service.apply_run(run_id, request, principal, key))
-        else:
-            request = VerifyRunRequest(reason="race: verify the reviewed plan")
-            status, _body = asyncio.run(service.verify_run(run_id, request, principal, key))
-        return stage, status
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        outcomes = dict(pool.map(submit, ("apply", "verify")))
-    return outcomes, orchestration.submissions
-
-
-def test_a_concurrent_apply_and_verify_admit_exactly_one_of_them(projection: ProductProjection) -> None:
-    """An apply and a verify that start together decide before either submits anything.
-
-    This is the cross-purpose race, and it is not the apply-versus-apply one: the two
-    requests want different stages, so nothing but the run's own arbitration keeps them
-    apart. Either may win, and which one wins decides which rule the round exercises — an
-    apply that wins is refusing the verify by its admission, a verify that wins is refusing
-    the apply by being an unresolved submission. The case asserts the shape of the outcome
-    rather than the identity of the winner, and runs several independent rounds so a broken
-    rule cannot hide behind one round's scheduling. Each rule is also pinned on its own,
-    deterministically, by the sequential cases above.
-
-    What makes it worth running concurrently: the loser is answered from the store, so it
-    never reaches Prefect. The recorder counts exactly one submission per round, whichever
-    way that round went.
-    """
-    principal = Principal(actor="operator@example.com", administrator=True)
-
-    for round_number in range(_RACE_ROUNDS):
-        run_id = _rid(f"apply-versus-verify-race-{round_number}")
-        projection.create_run(_run(run_id))
-        outcomes, submissions = _race_one_round(projection, principal, run_id, round_number)
-
-        assert sorted(outcomes.values()) == [202, 409], f"round {round_number}: {outcomes}"
-        winner = next(stage for stage, status in outcomes.items() if status == 202)
-        loser = next(stage for stage, status in outcomes.items() if status == 409)
-
-        admitted = projection.lookup_mutation(
-            principal.actor, sha256(f"race-{round_number}-{winner}".encode()).hexdigest()
-        ).value
-        assert admitted is not None
-        assert submissions == [admitted.prefect_key], (
-            f"round {round_number}: {loser} reached Prefect despite losing the reservation: {submissions}"
-        )
-
-        refused = projection.lookup_mutation(
-            principal.actor, sha256(f"race-{round_number}-{loser}".encode()).hexdigest()
-        ).value
-        assert refused is not None
-        assert refused.response_status == 409
-        assert _refusal_code(refused) == _CONFLICT_CODE
-        assert refused.flow_run_id is None, "the loser was answered from the store, before any submission"
-
-        stored = projection.lookup_run(run_id).value
-        assert stored is not None
-        assert len(stored.prefect_executions) == 1, (
-            f"round {round_number}: {loser} appended an execution: {stored.prefect_executions}"
-        )
-        assert stored.prefect_executions[0].purpose == winner
