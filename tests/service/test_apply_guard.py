@@ -10,13 +10,14 @@ facts that fake assumes — that a session-level `lock_timeout` bounds
 from __future__ import annotations
 
 import traceback
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import pytest
 
 pytest.importorskip("psycopg")
 
 import psycopg
+
 from infrahub_sync.service.apply_guard import (
     DEFAULT_DEADLINE_SECONDS,
     MAX_DEADLINE_SECONDS,
@@ -179,16 +180,19 @@ def _reachable_text(error: BaseException) -> str:
 
 
 def _hostile_driver_error(sqlstate: str | None = None) -> psycopg.Error:
-    """Return a driver error carrying a distinct canary in every graph carrier."""
+    """Return a driver error carrying a distinct canary in every graph carrier.
+
+    All four carriers reach a rendered traceback: `str(error)` prints the whole
+    argument tuple, and `__notes__` prints after the message line.
+    """
     context = RuntimeError(_CANARY_ENVIRONMENT["GUARD_CANARY_CONTEXT_PASSWORD"])
     cause = ValueError(_CANARY_ENVIRONMENT["GUARD_CANARY_CAUSE_PASSWORD"])
     cause.__context__ = context
     error_type = psycopg.errors.LockNotAvailable if sqlstate == "55P03" else psycopg.OperationalError
-    error = error_type(
-        _CANARY_ENVIRONMENT["GUARD_CANARY_MESSAGE_PASSWORD"],
-        {"password": _CANARY_ENVIRONMENT["GUARD_CANARY_ARGUMENT_PASSWORD"]},
-    )
-    error.add_note(_CANARY_ENVIRONMENT["GUARD_CANARY_NOTE_PASSWORD"])
+    error = error_type(_CANARY_ENVIRONMENT["GUARD_CANARY_MESSAGE_PASSWORD"])
+    error.args = (*error.args, {"password": _CANARY_ENVIRONMENT["GUARD_CANARY_ARGUMENT_PASSWORD"]})
+    # `BaseException.add_note` exists from Python 3.11; the type gate targets 3.10.
+    cast("Any", error).add_note(_CANARY_ENVIRONMENT["GUARD_CANARY_NOTE_PASSWORD"])
     error.__cause__ = cause
     return error
 
