@@ -24,8 +24,14 @@ _ORDINAL = count(1)
 _WRITE_PURPOSES = ("apply", "sync")
 
 
-def owning_receipt(projection: ProductProjection, run_id: str, *, purpose: str) -> MutationReceipt:
-    """Reserve the receipt that may append one execution of `purpose` to `run_id`."""
+def append_execution(
+    projection: ProductProjection,
+    run_id: str,
+    link: PrefectExecutionLink,
+    *,
+    allocate_attempt: bool = False,
+) -> PrefectExecutionLink:
+    """Reserve the receipt that owns this append, then append `link` through it."""
     ordinal = next(_ORDINAL)
     receipt_id = f"m-fixture-{ordinal}"
     now = datetime.now(timezone.utc)
@@ -34,9 +40,9 @@ def owning_receipt(projection: ProductProjection, run_id: str, *, purpose: str) 
             receipt_id=receipt_id,
             actor="owner",
             key_digest=sha256(f"fixture-key-{ordinal}".encode()).hexdigest(),
-            operation=purpose,
+            operation=link.purpose,
             target_run_id=run_id,
-            request_fingerprint=sha256(f"{purpose}:{run_id}:{ordinal}".encode()).hexdigest(),
+            request_fingerprint=sha256(f"{link.purpose}:{run_id}:{ordinal}".encode()).hexdigest(),
             reason="service execution fixture",
             resource_id=run_id,
             run_id=run_id,
@@ -44,22 +50,10 @@ def owning_receipt(projection: ProductProjection, run_id: str, *, purpose: str) 
             created_at=now,
             updated_at=now,
         ),
-        admit_write=purpose in _WRITE_PURPOSES,
+        admit_write=link.purpose in _WRITE_PURPOSES,
     )
-    return reserved
-
-
-def append_execution(
-    projection: ProductProjection,
-    run_id: str,
-    link: PrefectExecutionLink,
-    *,
-    allocate_attempt: bool = False,
-) -> PrefectExecutionLink:
-    """Reserve the owning receipt and append `link` as the one execution it may add."""
-    receipt = owning_receipt(projection, run_id, purpose=link.purpose)
     return projection.add_prefect_execution(
-        run_id, link, receipt_id=receipt.receipt_id, allocate_attempt=allocate_attempt
+        run_id, link, receipt_id=reserved.receipt_id, allocate_attempt=allocate_attempt
     )
 
 

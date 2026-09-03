@@ -683,9 +683,8 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     config_directory, projection = _runtime()
     flow_run_id, worker_id = _claim_current_execution(projection, run_id)
     secrets[:] = collect_secret_values()
-    # Owned here so the failure boundary can read it however the stage ended. Process-local
-    # diagnostic state for this one worker: never a receipt, a durable row, or an authority
-    # to replay anything.
+    # Owned here rather than by the stage, so the failure boundary can read it however the
+    # stage ended.
     tracker = WriteDispatchTracker()
     try:
         with _remote_log_bridge(run_logger, prefect_context=prefect_context, secrets=secrets):

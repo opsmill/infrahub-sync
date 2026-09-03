@@ -49,8 +49,8 @@ PLAN_ARTIFACT_ID = "plan-review"
 
 def _reservation_outcome(receipt: MutationReceipt) -> str:
     """Name what an already-answered receipt is: a replay, or this run's stored refusal."""
-    status = receipt.response_status
-    return "replayed" if status is None or status < 400 else "refused-run-execution-conflict"
+    assert receipt.response_status is not None  # an accepted receipt always stores its status.
+    return "replayed" if receipt.response_status < 400 else "refused-run-execution-conflict"
 
 
 def _service_status(snapshot: PoolStatus) -> ServiceStatusResource:

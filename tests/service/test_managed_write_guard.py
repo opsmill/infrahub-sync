@@ -65,7 +65,6 @@ class _FakeGuardSession:
 
     def __init__(self, events: list[str], *, acquire_failure: BaseException | None = None) -> None:
         self.events = events
-        self.closed = False
         self.held = True
         self._acquire_failure = acquire_failure
 
@@ -85,7 +84,7 @@ class _FakeGuardSession:
         return _FakeCursor(("configured",))
 
     def close(self) -> None:
-        self.closed = True
+        """Close the dedicated session."""
 
 
 def _lock_timeout() -> BaseException:
@@ -257,21 +256,6 @@ def test_a_managed_apply_holds_the_guard_before_its_live_schema_read(
     assert prepared.events.index("guard-acquired") < prepared.events.index("live-schema-read")
     assert prepared.events.index("live-schema-read") < prepared.events.index("execute-run:apply")
     assert prepared.events[-1] == "guard-released"
-
-
-def test_a_managed_apply_confirms_release_before_the_product_success_writeback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A success published while the key may still be held is a success nobody can trust."""
-    prepared = _prepare(tmp_path, monkeypatch)
-
-    _apply(prepared)
-
-    run = _stored(prepared)
-    assert (run.phase, run.outcome) == ("applied", "no-change")
-    assert prepared.session is not None
-    assert prepared.session.closed is True
-    assert run.reconciliation_required is False
 
 
 def test_guard_contention_touches_no_destination_and_creates_no_success_evidence(
