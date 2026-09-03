@@ -1165,7 +1165,11 @@ def test_the_composed_sync_writer_is_refused_before_the_engine_is_built(
     factory = _SpyFactory(cache_root=cache_root)
 
     with pytest.raises(RunValidationError) as excinfo:
-        execute_run(instance, operation="sync", confirm_writes=confirm_writes, potenda_factory=factory)
+        # Deliberately ill-typed: no overload accepts `sync`, and this case is about the
+        # runtime refusal that stands behind that type-level one.
+        execute_run(  # ty: ignore[no-matching-overload]
+            instance, operation="sync", confirm_writes=confirm_writes, potenda_factory=factory
+        )
 
     assert "operation=sync is not supported here" in str(excinfo.value)
     assert factory.calls == []

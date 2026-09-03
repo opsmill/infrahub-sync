@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, overload
 
 import pydantic
 import yaml
@@ -97,6 +97,11 @@ class PotendaFactory(Protocol):
 
 
 OPERATIONS: tuple[Operation, ...] = ("plan", "sync", "verify", "apply")
+# The composed sync writer is not a supported entry point: it produces its own plan and
+# applies it in one call, so it can offer no per-operation ownership proof over a reviewed
+# artifact. The Sync HTTP API composes plan, verify, and apply instead, holding one
+# configuration write guard across them. Named because both entry points state it.
+SYNC_UNSUPPORTED = "operation=sync is not supported here; compose plan, verify, and apply through the Sync API"
 ACTION_KEYS: tuple[ActionKey, ...] = ("create", "update", "delete")
 
 REDACTED = "***"
@@ -978,12 +983,7 @@ def _validate_operation_request(
         msg = f"Unsupported operation {operation!r} — expected one of {OPERATIONS!r}"
         raise RunValidationError(msg)
     if operation == "sync":
-        # The composed sync writer is not a supported entry point: it produces its own plan
-        # and applies it in one call, so it can offer no per-operation ownership proof over
-        # a reviewed artifact. The Sync HTTP API composes plan, verify, and apply instead,
-        # holding one configuration write guard across them.
-        msg = "operation=sync is not supported here; compose plan, verify, and apply through the Sync API"
-        raise RunValidationError(msg)
+        raise RunValidationError(SYNC_UNSUPPORTED)
     if operation == "apply" and not confirm_writes:
         msg = f"confirm_writes=true is required to run operation={operation}"
         raise RunValidationError(msg)
@@ -1028,16 +1028,13 @@ def execute_run(
 # `apply` is deliberately absent from the remaining overloads: it is the only operation that
 # writes, so the type checker — not just the runtime refusal below — is what rejects an apply
 # with no write-ownership boundary.
+#
+# `sync` is absent for the same reason, one step further: it is accepted only to be refused,
+# so no overload can honestly name what it returns. Leaving it out makes the type checker say
+# so at the call site, and keeps the runtime refusal below as the answer for callers that are
+# not type-checked at all.
 @overload
 def execute_run(sync_instance: SyncInstance, *, operation: Literal["plan"], **kwargs: Any) -> RunResult: ...
-
-
-# `sync` is accepted and then always refused, so `NoReturn` is the honest return type: this
-# call has no successful result to hand back. Stating it keeps `run_remote_request` able to
-# forward `sync` — its typed refusal is the intended behaviour — without the signature
-# promising a `RunResult` no caller can ever receive.
-@overload
-def execute_run(sync_instance: SyncInstance, *, operation: Literal["sync"], **kwargs: Any) -> NoReturn: ...
 
 
 def execute_run(
@@ -1255,22 +1252,26 @@ def run_remote_request(
     shared_secrets = _REMOTE_SECRET_VALUES.get()
     if shared_secrets is not None:
         shared_secrets[:] = secrets
+    if operation == "sync":
+        # Stated here as well as inside `execute_run`, because `sync` has no overload to
+        # forward to: this parameter still accepts it, and a remote caller that asks for one
+        # gets the same refusal it has always got. Ahead of the boundary rather than inside
+        # it because a `RunValidationError` crosses that boundary unchanged, and an
+        # unsupported request is refusable without resolving any configuration first.
+        raise RunValidationError(SYNC_UNSUPPORTED)
     try:
         sync_instance = resolve_sync_instance(sync_name, directory=config_directory)
         secrets = collect_secret_values(sync_instance)
         if shared_secrets is not None:
             shared_secrets[:] = secrets
-        return cast(
-            "RunResult",
-            execute_run(
-                sync_instance,
-                operation=operation,
-                confirm_writes=confirm_writes,
-                branch=branch,
-                show_progress=False,
-                potenda_factory=factory,
-                _lock_timeout=_lock_timeout,
-            ),
+        return execute_run(
+            sync_instance,
+            operation=operation,
+            confirm_writes=confirm_writes,
+            branch=branch,
+            show_progress=False,
+            potenda_factory=factory,
+            _lock_timeout=_lock_timeout,
         )
     except RunValidationError:
         raise
