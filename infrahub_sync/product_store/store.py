@@ -745,7 +745,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         raise DuplicateRunError(msg) from exc
                     raise
                 for position, link in enumerate(run.prefect_executions):
-                    self._insert_prefect_execution(cursor, run.run_id, link, position)
+                    # A link embedded in the run being created has no receipt to own it:
+                    # `reserve_mutation` is what mints one, and it runs against a run that
+                    # already exists. Stated rather than defaulted so a caller that does
+                    # have a receipt cannot append without naming it.
+                    self._insert_prefect_execution(cursor, run.run_id, link, position, mutation_receipt_id=None)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -758,7 +762,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
     def _insert_product_run(self, cursor: _Cursor, run: ProductRun) -> None:
         self._insert_product_run_row(cursor, run)
         for position, link in enumerate(run.prefect_executions):
-            self._insert_prefect_execution(cursor, run.run_id, link, position)
+            self._insert_prefect_execution(cursor, run.run_id, link, position, mutation_receipt_id=None)
 
     def _insert_product_run_row(self, cursor: _Cursor, run: ProductRun) -> None:
         cursor.execute(
@@ -1018,7 +1022,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         link: PrefectExecutionLink,
         position: int,
         *,
-        mutation_receipt_id: str | None = None,
+        mutation_receipt_id: str | None,
     ) -> None:
         cursor.execute(
             self._sql(_INSERT_PREFECT_EXECUTION),

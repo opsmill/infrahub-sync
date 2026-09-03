@@ -367,17 +367,47 @@ def test_the_apply_lifecycle_reports_its_completed_record_to_its_sink(tmp_path: 
     alpha, bravo, charlie = _three_operations(directory)
     events: list[str] = []
     reported: list[ApplyRecord] = []
+    observed: list[str | None] = []
 
-    _lifecycle(
-        directory,
-        RecordingOwnership(events),
-        RecordingDestination(events),
-        record_applied=reported.append,
-    )
+    def report(record: ApplyRecord) -> None:
+        observed.append(RunFile.load_or_default(directory / "run.json").status)
+        reported.append(record)
+
+    _lifecycle(directory, RecordingOwnership(events), RecordingDestination(events), record_applied=report)
 
     assert len(reported) == 1
     assert reported[0].applied_operations == (alpha, charlie)
     assert reported[0].skipped_delete_operations == (bravo,)
+    # Still `running` when the sink is asked: the scope is told what was written before the
+    # sidecar records the apply as complete, which is what makes the scope's copy the
+    # account every later failure can fall back on.
+    assert observed == ["running"]
+
+
+def test_a_sink_that_cannot_record_the_write_still_reaches_the_failure_boundary(tmp_path: Path) -> None:
+    """A sink that raises is a failure after a dispatch, and is handled as one.
+
+    The sink runs after the loop has written and before the applied sidecar, so a sink that
+    cannot record what happened leaves a run that wrote but was never marked complete. It
+    must reach the same boundary a failing sidecar reaches, carrying the same record —
+    otherwise the sidecar stays at `running` and the completed record is lost entirely.
+    """
+    directory = _run_dir(tmp_path)
+    alpha, bravo, charlie = _three_operations(directory)
+    events: list[str] = []
+
+    def refuse(_record: ApplyRecord) -> None:
+        msg = "the write scope could not record the completed apply"
+        raise OSError(msg)
+
+    with pytest.raises(OSError, match="could not record the completed apply") as raised:
+        _lifecycle(directory, RecordingOwnership(events), RecordingDestination(events), record_applied=refuse)
+
+    assert RunFile.load_or_default(directory / "run.json").status == "failed"
+    carried = getattr(raised.value, "apply_record", None)
+    assert isinstance(carried, ApplyRecord)
+    assert carried.applied_operations == (alpha, charlie)
+    assert carried.skipped_delete_operations == (bravo,)
 
 
 def test_a_failed_applied_sidecar_still_carries_the_completed_record(

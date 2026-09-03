@@ -11,6 +11,11 @@ tree the Python 3.10 legs exclude, and the Sync service is Python 3.11+.
 Both store profiles still run. SQLite covers the transaction shape; the same case runs
 against a real PostgreSQL server when ``PRODUCT_STORE_TEST_POSTGRESQL_DSN`` names one,
 because row-level serialization between two competing reservations is a provider fact.
+
+WARNING: the PostgreSQL parameter's session fixture runs ``DROP SCHEMA public CASCADE``
+against whatever database ``PRODUCT_STORE_TEST_POSTGRESQL_DSN`` points at, which destroys
+every table in that database's ``public`` schema. Point that variable only at a disposable,
+single-purpose database — never at a shared or persistent development database.
 """
 
 from __future__ import annotations

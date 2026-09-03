@@ -10,6 +10,11 @@ SQLite covers the transaction shape. The same cases run against a real PostgreSQ
 server when ``PRODUCT_STORE_TEST_POSTGRESQL_DSN`` names one, because row-level
 serialization between two competing reservations is a provider fact and SQLite's
 single-writer lock cannot stand in for it.
+
+WARNING: the PostgreSQL parameter's session fixture runs ``DROP SCHEMA public CASCADE``
+against whatever database ``PRODUCT_STORE_TEST_POSTGRESQL_DSN`` points at, which destroys
+every table in that database's ``public`` schema. Point that variable only at a disposable,
+single-purpose database — never at a shared or persistent development database.
 """
 
 from __future__ import annotations

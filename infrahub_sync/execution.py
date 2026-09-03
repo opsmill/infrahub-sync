@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol, cast, overload
 
 import pydantic
 import yaml
@@ -854,17 +854,19 @@ def _run_apply_lifecycle(  # pylint: disable=too-many-arguments
         _save_failed_run(run_directory, mode=sidecar_mode, record=partial, run_file=run_file)
         raise
 
-    # Reported to the write scope before anything else can fail: the sidecar write, the
-    # guard's release, and the product success commit all happen after this point, and each
-    # of them is a failure after a dispatch that still has to say what was written. The sink
-    # is separate from `ownership` on purpose — that boundary authorizes the write, and
-    # saying what the write did is not its question to answer.
-    record_applied(record)
     try:
+        # Reported to the write scope before anything else can fail: the sidecar write, the
+        # guard's release, and the product success commit all happen after this point, and
+        # each of them is a failure after a dispatch that still has to say what was written.
+        # Inside this `try` so a sink that raises is itself such a failure, and reaches the
+        # same boundary carrying the same record. The sink is separate from `ownership` on
+        # purpose — that boundary authorizes the write, and saying what the write did is not
+        # its question to answer.
+        record_applied(record)
         _save_run_transition(run_directory, mode=sidecar_mode, status="applied", record=record, run_file=run_file)
     except BaseException as exc:
-        # Everything the loop applied is already written; a sidecar that could not record
-        # that must not make the completed record unreadable to the failure boundary.
+        # Everything the loop applied is already written; a sink or a sidecar that could not
+        # record that must not make the completed record unreadable to the failure boundary.
         _save_failed_run(run_directory, mode=sidecar_mode, record=record, run_file=run_file)
         exc.apply_record = record  # ty: ignore[unresolved-attribute]
         raise
@@ -1030,8 +1032,12 @@ def execute_run(
 def execute_run(sync_instance: SyncInstance, *, operation: Literal["plan"], **kwargs: Any) -> RunResult: ...
 
 
+# `sync` is accepted and then always refused, so `NoReturn` is the honest return type: this
+# call has no successful result to hand back. Stating it keeps `run_remote_request` able to
+# forward `sync` — its typed refusal is the intended behaviour — without the signature
+# promising a `RunResult` no caller can ever receive.
 @overload
-def execute_run(sync_instance: SyncInstance, *, operation: Literal["plan", "sync"], **kwargs: Any) -> RunResult: ...
+def execute_run(sync_instance: SyncInstance, *, operation: Literal["sync"], **kwargs: Any) -> NoReturn: ...
 
 
 def execute_run(

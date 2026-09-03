@@ -1106,6 +1106,10 @@ def test_cancel_scans_past_newer_non_active_links(
         headers={**AUTH, "Idempotency-Key": "newer-finished-verify"},
         json={"reason": "later read-only check"},
     )
+    # Read the admissions before indexing their bodies: an admission regression refuses one
+    # of these, and a refusal has no `orchestration` to index. Assert it as the wrong status
+    # rather than let it surface as a KeyError that names the wrong defect.
+    assert (active.status_code, newer.status_code) == (202, 202), (active.json(), newer.json())
     active_flow_run_id = active.json()["orchestration"][-1]["flow_run_id"]
     newer_flow_run_id = newer.json()["orchestration"][-1]["flow_run_id"]
     orchestration.observations[active_flow_run_id] = Observation(available=True, state="running")
