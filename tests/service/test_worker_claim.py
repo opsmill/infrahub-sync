@@ -22,6 +22,7 @@ from prefect.workers.process import ProcessJobConfiguration, ProcessWorker
 
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 from infrahub_sync.service import flow as service_flow
+from tests.service.execution_fixtures import append_execution
 
 if TYPE_CHECKING:
     from prefect.client.schemas.objects import FlowRun
@@ -89,7 +90,8 @@ def _projection(tmp_path: Path, *, submitted_at: datetime | None = None, migrate
             phase="accepted",
         )
     )
-    projection.add_prefect_execution(
+    append_execution(
+        projection,
         "run-worker-claim",
         PrefectExecutionLink(
             flow_run_id=FLOW_ID,

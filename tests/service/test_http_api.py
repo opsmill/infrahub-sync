@@ -35,6 +35,7 @@ from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.plan.models import PlanManifest
 from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.product_store import (
+    ExecutionMergeWriteback,
     PrefectExecutionLink,
     ProductProjection,
     ProductRun,
@@ -60,6 +61,7 @@ from infrahub_sync.service.orchestration import (
     Submission,
 )
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService, ServiceAPIError
+from tests.service.execution_fixtures import append_execution
 
 if TYPE_CHECKING:
     from opsmill_prefect_extras.executors import RemoteExecutionClient
@@ -277,6 +279,32 @@ def _publish_plan(projection: ProductProjection, run_id: str, *, checksum: str =
     return plan
 
 
+_PLAN_WORKER_ID = "6b1f0a2c-9d3e-4f57-8a10-2c5b7e4d9f31"
+
+
+def _settle_open_executions(projection: ProductProjection, run_id: str) -> None:
+    """Finish the plan stage the way its worker does, so a write may then be admitted.
+
+    A run only admits its one write while nothing else is still running on it, so a
+    published reviewed plan has to leave its own execution terminal.
+    """
+    run = projection.lookup_run(run_id).value
+    assert run is not None
+    for link in run.prefect_executions:
+        if link.terminal_at is not None:
+            continue
+        projection.claim_execution(run_id, link.flow_run_id, worker_id=_PLAN_WORKER_ID)
+        projection.commit_claimed_execution(
+            run_id,
+            link.flow_run_id,
+            worker_id=_PLAN_WORKER_ID,
+            terminal_at=datetime.now(timezone.utc),
+            terminal_state="completed",
+            terminal_outcome="succeeded",
+            writeback=ExecutionMergeWriteback(results={"plan": {"outcome": "planned"}}),
+        )
+
+
 def test_worker_published_plan_is_retrievable_through_an_independent_api_projection(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -426,6 +454,7 @@ def test_reserved_apply_retry_replays_after_the_plan_artifact_expires(
     created = _create(client)
     run_id = created.json()["run"]["run_id"]
     plan = _publish_plan(projection, run_id)
+    _settle_open_executions(projection, run_id)
     headers = {**AUTH, "Idempotency-Key": "apply-expired-plan-retry"}
     body = {
         "expected_checksum": plan.checksum,
@@ -852,7 +881,8 @@ def test_cancel_append_during_observation_never_targets_the_stale_execution(
         await asyncio.sleep(0)
         assert flow_run_id == old_flow_run_id
         if not appended:
-            projection.add_prefect_execution(
+            append_execution(
+                projection,
                 run_id,
                 PrefectExecutionLink(
                     flow_run_id=new_flow_run_id,
@@ -1020,7 +1050,8 @@ def test_cancellation_remote_success_then_crash_resumes_same_intent(
 
     uncertain = client.post(f"/runs/{run_id}/cancel", headers=headers, json=body)
     with pytest.raises(WriteAdmissionConflictError):
-        projection.add_prefect_execution(
+        append_execution(
+            projection,
             run_id,
             PrefectExecutionLink(
                 flow_run_id="flow-racing-cancellation-retry",
@@ -1056,30 +1087,31 @@ def test_cancel_scans_past_newer_non_active_links(
     client, projection, orchestration = service_api
     created = _create(client)
     run_id = created.json()["run"]["run_id"]
-    plan = _publish_plan(projection, run_id)
-    applied = client.post(
-        f"/runs/{run_id}/apply",
-        headers={**AUTH, "Idempotency-Key": "cancel-active-apply"},
-        json={"expected_checksum": plan.checksum, "reason": "approved", "confirm_writes": True},
+    _publish_plan(projection, run_id)
+    _settle_open_executions(projection, run_id)
+    active = client.post(
+        f"/runs/{run_id}/verify",
+        headers={**AUTH, "Idempotency-Key": "cancel-active-verify"},
+        json={"reason": "the running check"},
     )
-    verified = client.post(
+    newer = client.post(
         f"/runs/{run_id}/verify",
         headers={**AUTH, "Idempotency-Key": "newer-finished-verify"},
         json={"reason": "later read-only check"},
     )
-    apply_flow_run_id = applied.json()["orchestration"][-1]["flow_run_id"]
-    verify_flow_run_id = verified.json()["orchestration"][-1]["flow_run_id"]
-    orchestration.observations[apply_flow_run_id] = Observation(available=True, state="running")
-    orchestration.observations[verify_flow_run_id] = newest_observation
+    active_flow_run_id = active.json()["orchestration"][-1]["flow_run_id"]
+    newer_flow_run_id = newer.json()["orchestration"][-1]["flow_run_id"]
+    orchestration.observations[active_flow_run_id] = Observation(available=True, state="running")
+    orchestration.observations[newer_flow_run_id] = newest_observation
 
     cancelled = client.post(
         f"/runs/{run_id}/cancel",
         headers={**AUTH, "Idempotency-Key": f"scan-cancel-{newest_observation.reason or newest_observation.state}"},
-        json={"reason": "stop the active write"},
+        json={"reason": "stop the active stage"},
     )
 
     assert cancelled.status_code == 202
-    assert orchestration.cancelled == [apply_flow_run_id]
+    assert orchestration.cancelled == [active_flow_run_id]
 
 
 def test_cancel_treats_expired_and_terminal_links_as_non_cancellable(
@@ -1089,6 +1121,7 @@ def test_cancel_treats_expired_and_terminal_links_as_non_cancellable(
     created = _create(client)
     run_id = created.json()["run"]["run_id"]
     plan = _publish_plan(projection, run_id)
+    _settle_open_executions(projection, run_id)
     applied = client.post(
         f"/runs/{run_id}/apply",
         headers={**AUTH, "Idempotency-Key": "apply-before-expiry"},
@@ -1117,12 +1150,14 @@ def test_owner_admin_authorization_apply_verify_and_cancel(  # noqa: PLR0914 - o
     created = _create(client)
     run_id = created.json()["run"]["run_id"]
     plan = _publish_plan(projection, run_id)
+    _settle_open_executions(projection, run_id)
     other_headers = {"Authorization": f"Bearer {OTHER_TOKEN}", "Idempotency-Key": "other-key"}
     admin_headers = {"Authorization": f"Bearer {ADMIN_TOKEN}", "Idempotency-Key": "admin-key"}
 
     refused = client.post(f"/runs/{run_id}/verify", headers=other_headers, json={"reason": "not my run"})
     verified = client.post(f"/runs/{run_id}/verify", headers=admin_headers, json={"reason": "admin review"})
     verified_replay = client.post(f"/runs/{run_id}/verify", headers=admin_headers, json={"reason": "admin review"})
+    _settle_open_executions(projection, run_id)
     unconfirmed = client.post(
         f"/runs/{run_id}/apply",
         headers={**AUTH, "Idempotency-Key": "apply-unconfirmed"},
@@ -1198,6 +1233,7 @@ def test_concurrent_and_post_completion_distinct_apply_keys_are_refused(
     created = _create(client)
     run_id = created.json()["run"]["run_id"]
     plan = _publish_plan(projection, run_id)
+    _settle_open_executions(projection, run_id)
     ready = Barrier(2)
 
     def apply(position: int):
@@ -1218,7 +1254,7 @@ def test_concurrent_and_post_completion_distinct_apply_keys_are_refused(
     accepted = next(response for response in responses if response.status_code == 202)
     refused = next(response for response in responses if response.status_code == 409)
     accepted_position = next(position for position, response in enumerate(responses) if response.status_code == 202)
-    assert refused.json()["error"]["code"] == "apply-already-admitted"
+    assert refused.json()["error"]["code"] == "run-execution-conflict"
     assert len(orchestration.submissions) == 2
 
     projection.finish_run(
@@ -1246,9 +1282,9 @@ def test_concurrent_and_post_completion_distinct_apply_keys_are_refused(
     assert replay.status_code == 202
     assert replay.json() == accepted.json()
     assert post_completion.status_code == 409
-    assert post_completion.json()["error"]["code"] == "apply-already-admitted"
+    assert post_completion.json()["error"]["code"] == "run-execution-conflict"
     assert len(orchestration.submissions) == 2
-    refusals = [event for event in projection.audit_events(run_id) if event.outcome == "refused-apply-admission"]
+    refusals = [event for event in projection.audit_events(run_id) if event.outcome == "refused-run-execution-conflict"]
     assert len(refusals) == 2
 
 
@@ -1270,6 +1306,7 @@ def test_confirmed_sync_reserves_its_write_admission_and_replays(
     replay = client.post("/runs", headers=headers, json=body)
     run_id = accepted.json()["run"]["run_id"]
     plan = _publish_plan(projection, run_id)
+    _settle_open_executions(projection, run_id)
     later_apply = client.post(
         f"/runs/{run_id}/apply",
         headers={**AUTH, "Idempotency-Key": "apply-after-sync"},
@@ -1279,7 +1316,7 @@ def test_confirmed_sync_reserves_its_write_admission_and_replays(
     assert accepted.status_code == 202
     assert replay.json() == accepted.json()
     assert later_apply.status_code == 409
-    assert later_apply.json()["error"]["code"] == "apply-already-admitted"
+    assert later_apply.json()["error"]["code"] == "run-execution-conflict"
     assert [parameters["stage"] for parameters, _ in orchestration.submissions] == ["sync"]
 
 
@@ -1303,6 +1340,10 @@ def test_owner_and_administrator_mutation_matrix(
     created = _create(client)
     run_id = created.json()["run"]["run_id"]
     plan = _publish_plan(projection, run_id)
+    if operation == "apply":
+        # A write is admitted only while nothing else is running; cancellation needs the
+        # opposite, so only this parameter settles the plan stage first.
+        _settle_open_executions(projection, run_id)
     headers = {"Authorization": f"Bearer {token}", "Idempotency-Key": f"{actor}-{operation}"}
     bodies = {
         "verify": {"reason": f"{actor} verification"},

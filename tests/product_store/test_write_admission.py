@@ -61,6 +61,24 @@ def _postgresql_dsn_or_skip() -> str:
     return dsn
 
 
+@pytest.fixture(name="_postgresql_schema", scope="session")
+def postgresql_schema_fixture() -> str:
+    """Recreate the disposable database's schema once, then return its DSN.
+
+    V3 is unreleased and its development databases are recreated rather than migrated, so
+    the clean schema this module asserts is the one a fresh server bootstraps.
+    """
+    dsn = _postgresql_dsn_or_skip()
+    # pylint: disable-next=import-outside-toplevel
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
+
+    with psycopg.connect(dsn) as admin:
+        admin.execute("DROP SCHEMA public CASCADE")
+        admin.execute("CREATE SCHEMA public")
+        admin.commit()
+    return dsn
+
+
 @pytest.fixture(params=("sqlite", pytest.param("postgresql", marks=pytest.mark.integration)))
 def projection(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[ProductProjection]:
     """One product projection per provider profile, isolated per test."""
@@ -68,7 +86,7 @@ def projection(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Produ
     if request.param == "sqlite":
         yield ProductProjection(SQLiteRunStore(tmp_path / "records.sqlite3"), artifacts)
         return
-    dsn = _postgresql_dsn_or_skip()
+    dsn = request.getfixturevalue("_postgresql_schema")
     # pylint: disable-next=import-outside-toplevel
     import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
 
@@ -118,11 +136,13 @@ def _receipt(receipt_id: str, *, run_id: str, operation: str, client_key: str | 
 
 
 def _link(flow_run_id: str, *, purpose: str) -> PrefectExecutionLink:
+    # Submitted now, not at the module's fixed instant: an execution older than the
+    # admission TTL is no longer claimable, and these cases are about claimed work.
     return PrefectExecutionLink(
         flow_run_id=flow_run_id,
         purpose=purpose,
         attempt=1,
-        submitted_at=_STARTED_AT,
+        submitted_at=datetime.now(timezone.utc),
     )
 
 
@@ -256,12 +276,13 @@ def test_every_later_reservation_refuses_once_a_write_is_admitted(
     projection: ProductProjection, operation: str
 ) -> None:
     """A run that has admitted its one write never admits another stage of any kind."""
-    projection.create_run(_run(_rid("admitted-run")))
-    admitted = _admit_write(projection, _rid("admitted-run"), "m-apply", operation="apply")
+    run_id = _rid(f"admitted-run-{operation}")
+    projection.create_run(_run(run_id))
+    admitted = _admit_write(projection, run_id, "m-apply", operation="apply")
     assert admitted.state == "reserved"
 
     refused, _created = projection.reserve_mutation(
-        _receipt(f"m-later-{operation}", run_id=_rid("admitted-run"), operation=operation),
+        _receipt(f"m-later-{operation}", run_id=run_id, operation=operation),
         admit_write=operation in {"apply", "sync"},
     )
 
@@ -312,10 +333,18 @@ def test_a_terminal_write_still_refuses_a_later_reservation(projection: ProductP
 
 
 def test_only_the_admitted_receipt_may_append_the_write_execution(projection: ProductProjection) -> None:
-    """A second receipt cannot borrow the admission another receipt won."""
+    """A second receipt cannot borrow the admission another receipt won.
+
+    The stranger is a real, still-unresolved receipt of the same run — a cancellation,
+    the one kind the stage arbitration deliberately leaves alone — so what refuses its
+    append is the admission's ownership and not the absence of a reservation.
+    """
     projection.create_run(_run(_rid("owned-append")))
     admitted = _admit_write(projection, _rid("owned-append"), "m-apply", operation="apply")
-    stranger = _receipt("m-stranger", run_id=_rid("owned-append"), operation="apply")
+    stranger, _created = projection.reserve_mutation(
+        _receipt("m-stranger", run_id=_rid("owned-append"), operation="cancel")
+    )
+    assert stranger.state == "reserved"
 
     with pytest.raises(ValueError, match="write admission"):
         projection.add_prefect_execution(
@@ -355,7 +384,7 @@ def test_a_receipt_appends_at_most_one_execution(projection: ProductProjection) 
         receipt_id=admitted.receipt_id,
     )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="already appended"):
         projection.add_prefect_execution(
             _rid("single-append"),
             _link("flow-apply-again", purpose="apply"),
@@ -368,18 +397,17 @@ def test_a_receipt_appends_at_most_one_execution(projection: ProductProjection) 
 
 
 def test_a_read_reservation_cannot_append_after_a_write_admission(projection: ProductProjection) -> None:
-    """A receipt reserved before the write cannot append its execution afterwards."""
+    """A run holding a write admission accepts no read execution either.
+
+    The appending receipt is an unresolved cancellation, so the run genuinely has one
+    receipt that could ask; the admission is what refuses it.
+    """
     projection.create_run(_run(_rid("late-read-append")))
-    verify = _reserve_read(projection, _rid("late-read-append"), "m-verify", operation="verify")
-    projection.complete_mutation(
-        verify.receipt_id,
-        response_status=202,
-        response_body={"accepted": True},
-        flow_run_id="flow-verify",
-    )
     admitted = _admit_write(projection, _rid("late-read-append"), "m-apply", operation="apply")
     assert admitted.state == "reserved"
-    late = _receipt("m-late-verify", run_id=_rid("late-read-append"), operation="verify")
+    late, _created = projection.reserve_mutation(
+        _receipt("m-late-verify", run_id=_rid("late-read-append"), operation="cancel")
+    )
 
     with pytest.raises(ValueError, match="write admission"):
         projection.add_prefect_execution(

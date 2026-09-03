@@ -187,6 +187,9 @@ class PublicRunResource(_ResourceModel):
     outcome: str | None = None
     summary: dict[str, Any] = Field(default_factory=dict)
     results: dict[str, Any] = Field(default_factory=dict)
+    # Exposed directly rather than through ``results``: an operator deciding whether a run
+    # needs reconciling must not have to parse failure evidence to find out.
+    reconciliation_required: bool = False
     artifact_refs: tuple[ArtifactReferenceResource, ...] = ()
     prefect_executions: tuple[PublicExecutionLink, ...] = ()
 

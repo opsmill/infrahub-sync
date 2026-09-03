@@ -23,6 +23,7 @@ from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.flow import service_sync_run
 from tests.configuration.validation_packages import package
 from tests.plan.artifact_fixtures import operation_record
+from tests.service.execution_fixtures import append_execution
 
 FLOW_RUN_ID = "ed4778cb-f2cf-4b1f-a87b-68be37659e93"
 WORKER_ID = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
@@ -56,7 +57,8 @@ def _registered_apply(
             phase="planned",
         )
     )
-    projection.add_prefect_execution(
+    append_execution(
+        projection,
         run_id,
         PrefectExecutionLink(
             flow_run_id=FLOW_RUN_ID, purpose="apply", attempt=1, submitted_at=datetime.now(timezone.utc)
@@ -172,7 +174,8 @@ def test_a_registered_saved_apply_runs_without_the_source_credential(
             phase="planned",
         )
     )
-    projection.add_prefect_execution(
+    append_execution(
+        projection,
         run_id,
         PrefectExecutionLink(
             flow_run_id=FLOW_RUN_ID, purpose="apply", attempt=1, submitted_at=datetime.now(timezone.utc)

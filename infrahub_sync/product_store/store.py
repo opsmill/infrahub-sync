@@ -40,7 +40,8 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS product_runs (
     run_id TEXT PRIMARY KEY, operation TEXT NOT NULL, configuration_reference TEXT NOT NULL,
     actor TEXT, audit_links TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
-    phase TEXT NOT NULL, outcome TEXT, summary TEXT NOT NULL, results TEXT NOT NULL
+    phase TEXT NOT NULL, outcome TEXT, summary TEXT NOT NULL, results TEXT NOT NULL,
+    reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE TABLE IF NOT EXISTS artifact_refs (
     run_id TEXT NOT NULL, artifact_id TEXT NOT NULL, kind TEXT NOT NULL, media_type TEXT NOT NULL,
@@ -48,18 +49,6 @@ CREATE TABLE IF NOT EXISTS artifact_refs (
     manifest_key TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, expires_at TEXT, published INTEGER NOT NULL,
     PRIMARY KEY (run_id, artifact_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id)
 );
-CREATE TABLE IF NOT EXISTS prefect_executions (
-    run_id TEXT NOT NULL, flow_run_id TEXT NOT NULL, deployment_id TEXT, purpose TEXT NOT NULL,
-    attempt INTEGER NOT NULL, last_observed_state TEXT, last_observed_at TEXT, submitted_at TEXT,
-    claimed_at TEXT, claiming_worker_id TEXT, stalled_at TEXT, cancellation_requested_at TEXT,
-    cancellation_recovery_deadline_at TEXT, cancellation_receipt_id TEXT, cancellation_acknowledged_at TEXT,
-    terminal_at TEXT, terminal_state TEXT, terminal_outcome TEXT, position INTEGER NOT NULL,
-    PRIMARY KEY (run_id, flow_run_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id)
-);
-CREATE UNIQUE INDEX IF NOT EXISTS prefect_executions_run_position
-    ON prefect_executions (run_id, position);
-CREATE UNIQUE INDEX IF NOT EXISTS prefect_executions_run_purpose_attempt
-    ON prefect_executions (run_id, purpose, attempt);
 CREATE TABLE IF NOT EXISTS mutation_receipts (
     receipt_id TEXT PRIMARY KEY, actor TEXT NOT NULL, key_digest TEXT NOT NULL,
     operation TEXT NOT NULL, target_run_id TEXT, request_fingerprint TEXT NOT NULL,
@@ -68,6 +57,20 @@ CREATE TABLE IF NOT EXISTS mutation_receipts (
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     UNIQUE (actor, key_digest)
 );
+CREATE TABLE IF NOT EXISTS prefect_executions (
+    run_id TEXT NOT NULL, flow_run_id TEXT NOT NULL, deployment_id TEXT, purpose TEXT NOT NULL,
+    attempt INTEGER NOT NULL, last_observed_state TEXT, last_observed_at TEXT, submitted_at TEXT,
+    claimed_at TEXT, claiming_worker_id TEXT, stalled_at TEXT, cancellation_requested_at TEXT,
+    cancellation_recovery_deadline_at TEXT, cancellation_receipt_id TEXT, cancellation_acknowledged_at TEXT,
+    terminal_at TEXT, terminal_state TEXT, terminal_outcome TEXT, position INTEGER NOT NULL,
+    mutation_receipt_id TEXT UNIQUE,
+    PRIMARY KEY (run_id, flow_run_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id),
+    FOREIGN KEY (mutation_receipt_id) REFERENCES mutation_receipts(receipt_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS prefect_executions_run_position
+    ON prefect_executions (run_id, position);
+CREATE UNIQUE INDEX IF NOT EXISTS prefect_executions_run_purpose_attempt
+    ON prefect_executions (run_id, purpose, attempt);
 CREATE TABLE IF NOT EXISTS write_admissions (
     run_id TEXT PRIMARY KEY, receipt_id TEXT NOT NULL UNIQUE, operation TEXT NOT NULL,
     FOREIGN KEY (run_id) REFERENCES product_runs(run_id),
@@ -221,6 +224,23 @@ _POSTGRESQL_DUPLICATE_COLUMN_CODE = "42701"
 # are the whole set of readable answers.
 _CATALOG_NULLABILITY_ROW_WIDTH = 2
 _CATALOG_NULLABILITY_VALUES = frozenset({"YES", "NO"})
+# The stages one run's admission arbitrates against each other. Cancellation is
+# deliberately outside the set: it targets the execution a write already owns and never
+# reserves a stage of its own, so a claimed write stays cancellable.
+_ARBITRATED_OPERATIONS = ("plan", "verify", "apply", "sync")
+# The two stages that reach a destination. The store's SQL spells them literally; this is
+# the Python-side membership test for the same pair.
+_WRITE_OPERATIONS = ("apply", "sync")
+_RUN_EXECUTION_CONFLICT = "run-execution-conflict"
+_RUN_EXECUTION_CONFLICT_MESSAGE = (
+    "this Sync run already has a write admission, an unresolved submission, or a running "
+    "execution; review the run and create a new plan or sync run"
+)
+_ADMITTED_APPEND_REFUSED = (
+    "appending a write execution requires the mutation receipt that holds this run's write admission"
+)
+_UNRESOLVED_APPEND_REFUSED = "appending an execution requires an unresolved mutation receipt for this run"
+_REPEATED_APPEND_REFUSED = "this mutation receipt has already appended its one execution"
 _PREFECT_POSITION_ATTEMPTS = 3
 _RESULT_MERGE_ATTEMPTS = 5
 _SCHEMA_INITIALIZATION_ATTEMPTS = 2
@@ -250,10 +270,10 @@ _SELECT_NEXT_CONFIGURATION_VERSION = (
 )
 
 _INSERT_PRODUCT_RUN = """INSERT INTO product_runs (run_id, operation, configuration_reference, config_id,
-registry_version, package_checksum, actor, audit_links, started_at, finished_at, phase, outcome, summary, results)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+registry_version, package_checksum, actor, audit_links, started_at, finished_at, phase, outcome, summary, results,
+reconciliation_required) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _SELECT_PRODUCT_RUN = """SELECT run_id, operation, configuration_reference, actor, audit_links, started_at,
-finished_at, phase, outcome, summary, results, config_id, registry_version, package_checksum
+finished_at, phase, outcome, summary, results, config_id, registry_version, package_checksum, reconciliation_required
 FROM product_runs WHERE run_id = ?"""
 _SELECT_RUN_ARTIFACT_REFERENCES = """SELECT run_id, artifact_id, kind, media_type, digest, size, object_key,
 manifest_key, created_at, expires_at, published FROM artifact_refs WHERE run_id = ? AND published = 1 ORDER BY artifact_id"""
@@ -268,7 +288,8 @@ terminal_outcome, position FROM prefect_executions WHERE run_id = ? ORDER BY pos
 _INSERT_PREFECT_EXECUTION = """INSERT INTO prefect_executions (run_id, flow_run_id, deployment_id, purpose, attempt,
 last_observed_state, last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at,
 cancellation_requested_at, cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at,
-terminal_at, terminal_state, terminal_outcome, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+terminal_at, terminal_state, terminal_outcome, position, mutation_receipt_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _INSERT_MUTATION_RECEIPT = """INSERT INTO mutation_receipts (receipt_id, actor, key_digest, operation,
 target_run_id, request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body,
 flow_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
@@ -303,7 +324,7 @@ class DuplicatePrefectExecutionError(ValueError):
 
 
 class WriteAdmissionConflictError(ValueError):
-    """A product run already owns its one durable write-capable admission."""
+    """A product run cannot admit another execution while a cancellation is in flight."""
 
 
 class ArtifactUnavailableError(RuntimeError):
@@ -368,7 +389,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def has_pending_artifacts(self, run_id: str) -> bool: ...
 
     def add_prefect_execution(
-        self, run_id: str, link: PrefectExecutionLink, *, allocate_attempt: bool = False
+        self, run_id: str, link: PrefectExecutionLink, *, receipt_id: str, allocate_attempt: bool = False
     ) -> PrefectExecutionLink: ...
 
     def observe_prefect_execution(
@@ -398,8 +419,8 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         *,
         worker_id: str,
         terminal_at: datetime,
-        terminal_state: Literal["completed", "failed"],
-        terminal_outcome: Literal["succeeded", "failed"],
+        terminal_state: Literal["completed", "failed", "interrupted"],
+        terminal_outcome: Literal["succeeded", "failed", "ambiguous"],
         writeback: ExecutionWriteback,
     ) -> bool: ...
 
@@ -757,6 +778,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 run.outcome,
                 _json(run.summary),
                 _json(run.results),
+                run.reconciliation_required,
             ),
         )
 
@@ -891,6 +913,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         run_id: str,
         link: PrefectExecutionLink,
         *,
+        receipt_id: str,
         allocate_attempt: bool = False,
     ) -> PrefectExecutionLink:
         last_conflict: BaseException | None = None
@@ -912,6 +935,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     )
                     if cursor.fetchone() is not None:
                         _raise_active_cancellation_conflict(run_id)
+                    self._require_append_owner(cursor, run_id, receipt_id, purpose=link.purpose)
                     cursor.execute(
                         self._sql("SELECT COALESCE(MAX(position) + 1, 0) FROM prefect_executions WHERE run_id = ?"),
                         (run_id,),
@@ -930,7 +954,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         attempt_row = cursor.fetchone()
                         ordinal = int(attempt_row[0]) if attempt_row is not None else 1
                         allocated_link = link.model_copy(update={"attempt": ordinal})
-                    self._insert_prefect_execution(cursor, run_id, allocated_link, position)
+                    self._insert_prefect_execution(
+                        cursor, run_id, allocated_link, position, mutation_receipt_id=receipt_id
+                    )
                     connection.commit()
                 except Exception as exc:  # pylint: disable=broad-exception-caught
                     # DB-API drivers do not share an integrity-error base class;
@@ -955,8 +981,44 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         msg = "Prefect execution allocation loop exited unexpectedly"
         raise AssertionError(msg)
 
+    def _require_append_owner(self, cursor: _Cursor, run_id: str, receipt_id: str, *, purpose: str) -> None:
+        """Refuse an execution append that no unresolved receipt of this run owns.
+
+        A receipt is unresolved until it carries a stored response, refusals included, so
+        the append belongs to a submission still in flight, and it appends at most once. A
+        write append additionally requires the run's write-admission row to name this exact
+        receipt and this exact operation: the admission is what one request won, and nothing
+        else may spend it. A run holding a write admission accepts no read append at all.
+        """
+        cursor.execute(
+            self._sql("SELECT 1 FROM mutation_receipts WHERE receipt_id = ? AND run_id = ? AND state <> 'accepted'"),
+            (receipt_id, run_id),
+        )
+        if cursor.fetchone() is None:
+            raise ValueError(_UNRESOLVED_APPEND_REFUSED)
+        cursor.execute(
+            self._sql("SELECT 1 FROM prefect_executions WHERE mutation_receipt_id = ?"),
+            (receipt_id,),
+        )
+        if cursor.fetchone() is not None:
+            raise ValueError(_REPEATED_APPEND_REFUSED)
+        cursor.execute(self._sql("SELECT receipt_id, operation FROM write_admissions WHERE run_id = ?"), (run_id,))
+        admission = cursor.fetchone()
+        if purpose in _WRITE_OPERATIONS:
+            if admission is None or (str(admission[0]), str(admission[1])) != (receipt_id, purpose):
+                raise ValueError(_ADMITTED_APPEND_REFUSED)
+            return
+        if admission is not None:
+            raise ValueError(_ADMITTED_APPEND_REFUSED)
+
     def _insert_prefect_execution(
-        self, cursor: _Cursor, run_id: str, link: PrefectExecutionLink, position: int
+        self,
+        cursor: _Cursor,
+        run_id: str,
+        link: PrefectExecutionLink,
+        position: int,
+        *,
+        mutation_receipt_id: str | None = None,
     ) -> None:
         cursor.execute(
             self._sql(_INSERT_PREFECT_EXECUTION),
@@ -980,6 +1042,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 link.terminal_state,
                 link.terminal_outcome,
                 position,
+                mutation_receipt_id,
             ),
         )
 
@@ -1092,8 +1155,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         *,
         worker_id: str,
         terminal_at: datetime,
-        terminal_state: Literal["completed", "failed"],
-        terminal_outcome: Literal["succeeded", "failed"],
+        terminal_state: Literal["completed", "failed", "interrupted"],
+        terminal_outcome: Literal["succeeded", "failed", "ambiguous"],
         writeback: ExecutionWriteback,
     ) -> bool:
         """Commit one claimed worker verdict and its business writeback together."""
@@ -1162,6 +1225,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         flow_run_id=flow_run_id,
                         updated_at=terminal_at,
                     )
+                self._record_write_ambiguity(
+                    cursor,
+                    run_id,
+                    flow_run_id,
+                    terminal_state=terminal_state,
+                    terminal_outcome=terminal_outcome,
+                )
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -1261,7 +1331,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.execute(
                     self._sql(
                         "SELECT claimed_at, cancellation_recovery_deadline_at, cancellation_receipt_id, "
-                        "cancellation_acknowledged_at FROM prefect_executions WHERE run_id = ? AND flow_run_id = ?"
+                        "cancellation_acknowledged_at, purpose FROM prefect_executions "
+                        "WHERE run_id = ? AND flow_run_id = ?"
                     ),
                     (run_id, flow_run_id),
                 )
@@ -1270,10 +1341,14 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     connection.commit()
                     return False
                 receipt_id = str(row[2])
-                if acknowledged_at >= datetime.fromisoformat(str(row[1])):
+                claimed = row[0] is not None
+                # A claimed apply or sync may already have reached the destination, so
+                # acknowledgement cannot promise a clean stop however early it arrives.
+                claimed_write = claimed and str(row[4]) in _WRITE_OPERATIONS
+                if claimed_write or acknowledged_at >= datetime.fromisoformat(str(row[1])):
                     state, outcome, phase = (
                         ("interrupted", "ambiguous", "interrupted")
-                        if row[0] is not None
+                        if claimed
                         else ("abandoned", "abandoned", "abandoned")
                     )
                     cursor.execute(
@@ -1291,11 +1366,19 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         self._sql(_UPDATE_LATEST_EXECUTION_TERMINAL),
                         (phase, outcome, acknowledged_at.isoformat(), run_id, flow_run_id),
                     )
+                    self._record_write_ambiguity(
+                        cursor, run_id, flow_run_id, terminal_state=state, terminal_outcome=outcome
+                    )
+                    refusal = (
+                        _cancellation_ambiguous_response(run_id, receipt_id)
+                        if claimed_write
+                        else _cancellation_unconfirmed_response(run_id, receipt_id)
+                    )
                     self._complete_receipt_row(
                         cursor,
                         receipt_id,
-                        response_status=503,
-                        response_body=_cancellation_unconfirmed_response(run_id, receipt_id),
+                        response_status=int(refusal["error"]["status"]),
+                        response_body=refusal,
                         flow_run_id=flow_run_id,
                         updated_at=acknowledged_at,
                     )
@@ -1415,6 +1498,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     self._sql(_UPDATE_LATEST_EXECUTION_TERMINAL),
                     (phase, outcome, terminal_at.isoformat(), run_id, flow_run_id),
                 )
+                self._record_write_ambiguity(
+                    cursor, run_id, flow_run_id, terminal_state=state, terminal_outcome=outcome
+                )
                 if not acknowledged:
                     receipt_id = str(row[2])
                     self._complete_receipt_row(
@@ -1473,6 +1559,34 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         finally:
             connection.close()
 
+    def _record_write_ambiguity(
+        self,
+        cursor: _Cursor,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        terminal_state: str,
+        terminal_outcome: str,
+    ) -> None:
+        """Record durable write ambiguity in the transaction that made it terminal.
+
+        The condition is derived from the verdict and the execution's own purpose rather
+        than passed in, so no caller can write the column false and no write-uncertain
+        terminal path can forget it. `interrupted` / `ambiguous` is only ever written to a
+        claimed execution, so an apply or sync bearing it is a worker that may already have
+        reached the destination.
+        """
+        if (terminal_state, terminal_outcome) != ("interrupted", "ambiguous"):
+            return
+        cursor.execute(
+            self._sql(
+                "UPDATE product_runs SET reconciliation_required = TRUE WHERE run_id = ? AND EXISTS "
+                "(SELECT 1 FROM prefect_executions WHERE run_id = ? AND flow_run_id = ? "
+                "AND purpose IN ('apply', 'sync'))"
+            ),
+            (run_id, run_id, flow_run_id),
+        )
+
     def _terminalize_execution(
         self,
         run_id: str,
@@ -1509,6 +1623,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     self._sql(_UPDATE_LATEST_EXECUTION_TERMINAL),
                     (phase, outcome, terminal_at.isoformat(), run_id, flow_run_id),
                 )
+                self._record_write_ambiguity(
+                    cursor,
+                    run_id,
+                    flow_run_id,
+                    terminal_state=terminal_state,
+                    terminal_outcome=terminal_outcome,
+                )
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -1527,16 +1648,24 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         *,
         admit_write: bool = False,
     ) -> tuple[MutationReceipt, bool]:
-        """Atomically reserve actor/key and optionally create its product run."""
+        """Atomically arbitrate one run stage, reserve actor/key, and create any new run.
+
+        The arbitration and the reservation are one transaction on purpose: whichever
+        request wins a run's single write admission is decided here, before either
+        competitor can submit anything to Prefect. A loser is answered durably, by a stored
+        refusal on its own receipt, so replaying its client key replays the refusal rather
+        than racing again.
+        """
         connection = self._connect()
         try:
             cursor = connection.cursor()
             try:
                 try:
-                    cursor.execute(self._sql(_INSERT_MUTATION_RECEIPT), _receipt_values(receipt))
+                    stored = self._arbitrate_reservation(cursor, receipt, run, admit_write=admit_write)
+                    cursor.execute(self._sql(_INSERT_MUTATION_RECEIPT), _receipt_values(stored))
                     if run is not None:
                         self._insert_product_run(cursor, run)
-                    if admit_write:
+                    if admit_write and stored.state != "accepted":
                         cursor.execute(
                             self._sql("INSERT INTO write_admissions (run_id, receipt_id, operation) VALUES (?, ?, ?)"),
                             (receipt.run_id, receipt.receipt_id, receipt.operation),
@@ -1549,11 +1678,6 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     existing = self.lookup_mutation(receipt.actor, receipt.key_digest)
                     if existing.value is not None:
                         return existing.value, False
-                    if admit_write:
-                        assert receipt.run_id is not None
-                        if self._write_admission_exists(receipt.run_id):
-                            msg = f"Sync run {receipt.run_id!r} already has a write-capable admission"
-                            raise WriteAdmissionConflictError(msg) from exc
                     if run is not None and self.exists(run.run_id):
                         msg = f"Sync run ID {run.run_id!r} already exists"
                         raise DuplicateRunError(msg) from exc
@@ -1562,19 +1686,68 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.close()
         finally:
             connection.close()
-        return receipt, True
+        return stored, True
 
-    def _write_admission_exists(self, run_id: str) -> bool:
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql("SELECT 1 FROM write_admissions WHERE run_id = ?"), (run_id,))
-                return cursor.fetchone() is not None
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
+    def _arbitrate_reservation(
+        self,
+        cursor: _Cursor,
+        receipt: MutationReceipt,
+        run: ProductRun | None,
+        *,
+        admit_write: bool,
+    ) -> MutationReceipt:
+        """Return the receipt to store: the request itself, or its stored refusal.
+
+        A run being created cannot lose: its own insert is the serialization point and it
+        has no records to arbitrate against. For an existing run, the run's authoritative
+        row is locked with the store's write-first pattern before anything is read, so two
+        competing reservations cannot both observe the same unadmitted run.
+        """
+        if run is not None or receipt.resource_kind != "run" or receipt.operation not in _ARBITRATED_OPERATIONS:
+            return receipt
+        run_id = receipt.run_id
+        assert run_id is not None  # a run receipt carries its run ID (MutationReceipt invariant).
+        cursor.execute(self._sql("UPDATE product_runs SET run_id = run_id WHERE run_id = ?"), (run_id,))
+        if not self._reservation_refused(cursor, run_id, receipt.receipt_id, admit_write=admit_write):
+            return receipt
+        return receipt.model_copy(
+            update={
+                "state": "accepted",
+                "response_status": 409,
+                "response_body": _run_execution_conflict_response(run_id, receipt.receipt_id),
+            }
+        )
+
+    def _reservation_refused(self, cursor: _Cursor, run_id: str, receipt_id: str, *, admit_write: bool) -> bool:
+        """Answer whether this run may still admit the requested stage.
+
+        A run that has admitted its one write never admits another stage of any kind, even
+        after that write becomes terminal: terminal write evidence is immutable and the
+        operator's next step is a new run. A write additionally needs the run quiet — no
+        other unresolved submission and no unfinished execution — so an apply cannot race
+        a verify that has reserved but not yet submitted.
+        """
+        cursor.execute(self._sql("SELECT 1 FROM write_admissions WHERE run_id = ?"), (run_id,))
+        if cursor.fetchone() is not None:
+            return True
+        if not admit_write:
+            return False
+        # Every stage a run arbitrates is every run mutation except cancellation, which
+        # targets the execution a write already owns rather than reserving a stage.
+        cursor.execute(
+            self._sql(
+                "SELECT 1 FROM mutation_receipts WHERE run_id = ? AND receipt_id <> ? AND state <> 'accepted' "
+                "AND operation <> 'cancel'"
+            ),
+            (run_id, receipt_id),
+        )
+        if cursor.fetchone() is not None:
+            return True
+        cursor.execute(
+            self._sql("SELECT 1 FROM prefect_executions WHERE run_id = ? AND terminal_at IS NULL"),
+            (run_id,),
+        )
+        return cursor.fetchone() is not None
 
     def lookup_mutation(self, actor: str, key_digest: str) -> LookupResult[MutationReceipt]:
         connection = self._connect()
@@ -2258,10 +2431,15 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         run_id: str,
         link: PrefectExecutionLink,
         *,
+        receipt_id: str,
         allocate_attempt: bool = False,
         secrets: Sequence[str] = (),
     ) -> PrefectExecutionLink:
-        """Append one purpose-labelled execution, optionally allocating its ordinal atomically."""
+        """Append the one execution `receipt_id` owns, allocating its ordinal atomically.
+
+        `receipt_id` is the exact unresolved mutation receipt this submission reserved. It
+        is the store's internal owner relation and appears in no public resource.
+        """
         if link.submitted_at is None:
             msg = "new Prefect execution requires submitted_at"
             raise ValueError(msg)
@@ -2269,7 +2447,9 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             msg = f"Cannot link a Prefect execution to unavailable Sync run ID {run_id!r}"
             raise RunNotFoundError(msg)
         sanitized = PrefectExecutionLink.model_validate(_redact_value(link.model_dump(mode="json"), secrets))
-        return self._records.add_prefect_execution(run_id, sanitized, allocate_attempt=allocate_attempt)
+        return self._records.add_prefect_execution(
+            run_id, sanitized, receipt_id=redact(receipt_id, secrets), allocate_attempt=allocate_attempt
+        )
 
     def observe_prefect_execution(
         self,
@@ -2335,20 +2515,29 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         *,
         worker_id: str,
         terminal_at: datetime,
-        terminal_state: Literal["completed", "failed"],
-        terminal_outcome: Literal["succeeded", "failed"],
+        terminal_state: Literal["completed", "failed", "interrupted"],
+        terminal_outcome: Literal["succeeded", "failed", "ambiguous"],
         writeback: ExecutionWriteback,
         secrets: Sequence[str] = (),
     ) -> bool:
-        """Atomically commit one claimed verdict and its business writeback."""
+        """Atomically commit one claimed verdict and its business writeback.
+
+        A live worker that may already have reached the destination commits
+        `interrupted` / `ambiguous`; the same transaction records that the run requires
+        reconciliation, so the verdict and its safety evidence cannot come apart.
+        """
         if not _is_canonical_uuid(worker_id):
             raise ValueError(_INVALID_SERVICE_WORKER_ID)
-        if (terminal_state, terminal_outcome) not in {("completed", "succeeded"), ("failed", "failed")}:
+        if (terminal_state, terminal_outcome) not in {
+            ("completed", "succeeded"),
+            ("failed", "failed"),
+            ("interrupted", "ambiguous"),
+        }:
             msg = "claimed execution terminal verdict is invalid"
             raise ValueError(msg)
         _require_execution_timestamp(terminal_at)
         if isinstance(writeback, ExecutionFinishWriteback):
-            if writeback.outcome != "failed" and self._records.has_pending_artifacts(run_id):
+            if terminal_state == "completed" and self._records.has_pending_artifacts(run_id):
                 msg = f"Sync run ID {run_id!r} has an incomplete artifact publication"
                 raise ArtifactUnavailableError(msg)
             run = self.lookup_run(run_id).value
@@ -2756,6 +2945,8 @@ def _run_from_rows(
             "config_id": row[11],
             "registry_version": row[12],
             "package_checksum": row[13],
+            # SQLite stores a BOOLEAN column as 0/1; PostgreSQL returns a bool.
+            "reconciliation_required": bool(row[14]),
             "artifact_refs": [_reference_from_row(item).model_dump() for item in references],
             "prefect_executions": [
                 {
@@ -2827,6 +3018,34 @@ def _receipt_from_row(row: Sequence[Any]) -> MutationReceipt:
             "updated_at": row[16],
         }
     )
+
+
+def _run_execution_conflict_response(run_id: str, receipt_id: str) -> dict[str, Any]:
+    """The one refusal a losing plan/verify/apply/sync reservation stores on its receipt."""
+    return {
+        "error": {
+            "code": _RUN_EXECUTION_CONFLICT,
+            "message": _RUN_EXECUTION_CONFLICT_MESSAGE,
+            "status": 409,
+            "run_id": run_id,
+            "mutation_id": receipt_id,
+        }
+    }
+
+
+def _cancellation_ambiguous_response(run_id: str, receipt_id: str) -> dict[str, Any]:
+    """The answer to cancelling a claimed write: terminal, and possibly already written."""
+    return {
+        "error": {
+            "code": "cancellation-ambiguous",
+            "message": (
+                "the cancelled write may already have reached the destination; inspect it and create a new plan run"
+            ),
+            "status": 409,
+            "run_id": run_id,
+            "mutation_id": receipt_id,
+        }
+    }
 
 
 def _cancellation_terminal_response(run_id: str, receipt_id: str) -> dict[str, Any]:

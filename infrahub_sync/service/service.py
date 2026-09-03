@@ -20,7 +20,6 @@ from infrahub_sync.product_store import (
     PrefectExecutionLink,
     ProductProjection,
     ProductRun,
-    WriteAdmissionConflictError,
 )
 
 from .liveness import CancellationSelectionUnavailableError, select_cancellable_execution
@@ -46,6 +45,12 @@ if TYPE_CHECKING:
     from .auth import Principal
 
 PLAN_ARTIFACT_ID = "plan-review"
+
+
+def _reservation_outcome(receipt: MutationReceipt) -> str:
+    """Name what an already-answered receipt is: a replay, or this run's stored refusal."""
+    status = receipt.response_status
+    return "replayed" if status is None or status < 400 else "refused-run-execution-conflict"
 
 
 def _service_status(snapshot: PoolStatus) -> ServiceStatusResource:
@@ -294,30 +299,15 @@ class RunService:
                 "expected_checksum does not match the retained reviewed plan",
                 run_id=run_id,
             )
-        try:
-            receipt = self._reserve_existing(
-                run,
-                principal,
-                idempotency_key,
-                operation="apply",
-                reason=request.reason,
-                body=body,
-                admit_write=True,
-            )
-        except WriteAdmissionConflictError:
-            self._audit(
-                run_id,
-                actor=principal.actor,
-                operation="apply",
-                reason=request.reason,
-                outcome="refused-apply-admission",
-            )
-            raise self._error(
-                409,
-                "apply-already-admitted",
-                "a write-capable apply stage is already admitted for this Sync run",
-                run_id=run_id,
-            ) from None
+        receipt = self._reserve_existing(
+            run,
+            principal,
+            idempotency_key,
+            operation="apply",
+            reason=request.reason,
+            body=body,
+            admit_write=True,
+        )
         return await self._resume_or_replay(receipt, parameters, principal, request.reason)
 
     async def cancel_run(  # noqa: PLR0911  # pylint: disable=too-many-branches,too-many-return-statements,too-many-statements
@@ -640,6 +630,7 @@ class RunService:
             self._projection.add_prefect_execution(
                 receipt.run_id,
                 link,
+                receipt_id=receipt.receipt_id,
                 allocate_attempt=True,
                 secrets=self._secrets,
             )
@@ -739,7 +730,7 @@ class RunService:
                 actor=principal.actor,
                 operation=receipt.operation,
                 reason=reason,
-                outcome="replayed",
+                outcome=_reservation_outcome(receipt),
             )
             return self._stored_response(receipt)
         return await self._submit(receipt, parameters, principal, reason)

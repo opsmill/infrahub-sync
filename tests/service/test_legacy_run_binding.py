@@ -24,6 +24,7 @@ from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, 
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.flow import service_sync_run
+from tests.service.execution_fixtures import append_execution
 
 FLOW_RUN_ID = "ed4778cb-f2cf-4b1f-a87b-68be37659e93"
 WORKER_ID = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
@@ -43,7 +44,8 @@ def _legacy_run(cache: Path, run_id: str, operation: Literal["plan", "verify", "
             summary={"sync_name": "legacy-inventory"},
         )
     )
-    projection.add_prefect_execution(
+    append_execution(
+        projection,
         run_id,
         PrefectExecutionLink(
             flow_run_id=FLOW_RUN_ID, purpose=operation, attempt=1, submitted_at=datetime.now(timezone.utc)
@@ -268,7 +270,8 @@ def test_cross_product_and_partial_worker_carriers_refuse_before_runtime(
             summary={"sync_name": "legacy-inventory"},
         )
     projection.create_run(run)
-    projection.add_prefect_execution(
+    append_execution(
+        projection,
         run.run_id,
         PrefectExecutionLink(
             flow_run_id=FLOW_RUN_ID, purpose="plan", attempt=1, submitted_at=datetime.now(timezone.utc)

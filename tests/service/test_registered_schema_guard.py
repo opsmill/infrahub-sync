@@ -44,6 +44,7 @@ from infrahub_sync.service.flow import service_sync_run
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID
 from tests.configuration.validation_packages import package_data
 from tests.plan.artifact_fixtures import duplicated_key_manifest_bytes
+from tests.service.execution_fixtures import append_execution
 
 if TYPE_CHECKING:
     from infrahub_sync import SyncInstance
@@ -174,7 +175,8 @@ def _harness(
             phase="planned",
         )
     )
-    projection.add_prefect_execution(
+    append_execution(
+        projection,
         RUN_ID,
         PrefectExecutionLink(
             flow_run_id=FLOW_RUN_ID, purpose="apply", attempt=1, submitted_at=datetime.now(timezone.utc)

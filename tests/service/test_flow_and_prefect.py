@@ -49,6 +49,7 @@ from infrahub_sync.service.orchestration import (
     PrefectOrchestration,
 )
 from tests.configuration.validation_packages import package
+from tests.service.execution_fixtures import append_execution
 
 if TYPE_CHECKING:
     from prefect.client.schemas.actions import DeploymentUpdate
@@ -65,7 +66,8 @@ def _claimed_worker_execution(monkeypatch: pytest.MonkeyPatch) -> None:
         flow_run_id = str(uuid5(NAMESPACE_URL, run_id))
         run = projection.lookup_run(run_id).value
         if run is not None and not any(link.flow_run_id == flow_run_id for link in run.prefect_executions):
-            projection.add_prefect_execution(
+            append_execution(
+                projection,
                 run_id,
                 PrefectExecutionLink(flow_run_id=flow_run_id, purpose="test", attempt=1),
             )

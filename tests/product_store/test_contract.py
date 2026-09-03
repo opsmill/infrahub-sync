@@ -12,6 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+from itertools import count
 from pathlib import Path
 from threading import Barrier, Event, local
 from types import SimpleNamespace
@@ -45,7 +46,13 @@ from infrahub_sync.product_store import (
     local_product_projection,
 )
 from infrahub_sync.product_store import store as product_store_store
-from infrahub_sync.product_store.store import FileArtifactStore, PostgreSQLRunStore, S3ArtifactStore, SQLiteRunStore
+from infrahub_sync.product_store.store import (
+    FileArtifactStore,
+    PostgreSQLRunStore,
+    S3ArtifactStore,
+    SQLiteRunStore,
+    _RelationalRunStore,
+)
 
 # This intentionally mirrors infrahub_sync/product_store/__init__.py's __all__, hand-maintained
 # so a change to the module's exports has to touch this list too.
@@ -266,17 +273,20 @@ class _PositionConflictOnceSQLiteStore(SQLiteRunStore):
         self.insert_calls = 0
         super().__init__(database)
 
-    def _insert_prefect_execution(self, cursor, run_id, link, position):
+    def _insert_prefect_execution(self, cursor, run_id, link, position, *, mutation_receipt_id=None):
         self.insert_calls += 1
         if self.insert_calls == 1:
             error = _FakeSQLiteIntegrityError("synthetic position race")
             error.sqlite_errorcode = 2067
             raise error
-        return super()._insert_prefect_execution(cursor, run_id, link, position)
+        return super()._insert_prefect_execution(
+            cursor, run_id, link, position, mutation_receipt_id=mutation_receipt_id
+        )
 
 
 class _ChildConflictSQLiteStore(SQLiteRunStore):
-    def _insert_prefect_execution(self, cursor, run_id, link, position):  # noqa: ARG002, PLR6301
+    def _insert_prefect_execution(self, cursor, run_id, link, position, *, mutation_receipt_id=None):  # noqa: PLR6301
+        _ = cursor, run_id, link, position, mutation_receipt_id
         error = _FakeSQLiteIntegrityError("synthetic child uniqueness failure")
         error.sqlite_errorcode = 2067
         raise error
@@ -472,6 +482,41 @@ def _receipt(  # noqa: PLR0913 - receipt factory exposes contract dimensions.
         created_at=now,
         updated_at=now,
     )
+
+
+_APPEND_ORDINAL = count(1)
+_STAGE_OPERATIONS = ("plan", "verify", "apply", "sync")
+
+
+def _append_execution(
+    target: ProductProjection | _RelationalRunStore,
+    run_id: str,
+    link: PrefectExecutionLink,
+    *,
+    allocate_attempt: bool = False,
+    secrets: Sequence[str] = (),
+) -> PrefectExecutionLink:
+    """Reserve the mutation receipt that owns one execution append, then append it.
+
+    Every execution belongs to exactly one still-unresolved submission, so a case that
+    wants a link has to name the receipt that asked for it. A purpose outside the four
+    stages is owned by a cancellation receipt, the one kind the stage arbitration leaves
+    alone.
+    """
+    ordinal = next(_APPEND_ORDINAL)
+    receipt = _receipt(
+        f"m-append-{ordinal}",
+        run_id=run_id,
+        client_key=f"append-key-{ordinal}",
+        operation=link.purpose if link.purpose in _STAGE_OPERATIONS else "cancel",
+    )
+    if isinstance(target, ProductProjection):
+        target.reserve_mutation(receipt)
+        return target.add_prefect_execution(
+            run_id, link, receipt_id=receipt.receipt_id, allocate_attempt=allocate_attempt, secrets=secrets
+        )
+    target.reserve_mutation(receipt, None)
+    return target.add_prefect_execution(run_id, link, receipt_id=receipt.receipt_id, allocate_attempt=allocate_attempt)
 
 
 def _configuration_declaration(**settings_overrides: object) -> dict[str, Any]:
@@ -795,6 +840,7 @@ def test_sqlite_concurrent_mutation_reservation_creates_exactly_one_product_run(
 
 
 def test_write_capable_mutation_admission_is_atomic_on_both_profiles(provider: ProductProjection) -> None:
+    """One admission wins; the loser keeps a receipt carrying its own stored refusal."""
     provider.create_run(_run())
 
     def reserve(position: int) -> str:
@@ -804,11 +850,8 @@ def test_write_capable_mutation_admission_is_atomic_on_both_profiles(provider: P
             operation="apply",
             target_run_id="run-001",
         )
-        try:
-            provider.reserve_mutation(receipt, admit_write=True)
-        except WriteAdmissionConflictError:
-            return "refused"
-        return "admitted"
+        reserved, _created = provider.reserve_mutation(receipt, admit_write=True)
+        return "refused" if reserved.state == "accepted" else "admitted"
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         outcomes = list(pool.map(reserve, range(2)))
@@ -818,7 +861,8 @@ def test_write_capable_mutation_admission_is_atomic_on_both_profiles(provider: P
         provider.lookup_mutation("operator@example.com", sha256(f"apply-key-{position}".encode()).hexdigest())
         for position in range(2)
     ]
-    assert sum(receipt.available for receipt in receipts) == 1
+    assert all(receipt.available for receipt in receipts), "both requests keep a durable answer"
+    assert sum(receipt.value.state == "reserved" for receipt in receipts if receipt.value is not None) == 1
 
 
 def test_write_admission_exact_receipt_replay_precedes_the_run_conflict(provider: ProductProjection) -> None:
@@ -914,7 +958,8 @@ def test_sqlite_foreign_key_failure_passes_through_as_integrity_error(tmp_path: 
     store = SQLiteRunStore(tmp_path / "records.sqlite3")
 
     with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY constraint failed"):
-        store.add_prefect_execution(
+        _append_execution(
+            store,
             "missing-run",
             PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1),
         )
@@ -973,7 +1018,7 @@ def test_every_prefect_link_field_and_multiple_attempts_round_trip(provider: Pro
 
     provider.create_run(expected)
     for link in links:
-        provider.add_prefect_execution(expected.run_id, link)
+        _append_execution(provider, expected.run_id, link)
 
     loaded = provider.lookup_run(expected.run_id).value
     assert loaded is not None
@@ -1164,7 +1209,7 @@ def test_new_execution_requires_submitted_at_without_persistence(provider: Produ
     link = PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=None)
 
     with pytest.raises(ValueError, match=r"^new Prefect execution requires submitted_at$"):
-        provider.add_prefect_execution("run-001", link)
+        _append_execution(provider, "run-001", link)
 
     stored = provider.lookup_run("run-001").value
     assert stored is not None
@@ -1215,7 +1260,8 @@ def test_migrated_execution_claim_uses_observation_fallback_at_admission_deadlin
         timezone(timedelta(hours=-4))
     )
     projection.create_run(_run())
-    projection.add_prefect_execution(
+    _append_execution(
+        projection,
         "run-001",
         PrefectExecutionLink(
             flow_run_id="flow-001",
@@ -1259,7 +1305,8 @@ def test_legacy_execution_without_any_admission_anchor_remains_claimable(profile
     projection = ProductProjection(records, FileArtifactStore(tmp_path / f"objects-{profile}"))
     observed_at = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
     projection.create_run(_run())
-    projection.add_prefect_execution(
+    _append_execution(
+        projection,
         "run-001",
         PrefectExecutionLink(
             flow_run_id="flow-001",
@@ -1291,8 +1338,8 @@ def test_execution_claim_stall_and_terminal_cas_contract(provider: ProductProjec
     now = datetime(2026, 8, 29, tzinfo=timezone.utc)
     worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
     )
 
     assert provider.mark_execution_stalled("run-001", "flow-001", stalled_at=now)
@@ -1325,7 +1372,8 @@ def test_execution_claim_respects_inclusive_admission_ttl(
     claimed_at = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
     worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
     provider.create_run(_run())
-    provider.add_prefect_execution(
+    _append_execution(
+        provider,
         "run-001",
         PrefectExecutionLink(
             flow_run_id="flow-001",
@@ -1362,8 +1410,8 @@ def test_execution_liveness_mutations_refuse_naive_timestamps_without_writing(
     naive = now.replace(tzinfo=None)
     worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
     )
     if mutation == "interrupt":
         provider.claim_execution("run-001", "flow-001", worker_id=worker_id, claimed_at=now)
@@ -1403,8 +1451,8 @@ def test_every_execution_terminal_transition_refuses_naive_timestamp_without_wri
     now = datetime(2026, 8, 29, tzinfo=timezone.utc)
     worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
     )
     if transition in {"interrupt", "commit"}:
         assert provider.claim_execution("run-001", "flow-001", worker_id=worker_id, claimed_at=now)
@@ -1444,7 +1492,8 @@ def test_claim_and_abandon_race_has_one_winner(provider: ProductProjection, age_
     now = datetime(2026, 8, 29, tzinfo=timezone.utc)
     worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
     provider.create_run(_run())
-    provider.add_prefect_execution(
+    _append_execution(
+        provider,
         "run-001",
         PrefectExecutionLink(
             flow_run_id="flow-001",
@@ -1485,7 +1534,8 @@ def test_migrated_claim_and_abandon_race_at_deadline_has_one_winner(profile: str
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
     worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
     projection.create_run(_run())
-    projection.add_prefect_execution(
+    _append_execution(
+        projection,
         "run-001",
         PrefectExecutionLink(
             flow_run_id="flow-001",
@@ -1524,8 +1574,8 @@ def test_migrated_claim_and_abandon_race_at_deadline_has_one_winner(profile: str
 def test_execution_claim_refuses_invalid_worker_identity_without_mutation(provider: ProductProjection) -> None:
     now = datetime(2026, 8, 29, tzinfo=timezone.utc)
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
     )
 
     with pytest.raises(ValueError, match="service worker identity is invalid"):
@@ -1541,8 +1591,8 @@ def test_claimed_finish_writeback_is_atomic_and_worker_bound(provider: ProductPr
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
     worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
     )
     assert provider.claim_execution("run-001", "flow-001", worker_id=worker_id, claimed_at=now)
     writeback = product_store.ExecutionFinishWriteback(
@@ -1594,10 +1644,11 @@ def test_older_execution_terminalization_settles_only_its_link_and_receipt(
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
     worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-older", purpose="plan", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-older", purpose="plan", attempt=1, submitted_at=now)
     )
-    provider.add_prefect_execution(
+    _append_execution(
+        provider,
         "run-001",
         PrefectExecutionLink(
             flow_run_id="flow-latest", purpose="verify", attempt=1, submitted_at=now + timedelta(seconds=1)
@@ -1720,7 +1771,8 @@ def test_cross_link_late_writer_cannot_overwrite_newer_execution_result(provider
     worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
     provider.create_run(_run())
     for attempt, flow_run_id in enumerate(("flow-older", "flow-latest"), start=1):
-        provider.add_prefect_execution(
+        _append_execution(
+            provider,
             "run-001",
             PrefectExecutionLink(flow_run_id=flow_run_id, purpose="plan", attempt=attempt, submitted_at=now),
         )
@@ -1786,8 +1838,8 @@ def test_cancellation_saga_persists_intent_acknowledgement_and_clean_terminal(pr
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
     receipt = _receipt(operation="cancel", target_run_id="run-001")
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
     )
     provider.reserve_mutation(receipt)
     assert provider.claim_mutation(receipt.receipt_id)
@@ -1836,15 +1888,16 @@ def test_execution_append_and_cancellation_intent_serialize_in_both_orders(
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
     receipt = _receipt(operation="cancel", target_run_id="run-001")
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-old", purpose="plan", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-old", purpose="plan", attempt=1, submitted_at=now)
     )
     provider.reserve_mutation(receipt)
     assert provider.claim_mutation(receipt.receipt_id)
 
     def append() -> bool:
         try:
-            provider.add_prefect_execution(
+            _append_execution(
+                provider,
                 "run-001",
                 PrefectExecutionLink(
                     flow_run_id="flow-new",
@@ -1886,8 +1939,8 @@ def test_execution_append_and_cancellation_intent_race_has_one_winner(provider: 
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
     receipt = _receipt(operation="cancel", target_run_id="run-001")
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-old", purpose="plan", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-old", purpose="plan", attempt=1, submitted_at=now)
     )
     provider.reserve_mutation(receipt)
     assert provider.claim_mutation(receipt.receipt_id)
@@ -1896,7 +1949,8 @@ def test_execution_append_and_cancellation_intent_race_has_one_winner(provider: 
     def append() -> bool:
         barrier.wait()
         try:
-            provider.add_prefect_execution(
+            _append_execution(
+                provider,
                 "run-001",
                 PrefectExecutionLink(
                     flow_run_id="flow-new",
@@ -1940,8 +1994,8 @@ def test_cancellation_intent_admission_revalidates_only_its_exact_receipt_owner(
         client_key="competitor-key",
     )
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-old", purpose="plan", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-old", purpose="plan", attempt=1, submitted_at=now)
     )
     for receipt in (owner, competitor):
         provider.reserve_mutation(receipt)
@@ -1970,8 +2024,8 @@ def test_cancellation_intent_rejects_naive_time_without_partial_state(provider: 
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
     receipt = _receipt(operation="cancel", target_run_id="run-001")
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
     )
     provider.reserve_mutation(receipt)
     assert provider.claim_mutation(receipt.receipt_id)
@@ -2000,8 +2054,8 @@ def test_cancellation_intent_requires_the_policy_owned_recovery_deadline(
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
     receipt = _receipt(operation="cancel", target_run_id="run-001")
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
     )
     provider.reserve_mutation(receipt)
     assert provider.claim_mutation(receipt.receipt_id)
@@ -2042,8 +2096,8 @@ def test_cancellation_expiry_is_inclusive_bounded_and_receipt_stable(
     worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
     receipt = _receipt(operation="cancel", target_run_id="run-001")
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
     )
     claimed = claim_state == "claimed"
     acknowledged = ack_state == "acknowledged"
@@ -2103,8 +2157,8 @@ def test_cancellation_acknowledgement_at_or_after_deadline_atomically_expires(
     deadline = now + timedelta(seconds=30)
     receipt = _receipt(operation="cancel", target_run_id="run-001")
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
     )
     provider.reserve_mutation(receipt)
     assert provider.claim_mutation(receipt.receipt_id)
@@ -2146,8 +2200,8 @@ def test_cancellation_acknowledgement_and_expiry_race_converges_at_deadline(
     deadline = now + timedelta(seconds=30)
     receipt = _receipt(operation="cancel", target_run_id="run-001")
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
     )
     provider.reserve_mutation(receipt)
     assert provider.claim_mutation(receipt.receipt_id)
@@ -2195,8 +2249,8 @@ def test_business_commit_wins_unacknowledged_cancellation_and_settles_receipt(pr
     worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
     receipt = _receipt(operation="cancel", target_run_id="run-001")
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="verify", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="verify", attempt=1, submitted_at=now)
     )
     assert provider.claim_execution("run-001", "flow-001", worker_id=worker_id, claimed_at=now)
     provider.reserve_mutation(receipt)
@@ -2237,8 +2291,8 @@ def test_external_cancelled_observation_without_acknowledgement_is_not_clean(pro
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
     receipt = _receipt(operation="cancel", target_run_id="run-001")
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
     )
     provider.reserve_mutation(receipt)
     assert provider.claim_mutation(receipt.receipt_id)
@@ -2266,8 +2320,8 @@ def test_terminal_cancelled_observation_serializes_before_expiry(provider: Produ
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
     receipt = _receipt(operation="cancel", target_run_id="run-001")
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
     )
     provider.reserve_mutation(receipt)
     assert provider.claim_mutation(receipt.receipt_id)
@@ -2313,8 +2367,8 @@ def test_claimed_success_and_failure_writebacks_have_one_consistent_winner(provi
     now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
     worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
     provider.create_run(_run())
-    provider.add_prefect_execution(
-        "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
+    _append_execution(
+        provider, "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=now)
     )
     assert provider.claim_execution("run-001", "flow-001", worker_id=worker_id, claimed_at=now)
     barrier = Barrier(2)
@@ -2369,10 +2423,10 @@ def test_claimed_success_and_failure_writebacks_have_one_consistent_winner(provi
 def test_duplicate_prefect_execution_is_rejected_when_appended(provider: ProductProjection) -> None:
     link = PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1)
     provider.create_run(_run())
-    provider.add_prefect_execution("run-001", link)
+    _append_execution(provider, "run-001", link)
 
     with pytest.raises(DuplicatePrefectExecutionError, match="already linked"):
-        provider.add_prefect_execution("run-001", link)
+        _append_execution(provider, "run-001", link)
 
 
 def test_prefect_position_conflict_retries_without_misreporting_a_duplicate(tmp_path: Path) -> None:
@@ -2380,7 +2434,8 @@ def test_prefect_position_conflict_retries_without_misreporting_a_duplicate(tmp_
     projection = ProductProjection(records, FileArtifactStore(tmp_path / "objects"))
     projection.create_run(_run())
 
-    projection.add_prefect_execution(
+    _append_execution(
+        projection,
         "run-001",
         PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1),
     )
@@ -2395,7 +2450,8 @@ def test_service_prefect_attempt_ordinals_are_allocated_atomically(provider: Pro
     provider.create_run(_run())
 
     def append(position: int) -> PrefectExecutionLink:
-        return provider.add_prefect_execution(
+        return _append_execution(
+            provider,
             "run-001",
             PrefectExecutionLink(flow_run_id=f"flow-{position}", purpose="verify", attempt=1),
             allocate_attempt=True,
@@ -2415,7 +2471,8 @@ def test_mutator_existence_checks_do_not_hydrate_the_run(tmp_path: Path) -> None
     projection = ProductProjection(records, FileArtifactStore(tmp_path / "objects"))
     records.create(_run())
 
-    projection.add_prefect_execution(
+    _append_execution(
+        projection,
         "run-001",
         PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1),
     )
@@ -2424,7 +2481,8 @@ def test_mutator_existence_checks_do_not_hydrate_the_run(tmp_path: Path) -> None
 
 def test_missing_run_prefect_mutator_raises_specific_public_error(provider: ProductProjection) -> None:
     with pytest.raises(RunNotFoundError, match="unavailable Sync run ID"):
-        provider.add_prefect_execution(
+        _append_execution(
+            provider,
             "missing-run",
             PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1),
         )
@@ -3161,7 +3219,8 @@ def test_secret_canary_is_absent_from_raw_provider_contents(profile: str, tmp_pa
         _run().model_copy(update={"actor": secret, "results": {"credential": secret}}),
         secrets=(secret,),
     )
-    projection.add_prefect_execution(
+    _append_execution(
+        projection,
         "run-001",
         PrefectExecutionLink(flow_run_id="flow-001", purpose=f"plan:{secret}", attempt=1),
         secrets=(secret,),
@@ -3774,11 +3833,15 @@ def test_concurrent_identical_checksums_deduplicate_to_exactly_one_row_on_both_p
 
 # --- Run-to-configuration binding columns (deliberately inert so far) -------------------------
 
+# The pre-binding shape the additive migration still brings forward. It carries
+# ``reconciliation_required`` because that column is part of the clean V3 table and is
+# never migrated onto an older one: V3 development databases are recreated across it.
 _LEGACY_PRODUCT_RUNS_TABLE = """
 CREATE TABLE product_runs (
     run_id TEXT PRIMARY KEY, operation TEXT NOT NULL, configuration_reference TEXT NOT NULL,
     actor TEXT, audit_links TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
-    phase TEXT NOT NULL, outcome TEXT, summary TEXT NOT NULL, results TEXT NOT NULL
+    phase TEXT NOT NULL, outcome TEXT, summary TEXT NOT NULL, results TEXT NOT NULL,
+    reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE
 );
 """
 _CONFIGURATION_BINDING_COLUMN_NAMES = ("config_id", "registry_version", "package_checksum")
@@ -3854,7 +3917,7 @@ def test_migration_is_idempotent_across_repeated_store_construction(tmp_path: Pa
 
 def test_existing_run_lifecycle_is_unaffected_by_the_new_binding_columns(provider: ProductProjection) -> None:
     provider.create_run(_run())
-    provider.add_prefect_execution("run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1))
+    _append_execution(provider, "run-001", PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1))
     provider.publish_artifact("run-001", artifact_id="plan", kind="plan", media_type="application/json", data=b"{}")
 
     provider.finish_run("run-001", phase="planned", outcome="succeeded", summary={"create": 1}, results={})

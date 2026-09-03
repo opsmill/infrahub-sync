@@ -177,6 +177,10 @@ class ProductRun(BaseModel):
     outcome: str | None = None
     summary: dict[str, Any] = Field(default_factory=dict)
     results: dict[str, Any] = Field(default_factory=dict)
+    # The run's one authoritative write-safety fact, never carried in ``results``: a write
+    # execution ended without proving what reached the destination, so an operator must
+    # inspect it and plan again. Nothing sets it back to false.
+    reconciliation_required: bool = False
     artifact_refs: tuple[ArtifactReference, ...] = ()
     prefect_executions: tuple[PrefectExecutionLink, ...] = ()
 
@@ -298,12 +302,19 @@ class MutationReceipt(BaseModel):
         ):
             msg = "a configuration mutation receipt cannot carry run or Prefect identifiers"
             raise ValueError(msg)
-        if self.state == "accepted" and (
-            self.response_status is None
-            or self.response_body is None
-            or (self.resource_kind == "run" and self.flow_run_id is None)
+        if self.state == "accepted" and (self.response_status is None or self.response_body is None):
+            msg = "an accepted mutation receipt requires its stored status and response"
+            raise ValueError(msg)
+        # A run receipt answered with a refusal never reached Prefect, so it has no
+        # flow-run ID to carry; only an accepted submission does.
+        if (
+            self.state == "accepted"
+            and self.resource_kind == "run"
+            and self.flow_run_id is None
+            and self.response_status is not None
+            and self.response_status < 400
         ):
-            msg = "an accepted mutation receipt requires its status, response, and Prefect flow-run ID"
+            msg = "an accepted run mutation receipt requires its Prefect flow-run ID"
             raise ValueError(msg)
         if self.state in {"reserved", "processing"} and any(value is not None for value in accepted_values):
             msg = "an incomplete mutation receipt cannot carry an accepted response"
