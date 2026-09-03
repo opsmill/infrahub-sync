@@ -1,7 +1,8 @@
 """Configuration-scoped PostgreSQL advisory guard that serializes one configuration's writes.
 
 The guard takes a **session-level** advisory lock on **one dedicated direct
-PostgreSQL connection**. Both properties are load-bearing:
+PostgreSQL connection**. Neither property is a preference; each one is required
+for the guard to exclude anything at all:
 
 - session level, because a write is held across many destination operations and a
   transaction-scoped lock would be released at the first commit; and
@@ -9,6 +10,13 @@ PostgreSQL connection**. Both properties are load-bearing:
   session across clients, so the lock and the writer would no longer be the same
   session. **Transaction-mode PgBouncer is unsupported.** Session-mode pooling, or
   a direct connection, is required.
+
+Every provider and cleanup boundary contains all exception classes, not only
+`psycopg.Error`: a connection, cursor, or protocol implementation may raise
+anything, and an interrupt can arrive mid-statement. A provider `Exception`
+becomes a sanitized guard failure, a non-`Exception` `BaseException` is re-raised
+unchanged once the session is retired, and a cleanup failure never replaces the
+body exception or the primary failure already unwinding.
 
 The guard is inert on its own: nothing in the supported write path calls it yet.
 """
@@ -197,11 +205,14 @@ class ApplyGuard:
         if self._state != "held":
             _fail(self._failure(ApplyGuardOwnershipError, _RETIRED))
         try:
-            row = self._connection.execute(_OWNERSHIP, self._lock_columns()).fetchone()
-        except psycopg.Error as exc:
+            row = self._connection.execute(_OWNERSHIP, _lock_columns(self._key)).fetchone()
+        except Exception as exc:  # noqa: BLE001 - one provider boundary; classified here.
             failure = self._failure(ApplyGuardOwnershipError, _SESSION_LOST.format(type(exc).__name__), exc)
             self.retire()
             _fail(failure)
+        except BaseException:  # Contained, then re-raised unchanged.
+            self.retire()
+            raise
         if row != (self._backend_pid, True):
             self.retire()
             _fail(self._failure(ApplyGuardOwnershipError, _NOT_OWNED))
@@ -210,8 +221,9 @@ class ApplyGuard:
         """Confirm the provider released exactly this key, then close the session.
 
         Callers may confirm release explicitly before publishing any success;
-        leaving the `hold_apply_guard` block confirms it otherwise. Repeating a
-        confirmed release is a no-op.
+        leaving the `hold_apply_guard` block confirms it otherwise. Only a
+        confirmed unlock followed by a successful close is a release, so repeating
+        one is a no-op while every other outcome leaves the session retired.
         """
         if self._state == "released":
             return
@@ -219,23 +231,28 @@ class ApplyGuard:
             _fail(self._failure(ApplyGuardReleaseError, _RETIRED))
         try:
             row = self._connection.execute(_RELEASE, (self._key,)).fetchone()
-        except psycopg.Error as exc:
+        except Exception as exc:  # noqa: BLE001 - one provider boundary; classified here.
             failure = self._failure(ApplyGuardReleaseError, _RELEASE_FAILED.format(type(exc).__name__), exc)
             self.retire()
             _fail(failure)
+        except BaseException:  # Contained, then re-raised unchanged.
+            self.retire()
+            raise
         confirmed = row == (True, self._backend_pid)
-        self._state = "released" if confirmed else "retired"
         close_failure = self._close()
         if not confirmed:
+            self._state = "retired"
             _fail(self._failure(ApplyGuardReleaseError, _UNCONFIRMED))
         if close_failure is not None:
+            self._state = "retired"
             _fail(close_failure)
+        self._state = "released"
 
     def retire(self) -> None:
         """Discard the session permanently; closing it releases any key it holds.
 
-        Never raises, so a caller unwinding on its own exception keeps that
-        exception rather than a cleanup failure.
+        Never raises, whatever the connection does, so a caller unwinding on its
+        own failure keeps that failure rather than a cleanup one.
         """
         if self._state != "held":
             return
@@ -243,16 +260,17 @@ class ApplyGuard:
         self._close()
 
     def _close(self) -> ApplyGuardError | None:
-        """Close the dedicated session, returning a failure rather than raising."""
+        """Close the dedicated session, returning any failure rather than raising.
+
+        A close failure is never allowed to replace the body exception or the
+        primary provider failure that a caller is already unwinding on, so this
+        boundary contains every exception class and reports the outcome instead.
+        """
         try:
             self._connection.close()
-        except psycopg.Error as exc:
+        except BaseException as exc:  # noqa: BLE001 - one cleanup boundary; never replaces a primary failure.
             return self._failure(ApplyGuardReleaseError, _CLOSE_FAILED.format(type(exc).__name__), exc)
         return None
-
-    def _lock_columns(self) -> tuple[int, int]:
-        """Split the signed key into the `oid` pair `pg_locks` records."""
-        return (self._key >> 32) & _OID_MASK, self._key & _OID_MASK
 
     def _failure(
         self, error_type: type[ApplyGuardError], message: str, cause: BaseException | None = None
@@ -308,20 +326,43 @@ def _acquire(
         connection = connect()
         connection.execute(_SET_DEADLINE, (str(milliseconds),))
         connection.execute(_ACQUIRE, (key,))
-        row = connection.execute(_OWNERSHIP, ((key >> 32) & _OID_MASK, key & _OID_MASK)).fetchone()
-    except psycopg.Error as exc:
-        if exc.sqlstate == _LOCK_NOT_AVAILABLE:
-            failure = _guard_failure(ApplyGuardContentionError, _CONTENDED, exc, secrets)
-        else:
-            failure = _guard_failure(ApplyGuardUnavailableError, _UNAVAILABLE.format(type(exc).__name__), exc, secrets)
+        row = connection.execute(_OWNERSHIP, _lock_columns(key)).fetchone()
+    except Exception as exc:  # noqa: BLE001 - one provider boundary; classified below.
+        failure = _acquisition_failure(exc, secrets)
+    except BaseException:  # Contained, then re-raised unchanged.
+        if connection is not None:
+            _discard(connection)
+        raise
     else:
         if row is not None and row[1] is True:
             return ApplyGuard(connection=connection, key=key, backend_pid=row[0], secrets=secrets)
         failure = _guard_failure(ApplyGuardUnavailableError, _UNPROVEN, None, secrets)
     if connection is not None:
-        with suppress(psycopg.Error):
-            connection.close()
+        _discard(connection)
     _fail(failure)
+
+
+def _acquisition_failure(exc: Exception, secrets: Sequence[str]) -> ApplyGuardError:
+    """Classify one acquisition failure. Only a driver lock timeout is contention."""
+    if isinstance(exc, psycopg.Error) and exc.sqlstate == _LOCK_NOT_AVAILABLE:
+        return _guard_failure(ApplyGuardContentionError, _CONTENDED, exc, secrets)
+    return _guard_failure(ApplyGuardUnavailableError, _UNAVAILABLE.format(type(exc).__name__), exc, secrets)
+
+
+def _discard(connection: GuardConnection) -> None:
+    """Close a session that never became a hold, keeping the primary failure.
+
+    Closing releases any advisory lock the session took, so a discarded session
+    cannot keep holding a configuration. A failure here is never reported: the
+    failure that caused the discard is the one the caller needs.
+    """
+    with suppress(BaseException):
+        connection.close()
+
+
+def _lock_columns(key: int) -> tuple[int, int]:
+    """Split the signed key into the `oid` pair `pg_locks` records."""
+    return (key >> 32) & _OID_MASK, key & _OID_MASK
 
 
 def _guard_failure(
