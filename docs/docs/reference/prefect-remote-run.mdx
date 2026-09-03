@@ -2,9 +2,15 @@
 title: Prefect remote run
 ---
 
-`infrahub-sync` ships an optional Prefect integration that exposes one sync run as a
-Prefect deployment, so a plan or a sync can be started and observed over Prefect's own
-REST API instead of by shelling out to the CLI.
+`infrahub-sync` ships an optional Prefect integration that exposes one read-only plan run
+as a Prefect deployment, so a plan can be started and observed over Prefect's own REST API
+instead of by shelling out to the CLI.
+
+This deployment does not write. `operation="sync"` is refused, because a composed sync
+derives its own plan and applies it in one call and can therefore prove nothing about who
+owns the destination between its operations. Writes go through the
+[Sync HTTP API](./sync-http-api.mdx), which reviews a plan and then applies it while
+holding the registered configuration's write guard.
 
 The flow parameters, returned result fields, and summary log line form the remote-run
 contract. Changes may extend that contract, but must not silently reshape existing fields.
@@ -91,8 +97,8 @@ a credential, or an environment override.
 | Parameter | Type | Default | Meaning |
 |---|---|---|---|
 | `sync_name` | `str` | required | Logical name of a configuration in `INFRAHUB_SYNC_CONFIG_DIRECTORY`, matched by exact string equality. |
-| `operation` | `"plan"` or `"sync"` | `"plan"` | `plan` is read-only and maps to the CLI `diff` lifecycle; `sync` writes. |
-| `confirm_writes` | `bool` | `false` | Must be `true` for `operation="sync"`. Has no effect on a plan. |
+| `operation` | `"plan"` or `"sync"` | `"plan"` | Only `plan` runs here. It is read-only and maps to the CLI `diff` lifecycle. `sync` is refused; see below. |
+| `confirm_writes` | `bool` | `false` | Retained for the parameter contract. It has no effect on a plan, and cannot make `sync` runnable here. |
 | `branch` | `str` or `null` | `null` | Infrahub branch, forwarded exactly as the CLI `--branch` option. Used only when the configuration's own `settings.branch` is unset — a configured branch takes precedence over this parameter. With neither set, `main` is used. |
 
 Credentials and endpoints stay in the runner's environment. They are never accepted as
@@ -106,12 +112,13 @@ replaced, because replacing a shorter value can corrupt ordinary message text
 lab-grade `CISCO_APIC_PASSWORD=admin` — is therefore not redacted from a failure message.
 Use credentials of realistic length on any runner whose logs are not private.
 
-### The confirm-writes gate
+### The write gate
 
-`operation="sync"` without `confirm_writes=true` fails before either adapter is loaded
-and before anything is read or written: the flow run ends `FAILED` with a state message
-explaining that `confirm_writes=true` is required. The same gate applies to any
-programmatic caller of the shared execution surface, not only to remote runs.
+`operation="sync"` fails before either adapter is loaded and before anything is read or
+written, whatever `confirm_writes` says: the flow run ends `FAILED` with a state message
+saying the composed sync writer is not supported here and to compose plan, verify, and apply
+through the Sync API. The same gate applies to any programmatic caller of the shared
+execution surface, not only to remote runs.
 
 An `operation` value other than `plan` or `sync` is rejected by Prefect's parameter
 validation when the run is created — the API returns `409` and no flow run is created, so
@@ -132,25 +139,10 @@ A successful run returns exactly these fields:
 | `artifact_path` | `str` | Absolute path of the run directory **on the runner host** |
 
 `changed` is true exactly when `status` is not `no-change`, and exactly when the summary
-counts sum to more than zero. `status="planned"` occurs only for a plan and
-`status="applied"` only for a sync. `artifact_path` holds the ordinary sync artifacts
-(`run.json`, `plan.parquet`); those files are local to the runner and are not retrievable
-through Prefect.
-
-:::warning `changed` is not "the destination was written"
-
-`changed` reports what the run **materialized as plan rows**, not whether the destination
-was written. The two can disagree in one case: the engine gates a sync on a recursive
-difference check, while the plan materializes only the diff root's direct children. A
-difference that exists solely in nested child elements therefore lets the sync run — and
-write — while materializing zero rows, so the result comes back
-`status="no-change"`, `changed=false`, and an all-zero `summary`.
-
-Do not read `changed=false` as "the destination was not touched". For a definitive
-account of what a run did, read the artifacts under `artifact_path` on the runner host.
-This is a known limit of the direct Prefect deployment.
-
-:::
+counts sum to more than zero. A plan returns `planned` when it materialized rows and
+`no-change` when it did not. `artifact_path` holds the ordinary run artifacts (`run.json`,
+`plan.parquet`); those files are local to the runner and are not retrievable through
+Prefect.
 
 ### Reading the result remotely
 
@@ -173,8 +165,7 @@ originating logger name preserved.
 | Prefect state | `status` | `run.json` `status` | Meaning |
 |---|---|---|---|
 | `COMPLETED` | `planned` | `dry-run` | Plan with changes; nothing was written |
-| `COMPLETED` | `no-change` | `dry-run` (plan) or `applied` (sync) | The run materialized no plan rows — normally because the destination already matches the source, but see the `changed` warning above for the nested-difference case in which a sync writes and still reports `no-change` |
-| `COMPLETED` | `applied` | `applied` | Sync that wrote the changes |
+| `COMPLETED` | `no-change` | `dry-run` | The plan materialized no rows, normally because the destination already matches the source |
 | `FAILED` | no result returned | `failed`, or no run directory when the refusal precedes execution | Validation refusal or execution failure; the sanitized cause is the Prefect state message |
 
 ## Scope and limitations

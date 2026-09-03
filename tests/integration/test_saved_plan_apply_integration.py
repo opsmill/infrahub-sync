@@ -114,6 +114,7 @@ from infrahub_sync.adapters.infrahub import InfrahubAdapter
 from infrahub_sync.plan import read_saved_plan
 from infrahub_sync.plan.errors import OperationApplyFailedError, PeerAmbiguousError
 from infrahub_sync.utils import find_missing_schema_model, get_instance, get_potenda_from_instance, render_adapter
+from tests.plan.ownership_fixtures import granted_ownership
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
@@ -758,9 +759,9 @@ def _seed_the_peer_kinds(workspace: Path, environment: Mapping[str, str], suffix
         environment=environment,
     )
     run_id, _ = _plan_run(seed_config)
-    get_potenda_from_instance(
-        sync_instance=_sync_instance(seed_config), run_id=run_id, show_progress=False
-    ).apply_plan()
+    get_potenda_from_instance(sync_instance=_sync_instance(seed_config), run_id=run_id, show_progress=False).apply_plan(
+        ownership=granted_ownership()
+    )
 
 
 def _unreferenced_tag(client: Any, schemas: Mapping[str, Any]) -> Any:  # noqa: ANN401 — SDK client and nodes
@@ -1087,7 +1088,7 @@ def test_applying_a_stored_plan_runs_no_extraction(live_plan: LivePlan) -> None:
     only the fork-wide rewrite the criterion also rules out.
     """
     with _extraction_forbidden() as calls:
-        record = _potenda_for_apply(live_plan).apply_plan()
+        record = _potenda_for_apply(live_plan).apply_plan(ownership=granted_ownership())
 
     assert calls == [], f"The apply path called {calls}, so it re-ran extraction or comparison."
     assert record.applied_operations, "The apply completed without applying a single operation."
@@ -1110,11 +1111,11 @@ def test_re_applying_an_identical_plan_converges(live_plan: LivePlan) -> None:
     """
     writes = [operation for operation in live_plan.plan.operations() if operation.action != "delete"]
 
-    _potenda_for_apply(live_plan).apply_plan()
+    _potenda_for_apply(live_plan).apply_plan(ownership=granted_ownership())
     first_counts = _counts_by_kind(live_plan)
     first_identities = _identities_by_operation(live_plan, writes)
 
-    _potenda_for_apply(live_plan).apply_plan()
+    _potenda_for_apply(live_plan).apply_plan(ownership=granted_ownership())
     second_counts = _counts_by_kind(live_plan)
     second_identities = _identities_by_operation(live_plan, writes)
 
@@ -1190,10 +1191,10 @@ def test_the_write_class_conformance_matrix(live_plan: LivePlan, write_class: st
     """
     operation = _representative(live_plan, write_class)
 
-    _potenda_for_apply(live_plan).apply_plan()
+    _potenda_for_apply(live_plan).apply_plan(ownership=granted_ownership())
     clean = _observation(live_plan, write_class)
 
-    _potenda_for_apply(live_plan).apply_plan()
+    _potenda_for_apply(live_plan).apply_plan(ownership=granted_ownership())
     assert _observation(live_plan, write_class) == clean, f"apply-twice moved the {write_class} class off its counts."
 
     for before_the_write in (False, True):
@@ -1206,8 +1207,8 @@ def test_the_write_class_conformance_matrix(live_plan: LivePlan, write_class: st
             pytest.raises(InjectedCrashError),
             _crash_at(operation.operation_id, before_the_write=before_the_write),
         ):
-            _potenda_for_apply(live_plan).apply_plan()
-        _potenda_for_apply(live_plan).apply_plan()
+            _potenda_for_apply(live_plan).apply_plan(ownership=granted_ownership())
+        _potenda_for_apply(live_plan).apply_plan(ownership=granted_ownership())
         assert _observation(live_plan, write_class) == clean, (
             f"A crash injected {window} the destination write of {operation.operation_id!r} left the "
             f"{write_class} class off its clean-single-run state after re-applying."
@@ -1241,7 +1242,7 @@ def test_relationship_peer_sets_match_the_plan(live_plan: LivePlan) -> None:
     assert operations, f"The plan holds no relationship-bearing {RELATIONSHIP_KIND} operation."
 
     with _extraction_forbidden() as calls, _destination_queries_recorded(live_plan) as queries:
-        _potenda_for_apply(live_plan).apply_plan()
+        _potenda_for_apply(live_plan).apply_plan(ownership=granted_ownership())
     assert calls == [], f"The apply path called {calls}, so the no-comparison-store precondition does not hold."
 
     expected_filters = live_plan.preexisting_peer_filters
@@ -1424,7 +1425,7 @@ def test_an_ambiguous_peer_refuses_the_operation(live_plan: LivePlan, ambiguous_
     referring = referrers[0]
 
     with pytest.raises(OperationApplyFailedError) as caught:
-        _potenda_for_apply(live_plan).apply_plan()
+        _potenda_for_apply(live_plan).apply_plan(ownership=granted_ownership())
 
     cause = caught.value.__cause__
     assert isinstance(cause, PeerAmbiguousError), f"The apply failed with {cause!r}, not a multi-match refusal."

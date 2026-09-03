@@ -8,7 +8,7 @@
 import logging
 import os
 from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -25,7 +25,6 @@ from infrahub_sync.configuration.runtime import resolve_runtime_instance
 from infrahub_sync.execution import (
     ACTION_KEYS,
     RunResult,
-    bounded_run_lock,
     collect_secret_values,
     execute_run,
     redact,
@@ -42,6 +41,7 @@ from infrahub_sync.orchestration.flow import (
 from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.errors import PlanSchemaChangedError
 from infrahub_sync.plan.models import ApplyRecord, PlanManifest
+from infrahub_sync.plan.ownership import ProvenWriteOwnership, WriteDispatchTracker
 from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes
 from infrahub_sync.plan.review import SavedPlan, resolve_run_directory
 from infrahub_sync.plan.verify import verify_plan
@@ -53,11 +53,12 @@ from infrahub_sync.product_store import (
 )
 from infrahub_sync.runtime_schema import STAGE_RUNTIME_MODEL_SCOPE, RuntimeModelPlan, build_runtime_model_plan
 
+from .apply_guard import ApplyGuard, hold_apply_guard
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME
 from .service import PLAN_ARTIFACT_ID
-from .storage import service_product_projection
+from .storage import service_guard_secrets, service_guard_session, service_product_projection
 
 CONFIG_DIR_ENV = "INFRAHUB_SYNC_CONFIG_DIRECTORY"
 RUN_CACHE_ENV = "INFRAHUB_SYNC_CACHE_DIR"
@@ -75,7 +76,14 @@ _WORKER_EXECUTION_REFUSED = "service worker execution claim was refused"
 _WORKER_EXECUTION_ID_INVALID = "service worker execution identity is invalid"
 _WORKER_EXECUTION_IDENTITY_UNAVAILABLE = "service worker execution identity is unavailable"
 _WORKER_EXECUTION_WRITEBACK_REFUSED = "service worker execution writeback was refused"
+_UNREGISTERED_WRITE_REFUSED = (
+    "a managed write requires a complete registered configuration binding, because the write "
+    "guard serializes writers per registered configuration"
+)
 _WORKER_PAGE_SIZE = 200
+# The stages the managed write scope covers. A read stage has nothing to be uncertain
+# about, so it keeps its own deliberate handling where the two differ.
+_WRITE_STAGES = ("apply", "sync")
 
 
 def _raise_writeback_refused() -> None:
@@ -178,7 +186,6 @@ def _plan(
         run_id=run_id,
         show_progress=False,
         print_diff=False,
-        _lock_already_held=composed_sync,
         _run_file_mode="sync" if composed_sync else None,
         _return_saved_plan=True,
     )
@@ -394,6 +401,27 @@ def _worker_execution_context(
     return projection, instance, package.configuration.name
 
 
+def _configuration_write_guard(configuration_id: str) -> AbstractContextManager[ApplyGuard]:
+    """Return the hold of one registered configuration's write guard.
+
+    Everything destination-sensitive belongs inside that hold: the live schema read, the
+    runtime models built from it, and every operation dispatched against them. A snapshot
+    taken before a contended wait describes a destination another writer may still have
+    been changing, so it cannot gate a write that happens after the wait.
+
+    The dedicated session it opens is the guard's alone. It is never handed to an adapter
+    or to the product store.
+    """
+    return hold_apply_guard(configuration_id, connect=service_guard_session, secrets=service_guard_secrets())
+
+
+def _require_registered_write(binding: tuple[str, int, str] | None) -> str:
+    """Return the configuration ID a managed write is guarded by, or refuse the write."""
+    if binding is None:
+        raise ValueError(_UNREGISTERED_WRITE_REFUSED)
+    return binding[0]
+
+
 def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-statements
     run_id: str,
     stage: Literal["plan", "verify", "apply", "sync"],
@@ -408,9 +436,22 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     secrets: list[str],
     config_directory: str,
     projection: ProductProjection,
+    tracker: WriteDispatchTracker,
 ) -> tuple[dict[str, Any], ExecutionWriteback]:
     """Resolve and execute one service stage within the sanitized worker boundary."""
     parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
+    if stage in ("apply", "sync"):
+        if not confirm_writes:
+            msg = f"confirm_writes=true is required for service stage={stage}"
+            raise ValueError(msg)
+        # Before anything is resolved: the guard serializes writers per registered
+        # configuration, so a run that names none cannot be serialized against them.
+        _require_registered_write(parameter_binding)
+    if stage == "apply" and expected_checksum is None:
+        msg = "expected_checksum is required for service stage=apply"
+        raise ValueError(msg)
+    # A write defers its live schema read until the guard is held, so no destination
+    # snapshot it validates against can predate a contended wait.
     projection, instance, sync_name = _worker_execution_context(
         run_id,
         parameter_binding,
@@ -418,14 +459,8 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         projection=projection,
         run_branch=branch,
         stage=stage,
-        build_models=stage != "apply",
+        build_models=stage not in ("apply", "sync"),
     )
-    if stage in ("apply", "sync") and not confirm_writes:
-        msg = f"confirm_writes=true is required for service stage={stage}"
-        raise ValueError(msg)
-    if stage == "apply" and expected_checksum is None:
-        msg = "expected_checksum is required for service stage=apply"
-        raise ValueError(msg)
 
     secrets[:] = collect_secret_values(instance)
     result: dict[str, Any]
@@ -455,15 +490,19 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         }
         writeback = ExecutionMergeWriteback(results={"verification": result})
     elif stage == "apply":
+        # Deterministic first, and outside the guard: a run whose retained artifact does
+        # not match its binding or the operator's approved checksum is refused without
+        # making another writer wait.
         manifest = _verify_registered_apply(
             instance=instance,
             run_id=run_id,
             binding=parameter_binding,
             expected_checksum=expected_checksum,
         )
-        if parameter_binding is not None:
-            # The live schema read, and the comparison it exists for, both before any
-            # adapter is constructed: the registered pre-write gate.
+        with _configuration_write_guard(_require_registered_write(parameter_binding)) as guard:
+            ownership = ProvenWriteOwnership(prove=guard.require_ownership, tracker=tracker)
+            # The live schema read, and the comparison it exists for, both under the guard
+            # and both before any adapter is constructed: the registered pre-write gate.
             _, instance, sync_name = _worker_execution_context(
                 run_id,
                 parameter_binding,
@@ -473,14 +512,17 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 stage=stage,
             )
             _require_planned_schema(run_id=run_id, manifest=manifest, models=instance._runtime_models)
-        applied = execute_run(
-            instance,
-            operation="apply",
-            run_id=run_id,
-            branch=branch,
-            expected_checksum=expected_checksum,
-            confirm_writes=True,
-        )
+            applied = execute_run(
+                instance,
+                operation="apply",
+                run_id=run_id,
+                branch=branch,
+                expected_checksum=expected_checksum,
+                confirm_writes=True,
+                ownership=ownership,
+                record_applied=tracker.record_applied,
+                _lock_already_held=True,
+            )
         assert isinstance(applied, RunResult)
         result = _result_data(applied)
         writeback = ExecutionFinishWriteback(
@@ -491,14 +533,24 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             results=result,
         )
     else:
-        with bounded_run_lock(instance.name, timeout=60.0):
+        # One guard across planning, verification, and the write it approves: a plan
+        # generated outside it could go stale behind another writer before being applied.
+        with _configuration_write_guard(_require_registered_write(parameter_binding)) as guard:
+            ownership = ProvenWriteOwnership(prove=guard.require_ownership, tracker=tracker)
+            _, instance, sync_name = _worker_execution_context(
+                run_id,
+                parameter_binding,
+                config_directory=config_directory,
+                projection=projection,
+                run_branch=branch,
+                stage=stage,
+            )
             saved = _plan(instance, run_id=run_id, branch=branch, composed_sync=True)
             _publish_plan(projection, run_id, saved, secrets)
             verified = execute_run(
                 instance,
                 operation="verify",
                 run_id=run_id,
-                _lock_already_held=True,
                 _run_file_mode="sync",
                 _require_verified=True,
             )
@@ -509,8 +561,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 binding=parameter_binding,
                 expected_checksum=verified.manifest.plan_checksum,
             )
-            if parameter_binding is not None:
-                _require_planned_schema(run_id=run_id, manifest=manifest, models=instance._runtime_models)
+            _require_planned_schema(run_id=run_id, manifest=manifest, models=instance._runtime_models)
             applied = execute_run(
                 instance,
                 operation="apply",
@@ -518,6 +569,8 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 branch=branch,
                 expected_checksum=verified.manifest.plan_checksum,
                 confirm_writes=True,
+                ownership=ownership,
+                record_applied=tracker.record_applied,
                 _lock_already_held=True,
                 _run_file_mode="sync",
             )
@@ -537,19 +590,29 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
 def _failure_evidence(
     stage: Literal["plan", "verify", "apply", "sync"],
     exc: Exception,
+    *,
+    outcome: str,
+    record: ApplyRecord | None,
 ) -> dict[str, Any]:
+    """Describe one failure, with whatever is known about what it wrote.
+
+    A failure raised by the engine carries its own partial record; a failure raised after
+    the engine returned — a sidecar write, the guard's release, the product commit — carries
+    none, and the scope's record is what that one wrote.
+    """
     evidence: dict[str, Any] = {
         "stage": stage,
-        "outcome": "failed",
+        "outcome": outcome,
         "error_type": type(exc).__name__,
     }
-    apply_record = getattr(exc, "apply_record", None)
-    if isinstance(apply_record, ApplyRecord):
-        evidence.update(apply_record.as_summary_keys())
+    carried = getattr(exc, "apply_record", None)
+    written = carried if isinstance(carried, ApplyRecord) else record
+    if written is not None:
+        evidence.update(written.as_summary_keys())
     return evidence
 
 
-def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     run_id: str,
     stage: Literal["plan", "verify", "apply", "sync"],
     exc: Exception,
@@ -558,13 +621,24 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
     projection: ProductProjection,
     flow_run_id: str,
     worker_id: str,
+    *,
+    dispatch_started: bool,
+    record: ApplyRecord | None,
 ) -> None:
-    """Best-effort durable product evidence without masking the worker failure."""
+    """Best-effort durable product evidence without masking the worker failure.
+
+    `dispatch_started` is the one thing this boundary cannot re-derive: only the stage
+    that ran knows whether it proved its hold and began a destination operation. Before
+    that point a failure is an ordinary failed run; after it, nothing can claim the
+    destination was left untouched, so the verdict is interrupted/ambiguous and the store
+    records that the run requires reconciliation in the same transaction.
+    """
     try:
         stored = projection.lookup_run(run_id).value
         if stored is None:
             return
-        evidence = _failure_evidence(stage, exc)
+        terminal_state, terminal_outcome = ("interrupted", "ambiguous") if dispatch_started else ("failed", "failed")
+        evidence = _failure_evidence(stage, exc, outcome=terminal_outcome, record=record)
         results: dict[str, Any] = {f"{stage}_failure": evidence}
         if stage == "verify":
             writeback: ExecutionWriteback = ExecutionMergeWriteback(results=results)
@@ -581,8 +655,8 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
                 if key in evidence
             }
             writeback = ExecutionFinishWriteback(
-                phase=f"{stage}-failed",
-                outcome="failed",
+                phase=f"{stage}-interrupted" if dispatch_started else f"{stage}-failed",
+                outcome=terminal_outcome,
                 finished_at=datetime.now(timezone.utc),
                 summary={**stored.summary, "failed_stage": stage, **partial},
                 results={**stored.results, **results},
@@ -592,8 +666,8 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
             flow_run_id,
             worker_id=worker_id,
             terminal_at=datetime.now(timezone.utc),
-            terminal_state="failed",
-            terminal_outcome="failed",
+            terminal_state=terminal_state,
+            terminal_outcome=terminal_outcome,
             writeback=writeback,
             secrets=secrets,
         )
@@ -623,6 +697,9 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     config_directory, projection = _runtime()
     flow_run_id, worker_id = _claim_current_execution(projection, run_id)
     secrets[:] = collect_secret_values()
+    # Owned here rather than by the stage, so the failure boundary can read it however the
+    # stage ended.
+    tracker = WriteDispatchTracker()
     try:
         with _remote_log_bridge(run_logger, prefect_context=prefect_context, secrets=secrets):
             result, writeback = _execute_stage(
@@ -638,16 +715,61 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 secrets=secrets,
                 config_directory=config_directory,
                 projection=projection,
+                tracker=tracker,
             )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-        # Rebuilt after the original exception context exits.
-        _record_failure(run_id, stage, exc, run_logger, secrets, projection, flow_run_id, worker_id)
-        failure = sanitize_exception_chain(exc, secrets)
+        failure = exc
+    record_terminal = True
+    if failure is None:
+        try:
+            _commit_success(projection, run_id, flow_run_id, worker_id=worker_id, writeback=writeback, secrets=secrets)
+        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            failure = exc
+            # A read stage whose success did not store stays nonterminal on purpose: it
+            # wrote nothing, so reconciliation decides it rather than this worker.
+            record_terminal = stage in _WRITE_STAGES
     if failure is not None:
+        # The one exit for the whole managed write scope. Everything after the first proven
+        # dispatch reaches it — a failed operation, a lost hold, a sidecar that could not
+        # record the applied transition, a release that could not be confirmed, and a
+        # product commit that did not store its success — so all of them commit the same
+        # ambiguous verdict, the same evidence, the record the scope kept, and
+        # `reconciliation_required` together.
+        if record_terminal:
+            _record_failure(
+                run_id,
+                stage,
+                failure,
+                run_logger,
+                secrets,
+                projection,
+                flow_run_id,
+                worker_id,
+                dispatch_started=tracker.dispatch_started,
+                record=tracker.applied_record,
+            )
+        # Rebuilt after the original exception context exits.
+        sanitized = sanitize_exception_chain(failure, secrets)
         secrets.clear()
-        raise failure
+        raise sanitized
+    return result
 
-    persistence_failure: Exception | None = None
+
+def _commit_success(
+    projection: ProductProjection,
+    run_id: str,
+    flow_run_id: str,
+    *,
+    worker_id: str,
+    writeback: ExecutionWriteback,
+    secrets: Sequence[str],
+) -> None:
+    """Commit this stage's success, tolerating only a commit that actually landed.
+
+    A commit can succeed and still fail to answer. Rereading the link is what tells those
+    apart: a stored success is this stage's success whatever the call reported, and
+    anything else is a failure the scope's one exit path has to handle.
+    """
     try:
         if not projection.commit_claimed_execution(
             run_id,
@@ -660,22 +782,24 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
             secrets=secrets,
         ):
             _raise_writeback_refused()
-    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-        try:
-            stored = projection.lookup_run(run_id).value
-            link = (
-                None
-                if stored is None
-                else next(
-                    (candidate for candidate in stored.prefect_executions if candidate.flow_run_id == flow_run_id),
-                    None,
-                )
+    except Exception:
+        if _stored_success(projection, run_id, flow_run_id):
+            return
+        raise
+
+
+def _stored_success(projection: ProductProjection, run_id: str, flow_run_id: str) -> bool:
+    """Answer whether this execution's success is already durable."""
+    try:
+        stored = projection.lookup_run(run_id).value
+        link = (
+            None
+            if stored is None
+            else next(
+                (candidate for candidate in stored.prefect_executions if candidate.flow_run_id == flow_run_id),
+                None,
             )
-        except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-            link = None
-        if link is None or (link.terminal_state, link.terminal_outcome) != ("completed", "succeeded"):
-            persistence_failure = sanitize_exception_chain(exc, secrets)
-    if persistence_failure is not None:
-        secrets.clear()
-        raise persistence_failure
-    return result
+        )
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        return False
+    return link is not None and (link.terminal_state, link.terminal_outcome) == ("completed", "succeeded")

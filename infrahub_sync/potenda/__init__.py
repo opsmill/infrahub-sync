@@ -82,6 +82,7 @@ if TYPE_CHECKING:
 
     from infrahub_sync import SyncInstance
     from infrahub_sync.plan.models import PlanManifest, VerificationFailure
+    from infrahub_sync.plan.ownership import WriteOwnership
     from infrahub_sync.plan.reader import RawPlanArtifact
 
 
@@ -594,6 +595,7 @@ class Potenda:
     def apply_plan(
         self,
         *,
+        ownership: WriteOwnership,
         config_version: str | None = None,
         artifact: RawPlanArtifact | None = None,
         expected_checksum: str | None = None,
@@ -625,6 +627,11 @@ class Potenda:
         single writer and merges `as_summary_keys()` into `run_file.summary` before saving.
 
         Args:
+            ownership: The write-ownership boundary this apply dispatches through. It is
+                proven immediately before every operation the loop dispatches and once
+                after the last one, so a hold lost mid-apply stops the next write instead
+                of being discovered afterwards. It is required and has no default: an
+                apply that could run without one would run without one.
             config_version: The comparison value for the configuration-version check,
                 compared for equality and never parsed. `None` recomputes it from the
                 parsed configuration by the default rule (FR-011, AD013).
@@ -731,6 +738,18 @@ class Potenda:
                 skipped_deletes.append(operation.operation_id)
                 continue
             try:
+                ownership.before_operation()
+            except BaseException as exc:
+                # A lost hold dispatched nothing, so this operation is named in neither
+                # set and is **not** recorded as possibly half-written.
+                # The suppression is not masking a defect — no annotation can declare an
+                # attribute on an exception type this module does not own.
+                exc.apply_record = ApplyRecord(  # ty: ignore[unresolved-attribute]
+                    applied_operations=tuple(applied),
+                    skipped_delete_operations=tuple(skipped_deletes),
+                )
+                raise
+            try:
                 destination.apply_planned_operation(operation=operation, peers=peers)
             except BaseException as exc:
                 # The partial record travels on the error so the CLI can merge what was
@@ -764,6 +783,15 @@ class Potenda:
             applied_operations=tuple(applied),
             skipped_delete_operations=tuple(skipped_deletes),
         )
+
+        # The closing proof, before anything may record this apply as complete: a hold
+        # lost after the last operation means nobody can say the destination was left as
+        # the plan describes, so it must not become a success.
+        try:
+            ownership.after_final_operation()
+        except BaseException as exc:
+            exc.apply_record = completed  # ty: ignore[unresolved-attribute]
+            raise
 
         # AFTER the loop and off the rejection path (AD069): a partial apply breaks both
         # clauses by construction, so checking unconditionally would replace a clear

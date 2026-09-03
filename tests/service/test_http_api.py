@@ -10,7 +10,7 @@ from hashlib import sha256
 from pathlib import Path
 from threading import Barrier
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, get_args
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
@@ -30,11 +30,13 @@ from prefect.client.schemas.responses import (
     StateWaitDetails,
 )
 from prefect.states import Cancelled, Cancelling, Running
+from pydantic import BaseModel
 
 from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.plan.models import PlanManifest
 from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.product_store import (
+    ExecutionMergeWriteback,
     PrefectExecutionLink,
     ProductProjection,
     ProductRun,
@@ -60,6 +62,7 @@ from infrahub_sync.service.orchestration import (
     Submission,
 )
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService, ServiceAPIError
+from tests.service.execution_fixtures import append_execution
 
 if TYPE_CHECKING:
     from opsmill_prefect_extras.executors import RemoteExecutionClient
@@ -242,8 +245,9 @@ def test_admission_reads_registered_binding_before_allocating_run(
     assert len(orchestration.submissions) == 1
 
 
-def _publish_plan(projection: ProductProjection, run_id: str, *, checksum: str = "a" * 64) -> PlanResource:
-    plan = PlanResource(
+def _plan_document(run_id: str, *, checksum: str = "a" * 64) -> PlanResource:
+    """The review document a worker publishes, before it reaches the artifact store."""
+    return PlanResource(
         run_id=run_id,
         checksum=checksum,
         checksum_ok=True,
@@ -267,6 +271,11 @@ def _publish_plan(projection: ProductProjection, run_id: str, *, checksum: str =
             ),
         ),
     )
+
+
+def _publish_plan(projection: ProductProjection, run_id: str, *, checksum: str = "a" * 64) -> PlanResource:
+    """Publish the review document, as the plan stage's worker does."""
+    plan = _plan_document(run_id, checksum=checksum)
     projection.publish_artifact(
         run_id,
         artifact_id=PLAN_ARTIFACT_ID,
@@ -275,6 +284,32 @@ def _publish_plan(projection: ProductProjection, run_id: str, *, checksum: str =
         data=plan.model_dump_json().encode(),
     )
     return plan
+
+
+_PLAN_WORKER_ID = "6b1f0a2c-9d3e-4f57-8a10-2c5b7e4d9f31"
+
+
+def _settle_open_executions(projection: ProductProjection, run_id: str) -> None:
+    """Finish the plan stage the way its worker does, so a write may then be admitted.
+
+    A run only admits its one write while nothing else is still running on it, so a
+    published reviewed plan has to leave its own execution terminal.
+    """
+    run = projection.lookup_run(run_id).value
+    assert run is not None
+    for link in run.prefect_executions:
+        if link.terminal_at is not None:
+            continue
+        projection.claim_execution(run_id, link.flow_run_id, worker_id=_PLAN_WORKER_ID)
+        projection.commit_claimed_execution(
+            run_id,
+            link.flow_run_id,
+            worker_id=_PLAN_WORKER_ID,
+            terminal_at=datetime.now(timezone.utc),
+            terminal_state="completed",
+            terminal_outcome="succeeded",
+            writeback=ExecutionMergeWriteback(results={"plan": {"outcome": "planned"}}),
+        )
 
 
 def test_worker_published_plan_is_retrievable_through_an_independent_api_projection(
@@ -426,6 +461,7 @@ def test_reserved_apply_retry_replays_after_the_plan_artifact_expires(
     created = _create(client)
     run_id = created.json()["run"]["run_id"]
     plan = _publish_plan(projection, run_id)
+    _settle_open_executions(projection, run_id)
     headers = {**AUTH, "Idempotency-Key": "apply-expired-plan-retry"}
     body = {
         "expected_checksum": plan.checksum,
@@ -852,7 +888,8 @@ def test_cancel_append_during_observation_never_targets_the_stale_execution(
         await asyncio.sleep(0)
         assert flow_run_id == old_flow_run_id
         if not appended:
-            projection.add_prefect_execution(
+            append_execution(
+                projection,
                 run_id,
                 PrefectExecutionLink(
                     flow_run_id=new_flow_run_id,
@@ -1020,7 +1057,8 @@ def test_cancellation_remote_success_then_crash_resumes_same_intent(
 
     uncertain = client.post(f"/runs/{run_id}/cancel", headers=headers, json=body)
     with pytest.raises(WriteAdmissionConflictError):
-        projection.add_prefect_execution(
+        append_execution(
+            projection,
             run_id,
             PrefectExecutionLink(
                 flow_run_id="flow-racing-cancellation-retry",
@@ -1056,30 +1094,35 @@ def test_cancel_scans_past_newer_non_active_links(
     client, projection, orchestration = service_api
     created = _create(client)
     run_id = created.json()["run"]["run_id"]
-    plan = _publish_plan(projection, run_id)
-    applied = client.post(
-        f"/runs/{run_id}/apply",
-        headers={**AUTH, "Idempotency-Key": "cancel-active-apply"},
-        json={"expected_checksum": plan.checksum, "reason": "approved", "confirm_writes": True},
+    _publish_plan(projection, run_id)
+    _settle_open_executions(projection, run_id)
+    active = client.post(
+        f"/runs/{run_id}/verify",
+        headers={**AUTH, "Idempotency-Key": "cancel-active-verify"},
+        json={"reason": "the running check"},
     )
-    verified = client.post(
+    newer = client.post(
         f"/runs/{run_id}/verify",
         headers={**AUTH, "Idempotency-Key": "newer-finished-verify"},
         json={"reason": "later read-only check"},
     )
-    apply_flow_run_id = applied.json()["orchestration"][-1]["flow_run_id"]
-    verify_flow_run_id = verified.json()["orchestration"][-1]["flow_run_id"]
-    orchestration.observations[apply_flow_run_id] = Observation(available=True, state="running")
-    orchestration.observations[verify_flow_run_id] = newest_observation
+    # Read the admissions before indexing their bodies: an admission regression refuses one
+    # of these, and a refusal has no `orchestration` to index. Assert it as the wrong status
+    # rather than let it surface as a KeyError that names the wrong defect.
+    assert (active.status_code, newer.status_code) == (202, 202), (active.json(), newer.json())
+    active_flow_run_id = active.json()["orchestration"][-1]["flow_run_id"]
+    newer_flow_run_id = newer.json()["orchestration"][-1]["flow_run_id"]
+    orchestration.observations[active_flow_run_id] = Observation(available=True, state="running")
+    orchestration.observations[newer_flow_run_id] = newest_observation
 
     cancelled = client.post(
         f"/runs/{run_id}/cancel",
         headers={**AUTH, "Idempotency-Key": f"scan-cancel-{newest_observation.reason or newest_observation.state}"},
-        json={"reason": "stop the active write"},
+        json={"reason": "stop the active stage"},
     )
 
     assert cancelled.status_code == 202
-    assert orchestration.cancelled == [apply_flow_run_id]
+    assert orchestration.cancelled == [active_flow_run_id]
 
 
 def test_cancel_treats_expired_and_terminal_links_as_non_cancellable(
@@ -1089,6 +1132,7 @@ def test_cancel_treats_expired_and_terminal_links_as_non_cancellable(
     created = _create(client)
     run_id = created.json()["run"]["run_id"]
     plan = _publish_plan(projection, run_id)
+    _settle_open_executions(projection, run_id)
     applied = client.post(
         f"/runs/{run_id}/apply",
         headers={**AUTH, "Idempotency-Key": "apply-before-expiry"},
@@ -1117,12 +1161,14 @@ def test_owner_admin_authorization_apply_verify_and_cancel(  # noqa: PLR0914 - o
     created = _create(client)
     run_id = created.json()["run"]["run_id"]
     plan = _publish_plan(projection, run_id)
+    _settle_open_executions(projection, run_id)
     other_headers = {"Authorization": f"Bearer {OTHER_TOKEN}", "Idempotency-Key": "other-key"}
     admin_headers = {"Authorization": f"Bearer {ADMIN_TOKEN}", "Idempotency-Key": "admin-key"}
 
     refused = client.post(f"/runs/{run_id}/verify", headers=other_headers, json={"reason": "not my run"})
     verified = client.post(f"/runs/{run_id}/verify", headers=admin_headers, json={"reason": "admin review"})
     verified_replay = client.post(f"/runs/{run_id}/verify", headers=admin_headers, json={"reason": "admin review"})
+    _settle_open_executions(projection, run_id)
     unconfirmed = client.post(
         f"/runs/{run_id}/apply",
         headers={**AUTH, "Idempotency-Key": "apply-unconfirmed"},
@@ -1198,6 +1244,7 @@ def test_concurrent_and_post_completion_distinct_apply_keys_are_refused(
     created = _create(client)
     run_id = created.json()["run"]["run_id"]
     plan = _publish_plan(projection, run_id)
+    _settle_open_executions(projection, run_id)
     ready = Barrier(2)
 
     def apply(position: int):
@@ -1218,7 +1265,7 @@ def test_concurrent_and_post_completion_distinct_apply_keys_are_refused(
     accepted = next(response for response in responses if response.status_code == 202)
     refused = next(response for response in responses if response.status_code == 409)
     accepted_position = next(position for position, response in enumerate(responses) if response.status_code == 202)
-    assert refused.json()["error"]["code"] == "apply-already-admitted"
+    assert refused.json()["error"]["code"] == "run-execution-conflict"
     assert len(orchestration.submissions) == 2
 
     projection.finish_run(
@@ -1246,9 +1293,9 @@ def test_concurrent_and_post_completion_distinct_apply_keys_are_refused(
     assert replay.status_code == 202
     assert replay.json() == accepted.json()
     assert post_completion.status_code == 409
-    assert post_completion.json()["error"]["code"] == "apply-already-admitted"
+    assert post_completion.json()["error"]["code"] == "run-execution-conflict"
     assert len(orchestration.submissions) == 2
-    refusals = [event for event in projection.audit_events(run_id) if event.outcome == "refused-apply-admission"]
+    refusals = [event for event in projection.audit_events(run_id) if event.outcome == "refused-run-execution-conflict"]
     assert len(refusals) == 2
 
 
@@ -1270,6 +1317,7 @@ def test_confirmed_sync_reserves_its_write_admission_and_replays(
     replay = client.post("/runs", headers=headers, json=body)
     run_id = accepted.json()["run"]["run_id"]
     plan = _publish_plan(projection, run_id)
+    _settle_open_executions(projection, run_id)
     later_apply = client.post(
         f"/runs/{run_id}/apply",
         headers={**AUTH, "Idempotency-Key": "apply-after-sync"},
@@ -1279,7 +1327,7 @@ def test_confirmed_sync_reserves_its_write_admission_and_replays(
     assert accepted.status_code == 202
     assert replay.json() == accepted.json()
     assert later_apply.status_code == 409
-    assert later_apply.json()["error"]["code"] == "apply-already-admitted"
+    assert later_apply.json()["error"]["code"] == "run-execution-conflict"
     assert [parameters["stage"] for parameters, _ in orchestration.submissions] == ["sync"]
 
 
@@ -1303,6 +1351,10 @@ def test_owner_and_administrator_mutation_matrix(
     created = _create(client)
     run_id = created.json()["run"]["run_id"]
     plan = _publish_plan(projection, run_id)
+    if operation == "apply":
+        # A write is admitted only while nothing else is running; cancellation needs the
+        # opposite, so only this parameter settles the plan stage first.
+        _settle_open_executions(projection, run_id)
     headers = {"Authorization": f"Bearer {token}", "Idempotency-Key": f"{actor}-{operation}"}
     bodies = {
         "verify": {"reason": f"{actor} verification"},
@@ -1506,3 +1558,171 @@ def test_version_is_unauthenticated_and_declares_the_unstable_api(
     }
     operation = client.get("/openapi.json").json()["paths"]["/version"]["get"]
     assert "security" not in operation
+
+
+def test_cancelling_a_claimed_write_answers_with_durable_ambiguity(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """A worker already holding the write may have reached the destination.
+
+    Cancellation is accepted by Prefect and still cannot promise a clean stop, so the
+    operator is told the run is terminal and uncertain rather than cancelled, and the
+    public record says reconciliation is required.
+    """
+    client, projection, orchestration = service_api
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+    plan = _publish_plan(projection, run_id)
+    _settle_open_executions(projection, run_id)
+    applied = client.post(
+        f"/runs/{run_id}/apply",
+        headers={**AUTH, "Idempotency-Key": "cancel-claimed-apply"},
+        json={"expected_checksum": plan.checksum, "reason": "approved", "confirm_writes": True},
+    )
+    apply_flow_run_id = applied.json()["orchestration"][-1]["flow_run_id"]
+    assert projection.claim_execution(run_id, apply_flow_run_id, worker_id=_PLAN_WORKER_ID)
+    orchestration.observations[apply_flow_run_id] = Observation(available=True, state="running")
+
+    cancelled = client.post(
+        f"/runs/{run_id}/cancel",
+        headers={**AUTH, "Idempotency-Key": "cancel-the-claimed-write"},
+        json={"reason": "stop the write"},
+    )
+
+    assert cancelled.status_code == 409
+    assert cancelled.json()["error"]["code"] == "cancellation-ambiguous"
+    assert orchestration.cancelled == [apply_flow_run_id]
+    resource = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {OWNER_TOKEN}"}).json()
+    assert resource["run"]["reconciliation_required"] is True
+    assert resource["run"]["outcome"] == "ambiguous"
+
+
+def test_a_run_that_never_wrote_reports_no_reconciliation_requirement(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """The field is authoritative and public, so its false answer has to be visible too."""
+    client, _projection, _orchestration = service_api
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+
+    resource = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {OWNER_TOKEN}"}).json()
+
+    assert resource["run"]["reconciliation_required"] is False
+
+
+def test_the_server_cannot_emit_a_field_its_public_resource_does_not_declare() -> None:
+    """An internal record field may not become an operator-facing one by accident.
+
+    The projection copies a store record's fields wholesale, so a field added to the
+    durable record for internal reasons would otherwise appear on the wire with nobody
+    deciding to publish it. The emitted variant drops it instead — the run stays readable,
+    and what an operator sees is exactly what the resource declares.
+    """
+    from infrahub_sync.service.models import public_run_resource
+
+    class _FutureProductRun(ProductRun):
+        """A store record that gained an internal field a later change did not publish."""
+
+        internal_canary: str = "internal-only"
+
+    record = _FutureProductRun(
+        run_id="run-bounded-boundary",
+        operation="plan",
+        configuration_reference="config-001@1",
+        started_at=datetime.now(timezone.utc),
+        phase="accepted",
+    )
+
+    emitted = public_run_resource(record)
+
+    assert emitted.run_id == "run-bounded-boundary"
+    assert "internal_canary" not in emitted.model_dump_json()
+
+
+def test_the_server_cannot_emit_a_field_nested_inside_a_retained_plan(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """Bounding a resource one level deep is not bounding it.
+
+    A retained plan is bytes some other version of this worker wrote, so its nested summary
+    and operations are exactly where an unknown key arrives. The read still answers — an
+    unknown key is not a reason to fail a plan an operator is trying to review — and the
+    key is not in what the API returns.
+    """
+    client, projection, _orchestration = service_api
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+    # A retained artifact is immutable, so the unknown keys go into the one publication —
+    # which is the realistic case anyway: the bytes were written by another version.
+    document = json.loads(_plan_document(run_id).model_dump_json())
+    document["summary"]["internal_canary"] = "nested-summary-leak"
+    document["operations"][0]["internal_canary"] = "nested-operation-leak"
+    projection.publish_artifact(
+        run_id,
+        artifact_id=PLAN_ARTIFACT_ID,
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=json.dumps(document).encode(),
+    )
+
+    response = client.get(f"/runs/{run_id}/plan", headers={"Authorization": f"Bearer {OWNER_TOKEN}"})
+
+    assert response.status_code == 200, response.text
+    assert "nested-summary-leak" not in response.text
+    assert "nested-operation-leak" not in response.text
+    assert response.json()["summary"]["total"] == document["summary"]["total"]
+
+
+def test_every_model_reachable_from_an_emitted_resource_is_bounded() -> None:
+    """The property, not the two nested models somebody happened to probe.
+
+    Adding a nested model that accepts undeclared fields reopens the same hole one level
+    further down, and nothing about the resources above it would look wrong. Walking the
+    whole field graph is what makes that a failure here rather than a finding later.
+    """
+    from infrahub_sync.service.models import EMITTED_RESOURCES
+
+    unbounded: list[str] = []
+    seen: set[type[BaseModel]] = set()
+    pending: list[tuple[str, type[BaseModel]]] = [(model.__name__, model) for model in EMITTED_RESOURCES]
+    while pending:
+        path, model = pending.pop()
+        if model in seen:
+            continue
+        seen.add(model)
+        if model.model_config.get("extra") not in {"ignore", "forbid"}:
+            unbounded.append(f"{path} ({model.__name__}: extra={model.model_config.get('extra')!r})")
+        for name, field in model.model_fields.items():
+            pending.extend((f"{path}.{name}", nested) for nested in _reachable_models(field.annotation))
+
+    assert unbounded == [], f"these models can emit fields they do not declare: {unbounded}"
+    assert len(seen) > len(EMITTED_RESOURCES), "the walk never reached a nested model, so it proves nothing"
+
+
+def _reachable_models(annotation: object) -> list[type[BaseModel]]:
+    """Return every pydantic model one field annotation can carry."""
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return [annotation]
+    return [nested for argument in get_args(annotation) for nested in _reachable_models(argument)]
+
+
+def test_the_client_still_reads_a_run_resource_from_a_newer_server() -> None:
+    """Boundedness belongs to the emitter; a client has to survive a server that grew.
+
+    The client's own model keeps the unknown field rather than refusing the payload,
+    because a reader that broke the day a field was added would be useless. Only what the
+    server *builds* is bounded.
+    """
+    payload = {
+        "run_id": "run-forward-compatible",
+        "operation": "plan",
+        "configuration_reference": "config-001@1",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "phase": "accepted",
+        "field_from_a_newer_server": "readable",
+    }
+
+    parsed = PublicRunResource.model_validate(payload)
+
+    assert parsed.run_id == "run-forward-compatible"
+    assert parsed.model_extra == {"field_from_a_newer_server": "readable"}

@@ -43,7 +43,9 @@ if TYPE_CHECKING:
 pytest.importorskip("prefect")
 pytest.importorskip("opsmill_prefect_extras")
 
+from infrahub_sync.plan.ownership import WriteDispatchTracker
 from infrahub_sync.service import flow as service_flow
+from tests.service.execution_fixtures import bind_granting_guard
 
 _SNAPSHOT: dict[str, Any] = {
     "BuiltinTag": {
@@ -221,6 +223,7 @@ def test_a_registered_stage_reaches_execution_with_its_models_bound(
     monkeypatch.setattr(service_flow, "_publish_plan", _skip)
     monkeypatch.setattr(service_flow, "_verify_registered_apply", _skip)
     monkeypatch.setattr(service_flow, "_require_planned_schema", _skip)
+    bind_granting_guard(monkeypatch, service_flow)
 
     result, _ = service_flow._execute_stage(
         "run-composed-sync",
@@ -233,6 +236,7 @@ def test_a_registered_stage_reaches_execution_with_its_models_bound(
         secrets=[],
         config_directory=str(tmp_path),
         projection=cast("ProductProjection", projection),
+        tracker=WriteDispatchTracker(),
     )
 
     assert result["operation"] == "sync"

@@ -1152,14 +1152,26 @@ def test_a_resolution_failure_that_is_not_a_refusal_is_wrapped_and_sanitized(
 # --------------------------------------------------------------------------- #
 
 
-def test_unconfirmed_sync_is_refused_before_the_engine_is_built(config_dir: str, cache_root: Path) -> None:
+@pytest.mark.parametrize("confirm_writes", [False, True])
+def test_the_composed_sync_writer_is_refused_before_the_engine_is_built(
+    config_dir: str,
+    cache_root: Path,
+    confirm_writes: bool,  # noqa: FBT001 - one parametrized dimension of the refusal.
+) -> None:
+    """A composed sync produces its own plan and applies it in one call, so it can offer
+    no per-operation ownership proof over a reviewed artifact. Confirming the write does
+    not make it supported; the Sync API composes plan, verify, and apply instead."""
     instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
     factory = _SpyFactory(cache_root=cache_root)
 
     with pytest.raises(RunValidationError) as excinfo:
-        execute_run(instance, operation="sync", potenda_factory=factory)
+        # Deliberately ill-typed: no overload accepts `sync`, and this case is about the
+        # runtime refusal that stands behind that type-level one.
+        execute_run(  # ty: ignore[no-matching-overload]
+            instance, operation="sync", confirm_writes=confirm_writes, potenda_factory=factory
+        )
 
-    assert "confirm_writes=true is required to run operation=sync" in str(excinfo.value)
+    assert "operation=sync is not supported here" in str(excinfo.value)
     assert factory.calls == []
     assert not cache_root.exists()
 
@@ -1175,7 +1187,9 @@ def test_unconfirmed_apply_is_refused(config_dir: str, cache_root: Path) -> None
     instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
     factory = _SpyFactory(cache_root=cache_root)
     with pytest.raises(RunValidationError):
-        execute_run(instance, operation="apply", potenda_factory=factory)
+        # Deliberately ill-typed: the apply overload requires a write-ownership boundary, and
+        # this case is about the runtime refusal that stands behind that type-level one.
+        execute_run(instance, operation="apply", potenda_factory=factory)  # ty: ignore[no-matching-overload]
     assert factory.calls == []
 
 
@@ -1553,39 +1567,6 @@ def test_empty_plan_reports_no_change(config_dir: str, cache_root: Path) -> None
     assert RunFile.load_or_default(cache_root / RUN_ID / "run.json").status == "dry-run"
 
 
-def test_nested_only_diff_reports_no_change_even_though_the_sync_ran(
-    config_dir: Path, cache_root: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """Materialized rows are the result contract's fidelity boundary (contract step 7).
-
-    `Potenda._diff_to_rows` walks only the diff root's direct children while
-    `Diff.has_diffs()` is recursive, so a diff whose only changes sit in nested
-    child elements gates the sync ON but materializes ZERO rows — and the result
-    fields, which derive from the rows, therefore report no change.
-    """
-    from infrahub_sync.utils import get_instance
-
-    sync_instance: SyncInstance | None = get_instance(name=SYNC_NAME, directory=str(config_dir))
-    assert sync_instance is not None
-    run_dir = cache_root / RUN_ID
-    factory = _factory(run_dir, [], has_diffs=True)
-
-    with caplog.at_level(logging.INFO, logger="infrahub_sync.execution"):
-        result = execute_run(
-            sync_instance,
-            operation="sync",
-            confirm_writes=True,
-            potenda_factory=factory,
-        )
-
-    engine = factory()
-    assert engine.synced is True, "has_diffs() gates execution exactly as it does today"
-    assert result.status == "no-change"
-    assert result.changed is False
-    assert dict(result.summary) == {"create": 0, "update": 0, "delete": 0}
-    assert "No difference found. Nothing to sync" not in [record.getMessage() for record in caplog.records]
-
-
 def test_plan_uses_a_valid_writer_summary_without_materializing_fallback_rows(
     config_dir: str,
     cache_root: Path,
@@ -1939,233 +1920,3 @@ NO_DIFF_LOG = "No difference found. Nothing to sync"
 
 def _fixture_creates() -> list[dict[str, Any]]:
     return [_plan_row("create", name) for name in FIXTURE_DEVICES]
-
-
-def test_confirmed_sync_applies_and_writes_the_serial_lifecycle(config_dir: str, cache_root: Path) -> None:
-    """`operation="sync"` + `confirm_writes=True` applies the plan and reports it."""
-    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
-    factory = _SpyFactory(cache_root=cache_root, rows=_fixture_creates())
-
-    result = execute_run(instance, operation="sync", confirm_writes=True, potenda_factory=factory)
-
-    run_dir = cache_root / RUN_ID
-    assert result == RunResult(
-        sync_name=SYNC_NAME,
-        operation="sync",
-        run_id=RUN_ID,
-        status="applied",
-        changed=True,
-        summary={"create": 5, "update": 0, "delete": 0},
-        artifact_path=str(run_dir),
-    )
-    assert (run_dir / "plan.parquet").exists()
-    run_file = RunFile.load_or_default(run_dir / "run.json")
-    assert run_file.mode == "sync"
-    assert run_file.status == "applied"
-    assert run_file.summary == {"resources": 1, "mode": "serial"}
-    assert run_file.finished_at is not None
-    engine = factory.engine
-    assert engine is not None
-    assert engine.force_full_extract is True
-    assert engine.loaded is True
-    assert engine.synced is True
-    assert engine.baseline_persisted is True
-    assert engine.guardrail_allow_drop is False
-
-
-def test_confirmed_sync_summary_counts_every_action(config_dir: str, cache_root: Path) -> None:
-    """The per-action summary is derived from the in-memory plan rows."""
-    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
-    rows = [
-        _plan_row("create", "core01"),
-        _plan_row("create", "core02"),
-        _plan_row("update", "edge01"),
-        _plan_row("delete", "edge02"),
-    ]
-    factory = _SpyFactory(cache_root=cache_root, rows=rows)
-
-    result = execute_run(instance, operation="sync", confirm_writes=True, potenda_factory=factory)
-
-    assert result.status == "applied"
-    assert dict(result.summary) == {"create": 2, "update": 1, "delete": 1}
-
-
-def test_confirmed_parallel_sync_returns_its_aggregated_plan_counts(config_dir: str, cache_root: Path) -> None:
-    """A tier-parallel write reports the materialized plan instead of no-change."""
-    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
-    rows = [_plan_row("create", "core01"), _plan_row("update", "edge01"), _plan_row("delete", "edge02")]
-    factory = _SpyFactory(cache_root=cache_root, rows=rows)
-
-    def parallel_factory(**kwargs: object) -> Any:  # noqa: ANN401
-        engine = factory(**kwargs)
-        engine.tiers = [{"InfraDevice"}]
-        return engine
-
-    result = execute_run(
-        instance,
-        operation="sync",
-        confirm_writes=True,
-        parallel=True,
-        potenda_factory=parallel_factory,
-    )
-
-    assert result.status == "applied"
-    assert result.changed is True
-    assert dict(result.summary) == {"create": 1, "update": 1, "delete": 1}
-    assert RunFile.load_or_default(cache_root / RUN_ID / "run.json").summary == {
-        "resources": 1,
-        "mode": "parallel",
-    }
-
-
-def test_confirmed_sync_rejects_a_malformed_writer_summary_before_writing(
-    config_dir: str,
-    cache_root: Path,
-) -> None:
-    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
-    factory = _SpyFactory(
-        cache_root=cache_root,
-        rows=[_plan_row("create", "core01")],
-        write_result={"create": True, "update": 0, "delete": 0},
-    )
-
-    with pytest.raises(ValueError, match="non-negative integer"):
-        execute_run(instance, operation="sync", confirm_writes=True, potenda_factory=factory)
-
-    assert factory.engine is not None
-    assert factory.engine.synced is False
-    assert factory.engine.diff_rows_materialized == 0
-    assert RunFile.load_or_default(cache_root / RUN_ID / "run.json").status == "failed"
-
-
-@pytest.mark.parametrize("print_diff", [True, False])
-def test_confirmed_sync_logs_the_timing_line_when_the_diff_has_changes(
-    config_dir: str,
-    cache_root: Path,
-    caplog: pytest.LogCaptureFixture,
-    *,
-    print_diff: bool,
-) -> None:
-    """`print_diff` gates the diff rendering only — the timing line is unconditional."""
-    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
-    factory = _SpyFactory(cache_root=cache_root, rows=_fixture_creates())
-
-    with caplog.at_level(logging.INFO, logger="infrahub_sync.execution"):
-        execute_run(
-            instance,
-            operation="sync",
-            confirm_writes=True,
-            print_diff=print_diff,
-            potenda_factory=factory,
-        )
-
-    assert TIMING_LOG_PREFIX in caplog.text
-    assert NO_DIFF_LOG not in caplog.text
-    assert ("fake-diff(5 rows)" in caplog.text) is print_diff
-
-
-def test_sync_over_an_unchanged_destination_skips_the_sync_and_the_timing_log(
-    config_dir: str,
-    cache_root: Path,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """No diffs: no engine `sync`, no timing line — but the baseline is still persisted."""
-    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
-    factory = _SpyFactory(cache_root=cache_root, rows=[])
-
-    with caplog.at_level(logging.INFO, logger="infrahub_sync.execution"):
-        result = execute_run(instance, operation="sync", confirm_writes=True, potenda_factory=factory)
-
-    assert result.status == "no-change"
-    assert result.changed is False
-    assert dict(result.summary) == {"create": 0, "update": 0, "delete": 0}
-    assert NO_DIFF_LOG in caplog.text
-    assert TIMING_LOG_PREFIX not in caplog.text
-    engine = factory.engine
-    assert engine is not None
-    assert engine.synced is False
-    assert engine.baseline_persisted is True
-
-
-def test_second_confirmed_sync_converges_to_no_change(
-    config_dir: str,
-    cache_root: Path,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Idempotent reconciliation: apply, then re-run against the synchronized state."""
-    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
-    factory = _ConvergingFactory(cache_root=cache_root, rows=_fixture_creates())
-
-    # `caplog` captures for the whole test, so the two runs' records are separated
-    # explicitly — otherwise the first run's timing line would still be in
-    # `caplog.text` while the second run is being asserted about.
-    with caplog.at_level(logging.INFO, logger="infrahub_sync.execution"):
-        first = execute_run(instance, operation="sync", confirm_writes=True, potenda_factory=factory)
-        first_logs = caplog.text
-        caplog.clear()
-        second = execute_run(instance, operation="sync", confirm_writes=True, potenda_factory=factory)
-        second_logs = caplog.text
-
-    assert first.status == "applied"
-    assert first.changed is True
-    assert dict(first.summary) == {"create": 5, "update": 0, "delete": 0}
-    assert TIMING_LOG_PREFIX in first_logs
-
-    assert second.status == "no-change"
-    assert second.changed is False
-    assert dict(second.summary) == {"create": 0, "update": 0, "delete": 0}
-    assert second.run_id != first.run_id
-    assert NO_DIFF_LOG in second_logs
-    assert TIMING_LOG_PREFIX not in second_logs
-
-    assert factory.engines[0].synced is True
-    assert factory.engines[1].synced is False
-    # Both runs record mode="sync"/status="applied" in run.json: run.json reports
-    # that the sync lifecycle ran to completion, while RunResult.status reports
-    # whether the destination actually differed.
-    for engine in factory.engines:
-        run_file = RunFile.load_or_default(engine.run_dir / "run.json")
-        assert run_file.mode == "sync"
-        assert run_file.status == "applied"
-        assert run_file.summary == {"resources": 1, "mode": "serial"}
-
-
-def test_follow_up_plan_after_a_confirmed_sync_reports_no_change(config_dir: str, cache_root: Path) -> None:
-    """The DBA-005 convergence leg: a plan over the synchronized state is empty."""
-    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
-    factory = _ConvergingFactory(cache_root=cache_root, rows=_fixture_creates())
-
-    applied = execute_run(instance, operation="sync", confirm_writes=True, potenda_factory=factory)
-    planned = execute_run(instance, operation="plan", potenda_factory=factory)
-
-    assert applied.status == "applied"
-    assert planned.operation == "plan"
-    assert planned.status == "no-change"
-    assert planned.changed is False
-    assert dict(planned.summary) == {"create": 0, "update": 0, "delete": 0}
-    assert RunFile.load_or_default(factory.engines[1].run_dir / "run.json").mode == "diff"
-
-
-def test_confirmed_sync_through_the_remote_composition_returns_applied(config_dir: str, cache_root: Path) -> None:
-    """The remote path reaches the same applied result the CLI serial branch does."""
-    factory = _ConvergingFactory(cache_root=cache_root, rows=_fixture_creates())
-
-    result = run_remote_request(
-        SYNC_NAME,
-        "sync",
-        confirm_writes=True,
-        config_directory=config_dir,
-        _potenda_factory=factory,
-    )
-
-    assert result.operation == "sync"
-    assert result.status == "applied"
-    assert result.changed is True
-    assert dict(result.summary) == {"create": 5, "update": 0, "delete": 0}
-    assert Path(result.artifact_path).name == result.run_id
-    assert factory.calls[0]["show_progress"] is False
-    assert factory.engines[0].synced is True
-    # The remote path's safety defaults, asserted on the engine the run actually
-    # used: mass-deletion protection stays armed, and the extract stays full.
-    assert factory.engines[0].guardrail_allow_drop is False
-    assert factory.engines[0].force_full_extract is True

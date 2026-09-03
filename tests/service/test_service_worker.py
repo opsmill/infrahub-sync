@@ -26,6 +26,7 @@ from prefect.workers.process import ProcessWorker
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.worker import ServiceProcessWorker, ServiceWorkerIdentityError, service_worker_name
+from tests.service.execution_fixtures import append_execution
 
 if TYPE_CHECKING:
     from prefect.client.schemas.objects import FlowRun, WorkPool
@@ -376,7 +377,8 @@ async def test_child_refuses_stale_identity_after_start_before_claim(
             phase="accepted",
         )
     )
-    projection.add_prefect_execution(
+    append_execution(
+        projection,
         run_id,
         PrefectExecutionLink(flow_run_id=str(FLOW_ID), purpose="plan", attempt=1, submitted_at=now),
     )

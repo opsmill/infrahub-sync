@@ -957,7 +957,7 @@ def test_no_canary_reaches_prefect_visible_state_on_a_failing_run(
 
 
 @pytest.mark.usefixtures("prefect_harness", "canary_environment")
-def test_flow_refuses_an_unconfirmed_sync_before_any_engine_is_built(
+def test_flow_refuses_the_composed_sync_writer_before_any_engine_is_built(
     monkeypatch: pytest.MonkeyPatch,
     source_logger: logging.Logger,  # noqa: ARG001 - restores the bridged logger's handlers and level
     tmp_path: Path,
@@ -971,8 +971,8 @@ def test_flow_refuses_an_unconfirmed_sync_before_any_engine_is_built(
 
     assert state.is_failed()
     assert isinstance(error, RunValidationError)
-    assert str(error) == "confirm_writes=true is required to run operation=sync"
-    assert "confirm_writes=true is required to run operation=sync" in str(state.message)
+    assert "operation=sync is not supported here" in str(error)
+    assert "operation=sync is not supported here" in str(state.message)
     assert factory.calls == []
 
 

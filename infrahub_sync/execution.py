@@ -25,7 +25,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from timeit import default_timer as timer
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, overload
 
@@ -58,8 +57,8 @@ from infrahub_sync.utils import PlanApplier, get_potenda_from_instance
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Sequence
-    from typing import NoReturn
 
+    from infrahub_sync.plan.ownership import WriteOwnership
     from infrahub_sync.plan.review import SavedPlan
     from infrahub_sync.potenda import Potenda
 
@@ -98,6 +97,11 @@ class PotendaFactory(Protocol):
 
 
 OPERATIONS: tuple[Operation, ...] = ("plan", "sync", "verify", "apply")
+# The composed sync writer is not a supported entry point: it produces its own plan and
+# applies it in one call, so it can offer no per-operation ownership proof over a reviewed
+# artifact. The Sync HTTP API composes plan, verify, and apply instead, holding one
+# configuration write guard across them. Named because both entry points state it.
+SYNC_UNSUPPORTED = "operation=sync is not supported here; compose plan, verify, and apply through the Sync API"
 ACTION_KEYS: tuple[ActionKey, ...] = ("create", "update", "delete")
 
 REDACTED = "***"
@@ -673,72 +677,6 @@ def _run_plan_lifecycle(*, ptd: Potenda, run_file: RunFile, print_diff: bool) ->
     return _summary_from_plan_write(write_result, lambda: ptd._diff_to_rows(mydiff))
 
 
-def _run_sync_lifecycle(
-    *,
-    ptd: Potenda,
-    run_file: RunFile,
-    print_diff: bool,
-    allow_rowcount_drop: bool,
-    serial_load_error: Callable[[ValueError], NoReturn] | None,
-    plan_committed: Callable[[], None] | None,
-) -> dict[ActionKey, int]:
-    """Reproduce the CLI serial `sync` lifecycle and return its live diff-row counts."""
-    try:
-        ptd.load_both_sides()
-    except ValueError as exc:
-        if serial_load_error is not None:
-            # CLI-only seam: the unprefixed abort fires at the site, exactly as
-            # cli.py:265-268 does today.
-            serial_load_error(exc)
-        raise
-    ptd.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
-    mydiff = ptd.diff()
-    write_result = ptd.write_plan(mydiff)
-    _validated_plan_write_summary(write_result)
-    if plan_committed is not None:
-        plan_committed()
-    if mydiff.has_diffs():
-        if print_diff:
-            logger.info("\n%s", mydiff.str())
-        start_synctime = timer()
-        ptd.sync(diff=mydiff)
-        end_synctime = timer()
-        logger.info("Sync: Completed in %s sec", end_synctime - start_synctime)
-    else:
-        logger.info("No difference found. Nothing to sync")
-    ptd.persist_baseline_counts()
-    run_file.summary = {"resources": len(ptd.top_level), "mode": "serial"}
-    run_file.status = "applied"
-    return _summarize_rows(ptd._diff_to_rows(mydiff))
-
-
-def _run_parallel_sync_lifecycle(
-    *,
-    ptd: Potenda,
-    run_file: RunFile,
-    allow_rowcount_drop: bool,
-    parallel_sync_error: Callable[[ValueError], NoReturn] | None,
-    plan_committed: Callable[[], None] | None,
-) -> dict[ActionKey, int]:
-    """Run the established tier-parallel lifecycle and return its plan counts."""
-    try:
-        if plan_committed is None:
-            summary = ptd.sync_in_tiers(parallel=True, allow_rowcount_drop=allow_rowcount_drop)
-        else:
-            summary = ptd.sync_in_tiers(
-                parallel=True,
-                allow_rowcount_drop=allow_rowcount_drop,
-                plan_committed=plan_committed,
-            )
-    except ValueError as exc:
-        if parallel_sync_error is not None:
-            parallel_sync_error(exc)
-        raise
-    run_file.summary = {"resources": len(ptd.top_level), "mode": "parallel"}
-    run_file.status = "applied"
-    return {action: summary[action] for action in ACTION_KEYS}
-
-
 def _require_a_free_run_id(*, sync_name: str, run_id: str | None) -> None:
     """Refuse a plan generation that would overwrite a committed saved plan."""
     if run_id is None:
@@ -785,13 +723,6 @@ def _run_lock(sync_name: str, *, timeout: float) -> Iterator[None]:
             msg = f"Sync {sync_name!r} could not acquire its pipeline lock within {timeout} seconds; {detail}."
             raise RunConcurrencyError(msg) from exc
     with lock_stack:
-        yield
-
-
-@contextmanager
-def bounded_run_lock(sync_name: str, *, timeout: float = 60.0) -> Iterator[None]:
-    """Expose the shared bounded run lock to in-process product compositions."""
-    with _run_lock(sync_name, timeout=timeout):
         yield
 
 
@@ -885,7 +816,7 @@ def _read_verified_plan(*, sync_instance: SyncInstance, run_id: str) -> SavedPla
     return saved
 
 
-def _run_apply_lifecycle(
+def _run_apply_lifecycle(  # pylint: disable=too-many-arguments
     *,
     sync_instance: SyncInstance,
     run_id: str,
@@ -893,6 +824,8 @@ def _run_apply_lifecycle(
     verbosity: int,
     allow_destination_change: bool,
     expected_checksum: str | None,
+    ownership: WriteOwnership,
+    record_applied: Callable[[ApplyRecord], None],
     _plan_applier_factory: Callable[..., PlanApplier] | None,
     run_directory: Path,
     sidecar_mode: Literal["sync", "apply"],
@@ -910,6 +843,7 @@ def _run_apply_lifecycle(
     _save_run_transition(run_directory, mode=sidecar_mode, status="running", run_file=run_file)
     try:
         record = applier.apply_plan(
+            ownership=ownership,
             allow_destination_change=allow_destination_change,
             expected_checksum=expected_checksum,
         )
@@ -926,9 +860,20 @@ def _run_apply_lifecycle(
         raise
 
     try:
+        # Reported to the write scope before anything else can fail: the sidecar write, the
+        # guard's release, and the product success commit all happen after this point, and
+        # each of them is a failure after a dispatch that still has to say what was written.
+        # Inside this `try` so a sink that raises is itself such a failure, and reaches the
+        # same boundary carrying the same record. The sink is separate from `ownership` on
+        # purpose — that boundary authorizes the write, and saying what the write did is not
+        # its question to answer.
+        record_applied(record)
         _save_run_transition(run_directory, mode=sidecar_mode, status="applied", record=record, run_file=run_file)
-    except BaseException:
+    except BaseException as exc:
+        # Everything the loop applied is already written; a sink or a sidecar that could not
+        # record that must not make the completed record unreadable to the failure boundary.
         _save_failed_run(run_directory, mode=sidecar_mode, record=record, run_file=run_file)
+        exc.apply_record = record  # ty: ignore[unresolved-attribute]
         raise
     return _build_result(
         sync_instance=sync_instance,
@@ -990,6 +935,8 @@ def _execute_apply_operation(
     verbosity: int,
     allow_destination_change: bool,
     expected_checksum: str | None,
+    ownership: WriteOwnership,
+    record_applied: Callable[[ApplyRecord], None],
     plan_applier_factory: Callable[..., PlanApplier] | None,
     lock_timeout: float,
     lock_already_held: bool,
@@ -1015,22 +962,39 @@ def _execute_apply_operation(
             verbosity=verbosity,
             allow_destination_change=allow_destination_change,
             expected_checksum=expected_checksum,
+            ownership=ownership,
+            record_applied=record_applied,
             _plan_applier_factory=plan_applier_factory,
             run_directory=run_directory,
             sidecar_mode=sidecar_mode,
         )
 
 
-def _validate_operation_request(*, operation: Operation, confirm_writes: bool, run_id: str | None) -> None:
+def _validate_operation_request(
+    *,
+    operation: Operation,
+    confirm_writes: bool,
+    run_id: str | None,
+    ownership: WriteOwnership | None,
+    record_applied: Callable[[ApplyRecord], None] | None,
+) -> None:
     """Refuse invalid operation inputs before any adapter or run state is constructed."""
     if operation not in OPERATIONS:
         msg = f"Unsupported operation {operation!r} — expected one of {OPERATIONS!r}"
         raise RunValidationError(msg)
-    if operation in ("sync", "apply") and not confirm_writes:
+    if operation == "sync":
+        raise RunValidationError(SYNC_UNSUPPORTED)
+    if operation == "apply" and not confirm_writes:
         msg = f"confirm_writes=true is required to run operation={operation}"
         raise RunValidationError(msg)
     if operation in ("verify", "apply") and run_id is None:
         msg = f"run_id is required to run operation={operation}"
+        raise RunValidationError(msg)
+    if operation == "apply" and ownership is None:
+        msg = "an explicit write-ownership boundary is required to run operation=apply"
+        raise RunValidationError(msg)
+    if operation == "apply" and record_applied is None:
+        msg = "a completion sink is required to run operation=apply"
         raise RunValidationError(msg)
 
 
@@ -1052,12 +1016,25 @@ def execute_run(
 
 @overload
 def execute_run(
-    sync_instance: SyncInstance, *, operation: Literal["plan", "sync", "apply"], **kwargs: Any
+    sync_instance: SyncInstance,
+    *,
+    operation: Literal["apply"],
+    ownership: WriteOwnership,
+    record_applied: Callable[[ApplyRecord], None],
+    **kwargs: Any,
 ) -> RunResult: ...
 
 
+# `apply` is deliberately absent from the remaining overloads: it is the only operation that
+# writes, so the type checker — not just the runtime refusal below — is what rejects an apply
+# with no write-ownership boundary.
+#
+# `sync` is absent for the same reason, one step further: it is accepted only to be refused,
+# so no overload can honestly name what it returns. Leaving it out makes the type checker say
+# so at the call site, and keeps the runtime refusal below as the answer for callers that are
+# not type-checked at all.
 @overload
-def execute_run(sync_instance: SyncInstance, *, operation: Operation, **kwargs: Any) -> RunResult | SavedPlan: ...
+def execute_run(sync_instance: SyncInstance, *, operation: Literal["plan"], **kwargs: Any) -> RunResult: ...
 
 
 def execute_run(
@@ -1072,37 +1049,46 @@ def execute_run(
     run_id: str | None = None,
     concurrent_load: bool = True,
     full_extract: bool = True,
-    allow_rowcount_drop: bool = False,
     continue_on_error: bool = False,
     print_diff: bool = True,
     potenda_factory: PotendaFactory | None = None,
-    parallel: bool = False,
     allow_destination_change: bool = False,
     expected_checksum: str | None = None,
+    ownership: WriteOwnership | None = None,
+    record_applied: Callable[[ApplyRecord], None] | None = None,
     # Private seams — not part of the remote contract; run_remote_request never sets them.
     _plan_applier_factory: Callable[..., PlanApplier] | None = None,
     _lock_timeout: float = 60.0,
-    _serial_load_error: Callable[[ValueError], NoReturn] | None = None,
-    _parallel_sync_error: Callable[[ValueError], NoReturn] | None = None,
     _lock_already_held: bool = False,
     _run_file_mode: Literal["diff", "sync"] | None = None,
     _require_verified: bool = False,
     _return_saved_plan: bool = False,
-    _plan_committed: Callable[[], None] | None = None,
 ) -> RunResult | SavedPlan:
     """Run one product operation against a resolved instance.
 
-    The core owns all write-capable locks and all run-sidecar transitions.  The
-    CLI remains responsible only for argument parsing and rendering, so the
-    existing command-specific failure shapes stay at that boundary.
+    The core owns all run-sidecar transitions.  The CLI remains responsible only
+    for argument parsing and rendering, so the existing command-specific failure
+    shapes stay at that boundary.
+
+    An apply writes to a destination, so it requires `ownership`: the boundary that
+    proves this process still holds the right to write this configuration. The
+    parameter is optional in the signature only because plan and verify do not write;
+    an apply without one is refused before anything is constructed.
 
     Raises:
         RunConcurrencyError: the same synchronization remains locked after the
             bounded wait, with advisory context from the latest running sidecar.
-        RunValidationError: an unsupported operation, a missing saved-plan id,
-            or an unconfirmed write (all refused before an adapter is built).
+        RunValidationError: an unsupported operation, a composed sync write, a
+            missing saved-plan id, an unconfirmed write, or an apply with no
+            write-ownership boundary (all refused before an adapter is built).
     """
-    _validate_operation_request(operation=operation, confirm_writes=confirm_writes, run_id=run_id)
+    _validate_operation_request(
+        operation=operation,
+        confirm_writes=confirm_writes,
+        run_id=run_id,
+        ownership=ownership,
+        record_applied=record_applied,
+    )
 
     if operation == "verify":
         assert run_id is not None  # narrowed above; verification never allocates a run.
@@ -1115,6 +1101,8 @@ def execute_run(
 
     if operation == "apply":
         assert run_id is not None  # narrowed above; keeps the saved-plan boundary explicit.
+        assert ownership is not None  # narrowed above; an apply never runs unguarded.
+        assert record_applied is not None  # narrowed above; an apply always reports what it did.
         return _execute_apply_operation(
             sync_instance=sync_instance,
             run_id=run_id,
@@ -1122,25 +1110,25 @@ def execute_run(
             verbosity=verbosity,
             allow_destination_change=allow_destination_change,
             expected_checksum=expected_checksum,
+            ownership=ownership,
+            record_applied=record_applied,
             plan_applier_factory=_plan_applier_factory,
             lock_timeout=_lock_timeout,
             lock_already_held=_lock_already_held,
             run_file_mode=_run_file_mode,
         )
 
-    if operation == "plan":
-        _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id)
+    _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id)
 
     run_lock: AbstractContextManager[None] = (
         nullcontext() if _lock_already_held else _run_lock(sync_instance.name, timeout=_lock_timeout)
     )
     with run_lock:
-        if operation == "plan":
-            # A plan may have been committed while this command waited for the lock.
-            _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id)
+        # A plan may have been committed while this command waited for the lock.
+        _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id)
         factory: PotendaFactory = potenda_factory if potenda_factory is not None else get_potenda_from_instance
         # Pinned call shape: all seven keyword arguments of
-        # utils.get_potenda_from_instance, always explicitly, for both operations.
+        # utils.get_potenda_from_instance, always explicitly.
         ptd = factory(
             sync_instance=sync_instance,
             branch=branch,
@@ -1154,7 +1142,7 @@ def execute_run(
         if ptd.run_dir is None:  # get_potenda_from_instance always allocates one
             msg = "get_potenda_from_instance did not allocate a run_dir"
             raise RuntimeError(msg)
-        run_mode: Literal["diff", "sync"] = _run_file_mode or ("diff" if operation == "plan" else "sync")
+        run_mode: Literal["diff", "sync"] = _run_file_mode or "diff"
         run_file = RunFile(
             path=ptd.run_dir / "run.json",
             status="running",
@@ -1164,31 +1152,8 @@ def execute_run(
 
         saved_plan: SavedPlan | None = None
         try:
-            if operation == "plan":
-                summary = _run_plan_lifecycle(ptd=ptd, run_file=run_file, print_diff=print_diff)
-            elif parallel and ptd.tiers:
-                summary = _run_parallel_sync_lifecycle(
-                    ptd=ptd,
-                    run_file=run_file,
-                    allow_rowcount_drop=allow_rowcount_drop,
-                    parallel_sync_error=_parallel_sync_error,
-                    plan_committed=_plan_committed,
-                )
-            else:
-                if parallel and not ptd.tiers:
-                    logger.warning(
-                        "--parallel ignored because order: is set in config.yml; "
-                        "remove order: to enable tier-by-tier execution",
-                    )
-                summary = _run_sync_lifecycle(
-                    ptd=ptd,
-                    run_file=run_file,
-                    print_diff=print_diff,
-                    allow_rowcount_drop=allow_rowcount_drop,
-                    serial_load_error=_serial_load_error,
-                    plan_committed=_plan_committed,
-                )
-            if operation == "plan" and _return_saved_plan:
+            summary = _run_plan_lifecycle(ptd=ptd, run_file=run_file, print_diff=print_diff)
+            if _return_saved_plan:
                 saved_plan = read_saved_plan(sync_name=sync_instance.name, run_id=str(ptd.run_id), config=sync_instance)
 
             run_file.finished_at = datetime.now(timezone.utc).isoformat()
@@ -1200,10 +1165,7 @@ def execute_run(
             # This broad except is that existing pattern, not new looseness.
             _save_failed_run(ptd.run_dir, mode=run_mode, run_file=run_file)
             raise
-        if operation == "plan":
-            logger.info("Cached run %s at %s", ptd.run_id, ptd.run_dir)
-        else:
-            logger.info("Sync run %s at %s", ptd.run_id, ptd.run_dir)
+        logger.info("Cached run %s at %s", ptd.run_id, ptd.run_dir)
         if saved_plan is not None:
             return saved_plan
         return _build_result(sync_instance=sync_instance, operation=operation, ptd=ptd, summary=summary)
@@ -1243,7 +1205,7 @@ def _missing_credential_hint(detail: str) -> str:
 
 def run_remote_request(
     sync_name: str,
-    operation: Operation = "plan",
+    operation: Literal["plan", "sync"] = "plan",
     confirm_writes: bool = False,
     branch: str | None = None,
     *,
@@ -1290,22 +1252,26 @@ def run_remote_request(
     shared_secrets = _REMOTE_SECRET_VALUES.get()
     if shared_secrets is not None:
         shared_secrets[:] = secrets
+    if operation == "sync":
+        # Stated here as well as inside `execute_run`, because `sync` has no overload to
+        # forward to: this parameter still accepts it, and a remote caller that asks for one
+        # gets the same refusal it has always got. Ahead of the boundary rather than inside
+        # it because a `RunValidationError` crosses that boundary unchanged, and an
+        # unsupported request is refusable without resolving any configuration first.
+        raise RunValidationError(SYNC_UNSUPPORTED)
     try:
         sync_instance = resolve_sync_instance(sync_name, directory=config_directory)
         secrets = collect_secret_values(sync_instance)
         if shared_secrets is not None:
             shared_secrets[:] = secrets
-        return cast(
-            "RunResult",
-            execute_run(
-                sync_instance,
-                operation=operation,
-                confirm_writes=confirm_writes,
-                branch=branch,
-                show_progress=False,
-                potenda_factory=factory,
-                _lock_timeout=_lock_timeout,
-            ),
+        return execute_run(
+            sync_instance,
+            operation=operation,
+            confirm_writes=confirm_writes,
+            branch=branch,
+            show_progress=False,
+            potenda_factory=factory,
+            _lock_timeout=_lock_timeout,
         )
     except RunValidationError:
         raise

@@ -973,3 +973,47 @@ def test_request_time_reconciliation_terminalizes_each_pending_link(tmp_path) ->
 
     assert response.status_code == 200
     assert response.json()["run"]["phase"] == "abandoned"
+
+
+@pytest.mark.parametrize(("purpose", "expected"), [("apply", True), ("sync", True), ("plan", False)])
+def test_a_lost_write_worker_leaves_durable_reconciliation_evidence(tmp_path, purpose: str, expected: bool) -> None:  # noqa: FBT001 - one parametrized dimension of the verdict.
+    """Losing a worker that held the write is the same uncertainty as losing the write.
+
+    Reconciliation cannot tell whether a disappeared apply or sync reached the
+    destination, so it records that the operator must look. A lost plan worker wrote
+    nothing by construction, so the same interrupted verdict carries no such evidence —
+    which is what makes the record worth reading.
+    """
+    now = datetime(2026, 9, 3, 12, tzinfo=timezone.utc)
+    owner = str(uuid4())
+    run_id = f"run-lost-{purpose}-worker"
+    projection = local_product_projection(tmp_path)
+    projection.create_run(
+        _run(
+            run_id,
+            PrefectExecutionLink(
+                flow_run_id=f"flow-lost-{purpose}",
+                purpose=purpose,
+                attempt=1,
+                submitted_at=now - timedelta(minutes=10),
+                claimed_at=now - timedelta(seconds=30),
+                claiming_worker_id=owner,
+            ),
+        )
+    )
+    pool = PoolStatus(
+        detail_available=True,
+        queue_depth=0,
+        observed_at=now,
+        workers=(PoolWorker(owner, "offline", now, 10.0),),
+    )
+    reconciler = RunLivenessReconciler(
+        projection, _Orchestration(pool), LivenessPolicy(300, 30, 5), "pool", clock=lambda: now
+    )
+
+    asyncio.run(reconciler.reconcile_once())
+
+    run = projection.lookup_run(run_id).value
+    assert run is not None
+    assert run.prefect_executions[0].terminal_state == "interrupted"
+    assert run.reconciliation_required is expected
