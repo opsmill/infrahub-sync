@@ -206,7 +206,8 @@ class ApplyGuard:
             _fail(self._failure(ApplyGuardOwnershipError, _RETIRED))
         try:
             row = self._connection.execute(_OWNERSHIP, _lock_columns(self._key)).fetchone()
-        except Exception as exc:  # noqa: BLE001 - one provider boundary; classified here.
+        # One provider boundary; every class is classified rather than escaping.
+        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             failure = self._failure(ApplyGuardOwnershipError, _SESSION_LOST.format(type(exc).__name__), exc)
             self.retire()
             _fail(failure)
@@ -231,7 +232,8 @@ class ApplyGuard:
             _fail(self._failure(ApplyGuardReleaseError, _RETIRED))
         try:
             row = self._connection.execute(_RELEASE, (self._key,)).fetchone()
-        except Exception as exc:  # noqa: BLE001 - one provider boundary; classified here.
+        # One provider boundary; every class is classified rather than escaping.
+        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             failure = self._failure(ApplyGuardReleaseError, _RELEASE_FAILED.format(type(exc).__name__), exc)
             self.retire()
             _fail(failure)
@@ -268,7 +270,8 @@ class ApplyGuard:
         """
         try:
             self._connection.close()
-        except BaseException as exc:  # noqa: BLE001 - one cleanup boundary; never replaces a primary failure.
+        # One cleanup boundary; a close failure never replaces a primary failure.
+        except BaseException as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             return self._failure(ApplyGuardReleaseError, _CLOSE_FAILED.format(type(exc).__name__), exc)
         return None
 
@@ -327,7 +330,8 @@ def _acquire(
         connection.execute(_SET_DEADLINE, (str(milliseconds),))
         connection.execute(_ACQUIRE, (key,))
         row = connection.execute(_OWNERSHIP, _lock_columns(key)).fetchone()
-    except Exception as exc:  # noqa: BLE001 - one provider boundary; classified below.
+    # One provider boundary; every class is classified rather than escaping.
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         failure = _acquisition_failure(exc, secrets)
     except BaseException:  # Contained, then re-raised unchanged.
         if connection is not None:
