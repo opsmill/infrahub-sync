@@ -30,7 +30,10 @@ lock readings distinguish serialization from luck, which is why every leg also r
 an observed waiting request.
 
 These legs need the live preview stack (`invoke preview.up` plus `invoke preview.seed`).
-They skip, naming what is missing, only when it is absent.
+An absent stack is the only thing they skip for, and the skip names the missing service.
+Psycopg is imported outright rather than skipped past: it ships with the service profile
+these legs exercise, so a missing driver is a broken environment, not a reason to report
+green.
 """
 
 from __future__ import annotations
@@ -43,16 +46,16 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from itertools import pairwise
+from operator import itemgetter
 from typing import TYPE_CHECKING, Any
 
 import httpx
+import psycopg
 import pytest
 from typing_extensions import Self
 
-psycopg: Any = pytest.importorskip("psycopg")
-
-from infrahub_sync.service.apply_guard import advisory_lock_key  # noqa: E402
-from tasks.preview import (  # noqa: E402
+from infrahub_sync.service.apply_guard import advisory_lock_key
+from tasks.preview import (
     SHARED_DEVICE_NAME,
     SMOKE_BRANCH,
     SMOKE_KIND,
@@ -429,6 +432,34 @@ def _assert_serialized(observations: KeyObservations, *, holder_pid: int) -> lis
     return worker_holds
 
 
+def _assert_each_plan_had_its_own_hold(first_published: dict[str, float], worker_holds: list[_Hold]) -> None:
+    """Require each published plan to sit in a hold of its own, in order.
+
+    "Inside some hold" is not the property: with holds `[10, 20]` and `[21, 30]`, two plans
+    published at 15 and 16 both sit inside a hold and both were nonetheless produced while
+    the *first* worker held the key — the exact violation this leg exists to exclude. Each
+    publication therefore has to claim a distinct hold, and because the holds are disjoint
+    and time-ordered, that is the same as saying no worker extracted or planned while
+    another held the key.
+
+    A contender that lost the key publishes nothing, so there are never more publications
+    than holds; requiring the counts to match is what stops a silent second publication
+    inside one hold from passing.
+    """
+    ordered = sorted(first_published.items(), key=itemgetter(1))
+    assert ordered, "no sync published a plan while sampled"
+    assert len(ordered) == len(worker_holds), (
+        f"{len(ordered)} plan publication(s) against {len(worker_holds)} worker hold(s): "
+        f"{ordered} versus {[(hold.pid, hold.first_seen, hold.last_seen) for hold in worker_holds]}"
+    )
+    for (run_id, published_at), hold in zip(ordered, worker_holds, strict=True):
+        assert hold.first_seen <= published_at <= hold.last_seen, (
+            f"run {run_id} published its reviewed plan at {published_at}, outside the hold it must "
+            f"have used — pid {hold.pid} [{hold.first_seen}, {hold.last_seen}] — so it extracted and "
+            f"planned while another worker held the configuration's key, or held none at all"
+        )
+
+
 def _assert_write_verdict(label: str, record: dict[str, Any]) -> bool:
     """Require one live write to have either run its stage or lost the key cleanly.
 
@@ -568,11 +599,33 @@ def test_two_live_sync_workers_serialize_extraction_and_planning(api: httpx.Clie
     completed = [label for label, record in records.items() if _assert_write_verdict(label, record)]
     assert completed, f"neither sync held the key long enough to run its write stage: {records}"
 
-    assert observations.first_published, "no sync published a plan while sampled"
-    for run_id, published_at in observations.first_published.items():
-        inside = [hold for hold in worker_holds if hold.first_seen <= published_at <= hold.last_seen]
-        assert inside, (
-            f"run {run_id} published its reviewed plan at {published_at}, outside every observed hold "
-            f"{[(hold.pid, hold.first_seen, hold.last_seen) for hold in worker_holds]} — so it extracted "
-            f"and planned without holding the configuration's key"
-        )
+    _assert_each_plan_had_its_own_hold(observations.first_published, worker_holds)
+
+
+def test_publications_must_claim_distinct_holds_in_order() -> None:
+    """The predicate the sync leg rests on, exercised on readings it must reject.
+
+    Two plans published at 15 and 16, against holds `[10, 20]` and `[21, 30]`, both sit
+    inside *a* hold — and both were produced while the first worker held the key, which is
+    the violation the leg exists to exclude. Requiring each publication to claim a hold of
+    its own, in order, is what tells that apart from the correct interleaving.
+
+    This case needs no stack: the predicate is pure, and its readings are the ones a broken
+    guard would produce.
+    """
+    holds = [_Hold(pid=1, first_seen=10.0, last_seen=20.0), _Hold(pid=2, first_seen=21.0, last_seen=30.0)]
+
+    with pytest.raises(AssertionError, match="outside the hold it must have used"):
+        _assert_each_plan_had_its_own_hold({"run-a": 15.0, "run-b": 16.0}, holds)
+
+    _assert_each_plan_had_its_own_hold({"run-a": 15.0, "run-b": 25.0}, holds)
+
+
+def test_a_contender_that_never_held_the_key_must_have_published_nothing() -> None:
+    """One worker holding means one plan: the loser extracted and planned nothing."""
+    holds = [_Hold(pid=1, first_seen=10.0, last_seen=20.0)]
+
+    _assert_each_plan_had_its_own_hold({"run-a": 15.0}, holds)
+
+    with pytest.raises(AssertionError, match="plan publication"):
+        _assert_each_plan_had_its_own_hold({"run-a": 15.0, "run-b": 16.0}, holds)
