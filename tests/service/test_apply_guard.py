@@ -418,18 +418,33 @@ def test_a_lost_or_uncertain_hold_refuses_ownership_and_retires_the_session(loss
     assert session.executed("pg_advisory_unlock") == []
 
 
-def test_a_failed_ownership_proof_retires_the_session_immediately() -> None:
+@pytest.mark.parametrize(
+    ("injected", "raised"),
+    [
+        pytest.param(None, ApplyGuardOwnershipError, id="lock-row"),
+        pytest.param(psycopg.OperationalError("driver"), ApplyGuardOwnershipError, id="driver-error"),
+        pytest.param(RuntimeError("ordinary"), ApplyGuardOwnershipError, id="ordinary-exception"),
+        pytest.param(KeyboardInterrupt("interrupt"), KeyboardInterrupt, id="base-exception"),
+    ],
+)
+def test_a_failed_ownership_proof_retires_the_session_immediately(
+    injected: BaseException | None, raised: type[BaseException]
+) -> None:
     """A caller that catches the refusal must not be able to keep using the session.
 
     Retiring only while the hold unwinds would leave a caught refusal followed by
-    another destination operation on a session that no longer owns the key.
+    another destination operation on a session that no longer owns the key. That
+    has to hold for every failure class, including a contained interrupt.
     """
     session = _FakeSession()
     hold = _Hold(session)
 
     def prove_twice(guard: ApplyGuard) -> None:
-        session.held = False
-        with pytest.raises(ApplyGuardOwnershipError):
+        if injected is None:
+            session.held = False
+        else:
+            session.failures["pg_locks"] = injected
+        with pytest.raises(raised):
             guard.require_ownership()
         assert guard.retired is True
         assert session.close_calls == 1
@@ -483,15 +498,24 @@ def test_a_successful_hold_confirms_the_unlock_and_closes_the_session() -> None:
         pytest.param(_FakeSession(release_pid=_OTHER_BACKEND_PID), id="different-backend-session"),
     ],
 )
-def test_an_unconfirmed_unlock_fails_the_guard_use(session: _FakeSession) -> None:
-    """A body that succeeded is still a failed guard use without a confirmed release."""
+def test_an_unconfirmed_unlock_fails_the_guard_use_and_retires_the_guard(session: _FakeSession) -> None:
+    """A body that succeeded is still a failed guard use without a confirmed release.
+
+    The guard must also report itself retired, so a caller that catches the failure
+    cannot read it as a usable hold or drive another unlock at the closed session.
+    """
     hold = _Hold(session)
 
     with pytest.raises(ApplyGuardReleaseError):
         hold.run()
 
     assert hold.guard is not None
+    assert hold.guard.retired is True
     assert session.close_calls == 1
+    unlocks = len(session.executed("pg_advisory_unlock"))
+    with pytest.raises(ApplyGuardReleaseError):
+        hold.guard.release()
+    assert len(session.executed("pg_advisory_unlock")) == unlocks
 
 
 def test_a_release_driver_failure_fails_the_guard_use_and_retires_the_session() -> None:
