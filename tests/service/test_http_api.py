@@ -1547,3 +1547,53 @@ def test_version_is_unauthenticated_and_declares_the_unstable_api(
     }
     operation = client.get("/openapi.json").json()["paths"]["/version"]["get"]
     assert "security" not in operation
+
+
+def test_cancelling_a_claimed_write_answers_with_durable_ambiguity(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """A worker already holding the write may have reached the destination.
+
+    Cancellation is accepted by Prefect and still cannot promise a clean stop, so the
+    operator is told the run is terminal and uncertain rather than cancelled, and the
+    public record says reconciliation is required.
+    """
+    client, projection, orchestration = service_api
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+    plan = _publish_plan(projection, run_id)
+    _settle_open_executions(projection, run_id)
+    applied = client.post(
+        f"/runs/{run_id}/apply",
+        headers={**AUTH, "Idempotency-Key": "cancel-claimed-apply"},
+        json={"expected_checksum": plan.checksum, "reason": "approved", "confirm_writes": True},
+    )
+    apply_flow_run_id = applied.json()["orchestration"][-1]["flow_run_id"]
+    assert projection.claim_execution(run_id, apply_flow_run_id, worker_id=_PLAN_WORKER_ID)
+    orchestration.observations[apply_flow_run_id] = Observation(available=True, state="running")
+
+    cancelled = client.post(
+        f"/runs/{run_id}/cancel",
+        headers={**AUTH, "Idempotency-Key": "cancel-the-claimed-write"},
+        json={"reason": "stop the write"},
+    )
+
+    assert cancelled.status_code == 409
+    assert cancelled.json()["error"]["code"] == "cancellation-ambiguous"
+    assert orchestration.cancelled == [apply_flow_run_id]
+    resource = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {OWNER_TOKEN}"}).json()
+    assert resource["run"]["reconciliation_required"] is True
+    assert resource["run"]["outcome"] == "ambiguous"
+
+
+def test_a_run_that_never_wrote_reports_no_reconciliation_requirement(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """The field is authoritative and public, so its false answer has to be visible too."""
+    client, _projection, _orchestration = service_api
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+
+    resource = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {OWNER_TOKEN}"}).json()
+
+    assert resource["run"]["reconciliation_required"] is False

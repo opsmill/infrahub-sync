@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from threading import Barrier
 from typing import TYPE_CHECKING, Any
@@ -596,3 +596,98 @@ def test_a_new_run_starts_without_reconciliation_evidence(projection: ProductPro
 
     assert stored is not None
     assert stored.reconciliation_required is False
+
+
+def _cancellation_intent(projection: ProductProjection, run_id: str, flow_run_id: str, *, receipt_id: str) -> datetime:
+    """Record first cancellation intent on one claimed execution and return its deadline."""
+    requested_at = datetime.now(timezone.utc)
+    recovery_deadline_at = requested_at + timedelta(seconds=30)
+    assert projection.request_execution_cancellation(
+        run_id,
+        flow_run_id,
+        requested_at=requested_at,
+        recovery_deadline_at=recovery_deadline_at,
+        recovery_seconds=30.0,
+        expected_latest_position=0,
+        receipt_id=receipt_id,
+    )
+    return recovery_deadline_at
+
+
+@pytest.mark.parametrize("purpose", ["apply", "sync"])
+def test_cancelling_a_claimed_write_is_conservative_ambiguity(projection: ProductProjection, purpose: str) -> None:
+    """A claimed write may already have reached the destination, so no clean stop exists.
+
+    Acknowledgement arrives well inside the recovery deadline, which for a read stage is
+    exactly when a clean cancellation is still possible — so what decides here is that the
+    claimed execution is a write, not that time ran out.
+    """
+    run_id = _rid(f"cancel-claimed-{purpose}")
+    flow_run_id = _claimed_write_run(projection, run_id, purpose=purpose)
+    cancel, _created = projection.reserve_mutation(_receipt("m-cancel", run_id=run_id, operation="cancel"))
+    projection.claim_mutation(cancel.receipt_id)
+    _cancellation_intent(projection, run_id, flow_run_id, receipt_id=cancel.receipt_id)
+
+    acknowledged = projection.acknowledge_execution_cancellation(
+        run_id,
+        flow_run_id,
+        acknowledged_at=datetime.now(timezone.utc),
+        response_status=202,
+        response_body={"accepted": True},
+    )
+
+    assert acknowledged is False, "a claimed write is never acknowledged as a clean stop"
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert stored.reconciliation_required is True
+    assert (stored.phase, stored.outcome) == ("interrupted", "ambiguous")
+    answered = projection.lookup_mutation(cancel.actor, cancel.key_digest).value
+    assert answered is not None
+    assert _refusal_code(answered) == "cancellation-ambiguous"
+
+
+def test_cancelling_a_claimed_read_stage_is_still_a_clean_acknowledgement(projection: ProductProjection) -> None:
+    """A verify worker cannot have written, so cancelling it keeps its ordinary path."""
+    run_id = _rid("cancel-claimed-verify")
+    projection.create_run(_run(run_id))
+    reserved = _reserve_read(projection, run_id, "m-verify", operation="verify")
+    projection.add_prefect_execution(run_id, _link("flow-verify", purpose="verify"), receipt_id=reserved.receipt_id)
+    projection.complete_mutation(
+        reserved.receipt_id,
+        response_status=202,
+        response_body={"accepted": True},
+        flow_run_id="flow-verify",
+    )
+    projection.claim_execution(run_id, "flow-verify", worker_id=_WORKER_ID)
+    cancel, _created = projection.reserve_mutation(_receipt("m-cancel", run_id=run_id, operation="cancel"))
+    projection.claim_mutation(cancel.receipt_id)
+    _cancellation_intent(projection, run_id, "flow-verify", receipt_id=cancel.receipt_id)
+
+    acknowledged = projection.acknowledge_execution_cancellation(
+        run_id,
+        "flow-verify",
+        acknowledged_at=datetime.now(timezone.utc),
+        response_status=202,
+        response_body={"accepted": True},
+    )
+
+    assert acknowledged is True
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert stored.reconciliation_required is False
+
+
+def test_an_expired_cancellation_of_a_claimed_write_records_reconciliation(projection: ProductProjection) -> None:
+    """Recovery that ran out of time on a claimed write is ambiguity, not abandonment."""
+    run_id = _rid("cancel-expired-apply")
+    flow_run_id = _claimed_write_run(projection, run_id, purpose="apply")
+    cancel, _created = projection.reserve_mutation(_receipt("m-cancel", run_id=run_id, operation="cancel"))
+    projection.claim_mutation(cancel.receipt_id)
+    deadline = _cancellation_intent(projection, run_id, flow_run_id, receipt_id=cancel.receipt_id)
+
+    assert projection.expire_execution_cancellation(run_id, flow_run_id, terminal_at=deadline + timedelta(seconds=1))
+
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert stored.reconciliation_required is True
+    assert (stored.phase, stored.outcome) == ("interrupted", "ambiguous")
