@@ -10,7 +10,7 @@ from hashlib import sha256
 from pathlib import Path
 from threading import Barrier
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, get_args
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
@@ -30,6 +30,7 @@ from prefect.client.schemas.responses import (
     StateWaitDetails,
 )
 from prefect.states import Cancelled, Cancelling, Running
+from pydantic import BaseModel
 
 from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.plan.models import PlanManifest
@@ -244,8 +245,9 @@ def test_admission_reads_registered_binding_before_allocating_run(
     assert len(orchestration.submissions) == 1
 
 
-def _publish_plan(projection: ProductProjection, run_id: str, *, checksum: str = "a" * 64) -> PlanResource:
-    plan = PlanResource(
+def _plan_document(run_id: str, *, checksum: str = "a" * 64) -> PlanResource:
+    """The review document a worker publishes, before it reaches the artifact store."""
+    return PlanResource(
         run_id=run_id,
         checksum=checksum,
         checksum_ok=True,
@@ -269,6 +271,11 @@ def _publish_plan(projection: ProductProjection, run_id: str, *, checksum: str =
             ),
         ),
     )
+
+
+def _publish_plan(projection: ProductProjection, run_id: str, *, checksum: str = "a" * 64) -> PlanResource:
+    """Publish the review document, as the plan stage's worker does."""
+    plan = _plan_document(run_id, checksum=checksum)
     projection.publish_artifact(
         run_id,
         artifact_id=PLAN_ARTIFACT_ID,
@@ -1604,11 +1611,9 @@ def test_the_server_cannot_emit_a_field_its_public_resource_does_not_declare() -
 
     The projection copies a store record's fields wholesale, so a field added to the
     durable record for internal reasons would otherwise appear on the wire with nobody
-    deciding to publish it. The strict emitted variant is what turns that into a refusal at
-    the boundary, where the change is being made.
+    deciding to publish it. The emitted variant drops it instead — the run stays readable,
+    and what an operator sees is exactly what the resource declares.
     """
-    from pydantic import ValidationError
-
     from infrahub_sync.service.models import public_run_resource
 
     class _FutureProductRun(ProductRun):
@@ -1617,22 +1622,92 @@ def test_the_server_cannot_emit_a_field_its_public_resource_does_not_declare() -
         internal_canary: str = "internal-only"
 
     record = _FutureProductRun(
-        run_id="run-strict-boundary",
+        run_id="run-bounded-boundary",
         operation="plan",
         configuration_reference="config-001@1",
         started_at=datetime.now(timezone.utc),
         phase="accepted",
     )
 
-    with pytest.raises(ValidationError, match="internal_canary"):
-        public_run_resource(record)
+    emitted = public_run_resource(record)
+
+    assert emitted.run_id == "run-bounded-boundary"
+    assert "internal_canary" not in emitted.model_dump_json()
+
+
+def test_the_server_cannot_emit_a_field_nested_inside_a_retained_plan(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """Bounding a resource one level deep is not bounding it.
+
+    A retained plan is bytes some other version of this worker wrote, so its nested summary
+    and operations are exactly where an unknown key arrives. The read still answers — an
+    unknown key is not a reason to fail a plan an operator is trying to review — and the
+    key is not in what the API returns.
+    """
+    client, projection, _orchestration = service_api
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+    # A retained artifact is immutable, so the unknown keys go into the one publication —
+    # which is the realistic case anyway: the bytes were written by another version.
+    document = json.loads(_plan_document(run_id).model_dump_json())
+    document["summary"]["internal_canary"] = "nested-summary-leak"
+    document["operations"][0]["internal_canary"] = "nested-operation-leak"
+    projection.publish_artifact(
+        run_id,
+        artifact_id=PLAN_ARTIFACT_ID,
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=json.dumps(document).encode(),
+    )
+
+    response = client.get(f"/runs/{run_id}/plan", headers={"Authorization": f"Bearer {OWNER_TOKEN}"})
+
+    assert response.status_code == 200, response.text
+    assert "nested-summary-leak" not in response.text
+    assert "nested-operation-leak" not in response.text
+    assert response.json()["summary"]["total"] == document["summary"]["total"]
+
+
+def test_every_model_reachable_from_an_emitted_resource_is_bounded() -> None:
+    """The property, not the two nested models somebody happened to probe.
+
+    Adding a nested model that accepts undeclared fields reopens the same hole one level
+    further down, and nothing about the resources above it would look wrong. Walking the
+    whole field graph is what makes that a failure here rather than a finding later.
+    """
+    from infrahub_sync.service.models import EMITTED_RESOURCES
+
+    unbounded: list[str] = []
+    seen: set[type[BaseModel]] = set()
+    pending: list[tuple[str, type[BaseModel]]] = [(model.__name__, model) for model in EMITTED_RESOURCES]
+    while pending:
+        path, model = pending.pop()
+        if model in seen:
+            continue
+        seen.add(model)
+        if model.model_config.get("extra") not in {"ignore", "forbid"}:
+            unbounded.append(f"{path} ({model.__name__}: extra={model.model_config.get('extra')!r})")
+        for name, field in model.model_fields.items():
+            pending.extend((f"{path}.{name}", nested) for nested in _reachable_models(field.annotation))
+
+    assert unbounded == [], f"these models can emit fields they do not declare: {unbounded}"
+    assert len(seen) > len(EMITTED_RESOURCES), "the walk never reached a nested model, so it proves nothing"
+
+
+def _reachable_models(annotation: object) -> list[type[BaseModel]]:
+    """Return every pydantic model one field annotation can carry."""
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return [annotation]
+    return [nested for argument in get_args(annotation) for nested in _reachable_models(argument)]
 
 
 def test_the_client_still_reads_a_run_resource_from_a_newer_server() -> None:
-    """Strictness belongs to the emitter; a client has to survive a server that grew.
+    """Boundedness belongs to the emitter; a client has to survive a server that grew.
 
-    The same model parses a payload carrying a field this client does not know, because
-    refusing it would break every reader the day a field is added.
+    The client's own model keeps the unknown field rather than refusing the payload,
+    because a reader that broke the day a field was added would be useless. Only what the
+    server *builds* is bounded.
     """
     payload = {
         "run_id": "run-forward-compatible",
