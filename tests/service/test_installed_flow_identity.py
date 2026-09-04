@@ -7,7 +7,9 @@ working directory, or on a Prefect step that puts source there.
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess  # noqa: S404 - the worker parent runs a fixed interpreter and inline script.
 import sys
 from asyncio import sleep
 from pathlib import Path
@@ -31,8 +33,6 @@ from infrahub_sync.service.orchestration import SERVICE_DEFINITION
 INSTALLED_FLOW_FILE = Path(installed_flow.__file__ or "").resolve()
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from prefect.client.schemas.actions import DeploymentUpdate
     from typing_extensions import Self
 
@@ -62,21 +62,13 @@ def _write_shadow_package(root: Path) -> None:
     (root / "infrahub_sync" / "__init__.py").write_text("SHADOW = True\n", encoding="utf-8")
     (service / "__init__.py").write_text("SHADOW = True\n", encoding="utf-8")
     (service / "flow.py").write_text(
-        "SHADOW = True\n\n\ndef service_sync_run(*_args, **_kwargs):\n    return 'shadow'\n",
+        "SHADOW = True\n"
+        "from prefect import flow\n\n\n"
+        "@flow(name='infrahub-sync-service')\n"
+        "def service_sync_run(run_id: str = '', stage: str = ''):\n"
+        "    return 'shadow'\n",
         encoding="utf-8",
     )
-
-
-@pytest.fixture
-def _shadow_cwd(tmp_path: Path) -> Iterator[Path]:
-    """Run the body from a directory that holds a shadow ``infrahub_sync`` package."""
-    _write_shadow_package(tmp_path)
-    previous = Path.cwd()
-    os.chdir(tmp_path)
-    try:
-        yield tmp_path
-    finally:
-        os.chdir(previous)
 
 
 @pytest.mark.usefixtures("_no_script_loading")
@@ -93,28 +85,6 @@ def test_the_deployment_resolves_through_the_installed_module_path() -> None:
 
     assert resolved.name == SERVICE_DEFINITION.flow_name
     assert resolved.fn is installed_flow.service_sync_run.fn
-
-
-@pytest.mark.usefixtures("_no_script_loading", "_shadow_cwd")
-def test_a_cwd_shadow_package_does_not_win_the_deployments_resolution() -> None:
-    """Resolution from a directory holding a shadow package still yields the installation.
-
-    Prefect prepends the working directory to ``sys.path`` on both of its entrypoint
-    branches, so what keeps the installed distribution authoritative is that the flow-run
-    working directory is never a source tree. This asserts the outcome that guarantee
-    exists for: the resolved flow is the installed one and carries none of the shadow.
-    """
-    entrypoint = SERVICE_DEFINITION.entrypoint
-    assert entrypoint is not None
-
-    resolved = load_flow_from_entrypoint(entrypoint)
-
-    assert resolved.name == SERVICE_DEFINITION.flow_name
-    assert resolved.fn is installed_flow.service_sync_run.fn
-    module = sys.modules[SERVICE_DEFINITION.module]
-    assert Path(module.__file__ or "").resolve() == INSTALLED_FLOW_FILE
-    assert not hasattr(module, "SHADOW")
-    assert Path.cwd() not in INSTALLED_FLOW_FILE.parents
 
 
 def test_the_flow_run_working_directory_is_prefects_own_disposable_one() -> None:
@@ -238,3 +208,132 @@ async def test_deploying_the_service_needs_no_working_directory_in_the_environme
 
     assert client.pull_steps == []
     assert offline_catalogue_apply == ["catalogue"]
+
+
+# The worker parent resolves the deployment's entrypoint in its own process: a
+# ProcessWorker builds a Runner (``prefect/workers/process.py``), and that runner imports
+# the flow to run ``on_crashed`` hooks once a child dies
+# (``prefect/runner/runner.py`` -> ``prefect/runner/_hook_runner.py``). Prefect's module
+# loader prepends the process working directory to ``sys.path``, so this has to be checked
+# in a *fresh* process: inside the test session the installed module is already cached in
+# ``sys.modules``, and the cache -- not the entrypoint form -- is what answers.
+_CRASH_HOOK_PARENT = '''
+import json, os, sys
+from pathlib import Path
+
+sys.path.insert(0, {repository_root!r})
+
+# The parent imports its own entry module first, exactly as `python -m` does, before it
+# is ever asked to resolve the flow.
+from infrahub_sync.service import worker as service_worker
+from infrahub_sync.service.orchestration import SERVICE_DEFINITION
+
+report = {{}}
+os.chdir({shadow!r})
+report["cwd_at_start"] = os.getcwd()
+
+
+def resolve_like_a_crash_hook():
+    """Do what the parent's runner does after a child crashes: import the flow.
+
+    The distribution is dropped from ``sys.modules`` first, on purpose. Prefect's module
+    loader prepends the working directory to ``sys.path``, so an already-cached package
+    would answer from the cache and the assertion would say nothing about the directory --
+    which is exactly how the earlier in-process test produced a false pass. Cleared, the
+    only thing deciding the answer is where this parent is running.
+    """
+    from prefect.flows import load_flow_from_entrypoint
+
+    report["cwd_at_hook"] = os.getcwd()
+    report["cwd_contents"] = sorted(entry.name for entry in Path.cwd().iterdir())
+    for name in [module for module in sys.modules if module.split(".")[0] == "infrahub_sync"]:
+        del sys.modules[name]
+    load_flow_from_entrypoint(SERVICE_DEFINITION.entrypoint)
+    module = sys.modules["infrahub_sync.service.flow"]
+    report["resolved_file"] = str(Path(module.__file__).resolve())
+    report["is_shadow"] = bool(getattr(module, "SHADOW", False))
+
+
+class _Probe:
+    def __init__(self, **kwargs):
+        pass
+
+    async def start(self):
+        try:
+            resolve_like_a_crash_hook()
+        except BaseException as failure:
+            report["error_type"] = type(failure).__name__
+            report["error"] = str(failure)[:400]
+
+
+service_worker.ServiceProcessWorker = _Probe
+try:
+    report["exit"] = service_worker.main(["--pool", "qualification-pool"])
+finally:
+    Path({report_path!r}).write_text(json.dumps(report), encoding="utf-8")
+'''
+
+
+def _run_crash_hook_parent(tmp_path: Path) -> dict[str, Any]:
+    """Start a worker parent in a fresh process whose working directory holds a shadow."""
+    shadow = tmp_path / "checkout-with-shadow"
+    shadow.mkdir()
+    _write_shadow_package(shadow)
+    report_path = tmp_path / "crash-hook-report.json"
+    script = _CRASH_HOOK_PARENT.format(
+        repository_root=str(Path(__file__).resolve().parents[2]),
+        shadow=str(shadow),
+        report_path=str(report_path),
+    )
+    completed = subprocess.run(  # noqa: S603 - fixed interpreter, inline script, no shell.
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(tmp_path),
+    )
+    if not report_path.is_file():
+        pytest.fail(f"the worker parent wrote no report; stderr: {completed.stderr[-3000:]}")
+    report: dict[str, Any] = json.loads(report_path.read_text(encoding="utf-8"))
+    report["shadow"] = str(shadow)
+    report["stderr"] = completed.stderr[-2000:]
+    return report
+
+
+def _resolution(report: dict[str, Any]) -> tuple[bool, str]:
+    """Return whether the shadow answered, and the evidence either way."""
+    if "is_shadow" not in report:
+        return (
+            True,
+            f"resolution failed inside the working directory: {report.get('error_type')}: {report.get('error')}",
+        )
+    return bool(report["is_shadow"]), str(report.get("resolved_file"))
+
+
+def test_the_worker_parent_resolves_the_installed_flow_after_a_child_crash(tmp_path: Path) -> None:
+    """A crash hook in the parent imports the installation, never the working directory.
+
+    The parent is started the way an operator can start it -- inside a checkout that holds
+    an ``infrahub_sync`` package -- and is then asked to resolve the flow the way its
+    runner does after a child crashes. It must reach the installed distribution.
+    """
+    report = _run_crash_hook_parent(tmp_path)
+    from_shadow, evidence = _resolution(report)
+
+    assert from_shadow is False, f"the crash hook resolved out of the working directory: {evidence}"
+    assert report["resolved_file"] == str(INSTALLED_FLOW_FILE)
+    assert report["exit"] == 0
+
+
+def test_the_worker_parent_runs_its_whole_lifetime_from_an_empty_directory(tmp_path: Path) -> None:
+    """The parent leaves the directory it was started in before it builds the worker.
+
+    Nothing the parent imports later -- the runner, its crash hooks, an adapter -- can then
+    resolve out of a source tree, because its working directory holds nothing to import.
+    """
+    report = _run_crash_hook_parent(tmp_path)
+
+    assert report["cwd_at_start"] == report["shadow"]
+    assert report["cwd_at_hook"] != report["shadow"]
+    assert Path(report["cwd_at_hook"]).is_absolute()
+    assert report["cwd_contents"] == []

@@ -5,8 +5,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
+from pathlib import Path
+from shutil import rmtree
+from tempfile import mkdtemp
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
 
@@ -20,7 +24,7 @@ from pydantic import PrivateAttr
 
 if TYPE_CHECKING:
     import logging
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
     from anyio.abc import TaskStatus
     from prefect.client.schemas.objects import Flow as APIFlow
@@ -303,14 +307,41 @@ def _pool_argument(argv: Sequence[str] | None = None) -> str:
     return pool
 
 
+@contextmanager
+def neutral_working_directory() -> Iterator[Path]:
+    """Run this parent from a fresh empty directory, and remove it on the way out.
+
+    Prefect prepends the process working directory to ``sys.path`` every time it resolves
+    a deployment's module entrypoint, and this parent does resolve it: a ``ProcessWorker``
+    builds a ``Runner`` in this process, and that runner imports the flow to run
+    ``on_crashed`` hooks once a child dies. A parent started inside a source tree would
+    import that copy of the package rather than the installed distribution, which is the
+    checkout dependence this service does not have. An empty directory holds nothing to
+    import, so the installed distribution is the only answer available -- for the whole
+    lifetime of the parent, hook inspection after a crash included.
+    """
+    previous = Path.cwd()
+    root = Path(mkdtemp(prefix="infrahub-sync-worker-"))
+    os.chdir(root)
+    try:
+        yield root
+    finally:
+        os.chdir(previous)
+        rmtree(root, ignore_errors=True)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Start one fail-closed service process worker."""
-    worker = ServiceProcessWorker(
-        work_pool_name=_pool_argument(argv),
-        name=service_worker_name(),
-        create_pool_if_not_found=False,
-    )
-    asyncio.run(worker.start())
+    pool = _pool_argument(argv)
+    # Entered before the worker exists, so nothing this parent imports later -- the
+    # runner, its crash hooks, or an adapter -- can resolve out of a source tree.
+    with neutral_working_directory():
+        worker = ServiceProcessWorker(
+            work_pool_name=pool,
+            name=service_worker_name(),
+            create_pool_if_not_found=False,
+        )
+        asyncio.run(worker.start())
     return 0
 
 
