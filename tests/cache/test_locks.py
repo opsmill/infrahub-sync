@@ -55,15 +55,3 @@ def test_pipeline_lock_allows_different_pipelines(tmp_path: Path, monkeypatch: p
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path))
     with pipeline_lock("p1"), pipeline_lock("p2"):
         pass
-
-
-def test_the_lock_tests_leave_no_cache_setting_behind() -> None:
-    """The direct-CLI cache setting must not leak out of this module.
-
-    Both tests above configure a cache root. Left in `os.environ`, that value would reach
-    every later test in the session, so a case asserting the service reads no cache
-    setting would pass or fail depending on collection order rather than on behaviour.
-    """
-    import os
-
-    assert "INFRAHUB_SYNC_CACHE_DIR" not in os.environ

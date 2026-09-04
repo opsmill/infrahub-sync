@@ -1221,11 +1221,12 @@ def test_execute_run_logs_the_latest_running_sidecar_before_starting_its_bounded
     holder = "20260808T1201-holder02"
     RunFile(path=cache_root / holder / "run.json", status="running", mode="sync").save()
     timeouts: list[float] = []
-    roots: list[Path | None] = []
 
     @contextmanager
     def contended_lock(_sync_name: str, *, timeout: float, base_directory: Path | None = None) -> Any:  # noqa: ANN401
-        roots.append(base_directory)
+        # Accepted because the product passes it; whether the private root propagates is
+        # owned by tests/service/test_stage_scratch.py against the real engine.
+        del base_directory
         timeouts.append(timeout)
         if timeout != 0:
             assert holder in caplog.text

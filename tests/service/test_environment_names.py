@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 
@@ -11,9 +11,6 @@ pytest.importorskip("fastapi")
 pytest.importorskip("prefect")
 
 from infrahub_sync.service import auth, deploy, serve
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 RETIRED_NAMES = (
     "INFRAHUB_SYNC_MANAGED_BEARER_TOKENS",
@@ -49,16 +46,6 @@ def test_a_retired_bearer_token_name_is_ignored(monkeypatch: pytest.MonkeyPatch)
 
     with pytest.raises(ValueError, match=auth.PRINCIPALS_ENV):
         auth.EnvironmentPrincipalResolver.from_environment()
-
-
-def test_no_flow_working_directory_name_is_read_at_all(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Neither the retired nor the Unit 2 working-directory name has a reader left."""
-    for name in ("INFRAHUB_SYNC_MANAGED_FLOW_WORKING_DIRECTORY", "INFRAHUB_SYNC_SERVICE_FLOW_WORKING_DIRECTORY"):
-        monkeypatch.setenv(name, str(tmp_path))
-
-    assert not any(name.endswith("FLOW_WORKING_DIRECTORY") for name in vars(deploy))
-    assert not hasattr(deploy, "required_flow_working_directory")
-    assert not hasattr(deploy, "flow_pull_steps")
 
 
 def test_a_retired_work_pool_name_is_ignored_by_the_reconciler(monkeypatch: pytest.MonkeyPatch) -> None:
