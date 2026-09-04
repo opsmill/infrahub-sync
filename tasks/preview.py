@@ -136,7 +136,6 @@ def _runtime_env(values: dict[str, str]) -> dict[str, str]:
             "INFRAHUB_API_TOKEN": values["INFRAHUB_INITIAL_ADMIN_TOKEN"],
             "PREFECT_API_URL": f"{urls['prefect']}/api",
             "INFRAHUB_SYNC_CONFIG_DIRECTORY": str(REPO_ROOT / "examples"),
-            "INFRAHUB_SYNC_CACHE_DIR": str(STATE_DIR / "sync-cache"),
             "INFRAHUB_SYNC_DATABASE_URL": (
                 f"postgresql://postgres:postgres@127.0.0.1:{values['PREVIEW_STORAGE_POSTGRES_PORT']}/infrahub_sync"
             ),
@@ -424,7 +423,6 @@ def up(context: Context) -> None:
     urls = preview_urls(values)
     env = _runtime_env(values)
     STATE_DIR.mkdir(exist_ok=True)
-    Path(env["INFRAHUB_SYNC_CACHE_DIR"]).mkdir(parents=True, exist_ok=True)
 
     print(f" - [{NAMESPACE}] Starting containers (first run downloads images)")
     _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS} --quiet-pull", values)

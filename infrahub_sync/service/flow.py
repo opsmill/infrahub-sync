@@ -57,11 +57,11 @@ from .apply_guard import ApplyGuard, hold_apply_guard
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME
+from .scratch import StageScratch, stage_scratch
 from .service import PLAN_ARTIFACT_ID
 from .storage import service_guard_secrets, service_guard_session, service_product_projection
 
 CONFIG_DIR_ENV = "INFRAHUB_SYNC_CONFIG_DIRECTORY"
-RUN_CACHE_ENV = "INFRAHUB_SYNC_CACHE_DIR"
 logger = logging.getLogger(__name__)
 _REGISTERED_VERSION_UNAVAILABLE = "registered configuration version is unavailable"
 _REGISTERED_VERSION_INVALID = "registered configuration version is invalid"
@@ -126,13 +126,15 @@ def _remote_log_bridge(
 
 
 def _runtime(*, projection_factory: Any = service_product_projection) -> tuple[str, ProductProjection]:
+    """Resolve the worker's configuration-data directory and its product store.
+
+    A configuration directory is configuration data, not flow source: the worker reads
+    registered packages from it and never imports or executes anything there. No cache
+    location is read at all -- every stage creates its own private scratch instead.
+    """
     config_directory = os.environ.get(CONFIG_DIR_ENV)
-    run_cache = os.environ.get(RUN_CACHE_ENV)
     if not config_directory or not Path(config_directory).is_dir():
         msg = f"{CONFIG_DIR_ENV} must name the worker's configuration directory"
-        raise RuntimeError(msg)
-    if not run_cache or not Path(run_cache).expanduser().is_absolute():
-        msg = f"{RUN_CACHE_ENV} must name an absolute shared saved-plan cache"
         raise RuntimeError(msg)
     return config_directory, projection_factory()
 
@@ -178,6 +180,7 @@ def _plan(
     run_id: str,
     branch: str | None,
     composed_sync: bool,
+    base_directory: Path | None = None,
 ) -> SavedPlan:
     saved = execute_run(
         instance,
@@ -186,6 +189,7 @@ def _plan(
         run_id=run_id,
         show_progress=False,
         print_diff=False,
+        base_directory=base_directory,
         _run_file_mode="sync" if composed_sync else None,
         _return_saved_plan=True,
     )
@@ -194,7 +198,12 @@ def _plan(
 
 
 def _verify_registered_apply(
-    *, instance: Any, run_id: str, binding: tuple[str, int, str] | None, expected_checksum: str | None
+    *,
+    instance: Any,
+    run_id: str,
+    binding: tuple[str, int, str] | None,
+    expected_checksum: str | None,
+    base_directory: Path | None = None,
 ) -> PlanManifest:
     """Verify a retained artifact before the apply path can construct a destination.
 
@@ -202,7 +211,7 @@ def _verify_registered_apply(
     approved value, which is the same value the later `PlanApplier` read is given: one
     approval gates both reads, so bytes swapped between them cannot reach the write loop.
     """
-    artifact = read_plan_artifact_bytes(resolve_run_directory(instance.name, run_id))
+    artifact = read_plan_artifact_bytes(resolve_run_directory(instance.name, run_id, base_directory=base_directory))
     if verify_plan(artifact=artifact, run_id=run_id, config_version=resolve_config_version(instance)):
         raise ValueError(_REGISTERED_PLAN_VERIFICATION_FAILED)
     manifest = parse_plan_artifact(artifact, run_id=run_id).manifest
@@ -437,6 +446,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     config_directory: str,
     projection: ProductProjection,
     tracker: WriteDispatchTracker,
+    scratch: StageScratch,
 ) -> tuple[dict[str, Any], ExecutionWriteback]:
     """Resolve and execute one service stage within the sanitized worker boundary."""
     parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
@@ -465,7 +475,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     secrets[:] = collect_secret_values(instance)
     result: dict[str, Any]
     if stage == "plan":
-        saved = _plan(instance, run_id=run_id, branch=branch, composed_sync=False)
+        saved = _plan(instance, run_id=run_id, branch=branch, composed_sync=False, base_directory=scratch.root)
         _publish_plan(projection, run_id, saved, secrets)
         summary = saved.summary()
         outcome = "no-change" if summary.total == 0 else "planned"
@@ -701,7 +711,13 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     # stage ended.
     tracker = WriteDispatchTracker()
     try:
-        with _remote_log_bridge(run_logger, prefect_context=prefect_context, secrets=secrets):
+        # One new private root per stage, released before this worker reports anything.
+        # Everything the stage needs from its predecessor arrives through product
+        # storage, so nothing here has to survive the stage that created it.
+        with (
+            stage_scratch(stage) as scratch,
+            _remote_log_bridge(run_logger, prefect_context=prefect_context, secrets=secrets),
+        ):
             result, writeback = _execute_stage(
                 run_id,
                 stage,
@@ -716,6 +732,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 config_directory=config_directory,
                 projection=projection,
                 tracker=tracker,
+                scratch=scratch,
             )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         failure = exc

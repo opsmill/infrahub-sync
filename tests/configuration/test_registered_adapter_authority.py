@@ -233,7 +233,7 @@ def _patch_engine(monkeypatch: pytest.MonkeyPatch, tmp_path: object) -> None:
             self.__dict__.update(kwargs)
 
     monkeypatch.setattr("infrahub_sync.utils.Potenda", Engine)
-    monkeypatch.setattr("infrahub_sync.utils.stored_run_dir", lambda *_args: tmp_path)
+    monkeypatch.setattr("infrahub_sync.utils.stored_run_dir", lambda *_args, **_kwargs: tmp_path)
 
 
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)

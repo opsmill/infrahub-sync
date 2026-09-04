@@ -45,6 +45,7 @@ pytest.importorskip("opsmill_prefect_extras")
 
 from infrahub_sync.plan.ownership import WriteDispatchTracker
 from infrahub_sync.service import flow as service_flow
+from infrahub_sync.service.scratch import stage_scratch
 from tests.service.execution_fixtures import bind_granting_guard
 
 _SNAPSHOT: dict[str, Any] = {
@@ -225,19 +226,21 @@ def test_a_registered_stage_reaches_execution_with_its_models_bound(
     monkeypatch.setattr(service_flow, "_require_planned_schema", _skip)
     bind_granting_guard(monkeypatch, service_flow)
 
-    result, _ = service_flow._execute_stage(
-        "run-composed-sync",
-        "sync",
-        *binding,
-        None,
-        None,
-        confirm_writes=True,
-        run_logger=service_flow.logger,
-        secrets=[],
-        config_directory=str(tmp_path),
-        projection=cast("ProductProjection", projection),
-        tracker=WriteDispatchTracker(),
-    )
+    with stage_scratch("sync") as scratch:
+        result, _ = service_flow._execute_stage(
+            "run-composed-sync",
+            "sync",
+            *binding,
+            None,
+            None,
+            confirm_writes=True,
+            run_logger=service_flow.logger,
+            secrets=[],
+            config_directory=str(tmp_path),
+            projection=cast("ProductProjection", projection),
+            tracker=WriteDispatchTracker(),
+            scratch=scratch,
+        )
 
     assert result["operation"] == "sync"
     # Plan, verify and apply legs share the one instance the single schema read built.

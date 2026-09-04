@@ -417,7 +417,7 @@ def test_service_flow_redacts_worker_logs_exception_chain_and_failed_state(
         )
         return instance
 
-    def fail_plan(_instance, *, run_id: str, branch: str | None, composed_sync: bool):  # noqa: ARG001
+    def fail_plan(_instance, *, run_id: str, branch: str | None, composed_sync: bool, **_kwargs: object):  # noqa: ARG001
         logging.getLogger("infrahub_sync.service.worker").error(
             "execution used %s",
             configuration_canary,
@@ -668,7 +668,7 @@ def test_service_plan_worker_updates_the_api_created_run_and_publishes_review(
     monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)
     monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
 
-    def plan(_instance, *, run_id: str, branch: str | None, composed_sync: bool):  # noqa: ARG001
+    def plan(_instance, *, run_id: str, branch: str | None, composed_sync: bool, **_kwargs: object):  # noqa: ARG001
         seen.append(run_id)
         assert composed_sync is False
         return saved
@@ -744,7 +744,7 @@ def test_confirmed_service_sync_calls_plan_verify_apply_in_order_on_one_run(
     monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)
     monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
 
-    def plan(_instance, *, run_id: str, branch: str | None, composed_sync: bool):  # noqa: ARG001
+    def plan(_instance, *, run_id: str, branch: str | None, composed_sync: bool, **_kwargs: object):  # noqa: ARG001
         calls.append(("plan", run_id))
         assert composed_sync is True
         return saved

@@ -42,6 +42,7 @@ from infrahub_sync.runtime_schema import compute_consumed_schema_fingerprint, no
 from infrahub_sync.runtime_schema import worker as worker_module
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.flow import service_sync_run
+from infrahub_sync.service.scratch import stage_scratch
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID
 from tests.configuration.validation_packages import package_data
 from tests.plan.artifact_fixtures import duplicated_key_manifest_bytes
@@ -249,19 +250,21 @@ def _apply(harness: _Harness, *, expected_checksum: str | None = None) -> dict[s
 
 def _execute_apply_stage(harness: _Harness) -> tuple[dict[str, Any], Any]:
     """Drive the production stage boundary before remote exception sanitization."""
-    return service_flow._execute_stage(
-        RUN_ID,
-        "apply",
-        *harness.binding,
-        None,
-        harness.checksum,
-        confirm_writes=True,
-        run_logger=service_flow.logger,
-        secrets=[],
-        config_directory=str(harness.run_dir.parents[2]),
-        projection=harness.projection,
-        tracker=WriteDispatchTracker(),
-    )
+    with stage_scratch("apply") as scratch:
+        return service_flow._execute_stage(
+            RUN_ID,
+            "apply",
+            *harness.binding,
+            None,
+            harness.checksum,
+            confirm_writes=True,
+            run_logger=service_flow.logger,
+            secrets=[],
+            config_directory=str(harness.run_dir.parents[2]),
+            projection=harness.projection,
+            tracker=WriteDispatchTracker(),
+            scratch=scratch,
+        )
 
 
 def _rewrite_manifest(harness: _Harness, mapping: dict[str, Any], *, recompute_checksum: bool) -> None:
