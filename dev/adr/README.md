@@ -32,6 +32,9 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0010 — A managed write holds one configuration guard and ends in a verdict, not a retry](0010-a-managed-write-ends-in-a-verdict-not-a-retry.md)
   — how a configuration's writes are serialized, why the ownership boundary is required rather
   than optional, and why an uncertain write is terminal evidence instead of a retry.
+- [0011 — Internal run bundles are private, uncompressed, and never redacted](0011-internal-run-bundles-are-private-and-byte-stable.md)
+  — why stage handoff state is a second artifact class, why its bytes are byte-stable and
+  exempt from redaction, and how an untrusted archive is bounded and validated.
 
 ## Related
 

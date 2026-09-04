@@ -169,3 +169,5 @@ autocommit
 pooler
 serializer
 traceback
+untrusted
+zlib
