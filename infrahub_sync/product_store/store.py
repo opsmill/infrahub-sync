@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS artifact_refs (
     run_id TEXT NOT NULL, artifact_id TEXT NOT NULL, kind TEXT NOT NULL, media_type TEXT NOT NULL,
     digest TEXT NOT NULL, size INTEGER NOT NULL, object_key TEXT NOT NULL UNIQUE,
     manifest_key TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, expires_at TEXT, published INTEGER NOT NULL,
+    visibility TEXT NOT NULL DEFAULT 'public',
     PRIMARY KEY (run_id, artifact_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id)
 );
 CREATE TABLE IF NOT EXISTS mutation_receipts (
@@ -276,11 +277,16 @@ _SELECT_PRODUCT_RUN = """SELECT run_id, operation, configuration_reference, acto
 finished_at, phase, outcome, summary, results, config_id, registry_version, package_checksum, reconciliation_required
 FROM product_runs WHERE run_id = ?"""
 _SELECT_RUN_ARTIFACT_REFERENCES = """SELECT run_id, artifact_id, kind, media_type, digest, size, object_key,
-manifest_key, created_at, expires_at, published FROM artifact_refs WHERE run_id = ? AND published = 1 ORDER BY artifact_id"""
+manifest_key, created_at, expires_at, published, visibility FROM artifact_refs
+WHERE run_id = ? AND published = 1 AND visibility = 'public' ORDER BY artifact_id"""
 _SELECT_ARTIFACT_REFERENCE = """SELECT run_id, artifact_id, kind, media_type, digest, size, object_key,
-manifest_key, created_at, expires_at, published FROM artifact_refs WHERE run_id = ? AND artifact_id = ?"""
+manifest_key, created_at, expires_at, published, visibility FROM artifact_refs WHERE run_id = ? AND artifact_id = ?"""
+_SELECT_ARTIFACT_REFERENCE_BY_VISIBILITY = """SELECT run_id, artifact_id, kind, media_type, digest, size, object_key,
+manifest_key, created_at, expires_at, published, visibility FROM artifact_refs
+WHERE run_id = ? AND artifact_id = ? AND visibility = ?"""
 _INSERT_ARTIFACT_REFERENCE = """INSERT INTO artifact_refs (run_id, artifact_id, kind, media_type, digest, size,
-object_key, manifest_key, created_at, expires_at, published) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+object_key, manifest_key, created_at, expires_at, published, visibility)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _SELECT_PREFECT_EXECUTIONS = """SELECT run_id, flow_run_id, deployment_id, purpose, attempt, last_observed_state,
 last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at, cancellation_requested_at,
 cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at, terminal_at, terminal_state,
@@ -383,7 +389,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def mark_artifact_published(self, reference: ArtifactReference) -> None: ...
 
     def lookup_artifact_reference(
-        self, run_id: str, artifact_id: str
+        self, run_id: str, artifact_id: str, *, visibility: Literal["public", "internal"] | None = None
     ) -> LookupResult[tuple[ArtifactReference, bool]]: ...
 
     def has_pending_artifacts(self, run_id: str) -> bool: ...
@@ -878,15 +884,21 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         finally:
             connection.close()
 
-    def lookup_artifact_reference(self, run_id: str, artifact_id: str) -> LookupResult[tuple[ArtifactReference, bool]]:
+    def lookup_artifact_reference(
+        self, run_id: str, artifact_id: str, *, visibility: Literal["public", "internal"] | None = None
+    ) -> LookupResult[tuple[ArtifactReference, bool]]:
+        """Resolve one reference, optionally only when it carries `visibility`."""
         connection = self._connect()
         try:
             cursor = connection.cursor()
             try:
-                cursor.execute(
-                    self._sql(_SELECT_ARTIFACT_REFERENCE),
-                    (run_id, artifact_id),
-                )
+                if visibility is None:
+                    cursor.execute(self._sql(_SELECT_ARTIFACT_REFERENCE), (run_id, artifact_id))
+                else:
+                    cursor.execute(
+                        self._sql(_SELECT_ARTIFACT_REFERENCE_BY_VISIBILITY),
+                        (run_id, artifact_id, visibility),
+                    )
                 row = cursor.fetchone()
             finally:
                 cursor.close()
@@ -2196,6 +2208,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 reference.created_at.isoformat(),
                 _iso(reference.expires_at),
                 int(published),
+                reference.visibility,
             ),
         )
 
@@ -2774,13 +2787,20 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         kind: str,
         media_type: str,
         data: bytes,
+        visibility: Literal["public", "internal"] = "public",
         secrets: Sequence[str] = (),
     ) -> ArtifactReference:
-        """Reserve the immutable reference, publish bytes and manifest, then expose it."""
+        """Reserve the immutable reference, publish bytes and manifest, then expose it.
+
+        Internal bytes are stored exactly as given. Redaction rewrites a byte sequence
+        wherever it occurs, which inside a binary container corrupts the archive rather
+        than protecting anything: no client ever receives these bytes, and their
+        integrity is established by stored size and digest before anything parses them.
+        """
         if not self._records.exists(run_id):
             msg = f"Cannot publish an artifact for unavailable Sync run ID {run_id!r}"
             raise RunNotFoundError(msg)
-        sanitized = _redact_bytes(data, secrets)
+        sanitized = data if visibility == "internal" else _redact_bytes(data, secrets)
         artifact_id = redact(artifact_id, secrets)
         kind = redact(kind, secrets)
         media_type = redact(media_type, secrets)
@@ -2796,6 +2816,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             object_key=f"{base}/data",
             manifest_key=f"{base}/manifest.json",
             created_at=datetime.now(timezone.utc),
+            visibility=visibility,
         )
         stored = self._records.lookup_artifact_reference(run_id, artifact_id)
         already_marked = False
@@ -2825,16 +2846,51 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         return reference
 
     def lookup_artifact(self, run_id: str, artifact_id: str) -> LookupResult[bytes]:
-        """Resolve only a run-owned immutable reference, with explicit unavailability."""
-        if not self._records.exists(run_id):
-            return LookupResult(value=None, reason="run-not-found")
-        stored = self._records.lookup_artifact_reference(run_id, artifact_id)
+        """Resolve only a published, public, run-owned reference, with explicit unavailability."""
+        return self._resolve_artifact(run_id, artifact_id, visibility="public")
+
+    def lookup_internal_artifact(self, run_id: str, artifact_id: str) -> LookupResult[bytes]:
+        """Resolve one of the product's own internal artifacts for a later stage."""
+        return self._resolve_artifact(run_id, artifact_id, visibility="internal")
+
+    def lookup_internal_reference(self, run_id: str, artifact_id: str) -> LookupResult[ArtifactReference]:
+        """Return the committed internal reference, which is a stage's bundle evidence."""
+        stored = self._internal_reference(run_id, artifact_id)
         if stored.value is None:
             return LookupResult(value=None, reason=stored.reason)
-        reference, published = stored.value
-        if not published:
+        return LookupResult(value=stored.value[0])
+
+    def _resolve_artifact(
+        self, run_id: str, artifact_id: str, *, visibility: Literal["public", "internal"]
+    ) -> LookupResult[bytes]:
+        stored = (
+            self._internal_reference(run_id, artifact_id)
+            if visibility == "internal"
+            else self._public_reference(run_id, artifact_id)
+        )
+        if stored.value is None:
+            return LookupResult(value=None, reason=stored.reason)
+        return self._artifacts.lookup(stored.value[0])
+
+    def _public_reference(self, run_id: str, artifact_id: str) -> LookupResult[tuple[ArtifactReference, bool]]:
+        if not self._records.exists(run_id):
+            return LookupResult(value=None, reason="run-not-found")
+        stored = self._records.lookup_artifact_reference(run_id, artifact_id, visibility="public")
+        if stored.value is None:
+            return LookupResult(value=None, reason=stored.reason)
+        if not stored.value[1]:
             return LookupResult(value=None, reason="artifact-publication-incomplete")
-        return self._artifacts.lookup(reference)
+        return stored
+
+    def _internal_reference(self, run_id: str, artifact_id: str) -> LookupResult[tuple[ArtifactReference, bool]]:
+        if not self._records.exists(run_id):
+            return LookupResult(value=None, reason="run-not-found")
+        stored = self._records.lookup_artifact_reference(run_id, artifact_id, visibility="internal")
+        if stored.value is None:
+            return LookupResult(value=None, reason=stored.reason)
+        if not stored.value[1]:
+            return LookupResult(value=None, reason="artifact-publication-incomplete")
+        return stored
 
     def finish_run(
         self,
@@ -3125,6 +3181,7 @@ def _reference_from_row(row: Sequence[Any]) -> ArtifactReference:
             "manifest_key": row[7],
             "created_at": row[8],
             "expires_at": row[9],
+            "visibility": row[11],
         }
     )
 

@@ -37,6 +37,10 @@ class ArtifactReference(BaseModel):
     manifest_key: str = Field(min_length=1)
     created_at: datetime
     expires_at: datetime | None = None
+    # An internal artifact is the product's own stage-handoff state. It is never
+    # enumerated or served to a client, and the public wire resource does not declare
+    # this field, so the distinction cannot leak by being projected.
+    visibility: Literal["public", "internal"] = "public"
 
     @field_validator("created_at", "expires_at")
     @classmethod
