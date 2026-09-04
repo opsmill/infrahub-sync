@@ -334,7 +334,7 @@ def expected_checksum_refusal(
                 f"unreadable or unparseable. {assurance}"
             ),
             next_action=(
-                f"Review the stored plan with `diff --from-plan {run_id}`, which names what the "
+                f"Review the stored plan with `runs plan {run_id}`, which names what the "
                 f"artifact is missing, then re-plan under a fresh run id and approve the checksum of "
                 f"the plan that replaces it."
             ),
@@ -348,7 +348,7 @@ def expected_checksum_refusal(
             f"{actual!r}. {assurance}"
         ),
         next_action=(
-            f"Review the stored plan with `diff --from-plan {run_id}` and approve its checksum, or "
+            f"Review the stored plan with `runs plan {run_id}` and approve its checksum, or "
             f"apply the run whose checksum you already approved."
         ),
     )

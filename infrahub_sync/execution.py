@@ -1,10 +1,21 @@
-"""Shared typed execution surface for plan, sync, verify, and apply lifecycles.
+"""Shared typed execution surface for plan, verify, and apply lifecycles.
 
-Four entry paths use this module: the CLI ``diff``, ``sync``, and ``apply``
-commands, plus the packaged Prefect flow. The CLI ``diff`` path selects either
-plan generation or saved-plan verification, and ``sync`` selects serial or
-tier-parallel execution. This module imports no Prefect symbol and stays
-importable in a base install.
+Callers:
+
+* the Sync HTTP API's worker, which runs each managed stage -- plan, verify,
+  apply, and sync -- through :func:`execute_run`, passing the explicit
+  ``base_directory`` of the private scratch that stage owns, and composing a
+  managed sync as plan, verify, and apply under one configuration guard;
+* the direct CLI commands, which pass no ``base_directory`` and so keep the
+  cache layout derived from the environment or the working directory; and
+* the packaged Prefect flow, through :func:`run_remote_request`.
+
+``operation="sync"`` is accepted here only to be refused: a composed writer
+produces its own plan and applies it in one call, so it can offer no
+per-operation ownership proof over a reviewed artifact. There is no serial or
+tier-parallel choice to make -- the tier runner is gone.
+
+This module imports no Prefect symbol and stays importable in a base install.
 
 Failure semantics: :func:`execute_run` preserves lifecycle exception types,
 apart from its typed concurrency refusal; :func:`run_remote_request` is the one

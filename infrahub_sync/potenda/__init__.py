@@ -285,7 +285,7 @@ class Potenda:
 
         Falls back to the legacy full-extract path (``adapter.load()``) when
         there is no prior successful run, the schema-subhash mismatches, or
-        the caller asked for ``--full-extract``.
+        the caller asked for a full extract.
         """
         from infrahub_sync.cache.cursors import CursorTier
         from infrahub_sync.cache.incremental import (

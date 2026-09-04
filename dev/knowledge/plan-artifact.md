@@ -5,7 +5,7 @@
 > Part of: `dev/knowledge/` | Related: [Planned writes and apply](planned-write-and-apply.md), [Incremental sync and cache](incremental-and-cache.md), [ADR 0001](../adr/0001-saved-plan-artifact-format.md)
 
 A run records what it intends to change as a **plan artifact** under its cache run directory. The
-artifact is what `infrahub-sync diff --from-plan` renders for review and what an apply executes, and it
+artifact is what `infrahub-sync runs plan` renders for review and what an apply executes, and it
 exists so that the set of changes an operator reads is the set that gets written. The format is owned
 by `infrahub_sync/plan/` and is versioned: `format_version` is `2`, and `1` is reserved for the
 pre-existing `plan.parquet` row format, which is still written and never read by this path.

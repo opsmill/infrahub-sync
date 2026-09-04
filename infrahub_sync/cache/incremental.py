@@ -58,15 +58,18 @@ def should_use_incremental(
 ) -> bool:
     """Gate the incremental path. False = full extract.
 
-    Bails out when: caller asked for full extract, no prior run exists,
+    Bails out when: the caller asked for a full extract, no prior run exists,
     the cadence threshold is reached, or the schema-subhash changed
     (mapping or destination schema moved under us, so prior snapshot is
     no longer trustworthy).
 
-    ``cadence=0`` disables the cadence check entirely (0 is falsy).
+    ``cadence=0`` disables the cadence check entirely (0 is falsy), and that is
+    what every current caller gets: nothing supplies ``runs_since_full`` or
+    ``cadence``, because the run counter they compared against is gone. The two
+    parameters stay for the caller a durable counter would give this gate.
     """
     if force_full:
-        logger.info("Incremental disabled: --full-extract requested")
+        logger.info("Incremental disabled: the caller requested a full extract")
         return False
     if prev_run_dir is None:
         logger.info("Incremental disabled: no prior successful run")

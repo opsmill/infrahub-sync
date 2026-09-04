@@ -137,7 +137,7 @@ class PlanGenerationExistsError(PlanArtifactError):
 
     next_action = (
         "Re-run `diff` without `--run-id` so the new plan is written under a fresh run id. To use the "
-        "existing plan instead, review it with `diff --from-plan <run-id>` or apply it with "
+        "existing plan instead, review it with `runs plan <run-id>` or apply it with "
         "`apply --run-id <run-id>`."
     )
 
