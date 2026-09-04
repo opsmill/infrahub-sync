@@ -7,7 +7,6 @@ from pathlib import Path
 from threading import Event, Thread, current_thread
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol
-from unittest.mock import AsyncMock
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import httpx
@@ -241,61 +240,6 @@ def test_service_and_direct_prefect_flow_schemas_are_separate_and_exact() -> Non
     )
     assert CATALOGUE.keys() == (SERVICE_DEFINITION.key,)
     assert_valid_definitions(CATALOGUE)
-
-
-def test_flow_working_directory_is_required_absolute_and_existing(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    from infrahub_sync.service import deploy
-
-    monkeypatch.delenv(deploy.FLOW_WORKING_DIRECTORY_ENV, raising=False)
-    with pytest.raises(ValueError, match=deploy.FLOW_WORKING_DIRECTORY_ENV):
-        deploy.required_flow_working_directory()
-
-    monkeypatch.setenv(deploy.FLOW_WORKING_DIRECTORY_ENV, "relative/path")
-    with pytest.raises(ValueError, match="absolute"):
-        deploy.required_flow_working_directory()
-
-    monkeypatch.setenv(deploy.FLOW_WORKING_DIRECTORY_ENV, str(tmp_path))
-    assert deploy.required_flow_working_directory() == str(tmp_path)
-    assert deploy.flow_pull_steps(str(tmp_path)) == [
-        {"prefect.deployments.steps.set_working_directory": {"directory": str(tmp_path)}}
-    ]
-
-
-async def test_service_deploy_only_converges_the_flow_working_directory(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    from infrahub_sync.service import deploy
-
-    calls: list[tuple[str, str]] = []
-    monkeypatch.setenv(deploy.WORK_POOL_ENV, "service-pool")
-    monkeypatch.setenv(deploy.FLOW_WORKING_DIRECTORY_ENV, str(tmp_path))
-
-    monkeypatch.setattr(deploy, "apply_deployments", AsyncMock(return_value=SimpleNamespace(is_successful=True)))
-    monkeypatch.setattr(
-        deploy,
-        "_ensure_flow_working_directory",
-        AsyncMock(side_effect=lambda directory: calls.append(("working-directory", directory))),
-    )
-    assert await deploy._deploy() == 0
-    assert calls == [("working-directory", str(tmp_path))]
-
-
-def test_service_definition_entrypoint_targets_the_flow_file() -> None:
-    """The applied deployment must carry an executable entrypoint.
-
-    Without one, a Prefect process worker refuses every service flow run with
-    "does not have an entrypoint and can not be run" — the deployment library
-    sends the entrypoint only when the definition supplies it.
-    """
-    assert SERVICE_DEFINITION.entrypoint is not None
-    path_part, _, function_part = SERVICE_DEFINITION.entrypoint.rpartition(":")
-    flow_file = Path(path_part)
-    assert flow_file.is_absolute(), "entrypoint must encode the shared-installation path contract"
-    assert flow_file.name == "flow.py"
-    assert flow_file.is_file()
-    assert function_part == "service_sync_run"
 
 
 def test_missing_context_uses_local_logger_without_constructing_a_bridge(monkeypatch: pytest.MonkeyPatch) -> None:

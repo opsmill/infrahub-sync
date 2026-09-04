@@ -21,6 +21,9 @@ RETIRED_NAMES = (
     "INFRAHUB_SYNC_MANAGED_FLOW_WORKING_DIRECTORY",
     "INFRAHUB_SYNC_MANAGED_HOST",
     "INFRAHUB_SYNC_MANAGED_CACHE_LOCATION",
+    # Unit 3 retired the service's flow working directory: a worker resolves the
+    # installed module and never enters a source tree.
+    "INFRAHUB_SYNC_SERVICE_FLOW_WORKING_DIRECTORY",
 )
 PRINCIPALS = json.dumps({"admin": {"token": "service-token-canary-0001", "administrator": True}})
 
@@ -31,7 +34,6 @@ def _clear_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         *RETIRED_NAMES,
         auth.PRINCIPALS_ENV,
         deploy.WORK_POOL_ENV,
-        deploy.FLOW_WORKING_DIRECTORY_ENV,
         "INFRAHUB_SYNC_SERVICE_HOST",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -40,7 +42,6 @@ def _clear_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_the_service_environment_names_are_the_declared_ones() -> None:
     assert auth.PRINCIPALS_ENV == "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"
     assert deploy.WORK_POOL_ENV == "INFRAHUB_SYNC_SERVICE_WORK_POOL"
-    assert deploy.FLOW_WORKING_DIRECTORY_ENV == "INFRAHUB_SYNC_SERVICE_FLOW_WORKING_DIRECTORY"
 
 
 def test_a_retired_bearer_token_name_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -50,11 +51,14 @@ def test_a_retired_bearer_token_name_is_ignored(monkeypatch: pytest.MonkeyPatch)
         auth.EnvironmentPrincipalResolver.from_environment()
 
 
-def test_a_retired_flow_working_directory_name_is_ignored(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("INFRAHUB_SYNC_MANAGED_FLOW_WORKING_DIRECTORY", str(tmp_path))
+def test_no_flow_working_directory_name_is_read_at_all(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Neither the retired nor the Unit 2 working-directory name has a reader left."""
+    for name in ("INFRAHUB_SYNC_MANAGED_FLOW_WORKING_DIRECTORY", "INFRAHUB_SYNC_SERVICE_FLOW_WORKING_DIRECTORY"):
+        monkeypatch.setenv(name, str(tmp_path))
 
-    with pytest.raises(ValueError, match=deploy.FLOW_WORKING_DIRECTORY_ENV):
-        deploy.required_flow_working_directory()
+    assert not any(name.endswith("FLOW_WORKING_DIRECTORY") for name in vars(deploy))
+    assert not hasattr(deploy, "required_flow_working_directory")
+    assert not hasattr(deploy, "flow_pull_steps")
 
 
 def test_a_retired_work_pool_name_is_ignored_by_the_reconciler(monkeypatch: pytest.MonkeyPatch) -> None:
