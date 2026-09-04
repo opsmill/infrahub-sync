@@ -7,19 +7,16 @@ from .utils import ESCAPED_REPO_PATH, REPO_BASE
 
 NAMESPACE = "INFRAHUB-SYNC"
 
-# CI runs five Python profiles; a development checkout runs one. These three legs are
-# the ones no local run can reach, because they need a Python 3.10 interpreter and, for
-# the last one, an install without the service runtimes.
 CHECK_310_LEGS = (
     "ty check, with the Python 3.10 excludes for infrahub_sync/service and tests/service",
     "unit tests on Python 3.10 with the dev and prefect extras",
     "unit tests on Python 3.10 with the dev extra alone, without service runtimes",
 )
 
-# `uv sync --python 3.10` repins whichever environment it is pointed at, and syncing the
-# service extra back does not restore it without an explicit `--python`. Building the
-# 3.10 legs in their own directory keeps the active .venv out of the blast radius.
-CHECK_310_ENVIRONMENT = {"UV_PROJECT_ENVIRONMENT": str(REPO_BASE / ".venv-310")}
+# `uv sync --python 3.10` repins whichever environment it is pointed at, and no later
+# sync restores that environment without an explicit `--python`. The 3.10 legs therefore
+# build under the preview runtime-state directory, never in the active .venv.
+CHECK_310_ENVIRONMENT = {"UV_PROJECT_ENVIRONMENT": str(REPO_BASE / ".preview" / "check-310-venv")}
 
 ns = Collection("infrahub_sync")
 ns.configure(
@@ -79,8 +76,8 @@ def docusaurus(context: Context) -> None:
 def check_310(context: Context) -> None:
     """Run the three CI legs the active environment cannot check, stopping at the first failure.
 
-    Builds its environments under .venv-310 so the active .venv keeps its own
-    interpreter and extras. Skips loudly and succeeds when Python 3.10 is absent.
+    Builds its environments under .preview/check-310-venv so the active .venv keeps its
+    own interpreter and extras. Skips loudly and succeeds when Python 3.10 is absent.
     """
     if not _python_310_available(context):
         print(f" - [{NAMESPACE}] check-310 SKIPPED: no Python 3.10 interpreter, so nothing below was checked:")
