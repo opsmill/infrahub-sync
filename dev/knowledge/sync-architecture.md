@@ -9,7 +9,7 @@ is reconciled to match the source. An adapter is the connector for one system; t
 adapter class can act as either source or destination depending on where it appears in
 `config.yml`.
 
-## What the engine builds on
+## The foundation classes
 
 DiffSync represents every object as a model instance with a stable identity. Two concepts
 do the work:
@@ -51,18 +51,16 @@ for its destination role.
 <!-- Extracted from dev/specs/archive/001-plan-artifact-saved-apply on 2026-07-28 -->
 
 Between the diff and the first write, a run saves a **plan artifact** recording every
-operation it intends to perform. This holds on the `sync` path as well as the `diff` path:
-the tier branch computes and retains every tier's `Diff` first, writes the artifact, then
-applies the retained diffs tier by tier, so a plan always exists before anything is written.
-The narrowing of `top_level` to one tier governs *diff computation* rather than execution —
-it is read only by the comparison engine's differ — so it wraps each `diff()` call in the
-compute loop and is irrelevant in the execution loop. A saved artifact can be reviewed
-afterwards and applied on its own, without recomputing either side. See
+operation it intends to perform, so a plan always exists before anything is written. A saved
+artifact can be reviewed afterwards and applied on its own, without recomputing either
+side. See
 [The saved plan artifact](plan-artifact.md) and
 [Planned writes and apply](planned-write-and-apply.md).
 
 Potenda also owns the cross-cutting machinery — write order tiers, the incremental cursor
-state, the Parquet diff plan, and the row-count guardrail. See
+state, and the Parquet diff plan. It owns no row-count guardrail: the filesystem baseline
+that one compared against is deleted, and the durable replacement is the configuration
+baseline the managed write path records in PostgreSQL. See
 [Incremental sync and cache](incremental-and-cache.md). Adapters do not call Potenda;
 Potenda calls adapters through the `DiffSyncMixin` contract.
 
