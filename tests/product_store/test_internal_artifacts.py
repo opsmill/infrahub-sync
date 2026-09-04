@@ -15,6 +15,7 @@ from infrahub_sync.product_store import (
 )
 from infrahub_sync.product_store.bundle import (
     FINAL_CHECKPOINT_ARTIFACT_ID,
+    MAX_BUNDLE_BYTES,
     PLAN_CHECKPOINT_ARTIFACT_ID,
     write_bundle,
 )
@@ -40,18 +41,18 @@ class _FakeS3:
         self.objects[marker] = data
 
     def get(self, *, bucket: str, key: str) -> bytes | None:
+        self.body_reads.append(key)
         return self.objects.get((bucket, key))
 
     def head(self, *, bucket: str, key: str) -> int | None:
+        """Object length from metadata. Deliberately not recorded as a body read."""
         stored = self.objects.get((bucket, key))
         return None if stored is None else len(stored)
 
     def get_bounded(self, *, bucket: str, key: str, limit: int) -> bytes | None:
-        stored = self.objects.get((bucket, key))
-        if stored is None:
-            return None
         self.body_reads.append(key)
-        return stored[: limit + 1]
+        stored = self.objects.get((bucket, key))
+        return None if stored is None else stored[: limit + 1]
 
     def copy(self, *, bucket: str, source: str, destination: str) -> None:
         self.objects[bucket, destination] = self.objects[bucket, source]
@@ -382,3 +383,141 @@ def test_an_internal_reference_is_not_reachable_through_the_public_reference_loo
 
     assert isinstance(reference.value, ArtifactReference)
     assert reference.value.visibility == "internal"
+
+
+# ---------------------------------------------------------------------------
+# Bounded reads, and the digest checked before any structure is trusted
+# ---------------------------------------------------------------------------
+
+
+def test_a_reference_over_the_bound_is_refused_without_touching_the_provider(tmp_path: Path) -> None:
+    """Metadata already carries the size, so an oversized object is never downloaded."""
+    fake = _FakeS3()
+    projection = ProductProjection(
+        SQLiteRunStore(tmp_path / "local.sqlite3"),
+        S3ArtifactStore(fake, bucket="product-artifacts"),
+    )
+    run_id = _created(projection)
+    projection.publish_artifact(
+        run_id,
+        artifact_id=PLAN_CHECKPOINT_ARTIFACT_ID,
+        kind="run-bundle",
+        media_type="application/zip",
+        data=write_bundle(_BUNDLE_MEMBERS),
+        visibility="internal",
+    )
+    fake.body_reads.clear()
+
+    result = projection.lookup_internal_artifact(run_id, PLAN_CHECKPOINT_ARTIFACT_ID, limit=8)
+
+    assert result.value is None
+    assert result.reason == "artifact-too-large"
+    assert fake.body_reads == []
+
+
+def test_a_stored_object_larger_than_its_reference_is_refused(tmp_path: Path) -> None:
+    """The reference is a claim about the store; the streamed bound is what enforces it."""
+    fake = _FakeS3()
+    projection = ProductProjection(
+        SQLiteRunStore(tmp_path / "local.sqlite3"),
+        S3ArtifactStore(fake, bucket="product-artifacts"),
+    )
+    run_id = _created(projection)
+    reference = projection.publish_artifact(
+        run_id,
+        artifact_id=PLAN_CHECKPOINT_ARTIFACT_ID,
+        kind="run-bundle",
+        media_type="application/zip",
+        data=write_bundle(_BUNDLE_MEMBERS),
+        visibility="internal",
+    )
+    fake.objects["product-artifacts", reference.object_key] += b"\x00" * 4096
+
+    result = projection.lookup_internal_artifact(run_id, PLAN_CHECKPOINT_ARTIFACT_ID, limit=reference.size)
+
+    assert result.value is None
+    assert result.reason == "artifact-too-large"
+
+
+def test_a_bundle_at_exactly_the_bound_is_readable(projection: ProductProjection) -> None:
+    """The bound is inclusive; an off-by-one here silently refuses a legal bundle."""
+    run_id = _created(projection)
+    data = write_bundle(_BUNDLE_MEMBERS)
+    projection.publish_artifact(
+        run_id,
+        artifact_id=PLAN_CHECKPOINT_ARTIFACT_ID,
+        kind="run-bundle",
+        media_type="application/zip",
+        data=data,
+        visibility="internal",
+    )
+
+    result = projection.lookup_internal_artifact(run_id, PLAN_CHECKPOINT_ARTIFACT_ID, limit=len(data))
+
+    assert result.value == data
+
+
+def test_the_default_bound_is_the_bundle_maximum(projection: ProductProjection) -> None:
+    run_id = _created(projection)
+    data = write_bundle(_BUNDLE_MEMBERS)
+    projection.publish_artifact(
+        run_id,
+        artifact_id=PLAN_CHECKPOINT_ARTIFACT_ID,
+        kind="run-bundle",
+        media_type="application/zip",
+        data=data,
+        visibility="internal",
+    )
+
+    assert projection.lookup_internal_artifact(
+        run_id, PLAN_CHECKPOINT_ARTIFACT_ID, limit=MAX_BUNDLE_BYTES
+    ) == projection.lookup_internal_artifact(run_id, PLAN_CHECKPOINT_ARTIFACT_ID)
+
+
+def test_tampered_bytes_are_refused_before_the_archive_is_parsed(tmp_path: Path) -> None:
+    fake = _FakeS3()
+    projection = ProductProjection(
+        SQLiteRunStore(tmp_path / "local.sqlite3"),
+        S3ArtifactStore(fake, bucket="product-artifacts"),
+    )
+    run_id = _created(projection)
+    reference = projection.publish_artifact(
+        run_id,
+        artifact_id=PLAN_CHECKPOINT_ARTIFACT_ID,
+        kind="run-bundle",
+        media_type="application/zip",
+        data=write_bundle(_BUNDLE_MEMBERS),
+        visibility="internal",
+    )
+    stored = fake.objects["product-artifacts", reference.object_key]
+    fake.objects["product-artifacts", reference.object_key] = stored[:-1] + bytes([stored[-1] ^ 0xFF])
+
+    result = projection.lookup_internal_artifact(run_id, PLAN_CHECKPOINT_ARTIFACT_ID)
+
+    assert result.value is None
+    assert result.reason == "artifact-integrity-failed"
+
+
+def test_a_truncated_object_is_refused_on_stored_size(tmp_path: Path) -> None:
+    fake = _FakeS3()
+    projection = ProductProjection(
+        SQLiteRunStore(tmp_path / "local.sqlite3"),
+        S3ArtifactStore(fake, bucket="product-artifacts"),
+    )
+    run_id = _created(projection)
+    reference = projection.publish_artifact(
+        run_id,
+        artifact_id=PLAN_CHECKPOINT_ARTIFACT_ID,
+        kind="run-bundle",
+        media_type="application/zip",
+        data=write_bundle(_BUNDLE_MEMBERS),
+        visibility="internal",
+    )
+    fake.objects["product-artifacts", reference.object_key] = fake.objects["product-artifacts", reference.object_key][
+        :-1
+    ]
+
+    result = projection.lookup_internal_artifact(run_id, PLAN_CHECKPOINT_ARTIFACT_ID)
+
+    assert result.value is None
+    assert result.reason == "artifact-integrity-failed"

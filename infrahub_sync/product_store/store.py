@@ -22,6 +22,7 @@ from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.configuration import ConfigurationPackage, validate_package_credentials
 from infrahub_sync.execution import REDACTED, redact
 from infrahub_sync.plan.canonical import canonical_json_bytes
+from infrahub_sync.product_store.bundle import MAX_BUNDLE_BYTES
 from infrahub_sync.product_store.models import (
     ArtifactReference,
     AuditEvent,
@@ -2281,6 +2282,14 @@ class _ArtifactStore(Protocol):
 
     def lookup(self, reference: ArtifactReference) -> LookupResult[bytes]: ...
 
+    def read_bounded(self, reference: ArtifactReference, *, limit: int) -> LookupResult[bytes]:
+        """Return the object only if it is at most `limit` bytes.
+
+        The stored size is checked from provider metadata first, so an oversized object
+        is refused without transferring it; the transfer is then itself bounded, because
+        metadata is part of the same store the object came from.
+        """
+
 
 class FileArtifactStore:
     """Filesystem artifact provider using an atomic directory rename as commit."""
@@ -2355,6 +2364,25 @@ class FileArtifactStore:
             return LookupResult(value=None, reason="data-unavailable")
         return _validate_publication(reference, manifest, data)
 
+    def read_bounded(self, reference: ArtifactReference, *, limit: int) -> LookupResult[bytes]:
+        if _expired(reference):
+            return LookupResult(value=None, reason="artifact-expired")
+        try:
+            manifest = self._path(reference.manifest_key).read_bytes()
+        except (FileNotFoundError, NotADirectoryError):
+            return LookupResult(value=None, reason="manifest-unavailable")
+        path = self._path(reference.object_key)
+        try:
+            if path.stat().st_size > limit:
+                return LookupResult(value=None, reason="artifact-too-large")
+            with path.open("rb") as handle:
+                data = handle.read(limit + 1)
+        except (FileNotFoundError, NotADirectoryError):
+            return LookupResult(value=None, reason="data-unavailable")
+        if len(data) > limit:
+            return LookupResult(value=None, reason="artifact-too-large")
+        return _validate_publication(reference, manifest, data)
+
 
 class S3Client(Protocol):
     """Minimal operations required from an S3-compatible object client."""
@@ -2368,6 +2396,12 @@ class S3Client(Protocol):
         """
 
     def get(self, *, bucket: str, key: str) -> bytes | None: ...
+
+    def head(self, *, bucket: str, key: str) -> int | None:
+        """Return the stored object's length, or None when the key is absent."""
+
+    def get_bounded(self, *, bucket: str, key: str, limit: int) -> bytes | None:
+        """Return at most `limit + 1` bytes, so an overrun is visible without buffering it."""
 
     def copy(self, *, bucket: str, source: str, destination: str) -> None: ...
 
@@ -2421,6 +2455,25 @@ class S3ArtifactStore:
         data = self._client.get(bucket=self._bucket, key=self._key(reference.object_key))
         if data is None:
             return LookupResult(value=None, reason="data-unavailable")
+        return _validate_publication(reference, manifest, data)
+
+    def read_bounded(self, reference: ArtifactReference, *, limit: int) -> LookupResult[bytes]:
+        if _expired(reference):
+            return LookupResult(value=None, reason="artifact-expired")
+        manifest = self._client.get(bucket=self._bucket, key=self._key(reference.manifest_key))
+        if manifest is None:
+            return LookupResult(value=None, reason="manifest-unavailable")
+        object_key = self._key(reference.object_key)
+        stored = self._client.head(bucket=self._bucket, key=object_key)
+        if stored is not None and stored > limit:
+            return LookupResult(value=None, reason="artifact-too-large")
+        # An absent object reports itself the same way through either call, so the
+        # missing-metadata case needs no branch of its own.
+        data = self._client.get_bounded(bucket=self._bucket, key=object_key, limit=limit)
+        if data is None:
+            return LookupResult(value=None, reason="data-unavailable")
+        if len(data) > limit:
+            return LookupResult(value=None, reason="artifact-too-large")
         return _validate_publication(reference, manifest, data)
 
 
@@ -2849,9 +2902,19 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Resolve only a published, public, run-owned reference, with explicit unavailability."""
         return self._resolve_artifact(run_id, artifact_id, visibility="public")
 
-    def lookup_internal_artifact(self, run_id: str, artifact_id: str) -> LookupResult[bytes]:
+    def lookup_internal_artifact(
+        self, run_id: str, artifact_id: str, *, limit: int = MAX_BUNDLE_BYTES
+    ) -> LookupResult[bytes]:
         """Resolve one of the product's own internal artifacts for a later stage."""
-        return self._resolve_artifact(run_id, artifact_id, visibility="internal")
+        stored = self._internal_reference(run_id, artifact_id)
+        if stored.value is None:
+            return LookupResult(value=None, reason=stored.reason)
+        reference = stored.value[0]
+        # The committed reference already records the size, so an oversized artifact is
+        # refused here without the provider being contacted at all.
+        if reference.size > limit:
+            return LookupResult(value=None, reason="artifact-too-large")
+        return self._artifacts.read_bounded(reference, limit=limit)
 
     def lookup_internal_reference(self, run_id: str, artifact_id: str) -> LookupResult[ArtifactReference]:
         """Return the committed internal reference, which is a stage's bundle evidence."""

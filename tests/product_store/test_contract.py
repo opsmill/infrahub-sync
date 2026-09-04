@@ -224,6 +224,14 @@ class _FakeS3:
     def get(self, *, bucket: str, key: str) -> bytes | None:
         return self.objects.get((bucket, key))
 
+    def head(self, *, bucket: str, key: str) -> int | None:
+        stored = self.objects.get((bucket, key))
+        return None if stored is None else len(stored)
+
+    def get_bounded(self, *, bucket: str, key: str, limit: int) -> bytes | None:
+        stored = self.objects.get((bucket, key))
+        return None if stored is None else stored[: limit + 1]
+
     def copy(self, *, bucket: str, source: str, destination: str) -> None:
         self.objects[bucket, destination] = self.objects[bucket, source]
 
@@ -266,6 +274,9 @@ class _CountingArtifactStore:
 
     def lookup(self, reference: ArtifactReference) -> product_store.LookupResult[bytes]:
         return self._store.lookup(reference)
+
+    def read_bounded(self, reference: ArtifactReference, *, limit: int) -> product_store.LookupResult[bytes]:
+        return self._store.read_bounded(reference, limit=limit)
 
 
 class _PositionConflictOnceSQLiteStore(SQLiteRunStore):
