@@ -7,13 +7,36 @@ configuration version and does not select local extraction or cache controls.
 
 A configuration package can declare the optional incremental capability. During
 validation, `optional-feature-unqualified` warns when the selected source adapter does not
-qualify that feature. During execution, the worker decides whether a prior compatible
-cursor permits a warm extraction and falls back to a full extraction when it does not.
+qualify that feature.
 
-Timestamp-based incremental extraction can miss deleted source rows. The worker therefore
-uses its configured full-resynchronization cadence. When the destination was not fully
-enumerated, a saved plan reports `delete_operations_computed: false`; `runs plan` discloses
-that the review may omit destination deletes.
+## The supported service
+
+Every managed stage — plan, verify, apply, and sync — begins in a private empty directory
+it creates for itself and releases when the stage ends. It inherits no side snapshot and
+no cursor from an earlier run, so a managed run is an explicit cold start and extracts in
+full.
+
+`incremental.full_resync_every` remains schema-valid, and a package declaring it is still
+accepted, but it governs nothing on this path: with no predecessor state to carry forward
+there is nothing for a cadence to count. Predecessor hydration across workers, and the
+cadence that would pace it, are later work; until they exist, a managed run's extraction
+is full every time.
+
+## Direct execution
+
+Direct non-service execution keeps the engine's own cache layout, where cursors, side
+snapshots, and the schema sub-hash live under the run's cache root. The incremental path
+and the adapter cursor contract are implemented there, but no current entry point selects
+them: every run requests a full extraction. Warm extraction is therefore not reachable
+from either path today.
+
+## What a saved plan records about deletes
+
+Timestamp-based incremental extraction can miss deleted source rows, so a plan records
+whether its deletes were derived from a fully enumerated destination. When the destination
+side did not run a full extract, the saved plan reports `delete_operations_computed:
+false`, and `runs plan` discloses that the review may omit destination deletes. A run that
+extracted the destination in full records `true`.
 
 Current timestamp-capable adapters include NetBox, Nautobot, and Infrahub. Other adapters
 use full extraction unless their capability contract says otherwise.

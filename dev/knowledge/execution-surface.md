@@ -108,18 +108,21 @@ A raise means no `RunResult` exists for that run. Any `run.json` already created
 ## The lock and the already-locked caller
 
 `execute_run` acquires the per-configuration pipeline lock with the same 60-second timeout
-the CLI has always used, and lets `filelock.Timeout` propagate unchanged.
+the CLI has always used, and lets `filelock.Timeout` propagate unchanged. The lock and its
+advisory "which run still looks running" lookup both take the caller's `base_directory`, so
+a caller that owns a private directory for the run is excluded and diagnosed inside it
+rather than in a location other processes derive.
 
-The CLI serial-sync path is the exception. `sync_cmd` must construct the engine inside its
-own outer `with pipeline_lock(...)`, because the parallel/serial branch predicate reads
-`ptd.tiers` and is only knowable once the engine exists — and constructing the engine twice
-would allocate a second run directory and re-emit the tier log lines. A second same-process
-`FileLock` on the same path does not re-enter: it blocks for the full timeout and then
-raises. So the CLI serial branch passes `_lock_already_held=True` and a factory closure that
-returns the already-constructed engine, and `execute_run` runs the lifecycle inside the
-caller's lock. No other caller sets it; `run_remote_request` never does.
+What that lock is: contention control between two invocations sharing one cache root. What
+it is not: cross-worker write authority. Taken inside a stage's own private directory there
+is nothing for a second worker to contend on. Exclusion for a managed write belongs to the
+PostgreSQL advisory configuration guard instead (`infrahub_sync.service.apply_guard`).
 
-`execute_run` calls the factory with all seven keyword arguments of
+`_lock_already_held=True` is set by the managed apply and sync stages, which already hold
+that configuration guard and take no core lock inside it. No other caller sets it;
+`run_remote_request` never does.
+
+`execute_run` calls the factory with all eight keyword arguments of
 `utils.get_potenda_from_instance`, always explicitly, for both operations. The two CLI
 commands historically passed different subsets whose omitted values defaulted to exactly
 what the surface now passes, so the real factory behaves identically — but a fake factory in
