@@ -54,7 +54,7 @@ from infrahub_sync.product_store import (
 from infrahub_sync.runtime_schema import STAGE_RUNTIME_MODEL_SCOPE, RuntimeModelPlan, build_runtime_model_plan
 
 from .apply_guard import ApplyGuard, hold_apply_guard
-from .checkpoints import publish_plan_checkpoint, rehydrate_plan_checkpoint
+from .checkpoints import publish_final_checkpoint, publish_plan_checkpoint, rehydrate_plan_checkpoint
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME
@@ -519,14 +519,20 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         }
         writeback = ExecutionMergeWriteback(results={"verification": result})
     elif stage == "apply":
-        # Deterministic first, and outside the guard: a run whose retained artifact does
-        # not match its binding or the operator's approved checksum is refused without
+        run_directory = scratch.run_directory(instance.name, run_id)
+        # The plan this apply was approved for, resolved and validated whole before any
+        # adapter factory exists. A checkpoint that is absent, oversized, corrupt,
+        # digest-mismatched, or another run's refuses here, having contacted nothing.
+        rehydrate_plan_checkpoint(projection, run_id, destination=run_directory)
+        # Deterministic next, and still outside the guard: a run whose rehydrated artifact
+        # does not match its binding or the operator's approved checksum is refused without
         # making another writer wait.
         manifest = _verify_registered_apply(
             instance=instance,
             run_id=run_id,
             binding=parameter_binding,
             expected_checksum=expected_checksum,
+            base_directory=scratch.root,
         )
         with _configuration_write_guard(_require_registered_write(parameter_binding)) as guard:
             ownership = ProvenWriteOwnership(prove=guard.require_ownership, tracker=tracker)
@@ -550,9 +556,13 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 confirm_writes=True,
                 ownership=ownership,
                 record_applied=tracker.record_applied,
+                base_directory=scratch.root,
                 _lock_already_held=True,
             )
+        # Outside the guard, so the release this stage reports is already confirmed, and
+        # before the product commit, so the run's evidence is durable before its verdict.
         assert isinstance(applied, RunResult)
+        publish_final_checkpoint(projection, run_id, run_directory=run_directory, secrets=secrets)
         result = _result_data(applied)
         writeback = ExecutionFinishWriteback(
             phase="applied",
