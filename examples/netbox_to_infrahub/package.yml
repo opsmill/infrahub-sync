@@ -6,10 +6,12 @@ configuration:
   #   - README.md
   #   - docs/docs/tutorials/netbox-demo-to-infrahub.mdx
   #
-  #   1. Auto-tiered write order. The `order:` list has been removed; the worker
-  #      derives tiers from `schema_mapping[].fields[].reference` and groups
-  #      kinds that can be written in parallel. Tiered parallel execution is the
-  #      service execution policy.
+  #   1. Automatic write order. The `order:` list has been removed; the worker
+  #      derives write-order tiers from `schema_mapping[].fields[].reference`,
+  #      and every planned operation carries the tier its kind belongs to. An
+  #      apply executes the reviewed operation sequence in `(tier, operation_id)`
+  #      order, so a kind is written after the kinds it references. There is no
+  #      separate serial or parallel execution mode.
   #
   #   2. Service-owned saved plans. `diff` submits a plan run to the Sync API.
   #      Review the returned run with `runs plan`; `apply` binds the service run
