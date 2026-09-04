@@ -397,8 +397,14 @@ def _process_running(name: str) -> int | None:
 
 
 def _project_interpreter(context: Context) -> str:
-    """Return the absolute interpreter of this project's environment."""
-    probe = context.run("uv run python -c 'import sys; print(sys.executable)'", hide=True, warn=True, pty=False)
+    """Return the absolute interpreter of this project's environment.
+
+    Scoped to the repository root, because `uv run` resolves the project from the working
+    directory: invoked from anywhere else, the probe would answer for a different project
+    or for none at all.
+    """
+    with context.cd(ESCAPED_REPO_PATH):
+        probe = context.run("uv run python -c 'import sys; print(sys.executable)'", hide=True, warn=True, pty=False)
     lines = (probe.stdout or "").strip().splitlines() if probe is not None else []
     interpreter = lines[-1].strip() if lines else ""
     if probe is None or probe.exited != 0 or not interpreter or not Path(interpreter).is_file():

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from invoke import Context
+from invoke import Context, Result
 
 from tasks import preview
 
@@ -100,3 +101,23 @@ def test_preview_passes_the_worker_environment_to_deployment_unchanged(
     captured = _staged_up(monkeypatch, tmp_path)
 
     assert captured["deploy_env"] == captured["env:prefect-worker"]
+
+
+def test_the_interpreter_probe_runs_from_the_repository_root() -> None:
+    """`uv run` resolves this project from the working directory, so the probe is scoped.
+
+    Every other `uv` and Compose command in this module runs inside
+    `context.cd(ESCAPED_REPO_PATH)`. Unscoped, the probe resolves whatever project the
+    caller's directory belongs to -- or none -- and the worker never starts.
+    """
+    recorded: list[str] = []
+
+    class _ProbeContext(Context):
+        def run(self, command: str, **kwargs: object) -> Result:  # noqa: ARG002 - Invoke surface.
+            recorded.append(self.cwd)
+            return Result(stdout=f"{sys.executable}\n", exited=0)
+
+    interpreter = preview._project_interpreter(_ProbeContext())
+
+    assert interpreter == sys.executable
+    assert recorded == [preview.ESCAPED_REPO_PATH]
