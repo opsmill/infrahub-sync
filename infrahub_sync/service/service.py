@@ -28,6 +28,7 @@ from .models import (
     ArtifactListResource,
     CancelRunRequest,
     CreateRunRequest,
+    EmittedArtifactListResource,
     EmittedPlanResource,
     OrchestrationSummary,
     PlanResource,
@@ -572,10 +573,15 @@ class RunService:
         return ResultsResource(run_id=run_id, results=run.results)
 
     def list_artifacts(self, run_id: str) -> ArtifactListResource:
-        """List immutable references without reading artifact bodies."""
+        """List immutable references without reading artifact bodies.
+
+        Built from store records, so it goes through the bounded twin for the same
+        reason the run resource does: a durable field this contract does not declare
+        must not reach an operator by being copied through.
+        """
         run = self._required_run(run_id)
         artifacts = tuple(reference.model_dump(mode="json") for reference in run.artifact_refs)
-        return ArtifactListResource.model_validate({"run_id": run_id, "artifacts": artifacts})
+        return EmittedArtifactListResource.model_validate({"run_id": run_id, "artifacts": artifacts})
 
     def get_artifact(self, run_id: str, artifact_id: str) -> tuple[bytes, str, str]:
         """Return verified artifact bytes, media type, and recorded digest."""
