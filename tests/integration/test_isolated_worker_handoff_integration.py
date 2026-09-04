@@ -64,6 +64,17 @@ _REQUIRED_ENVIRONMENT = (
 )
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_FINGERPRINT = "f" * 64
+# One stage against reachable backends is seconds' work; this bound exists so an
+# unreachable-but-accepting backend fails the case instead of hanging the session.
+_WORKER_TIMEOUT_SECONDS = 300
+
+
+def _captured(stream: str | bytes | None) -> str:
+    """Render whatever a finished or timed-out worker managed to write."""
+    if stream is None:
+        return "<none>"
+    text = stream.decode("utf-8", "replace") if isinstance(stream, bytes) else stream
+    return text[-3000:] or "<empty>"
 
 
 def _settings_or_skip() -> dict[str, str]:
@@ -304,19 +315,27 @@ def _run_worker(  # noqa: PLR0913 - one parameter per input the worker process n
     working_directory = report_root / "cwd-canary"
     working_directory.mkdir(exist_ok=True)
     environment["INFRAHUB_SYNC_CACHE_DIR"] = str(legacy_cache)
-    completed = subprocess.run(  # noqa: S603 - fixed interpreter, inline script, no shell.
-        [sys.executable, "-c", textwrap.dedent(script)],
-        capture_output=True,
-        text=True,
-        env=environment,
-        cwd=str(working_directory),
-        check=False,
-    )
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed interpreter, inline script, no shell.
+            [sys.executable, "-c", textwrap.dedent(script)],
+            capture_output=True,
+            text=True,
+            env=environment,
+            cwd=str(working_directory),
+            check=False,
+            timeout=_WORKER_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as expired:
+        # The settings check proves only that they are non-empty. A backend that accepts
+        # the connection and then stalls would otherwise hang the session with no output.
+        pytest.fail(
+            f"stage {stage!r} did not finish within {_WORKER_TIMEOUT_SECONDS}s; stderr: {_captured(expired.stderr)}"
+        )
     if not report.is_file():
-        pytest.fail(f"stage {stage!r} wrote no report; stderr: {completed.stderr[-3000:]}")
+        pytest.fail(f"stage {stage!r} wrote no report; stderr: {_captured(completed.stderr)}")
     written: dict[str, Any] = json.loads(report.read_text(encoding="utf-8"))
     written["returncode"] = completed.returncode
-    written["stderr"] = completed.stderr[-3000:]
+    written["stderr"] = _captured(completed.stderr)
     written["detail"] = f"{written.get('error_type')}: {written.get('error')}\n{written['stderr']}"
     written["legacy_cache_contents"] = sorted(str(path.relative_to(legacy_cache)) for path in legacy_cache.rglob("*"))
     written["cwd_contents"] = sorted(str(path.relative_to(working_directory)) for path in working_directory.rglob("*"))
