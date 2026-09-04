@@ -224,6 +224,10 @@ def test_a_registered_stage_reaches_execution_with_its_models_bound(
     monkeypatch.setattr(service_flow, "_publish_plan", _skip)
     monkeypatch.setattr(service_flow, "_verify_registered_apply", _skip)
     monkeypatch.setattr(service_flow, "_require_planned_schema", _skip)
+    # Checkpoint membership is asserted in tests/service/test_sync_checkpoint_order.py;
+    # this test's subject is which models a registered stage binds.
+    monkeypatch.setattr(service_flow, "publish_plan_checkpoint", _skip)
+    monkeypatch.setattr(service_flow, "publish_final_checkpoint", _skip)
     bind_granting_guard(monkeypatch, service_flow)
 
     with stage_scratch("sync") as scratch:

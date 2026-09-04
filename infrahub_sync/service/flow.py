@@ -584,12 +584,23 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 run_branch=branch,
                 stage=stage,
             )
-            saved = _plan(instance, run_id=run_id, branch=branch, composed_sync=True)
+            run_directory = scratch.run_directory(instance.name, run_id)
+            saved = _plan(instance, run_id=run_id, branch=branch, composed_sync=True, base_directory=scratch.root)
+            # Durable before the first destination operation: a sync interrupted
+            # mid-write leaves the plan an operator reconciles what happened against.
+            publish_plan_checkpoint(
+                projection,
+                run_id,
+                run_directory=run_directory,
+                manifest=saved.manifest,
+                secrets=secrets,
+            )
             _publish_plan(projection, run_id, saved, secrets)
             verified = execute_run(
                 instance,
                 operation="verify",
                 run_id=run_id,
+                base_directory=scratch.root,
                 _run_file_mode="sync",
                 _require_verified=True,
             )
@@ -599,6 +610,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 run_id=run_id,
                 binding=parameter_binding,
                 expected_checksum=verified.manifest.plan_checksum,
+                base_directory=scratch.root,
             )
             _require_planned_schema(run_id=run_id, manifest=manifest, models=instance._runtime_models)
             applied = execute_run(
@@ -610,10 +622,13 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 confirm_writes=True,
                 ownership=ownership,
                 record_applied=tracker.record_applied,
+                base_directory=scratch.root,
                 _lock_already_held=True,
                 _run_file_mode="sync",
             )
             assert isinstance(applied, RunResult)
+        # Same order the apply stage publishes in, for the same reason.
+        publish_final_checkpoint(projection, run_id, run_directory=run_directory, secrets=secrets)
         result = {**_result_data(applied), "operation": "sync"}
         writeback = ExecutionFinishWriteback(
             phase="applied",

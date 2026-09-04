@@ -193,7 +193,9 @@ def _prepare(  # noqa: PLR0913, PLR0915 - one harness knob per collaborator a ca
         configuration_binding=binding,
         schema_fingerprint=SCHEMA_FINGERPRINT,
     )
-    publish_authored_plan(projection, run_id, run_directory=authored, manifest=manifest)
+    if stage == "apply":
+        # Only an apply has a predecessor: a sync publishes the plan it generates itself.
+        publish_authored_plan(projection, run_id, run_directory=authored, manifest=manifest)
     prepared = _ManagedStage(run_id, binding, manifest.plan_checksum, events)
     prepared.projection = projection
 
@@ -237,8 +239,21 @@ def _prepare(  # noqa: PLR0913, PLR0915 - one harness knob per collaborator a ca
         )
 
     def fake_plan(*_args: object, **kwargs: object) -> Any:  # noqa: ANN401 - the engine's own SavedPlan record.
+        """Plan into this stage's own directory, the way the real engine does."""
         events.append("plan")
-        return saved_plan(kwargs.get("base_directory"))
+        base = kwargs.get("base_directory")
+        if base is not None:
+            write_plan_artifact(
+                run_dir=Path(str(base)) / runtime.name / run_id,
+                run_id=run_id,
+                config_version=resolve_config_version(runtime),
+                source_snapshot=[],
+                deletes_computed=True,
+                operations=[],
+                configuration_binding=binding,
+                schema_fingerprint=SCHEMA_FINGERPRINT,
+            )
+        return saved_plan(base)
 
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (service_flow.logger, False))
