@@ -404,11 +404,7 @@ class Potenda:
         return self.destination.sync_from(self.source, diff=diff, flags=self.flags, callback=self._print_callback)
 
     def _diff_to_rows(self, diff: Any) -> list[dict[str, str]]:
-        """Materialize a diffsync.Diff into plan-row dicts (one per change).
-
-        Pulled out so sync_in_tiers can accumulate rows across per-tier
-        diffs before writing a single plan.parquet for the whole run.
-        """
+        """Materialize a diffsync.Diff into plan-row dicts (one per change)."""
         import json
 
         rows: list[dict[str, str]] = []
@@ -445,11 +441,9 @@ class Potenda:
         `plan.parquet` is written exactly as before (V23) — it is retained for operators
         to query, and the new artifact never replaces it. It is **not** what `apply`
         reads: `apply_plan` loads `<run_dir>/plan/` and refuses a run that holds only the
-        parquet. The saved plan artifact is written alongside it, because this method is
-        the one call site common to every non-tier path that produces a plan: the `diff`
-        command, the serial `sync` command and `sync_in_tiers`' no-tiers branch — and on all
-        three it runs before any destination write, which is what FR-001 requires. The tier branch of
-        `sync_in_tiers` writes the artifact itself, from every tier's retained diff.
+        parquet. The saved plan artifact is written alongside it, because this method is the
+        one call site every path that produces a plan goes through — and on all of them it
+        runs before any destination write, which is what FR-001 requires.
 
         Returns the saved artifact's in-memory per-action counts, or `None` when no
         saved artifact can be written. For `operation="plan"`, the shared execution
