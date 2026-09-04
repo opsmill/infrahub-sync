@@ -53,6 +53,7 @@ from infrahub_sync.product_store.store import (
     SQLiteRunStore,
     _RelationalRunStore,
 )
+from tests.product_store.postgresql_isolation import isolated_schema
 
 # This intentionally mirrors infrahub_sync/product_store/__init__.py's __all__, hand-maintained
 # so a change to the module's exports has to touch this list too.
@@ -4337,10 +4338,8 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
     """Real-server confirmation of the schema-bootstrap fix, and of the run-to-configuration
     binding columns and CHECK constraint that were otherwise only verified by hand.
 
-    WARNING: this test runs ``DROP SCHEMA public CASCADE`` against whatever database the DSN
-    points at, which destroys every table in that database's ``public`` schema. Point the DSN
-    only at a disposable, single-purpose database (e.g. the throwaway container below) — never
-    at a shared or persistent development database.
+    The case runs inside a generated schema it creates and drops, so a DSN aimed at the wrong
+    database cannot destroy that database's records; see ``tests.product_store.postgresql_isolation``.
 
     Opt in with ``-m integration`` and a reachable ``PRODUCT_STORE_TEST_POSTGRESQL_DSN``, e.g.::
 
@@ -4355,27 +4354,24 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
     path (twice consecutively). Also asserts, against the real server, that construction leaves
     ``product_runs`` with its three binding columns and the binding CHECK constraint in place.
     """
-    dsn = _reachable_postgresql_dsn()
-    if dsn is None:
+    endpoint = _reachable_postgresql_dsn()
+    if endpoint is None:
         pytest.skip("psycopg is not installed, or PRODUCT_STORE_TEST_POSTGRESQL_DSN is unset/unreachable")
     # pylint: disable-next=import-outside-toplevel,import-error
     import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
 
     from infrahub_sync.service.storage import PsycopgConnectionFactory
 
+    schema = isolated_schema(endpoint)
+    dsn = schema.dsn
+
     def connect() -> DBAPIConnection:
         return PsycopgConnectionFactory(psycopg.connect)(dsn)
-
-    def reset_schema() -> None:
-        with psycopg.connect(dsn) as admin:
-            admin.execute("DROP SCHEMA public CASCADE")
-            admin.execute("CREATE SCHEMA public")
-            admin.commit()
 
     def committed_tables() -> set[str]:
         with psycopg.connect(dsn) as admin:
             rows = admin.execute(
-                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()"
             ).fetchall()
         return {row[0] for row in rows}
 
@@ -4399,40 +4395,43 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
     registry_tables = {"configurations", "configuration_versions"}
     binding_columns = {"config_id", "registry_version", "package_checksum"}
 
-    # A fresh catalog, twice consecutively.
-    reset_schema()
-    PostgreSQLRunStore(connect)
-    assert registry_tables <= committed_tables()
-    assert binding_columns <= product_runs_columns()
-    assert binding_constraint_exists()
-    PostgreSQLRunStore(connect)
-    assert registry_tables <= committed_tables()
-    assert binding_columns <= product_runs_columns()
-    assert binding_constraint_exists()
+    try:
+        # A fresh catalog, twice consecutively.
+        schema.reset()
+        PostgreSQLRunStore(connect)
+        assert registry_tables <= committed_tables()
+        assert binding_columns <= product_runs_columns()
+        assert binding_constraint_exists()
+        PostgreSQLRunStore(connect)
+        assert registry_tables <= committed_tables()
+        assert binding_columns <= product_runs_columns()
+        assert binding_constraint_exists()
 
-    # The realistic upgrade path: every parent table pre-exists, the two registry tables do not.
-    reset_schema()
-    parent_statements = [
-        statement.strip()
-        for statement in product_store_store._SCHEMA.split(";")
-        if statement.strip() and not any(table in statement for table in registry_tables)
-    ]
-    with psycopg.connect(dsn) as admin:
-        for statement in parent_statements:
-            admin.execute(statement)
-        admin.commit()
-    PostgreSQLRunStore(connect)
-    assert registry_tables <= committed_tables()
-    assert binding_columns <= product_runs_columns()
-    assert binding_constraint_exists()
-    PostgreSQLRunStore(connect)
-    assert registry_tables <= committed_tables()
-    assert binding_columns <= product_runs_columns()
-    assert binding_constraint_exists()
+        # The realistic upgrade path: every parent table pre-exists, the two registry tables do not.
+        schema.reset()
+        parent_statements = [
+            statement.strip()
+            for statement in product_store_store._SCHEMA.split(";")
+            if statement.strip() and not any(table in statement for table in registry_tables)
+        ]
+        with psycopg.connect(dsn) as admin:
+            for statement in parent_statements:
+                admin.execute(statement)
+            admin.commit()
+        PostgreSQLRunStore(connect)
+        assert registry_tables <= committed_tables()
+        assert binding_columns <= product_runs_columns()
+        assert binding_constraint_exists()
+        PostgreSQLRunStore(connect)
+        assert registry_tables <= committed_tables()
+        assert binding_columns <= product_runs_columns()
+        assert binding_constraint_exists()
 
-    # The CHECK constraint must actually enforce the binding invariant against a real server,
-    # not merely exist by name.
-    _assert_real_postgresql_refuses_partial_configuration_binding(dsn)
+        # The CHECK constraint must actually enforce the binding invariant against a real server,
+        # not merely exist by name.
+        _assert_real_postgresql_refuses_partial_configuration_binding(dsn)
+    finally:
+        schema.drop()
 
 
 def _assert_real_postgresql_refuses_partial_configuration_binding(dsn: str) -> None:
