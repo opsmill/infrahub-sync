@@ -99,7 +99,8 @@ def _staged_up(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, started: list[st
     )
     monkeypatch.setattr(preview, "_compose", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(preview, "_wait_for_http", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(preview, "_start_process", lambda name, _argv, _env: started.append(name))
+    monkeypatch.setattr(preview, "_start_process", lambda name, _argv, _env, **_kwargs: started.append(name))
+    monkeypatch.setattr(preview, "_project_interpreter", lambda _context: "/preview/venv/bin/python")
 
     class _SilentContext(Context):
         def run(self, command: str, **kwargs: Any) -> None:  # noqa: ANN401, PLR6301 - Invoke surface.

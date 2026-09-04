@@ -58,6 +58,15 @@ SHARED_DEVICE_NAME = "core01"
 SHARED_DEVICE_SEED_TYPE = "preview-seed"
 # Process name -> substring its command line must contain before a recorded pid
 # is treated as ours (guards against pid recycling by unrelated processes).
+# Settings the Unit 3 cutover retired. The supported service reads no cache location -- each
+# stage creates its own private scratch -- and resolves its flow as an installed module, so
+# it declares no working directory and needs no source tree.
+RETIRED_SERVICE_SETTINGS = (
+    "INFRAHUB_SYNC_CACHE_DIR",
+    "INFRAHUB_SYNC_SERVICE_FLOW_WORKING_DIRECTORY",
+    "INFRAHUB_SYNC_MANAGED_FLOW_WORKING_DIRECTORY",
+    "INFRAHUB_SYNC_MANAGED_CACHE_LOCATION",
+)
 SERVICE_PROCESSES = {
     "sync-api": "infrahub_sync.service.serve",
     "prefect-worker": "infrahub_sync.service.worker",
@@ -127,16 +136,23 @@ def preview_urls(values: dict[str, str]) -> dict[str, str]:
 
 
 def _runtime_env(values: dict[str, str]) -> dict[str, str]:
-    """Environment for Sync processes: worker, Sync API, CLI, and smoke."""
+    """Environment for Sync processes: worker, Sync API, CLI, and smoke.
+
+    This environment starts from the caller's, so a retired name has to be removed rather
+    than merely not set: inherited from a shell that predates the cutover, it would reach
+    every preview process and be read by whatever still honours it. Removing it here is
+    what makes the preview prove the service needs none of them.
+    """
     urls = preview_urls(values)
     env = dict(os.environ)
+    for retired in RETIRED_SERVICE_SETTINGS:
+        env.pop(retired, None)
     env.update(
         {
             "INFRAHUB_ADDRESS": urls["infrahub"],
             "INFRAHUB_API_TOKEN": values["INFRAHUB_INITIAL_ADMIN_TOKEN"],
             "PREFECT_API_URL": f"{urls['prefect']}/api",
             "INFRAHUB_SYNC_CONFIG_DIRECTORY": str(REPO_ROOT / "examples"),
-            "INFRAHUB_SYNC_CACHE_DIR": str(STATE_DIR / "sync-cache"),
             "INFRAHUB_SYNC_DATABASE_URL": (
                 f"postgresql://postgres:postgres@127.0.0.1:{values['PREVIEW_STORAGE_POSTGRES_PORT']}/infrahub_sync"
             ),
@@ -150,7 +166,6 @@ def _runtime_env(values: dict[str, str]) -> dict[str, str]:
             "INFRAHUB_SYNC_SERVICE_WORK_POOL": values["PREVIEW_WORK_POOL"],
             "INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS": values["PREVIEW_RUN_ADMISSION_TTL_SECONDS"],
             "PREFECT_WORKER_QUERY_SECONDS": values["PREVIEW_PREFECT_WORKER_QUERY_SECONDS"],
-            "INFRAHUB_SYNC_SERVICE_FLOW_WORKING_DIRECTORY": str(REPO_ROOT),
         }
     )
     return env
@@ -381,7 +396,39 @@ def _process_running(name: str) -> int | None:
     return pid
 
 
-def _start_process(name: str, argv: list[str], env: dict[str, str]) -> None:
+def _project_interpreter(context: Context) -> str:
+    """Return the absolute interpreter of this project's environment.
+
+    Scoped to the repository root, because `uv run` resolves the project from the working
+    directory: invoked from anywhere else, the probe would answer for a different project
+    or for none at all.
+    """
+    with context.cd(ESCAPED_REPO_PATH):
+        probe = context.run("uv run python -c 'import sys; print(sys.executable)'", hide=True, warn=True, pty=False)
+    lines = (probe.stdout or "").strip().splitlines() if probe is not None else []
+    interpreter = lines[-1].strip() if lines else ""
+    if probe is None or probe.exited != 0 or not interpreter or not Path(interpreter).is_file():
+        msg = "could not resolve the project interpreter; run `uv sync --extra dev --extra prefect --extra service`"
+        raise PreviewError(msg)
+    return interpreter
+
+
+def _worker_working_directory() -> Path:
+    """Return the worker's own empty directory under the preview state root."""
+    directory = STATE_DIR / "worker-cwd"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _start_process(name: str, argv: list[str], env: dict[str, str], *, working_directory: Path = REPO_ROOT) -> None:
+    """Start one preview process, from the repository root unless told otherwise.
+
+    The repository root is the right directory for a process that resolves this project
+    from it -- the Sync API's `uv run` does. It is the wrong one for the service worker:
+    Prefect prepends the working directory to `sys.path` when it resolves the deployment's
+    module entrypoint, so a worker started here would import the checkout instead of the
+    installed distribution.
+    """
     if _process_running(name) is not None:
         print(f" - [{NAMESPACE}] {name} already running")
         return
@@ -389,7 +436,7 @@ def _start_process(name: str, argv: list[str], env: dict[str, str]) -> None:
     log_handle = _log_file(name).open("ab")
     process = subprocess.Popen(  # noqa: S603 -- fixed argv, local dev processes
         argv,
-        cwd=REPO_ROOT,
+        cwd=working_directory,
         env=env,
         stdout=log_handle,
         stderr=subprocess.STDOUT,
@@ -425,7 +472,6 @@ def up(context: Context) -> None:
     urls = preview_urls(values)
     env = _runtime_env(values)
     STATE_DIR.mkdir(exist_ok=True)
-    Path(env["INFRAHUB_SYNC_CACHE_DIR"]).mkdir(parents=True, exist_ok=True)
 
     print(f" - [{NAMESPACE}] Starting containers (first run downloads images)")
     _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS} --quiet-pull", values)
@@ -440,18 +486,20 @@ def up(context: Context) -> None:
         warn=True,  # already-exists is fine
     )
 
+    # The installed interpreter, resolved once from the project, then started from a
+    # directory holding no source: `uv run` would have to resolve the project from the
+    # working directory, which is the coupling this worker must not have.
     _start_process(
         "prefect-worker",
         [
-            "uv",
-            "run",
-            "python",
+            _project_interpreter(context),
             "-m",
             "infrahub_sync.service.worker",
             "--pool",
             values["PREVIEW_WORK_POOL"],
         ],
         env,
+        working_directory=_worker_working_directory(),
     )
 
     print(f" - [{NAMESPACE}] Applying the service deployment")

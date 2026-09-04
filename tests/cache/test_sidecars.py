@@ -6,7 +6,6 @@ from pathlib import Path
 
 from infrahub_sync.cache.sidecars import (
     CursorsFile,
-    RowcountsFile,
     RunFile,
     SchemaHashFile,
 )
@@ -23,15 +22,6 @@ def test_cursors_file_roundtrip(tmp_path: Path) -> None:
     f.save()
     g = CursorsFile.load_or_default(tmp_path / "cursors.json")
     assert g.cursors == f.cursors
-
-
-def test_rowcounts_file_set_and_get(tmp_path: Path) -> None:
-    f = RowcountsFile.load_or_default(tmp_path / "last-successful-rowcounts.json")
-    f.set("BuiltinTag", 4000)
-    f.save()
-    g = RowcountsFile.load_or_default(tmp_path / "last-successful-rowcounts.json")
-    assert g.get("BuiltinTag") == 4000
-    assert g.get("MissingResource") is None
 
 
 def test_run_file_records_status(tmp_path: Path) -> None:

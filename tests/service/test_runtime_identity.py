@@ -34,12 +34,10 @@ def test_the_deployment_carries_the_service_tag_set() -> None:
 
 
 def test_the_deployment_entrypoint_names_the_service_flow_function() -> None:
+    """The entrypoint is the declared module and function, joined as one dotted path."""
     assert SERVICE_DEFINITION.module == "infrahub_sync.service.flow"
     assert SERVICE_DEFINITION.function == "service_sync_run"
-    assert SERVICE_DEFINITION.entrypoint is not None
-    path_part, _, function_part = SERVICE_DEFINITION.entrypoint.rpartition(":")
-    assert function_part == "service_sync_run"
-    assert Path(path_part).parent.name == "service"
+    assert SERVICE_DEFINITION.entrypoint == f"{SERVICE_DEFINITION.module}.{SERVICE_DEFINITION.function}"
 
 
 def test_exactly_one_deployment_is_registered() -> None:

@@ -165,14 +165,16 @@ def _run_directory_exists(directory: Path) -> bool:
     return stat_or_unreadable(directory, description="run directory") is not None
 
 
-def _unknown_run_error(sync_name: str, run_id: str, expected_artifact: Path) -> UnknownRunIdentifierError:
+def _unknown_run_error(
+    sync_name: str, run_id: str, expected_artifact: Path, *, base_directory: Path | None = None
+) -> UnknownRunIdentifierError:
     """Build the unknown-run refusal, with the enumeration AD073 requires (AD059).
 
     The enumeration's wording is the reader's, because FR-008 requires the same listing when a
     run is located but holds no plan artifact — a verdict `require_plan_directory` raises — and
     two hand-written listings would drift.
     """
-    cache_root = cache_root_for(sync_name)
+    cache_root = cache_root_for(sync_name, base_directory=base_directory)
     stored = stored_run_ids(cache_root)
     msg = (
         f"No run {run_id!r} is stored for synchronization {sync_name!r}: the plan artifact was "
@@ -197,7 +199,7 @@ def _snapshot_note(failure: VerificationFailure) -> str:
     )
 
 
-def resolve_run_directory(sync_name: str, run_id: str) -> Path:
+def resolve_run_directory(sync_name: str, run_id: str, *, base_directory: Path | None = None) -> Path:
     """Return where a run's directory would be, refusing an identifier that is not one segment.
 
     The **single** translation site for the cache layout's traversal guard. `run_dir` applies
@@ -215,7 +217,7 @@ def resolve_run_directory(sync_name: str, run_id: str) -> Path:
         UnsafeRunIdentifierError: the identifier is not a single path segment.
     """
     try:
-        return run_dir(sync_name, run_id)
+        return run_dir(sync_name, run_id, base_directory=base_directory)
     except ValueError as exc:
         msg = (
             f"Run identifier {run_id!r} is not usable: a run id names one directory under the "
@@ -225,7 +227,7 @@ def resolve_run_directory(sync_name: str, run_id: str) -> Path:
         raise UnsafeRunIdentifierError(msg) from exc
 
 
-def require_stored_run(sync_name: str, run_id: str) -> Path:
+def require_stored_run(sync_name: str, run_id: str, *, base_directory: Path | None = None) -> Path:
     """Return the run's directory, refusing with the enumerated message when it is absent.
 
     The **single** raising site for the unknown-run refusal, shared by the review path below
@@ -240,9 +242,14 @@ def require_stored_run(sync_name: str, run_id: str) -> Path:
         PlanArtifactUnreadableError: the run directory or the cache root exists but could
             not be examined or listed (AD036).
     """
-    directory = resolve_run_directory(sync_name, run_id)
+    directory = resolve_run_directory(sync_name, run_id, base_directory=base_directory)
     if not _run_directory_exists(directory):
-        raise _unknown_run_error(sync_name, run_id, directory / PLAN_DIR_NAME / MANIFEST_FILE_NAME)
+        raise _unknown_run_error(
+            sync_name,
+            run_id,
+            directory / PLAN_DIR_NAME / MANIFEST_FILE_NAME,
+            base_directory=base_directory,
+        )
     return directory
 
 
@@ -327,7 +334,7 @@ def expected_checksum_refusal(
                 f"unreadable or unparseable. {assurance}"
             ),
             next_action=(
-                f"Review the stored plan with `diff --from-plan {run_id}`, which names what the "
+                f"Review the stored plan with `runs plan {run_id}`, which names what the "
                 f"artifact is missing, then re-plan under a fresh run id and approve the checksum of "
                 f"the plan that replaces it."
             ),
@@ -341,7 +348,7 @@ def expected_checksum_refusal(
             f"{actual!r}. {assurance}"
         ),
         next_action=(
-            f"Review the stored plan with `diff --from-plan {run_id}` and approve its checksum, or "
+            f"Review the stored plan with `runs plan {run_id}` and approve its checksum, or "
             f"apply the run whose checksum you already approved."
         ),
     )
@@ -352,6 +359,7 @@ def read_saved_plan(
     sync_name: str,
     run_id: str,
     config: SyncConfig | None = None,
+    base_directory: Path | None = None,
 ) -> SavedPlan:
     """Read the plan artifact stored for one run and return it as data (FR-029).
 
@@ -361,6 +369,9 @@ def read_saved_plan(
         config: Optional, and used for **one** thing: deciding whether a `kind` filter names
             a kind the configuration declares (FR-006). Review is otherwise
             configuration-independent once the run is located.
+        base_directory: Optional explicit cache root, for a caller that owns the run's
+            directory rather than deriving it from the environment or the working
+            directory.
 
     Returns:
         A `SavedPlan`. Data, never rendered text, so SC-010's canary scan can scan the
@@ -380,7 +391,7 @@ def read_saved_plan(
             the one bound on AD031's "review renders rather than refuses", which is scoped
             to verification failures (AD055).
     """
-    directory = require_stored_run(sync_name, run_id)
+    directory = require_stored_run(sync_name, run_id, base_directory=base_directory)
 
     loaded = load_plan_artifact(directory)
     # Both checks below are routed through the verifier's own implementations rather than

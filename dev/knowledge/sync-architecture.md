@@ -9,7 +9,7 @@ is reconciled to match the source. An adapter is the connector for one system; t
 adapter class can act as either source or destination depending on where it appears in
 `config.yml`.
 
-## The DiffSync foundation
+## The foundation classes
 
 DiffSync represents every object as a model instance with a stable identity. Two concepts
 do the work:
@@ -20,7 +20,7 @@ do the work:
   (the comparable fields). Two objects with the same identifiers are "the same object" on
   both sides; their attributes are what the diff compares.
 
-infrahub-sync layers two mixins on top of the DiffSync base classes: `DiffSyncMixin` for
+infrahub-sync layers two classes on top of the DiffSync base classes: `DiffSyncMixin` for
 adapters and `DiffSyncModelMixin` for models. See [Adapter anatomy](adapter-anatomy.md).
 
 ## Source and destination
@@ -35,7 +35,7 @@ destination in `netbox_to_infrahub` and the source in `infrahub_to_peering-manag
 adapter must be able to *load* (read) for its source role and to *create / update / delete*
 for its destination role.
 
-## The Potenda engine
+## The sync engine
 
 `Potenda` (in `infrahub_sync/potenda/`) orchestrates a run in three stages:
 
@@ -44,27 +44,25 @@ for its destination role.
    destination load concurrently by default.
 2. **Diff** — `diff()` runs the DiffSync comparison and produces a structured set of
    create / update / delete actions.
-3. **Sync** — `sync()` (or `sync_in_tiers()`) applies those actions against the
+3. **Sync** — `sync()` applies those actions against the
    destination in dependency order, calling the destination model's `create` / `update` /
    `delete`.
 
 <!-- Extracted from dev/specs/archive/001-plan-artifact-saved-apply on 2026-07-28 -->
 
 Between the diff and the first write, a run saves a **plan artifact** recording every
-operation it intends to perform. This holds on the `sync` path as well as the `diff` path:
-the tier branch computes and retains every tier's `Diff` first, writes the artifact, then
-applies the retained diffs tier by tier, so a plan always exists before anything is written.
-The narrowing of `top_level` to one tier governs *diff computation* rather than execution —
-it is read only by the comparison engine's differ — so it wraps each `diff()` call in the
-compute loop and is irrelevant in the execution loop. A saved artifact can be reviewed
-afterwards and applied on its own, without recomputing either side. See
+operation it intends to perform, so a plan always exists before anything is written. A saved
+artifact can be reviewed afterwards and applied on its own, without recomputing either
+side. See
 [The saved plan artifact](plan-artifact.md) and
 [Planned writes and apply](planned-write-and-apply.md).
 
 Potenda also owns the cross-cutting machinery — write order tiers, the incremental cursor
-state, the Parquet diff plan, and the row-count guardrail. See
+state, and the Parquet diff plan. It owns no row-count guardrail: the filesystem baseline
+that one compared against is deleted, and the durable replacement is the configuration
+baseline the managed write path records in PostgreSQL. See
 [Incremental sync and cache](incremental-and-cache.md). Adapters do not call Potenda;
-Potenda calls adapters through the mixin contract.
+Potenda calls adapters through the `DiffSyncMixin` contract.
 
 ## The code-generation path
 
@@ -73,7 +71,7 @@ Adapters do not hand-write a model class per object type. Instead:
 1. You write the adapter module (the connector logic) and a `config.yml` whose
    `schema_mapping` describes which source resources map to which destination models.
 2. The internal generator (`infrahub_sync/generator/`, reached through
-   `infrahub_sync.utils.render_adapter`) reads the config and the destination schema and
+   `infrahub_sync.utils.render_adapter`) reads the configuration and the destination schema and
    renders DiffSync model classes from Jinja2 templates.
 3. `infrahub_sync/plugin_loader.py` resolves the adapter class — built-in by `name`, a
    dotted import path, a filesystem path, or an installed entry point — and wires the

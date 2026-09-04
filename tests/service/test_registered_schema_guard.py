@@ -42,10 +42,17 @@ from infrahub_sync.runtime_schema import compute_consumed_schema_fingerprint, no
 from infrahub_sync.runtime_schema import worker as worker_module
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.flow import service_sync_run
+from infrahub_sync.service.scratch import stage_scratch
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID
 from tests.configuration.validation_packages import package_data
 from tests.plan.artifact_fixtures import duplicated_key_manifest_bytes
-from tests.service.execution_fixtures import append_execution, bind_granting_guard
+from tests.service.execution_fixtures import (
+    append_execution,
+    bind_granting_guard,
+    publish_plan_directory,
+    stage_root,
+    write_applied_sidecar,
+)
 
 if TYPE_CHECKING:
     from infrahub_sync import SyncInstance
@@ -202,7 +209,6 @@ def _harness(
         configuration_binding=binding,
         schema_fingerprint=recorded,
     )
-
     spy = _SnapshotSpy()
     monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", spy)
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
@@ -215,6 +221,8 @@ def _harness(
 
     def _execution_sentinel(*_args: object, **kwargs: Any) -> RunResult:  # noqa: ANN401 — the stage's own kwargs
         calls.append(kwargs)
+        # The engine leaves the applied sidecar the final checkpoint carries.
+        write_applied_sidecar(stage_root(kwargs) / instance.name / RUN_ID)
         return RunResult(
             sync_name=instance.name,
             operation="apply",
@@ -237,7 +245,17 @@ def _harness(
     )
 
 
+def _publish_current_plan(harness: _Harness) -> None:
+    """Hand the run directory's current plan over as this run's plan checkpoint.
+
+    Published at the point of the apply rather than when the harness was built, so an
+    edit made after review is what the consuming stage receives.
+    """
+    publish_plan_directory(harness.projection, RUN_ID, harness.run_dir)
+
+
 def _apply(harness: _Harness, *, expected_checksum: str | None = None) -> dict[str, Any]:
+    _publish_current_plan(harness)
     return service_sync_run.fn(
         RUN_ID,
         "apply",
@@ -249,19 +267,22 @@ def _apply(harness: _Harness, *, expected_checksum: str | None = None) -> dict[s
 
 def _execute_apply_stage(harness: _Harness) -> tuple[dict[str, Any], Any]:
     """Drive the production stage boundary before remote exception sanitization."""
-    return service_flow._execute_stage(
-        RUN_ID,
-        "apply",
-        *harness.binding,
-        None,
-        harness.checksum,
-        confirm_writes=True,
-        run_logger=service_flow.logger,
-        secrets=[],
-        config_directory=str(harness.run_dir.parents[2]),
-        projection=harness.projection,
-        tracker=WriteDispatchTracker(),
-    )
+    _publish_current_plan(harness)
+    with stage_scratch("apply") as scratch:
+        return service_flow._execute_stage(
+            RUN_ID,
+            "apply",
+            *harness.binding,
+            None,
+            harness.checksum,
+            confirm_writes=True,
+            run_logger=service_flow.logger,
+            secrets=[],
+            config_directory=str(harness.run_dir.parents[2]),
+            projection=harness.projection,
+            tracker=WriteDispatchTracker(),
+            scratch=scratch,
+        )
 
 
 def _rewrite_manifest(harness: _Harness, mapping: dict[str, Any], *, recompute_checksum: bool) -> None:

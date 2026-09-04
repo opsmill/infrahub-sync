@@ -45,6 +45,11 @@ from infrahub_sync.runtime_schema import RuntimeModelPlan, RuntimeSideModels  # 
 from infrahub_sync.service import flow as service_flow  # noqa: E402
 from infrahub_sync.service.flow import service_sync_run  # noqa: E402
 from tests.configuration.validation_packages import package  # noqa: E402
+from tests.service.execution_fixtures import (  # noqa: E402
+    publish_authored_plan,
+    stage_root,
+    write_applied_sidecar,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -133,7 +138,7 @@ class _ManagedStage:
         self.projection: Any = None
 
 
-def _prepare(  # noqa: PLR0913 - one harness knob per collaborator a case scripts.
+def _prepare(  # noqa: PLR0913, PLR0915 - one harness knob per collaborator a case scripts.
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -181,8 +186,9 @@ def _prepare(  # noqa: PLR0913 - one harness knob per collaborator a case script
         ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path)
     )
     runtime._configuration_binding = binding
+    authored = tmp_path / "runs" / runtime.name / run_id
     manifest = write_plan_artifact(
-        run_dir=tmp_path / "runs" / runtime.name / run_id,
+        run_dir=authored,
         run_id=run_id,
         config_version=resolve_config_version(runtime),
         source_snapshot=[],
@@ -191,6 +197,9 @@ def _prepare(  # noqa: PLR0913 - one harness knob per collaborator a case script
         configuration_binding=binding,
         schema_fingerprint=SCHEMA_FINGERPRINT,
     )
+    if stage == "apply":
+        # Only an apply has a predecessor: a sync publishes the plan it generates itself.
+        publish_authored_plan(projection, run_id, run_directory=authored, manifest=manifest)
     prepared = _ManagedStage(run_id, binding, manifest.plan_checksum, events)
     prepared.projection = projection
 
@@ -208,16 +217,19 @@ def _prepare(  # noqa: PLR0913 - one harness knob per collaborator a case script
             source=None,
         )
 
-    def saved_plan() -> Any:  # noqa: ANN401 - the engine's own SavedPlan record.
-        return read_saved_plan(sync_name=runtime.name, run_id=run_id, config=runtime)
+    def saved_plan(base: Path) -> Any:  # noqa: ANN401 - the engine's own SavedPlan record.
+        return read_saved_plan(sync_name=runtime.name, run_id=run_id, config=runtime, base_directory=base)
 
     def fake_execute_run(_instance: object, **kwargs: object) -> Any:  # noqa: ANN401 - result shape follows the stage.
         operation = kwargs.get("operation")
         events.append(f"execute-run:{operation}")
+        base = stage_root(kwargs)
         if operation == "verify":
-            return saved_plan()
+            return saved_plan(base)
         if engine is not None:
             engine(kwargs)
+        # The engine leaves the applied sidecar the final checkpoint carries.
+        write_applied_sidecar(base / runtime.name / run_id)
         return RunResult(
             sync_name=runtime.name,
             operation="apply",
@@ -228,9 +240,21 @@ def _prepare(  # noqa: PLR0913 - one harness knob per collaborator a case script
             artifact_path=str(tmp_path / "runs" / runtime.name / run_id),
         )
 
-    def fake_plan(*_args: object, **_kwargs: object) -> Any:  # noqa: ANN401 - the engine's own SavedPlan record.
+    def fake_plan(*_args: object, **kwargs: object) -> Any:  # noqa: ANN401 - the engine's own SavedPlan record.
+        """Plan into this stage's own directory, the way the real engine does."""
         events.append("plan")
-        return saved_plan()
+        base = stage_root(kwargs)
+        write_plan_artifact(
+            run_dir=base / runtime.name / run_id,
+            run_id=run_id,
+            config_version=resolve_config_version(runtime),
+            source_snapshot=[],
+            deletes_computed=True,
+            operations=[],
+            configuration_binding=binding,
+            schema_fingerprint=SCHEMA_FINGERPRINT,
+        )
+        return saved_plan(base)
 
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (service_flow.logger, False))

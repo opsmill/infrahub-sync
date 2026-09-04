@@ -20,7 +20,8 @@ for a model. It returns a `CursorTier` (an `IntEnum`, defined in
 | `TIMESTAMP` | 2 | The source can filter by modification time (for example NetBox / Nautobot `last_updated__gte`); extract only changed-since records. |
 
 Higher tiers extract less data. NetBox returns `TIMESTAMP` for mapped kinds and `NONE`
-otherwise; an adapter with no incremental support inherits the `NONE` default from the mixin.
+otherwise; an adapter with no incremental support inherits the `NONE` default from
+`DiffSyncMixin`.
 
 ## What an adapter implements
 
@@ -30,7 +31,7 @@ Three methods, layered on top of `model_loader`:
   on for a model.
 - `list_changed_since(model_name, cursor)` — **required when the tier is not `NONE`.** Yield
   the raw records changed since `cursor`, in the same shape `model_loader` feeds to
-  `self.add(...)`. The mixin raises `NotImplementedError` until you override it.
+  `self.add(...)`. `DiffSyncMixin` raises `NotImplementedError` until you override it.
 - `list_existing_ids(model_name)` — optional. Yield the current `unique_id` strings present
   in the source so deletions can be detected between runs. Without it, a warm run cannot tell
   that an object disappeared.
@@ -38,16 +39,13 @@ Three methods, layered on top of `model_loader`:
 `CursorState` (also in `cache/cursors.py`) carries the tier and the saved value (a timestamp
 or id watermark) from the previous run.
 
-## Full resync cadence
+## Full re-extraction cadence
 
-Incremental drift accumulates, so a periodic full extract re-establishes ground truth.
-`IncrementalConfig.full_resync_every` (default `10`) forces a full resync every N incremental
-runs. Configure it under `incremental` in `config.yml`:
-
-```yaml
-incremental:
-  full_resync_every: 20
-```
+`IncrementalConfig.full_resync_every` (default `10`) is declared under `incremental` in
+`config.yml` and currently governs nothing: the run counter it compared against was written
+only by a code path that had no production caller, and that path is gone. Every current
+caller extracts in full, so no cadence decision is reachable. The key is retained for the
+incremental-extraction work that will supply the counter durably.
 
 ## The diff plan and the cache
 
@@ -64,13 +62,20 @@ own `<run_id>/`. Set `INFRAHUB_SYNC_CACHE_DIR` to relocate it (for example to a 
 the path may not contain `..` traversal segments. Cursor state is written by
 `persist_cursors_for_run()` at the end of a successful run and read at the start of the next.
 
-## The row-count guardrail
+## The row-count baseline
 
 A buggy source or an auth failure can return far fewer objects than reality, which would make
-a sync delete most of the destination. `check_rowcount_guardrail()` compares the new run's
-destination row counts against a persisted baseline and **fails the run** if the count drops
-beyond the threshold. Override intentionally with the `--allow-rowcount-drop` flag (which maps
-to `allow_rowcount_drop` on `sync_in_tiers`) when a large deletion is expected.
+a later sync delete most of the destination. The durable input for detecting that is the
+configuration baseline: a successful managed apply or sync records the source row counts its
+plan was computed against, in the same PostgreSQL transaction that stores the run's success.
+A failed or ambiguous run leaves the previous baseline standing, and a read stage never
+advances it.
+
+Nothing reads the baseline yet. There is no row-count refusal in the managed write path, no
+lookup before dispatch, no operator override, and no lockout rule; adding one needs a fixed
+placement, a missing-baseline rule, a failure class, and an operator contract. The
+`RowcountGuardrail` comparison in `cache/guardrails.py` is that future feature's primitive
+and has no caller.
 
 ## See also
 

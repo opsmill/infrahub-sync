@@ -20,10 +20,12 @@ rather than an addition to `utils.py`, which is already broad and would blur the
 | Caller | Entry point |
 |---|---|
 | CLI `diff` | `execute_run(instance, operation="plan", …)` |
-| CLI `sync --no-parallel` (serial branch only) | `execute_run(instance, operation="sync", confirm_writes=True, …)` |
+| Sync API worker stages | `execute_run(instance, operation=…, base_directory=<stage scratch>, …)` |
 | `orchestration/flow.py` | `run_remote_request(sync_name, operation, confirm_writes, branch, config_directory=…)` |
 
-The parallel sync branch (`sync_in_tiers`) is not behind this surface; it stays in `cli.py`.
+`base_directory` names the cache root one run works in. A caller that owns a private
+directory for the run — the Sync service, whose stages share no filesystem — passes it, and
+nothing then derives the run's location from the environment or the working directory.
 
 `run_remote_request` is the remote-shaped composition: it resolves a logical name against a
 directory, then calls `execute_run` with every engine option at its CLI default except
@@ -32,7 +34,7 @@ or environment overrides.
 
 ## `RunResult`
 
-A successful run returns a frozen, slotted dataclass with exactly seven fields:
+A successful run returns a frozen, slotted `dataclass` with exactly seven fields:
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -59,7 +61,7 @@ violation is a bug in the surface, not a run failure:
 
 `artifact_path` is required absolute because it crosses a process boundary: a remote caller
 cannot recover the serving process's working directory. `cache.paths.cache_root_for`
-absolutizes a relative cache directory at the single derivation point, using `absolute()`
+makes a relative cache directory absolute at the single derivation point, using `absolute()`
 rather than `resolve()` so the final path segment the `run_id` invariant compares against
 survives.
 
@@ -71,16 +73,16 @@ lifecycle. A derived delete saved for review but excluded from the live diff by 
 flags therefore does not make a sync result claim that a destination write occurred.
 
 Behavioral test engines with the legacy no-return `write_plan` shape fall back to their
-in-memory materialized plan rows for plan results, which keeps the execution seam injectable
-without weakening production delete reporting. A valid authoritative writer summary avoids
+in-memory materialized plan rows for plan results, which keeps the execution seam open to
+injection without weakening production delete reporting. A valid authoritative writer summary avoids
 materializing those fallback rows.
 
 One test-seam fidelity boundary is worth knowing: a legacy behavioral engine that returns
-no saved-operation counts falls back to the row materializer, which walks only the diff
-root's direct children, while `Diff.has_diffs()` is recursive. Such a fake can therefore
+no saved-operation counts falls back to building rows from the diff, which walks only the
+diff root's direct children, while `Diff.has_diffs()` is recursive. Such a fake can therefore
 execute a sync for nested-only changes but report `status="no-change"`; a unit test pins that
-fallback behavior. The real saved-plan engine instead refuses unwalked nested elements
-during plan derivation, before it can return a misleading result.
+fallback behavior. The real saved-plan engine instead refuses nested elements it has not
+walked during plan derivation, before it can return a misleading result.
 
 ## Failure model
 
@@ -96,8 +98,8 @@ Two exception types make up the remote contract:
 Both are raised in one place only. `execute_run` re-raises original exception types;
 `run_remote_request` is the sole sanitize-and-wrap boundary. That split is what keeps CLI
 failure behaviour identical, and it is the subject of
-[ADR 5](../adr/0005-translate-run-failures-only-at-the-remote-boundary.md). Message
-sanitization rules are in
+[ADR 5](../adr/0005-translate-run-failures-only-at-the-remote-boundary.md). The rules for
+redacting messages are in
 [Secret redaction](../guidelines/secret-redaction.md).
 
 A raise means no `RunResult` exists for that run. Any `run.json` already created is left at
@@ -106,18 +108,21 @@ A raise means no `RunResult` exists for that run. Any `run.json` already created
 ## The lock and the already-locked caller
 
 `execute_run` acquires the per-configuration pipeline lock with the same 60-second timeout
-the CLI has always used, and lets `filelock.Timeout` propagate unchanged.
+the CLI has always used, and lets `filelock.Timeout` propagate unchanged. The lock and its
+advisory "which run still looks running" lookup both take the caller's `base_directory`, so
+a caller that owns a private directory for the run is excluded and diagnosed inside it
+rather than in a location other processes derive.
 
-The CLI serial-sync path is the exception. `sync_cmd` must construct the engine inside its
-own outer `with pipeline_lock(...)`, because the parallel/serial branch predicate reads
-`ptd.tiers` and is only knowable once the engine exists — and constructing the engine twice
-would allocate a second run directory and re-emit the tier log lines. A second same-process
-`FileLock` on the same path does not re-enter: it blocks for the full timeout and then
-raises. So the CLI serial branch passes `_lock_already_held=True` and a factory closure that
-returns the already-constructed engine, and `execute_run` runs the lifecycle inside the
-caller's lock. No other caller sets it; `run_remote_request` never does.
+What that lock is: contention control between two invocations sharing one cache root. What
+it is not: cross-worker write authority. Taken inside a stage's own private directory there
+is nothing for a second worker to contend on. Exclusion for a managed write belongs to the
+PostgreSQL advisory configuration guard instead (`infrahub_sync.service.apply_guard`).
 
-`execute_run` calls the factory with all seven keyword arguments of
+`_lock_already_held=True` is set by the managed apply and sync stages, which already hold
+that configuration guard and take no core lock inside it. No other caller sets it;
+`run_remote_request` never does.
+
+`execute_run` calls the factory with all eight keyword arguments of
 `utils.get_potenda_from_instance`, always explicitly, for both operations. The two CLI
 commands historically passed different subsets whose omitted values defaulted to exactly
 what the surface now passes, so the real factory behaves identically — but a fake factory in
@@ -128,7 +133,7 @@ bare `Callable`: a rename in the factory becomes a type error instead of a runti
 ## Plan fingerprint
 
 `infrahub_sync/cache/fingerprint.py::compute_plan_fingerprint(run_dir)` returns a SHA-256
-digest over the canonicalized plan rows, excluding timestamps, run identifiers and paths by
+digest over the canonical plan rows, excluding timestamps, run identifiers and paths by
 construction. It is how "the remote path produced the same plan as the CLI" is tested. The
 algorithm and its compatibility rules are in
 [ADR 7](../adr/0007-canonical-plan-fingerprint-as-equivalence-oracle.md).

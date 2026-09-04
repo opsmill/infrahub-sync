@@ -98,6 +98,8 @@ def test_all_absent_legacy_run_reaches_existing_local_worker_path(
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(service_flow, "_plan", lambda *_args, **_kwargs: saved)
     monkeypatch.setattr(service_flow, "_publish_plan", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(service_flow, "publish_plan_checkpoint", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(service_flow, "rehydrate_plan_checkpoint", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(service_flow, "execute_run", lambda *_args, **_kwargs: saved)
 
     service_sync_run.fn(run_id, stage)

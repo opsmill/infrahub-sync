@@ -181,8 +181,6 @@ class _FakePotenda:
         self.loaded = False
         self.synced = False
         self.diff_rows_materialized = 0
-        self.baseline_persisted = False
-        self.guardrail_allow_drop: bool | None = None
 
     def load_both_sides(self) -> None:
         if self.load_error is not None:
@@ -202,21 +200,8 @@ class _FakePotenda:
         write_plan(run_dir=self.run_dir, rows=list(diff.rows))
         return self.write_result
 
-    def check_rowcount_guardrail(self, *, allow_drop: bool) -> None:
-        self.guardrail_allow_drop = allow_drop
-
     def sync(self, diff: _FakeDiff | None = None) -> None:  # noqa: ARG002 — keyword name is part of the API
         self.synced = True
-
-    def persist_baseline_counts(self) -> None:
-        self.baseline_persisted = True
-
-    def sync_in_tiers(self, *, parallel: bool, allow_rowcount_drop: bool) -> dict[str, int]:
-        assert parallel is True
-        self.guardrail_allow_drop = allow_rowcount_drop
-        self.synced = bool(self.rows)
-        self.baseline_persisted = True
-        return {action: sum(row["action"] == action for row in self.rows) for action in ("create", "update", "delete")}
 
 
 def _factory(
@@ -1238,7 +1223,10 @@ def test_execute_run_logs_the_latest_running_sidecar_before_starting_its_bounded
     timeouts: list[float] = []
 
     @contextmanager
-    def contended_lock(_sync_name: str, *, timeout: float) -> Any:  # noqa: ANN401
+    def contended_lock(_sync_name: str, *, timeout: float, base_directory: Path | None = None) -> Any:  # noqa: ANN401
+        # Accepted because the product passes it; whether the private root propagates is
+        # owned by tests/service/test_stage_scratch.py against the real engine.
+        del base_directory
         timeouts.append(timeout)
         if timeout != 0:
             assert holder in caplog.text

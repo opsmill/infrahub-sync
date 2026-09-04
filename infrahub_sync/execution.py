@@ -1,10 +1,21 @@
-"""Shared typed execution surface for plan, sync, verify, and apply lifecycles.
+"""Shared typed execution surface for plan, verify, and apply lifecycles.
 
-Four entry paths use this module: the CLI ``diff``, ``sync``, and ``apply``
-commands, plus the packaged Prefect flow. The CLI ``diff`` path selects either
-plan generation or saved-plan verification, and ``sync`` selects serial or
-tier-parallel execution. This module imports no Prefect symbol and stays
-importable in a base install.
+Callers:
+
+* the Sync HTTP API's worker, which runs each managed stage -- plan, verify,
+  apply, and sync -- through :func:`execute_run`, passing the explicit
+  ``base_directory`` of the private scratch that stage owns, and composing a
+  managed sync as plan, verify, and apply under one configuration guard;
+* the direct CLI commands, which pass no ``base_directory`` and so keep the
+  cache layout derived from the environment or the working directory; and
+* the packaged Prefect flow, through :func:`run_remote_request`.
+
+``operation="sync"`` is accepted here only to be refused: a composed writer
+produces its own plan and applies it in one call, so it can offer no
+per-operation ownership proof over a reviewed artifact. There is no serial or
+tier-parallel choice to make -- the tier runner is gone.
+
+This module imports no Prefect symbol and stays importable in a base install.
 
 Failure semantics: :func:`execute_run` preserves lifecycle exception types,
 apart from its typed concurrency refusal; :func:`run_remote_request` is the one
@@ -73,10 +84,10 @@ class PotendaFactory(Protocol):
     """The engine-factory call shape, injected wherever an engine is built.
 
     Spelled as a `Protocol` rather than `Callable[..., Potenda]` so the pinned
-    seven-keyword call shape is part of the type: `Callable[..., ...]` erases the
+    eight-keyword call shape is part of the type: `Callable[..., ...]` erases the
     parameter names, and a rename in `utils.get_potenda_from_instance` then
     survives type checking and fails at run time inside the remote boundary
-    instead. Keyword-only, because every caller passes all seven by keyword.
+    instead. Keyword-only, because every caller passes all eight by keyword.
 
     Injection exists so the CLI can pass its own thin wrapper over the module
     global (which keeps existing patches on
@@ -93,6 +104,7 @@ class PotendaFactory(Protocol):
         run_id: str | None = ...,
         continue_on_error: bool = ...,
         concurrent_load: bool = ...,
+        base_directory: Path | None = ...,
     ) -> Potenda: ...
 
 
@@ -677,17 +689,17 @@ def _run_plan_lifecycle(*, ptd: Potenda, run_file: RunFile, print_diff: bool) ->
     return _summary_from_plan_write(write_result, lambda: ptd._diff_to_rows(mydiff))
 
 
-def _require_a_free_run_id(*, sync_name: str, run_id: str | None) -> None:
+def _require_a_free_run_id(*, sync_name: str, run_id: str | None, base_directory: Path | None) -> None:
     """Refuse a plan generation that would overwrite a committed saved plan."""
     if run_id is None:
         return
-    directory = resolve_run_directory(sync_name, run_id)
+    directory = resolve_run_directory(sync_name, run_id, base_directory=base_directory)
     require_uncommitted_plan(directory, run_id=run_id)
 
 
-def _latest_running_run_id(sync_name: str) -> str | None:
+def _latest_running_run_id(sync_name: str, *, base_directory: Path | None = None) -> str | None:
     """Return the newest run still marked running, which may be stale."""
-    root = cache_root_for(sync_name)
+    root = cache_root_for(sync_name, base_directory=base_directory)
     try:
         candidates = sorted((path for path in root.iterdir() if path.is_dir()), reverse=True)
     except OSError:
@@ -703,13 +715,19 @@ def _latest_running_run_id(sync_name: str) -> str | None:
 
 
 @contextmanager
-def _run_lock(sync_name: str, *, timeout: float) -> Iterator[None]:
-    """Acquire the core-owned lock and report advisory sidecar context while waiting."""
+def _run_lock(sync_name: str, *, timeout: float, base_directory: Path | None = None) -> Iterator[None]:
+    """Acquire the core-owned lock and report advisory sidecar context while waiting.
+
+    `base_directory` is threaded to both the lock and the advisory lookup, so a caller that
+    owns a private directory for this run is excluded and diagnosed inside it. Held there,
+    this lock is contention control for one cache root and nothing wider; a managed write's
+    cross-worker exclusion is the configuration guard's.
+    """
     lock_stack = ExitStack()
     try:
-        lock_stack.enter_context(pipeline_lock(sync_name, timeout=0))
+        lock_stack.enter_context(pipeline_lock(sync_name, timeout=0, base_directory=base_directory))
     except Timeout:
-        latest_running = _latest_running_run_id(sync_name)
+        latest_running = _latest_running_run_id(sync_name, base_directory=base_directory)
         detail = (
             f"the latest run sidecar still marked running is {latest_running!r} (it may be stale)"
             if latest_running is not None
@@ -717,7 +735,7 @@ def _run_lock(sync_name: str, *, timeout: float) -> Iterator[None]:
         )
         logger.warning("Sync %r is locked; %s; waiting up to %s seconds", sync_name, detail, timeout)
         try:
-            lock_stack.enter_context(pipeline_lock(sync_name, timeout=timeout))
+            lock_stack.enter_context(pipeline_lock(sync_name, timeout=timeout, base_directory=base_directory))
         except Timeout as exc:
             lock_stack.close()
             msg = f"Sync {sync_name!r} could not acquire its pipeline lock within {timeout} seconds; {detail}."
@@ -726,9 +744,9 @@ def _run_lock(sync_name: str, *, timeout: float) -> Iterator[None]:
         yield
 
 
-def _require_applicable_plan(*, sync_name: str, run_id: str) -> Path:
+def _require_applicable_plan(*, sync_name: str, run_id: str, base_directory: Path | None) -> Path:
     """Locate an existing saved plan before constructing an apply destination."""
-    directory = require_stored_run(sync_name, run_id)
+    directory = require_stored_run(sync_name, run_id, base_directory=base_directory)
     require_plan_directory(directory)
     return directory
 
@@ -796,10 +814,12 @@ def _save_failed_run(
     )
 
 
-def _read_verified_plan(*, sync_instance: SyncInstance, run_id: str) -> SavedPlan:
+def _read_verified_plan(*, sync_instance: SyncInstance, run_id: str, base_directory: Path | None) -> SavedPlan:
     """Read and independently verify one saved plan without constructing adapters."""
-    saved = read_saved_plan(sync_name=sync_instance.name, run_id=run_id, config=sync_instance)
-    run_directory = resolve_run_directory(sync_instance.name, run_id)
+    saved = read_saved_plan(
+        sync_name=sync_instance.name, run_id=run_id, config=sync_instance, base_directory=base_directory
+    )
+    run_directory = resolve_run_directory(sync_instance.name, run_id, base_directory=base_directory)
     failures = verify_plan(
         artifact=read_plan_artifact_bytes(run_directory),
         run_id=run_id,
@@ -829,11 +849,14 @@ def _run_apply_lifecycle(  # pylint: disable=too-many-arguments
     _plan_applier_factory: Callable[..., PlanApplier] | None,
     run_directory: Path,
     sidecar_mode: Literal["sync", "apply"],
+    base_directory: Path | None = None,
 ) -> RunResult:
     """Apply one saved plan while the shared core owns its sidecar transitions."""
     factory = _plan_applier_factory if _plan_applier_factory is not None else PlanApplier.open_existing
     try:
-        applier = factory(sync_instance, run_id=run_id, branch=branch, verbosity=verbosity)
+        applier = factory(
+            sync_instance, run_id=run_id, branch=branch, verbosity=verbosity, base_directory=base_directory
+        )
     except BaseException:
         if sidecar_mode == "sync":
             _save_failed_run(run_directory, mode="sync")
@@ -915,15 +938,21 @@ def _execute_verify_operation(
     run_id: str,
     require_verified: bool,
     run_file_mode: Literal["diff", "sync"] | None,
+    base_directory: Path | None,
 ) -> SavedPlan:
     """Run one read-only verification, terminalizing only a composed run failure."""
     try:
         if require_verified:
-            return _read_verified_plan(sync_instance=sync_instance, run_id=run_id)
-        return read_saved_plan(sync_name=sync_instance.name, run_id=run_id, config=sync_instance)
+            return _read_verified_plan(sync_instance=sync_instance, run_id=run_id, base_directory=base_directory)
+        return read_saved_plan(
+            sync_name=sync_instance.name, run_id=run_id, config=sync_instance, base_directory=base_directory
+        )
     except BaseException:
         if run_file_mode is not None:
-            _save_failed_run(resolve_run_directory(sync_instance.name, run_id), mode=run_file_mode)
+            _save_failed_run(
+                resolve_run_directory(sync_instance.name, run_id, base_directory=base_directory),
+                mode=run_file_mode,
+            )
         raise
 
 
@@ -941,9 +970,10 @@ def _execute_apply_operation(
     lock_timeout: float,
     lock_already_held: bool,
     run_file_mode: Literal["diff", "sync"] | None,
+    base_directory: Path | None,
 ) -> RunResult:
     """Apply one reviewed plan with core-owned lock and sidecar transitions."""
-    run_directory = _require_applicable_plan(sync_name=sync_instance.name, run_id=run_id)
+    run_directory = _require_applicable_plan(sync_name=sync_instance.name, run_id=run_id, base_directory=base_directory)
     sidecar_mode: Literal["sync", "apply"] = "sync" if run_file_mode == "sync" else "apply"
     try:
         _require_expected_checksum(run_directory=run_directory, run_id=run_id, expected=expected_checksum)
@@ -952,7 +982,9 @@ def _execute_apply_operation(
             _save_failed_run(run_directory, mode="sync")
         raise
     apply_lock: AbstractContextManager[None] = (
-        nullcontext() if lock_already_held else _run_lock(sync_instance.name, timeout=lock_timeout)
+        nullcontext()
+        if lock_already_held
+        else _run_lock(sync_instance.name, timeout=lock_timeout, base_directory=base_directory)
     )
     with apply_lock:
         return _run_apply_lifecycle(
@@ -967,6 +999,7 @@ def _execute_apply_operation(
             _plan_applier_factory=plan_applier_factory,
             run_directory=run_directory,
             sidecar_mode=sidecar_mode,
+            base_directory=base_directory,
         )
 
 
@@ -1056,6 +1089,7 @@ def execute_run(
     expected_checksum: str | None = None,
     ownership: WriteOwnership | None = None,
     record_applied: Callable[[ApplyRecord], None] | None = None,
+    base_directory: Path | None = None,
     # Private seams — not part of the remote contract; run_remote_request never sets them.
     _plan_applier_factory: Callable[..., PlanApplier] | None = None,
     _lock_timeout: float = 60.0,
@@ -1074,6 +1108,11 @@ def execute_run(
     proves this process still holds the right to write this configuration. The
     parameter is optional in the signature only because plan and verify do not write;
     an apply without one is refused before anything is constructed.
+
+    `base_directory` names the cache root this run works in. A caller that owns a
+    private directory for the run — the Sync service, whose stages share no filesystem
+    with each other or with the API — passes it, and nothing then depends on the
+    environment or the working directory to locate the run.
 
     Raises:
         RunConcurrencyError: the same synchronization remains locked after the
@@ -1097,6 +1136,7 @@ def execute_run(
             run_id=run_id,
             require_verified=_require_verified,
             run_file_mode=_run_file_mode,
+            base_directory=base_directory,
         )
 
     if operation == "apply":
@@ -1116,18 +1156,21 @@ def execute_run(
             lock_timeout=_lock_timeout,
             lock_already_held=_lock_already_held,
             run_file_mode=_run_file_mode,
+            base_directory=base_directory,
         )
 
-    _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id)
+    _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id, base_directory=base_directory)
 
     run_lock: AbstractContextManager[None] = (
-        nullcontext() if _lock_already_held else _run_lock(sync_instance.name, timeout=_lock_timeout)
+        nullcontext()
+        if _lock_already_held
+        else _run_lock(sync_instance.name, timeout=_lock_timeout, base_directory=base_directory)
     )
     with run_lock:
         # A plan may have been committed while this command waited for the lock.
-        _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id)
+        _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id, base_directory=base_directory)
         factory: PotendaFactory = potenda_factory if potenda_factory is not None else get_potenda_from_instance
-        # Pinned call shape: all seven keyword arguments of
+        # Pinned call shape: all eight keyword arguments of
         # utils.get_potenda_from_instance, always explicitly.
         ptd = factory(
             sync_instance=sync_instance,
@@ -1137,6 +1180,7 @@ def execute_run(
             run_id=run_id,
             continue_on_error=continue_on_error,
             concurrent_load=concurrent_load,
+            base_directory=base_directory,
         )
         ptd.force_full_extract = full_extract
         if ptd.run_dir is None:  # get_potenda_from_instance always allocates one
@@ -1154,7 +1198,12 @@ def execute_run(
         try:
             summary = _run_plan_lifecycle(ptd=ptd, run_file=run_file, print_diff=print_diff)
             if _return_saved_plan:
-                saved_plan = read_saved_plan(sync_name=sync_instance.name, run_id=str(ptd.run_id), config=sync_instance)
+                saved_plan = read_saved_plan(
+                    sync_name=sync_instance.name,
+                    run_id=str(ptd.run_id),
+                    config=sync_instance,
+                    base_directory=base_directory,
+                )
 
             run_file.finished_at = datetime.now(timezone.utc).isoformat()
             run_file.save()

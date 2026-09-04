@@ -13,14 +13,16 @@ artifacts in S3-compatible object storage. Each process creates its own clients 
 same environment settings. CLI and public Python callers access these records only through
 the Sync API.
 
-Service execution continues to use `INFRAHUB_SYNC_CACHE_DIR` as the absolute shared cache
-root for saved plans. This PH-2 seam is separate from product records and artifacts.
+Service execution reads no cache setting. Each stage works in a private scratch directory
+it creates and removes, and hands the next stage its plan through an internal artifact in
+the same object storage. Internal artifacts are never enumerated or served by the public
+run resource.
 
 This is minimum product-projection configuration. It does not select a new provider type or
 add a release-management API.
 
 For configured direct `sync`, the immutable review artifact is published after the saved
-plan commits and before the first destination write, in both serial and tiered execution.
+plan commits and before the first destination write.
 If publication fails, synchronization stops before contacting the destination write
 surface and retains typed failure evidence on a terminal failed ProductRun. A reserved
 artifact remains unavailable until an exact publication retry completes it.
@@ -310,6 +312,35 @@ public artifact has no single product writer.
 Bundles are published and looked up through the same providers as public artifacts, so a
 deployment needs no additional storage settings.
 
+### The two checkpoints, and when each is published
+
+A run has at most two internal checkpoints, and their membership is fixed:
+
+| Checkpoint | Members | Written by | Read by |
+| --- | --- | --- | --- |
+| `run-bundle-v1-plan` | `plan/manifest.json`, `plan/operations.jsonl`, and the `A/*.parquet` source snapshots the manifest declares | plan, sync | verify, apply |
+| `run-bundle-v1-final` | the applied `run.json` | apply, sync | nothing |
+
+The plan checkpoint publishes before the run's plan becomes publicly reviewable. A run whose
+checkpoint publication fails has no `plan-review` artifact and no planned result, so an
+operator never reviews a plan a later stage on another worker could not read. A sync
+publishes the same checkpoint before its first destination operation, so a sync interrupted
+mid-write still leaves the plan its writes were derived from.
+
+Verify and apply rehydrate that checkpoint into their own private scratch. Bounded read,
+stored size and digest validation, whole-archive validation, and extraction all complete
+before either stage constructs anything that could reach a destination. A checkpoint that is
+missing, oversized, corrupt, digest-mismatched, or another run's is refused at that
+boundary, having contacted nothing.
+
+The final checkpoint publishes after confirmed guard release and before the run's success is
+committed. It is current-run evidence and nothing more: no stage reads it, and its presence
+never implies a run succeeded. Whether a write landed is answered only by a success
+transaction that actually committed. Once a destination operation may have started, any
+failure up to and including that commit — a final-checkpoint publication that fails, or a
+commit that stores nothing — finishes the run as interrupted and ambiguous with
+reconciliation required.
+
 ### Storage limits
 
 A bundle is at most 64 MiB and holds at most 1024 members, not counting its manifest. Both
@@ -340,13 +371,17 @@ exceed either bound cannot use this path; the refusal is explicit.
 
 ## Configuration safety baseline
 
-A successful write execution may record the source row counts it observed and whether it
-performed a full extract. That baseline is stored per configuration and updated inside the
-same transaction that commits the execution's verdict, so a run's counts and its success
-cannot come apart. Only a `completed` / `succeeded` verdict updates it. A failed or
-ambiguous terminal leaves the previous baseline in place, because that is still the last
-state known good. Counts replace rather than merge, so a resource the configuration no
-longer extracts stops being compared against.
+A successful managed apply or sync records the source row counts its plan was computed
+against, and that it extracted in full. That baseline is stored per configuration and
+updated inside the same transaction that commits the execution's verdict, so a run's counts
+and its success cannot come apart. Only a `completed` / `succeeded` verdict updates it. A
+failed or ambiguous terminal leaves the previous baseline in place, because that is still
+the last state known good. A read stage never advances it. Counts replace rather than merge,
+so a resource the configuration no longer extracts stops being compared against.
+
+Nothing reads the baseline yet. The managed write path performs no row-count refusal, no
+lookup before dispatch, and offers no override or lockout; the baseline is the durable input
+a later guardrail feature would need.
 
 ## Secret boundary
 

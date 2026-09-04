@@ -5,7 +5,7 @@
 > Part of: `dev/knowledge/` | Related: [Planned writes and apply](planned-write-and-apply.md), [Incremental sync and cache](incremental-and-cache.md), [ADR 0001](../adr/0001-saved-plan-artifact-format.md)
 
 A run records what it intends to change as a **plan artifact** under its cache run directory. The
-artifact is what `infrahub-sync diff --from-plan` renders for review and what an apply executes, and it
+artifact is what `infrahub-sync runs plan` renders for review and what an apply executes, and it
 exists so that the set of changes an operator reads is the set that gets written. The format is owned
 by `infrahub_sync/plan/` and is versioned: `format_version` is `2`, and `1` is reserved for the
 pre-existing `plan.parquet` row format, which is still written and never read by this path.
@@ -31,7 +31,7 @@ load-bearing, and it is what makes the failure verdicts disjoint without any heu
 | Observation | Verdict |
 |---|---|
 | `plan/` absent entirely | A pre-existing v1 plan — re-plan |
-| `plan/` present, `manifest.json` absent or unparseable | **Torn** |
+| `plan/` present, `manifest.json` absent or malformed | **Torn** |
 | `manifest.json` present, `operations.jsonl` absent | **Torn** |
 | `manifest.json` present, line count ≠ `operations_count` | **Torn** |
 | `manifest.json` present, `format_version` unrecognized | Unrecognized version — worded distinctly from the v1 message |
@@ -48,8 +48,8 @@ Both files use one encoding: UTF-8 without BOM,
 operation object per line with every line terminated. An empty plan is a zero-byte `operations.jsonl`.
 
 Values pass through `canonical_value` before encoding: `str | int | float | bool | None` pass through,
-`datetime`/`date` become ISO-8601 strings, `Decimal` becomes its `str`, `list`/`tuple` recurse **in
-source order**, `dict` recurses key-sorted, and anything else raises `UnserializablePayloadValueError`
+`datetime`/`date` become ISO-8601 strings, `Decimal` becomes its `str`, `list`/`tuple` descend **in
+source order**, `dict` descends key-sorted, and anything else raises `UnserializablePayloadValueError`
 naming the kind, the field and the Python type. There is no `default=` fallback.
 
 Canonical *ordering* applies to the operations sequence and to relationship peer lists only. A
@@ -70,7 +70,7 @@ make the applied value differ from the reviewed source value.
 | `identity` | `object`, key-sorted | always |
 | `tier` | `integer ≥ 0` | always |
 | `payload` | `object` | required on create/update, **omitted** on delete |
-| `relationships` | `array` | present **iff** the operation carries any |
+| `relationships` | `array` | present **if and only if** the operation carries any |
 
 Operations are stored ordered by `(tier, operation_id)` and are executed in exactly that order — no
 re-sorting and no recomputation at apply time. When the configuration supplies an explicit `order:`,
@@ -99,11 +99,11 @@ payload = element.keys ∪ element.source_attrs   minus every key carried as a r
 
 The identity components are inside the payload, and they are not decoration: the destination's
 convergent write is keyed on the kind's human-friendly ID, whose components come from the identity, so
-a write issued without them is unkeyed and duplicates on every re-apply.
+a write issued without them carries no key and duplicates on every re-apply.
 
 `source_attrs` alone cannot supply them. DiffSync's `get_attrs()` explicitly "does not include the
 fields in `_identifiers`", and the generator strips identifiers out of `_attributes`, so the identity
-has to be unioned in from `element.keys`. Every identity key ends up in exactly one of `payload` or
+has to be merged in from `element.keys`. Every identity key ends up in exactly one of `payload` or
 `relationships[].field` — never neither, which is a model-level validation.
 
 ### Peer references are recursive
@@ -156,7 +156,7 @@ The data model rejects a stored identifier that does not match its own triple.
 | `delete_operations_computed` | `false` when the destination side was loaded incrementally |
 | `destination_binding` | `{url, branch}` — the destination the plan was computed against, resolved (env over settings) and URL-normalized, **never the token**. Compared for equality at apply time. Additive: absent on plans written before it existed, and the check is skipped for them |
 | `plan_checksum` | Lowercase sha256 hex over the manifest body plus the operations bytes |
-| *(any other key)* | Tolerated on read, preserved, and included in the checksummed bytes |
+| *(any other key)* | Tolerated on read, preserved, and included in the bytes the checksum covers |
 
 ```python
 excluded = {"plan_checksum", "run_id", "created_at"}

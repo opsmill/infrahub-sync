@@ -1,10 +1,14 @@
-"""Rowcount guardrails.
+"""The row-count comparison, as a primitive with no state of its own.
 
-The previous successful run's rowcounts are kept in
-`<run_dir>/last-successful-rowcounts.json` (one canonical copy per pipeline,
-updated only when a sync completes successfully). The next run loads the
-baseline; if any resource's current count is below the threshold the engine
-raises and asks the operator to confirm with `--allow-rowcount-drop`.
+`RowcountGuardrail` compares counts a caller hands it against a mapping of previous
+counts the same caller supplies, and refuses a per-resource collapse. It reads no file,
+loads no baseline, and has no operator flag: the filesystem baseline this once read is
+deleted, and the durable replacement is the configuration baseline the managed write path
+records in PostgreSQL (`infrahub_sync.product_store`).
+
+Nothing calls this today. It is kept as the comparison a later row-count refusal would
+need, so that feature can be built around a fixed placement, a missing-baseline rule, a
+failure class, and an operator contract rather than around a rediscovered ratio.
 """
 
 from __future__ import annotations
@@ -16,12 +20,17 @@ logger = logging.getLogger(__name__)
 
 
 class RowcountGuardrailError(RuntimeError):
-    """Raised when a resource's rowcount drops below the threshold."""
+    """Raised when a resource's count falls below `drop_threshold` of its previous count."""
 
 
 @dataclass
 class RowcountGuardrail:
-    """Reject per-resource rowcount drops below `drop_threshold` vs. `previous`."""
+    """Reject per-resource count drops below `drop_threshold` of `previous`.
+
+    Every input is the caller's: `previous` is the mapping it chose to compare against,
+    and `allow_drop` is how it says a collapse is expected. A resource absent from
+    `previous`, or recorded there as zero, has nothing to compare against and passes.
+    """
 
     previous: dict[str, int]
     drop_threshold: float = 0.5
@@ -41,7 +50,8 @@ class RowcountGuardrail:
         msg = (
             f"Rowcount guardrail tripped for {resource!r}: dropped from "
             f"{prior} to {current} (ratio {ratio:.2f} < threshold "
-            f"{self.drop_threshold:.2f}). Pass --allow-rowcount-drop to override."
+            f"{self.drop_threshold:.2f}). Construct this guardrail with allow_drop=True "
+            f"to accept an expected drop."
         )
         self.triggered.append(resource)
         logger.error(msg)

@@ -46,6 +46,7 @@ from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_by
 from infrahub_sync.plan.review import SavedPlan, resolve_run_directory
 from infrahub_sync.plan.verify import verify_plan
 from infrahub_sync.product_store import (
+    BaselineWriteback,
     ExecutionFinishWriteback,
     ExecutionMergeWriteback,
     ExecutionWriteback,
@@ -54,14 +55,15 @@ from infrahub_sync.product_store import (
 from infrahub_sync.runtime_schema import STAGE_RUNTIME_MODEL_SCOPE, RuntimeModelPlan, build_runtime_model_plan
 
 from .apply_guard import ApplyGuard, hold_apply_guard
+from .checkpoints import publish_final_checkpoint, publish_plan_checkpoint, rehydrate_plan_checkpoint
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME
+from .scratch import StageScratch, stage_scratch
 from .service import PLAN_ARTIFACT_ID
 from .storage import service_guard_secrets, service_guard_session, service_product_projection
 
 CONFIG_DIR_ENV = "INFRAHUB_SYNC_CONFIG_DIRECTORY"
-RUN_CACHE_ENV = "INFRAHUB_SYNC_CACHE_DIR"
 logger = logging.getLogger(__name__)
 _REGISTERED_VERSION_UNAVAILABLE = "registered configuration version is unavailable"
 _REGISTERED_VERSION_INVALID = "registered configuration version is invalid"
@@ -126,13 +128,15 @@ def _remote_log_bridge(
 
 
 def _runtime(*, projection_factory: Any = service_product_projection) -> tuple[str, ProductProjection]:
+    """Resolve the worker's configuration-data directory and its product store.
+
+    A configuration directory is configuration data, not flow source: the worker reads
+    registered packages from it and never imports or executes anything there. No cache
+    location is read at all -- every stage creates its own private scratch instead.
+    """
     config_directory = os.environ.get(CONFIG_DIR_ENV)
-    run_cache = os.environ.get(RUN_CACHE_ENV)
     if not config_directory or not Path(config_directory).is_dir():
         msg = f"{CONFIG_DIR_ENV} must name the worker's configuration directory"
-        raise RuntimeError(msg)
-    if not run_cache or not Path(run_cache).expanduser().is_absolute():
-        msg = f"{RUN_CACHE_ENV} must name an absolute shared saved-plan cache"
         raise RuntimeError(msg)
     return config_directory, projection_factory()
 
@@ -178,6 +182,7 @@ def _plan(
     run_id: str,
     branch: str | None,
     composed_sync: bool,
+    base_directory: Path | None = None,
 ) -> SavedPlan:
     saved = execute_run(
         instance,
@@ -186,6 +191,7 @@ def _plan(
         run_id=run_id,
         show_progress=False,
         print_diff=False,
+        base_directory=base_directory,
         _run_file_mode="sync" if composed_sync else None,
         _return_saved_plan=True,
     )
@@ -194,7 +200,12 @@ def _plan(
 
 
 def _verify_registered_apply(
-    *, instance: Any, run_id: str, binding: tuple[str, int, str] | None, expected_checksum: str | None
+    *,
+    instance: Any,
+    run_id: str,
+    binding: tuple[str, int, str] | None,
+    expected_checksum: str | None,
+    base_directory: Path | None = None,
 ) -> PlanManifest:
     """Verify a retained artifact before the apply path can construct a destination.
 
@@ -202,7 +213,7 @@ def _verify_registered_apply(
     approved value, which is the same value the later `PlanApplier` read is given: one
     approval gates both reads, so bytes swapped between them cannot reach the write loop.
     """
-    artifact = read_plan_artifact_bytes(resolve_run_directory(instance.name, run_id))
+    artifact = read_plan_artifact_bytes(resolve_run_directory(instance.name, run_id, base_directory=base_directory))
     if verify_plan(artifact=artifact, run_id=run_id, config_version=resolve_config_version(instance)):
         raise ValueError(_REGISTERED_PLAN_VERIFICATION_FAILED)
     manifest = parse_plan_artifact(artifact, run_id=run_id).manifest
@@ -233,6 +244,23 @@ def _require_planned_schema(*, run_id: str, manifest: PlanManifest, models: Runt
         f"written to the destination and no source was read."
     )
     raise PlanSchemaChangedError(msg)
+
+
+def _baseline_writeback(manifest: PlanManifest) -> BaselineWriteback:
+    """Return the durable safety reference this successful write contributes.
+
+    The counts are the plan manifest's own source snapshots: the write applied that
+    plan, so those are the source counts its success corresponds to. Each snapshot is
+    one resource's `A/<resource>.parquet`, and the supported service path always extracts
+    in full, so the cadence fact is stated rather than counted.
+
+    It records what this run observed. Nothing in this unit reads it back: there is no
+    managed row-count refusal, no pre-dispatch lookup, and no override.
+    """
+    return BaselineWriteback(
+        source_row_counts={Path(record.path).stem: record.row_count for record in manifest.source_snapshot},
+        full_extract=True,
+    )
 
 
 def _worker_binding(
@@ -437,6 +465,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     config_directory: str,
     projection: ProductProjection,
     tracker: WriteDispatchTracker,
+    scratch: StageScratch,
 ) -> tuple[dict[str, Any], ExecutionWriteback]:
     """Resolve and execute one service stage within the sanitized worker boundary."""
     parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
@@ -465,7 +494,16 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     secrets[:] = collect_secret_values(instance)
     result: dict[str, Any]
     if stage == "plan":
-        saved = _plan(instance, run_id=run_id, branch=branch, composed_sync=False)
+        saved = _plan(instance, run_id=run_id, branch=branch, composed_sync=False, base_directory=scratch.root)
+        # The internal handoff first: a plan that is publicly reviewable but has no
+        # durable checkpoint would invite an apply on another worker that cannot read it.
+        publish_plan_checkpoint(
+            projection,
+            run_id,
+            run_directory=scratch.run_directory(instance.name, run_id),
+            manifest=saved.manifest,
+            secrets=secrets,
+        )
         _publish_plan(projection, run_id, saved, secrets)
         summary = saved.summary()
         outcome = "no-change" if summary.total == 0 else "planned"
@@ -478,7 +516,16 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             results=result,
         )
     elif stage == "verify":
-        saved = execute_run(instance, operation="verify", run_id=run_id, _require_verified=True)
+        # Rehydrated and validated whole before the engine reads any of it. Verification
+        # constructs no adapter, so a refusal here has contacted nothing at all.
+        rehydrate_plan_checkpoint(projection, run_id, destination=scratch.run_directory(instance.name, run_id))
+        saved = execute_run(
+            instance,
+            operation="verify",
+            run_id=run_id,
+            base_directory=scratch.root,
+            _require_verified=True,
+        )
         assert isinstance(saved, SavedPlan)
         result = {
             "run_id": run_id,
@@ -490,14 +537,20 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         }
         writeback = ExecutionMergeWriteback(results={"verification": result})
     elif stage == "apply":
-        # Deterministic first, and outside the guard: a run whose retained artifact does
-        # not match its binding or the operator's approved checksum is refused without
+        run_directory = scratch.run_directory(instance.name, run_id)
+        # The plan this apply was approved for, resolved and validated whole before any
+        # adapter factory exists. A checkpoint that is absent, oversized, corrupt,
+        # digest-mismatched, or another run's refuses here, having contacted nothing.
+        rehydrate_plan_checkpoint(projection, run_id, destination=run_directory)
+        # Deterministic next, and still outside the guard: a run whose rehydrated artifact
+        # does not match its binding or the operator's approved checksum is refused without
         # making another writer wait.
         manifest = _verify_registered_apply(
             instance=instance,
             run_id=run_id,
             binding=parameter_binding,
             expected_checksum=expected_checksum,
+            base_directory=scratch.root,
         )
         with _configuration_write_guard(_require_registered_write(parameter_binding)) as guard:
             ownership = ProvenWriteOwnership(prove=guard.require_ownership, tracker=tracker)
@@ -521,9 +574,13 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 confirm_writes=True,
                 ownership=ownership,
                 record_applied=tracker.record_applied,
+                base_directory=scratch.root,
                 _lock_already_held=True,
             )
+        # Outside the guard, so the release this stage reports is already confirmed, and
+        # before the product commit, so the run's evidence is durable before its verdict.
         assert isinstance(applied, RunResult)
+        publish_final_checkpoint(projection, run_id, run_directory=run_directory, secrets=secrets)
         result = _result_data(applied)
         writeback = ExecutionFinishWriteback(
             phase="applied",
@@ -531,6 +588,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             finished_at=datetime.now(timezone.utc),
             summary={"sync_name": sync_name, **{key: applied.summary[key] for key in ACTION_KEYS}},
             results=result,
+            baseline=_baseline_writeback(manifest),
         )
     else:
         # One guard across planning, verification, and the write it approves: a plan
@@ -545,12 +603,23 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 run_branch=branch,
                 stage=stage,
             )
-            saved = _plan(instance, run_id=run_id, branch=branch, composed_sync=True)
+            run_directory = scratch.run_directory(instance.name, run_id)
+            saved = _plan(instance, run_id=run_id, branch=branch, composed_sync=True, base_directory=scratch.root)
+            # Durable before the first destination operation: a sync interrupted
+            # mid-write leaves the plan an operator reconciles what happened against.
+            publish_plan_checkpoint(
+                projection,
+                run_id,
+                run_directory=run_directory,
+                manifest=saved.manifest,
+                secrets=secrets,
+            )
             _publish_plan(projection, run_id, saved, secrets)
             verified = execute_run(
                 instance,
                 operation="verify",
                 run_id=run_id,
+                base_directory=scratch.root,
                 _run_file_mode="sync",
                 _require_verified=True,
             )
@@ -560,6 +629,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 run_id=run_id,
                 binding=parameter_binding,
                 expected_checksum=verified.manifest.plan_checksum,
+                base_directory=scratch.root,
             )
             _require_planned_schema(run_id=run_id, manifest=manifest, models=instance._runtime_models)
             applied = execute_run(
@@ -571,10 +641,13 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 confirm_writes=True,
                 ownership=ownership,
                 record_applied=tracker.record_applied,
+                base_directory=scratch.root,
                 _lock_already_held=True,
                 _run_file_mode="sync",
             )
             assert isinstance(applied, RunResult)
+        # Same order the apply stage publishes in, for the same reason.
+        publish_final_checkpoint(projection, run_id, run_directory=run_directory, secrets=secrets)
         result = {**_result_data(applied), "operation": "sync"}
         writeback = ExecutionFinishWriteback(
             phase="applied",
@@ -582,6 +655,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             finished_at=datetime.now(timezone.utc),
             summary={"sync_name": sync_name, **{key: applied.summary[key] for key in ACTION_KEYS}},
             results=result,
+            baseline=_baseline_writeback(verified.manifest),
         )
     run_logger.info(redact(f"service run {run_id} stage={stage} outcome={result['outcome']}", secrets))
     return result, writeback
@@ -701,7 +775,13 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     # stage ended.
     tracker = WriteDispatchTracker()
     try:
-        with _remote_log_bridge(run_logger, prefect_context=prefect_context, secrets=secrets):
+        # One new private root per stage, released before this worker reports anything.
+        # Everything the stage needs from its predecessor arrives through product
+        # storage, so nothing here has to survive the stage that created it.
+        with (
+            stage_scratch(stage) as scratch,
+            _remote_log_bridge(run_logger, prefect_context=prefect_context, secrets=secrets),
+        ):
             result, writeback = _execute_stage(
                 run_id,
                 stage,
@@ -716,6 +796,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 config_directory=config_directory,
                 projection=projection,
                 tracker=tracker,
+                scratch=scratch,
             )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         failure = exc

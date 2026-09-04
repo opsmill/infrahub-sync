@@ -23,7 +23,13 @@ from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.flow import service_sync_run
 from tests.configuration.validation_packages import package
 from tests.plan.artifact_fixtures import operation_record
-from tests.service.execution_fixtures import append_execution, bind_granting_guard
+from tests.service.execution_fixtures import (
+    append_execution,
+    bind_granting_guard,
+    publish_authored_plan,
+    stage_root,
+    write_applied_sidecar,
+)
 
 FLOW_RUN_ID = "ed4778cb-f2cf-4b1f-a87b-68be37659e93"
 WORKER_ID = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
@@ -70,8 +76,9 @@ def _registered_apply(
         ConfigurationPackage.model_validate(stored.declared_content), directory=str(tmp_path)
     )
     runtime._configuration_binding = binding
+    authored = tmp_path / "runs" / runtime.name / run_id
     manifest = write_plan_artifact(
-        run_dir=tmp_path / "runs" / runtime.name / run_id,
+        run_dir=authored,
         run_id=run_id,
         config_version=resolve_config_version(runtime),
         source_snapshot=[],
@@ -82,6 +89,7 @@ def _registered_apply(
         # comparison, which the schema guard's own suite covers separately.
         schema_fingerprint=None if manifest_binding is None else SCHEMA_FINGERPRINT,
     )
+    publish_authored_plan(projection, run_id, run_directory=authored, manifest=manifest)
     calls: list[str] = []
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
     bind_granting_guard(monkeypatch, service_flow)
@@ -100,8 +108,10 @@ def _registered_apply(
         ),
     )
 
-    def destination_forbidden(*_args: object, **_kwargs: object) -> RunResult:
+    def destination_forbidden(*_args: object, **kwargs: object) -> RunResult:
         calls.append("execute-run")
+        # The engine leaves the applied sidecar the final checkpoint carries.
+        write_applied_sidecar(stage_root(kwargs) / runtime.name / run_id)
         return RunResult(
             sync_name=runtime.name,
             operation="apply",
@@ -190,8 +200,9 @@ def test_a_registered_saved_apply_runs_without_the_source_credential(
     )
     runtime._configuration_binding = binding
     planned = PlannedOperation.model_validate(operation_record(identity={"name": "prod"}))
+    authored = tmp_path / "runs" / runtime.name / run_id
     manifest = write_plan_artifact(
-        run_dir=tmp_path / "runs" / runtime.name / run_id,
+        run_dir=authored,
         run_id=run_id,
         config_version=resolve_config_version(runtime),
         source_snapshot=[],
@@ -200,6 +211,7 @@ def test_a_registered_saved_apply_runs_without_the_source_credential(
         configuration_binding=binding,
         schema_fingerprint=SCHEMA_FINGERPRINT,
     )
+    publish_authored_plan(projection, run_id, run_directory=authored, manifest=manifest)
 
     writes: list[str] = []
     constructed: list[dict[str, Any]] = []

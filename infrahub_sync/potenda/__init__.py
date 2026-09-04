@@ -18,7 +18,7 @@ from infrahub_sdk.exceptions import (
 )
 from tqdm import tqdm
 
-from infrahub_sync import IncrementalConfig, resolve_effective_diffsync_flags
+from infrahub_sync import resolve_effective_diffsync_flags
 
 # Imported at module level, unlike this module's other `infrahub_sync` imports: these four
 # pull nothing beyond pydantic and the standard library — the write-surface protocol pulls
@@ -72,7 +72,7 @@ OPERATIONAL_APPLY_FAILURES: tuple[type[Exception], ...] = (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Sequence
     from datetime import datetime
     from pathlib import Path
 
@@ -169,8 +169,7 @@ class Potenda:
         # `_did_full_extract` rather than in place of it. FR-015 derives deletes only
         # when the *destination* side ran a full extract, and the OR-accumulated flag
         # cannot answer for one side: it is deliberately true when either side ran
-        # full, which is what `persist_baseline_counts` needs and what a per-side
-        # question must not be answered with. Absent side means "did not load".
+        # full. Absent side means "did not load".
         self._side_full_extract: dict[str, bool] = {}
         self._side_extract_ts: dict[str, datetime] = {}
         self._prev_run_resolved: bool = False
@@ -286,7 +285,7 @@ class Potenda:
 
         Falls back to the legacy full-extract path (``adapter.load()``) when
         there is no prior successful run, the schema-subhash mismatches, or
-        the caller asked for ``--full-extract``.
+        the caller asked for a full extract.
         """
         from infrahub_sync.cache.cursors import CursorTier
         from infrahub_sync.cache.incremental import (
@@ -294,30 +293,15 @@ class Potenda:
             load_cursors,
             should_use_incremental,
         )
-        from infrahub_sync.cache.sidecars import RunCounterFile
 
-        cache_root = self.cache_root
         prev_run = self._previous_run()
-
-        inc_config = self.config.incremental if self.config else None
-        cadence = inc_config.full_resync_every if inc_config else IncrementalConfig().full_resync_every
-
-        runs_since_full = 0
-        if cache_root is not None:
-            counter = RunCounterFile.load_or_default(cache_root / "run-counter.json")
-            runs_since_full = counter.runs_since_full
 
         use_inc = should_use_incremental(
             prev_run_dir=prev_run,
             current_subhash=self._schema_subhash,
             force_full=self.force_full_extract,
-            runs_since_full=runs_since_full,
-            cadence=cadence,
         )
 
-        # OR-accumulate so the second side cannot silently overwrite the
-        # first side's True (persist_baseline_counts resets the run-counter
-        # only when no side ran the incremental path).
         self._did_full_extract = self._did_full_extract or (not use_inc)
         # Per-side answer for FR-015. `should_use_incremental` already returns False
         # when there is no prior run, so `not use_inc` is exactly "this side ran a
@@ -420,11 +404,7 @@ class Potenda:
         return self.destination.sync_from(self.source, diff=diff, flags=self.flags, callback=self._print_callback)
 
     def _diff_to_rows(self, diff: Any) -> list[dict[str, str]]:
-        """Materialize a diffsync.Diff into plan-row dicts (one per change).
-
-        Pulled out so sync_in_tiers can accumulate rows across per-tier
-        diffs before writing a single plan.parquet for the whole run.
-        """
+        """Materialize a diffsync.Diff into plan-row dicts (one per change)."""
         import json
 
         rows: list[dict[str, str]] = []
@@ -461,11 +441,9 @@ class Potenda:
         `plan.parquet` is written exactly as before (V23) — it is retained for operators
         to query, and the new artifact never replaces it. It is **not** what `apply`
         reads: `apply_plan` loads `<run_dir>/plan/` and refuses a run that holds only the
-        parquet. The saved plan artifact is written alongside it, because this method is
-        the one call site common to every non-tier path that produces a plan: the `diff`
-        command, the serial `sync` command and `sync_in_tiers`' no-tiers branch — and on all
-        three it runs before any destination write, which is what FR-001 requires. The tier branch of
-        `sync_in_tiers` writes the artifact itself, from every tier's retained diff.
+        parquet. The saved plan artifact is written alongside it, because this method is the
+        one call site every path that produces a plan goes through — and on all of them it
+        runs before any destination write, which is what FR-001 requires.
 
         Returns the saved artifact's in-memory per-action counts, or `None` when no
         saved artifact can be written. For `operation="plan"`, the shared execution
@@ -861,136 +839,3 @@ class Potenda:
 
         if cursors:
             persist_cursors(self.run_dir / "cursors.json", side=side, cursors=cursors)
-
-    def persist_baseline_counts(self) -> None:
-        """Write the source-side row counts to the canonical baseline file.
-
-        Called only after a successful sync — a failed run must not poison
-        the baseline. Also bumps run-counter.json toward the cadence
-        threshold (or resets it to zero if this run was a full extract).
-        """
-        if not self.run_dir:
-            return
-        from infrahub_sync.cache.paths import cache_root_for
-        from infrahub_sync.cache.sidecars import RowcountsFile, RunCounterFile
-
-        root = cache_root_for(self.config.name if self.config else "_unknown")
-        counts_file = RowcountsFile.load_or_default(root / "last-successful-rowcounts.json")
-        for k, v in self._counts.items():
-            counts_file.set(k, v)
-        counts_file.save()
-
-        counter = RunCounterFile.load_or_default(root / "run-counter.json")
-        if self._did_full_extract:
-            counter.runs_since_full = 0
-        else:
-            counter.runs_since_full += 1
-        counter.save()
-
-    def check_rowcount_guardrail(self, *, allow_drop: bool) -> None:
-        if not self.run_dir or not self.config:
-            return
-        from infrahub_sync.cache.guardrails import RowcountGuardrail
-        from infrahub_sync.cache.paths import cache_root_for
-        from infrahub_sync.cache.sidecars import RowcountsFile
-
-        root = cache_root_for(self.config.name)
-        baseline = RowcountsFile.load_or_default(root / "last-successful-rowcounts.json")
-        guard = RowcountGuardrail(previous=baseline.counts, allow_drop=allow_drop)
-        for resource, current in self._counts.items():
-            guard.check(resource, current=current)
-
-    def sync_in_tiers(
-        self,
-        *,
-        parallel: bool = False,
-        allow_rowcount_drop: bool = False,
-        plan_committed: Callable[[], None] | None = None,
-    ) -> dict[str, int]:
-        """Run diff+sync one tier at a time.
-
-        When `parallel=False`, falls back to the existing serial pathway.
-        When `parallel=True`, computes **every** tier's diff first, writes the plan
-        artifact, and only then executes the retained diffs tier by tier. The two loops
-        are what makes FR-001's "the artifact exists before anything is written" true in
-        tier mode: interleaving diff and sync writes the first
-        tier before the second tier has even been compared, so no complete artifact can
-        precede the first write, and `sync --parallel` is the default.
-
-        The `top_level` narrowing stays in the **compute** loop, restored afterwards. It
-        governs diff computation, not execution: only the comparison differ reads it, while
-        the synchronizer walks the children of whatever `Diff` it is handed. Narrowing in the execution loop instead would compute
-        six identical full-destination diffs rather than six disjoint per-tier ones, and the
-        artifact would record every operation once per tier (AD039, PD-009).
-
-        Aggregates per-tier diff rows into a single plan.parquet, unchanged, so operators can
-        query the whole change set. `apply` reads the saved plan artifact instead, which this
-        branch writes from every tier's retained diff.
-        """
-        if not self.tiers:
-            self.load_both_sides()
-            self.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
-            diff = self.diff()
-            self.write_plan(diff)
-            if plan_committed is not None:
-                plan_committed()
-            if diff.has_diffs():
-                self.sync(diff=diff)
-                # Re-snapshot destination AFTER writes so the next warm run
-                # hydrates from real post-sync state rather than the pre-sync
-                # (often empty) snapshot. Source state was already final.
-                self._write_side_snapshot("B", self.destination)
-            self.persist_baseline_counts()
-            self.persist_cursors_for_run(side="A")
-            self.persist_cursors_for_run(side="B")
-            rows = self._diff_to_rows(diff)
-            return {action: sum(row["action"] == action for row in rows) for action in ACTIONS}
-
-        self.load_both_sides()
-        self.check_rowcount_guardrail(allow_drop=allow_rowcount_drop)
-        saved_top = self.destination.top_level
-
-        # Compute loop: every tier's diff, each computed against its own narrowed
-        # destination top_level, retained for the execution loop below.
-        retained: list[tuple[list[str], Any]] = []
-        try:
-            for idx, tier in enumerate(self.tiers):
-                tier_list = sorted(tier)
-                logger.info("Diff tier %d (%d): %s", idx, len(tier), tier_list)
-                self.destination.top_level = tier_list  # ty: ignore[invalid-attribute-access]
-                retained.append((tier_list, self.diff()))
-        finally:
-            self.destination.top_level = saved_top  # ty: ignore[invalid-attribute-access]
-
-        aggregated_rows: list[dict[str, str]] = []
-        for _tier_list, diff in retained:
-            aggregated_rows.extend(self._diff_to_rows(diff))
-
-        # Before the first destination write, and after top_level is restored so the
-        # derived deletes cover every kind rather than the last tier's (FR-001, AD039).
-        self.write_plan_artifact([diff for _tier_list, diff in retained])
-        if plan_committed is not None:
-            plan_committed()
-
-        # Execution loop: replay the retained diffs in tier order. `top_level` is
-        # irrelevant here — the synchronizer walks the Diff it is handed.
-        any_writes = False
-        for idx, (tier_list, diff) in enumerate(retained):
-            logger.info("Sync tier %d (%d): %s", idx, len(tier_list), tier_list)
-            if diff.has_diffs():
-                self.sync(diff=diff)
-                any_writes = True
-
-        if any_writes:
-            # Same reasoning as the no-tiers branch — capture post-sync
-            # destination state for the next warm run's hydrate path.
-            self._write_side_snapshot("B", self.destination)
-        if self.run_dir:
-            from infrahub_sync.cache.parquet_io import write_plan as _write_plan_file
-
-            _write_plan_file(run_dir=self.run_dir, rows=aggregated_rows)
-        self.persist_baseline_counts()
-        self.persist_cursors_for_run(side="A")
-        self.persist_cursors_for_run(side="B")
-        _ = parallel  # reserved for diffsync v3 thread fan-out; see backport doc
-        return {action: sum(row["action"] == action for row in aggregated_rows) for action in ACTIONS}

@@ -46,9 +46,18 @@ def test_preview_routes_prefect_ui_to_the_published_host_port() -> None:
     assert 'PREFECT_SERVER_UI_API_URL: "http://localhost:${PREVIEW_PREFECT_PORT:-4210}/api"' in compose
 
 
-def test_preview_declares_the_service_postgresql_and_minio_storage_shape() -> None:
-    """Preview supplies storage and liveness settings to both service processes."""
+def test_preview_declares_the_service_postgresql_and_minio_storage_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preview supplies storage and liveness settings to both service processes.
+
+    Every retired name is seeded first, as an operator's shell would carry it across the
+    cutover, so the absences asserted below are removals rather than values that merely
+    happened not to be set.
+    """
     compose = (DEV_DIR / "docker-compose.preview.yml").read_text(encoding="utf-8")
+    for retired in preview.RETIRED_SERVICE_SETTINGS:
+        monkeypatch.setenv(retired, f"/inherited/{retired.lower()}-canary")
     environment = preview._runtime_env(
         {
             "INFRAHUB_INITIAL_ADMIN_TOKEN": "local-token",
@@ -78,7 +87,9 @@ def test_preview_declares_the_service_postgresql_and_minio_storage_shape() -> No
     assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == "http://127.0.0.1:9010"
     assert environment["AWS_ACCESS_KEY_ID"] == "preview-minio-access"
     assert environment["AWS_SECRET_ACCESS_KEY"] == PREVIEW_MINIO_SECRET
-    assert "INFRAHUB_SYNC_CACHE_DIR" in environment
+    # Seeded above and gone here: the retired names are removed, not merely unset.
+    for retired in preview.RETIRED_SERVICE_SETTINGS:
+        assert retired not in environment, retired
     assert environment["INFRAHUB_SYNC_SERVICE_WORK_POOL"] == "preview-pool"
     assert environment["INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS"] == "600"
     assert environment["PREFECT_WORKER_QUERY_SECONDS"] == "15"
@@ -178,7 +189,8 @@ def test_bringing_the_preview_up_writes_nothing_to_infrahub(monkeypatch: pytest.
     monkeypatch.setattr(preview, "_compose", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(preview, "_wait_for_http", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(preview, "assert_no_legacy_state", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(preview, "_start_process", lambda name, _argv, _env: started.append(name))
+    monkeypatch.setattr(preview, "_start_process", lambda name, _argv, _env, **_kwargs: started.append(name))
+    monkeypatch.setattr(preview, "_project_interpreter", lambda _context: "/preview/venv/bin/python")
     monkeypatch.setattr(preview, "ensure_smoke_branch", seeded.append)
     monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
     monkeypatch.setattr(context, "run", lambda command, **_kwargs: commands.append(command))

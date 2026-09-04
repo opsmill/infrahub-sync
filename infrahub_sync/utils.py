@@ -205,11 +205,16 @@ def get_potenda_from_instance(
     run_id: str | None = None,
     continue_on_error: bool = False,
     concurrent_load: bool = True,
+    base_directory: Path | None = None,
 ) -> Potenda:
     """Create and return a Potenda instance based on the provided SyncInstance.
 
     When ``run_id`` is None, a fresh sortable identifier is allocated via
     ``generate_run_id()`` so each invocation gets its own cache directory.
+
+    ``base_directory`` names the cache root explicitly, for a caller that owns the
+    directory this run works in instead of deriving it from the environment or the
+    working directory.
     """
     runtime_models = sync_instance._runtime_models
     source, destination = _adapter_classes(sync_instance, runtime_models)
@@ -267,7 +272,7 @@ def get_potenda_from_instance(
     from infrahub_sync.cache.paths import generate_run_id
 
     rid = run_id or generate_run_id()
-    rdir = stored_run_dir(sync_instance.name, rid)
+    rdir = stored_run_dir(sync_instance.name, rid, base_directory=base_directory)
     rdir.mkdir(parents=True, exist_ok=True)
 
     # Compute (and persist) the schema sub-hash *before* constructing Potenda so
@@ -364,8 +369,12 @@ class PlanApplier:
         run_id: str,
         branch: str | None = None,
         verbosity: int | None = None,
+        base_directory: Path | None = None,
     ) -> PlanApplier:
         """Open the stored run `run_id` of `sync_instance` for applying.
+
+        `base_directory` names the cache root explicitly, for a caller that placed the
+        run's directory itself rather than deriving its location.
 
         Raises:
             ImportError: the destination adapter could not be loaded.
@@ -401,7 +410,7 @@ class PlanApplier:
 
         # Located, never created: the run being applied already exists, and an apply that
         # allocated directories could manufacture the very run whose absence it should report.
-        rdir = stored_run_dir(sync_instance.name, run_id)
+        rdir = stored_run_dir(sync_instance.name, run_id, base_directory=base_directory)
 
         engine = Potenda(
             source=cast("Adapter", _PlanApplySource()),

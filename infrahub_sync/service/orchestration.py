@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from math import isfinite
-from pathlib import Path
 from typing import Any, Protocol, cast
 from uuid import UUID
 
@@ -32,14 +31,15 @@ _TERMINAL_STATE_TYPES = frozenset({StateType.COMPLETED, StateType.FAILED, StateT
 # Freshness uses three intervals; cap it at the largest age two datetimes can express.
 _MAX_DATETIME_AGE = datetime.max.replace(tzinfo=timezone.utc) - datetime.min.replace(tzinfo=timezone.utc)
 _MAX_HEARTBEAT_INTERVAL_SECONDS = (_MAX_DATETIME_AGE.days * 24 * 60 * 60 + _MAX_DATETIME_AGE.seconds) // 3
-# The entrypoint is the absolute path of the flow file in THIS installation,
-# resolved at import time. Without it the applied deployment carries no
-# entrypoint at all (the deployment library invents no defaults), and a Prefect
-# process worker refuses the flow run with "does not have an entrypoint and can
-# not be run". An absolute path also encodes the documented contract that the
-# API, the deployment apply, and the workers share one installation's
-# filesystem view; re-applying from a different installation reconciles it.
-_SERVICE_FLOW_ENTRYPOINT = f"{Path(__file__).with_name('flow.py')}:service_sync_run"
+# The installed dotted identity of the flow, and deliberately colon-free. Prefect
+# routes an entrypoint containing a colon through its source-file branch, which
+# executes a script at a recorded path -- a path that belongs to whichever
+# installation applied the deployment and need not exist on a worker at all. The
+# module form resolves through the installed distribution instead, so a worker
+# needs the package installed and nothing else. An entrypoint is still required:
+# without one a process worker refuses the flow run with "does not have an
+# entrypoint and can not be run".
+_SERVICE_FLOW_ENTRYPOINT = "infrahub_sync.service.flow.service_sync_run"
 
 SERVICE_DEFINITION = WorkflowDefinition(
     flow_name=SERVICE_FLOW_NAME,
