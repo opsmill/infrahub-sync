@@ -25,6 +25,7 @@ bench-results.csv
 # Virtual environments
 .venv/
 venv/
+.venv-310/
 # Secrets (never commit)
 *.pem
 *.key
