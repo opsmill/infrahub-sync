@@ -46,6 +46,7 @@ from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_by
 from infrahub_sync.plan.review import SavedPlan, resolve_run_directory
 from infrahub_sync.plan.verify import verify_plan
 from infrahub_sync.product_store import (
+    BaselineWriteback,
     ExecutionFinishWriteback,
     ExecutionMergeWriteback,
     ExecutionWriteback,
@@ -243,6 +244,23 @@ def _require_planned_schema(*, run_id: str, manifest: PlanManifest, models: Runt
         f"written to the destination and no source was read."
     )
     raise PlanSchemaChangedError(msg)
+
+
+def _baseline_writeback(manifest: PlanManifest) -> BaselineWriteback:
+    """Return the durable safety reference this successful write contributes.
+
+    The counts are the plan manifest's own source snapshots: the write applied that
+    plan, so those are the source counts its success corresponds to. Each snapshot is
+    one resource's `A/<resource>.parquet`, and the supported service path always extracts
+    in full, so the cadence fact is stated rather than counted.
+
+    It records what this run observed. Nothing in this unit reads it back: there is no
+    managed row-count refusal, no pre-dispatch lookup, and no override.
+    """
+    return BaselineWriteback(
+        source_row_counts={Path(record.path).stem: record.row_count for record in manifest.source_snapshot},
+        full_extract=True,
+    )
 
 
 def _worker_binding(
@@ -570,6 +588,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             finished_at=datetime.now(timezone.utc),
             summary={"sync_name": sync_name, **{key: applied.summary[key] for key in ACTION_KEYS}},
             results=result,
+            baseline=_baseline_writeback(manifest),
         )
     else:
         # One guard across planning, verification, and the write it approves: a plan
@@ -636,6 +655,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             finished_at=datetime.now(timezone.utc),
             summary={"sync_name": sync_name, **{key: applied.summary[key] for key in ACTION_KEYS}},
             results=result,
+            baseline=_baseline_writeback(verified.manifest),
         )
     run_logger.info(redact(f"service run {run_id} stage={stage} outcome={result['outcome']}", secrets))
     return result, writeback

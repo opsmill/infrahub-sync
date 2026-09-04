@@ -181,8 +181,6 @@ class _FakePotenda:
         self.loaded = False
         self.synced = False
         self.diff_rows_materialized = 0
-        self.baseline_persisted = False
-        self.guardrail_allow_drop: bool | None = None
 
     def load_both_sides(self) -> None:
         if self.load_error is not None:
@@ -202,21 +200,8 @@ class _FakePotenda:
         write_plan(run_dir=self.run_dir, rows=list(diff.rows))
         return self.write_result
 
-    def check_rowcount_guardrail(self, *, allow_drop: bool) -> None:
-        self.guardrail_allow_drop = allow_drop
-
     def sync(self, diff: _FakeDiff | None = None) -> None:  # noqa: ARG002 — keyword name is part of the API
         self.synced = True
-
-    def persist_baseline_counts(self) -> None:
-        self.baseline_persisted = True
-
-    def sync_in_tiers(self, *, parallel: bool, allow_rowcount_drop: bool) -> dict[str, int]:
-        assert parallel is True
-        self.guardrail_allow_drop = allow_rowcount_drop
-        self.synced = bool(self.rows)
-        self.baseline_persisted = True
-        return {action: sum(row["action"] == action for row in self.rows) for action in ("create", "update", "delete")}
 
 
 def _factory(

@@ -434,3 +434,28 @@ def _manifest_of(run_directory: Path) -> Any:  # noqa: ANN401
     from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes
 
     return parse_plan_artifact(read_plan_artifact_bytes(run_directory), run_id=run_directory.name).manifest
+
+
+@pytest.mark.usefixtures("claimed")
+def test_a_read_stage_advances_no_baseline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Verify never advances the safety reference; only a successful write does."""
+    run_id = "run-verify-no-baseline"
+    projection = _product_run(tmp_path / "product", run_id, operation="verify", phase="planned")
+    _published_plan_checkpoint(projection, run_id, tmp_path)
+    binding = _binding(projection, run_id)
+
+    def execute_run(instance: Any, **kwargs: Any) -> SavedPlan:  # noqa: ANN401
+        from infrahub_sync.cache.paths import run_dir
+
+        directory = run_dir(instance.name, str(kwargs["run_id"]), base_directory=Path(kwargs["base_directory"]))
+        return SavedPlan(manifest=_manifest_of(directory), operations=[], checksum_ok=True, verification_notes=[])
+
+    monkeypatch.setattr(service_flow, "execute_run", execute_run)
+    monkeypatch.setattr(service_flow, "resolve_runtime_instance", lambda *_a, **_k: _instance())
+    monkeypatch.setattr(service_flow, "build_runtime_model_plan", lambda *_a, **_k: None)
+    monkeypatch.setattr(service_flow, "_run_logger", lambda: (service_flow.logger, False))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+
+    service_sync_run.fn(run_id, "verify", *binding)
+
+    assert projection.lookup_configuration_baseline(binding[0]).value is None

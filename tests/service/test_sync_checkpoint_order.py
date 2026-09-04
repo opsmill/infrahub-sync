@@ -311,3 +311,24 @@ def test_sync_works_in_its_own_scratch_and_leaves_the_shared_cache_alone(
     assert stage.projection.run_directory is not None
     assert shared not in stage.projection.run_directory.parents
     assert not stage.projection.run_directory.exists()
+
+
+def test_a_successful_sync_replaces_the_configuration_baseline(stage: _SyncStage) -> None:
+    """A managed sync writes the same durable reference an apply does."""
+    _sync(stage)
+
+    baseline = stage.projection.lookup_configuration_baseline(stage.binding[0]).value
+
+    assert baseline is not None
+    assert baseline.source_row_counts == {"tag": 1}
+    assert baseline.runs_since_full_extract == 0
+
+
+def test_an_ambiguous_sync_advances_no_baseline(stage: _SyncStage) -> None:
+    """Ambiguity leaves the configuration's previous reference untouched."""
+    stage.projection.fail_final_publication = True
+
+    with pytest.raises(RuntimeError, match="object storage refused the final checkpoint"):
+        _sync(stage)
+
+    assert stage.projection.lookup_configuration_baseline(stage.binding[0]).value is None

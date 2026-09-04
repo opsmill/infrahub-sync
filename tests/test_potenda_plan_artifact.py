@@ -1196,50 +1196,8 @@ def test_write_plan_calls_the_public_artifact_writer_hook(monkeypatch: pytest.Mo
     assert counts == {"create": 0, "update": 0, "delete": 1}
 
 
-def test_the_tier_branch_computes_every_diff_and_writes_the_artifact_before_the_first_write(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """AD039: two loops, and the narrowing sits in the compute loop."""
-    tiers = [{"BuiltinTag", "LocationSite"}, {"LocationRack"}, {"DcimDevice"}]
-    config = build_config()
-    source = qualified_source()
-    destination = _FakeAdapter("destination")
-
-    pin_extraction_decisions(monkeypatch, [False, False])
-    potenda = build_potenda(
-        config=config,
-        source=source,
-        destination=destination,
-        run_id="20260726T1500-ffffffff",
-        tiers=tiers,
-        cls=_RecordingPotenda,
-    )
-    potenda.sync_in_tiers(parallel=True)
-
-    assert potenda.events == [  # ty: ignore[unresolved-attribute]
-        ("diff", ("BuiltinTag", "LocationSite")),
-        ("diff", ("LocationRack",)),
-        ("diff", ("DcimDevice",)),
-        ("write_plan_artifact", 3),
-        ("sync", ("BuiltinTag", "LocationSite")),
-        ("sync", ("LocationRack",)),
-        ("sync", ("DcimDevice",)),
-    ]
-    # The same claim read off the destination adapter rather than the engine wrapper: every
-    # write saw a manifest already on disk, and the executed set per tier is the tier's.
-    assert destination.sync_calls == [("BuiltinTag", "LocationSite"), ("LocationRack",), ("DcimDevice",)]
-    assert destination.manifest_present_at_sync == [True, True, True]
-
-    lines = [json.loads(line) for line in read_operations_bytes(plan_run_dir(potenda)).splitlines()]
-    identifiers = [record["operation_id"] for record in lines]
-    # One operation per source object, recorded once — not once per tier.
-    assert len(identifiers) == 6
-    assert len(identifiers) == len(set(identifiers))
-    assert read_manifest(plan_run_dir(potenda))["operations_count"] == 6
-
-
 # =======================================================================================
-# FR-015: `sync` records deletes exactly as `diff` does, serial and tiered
+# FR-015: a plan records deletes it never executes
 # =======================================================================================
 
 
@@ -1249,8 +1207,8 @@ def _delete_records(potenda: Potenda) -> list[dict[str, Any]]:
     return [record for record in lines if record["action"] == "delete"]
 
 
-def test_a_serial_and_a_tiered_sync_record_deletes_exactly_as_a_diff_does(monkeypatch: pytest.MonkeyPatch) -> None:
-    """FR-015: the delete class is recorded, never executed — and identically in all three modes."""
+def test_a_plan_records_the_delete_class_without_executing_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FR-015: the delete class is recorded, never executed."""
     config = build_config()
 
     pin_extraction_decisions(monkeypatch, [False, False])
@@ -1262,43 +1220,13 @@ def test_a_serial_and_a_tiered_sync_record_deletes_exactly_as_a_diff_does(monkey
     )
     run_plan(dry_run)
 
-    pin_extraction_decisions(monkeypatch, [False, False])
-    serial = build_potenda(
-        config=config,
-        source=qualified_source(),
-        destination=destination_with_orphan(),
-        run_id="20260727T0401-22222222",
-    )
-    serial.sync_in_tiers(parallel=False)
-
-    pin_extraction_decisions(monkeypatch, [False, False])
-    tiered = build_potenda(
-        config=config,
-        source=qualified_source(),
-        destination=destination_with_orphan(),
-        run_id="20260727T0402-33333333",
-        tiers=[{"BuiltinTag", "LocationSite"}, {"LocationRack"}, {"DcimDevice"}],
-    )
-    tiered.sync_in_tiers(parallel=True)
-
-    # The precondition: the fixture's orphan gives all three runs a delete to record. Without
-    # it every equality below would hold vacuously between three empty lists.
+    # The precondition: the fixture's orphan gives the run a delete to record. Without it
+    # the assertions below would hold vacuously over an empty list.
     recorded = _delete_records(dry_run)
     assert recorded, "the fixture's destination orphan produced no delete operation"
     assert {record["kind"] for record in recorded} == {"BuiltinTag"}
-
-    assert _delete_records(serial) == recorded
-    assert _delete_records(tiered) == recorded
-    # And each mode recorded the delete class as computed, so review discloses it (AD056).
-    for potenda in (dry_run, serial, tiered):
-        assert read_manifest(plan_run_dir(potenda))["delete_operations_computed"] is True
-
-    # Both sync modes really executed, and the artifact was already on disk when they did —
-    # otherwise the parity above would be a parity between three dry runs (FR-001).
+    assert read_manifest(plan_run_dir(dry_run))["delete_operations_computed"] is True
     assert dry_run.destination.sync_calls == []  # ty: ignore[unresolved-attribute]
-    for potenda in (serial, tiered):
-        assert potenda.destination.sync_calls  # ty: ignore[unresolved-attribute]
-        assert all(potenda.destination.manifest_present_at_sync)  # ty: ignore[unresolved-attribute]
 
 
 # =======================================================================================

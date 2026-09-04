@@ -398,3 +398,41 @@ def test_the_apply_stage_ignores_a_shared_cache_holding_the_same_run(
     assert sorted(path.name for path in stale.iterdir()) == before
     assert json.loads((stale / "plan" / "manifest.json").read_text(encoding="utf-8"))["run_id"] == harness.run_id
     assert not (stale / "run.json").exists()
+
+
+def test_a_successful_apply_populates_the_configuration_baseline(harness: _Harness) -> None:
+    """The counts the applied plan was computed against become the durable reference."""
+    _apply(harness)
+
+    baseline = harness.projection.lookup_configuration_baseline(harness.binding[0]).value
+
+    assert baseline is not None
+    assert baseline.config_id == harness.binding[0]
+    assert baseline.source_row_counts == {"tag": 1}
+    assert baseline.runs_since_full_extract == 0
+
+
+def test_an_ambiguous_apply_leaves_the_previous_baseline_standing(harness: _Harness) -> None:
+    """A write that may not have landed cannot become the next run's reference."""
+    harness.projection.fail_final_publication = True
+
+    with pytest.raises(RuntimeError, match="object storage refused the final checkpoint"):
+        _apply(harness)
+
+    assert harness.projection.lookup_configuration_baseline(harness.binding[0]).value is None
+
+
+def test_the_apply_path_never_reads_a_baseline_before_dispatch(harness: _Harness) -> None:
+    """No managed row-count refusal, override, or lockout was introduced."""
+    reads: list[str] = []
+    original = harness.projection._inner.lookup_configuration_baseline
+
+    def record(config_id: str) -> Any:  # noqa: ANN401
+        reads.append(config_id)
+        return original(config_id)
+
+    harness.projection._inner.lookup_configuration_baseline = record
+
+    _apply(harness)
+
+    assert reads == []

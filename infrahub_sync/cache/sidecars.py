@@ -44,28 +44,6 @@ class CursorsFile:
 
 
 @dataclass
-class RowcountsFile:
-    path: Path
-    counts: dict[str, int] = field(default_factory=dict)
-
-    @classmethod
-    def load_or_default(cls, path: Path) -> RowcountsFile:
-        if not path.exists():
-            return cls(path=path)
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return cls(path=path, counts={k: int(v) for k, v in data.items()})
-
-    def set(self, resource: str, count: int) -> None:
-        self.counts[resource] = count
-
-    def get(self, resource: str) -> int | None:
-        return self.counts.get(resource)
-
-    def save(self) -> None:
-        _atomic_write_text(self.path, json.dumps(self.counts, indent=2, sort_keys=True))
-
-
-@dataclass
 class RunFile:
     path: Path
     status: str = "pending"  # pending | running | dry-run | applied | failed
@@ -103,28 +81,3 @@ class SchemaHashFile:
 
     def save(self) -> None:
         _atomic_write_text(self.path, self.value)
-
-
-@dataclass
-class RunCounterFile:
-    """Tracks how many runs have happened since the last full extract.
-
-    The engine forces a full extract when `runs_since_full >= cadence`.
-    Reset to 0 after every full extract.
-    """
-
-    path: Path
-    runs_since_full: int = 0
-
-    KEYS: ClassVar[tuple[str, ...]] = ("runs_since_full",)
-
-    @classmethod
-    def load_or_default(cls, path: Path) -> RunCounterFile:
-        if not path.exists():
-            return cls(path=path)
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return cls(path=path, **{k: data.get(k, 0) for k in cls.KEYS})
-
-    def save(self) -> None:
-        payload = {k: getattr(self, k) for k in self.KEYS}
-        _atomic_write_text(self.path, json.dumps(payload, indent=2, sort_keys=True))
