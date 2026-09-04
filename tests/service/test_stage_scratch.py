@@ -141,6 +141,9 @@ def stub_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(service_flow, "build_runtime_model_plan", lambda *_a, **_k: object())
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (service_flow.logger, False))
+    # Checkpoint membership has its own tests; these assert only where a stage works.
+    monkeypatch.setattr(service_flow, "publish_plan_checkpoint", lambda *_a, **_k: None)
+    monkeypatch.setattr(service_flow, "rehydrate_plan_checkpoint", lambda *_a, **_k: None)
 
 
 @pytest.mark.usefixtures("claimed", "stub_runtime")

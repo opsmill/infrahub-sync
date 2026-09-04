@@ -54,6 +54,7 @@ from infrahub_sync.product_store import (
 from infrahub_sync.runtime_schema import STAGE_RUNTIME_MODEL_SCOPE, RuntimeModelPlan, build_runtime_model_plan
 
 from .apply_guard import ApplyGuard, hold_apply_guard
+from .checkpoints import publish_plan_checkpoint, rehydrate_plan_checkpoint
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME
@@ -476,6 +477,15 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     result: dict[str, Any]
     if stage == "plan":
         saved = _plan(instance, run_id=run_id, branch=branch, composed_sync=False, base_directory=scratch.root)
+        # The internal handoff first: a plan that is publicly reviewable but has no
+        # durable checkpoint would invite an apply on another worker that cannot read it.
+        publish_plan_checkpoint(
+            projection,
+            run_id,
+            run_directory=scratch.run_directory(instance.name, run_id),
+            manifest=saved.manifest,
+            secrets=secrets,
+        )
         _publish_plan(projection, run_id, saved, secrets)
         summary = saved.summary()
         outcome = "no-change" if summary.total == 0 else "planned"
@@ -488,7 +498,16 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             results=result,
         )
     elif stage == "verify":
-        saved = execute_run(instance, operation="verify", run_id=run_id, _require_verified=True)
+        # Rehydrated and validated whole before the engine reads any of it. Verification
+        # constructs no adapter, so a refusal here has contacted nothing at all.
+        rehydrate_plan_checkpoint(projection, run_id, destination=scratch.run_directory(instance.name, run_id))
+        saved = execute_run(
+            instance,
+            operation="verify",
+            run_id=run_id,
+            base_directory=scratch.root,
+            _require_verified=True,
+        )
         assert isinstance(saved, SavedPlan)
         result = {
             "run_id": run_id,

@@ -85,6 +85,18 @@ def _stub_runtime_model_plan(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(service_flow, "build_runtime_model_plan", build)
 
 
+@pytest.fixture(autouse=True)
+def _stub_checkpoints(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep lifecycle tests focused on flow behavior, not checkpoint membership.
+
+    The internal handoff and its ordering are asserted in
+    ``tests/service/test_plan_checkpoint.py`` against real bundles.
+    """
+    monkeypatch.setattr(service_flow, "publish_plan_checkpoint", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(service_flow, "rehydrate_plan_checkpoint", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(service_flow, "publish_final_checkpoint", lambda *_args, **_kwargs: None, raising=False)
+
+
 def _saved(run_id: str) -> SavedPlan:
     manifest = PlanManifest(
         format_version=2,
