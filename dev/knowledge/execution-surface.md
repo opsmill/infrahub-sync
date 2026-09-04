@@ -20,10 +20,12 @@ rather than an addition to `utils.py`, which is already broad and would blur the
 | Caller | Entry point |
 |---|---|
 | CLI `diff` | `execute_run(instance, operation="plan", …)` |
-| CLI `sync --no-parallel` (serial branch only) | `execute_run(instance, operation="sync", confirm_writes=True, …)` |
+| Sync API worker stages | `execute_run(instance, operation=…, base_directory=<stage scratch>, …)` |
 | `orchestration/flow.py` | `run_remote_request(sync_name, operation, confirm_writes, branch, config_directory=…)` |
 
-The parallel sync branch (`sync_in_tiers`) is not behind this surface; it stays in `cli.py`.
+`base_directory` names the cache root one run works in. A caller that owns a private
+directory for the run — the Sync service, whose stages share no filesystem — passes it, and
+nothing then derives the run's location from the environment or the working directory.
 
 `run_remote_request` is the remote-shaped composition: it resolves a logical name against a
 directory, then calls `execute_run` with every engine option at its CLI default except

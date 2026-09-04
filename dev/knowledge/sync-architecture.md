@@ -44,7 +44,7 @@ for its destination role.
    destination load concurrently by default.
 2. **Diff** — `diff()` runs the DiffSync comparison and produces a structured set of
    create / update / delete actions.
-3. **Sync** — `sync()` (or `sync_in_tiers()`) applies those actions against the
+3. **Sync** — `sync()` applies those actions against the
    destination in dependency order, calling the destination model's `create` / `update` /
    `delete`.
 

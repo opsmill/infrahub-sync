@@ -72,20 +72,25 @@ refusal records secret-safe actor, reason, and outcome evidence.
 
 ## Deploy the service flow
 
-Set the work pool name and the absolute directory service flow runs execute from —
-relative paths in Sync configurations resolve against it — then apply the service
-deployment:
+Set the work pool name, then apply the service deployment:
 
 ```bash
 export PREFECT_API_URL="http://127.0.0.1:4200/api"
 export INFRAHUB_SYNC_SERVICE_WORK_POOL="sync-process-pool"
-export INFRAHUB_SYNC_SERVICE_FLOW_WORKING_DIRECTORY="/path/to/checkout"
 python -m infrahub_sync.service.deploy
 ```
 
 The command validates and applies `infrahub-sync-service/run` through OpsMill Prefect
-Extras, then records the declared working directory as the deployment's only pull step.
-It does not create a work pool or start a worker.
+Extras, then drives the deployment's pull steps to empty. It does not create a work pool
+or start a worker.
+
+The deployment's entrypoint is the installed module path
+`infrahub_sync.service.flow.service_sync_run`. A worker resolves it by importing the
+installed `infrahub-sync` distribution, so it needs no repository checkout, no declared
+working directory, and no source-pull step. Applying the deployment removes any pull step
+an earlier release installed; without that, workers would keep entering a source tree
+that need not exist on their host. Install the same `infrahub-sync` version on every
+worker.
 
 ## Start service workers
 
@@ -105,14 +110,15 @@ flow-run child. The deployment stores no worker identity.
 A restarted process generates a new name and resolves its current server Worker UUID.
 It does not reuse an identity from the previous process.
 
-The validated support boundary is one host running one service worker process. Worker
-identity is not what limits this: every supported invocation has a distinct name and
-resolves a distinct UUID. Plan and apply exchange saved plans through the
-`INFRAHUB_SYNC_CACHE_DIR` filesystem, so an apply must run where its plan was written. A
-work pool with more than one service worker, and scheduling across more than one host,
-are outside the validated boundary. Use this entry point for every worker eligible to run
-the service deployment; manually named or standard Prefect process workers are outside the
-supported topology.
+Plan, verify, apply, and sync share no Sync filesystem. Each stage creates its own
+private scratch directory, hands the next stage what it needs through internal artifacts
+in the product store, and releases the directory when it ends. An apply therefore runs on
+any worker, including one that never saw the plan: it resolves the plan from the run's
+internal checkpoint and refuses if that checkpoint is missing, oversized, corrupt,
+digest-mismatched, or another run's.
+
+Use this entry point for every worker eligible to run the service deployment; manually
+named or standard Prefect process workers are outside the supported topology.
 
 The worker does not poll for runs until its heartbeat is complete and the pool returns
 exactly one online record with its name, work pool, and a standard UUID string. An
@@ -124,8 +130,7 @@ Configure the worker environment before it starts:
 | Variable | Requirement |
 | --- | --- |
 | `PREFECT_API_URL` | Prefect API used by the deployment and worker. |
-| `INFRAHUB_SYNC_CONFIG_DIRECTORY` | Existing directory containing the Sync configurations allowed on this worker. |
-| `INFRAHUB_SYNC_CACHE_DIR` | Absolute shared cache root for saved plans. This PH-2 seam remains unchanged. |
+| `INFRAHUB_SYNC_CONFIG_DIRECTORY` | Existing directory containing the Sync configurations allowed on this worker. Configuration data only: the worker reads registered packages from it and never imports or executes anything there, so it does not have to be a repository checkout. |
 | `INFRAHUB_SYNC_DATABASE_URL` | Non-empty PostgreSQL connection string accepted by Psycopg for product records. |
 | `INFRAHUB_SYNC_S3_BUCKET` | Non-empty bucket for immutable product artifacts. |
 | `INFRAHUB_SYNC_S3_PREFIX` | Optional object-key prefix; defaults to `infrahub-sync`. |

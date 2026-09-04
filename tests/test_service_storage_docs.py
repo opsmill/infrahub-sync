@@ -25,8 +25,10 @@ def test_service_storage_operator_references_state_the_complete_deployed_contrac
     assert "standard credential-provider chain" in text
     assert "absolute `http` or `https` URL with no userinfo" in text
     assert "reaches Boto3 unchanged" in text
-    assert "`INFRAHUB_SYNC_CACHE_DIR`" in text
-    assert "PH-2" in text
+    # The deployed service shares no Sync filesystem, so no reference may send an operator
+    # to configure a cache root for it.
+    assert "INFRAHUB_SYNC_CACHE_DIR" not in text
+    assert "shared cache" not in text.lower()
     assert not [claim for claim in ("backup", "restore", "production hardening") if claim in text.lower()]
 
 
