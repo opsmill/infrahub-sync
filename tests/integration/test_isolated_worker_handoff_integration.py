@@ -82,11 +82,15 @@ def _settings_or_skip() -> dict[str, str]:
     }
 
 
-# The worker process. Everything Unit 3 owns runs for real here: the private scratch, the
-# plan artifact, the bundle codec, the S3 publication and rehydration, the PostgreSQL guard
-# and baseline, the apply engine, and the local applied sidecar. Two things are doubled,
-# because this environment provides neither: source extraction and the destination adapter,
-# and Prefect's worker-identity lookup.
+# The worker process. What runs for real: the private scratch, the whole `execute_run` plan
+# lifecycle including its pipeline lock and run sidecar, the plan artifact and its Parquet
+# snapshots, the bundle codec, the S3 publication and rehydration, the PostgreSQL guard and
+# baseline, the apply engine, and the applied sidecar.
+#
+# What is doubled, and only this: the engine factory, because this environment offers no
+# source or destination service to extract from or write to, and Prefect's worker-identity
+# lookup, because there is no Prefect server. The factory's stand-in is handed the run
+# directory the real engine entry point derived, so every path below it is the product's.
 _WORKER = '''
 import json, os, sys
 from datetime import datetime, timezone
@@ -147,31 +151,71 @@ def scratch(stage):
     return wrapped()
 
 
-def authored_plan(instance, **kwargs):
-    """Stand in for extraction: write the plan artifact this run would have produced."""
-    import pyarrow as pa
-    import pyarrow.parquet as pq
+class ExtractingEngine:
+    """The engine surface a plan touches, standing in for extraction only.
 
+    It is constructed by the real `execute_run`, in the run directory the real
+    `execute_run` derived, and it writes the artifact the product's own writer produces.
+    Everything around it -- the pipeline lock, the run sidecar, reading the saved plan back
+    -- is the product's.
+    """
+
+    def __init__(self, run_directory, config_version):
+        self.run_dir = run_directory
+        self.run_id = run_directory.name
+        self.top_level = ["BuiltinTag"]
+        self.tiers = None
+        self.force_full_extract = False
+        self.cache_root = run_directory.parent
+        self._config_version = config_version
+
+    def load_both_sides(self):
+        """The one boundary this environment cannot provide."""
+
+    def diff(self):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(rows=[], has_diffs=lambda: False, str=lambda: "extracted-diff")
+
+    def _diff_to_rows(self, _diff):
+        return []
+
+    def write_plan(self, _diff):
+        """Write the source snapshots and the plan artifact this run hands on."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        (self.run_dir / "A").mkdir(parents=True, exist_ok=True)
+        pq.write_table(
+            pa.table({{"name": ["prod"], "_extract_ts": ["2026-09-04T12:00:00+00:00"]}}),
+            self.run_dir / "A" / "tag.parquet",
+        )
+        write_plan_artifact(
+            run_dir=self.run_dir,
+            run_id=self.run_id,
+            config_version=self._config_version,
+            source_snapshot=[
+                SourceSnapshotRecord(**record) for record in source_snapshot_records(self.run_dir)
+            ],
+            deletes_computed=True,
+            operations=[PlannedOperation.model_validate(operation_record(identity={{"name": "prod"}}))],
+            configuration_binding=BINDING,
+            schema_fingerprint=SCHEMA_FINGERPRINT,
+        )
+        report["planned_in"] = str(self.run_dir)
+
+
+def engine_factory(**kwargs):
+    """Build the extraction stand-in inside the directory the real engine chose."""
+    from infrahub_sync.cache.paths import run_dir
+
+    instance = kwargs["sync_instance"]
     base = Path(kwargs["base_directory"])
     assert base.is_absolute(), base
-    directory = base / instance.name / RUN_ID
-    (directory / "A").mkdir(parents=True, exist_ok=True)
-    pq.write_table(
-        pa.table({{"name": ["prod"], "_extract_ts": ["2026-09-04T12:00:00+00:00"]}}),
-        directory / "A" / "tag.parquet",
-    )
-    write_plan_artifact(
-        run_dir=directory,
-        run_id=RUN_ID,
-        config_version=resolve_config_version(instance),
-        source_snapshot=[SourceSnapshotRecord(**record) for record in source_snapshot_records(directory)],
-        deletes_computed=True,
-        operations=[PlannedOperation.model_validate(operation_record(identity={{"name": "prod"}}))],
-        configuration_binding=BINDING,
-        schema_fingerprint=SCHEMA_FINGERPRINT,
-    )
-    report["planned_in"] = str(directory)
-    return read_saved_plan(sync_name=instance.name, run_id=RUN_ID, config=instance, base_directory=base)
+    directory = run_dir(instance.name, str(kwargs["run_id"]), base_directory=base)
+    directory.mkdir(parents=True, exist_ok=True)
+    report["engine_built_in"] = str(directory)
+    return ExtractingEngine(directory, resolve_config_version(instance))
 
 
 def models(**kwargs):
@@ -187,18 +231,12 @@ service_flow.stage_scratch = scratch
 service_flow.build_runtime_model_plan = models
 service_flow._prefect_flow_run_id = lambda: FLOW_RUN_ID
 service_flow._require_current_worker_identity = lambda *args: None
-if STAGE in ("plan", "sync"):
-    # Only extraction is doubled. The plan artifact, its snapshots, the checkpoint, the
-    # guard, the apply engine and the sidecar are all the real ones.
-    service_flow._plan = authored_plan
-    service_flow.execute_run_original = service_flow.execute_run
+# The engine factory is the only seam replaced: `service_flow._plan` and
+# `service_flow.execute_run` stay the product's, so the plan leg takes its real pipeline
+# lock inside the stage root and writes its real sidecar there.
+import infrahub_sync.execution as execution_module
 
-    def execute_run(instance, **kwargs):
-        if kwargs.get("operation") == "plan":
-            return authored_plan(instance, **kwargs)
-        return service_flow.execute_run_original(instance, **kwargs)
-
-    service_flow.execute_run = execute_run
+execution_module.get_potenda_from_instance = engine_factory
 
 os.environ["PREFECT__WORKER_ID"] = WORKER_ID
 
@@ -258,15 +296,20 @@ def _run_worker(  # noqa: PLR0913 - one parameter per input the worker process n
         "INFRAHUB_API_TOKEN": "qualification-destination-token",
         "NETBOX_TOKEN": "qualification-source-token",
     }
-    # No worker receives a cache setting: a stage that read one would be reaching for a
-    # filesystem it is not allowed to share.
-    environment.pop("INFRAHUB_SYNC_CACHE_DIR", None)
+    # The upgraded operator's shell: the retired cache setting is still exported, and the
+    # worker is started somewhere that is not its stage root. Both are left in place on
+    # purpose -- a stage that reaches for either is what this qualification catches.
+    legacy_cache = report_root / "legacy-cache-canary"
+    legacy_cache.mkdir(exist_ok=True)
+    working_directory = report_root / "cwd-canary"
+    working_directory.mkdir(exist_ok=True)
+    environment["INFRAHUB_SYNC_CACHE_DIR"] = str(legacy_cache)
     completed = subprocess.run(  # noqa: S603 - fixed interpreter, inline script, no shell.
         [sys.executable, "-c", textwrap.dedent(script)],
         capture_output=True,
         text=True,
         env=environment,
-        cwd=str(report_root),
+        cwd=str(working_directory),
         check=False,
     )
     if not report.is_file():
@@ -275,6 +318,8 @@ def _run_worker(  # noqa: PLR0913 - one parameter per input the worker process n
     written["returncode"] = completed.returncode
     written["stderr"] = completed.stderr[-3000:]
     written["detail"] = f"{written.get('error_type')}: {written.get('error')}\n{written['stderr']}"
+    written["legacy_cache_contents"] = sorted(str(path.relative_to(legacy_cache)) for path in legacy_cache.rglob("*"))
+    written["cwd_contents"] = sorted(str(path.relative_to(working_directory)) for path in working_directory.rglob("*"))
     return written
 
 
@@ -393,6 +438,10 @@ def test_a_run_survives_worker_replacement_across_plan_verify_and_apply(  # noqa
     )
     assert planned["ok"], planned["detail"]
     assert planned["outcome"] == "planned"
+    assert planned["legacy_cache_contents"] == [], planned["legacy_cache_contents"]
+    assert planned["cwd_contents"] == [], planned["cwd_contents"]
+    # The real engine entry point derived this run's directory inside the stage root.
+    assert Path(planned["engine_built_in"]).is_relative_to(Path(planned["scratch"]))
 
     # The planning worker is gone. Its private scratch went with it, and the parent
     # removes the path as well so nothing can depend on it existing.
@@ -420,6 +469,8 @@ def test_a_run_survives_worker_replacement_across_plan_verify_and_apply(  # noqa
     )
     assert verified["ok"], verified["detail"]
     assert verified["outcome"] == "verified"
+    assert verified["legacy_cache_contents"] == []
+    assert verified["cwd_contents"] == []
     assert verified["pid"] != planned["pid"]
     verifying_scratch = Path(verified["scratch"])
     assert verifying_scratch != planning_scratch
@@ -443,6 +494,8 @@ def test_a_run_survives_worker_replacement_across_plan_verify_and_apply(  # noqa
     )
     assert applied["ok"], applied["detail"]
     assert applied["outcome"] == "applied"
+    assert applied["legacy_cache_contents"] == []
+    assert applied["cwd_contents"] == []
     assert applied["pid"] not in {planned["pid"], verified["pid"]}
     assert applied["destination_constructed"] is True
     assert len(applied["dispatched"]) == 1
@@ -493,6 +546,8 @@ def test_a_separate_managed_sync_publishes_both_checkpoints_and_the_baseline(
 
     assert synced["ok"], synced["detail"]
     assert len(synced["dispatched"]) == 1
+    assert synced["legacy_cache_contents"] == [], synced["legacy_cache_contents"]
+    assert synced["cwd_contents"] == [], synced["cwd_contents"]
     assert not Path(synced["scratch"]).exists()
     assert projection.lookup_internal_reference(run_id, PLAN_CHECKPOINT_ARTIFACT_ID).value is not None
     assert projection.lookup_internal_reference(run_id, FINAL_CHECKPOINT_ARTIFACT_ID).value is not None
