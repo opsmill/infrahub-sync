@@ -12,6 +12,7 @@ from io import BytesIO
 from pathlib import Path
 
 import pytest
+
 from infrahub_sync.product_store.bundle import (
     BUNDLE_MANIFEST_NAME,
     MAX_BUNDLE_BYTES,
@@ -20,6 +21,11 @@ from infrahub_sync.product_store.bundle import (
     read_bundle,
     write_bundle,
 )
+
+# The archive these members produce. Pinned as a literal so the determinism cases fail
+# on any host where the writer stops being reproducible, not only on this one.
+_ARCHIVE_DIGEST = "fbe4fca5318378df86862dee86d8b2885dbf889f1a312d4dd5086d67fd14750b"
+_ARCHIVE_SIZE = 1254
 
 _MEMBERS = {
     "plan/operations.jsonl": b'{"op": "create", "id": "1"}\n{"op": "update", "id": "2"}\n',
@@ -52,9 +58,16 @@ def _rebuild(members: dict[str, bytes], *, manifest: bytes | None = None) -> byt
 # ---------------------------------------------------------------------------
 
 
-def test_the_same_members_serialize_to_identical_bytes() -> None:
-    """Determinism is the property; a stable digest is how a retry stays idempotent."""
-    assert write_bundle(_MEMBERS) == write_bundle(_MEMBERS)
+def test_the_members_serialize_to_the_pinned_archive_vector() -> None:
+    """A literal vector, because "equal to itself" passes for a clock-dependent writer.
+
+    Any drift in timestamp, permissions, host system, member order, compression method,
+    or manifest encoding moves this digest, on this host or any other.
+    """
+    archive = write_bundle(_MEMBERS)
+
+    assert len(archive) == _ARCHIVE_SIZE
+    assert sha256(archive).hexdigest() == _ARCHIVE_DIGEST
 
 
 def test_member_insertion_order_does_not_reach_the_bytes() -> None:
@@ -82,7 +95,7 @@ def test_timestamps_permissions_and_host_system_are_pinned() -> None:
 
 
 def test_bytes_are_identical_across_processes() -> None:
-    """A digest computed in one interpreter has to match one computed in another."""
+    """The same vector, reproduced by interpreters that share no state with this one."""
     script = (
         "import sys, json;"
         "from hashlib import sha256;"
@@ -103,7 +116,7 @@ def test_bytes_are_identical_across_processes() -> None:
         )
         digests.add(result.stdout.strip())
 
-    assert digests == {sha256(write_bundle(_MEMBERS)).hexdigest()}
+    assert digests == {_ARCHIVE_DIGEST}
 
 
 def test_a_bundle_round_trips_through_its_own_reader() -> None:
@@ -158,14 +171,17 @@ def test_the_writer_refuses_an_empty_bundle() -> None:
 
 
 def test_a_duplicate_member_name_is_refused() -> None:
+    """Two entries under one name make "which bytes" a reader-implementation detail."""
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
         archive.writestr(BUNDLE_MANIFEST_NAME, b"{}")
         archive.writestr("plan/manifest.json", b"first")
         archive.writestr("plan/manifest.json", b"second")
 
-    with pytest.raises(BundleFormatError):
+    with pytest.raises(BundleFormatError) as refusal:
         read_bundle(buffer.getvalue())
+
+    assert refusal.value.reason == "bundle-duplicate-member"
 
 
 def test_case_colliding_member_names_are_refused() -> None:
@@ -189,7 +205,10 @@ def test_a_member_path_escaping_the_destination_is_refused(path: str) -> None:
 
 
 def test_a_symlink_member_is_refused() -> None:
-    """A symlink entry turns extraction into a write through a path the archive chose."""
+    """A symlink entry turns extraction into a write through a path the archive chose.
+
+    The name satisfies the grammar, so only the entry's file type can refuse it.
+    """
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
         archive.writestr(BUNDLE_MANIFEST_NAME, b"{}")
@@ -198,8 +217,10 @@ def test_a_symlink_member_is_refused() -> None:
         entry.create_system = 3
         archive.writestr(entry, b"/etc/passwd")
 
-    with pytest.raises(BundleFormatError):
+    with pytest.raises(BundleFormatError) as refusal:
         read_bundle(buffer.getvalue())
+
+    assert refusal.value.reason == "bundle-non-regular-member"
 
 
 @pytest.mark.parametrize(
@@ -295,19 +316,24 @@ def test_bytes_that_are_not_a_zip_archive_are_refused() -> None:
 
 
 def test_an_archive_over_the_size_bound_is_refused_before_parsing() -> None:
-    with pytest.raises(BundleFormatError):
+    """These bytes are not a readable archive, so the reason names which check ran first."""
+    with pytest.raises(BundleFormatError) as refusal:
         read_bundle(b"\x00" * (MAX_BUNDLE_BYTES + 1))
 
+    assert refusal.value.reason == "bundle-too-large"
 
-def test_a_member_declaring_more_than_the_bound_is_refused_before_reading_it() -> None:
-    """The central directory states the size, so the bomb is refused without inflating it."""
+
+def test_a_decompression_bomb_is_refused_on_its_method_before_its_declared_size() -> None:
+    """Storing members uncompressed is what makes the archive bound bound the members."""
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(BUNDLE_MANIFEST_NAME, b"{}")
         archive.writestr("A/bomb.parquet", b"\x00" * (MAX_BUNDLE_BYTES + 1))
 
-    with pytest.raises(BundleFormatError):
+    with pytest.raises(BundleFormatError) as refusal:
         read_bundle(buffer.getvalue())
+
+    assert refusal.value.reason == "bundle-unsupported-compression"
 
 
 # ---------------------------------------------------------------------------
