@@ -228,6 +228,30 @@ class ProductRun(BaseModel):
         return self.config_id, self.registry_version, self.package_checksum
 
 
+class BaselineWriteback(BaseModel):
+    """The safety reference one successful write execution contributes.
+
+    Carries what the run observed, not what the next run should conclude: the cadence
+    counter is derived by the store, so the rule for advancing it lives in one place.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    source_row_counts: dict[str, int]
+    full_extract: bool
+
+
+class ConfigurationBaseline(BaseModel):
+    """The durable safety reference for one configuration's last successful write."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    source_row_counts: dict[str, int]
+    runs_since_full_extract: int = Field(ge=0)
+    updated_at: datetime
+
+
 class ExecutionFinishWriteback(BaseModel):
     """Complete business writeback committed with one claimed execution verdict."""
 
@@ -239,6 +263,9 @@ class ExecutionFinishWriteback(BaseModel):
     finished_at: datetime
     summary: dict[str, Any]
     results: dict[str, Any]
+    # Present only when this execution completed a write whose source counts are safe to
+    # become the next run's reference. Absent on every read stage.
+    baseline: BaselineWriteback | None = None
 
     @field_validator("finished_at", mode="before")
     @classmethod

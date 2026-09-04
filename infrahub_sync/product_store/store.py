@@ -26,6 +26,8 @@ from infrahub_sync.product_store.bundle import MAX_BUNDLE_BYTES
 from infrahub_sync.product_store.models import (
     ArtifactReference,
     AuditEvent,
+    BaselineWriteback,
+    ConfigurationBaseline,
     ConfigurationSummary,
     ConfigurationVersion,
     ExecutionFinishWriteback,
@@ -50,6 +52,10 @@ CREATE TABLE IF NOT EXISTS artifact_refs (
     manifest_key TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, expires_at TEXT, published INTEGER NOT NULL,
     visibility TEXT NOT NULL DEFAULT 'public',
     PRIMARY KEY (run_id, artifact_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id)
+);
+CREATE TABLE IF NOT EXISTS configuration_baselines (
+    config_id TEXT PRIMARY KEY, source_row_counts TEXT NOT NULL,
+    runs_since_full_extract INTEGER NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS mutation_receipts (
     receipt_id TEXT PRIMARY KEY, actor TEXT NOT NULL, key_digest TEXT NOT NULL,
@@ -285,6 +291,12 @@ manifest_key, created_at, expires_at, published, visibility FROM artifact_refs W
 _SELECT_ARTIFACT_REFERENCE_BY_VISIBILITY = """SELECT run_id, artifact_id, kind, media_type, digest, size, object_key,
 manifest_key, created_at, expires_at, published, visibility FROM artifact_refs
 WHERE run_id = ? AND artifact_id = ? AND visibility = ?"""
+_SELECT_CONFIGURATION_BASELINE = """SELECT config_id, source_row_counts, runs_since_full_extract, updated_at
+FROM configuration_baselines WHERE config_id = ?"""
+_UPSERT_CONFIGURATION_BASELINE = """INSERT INTO configuration_baselines (config_id, source_row_counts,
+runs_since_full_extract, updated_at) VALUES (?, ?, ?, ?)
+ON CONFLICT (config_id) DO UPDATE SET source_row_counts = EXCLUDED.source_row_counts,
+runs_since_full_extract = EXCLUDED.runs_since_full_extract, updated_at = EXCLUDED.updated_at"""
 _INSERT_ARTIFACT_REFERENCE = """INSERT INTO artifact_refs (run_id, artifact_id, kind, media_type, digest, size,
 object_key, manifest_key, created_at, expires_at, published, visibility)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
@@ -394,6 +406,8 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     ) -> LookupResult[tuple[ArtifactReference, bool]]: ...
 
     def has_pending_artifacts(self, run_id: str) -> bool: ...
+
+    def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]: ...
 
     def add_prefect_execution(
         self, run_id: str, link: PrefectExecutionLink, *, receipt_id: str, allocate_attempt: bool = False
@@ -1212,6 +1226,14 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                             flow_run_id,
                         ),
                     )
+                    # Only a write that actually succeeded may become the next run's
+                    # safety reference. A failed or ambiguous terminal leaves the previous
+                    # baseline standing, because it is still the last state known good.
+                    if writeback.baseline is not None and (terminal_state, terminal_outcome) == (
+                        "completed",
+                        "succeeded",
+                    ):
+                        self._record_configuration_baseline(cursor, run_id, writeback.baseline, terminal_at)
                 else:
                     cursor.execute(
                         self._sql(_SELECT_LATEST_EXECUTION_RESULTS),
@@ -1259,6 +1281,64 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.close()
         finally:
             connection.close()
+
+    def _record_configuration_baseline(
+        self,
+        cursor: _Cursor,
+        run_id: str,
+        baseline: BaselineWriteback,
+        updated_at: datetime,
+    ) -> None:
+        """Replace the run's configuration baseline inside the caller's transaction.
+
+        The counts replace rather than merge: the baseline describes one run's source, so
+        carrying forward a resource this configuration no longer extracts would let the
+        next run's guardrail compare against something nothing produces any more.
+        """
+        cursor.execute(self._sql("SELECT config_id FROM product_runs WHERE run_id = ?"), (run_id,))
+        run_row = cursor.fetchone()
+        if run_row is None or run_row[0] is None:
+            # A run with no registered configuration has nothing to scope a baseline to.
+            return
+        config_id = str(run_row[0])
+        cursor.execute(self._sql(_SELECT_CONFIGURATION_BASELINE), (config_id,))
+        stored = cursor.fetchone()
+        previous = 0 if stored is None else int(stored[2])
+        runs_since_full_extract = 0 if baseline.full_extract else previous + 1
+        cursor.execute(
+            self._sql(_UPSERT_CONFIGURATION_BASELINE),
+            (
+                config_id,
+                _json(baseline.source_row_counts),
+                runs_since_full_extract,
+                updated_at.isoformat(),
+            ),
+        )
+
+    def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]:
+        """Return the configuration's durable safety reference, if a write has set one."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_SELECT_CONFIGURATION_BASELINE), (config_id,))
+                row = cursor.fetchone()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        if row is None:
+            return LookupResult(value=None, reason="configuration-baseline-not-found")
+        return LookupResult(
+            value=ConfigurationBaseline.model_validate(
+                {
+                    "config_id": row[0],
+                    "source_row_counts": _JSON_MAPPING_ADAPTER.validate_json(str(row[1])),
+                    "runs_since_full_extract": row[2],
+                    "updated_at": row[3],
+                }
+            )
+        )
 
     def request_execution_cancellation(
         self,
@@ -2625,6 +2705,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
                 finished_at=writeback.finished_at,
                 summary=cast("dict[str, Any]", _redact_value(_normalize_mapping(writeback.summary), secrets)),
                 results=cast("dict[str, Any]", _redact_value(_normalize_mapping(writeback.results), secrets)),
+                baseline=_redacted_baseline(writeback.baseline, secrets),
             )
         else:
             sanitized = ExecutionMergeWriteback(
@@ -2897,6 +2978,10 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         if not already_marked:
             self._records.mark_artifact_published(reference)
         return reference
+
+    def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]:
+        """Return one configuration's durable source-count and full-extract reference."""
+        return self._records.lookup_configuration_baseline(config_id)
 
     def lookup_artifact(self, run_id: str, artifact_id: str) -> LookupResult[bytes]:
         """Resolve only a published, public, run-owned reference, with explicit unavailability."""
@@ -3366,6 +3451,16 @@ def _require_execution_timestamp(value: datetime) -> None:
     if value.utcoffset() is None:
         msg = "execution timestamps must include a timezone"
         raise ValueError(msg)
+
+
+def _redacted_baseline(baseline: BaselineWriteback | None, secrets: Sequence[str]) -> BaselineWriteback | None:
+    """Sanitize a baseline's resource names, which reach the store from a worker."""
+    if baseline is None:
+        return None
+    return BaselineWriteback(
+        source_row_counts=cast("dict[str, int]", _redact_value(baseline.source_row_counts, secrets)),
+        full_extract=baseline.full_extract,
+    )
 
 
 def _redact_value(value: Any, secrets: Sequence[str]) -> Any:

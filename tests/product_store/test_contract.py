@@ -60,6 +60,8 @@ EXPECTED_PUBLIC_NAMES = {
     "ArtifactReference",
     "ArtifactUnavailableError",
     "AuditEvent",
+    "BaselineWriteback",
+    "ConfigurationBaseline",
     "ConfigurationNotFoundError",
     "ConfigurationSummary",
     "ConfigurationVersion",
@@ -3477,6 +3479,7 @@ _ALLOWED_STORE_CONFIGURATION_METHODS = frozenset(
         "lookup_configuration_version",
         "list_configurations",
         "list_configuration_versions",
+        "lookup_configuration_baseline",
     }
 )
 _ALLOWED_PROJECTION_CONFIGURATION_METHODS = frozenset(
@@ -3487,6 +3490,7 @@ _ALLOWED_PROJECTION_CONFIGURATION_METHODS = frozenset(
         "lookup_configuration_version",
         "list_configurations",
         "list_configuration_versions",
+        "lookup_configuration_baseline",
     }
 )
 
