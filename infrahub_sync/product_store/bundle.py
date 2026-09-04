@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 from infrahub_sync.plan.canonical import canonical_json_bytes
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Collection, Mapping
 
 __all__ = [
     "BUNDLE_FORMAT_VERSION",
@@ -40,6 +40,7 @@ __all__ = [
     "BUNDLE_MEDIA_TYPE",
     "FINAL_CHECKPOINT_ARTIFACT_ID",
     "MAX_BUNDLE_BYTES",
+    "MAX_BUNDLE_MEMBERS",
     "PLAN_CHECKPOINT_ARTIFACT_ID",
     "BundleFormatError",
     "extract_bundle",
@@ -51,6 +52,12 @@ BUNDLE_FORMAT_VERSION = 1
 BUNDLE_MANIFEST_NAME = "bundle-manifest.json"
 BUNDLE_MEDIA_TYPE = "application/vnd.infrahub-sync.run-bundle.v1+zip"
 MAX_BUNDLE_BYTES = 64 * 1024 * 1024
+# The most members one bundle may hold, not counting the manifest. A checkpoint carries
+# the plan's two files plus one Parquet file per extracted resource kind, so this sits far
+# above any real configuration. It exists because the byte bound alone does not bound the
+# entry count: an archive of empty members stays small while costing the reader one entry,
+# one set element, and one dictionary entry each.
+MAX_BUNDLE_MEMBERS = 1024
 
 # Fixed for the lifetime of format version 1: a stage looks up its predecessor's bundle
 # by this identifier, so the two are part of the protocol rather than naming choices.
@@ -70,7 +77,7 @@ _ENCRYPTED_FLAG = 0x1
 # ASCII set. Stating the accepted domain this way is what excludes absolute paths, `..`
 # traversal, empty and dot segments, backslashes, drive letters, control characters, and
 # non-ASCII homoglyphs, without enumerating any of them.
-_MEMBER_PATH = compile_pattern(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+_MEMBER_PATH = compile_pattern(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*")
 
 # The refusal vocabulary. A caller that has to react differently per property reads
 # `BundleFormatError.reason` rather than a message, and the store maps these onto its own
@@ -80,6 +87,7 @@ TOO_LARGE = "bundle-too-large"
 MEMBER_PATH_REJECTED = "bundle-member-path-rejected"
 DUPLICATE_MEMBER = "bundle-duplicate-member"
 CASE_COLLISION = "bundle-case-collision"
+TOO_MANY_MEMBERS = "bundle-too-many-members"
 MANIFEST_ABSENT = "bundle-manifest-absent"
 MANIFEST_INVALID = "bundle-manifest-invalid"
 UNSUPPORTED_COMPRESSION = "bundle-unsupported-compression"
@@ -107,13 +115,18 @@ class BundleFormatError(ValueError):
 def write_bundle(members: Mapping[str, bytes]) -> bytes:
     """Serialize `members` into the deterministic uncompressed bundle archive.
 
-    Raises `BundleFormatError` when a member path is outside the format's grammar or the
-    archive would exceed the size bound.
+    Every archive this returns is one `read_bundle` accepts: the writer holds itself to
+    the reader's accepted domain rather than to a looser one. Raises `BundleFormatError`
+    when the members are outside that domain or the completed archive exceeds the size
+    bound.
     """
     if not members:
         raise BundleFormatError(EMPTY)
+    if len(members) > MAX_BUNDLE_MEMBERS:
+        raise BundleFormatError(TOO_MANY_MEMBERS)
     for path in members:
         _require_member_path(path)
+    _require_distinct_when_case_folded(members.keys())
     manifest = _manifest_bytes(members)
     if len(manifest) + sum(len(payload) for payload in members.values()) > MAX_BUNDLE_BYTES:
         raise BundleFormatError(TOO_LARGE)
@@ -122,7 +135,13 @@ def write_bundle(members: Mapping[str, bytes]) -> bytes:
         _write_entry(archive, BUNDLE_MANIFEST_NAME, manifest)
         for path in sorted(members):
             _write_entry(archive, path, members[path])
-    return buffer.getvalue()
+    archive_bytes = buffer.getvalue()
+    # The payload check above cannot see ZIP local headers, the central directory, or the
+    # end-of-archive record, and the bound the reader applies covers all of them. Only the
+    # completed archive answers the question the reader will ask.
+    if len(archive_bytes) > MAX_BUNDLE_BYTES:
+        raise BundleFormatError(TOO_LARGE)
+    return archive_bytes
 
 
 def read_bundle(data: bytes) -> dict[str, bytes]:
@@ -170,8 +189,16 @@ def extract_bundle(data: bytes, destination: Path) -> None:
 
 
 def _require_member_path(path: str) -> None:
-    if not _MEMBER_PATH.match(path):
+    # `fullmatch`, never `match`: an anchored `$` also matches immediately before a final
+    # newline, which would put a control character inside the grammar's accepted domain.
+    if not _MEMBER_PATH.fullmatch(path):
         raise BundleFormatError(MEMBER_PATH_REJECTED)
+
+
+def _require_distinct_when_case_folded(names: Collection[str]) -> None:
+    """Two names differing only by case become one file on a case-folding filesystem."""
+    if len({name.lower() for name in names}) != len(names):
+        raise BundleFormatError(CASE_COLLISION)
 
 
 def _write_entry(archive: zipfile.ZipFile, path: str, payload: bytes) -> None:
@@ -195,12 +222,18 @@ def _manifest_bytes(members: Mapping[str, bytes]) -> bytes:
 
 
 def _require_sound_entries(entries: list[zipfile.ZipInfo]) -> None:
-    """Reject every structural property that makes an archive unsafe to extract."""
+    """Reject every structural property that makes an archive unsafe to extract.
+
+    The entry count is bounded first. Every later check builds a list, a set, or a
+    dictionary over the entries, so the bound has to apply before any of them exists.
+    One entry above the member limit is the manifest.
+    """
+    if len(entries) > MAX_BUNDLE_MEMBERS + 1:
+        raise BundleFormatError(TOO_MANY_MEMBERS)
     names = [entry.filename for entry in entries]
     if len(set(names)) != len(names):
         raise BundleFormatError(DUPLICATE_MEMBER)
-    if len({name.lower() for name in names}) != len(names):
-        raise BundleFormatError(CASE_COLLISION)
+    _require_distinct_when_case_folded(names)
     if BUNDLE_MANIFEST_NAME not in names:
         raise BundleFormatError(MANIFEST_ABSENT)
     total = 0
@@ -228,17 +261,22 @@ def _declared_members(manifest: bytes) -> dict[str, dict[str, Any]]:
         document = json.loads(manifest)
     except (json.JSONDecodeError, UnicodeDecodeError):
         raise BundleFormatError(MANIFEST_INVALID) from None
-    if not isinstance(document, dict) or document.get("format_version") != BUNDLE_FORMAT_VERSION:
+    if not isinstance(document, dict) or not _is_whole_number(document.get("format_version")):
+        raise BundleFormatError(MANIFEST_INVALID)
+    if document["format_version"] != BUNDLE_FORMAT_VERSION:
         raise BundleFormatError(MANIFEST_INVALID)
     declared = document.get("members")
     if not isinstance(declared, list):
         raise BundleFormatError(MANIFEST_INVALID)
+    # Bounded before the table below exists, for the same reason the entry count is.
+    if len(declared) > MAX_BUNDLE_MEMBERS:
+        raise BundleFormatError(TOO_MANY_MEMBERS)
     table: dict[str, dict[str, Any]] = {}
     for member in declared:
         if (
             not isinstance(member, dict)
             or not isinstance(member.get("path"), str)
-            or not isinstance(member.get("size"), int)
+            or not _is_whole_number(member.get("size"))
             or not isinstance(member.get("sha256"), str)
         ):
             raise BundleFormatError(MANIFEST_INVALID)
@@ -246,6 +284,15 @@ def _declared_members(manifest: bytes) -> dict[str, dict[str, Any]]:
     if len(table) != len(declared):
         raise BundleFormatError(MANIFEST_INVALID)
     return table
+
+
+def _is_whole_number(value: Any) -> bool:
+    """`True` only for a non-negative plain integer.
+
+    `bool` subclasses `int` and JSON `true` equals 1, so an `isinstance` test alone would
+    let a Boolean stand in for a version or a length. A negative length is never a length.
+    """
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def _verified(payload: bytes, declared: Mapping[str, Any]) -> bytes:

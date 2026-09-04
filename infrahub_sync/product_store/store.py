@@ -22,7 +22,11 @@ from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.configuration import ConfigurationPackage, validate_package_credentials
 from infrahub_sync.execution import REDACTED, redact
 from infrahub_sync.plan.canonical import canonical_json_bytes
-from infrahub_sync.product_store.bundle import MAX_BUNDLE_BYTES
+from infrahub_sync.product_store.bundle import (
+    FINAL_CHECKPOINT_ARTIFACT_ID,
+    MAX_BUNDLE_BYTES,
+    PLAN_CHECKPOINT_ARTIFACT_ID,
+)
 from infrahub_sync.product_store.models import (
     ArtifactReference,
     AuditEvent,
@@ -250,6 +254,9 @@ _ADMITTED_APPEND_REFUSED = (
 _UNRESOLVED_APPEND_REFUSED = "appending an execution requires an unresolved mutation receipt for this run"
 _REPEATED_APPEND_REFUSED = "this mutation receipt has already appended its one execution"
 _PREFECT_POSITION_ATTEMPTS = 3
+# The run-bundle protocol fixes these two identifiers, so their one writer is a product
+# stage that may repeat a completed publication after losing the response to it.
+_FIXED_CHECKPOINT_ARTIFACT_IDS = frozenset({PLAN_CHECKPOINT_ARTIFACT_ID, FINAL_CHECKPOINT_ARTIFACT_ID})
 _RESULT_MERGE_ATTEMPTS = 5
 _SCHEMA_INITIALIZATION_ATTEMPTS = 2
 # Measured, not guessed: across roughly 4,800 trials of 8 concurrent distinct-checksum
@@ -2966,11 +2973,20 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             already_marked = published
             publication = self._artifacts.lookup(reference)
             if publication.available:
-                if published:
-                    msg = f"Artifact {artifact_id!r} is already published on run {run_id!r}"
-                    raise DuplicateArtifactError(msg)
-                self._records.mark_artifact_published(reference)
-                return reference
+                if not published:
+                    self._records.mark_artifact_published(reference)
+                    return reference
+                # A fixed internal checkpoint has one writer — the product's own stage —
+                # which repeats the publication when it loses the response rather than
+                # the write. Reaching here means the request's metadata equals the
+                # committed reference and the stored bytes have just been validated
+                # complete against it, so this retry is the publication that already
+                # succeeded. Any other artifact keeps the conflict: a repeat there is a
+                # second author, not a lost answer.
+                if _is_fixed_internal_checkpoint(reference):
+                    return reference
+                msg = f"Artifact {artifact_id!r} is already published on run {run_id!r}"
+                raise DuplicateArtifactError(msg)
             if publication.reason != "manifest-unavailable":
                 msg = f"Artifact {artifact_id!r} has an incomplete publication that cannot be resumed: {publication.reason}"
                 raise ArtifactUnavailableError(msg)
@@ -3332,6 +3348,11 @@ def _reference_from_row(row: Sequence[Any]) -> ArtifactReference:
             "visibility": row[11],
         }
     )
+
+
+def _is_fixed_internal_checkpoint(reference: ArtifactReference) -> bool:
+    """Whether this reference is one of the two run-bundle checkpoints the protocol fixes."""
+    return reference.visibility == "internal" and reference.artifact_id in _FIXED_CHECKPOINT_ARTIFACT_IDS
 
 
 def _same_publication(existing: ArtifactReference, requested: ArtifactReference) -> bool:

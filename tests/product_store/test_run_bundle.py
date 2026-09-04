@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import subprocess  # noqa: S404 - fixed local interpreter probes cross-process determinism.
 import sys
 import zipfile
+from collections.abc import Callable
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -16,6 +18,7 @@ import pytest
 from infrahub_sync.product_store.bundle import (
     BUNDLE_MANIFEST_NAME,
     MAX_BUNDLE_BYTES,
+    MAX_BUNDLE_MEMBERS,
     BundleFormatError,
     extract_bundle,
     read_bundle,
@@ -38,6 +41,29 @@ _MEMBERS = {
 def _entries(data: bytes) -> list[zipfile.ZipInfo]:
     with zipfile.ZipFile(BytesIO(data)) as archive:
         return list(archive.infolist())
+
+
+def _manifest_for(
+    members: dict[str, bytes],
+    *,
+    format_version: object = 1,
+    sizes: dict[str, object] | None = None,
+) -> bytes:
+    """A manifest that agrees with `members`, so a case isolates the field it changes."""
+    declared = sizes or {}
+    return json.dumps(
+        {
+            "format_version": format_version,
+            "members": [
+                {
+                    "path": path,
+                    "size": declared.get(path, len(members[path])),
+                    "sha256": sha256(members[path]).hexdigest(),
+                }
+                for path in sorted(members)
+            ],
+        }
+    ).encode()
 
 
 def _rebuild(members: dict[str, bytes], *, manifest: bytes | None = None) -> bytes:
@@ -163,6 +189,65 @@ def test_the_writer_refuses_a_bundle_over_the_size_bound() -> None:
 def test_the_writer_refuses_an_empty_bundle() -> None:
     with pytest.raises(BundleFormatError):
         write_bundle({})
+
+
+def test_a_member_path_ending_in_a_newline_is_refused() -> None:
+    """An anchored `$` also matches before a final newline; the grammar is matched in full."""
+    with pytest.raises(BundleFormatError) as writer_refusal:
+        write_bundle({"A/devices.parquet\n": b"payload"})
+
+    assert writer_refusal.value.reason == "bundle-member-path-rejected"
+
+    with pytest.raises(BundleFormatError) as reader_refusal:
+        read_bundle(_rebuild({"A/devices.parquet\n": b"payload"}))
+
+    assert reader_refusal.value.reason == "bundle-member-path-rejected"
+
+
+def test_the_writer_refuses_case_colliding_member_names() -> None:
+    """Its own reader refuses these, so emitting them would produce an unreadable bundle."""
+    with pytest.raises(BundleFormatError) as refusal:
+        write_bundle({"A/devices.parquet": b"one", "a/devices.parquet": b"two"})
+
+    assert refusal.value.reason == "bundle-case-collision"
+
+
+def test_the_writer_refuses_more_members_than_a_bundle_holds() -> None:
+    members = {f"A/m{index:05d}.parquet": b"" for index in range(MAX_BUNDLE_MEMBERS + 1)}
+
+    with pytest.raises(BundleFormatError) as refusal:
+        write_bundle(members)
+
+    assert refusal.value.reason == "bundle-too-many-members"
+
+
+def test_the_writer_refuses_an_archive_that_only_its_framing_pushes_over_the_bound() -> None:
+    """Payload alone is not the archive: local headers and the directory count too."""
+    with pytest.raises(BundleFormatError) as refusal:
+        write_bundle({"A/huge.parquet": b"\x00" * (MAX_BUNDLE_BYTES - 200)})
+
+    assert refusal.value.reason == "bundle-too-large"
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        pytest.param(lambda: dict(_MEMBERS), id="ordinary"),
+        pytest.param(
+            lambda: {f"A/m{index:05d}.parquet": b"x" for index in range(MAX_BUNDLE_MEMBERS)},
+            id="most-members",
+        ),
+        pytest.param(lambda: {"A/huge.parquet": b"\x00" * (MAX_BUNDLE_BYTES - 1024)}, id="largest-payload"),
+    ],
+)
+def test_the_reader_accepts_every_archive_the_writer_returns(build: Callable[[], dict[str, bytes]]) -> None:
+    """At each bound's edge the writer's accepted domain stays inside the reader's."""
+    members = build()
+
+    data = write_bundle(members)
+
+    assert len(data) <= MAX_BUNDLE_BYTES
+    assert read_bundle(data) == members
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +406,72 @@ def test_an_archive_over_the_size_bound_is_refused_before_parsing() -> None:
         read_bundle(b"\x00" * (MAX_BUNDLE_BYTES + 1))
 
     assert refusal.value.reason == "bundle-too-large"
+
+
+def test_a_manifest_whose_version_is_a_boolean_is_refused() -> None:
+    """JSON `true` equals 1, so a version has to be a plain integer, not merely equal to one."""
+    manifest = _manifest_for(_MEMBERS, format_version=True)
+
+    with pytest.raises(BundleFormatError) as refusal:
+        read_bundle(_rebuild(_MEMBERS, manifest=manifest))
+
+    assert refusal.value.reason == "bundle-manifest-invalid"
+
+
+def test_a_manifest_whose_member_size_is_a_boolean_is_refused() -> None:
+    """`true` also passes a length comparison against a one-byte member."""
+    members = {"A/devices.parquet": b"x"}
+    manifest = _manifest_for(members, sizes={"A/devices.parquet": True})
+
+    with pytest.raises(BundleFormatError) as refusal:
+        read_bundle(_rebuild(members, manifest=manifest))
+
+    assert refusal.value.reason == "bundle-manifest-invalid"
+
+
+def test_a_manifest_declaring_a_negative_member_size_is_refused() -> None:
+    """A length is refused where the manifest is parsed, not incidentally at verification."""
+    members = {"A/devices.parquet": b"x"}
+    manifest = _manifest_for(members, sizes={"A/devices.parquet": -1})
+
+    with pytest.raises(BundleFormatError) as refusal:
+        read_bundle(_rebuild(members, manifest=manifest))
+
+    assert refusal.value.reason == "bundle-manifest-invalid"
+
+
+def test_an_archive_holding_more_entries_than_a_bundle_holds_is_refused() -> None:
+    """A small archive can still declare enough entries to make reading it disproportionate."""
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr(BUNDLE_MANIFEST_NAME, b"{}")
+        for index in range(MAX_BUNDLE_MEMBERS + 1):
+            archive.writestr(f"A/m{index:05d}.parquet", b"")
+    data = buffer.getvalue()
+
+    with pytest.raises(BundleFormatError) as refusal:
+        read_bundle(data)
+
+    assert refusal.value.reason == "bundle-too-many-members"
+    assert len(data) < MAX_BUNDLE_BYTES
+
+
+def test_a_manifest_declaring_more_members_than_a_bundle_holds_is_refused() -> None:
+    """The manifest's own table is bounded before it is built, not after."""
+    overdeclared = json.dumps(
+        {
+            "format_version": 1,
+            "members": [
+                {"path": f"A/m{index:05d}.parquet", "size": 0, "sha256": "a" * 64}
+                for index in range(MAX_BUNDLE_MEMBERS + 1)
+            ],
+        }
+    ).encode()
+
+    with pytest.raises(BundleFormatError) as refusal:
+        read_bundle(_rebuild({"A/m00000.parquet": b""}, manifest=overdeclared))
+
+    assert refusal.value.reason == "bundle-too-many-members"
 
 
 def test_a_decompression_bomb_is_refused_on_its_method_before_its_declared_size() -> None:

@@ -61,11 +61,12 @@ transferring. The transfer itself reads at most one byte past the bound, because
 comes from the same store as the object and cannot be its own witness. Only then are stored
 size and digest verified, and only then may anything parse the archive.
 
-An archive read back from storage is untrusted input. It is validated as a whole — grammar,
-duplicate and case-colliding names, entry types, compression method, encryption, declared
-against present members, manifest usability, and size — before a single byte reaches disk,
-and extraction populates a private directory that is renamed into place, so a destination
-either holds the whole bundle or does not exist.
+An archive read back from storage is untrusted input. It is validated as a whole — member
+count, grammar, duplicate and case-colliding names, entry types, compression method,
+encryption, declared against present members, manifest usability, and size — before a single
+byte reaches disk, and extraction populates a private directory that is renamed into place,
+so a destination either holds the whole bundle or does not exist. The writer holds itself to
+the same accepted domain, so an archive it returns is always one the reader takes back.
 
 ## Consequences
 
@@ -81,9 +82,10 @@ The bundle format has a version in its name and in its manifest. There is no rea
 other version and none will be added; a format change is a new version, and the pre-release
 boundary means old bundles are discarded rather than migrated.
 
-The 64 MiB bound is a product limit, not a tuning parameter. A configuration whose plan
-checkpoint would exceed it cannot hand off, and that is a refusal rather than a silent
-truncation.
+The 64 MiB and 1024-member bounds are product limits, not tuning parameters. A configuration
+whose plan checkpoint would exceed either cannot hand off, and that is a refusal rather than
+a silent truncation. The two bounds answer different questions: bytes bound the transfer,
+and the member count bounds the work of reading an archive that is small but numerous.
 
 ## Alternatives considered
 

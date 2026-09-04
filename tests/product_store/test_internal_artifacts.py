@@ -9,6 +9,7 @@ import pytest
 
 from infrahub_sync.product_store import (
     ArtifactReference,
+    ArtifactUnavailableError,
     DuplicateArtifactError,
     ProductProjection,
     ProductRun,
@@ -210,6 +211,7 @@ def test_visibility_is_part_of_publication_identity(projection: ProductProjectio
     [PLAN_CHECKPOINT_ARTIFACT_ID, FINAL_CHECKPOINT_ARTIFACT_ID],
 )
 def test_an_equal_fixed_checkpoint_retry_is_idempotent(projection: ProductProjection, artifact_id: str) -> None:
+    """A stage that loses the response, not the write, has to be able to repeat itself."""
     run_id = _created(projection)
     data = write_bundle(_BUNDLE_MEMBERS)
     first = projection.publish_artifact(
@@ -221,7 +223,49 @@ def test_an_equal_fixed_checkpoint_retry_is_idempotent(projection: ProductProjec
         visibility="internal",
     )
 
-    with pytest.raises(DuplicateArtifactError, match="is already published"):
+    repeated = projection.publish_artifact(
+        run_id,
+        artifact_id=artifact_id,
+        kind="run-bundle",
+        media_type="application/zip",
+        data=data,
+        visibility="internal",
+    )
+
+    assert repeated == first
+    stored = projection.lookup_internal_reference(run_id, artifact_id)
+    assert projection.lookup_internal_artifact(run_id, artifact_id).value == data
+    assert stored.value is not None
+    assert stored.value.digest == first.digest
+
+
+@pytest.mark.parametrize(
+    "artifact_id",
+    [PLAN_CHECKPOINT_ARTIFACT_ID, FINAL_CHECKPOINT_ARTIFACT_ID],
+)
+def test_a_checkpoint_retry_is_refused_when_the_stored_bytes_no_longer_validate(
+    tmp_path: Path, artifact_id: str
+) -> None:
+    """Idempotency rests on the stored bytes, not on the record agreeing with itself."""
+    fake = _FakeS3()
+    projection = ProductProjection(
+        SQLiteRunStore(tmp_path / "local.sqlite3"),
+        S3ArtifactStore(fake, bucket="product-artifacts"),
+    )
+    run_id = _created(projection)
+    data = write_bundle(_BUNDLE_MEMBERS)
+    reference = projection.publish_artifact(
+        run_id,
+        artifact_id=artifact_id,
+        kind="run-bundle",
+        media_type="application/zip",
+        data=data,
+        visibility="internal",
+    )
+    stored = fake.objects["product-artifacts", reference.object_key]
+    fake.objects["product-artifacts", reference.object_key] = stored[:-1] + bytes([stored[-1] ^ 0xFF])
+
+    with pytest.raises(ArtifactUnavailableError, match="artifact-integrity-failed"):
         projection.publish_artifact(
             run_id,
             artifact_id=artifact_id,
@@ -231,10 +275,81 @@ def test_an_equal_fixed_checkpoint_retry_is_idempotent(projection: ProductProjec
             visibility="internal",
         )
 
-    stored = projection.lookup_internal_reference(run_id, artifact_id)
-    assert projection.lookup_internal_artifact(run_id, artifact_id).value == data
-    assert stored.value is not None
-    assert stored.value.digest == first.digest
+
+def test_a_repeated_public_artifact_still_conflicts(projection: ProductProjection) -> None:
+    """A public artifact has no single product writer, so a repeat is a second author."""
+    run_id = _created(projection)
+    document = b'{"review": true}'
+    projection.publish_artifact(
+        run_id,
+        artifact_id="plan-review",
+        kind="plan-review",
+        media_type="application/json",
+        data=document,
+    )
+
+    with pytest.raises(DuplicateArtifactError, match="is already published"):
+        projection.publish_artifact(
+            run_id,
+            artifact_id="plan-review",
+            kind="plan-review",
+            media_type="application/json",
+            data=document,
+        )
+
+
+@pytest.mark.parametrize(
+    "artifact_id",
+    [PLAN_CHECKPOINT_ARTIFACT_ID, FINAL_CHECKPOINT_ARTIFACT_ID],
+)
+def test_a_public_artifact_under_a_checkpoint_identifier_still_conflicts(
+    projection: ProductProjection, artifact_id: str
+) -> None:
+    """The identifier alone does not buy idempotency; the internal protocol does."""
+    run_id = _created(projection)
+    document = b'{"review": true}'
+    projection.publish_artifact(
+        run_id,
+        artifact_id=artifact_id,
+        kind="plan-review",
+        media_type="application/json",
+        data=document,
+    )
+
+    with pytest.raises(DuplicateArtifactError, match="is already published"):
+        projection.publish_artifact(
+            run_id,
+            artifact_id=artifact_id,
+            kind="plan-review",
+            media_type="application/json",
+            data=document,
+        )
+
+
+def test_a_repeated_internal_artifact_outside_the_two_checkpoints_still_conflicts(
+    projection: ProductProjection,
+) -> None:
+    """Only the two identifiers the protocol fixes have the single writer this relies on."""
+    run_id = _created(projection)
+    data = write_bundle(_BUNDLE_MEMBERS)
+    projection.publish_artifact(
+        run_id,
+        artifact_id="run-bundle-v1-scratch",
+        kind="run-bundle",
+        media_type="application/zip",
+        data=data,
+        visibility="internal",
+    )
+
+    with pytest.raises(DuplicateArtifactError, match="is already published"):
+        projection.publish_artifact(
+            run_id,
+            artifact_id="run-bundle-v1-scratch",
+            kind="run-bundle",
+            media_type="application/zip",
+            data=data,
+            visibility="internal",
+        )
 
 
 @pytest.mark.parametrize(

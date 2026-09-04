@@ -149,7 +149,9 @@ never falls back to the process working directory.
 
 The underlying PostgreSQL/S3 library constructor accepts a PostgreSQL DB-API connection
 factory and an S3-compatible client implementing the small `S3Client` protocol (`put`,
-`get`, `copy`, and `delete`):
+`get`, `head`, `get_bounded`, `copy`, and `delete`). `head` returns the stored object's
+length from metadata, and `get_bounded` returns at most one byte past the limit it is
+given, so an oversized object is refused without being buffered:
 
 ```python
 from infrahub_sync.product_store import production_product_projection
@@ -297,24 +299,44 @@ unequal one is rejected as a content conflict. Members are stored uncompressed b
 output is not identical across zlib builds or Python versions, and the members are Parquet
 and JSONL that are already compressed.
 
+Because the two checkpoint identifiers have one writer — the product stage that owns them —
+repeating a completed publication returns the existing reference instead of conflicting.
+That happens only once the request's metadata equals the committed reference and the stored
+bytes have been read back and validated complete against it, so a stage that lost the
+response rather than the write can repeat itself. Different content still conflicts,
+and a public artifact still conflicts on a repeat regardless of its identifier, because a
+public artifact has no single product writer.
+
 Bundles are published and looked up through the same providers as public artifacts, so a
 deployment needs no additional storage settings.
 
 ### Storage limits
 
-A bundle is at most 64 MiB, and that bound is enforced on both sides. Writing a larger
-bundle is refused rather than truncated. Reading is bounded three times: the committed
-reference's recorded size is checked before the provider is contacted at all, the provider
-checks the stored object's length from metadata before transferring it, and the transfer
-itself stops one byte past the bound. Stored size and SHA-256 are verified before any
-archive structure is read.
+A bundle is at most 64 MiB and holds at most 1024 members, not counting its manifest. Both
+bounds are enforced on both sides. Writing past either is refused rather than truncated,
+and the size bound is applied to the completed archive, so the ZIP headers and central
+directory count against it exactly as they do when the archive is read back. Every archive
+the writer returns is one the reader accepts.
 
-An archive is validated as a whole before extraction writes anything: member path grammar,
-duplicate and case-colliding names, entry types, compression method, encryption, declared
-members against present members, per-member and total size, and manifest usability.
-Extraction is all-or-nothing into a new directory, so a destination either holds the whole
-bundle or does not exist. A configuration whose handoff state would exceed 64 MiB cannot use
-this path; the refusal is explicit.
+The member limit sits far above any real configuration — a checkpoint carries the plan's
+two files plus one Parquet file per extracted resource kind. It exists because the byte
+bound does not bound the entry count on its own: an archive of empty members stays small
+while still costing one entry each to read. The limit is applied before the reader builds
+any collection over the entries, and again before it builds the manifest's member table.
+
+Reading is bounded three times: the committed reference's recorded size is checked before
+the provider is contacted at all, the provider checks the stored object's length from
+metadata before transferring it, and the transfer itself stops one byte past the bound.
+Stored size and SHA-256 are verified before any archive structure is read.
+
+An archive is validated as a whole before extraction writes anything: member count, member
+path grammar, duplicate and case-colliding names, entry types, compression method,
+encryption, declared members against present members, per-member and total size, and
+manifest usability. The manifest's format version and member lengths must be plain
+integers and its lengths non-negative; a JSON Boolean is not a number here even though it
+compares equal to one. Extraction is all-or-nothing into a new directory, so a destination
+either holds the whole bundle or does not exist. A configuration whose handoff state would
+exceed either bound cannot use this path; the refusal is explicit.
 
 ## Configuration safety baseline
 
