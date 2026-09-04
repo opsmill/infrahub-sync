@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from hashlib import sha256
 from itertools import count
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from infrahub_sync.cache.sidecars import RunFile
@@ -22,7 +23,8 @@ from infrahub_sync.product_store.bundle import BUNDLE_MEDIA_TYPE, PLAN_CHECKPOIN
 from infrahub_sync.service.checkpoints import publish_plan_checkpoint
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Mapping
+    from typing import Any
 
     from infrahub_sync.plan.models import PlanManifest
     from infrahub_sync.product_store import PrefectExecutionLink, ProductProjection
@@ -142,11 +144,44 @@ def publish_plan_directory(projection: ProductProjection, run_id: str, run_direc
     )
 
 
+def stage_root(kwargs: Mapping[str, Any]) -> Path:
+    """Return the explicit run-directory root a service stage handed the engine.
+
+    Read rather than stringified. ``Path(str(kwargs.get("base_directory")))`` turns a
+    missing value into the relative directory ``None`` and writes the run's files under
+    whatever the caller's working directory happens to be; a stage that supplied no root
+    is a defect in the stage, so this raises instead of inventing one.
+
+    Raises:
+        AssertionError: the stage passed no explicit run directory, or passed a value that
+            is not an absolute path.
+    """
+    value = kwargs.get("base_directory")
+    assert value is not None, "the service stage gave the engine no explicit run directory"
+    root = Path(value)
+    assert root.is_absolute(), f"a stage root must be absolute, got {str(root)!r}"
+    return root
+
+
 def write_applied_sidecar(run_directory: Path, *, mode: str = "apply") -> None:
     """Write the applied run sidecar a real engine leaves behind.
 
     The final checkpoint carries exactly this file, so a test whose engine is a double
     still has to leave the record that publication reads.
+
+    The destination has to be the absolute private directory the stage was given. A double
+    that lost its stage root would otherwise stringify the miss -- ``Path(str(None))`` is
+    the relative directory ``None`` -- and quietly write this tree under the caller's
+    working directory instead of failing.
+
+    Raises:
+        ValueError: `run_directory` is relative, so it does not name a stage's own root.
     """
+    if not run_directory.is_absolute():
+        msg = (
+            f"the applied sidecar must be written into the stage's own absolute run "
+            f"directory, got {str(run_directory)!r}"
+        )
+        raise ValueError(msg)
     run_directory.mkdir(parents=True, exist_ok=True)
     RunFile(path=run_directory / "run.json", status="applied", mode=mode).save()

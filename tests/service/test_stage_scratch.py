@@ -24,7 +24,7 @@ from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.flow import service_sync_run
 from tests.configuration.validation_packages import package
-from tests.service.execution_fixtures import append_execution
+from tests.service.execution_fixtures import append_execution, stage_root
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -175,7 +175,7 @@ def test_each_stage_receives_a_new_empty_private_run_directory(
 
     def observe(*args: Any, **kwargs: Any) -> SavedPlan:  # noqa: ANN401
         del args
-        base = Path(kwargs["base_directory"])
+        base = stage_root(kwargs)
         observed.append(base)
         assert base.is_dir()
         assert list(base.iterdir()) == []
@@ -227,3 +227,32 @@ def test_a_stage_writes_into_neither_the_shared_cache_nor_the_working_directory(
     assert canary_cwd not in given.parents
     assert list(shared_cache.iterdir()) == []
     assert list(canary_cwd.iterdir()) == []
+
+
+def test_a_lost_stage_root_is_refused_rather_than_stringified() -> None:
+    """A double that loses its stage root must fail, not write into the caller's cwd.
+
+    ``Path(str(None))`` is the relative directory ``None``. Read that way, a stage root a
+    caller forgot to pass becomes a real tree under whatever the working directory happens
+    to be, which is the shared-filesystem behaviour this unit removed.
+    """
+    from tests.service.execution_fixtures import stage_root as read_root
+
+    with pytest.raises(AssertionError, match="no explicit run directory"):
+        read_root({"operation": "apply", "run_id": "run-1"})
+
+    with pytest.raises(AssertionError, match="must be absolute"):
+        read_root({"base_directory": Path("None")})
+
+
+def test_the_applied_sidecar_refuses_a_relative_destination(tmp_path: Path) -> None:
+    """The boundary that writes the sidecar refuses anything but an owned absolute root."""
+    from tests.service.execution_fixtures import write_applied_sidecar
+
+    with pytest.raises(ValueError, match="absolute run directory"):
+        write_applied_sidecar(Path("None") / "inventory" / "run-1")
+
+    write_applied_sidecar(tmp_path / "inventory" / "run-1")
+
+    assert (tmp_path / "inventory" / "run-1" / "run.json").is_file()
+    assert not Path("None").exists()

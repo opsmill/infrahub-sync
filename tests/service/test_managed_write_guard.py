@@ -45,7 +45,11 @@ from infrahub_sync.runtime_schema import RuntimeModelPlan, RuntimeSideModels  # 
 from infrahub_sync.service import flow as service_flow  # noqa: E402
 from infrahub_sync.service.flow import service_sync_run  # noqa: E402
 from tests.configuration.validation_packages import package  # noqa: E402
-from tests.service.execution_fixtures import publish_authored_plan, write_applied_sidecar  # noqa: E402
+from tests.service.execution_fixtures import (  # noqa: E402
+    publish_authored_plan,
+    stage_root,
+    write_applied_sidecar,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -213,21 +217,19 @@ def _prepare(  # noqa: PLR0913, PLR0915 - one harness knob per collaborator a ca
             source=None,
         )
 
-    def saved_plan(base: object = None) -> Any:  # noqa: ANN401 - the engine's own SavedPlan record.
-        directory = None if base is None else Path(str(base))
-        return read_saved_plan(sync_name=runtime.name, run_id=run_id, config=runtime, base_directory=directory)
+    def saved_plan(base: Path) -> Any:  # noqa: ANN401 - the engine's own SavedPlan record.
+        return read_saved_plan(sync_name=runtime.name, run_id=run_id, config=runtime, base_directory=base)
 
     def fake_execute_run(_instance: object, **kwargs: object) -> Any:  # noqa: ANN401 - result shape follows the stage.
         operation = kwargs.get("operation")
         events.append(f"execute-run:{operation}")
-        base = kwargs.get("base_directory")
+        base = stage_root(kwargs)
         if operation == "verify":
             return saved_plan(base)
         if engine is not None:
             engine(kwargs)
         # The engine leaves the applied sidecar the final checkpoint carries.
-        if base is not None:
-            write_applied_sidecar(Path(str(base)) / runtime.name / run_id)
+        write_applied_sidecar(base / runtime.name / run_id)
         return RunResult(
             sync_name=runtime.name,
             operation="apply",
@@ -241,18 +243,17 @@ def _prepare(  # noqa: PLR0913, PLR0915 - one harness knob per collaborator a ca
     def fake_plan(*_args: object, **kwargs: object) -> Any:  # noqa: ANN401 - the engine's own SavedPlan record.
         """Plan into this stage's own directory, the way the real engine does."""
         events.append("plan")
-        base = kwargs.get("base_directory")
-        if base is not None:
-            write_plan_artifact(
-                run_dir=Path(str(base)) / runtime.name / run_id,
-                run_id=run_id,
-                config_version=resolve_config_version(runtime),
-                source_snapshot=[],
-                deletes_computed=True,
-                operations=[],
-                configuration_binding=binding,
-                schema_fingerprint=SCHEMA_FINGERPRINT,
-            )
+        base = stage_root(kwargs)
+        write_plan_artifact(
+            run_dir=base / runtime.name / run_id,
+            run_id=run_id,
+            config_version=resolve_config_version(runtime),
+            source_snapshot=[],
+            deletes_computed=True,
+            operations=[],
+            configuration_binding=binding,
+            schema_fingerprint=SCHEMA_FINGERPRINT,
+        )
         return saved_plan(base)
 
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))

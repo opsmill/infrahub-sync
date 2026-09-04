@@ -41,7 +41,7 @@ from infrahub_sync.service.flow import service_sync_run
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID
 from tests.configuration.validation_packages import package
 from tests.plan.artifact_fixtures import operation_record
-from tests.service.execution_fixtures import append_execution, write_applied_sidecar
+from tests.service.execution_fixtures import append_execution, stage_root, write_applied_sidecar
 
 if TYPE_CHECKING:
     from infrahub_sync.product_store import ProductProjection
@@ -163,7 +163,8 @@ def stage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _SyncStage:
     def plan(_instance: Any, **kwargs: Any) -> SavedPlan:  # noqa: ANN401
         """Extract and plan, writing the real artifact into this stage's scratch."""
         events.append("plan")
-        directory = Path(str(kwargs["base_directory"])) / runtime.name / RUN_ID
+        base = stage_root(kwargs)
+        directory = base / runtime.name / RUN_ID
         directory.mkdir(parents=True, exist_ok=True)
         projection.run_directory = directory
         _write_plan(directory, binding=binding, config_version=resolve_config_version(runtime))
@@ -171,12 +172,12 @@ def stage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _SyncStage:
             sync_name=runtime.name,
             run_id=RUN_ID,
             config=runtime,
-            base_directory=Path(str(kwargs["base_directory"])),
+            base_directory=base,
         )
 
     def execute_run(_instance: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         operation = kwargs.get("operation")
-        base = Path(str(kwargs["base_directory"]))
+        base = stage_root(kwargs)
         if operation == "verify":
             events.append("verify")
             return read_saved_plan(sync_name=runtime.name, run_id=RUN_ID, config=runtime, base_directory=base)

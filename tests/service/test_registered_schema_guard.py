@@ -50,6 +50,7 @@ from tests.service.execution_fixtures import (
     append_execution,
     bind_granting_guard,
     publish_plan_directory,
+    stage_root,
     write_applied_sidecar,
 )
 
@@ -221,7 +222,7 @@ def _harness(
     def _execution_sentinel(*_args: object, **kwargs: Any) -> RunResult:  # noqa: ANN401 — the stage's own kwargs
         calls.append(kwargs)
         # The engine leaves the applied sidecar the final checkpoint carries.
-        write_applied_sidecar(Path(str(kwargs["base_directory"])) / instance.name / RUN_ID)
+        write_applied_sidecar(stage_root(kwargs) / instance.name / RUN_ID)
         return RunResult(
             sync_name=instance.name,
             operation="apply",

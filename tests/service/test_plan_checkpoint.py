@@ -37,7 +37,7 @@ from infrahub_sync.service.scratch import stage_scratch
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID
 from tests.configuration.validation_packages import package
 from tests.plan.artifact_fixtures import operation_record
-from tests.service.execution_fixtures import append_execution
+from tests.service.execution_fixtures import append_execution, stage_root
 
 if TYPE_CHECKING:
     from infrahub_sync.product_store import ProductProjection
@@ -132,11 +132,10 @@ def planning_stage(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     directories: list[Path] = []
 
     def execute_run(instance: Any, **kwargs: Any) -> SavedPlan:  # noqa: ANN401
-        base = kwargs["base_directory"]
         run_id = str(kwargs["run_id"])
         from infrahub_sync.cache.paths import run_dir
 
-        directory = run_dir(instance.name, run_id, base_directory=Path(base))
+        directory = run_dir(instance.name, run_id, base_directory=stage_root(kwargs))
         directory.mkdir(parents=True, exist_ok=True)
         manifest = _write_plan(directory, run_id)
         directories.append(directory)
@@ -409,7 +408,7 @@ def test_the_verify_stage_reads_the_checkpoint_it_rehydrated(monkeypatch: pytest
     def execute_run(instance: Any, **kwargs: Any) -> SavedPlan:  # noqa: ANN401
         from infrahub_sync.cache.paths import run_dir
 
-        directory = run_dir(instance.name, str(kwargs["run_id"]), base_directory=Path(kwargs["base_directory"]))
+        directory = run_dir(instance.name, str(kwargs["run_id"]), base_directory=stage_root(kwargs))
         assert (directory / "plan" / "manifest.json").is_file()
         assert (directory / "A" / "resource0.parquet").is_file()
         seen.append(directory)
@@ -447,7 +446,7 @@ def test_a_read_stage_advances_no_baseline(monkeypatch: pytest.MonkeyPatch, tmp_
     def execute_run(instance: Any, **kwargs: Any) -> SavedPlan:  # noqa: ANN401
         from infrahub_sync.cache.paths import run_dir
 
-        directory = run_dir(instance.name, str(kwargs["run_id"]), base_directory=Path(kwargs["base_directory"]))
+        directory = run_dir(instance.name, str(kwargs["run_id"]), base_directory=stage_root(kwargs))
         return SavedPlan(manifest=_manifest_of(directory), operations=[], checksum_ok=True, verification_notes=[])
 
     monkeypatch.setattr(service_flow, "execute_run", execute_run)

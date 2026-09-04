@@ -152,7 +152,8 @@ def authored_plan(instance, **kwargs):
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    base = Path(str(kwargs["base_directory"]))
+    base = Path(kwargs["base_directory"])
+    assert base.is_absolute(), base
     directory = base / instance.name / RUN_ID
     (directory / "A").mkdir(parents=True, exist_ok=True)
     pq.write_table(

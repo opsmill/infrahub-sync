@@ -27,6 +27,7 @@ from tests.service.execution_fixtures import (
     append_execution,
     bind_granting_guard,
     publish_authored_plan,
+    stage_root,
     write_applied_sidecar,
 )
 
@@ -110,8 +111,7 @@ def _registered_apply(
     def destination_forbidden(*_args: object, **kwargs: object) -> RunResult:
         calls.append("execute-run")
         # The engine leaves the applied sidecar the final checkpoint carries.
-        base = kwargs["base_directory"]
-        write_applied_sidecar(Path(str(base)) / runtime.name / run_id)
+        write_applied_sidecar(stage_root(kwargs) / runtime.name / run_id)
         return RunResult(
             sync_name=runtime.name,
             operation="apply",
