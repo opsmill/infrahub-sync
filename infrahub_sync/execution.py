@@ -686,9 +686,9 @@ def _require_a_free_run_id(*, sync_name: str, run_id: str | None, base_directory
     require_uncommitted_plan(directory, run_id=run_id)
 
 
-def _latest_running_run_id(sync_name: str) -> str | None:
+def _latest_running_run_id(sync_name: str, *, base_directory: Path | None = None) -> str | None:
     """Return the newest run still marked running, which may be stale."""
-    root = cache_root_for(sync_name)
+    root = cache_root_for(sync_name, base_directory=base_directory)
     try:
         candidates = sorted((path for path in root.iterdir() if path.is_dir()), reverse=True)
     except OSError:
@@ -704,13 +704,19 @@ def _latest_running_run_id(sync_name: str) -> str | None:
 
 
 @contextmanager
-def _run_lock(sync_name: str, *, timeout: float) -> Iterator[None]:
-    """Acquire the core-owned lock and report advisory sidecar context while waiting."""
+def _run_lock(sync_name: str, *, timeout: float, base_directory: Path | None = None) -> Iterator[None]:
+    """Acquire the core-owned lock and report advisory sidecar context while waiting.
+
+    `base_directory` is threaded to both the lock and the advisory lookup, so a caller that
+    owns a private directory for this run is excluded and diagnosed inside it. Held there,
+    this lock is contention control for one cache root and nothing wider; a managed write's
+    cross-worker exclusion is the configuration guard's.
+    """
     lock_stack = ExitStack()
     try:
-        lock_stack.enter_context(pipeline_lock(sync_name, timeout=0))
+        lock_stack.enter_context(pipeline_lock(sync_name, timeout=0, base_directory=base_directory))
     except Timeout:
-        latest_running = _latest_running_run_id(sync_name)
+        latest_running = _latest_running_run_id(sync_name, base_directory=base_directory)
         detail = (
             f"the latest run sidecar still marked running is {latest_running!r} (it may be stale)"
             if latest_running is not None
@@ -718,7 +724,7 @@ def _run_lock(sync_name: str, *, timeout: float) -> Iterator[None]:
         )
         logger.warning("Sync %r is locked; %s; waiting up to %s seconds", sync_name, detail, timeout)
         try:
-            lock_stack.enter_context(pipeline_lock(sync_name, timeout=timeout))
+            lock_stack.enter_context(pipeline_lock(sync_name, timeout=timeout, base_directory=base_directory))
         except Timeout as exc:
             lock_stack.close()
             msg = f"Sync {sync_name!r} could not acquire its pipeline lock within {timeout} seconds; {detail}."
@@ -965,7 +971,9 @@ def _execute_apply_operation(
             _save_failed_run(run_directory, mode="sync")
         raise
     apply_lock: AbstractContextManager[None] = (
-        nullcontext() if lock_already_held else _run_lock(sync_instance.name, timeout=lock_timeout)
+        nullcontext()
+        if lock_already_held
+        else _run_lock(sync_instance.name, timeout=lock_timeout, base_directory=base_directory)
     )
     with apply_lock:
         return _run_apply_lifecycle(
@@ -1143,7 +1151,9 @@ def execute_run(
     _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id, base_directory=base_directory)
 
     run_lock: AbstractContextManager[None] = (
-        nullcontext() if _lock_already_held else _run_lock(sync_instance.name, timeout=_lock_timeout)
+        nullcontext()
+        if _lock_already_held
+        else _run_lock(sync_instance.name, timeout=_lock_timeout, base_directory=base_directory)
     )
     with run_lock:
         # A plan may have been committed while this command waited for the lock.

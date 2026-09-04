@@ -298,17 +298,23 @@ def test_a_sync_final_publication_failure_after_dispatch_is_ambiguous(stage: _Sy
     assert stored.reconciliation_required is True
 
 
-def test_sync_works_in_its_own_scratch_and_leaves_the_shared_cache_alone(
+def test_sync_works_in_a_stage_root_it_does_not_outlive(
     stage: _SyncStage, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A configured shared cache is neither read nor written by a managed sync."""
+    """A managed sync plans and writes inside a root released with the stage.
+
+    This harness doubles the engine, so it can see where the stage *put* its run and that
+    the root is gone afterwards, but not what the engine itself touched. Whether the real
+    engine -- its pipeline lock included -- stays inside that root is
+    `tests/service/test_stage_scratch.py::test_the_managed_sync_planning_leg_touches_neither_canary`,
+    which drives the real `execute_run`.
+    """
     shared = tmp_path / "shared-cache"
     shared.mkdir()
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(shared))
 
     _sync(stage)
 
-    assert list(shared.iterdir()) == []
     assert stage.projection.run_directory is not None
     assert shared not in stage.projection.run_directory.parents
     assert not stage.projection.run_directory.exists()

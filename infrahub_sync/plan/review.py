@@ -165,14 +165,16 @@ def _run_directory_exists(directory: Path) -> bool:
     return stat_or_unreadable(directory, description="run directory") is not None
 
 
-def _unknown_run_error(sync_name: str, run_id: str, expected_artifact: Path) -> UnknownRunIdentifierError:
+def _unknown_run_error(
+    sync_name: str, run_id: str, expected_artifact: Path, *, base_directory: Path | None = None
+) -> UnknownRunIdentifierError:
     """Build the unknown-run refusal, with the enumeration AD073 requires (AD059).
 
     The enumeration's wording is the reader's, because FR-008 requires the same listing when a
     run is located but holds no plan artifact — a verdict `require_plan_directory` raises — and
     two hand-written listings would drift.
     """
-    cache_root = cache_root_for(sync_name)
+    cache_root = cache_root_for(sync_name, base_directory=base_directory)
     stored = stored_run_ids(cache_root)
     msg = (
         f"No run {run_id!r} is stored for synchronization {sync_name!r}: the plan artifact was "
@@ -242,7 +244,12 @@ def require_stored_run(sync_name: str, run_id: str, *, base_directory: Path | No
     """
     directory = resolve_run_directory(sync_name, run_id, base_directory=base_directory)
     if not _run_directory_exists(directory):
-        raise _unknown_run_error(sync_name, run_id, directory / PLAN_DIR_NAME / MANIFEST_FILE_NAME)
+        raise _unknown_run_error(
+            sync_name,
+            run_id,
+            directory / PLAN_DIR_NAME / MANIFEST_FILE_NAME,
+            base_directory=base_directory,
+        )
     return directory
 
 
