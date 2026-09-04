@@ -22,9 +22,16 @@ from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.configuration import ConfigurationPackage, validate_package_credentials
 from infrahub_sync.execution import REDACTED, redact
 from infrahub_sync.plan.canonical import canonical_json_bytes
+from infrahub_sync.product_store.bundle import (
+    FINAL_CHECKPOINT_ARTIFACT_ID,
+    MAX_BUNDLE_BYTES,
+    PLAN_CHECKPOINT_ARTIFACT_ID,
+)
 from infrahub_sync.product_store.models import (
     ArtifactReference,
     AuditEvent,
+    BaselineWriteback,
+    ConfigurationBaseline,
     ConfigurationSummary,
     ConfigurationVersion,
     ExecutionFinishWriteback,
@@ -47,7 +54,12 @@ CREATE TABLE IF NOT EXISTS artifact_refs (
     run_id TEXT NOT NULL, artifact_id TEXT NOT NULL, kind TEXT NOT NULL, media_type TEXT NOT NULL,
     digest TEXT NOT NULL, size INTEGER NOT NULL, object_key TEXT NOT NULL UNIQUE,
     manifest_key TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, expires_at TEXT, published INTEGER NOT NULL,
+    visibility TEXT NOT NULL DEFAULT 'public',
     PRIMARY KEY (run_id, artifact_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id)
+);
+CREATE TABLE IF NOT EXISTS configuration_baselines (
+    config_id TEXT PRIMARY KEY, source_row_counts TEXT NOT NULL,
+    runs_since_full_extract INTEGER NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS mutation_receipts (
     receipt_id TEXT PRIMARY KEY, actor TEXT NOT NULL, key_digest TEXT NOT NULL,
@@ -242,6 +254,9 @@ _ADMITTED_APPEND_REFUSED = (
 _UNRESOLVED_APPEND_REFUSED = "appending an execution requires an unresolved mutation receipt for this run"
 _REPEATED_APPEND_REFUSED = "this mutation receipt has already appended its one execution"
 _PREFECT_POSITION_ATTEMPTS = 3
+# The run-bundle protocol fixes these two identifiers, so their one writer is a product
+# stage that may repeat a completed publication after losing the response to it.
+_FIXED_CHECKPOINT_ARTIFACT_IDS = frozenset({PLAN_CHECKPOINT_ARTIFACT_ID, FINAL_CHECKPOINT_ARTIFACT_ID})
 _RESULT_MERGE_ATTEMPTS = 5
 _SCHEMA_INITIALIZATION_ATTEMPTS = 2
 # Measured, not guessed: across roughly 4,800 trials of 8 concurrent distinct-checksum
@@ -276,11 +291,22 @@ _SELECT_PRODUCT_RUN = """SELECT run_id, operation, configuration_reference, acto
 finished_at, phase, outcome, summary, results, config_id, registry_version, package_checksum, reconciliation_required
 FROM product_runs WHERE run_id = ?"""
 _SELECT_RUN_ARTIFACT_REFERENCES = """SELECT run_id, artifact_id, kind, media_type, digest, size, object_key,
-manifest_key, created_at, expires_at, published FROM artifact_refs WHERE run_id = ? AND published = 1 ORDER BY artifact_id"""
+manifest_key, created_at, expires_at, published, visibility FROM artifact_refs
+WHERE run_id = ? AND published = 1 AND visibility = 'public' ORDER BY artifact_id"""
 _SELECT_ARTIFACT_REFERENCE = """SELECT run_id, artifact_id, kind, media_type, digest, size, object_key,
-manifest_key, created_at, expires_at, published FROM artifact_refs WHERE run_id = ? AND artifact_id = ?"""
+manifest_key, created_at, expires_at, published, visibility FROM artifact_refs WHERE run_id = ? AND artifact_id = ?"""
+_SELECT_ARTIFACT_REFERENCE_BY_VISIBILITY = """SELECT run_id, artifact_id, kind, media_type, digest, size, object_key,
+manifest_key, created_at, expires_at, published, visibility FROM artifact_refs
+WHERE run_id = ? AND artifact_id = ? AND visibility = ?"""
+_SELECT_CONFIGURATION_BASELINE = """SELECT config_id, source_row_counts, runs_since_full_extract, updated_at
+FROM configuration_baselines WHERE config_id = ?"""
+_UPSERT_CONFIGURATION_BASELINE = """INSERT INTO configuration_baselines (config_id, source_row_counts,
+runs_since_full_extract, updated_at) VALUES (?, ?, ?, ?)
+ON CONFLICT (config_id) DO UPDATE SET source_row_counts = EXCLUDED.source_row_counts,
+runs_since_full_extract = EXCLUDED.runs_since_full_extract, updated_at = EXCLUDED.updated_at"""
 _INSERT_ARTIFACT_REFERENCE = """INSERT INTO artifact_refs (run_id, artifact_id, kind, media_type, digest, size,
-object_key, manifest_key, created_at, expires_at, published) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+object_key, manifest_key, created_at, expires_at, published, visibility)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _SELECT_PREFECT_EXECUTIONS = """SELECT run_id, flow_run_id, deployment_id, purpose, attempt, last_observed_state,
 last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at, cancellation_requested_at,
 cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at, terminal_at, terminal_state,
@@ -383,10 +409,12 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def mark_artifact_published(self, reference: ArtifactReference) -> None: ...
 
     def lookup_artifact_reference(
-        self, run_id: str, artifact_id: str
+        self, run_id: str, artifact_id: str, *, visibility: Literal["public", "internal"] | None = None
     ) -> LookupResult[tuple[ArtifactReference, bool]]: ...
 
     def has_pending_artifacts(self, run_id: str) -> bool: ...
+
+    def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]: ...
 
     def add_prefect_execution(
         self, run_id: str, link: PrefectExecutionLink, *, receipt_id: str, allocate_attempt: bool = False
@@ -878,15 +906,21 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         finally:
             connection.close()
 
-    def lookup_artifact_reference(self, run_id: str, artifact_id: str) -> LookupResult[tuple[ArtifactReference, bool]]:
+    def lookup_artifact_reference(
+        self, run_id: str, artifact_id: str, *, visibility: Literal["public", "internal"] | None = None
+    ) -> LookupResult[tuple[ArtifactReference, bool]]:
+        """Resolve one reference, optionally only when it carries `visibility`."""
         connection = self._connect()
         try:
             cursor = connection.cursor()
             try:
-                cursor.execute(
-                    self._sql(_SELECT_ARTIFACT_REFERENCE),
-                    (run_id, artifact_id),
-                )
+                if visibility is None:
+                    cursor.execute(self._sql(_SELECT_ARTIFACT_REFERENCE), (run_id, artifact_id))
+                else:
+                    cursor.execute(
+                        self._sql(_SELECT_ARTIFACT_REFERENCE_BY_VISIBILITY),
+                        (run_id, artifact_id, visibility),
+                    )
                 row = cursor.fetchone()
             finally:
                 cursor.close()
@@ -1199,6 +1233,14 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                             flow_run_id,
                         ),
                     )
+                    # Only a write that actually succeeded may become the next run's
+                    # safety reference. A failed or ambiguous terminal leaves the previous
+                    # baseline standing, because it is still the last state known good.
+                    if writeback.baseline is not None and (terminal_state, terminal_outcome) == (
+                        "completed",
+                        "succeeded",
+                    ):
+                        self._record_configuration_baseline(cursor, run_id, writeback.baseline, terminal_at)
                 else:
                     cursor.execute(
                         self._sql(_SELECT_LATEST_EXECUTION_RESULTS),
@@ -1246,6 +1288,64 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.close()
         finally:
             connection.close()
+
+    def _record_configuration_baseline(
+        self,
+        cursor: _Cursor,
+        run_id: str,
+        baseline: BaselineWriteback,
+        updated_at: datetime,
+    ) -> None:
+        """Replace the run's configuration baseline inside the caller's transaction.
+
+        The counts replace rather than merge: the baseline describes one run's source, so
+        carrying forward a resource this configuration no longer extracts would let the
+        next run's guardrail compare against something nothing produces any more.
+        """
+        cursor.execute(self._sql("SELECT config_id FROM product_runs WHERE run_id = ?"), (run_id,))
+        run_row = cursor.fetchone()
+        if run_row is None or run_row[0] is None:
+            # A run with no registered configuration has nothing to scope a baseline to.
+            return
+        config_id = str(run_row[0])
+        cursor.execute(self._sql(_SELECT_CONFIGURATION_BASELINE), (config_id,))
+        stored = cursor.fetchone()
+        previous = 0 if stored is None else int(stored[2])
+        runs_since_full_extract = 0 if baseline.full_extract else previous + 1
+        cursor.execute(
+            self._sql(_UPSERT_CONFIGURATION_BASELINE),
+            (
+                config_id,
+                _json(baseline.source_row_counts),
+                runs_since_full_extract,
+                updated_at.isoformat(),
+            ),
+        )
+
+    def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]:
+        """Return the configuration's durable safety reference, if a write has set one."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_SELECT_CONFIGURATION_BASELINE), (config_id,))
+                row = cursor.fetchone()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        if row is None:
+            return LookupResult(value=None, reason="configuration-baseline-not-found")
+        return LookupResult(
+            value=ConfigurationBaseline.model_validate(
+                {
+                    "config_id": row[0],
+                    "source_row_counts": _JSON_MAPPING_ADAPTER.validate_json(str(row[1])),
+                    "runs_since_full_extract": row[2],
+                    "updated_at": row[3],
+                }
+            )
+        )
 
     def request_execution_cancellation(
         self,
@@ -2196,6 +2296,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 reference.created_at.isoformat(),
                 _iso(reference.expires_at),
                 int(published),
+                reference.visibility,
             ),
         )
 
@@ -2267,6 +2368,14 @@ class _ArtifactStore(Protocol):
     def publish(self, reference: ArtifactReference, data: bytes) -> None: ...
 
     def lookup(self, reference: ArtifactReference) -> LookupResult[bytes]: ...
+
+    def read_bounded(self, reference: ArtifactReference, *, limit: int) -> LookupResult[bytes]:
+        """Return the object only if it is at most `limit` bytes.
+
+        The stored size is checked from provider metadata first, so an oversized object
+        is refused without transferring it; the transfer is then itself bounded, because
+        metadata is part of the same store the object came from.
+        """
 
 
 class FileArtifactStore:
@@ -2342,6 +2451,25 @@ class FileArtifactStore:
             return LookupResult(value=None, reason="data-unavailable")
         return _validate_publication(reference, manifest, data)
 
+    def read_bounded(self, reference: ArtifactReference, *, limit: int) -> LookupResult[bytes]:
+        if _expired(reference):
+            return LookupResult(value=None, reason="artifact-expired")
+        try:
+            manifest = self._path(reference.manifest_key).read_bytes()
+        except (FileNotFoundError, NotADirectoryError):
+            return LookupResult(value=None, reason="manifest-unavailable")
+        path = self._path(reference.object_key)
+        try:
+            if path.stat().st_size > limit:
+                return LookupResult(value=None, reason="artifact-too-large")
+            with path.open("rb") as handle:
+                data = handle.read(limit + 1)
+        except (FileNotFoundError, NotADirectoryError):
+            return LookupResult(value=None, reason="data-unavailable")
+        if len(data) > limit:
+            return LookupResult(value=None, reason="artifact-too-large")
+        return _validate_publication(reference, manifest, data)
+
 
 class S3Client(Protocol):
     """Minimal operations required from an S3-compatible object client."""
@@ -2355,6 +2483,12 @@ class S3Client(Protocol):
         """
 
     def get(self, *, bucket: str, key: str) -> bytes | None: ...
+
+    def head(self, *, bucket: str, key: str) -> int | None:
+        """Return the stored object's length, or None when the key is absent."""
+
+    def get_bounded(self, *, bucket: str, key: str, limit: int) -> bytes | None:
+        """Return at most `limit + 1` bytes, so an overrun is visible without buffering it."""
 
     def copy(self, *, bucket: str, source: str, destination: str) -> None: ...
 
@@ -2408,6 +2542,25 @@ class S3ArtifactStore:
         data = self._client.get(bucket=self._bucket, key=self._key(reference.object_key))
         if data is None:
             return LookupResult(value=None, reason="data-unavailable")
+        return _validate_publication(reference, manifest, data)
+
+    def read_bounded(self, reference: ArtifactReference, *, limit: int) -> LookupResult[bytes]:
+        if _expired(reference):
+            return LookupResult(value=None, reason="artifact-expired")
+        manifest = self._client.get(bucket=self._bucket, key=self._key(reference.manifest_key))
+        if manifest is None:
+            return LookupResult(value=None, reason="manifest-unavailable")
+        object_key = self._key(reference.object_key)
+        stored = self._client.head(bucket=self._bucket, key=object_key)
+        if stored is not None and stored > limit:
+            return LookupResult(value=None, reason="artifact-too-large")
+        # An absent object reports itself the same way through either call, so the
+        # missing-metadata case needs no branch of its own.
+        data = self._client.get_bounded(bucket=self._bucket, key=object_key, limit=limit)
+        if data is None:
+            return LookupResult(value=None, reason="data-unavailable")
+        if len(data) > limit:
+            return LookupResult(value=None, reason="artifact-too-large")
         return _validate_publication(reference, manifest, data)
 
 
@@ -2559,6 +2712,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
                 finished_at=writeback.finished_at,
                 summary=cast("dict[str, Any]", _redact_value(_normalize_mapping(writeback.summary), secrets)),
                 results=cast("dict[str, Any]", _redact_value(_normalize_mapping(writeback.results), secrets)),
+                baseline=_redacted_baseline(writeback.baseline, secrets),
             )
         else:
             sanitized = ExecutionMergeWriteback(
@@ -2774,13 +2928,20 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         kind: str,
         media_type: str,
         data: bytes,
+        visibility: Literal["public", "internal"] = "public",
         secrets: Sequence[str] = (),
     ) -> ArtifactReference:
-        """Reserve the immutable reference, publish bytes and manifest, then expose it."""
+        """Reserve the immutable reference, publish bytes and manifest, then expose it.
+
+        Internal bytes are stored exactly as given. Redaction rewrites a byte sequence
+        wherever it occurs, which inside a binary container corrupts the archive rather
+        than protecting anything: no client ever receives these bytes, and their
+        integrity is established by stored size and digest before anything parses them.
+        """
         if not self._records.exists(run_id):
             msg = f"Cannot publish an artifact for unavailable Sync run ID {run_id!r}"
             raise RunNotFoundError(msg)
-        sanitized = _redact_bytes(data, secrets)
+        sanitized = data if visibility == "internal" else _redact_bytes(data, secrets)
         artifact_id = redact(artifact_id, secrets)
         kind = redact(kind, secrets)
         media_type = redact(media_type, secrets)
@@ -2796,6 +2957,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             object_key=f"{base}/data",
             manifest_key=f"{base}/manifest.json",
             created_at=datetime.now(timezone.utc),
+            visibility=visibility,
         )
         stored = self._records.lookup_artifact_reference(run_id, artifact_id)
         already_marked = False
@@ -2811,11 +2973,20 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             already_marked = published
             publication = self._artifacts.lookup(reference)
             if publication.available:
-                if published:
-                    msg = f"Artifact {artifact_id!r} is already published on run {run_id!r}"
-                    raise DuplicateArtifactError(msg)
-                self._records.mark_artifact_published(reference)
-                return reference
+                if not published:
+                    self._records.mark_artifact_published(reference)
+                    return reference
+                # A fixed internal checkpoint has one writer — the product's own stage —
+                # which repeats the publication when it loses the response rather than
+                # the write. Reaching here means the request's metadata equals the
+                # committed reference and the stored bytes have just been validated
+                # complete against it, so this retry is the publication that already
+                # succeeded. Any other artifact keeps the conflict: a repeat there is a
+                # second author, not a lost answer.
+                if _is_fixed_internal_checkpoint(reference):
+                    return reference
+                msg = f"Artifact {artifact_id!r} is already published on run {run_id!r}"
+                raise DuplicateArtifactError(msg)
             if publication.reason != "manifest-unavailable":
                 msg = f"Artifact {artifact_id!r} has an incomplete publication that cannot be resumed: {publication.reason}"
                 raise ArtifactUnavailableError(msg)
@@ -2824,17 +2995,66 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             self._records.mark_artifact_published(reference)
         return reference
 
+    def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]:
+        """Return one configuration's durable source-count and full-extract reference."""
+        return self._records.lookup_configuration_baseline(config_id)
+
     def lookup_artifact(self, run_id: str, artifact_id: str) -> LookupResult[bytes]:
-        """Resolve only a run-owned immutable reference, with explicit unavailability."""
-        if not self._records.exists(run_id):
-            return LookupResult(value=None, reason="run-not-found")
-        stored = self._records.lookup_artifact_reference(run_id, artifact_id)
+        """Resolve only a published, public, run-owned reference, with explicit unavailability."""
+        return self._resolve_artifact(run_id, artifact_id, visibility="public")
+
+    def lookup_internal_artifact(
+        self, run_id: str, artifact_id: str, *, limit: int = MAX_BUNDLE_BYTES
+    ) -> LookupResult[bytes]:
+        """Resolve one of the product's own internal artifacts for a later stage."""
+        stored = self._internal_reference(run_id, artifact_id)
         if stored.value is None:
             return LookupResult(value=None, reason=stored.reason)
-        reference, published = stored.value
-        if not published:
+        reference = stored.value[0]
+        # The committed reference already records the size, so an oversized artifact is
+        # refused here without the provider being contacted at all.
+        if reference.size > limit:
+            return LookupResult(value=None, reason="artifact-too-large")
+        return self._artifacts.read_bounded(reference, limit=limit)
+
+    def lookup_internal_reference(self, run_id: str, artifact_id: str) -> LookupResult[ArtifactReference]:
+        """Return the committed internal reference, which is a stage's bundle evidence."""
+        stored = self._internal_reference(run_id, artifact_id)
+        if stored.value is None:
+            return LookupResult(value=None, reason=stored.reason)
+        return LookupResult(value=stored.value[0])
+
+    def _resolve_artifact(
+        self, run_id: str, artifact_id: str, *, visibility: Literal["public", "internal"]
+    ) -> LookupResult[bytes]:
+        stored = (
+            self._internal_reference(run_id, artifact_id)
+            if visibility == "internal"
+            else self._public_reference(run_id, artifact_id)
+        )
+        if stored.value is None:
+            return LookupResult(value=None, reason=stored.reason)
+        return self._artifacts.lookup(stored.value[0])
+
+    def _public_reference(self, run_id: str, artifact_id: str) -> LookupResult[tuple[ArtifactReference, bool]]:
+        if not self._records.exists(run_id):
+            return LookupResult(value=None, reason="run-not-found")
+        stored = self._records.lookup_artifact_reference(run_id, artifact_id, visibility="public")
+        if stored.value is None:
+            return LookupResult(value=None, reason=stored.reason)
+        if not stored.value[1]:
             return LookupResult(value=None, reason="artifact-publication-incomplete")
-        return self._artifacts.lookup(reference)
+        return stored
+
+    def _internal_reference(self, run_id: str, artifact_id: str) -> LookupResult[tuple[ArtifactReference, bool]]:
+        if not self._records.exists(run_id):
+            return LookupResult(value=None, reason="run-not-found")
+        stored = self._records.lookup_artifact_reference(run_id, artifact_id, visibility="internal")
+        if stored.value is None:
+            return LookupResult(value=None, reason=stored.reason)
+        if not stored.value[1]:
+            return LookupResult(value=None, reason="artifact-publication-incomplete")
+        return stored
 
     def finish_run(
         self,
@@ -3125,8 +3345,14 @@ def _reference_from_row(row: Sequence[Any]) -> ArtifactReference:
             "manifest_key": row[7],
             "created_at": row[8],
             "expires_at": row[9],
+            "visibility": row[11],
         }
     )
+
+
+def _is_fixed_internal_checkpoint(reference: ArtifactReference) -> bool:
+    """Whether this reference is one of the two run-bundle checkpoints the protocol fixes."""
+    return reference.visibility == "internal" and reference.artifact_id in _FIXED_CHECKPOINT_ARTIFACT_IDS
 
 
 def _same_publication(existing: ArtifactReference, requested: ArtifactReference) -> bool:
@@ -3246,6 +3472,16 @@ def _require_execution_timestamp(value: datetime) -> None:
     if value.utcoffset() is None:
         msg = "execution timestamps must include a timezone"
         raise ValueError(msg)
+
+
+def _redacted_baseline(baseline: BaselineWriteback | None, secrets: Sequence[str]) -> BaselineWriteback | None:
+    """Sanitize a baseline's resource names, which reach the store from a worker."""
+    if baseline is None:
+        return None
+    return BaselineWriteback(
+        source_row_counts=cast("dict[str, int]", _redact_value(baseline.source_row_counts, secrets)),
+        full_extract=baseline.full_extract,
+    )
 
 
 def _redact_value(value: Any, secrets: Sequence[str]) -> Any:

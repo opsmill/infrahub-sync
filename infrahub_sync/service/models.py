@@ -65,6 +65,7 @@ __all__ = [
     "VerifyRunRequest",
     "VersionResource",
     "WorkerStatusResource",
+    "bounded_emitted_model",
     "public_execution_link",
     "public_run_resource",
 ]
@@ -126,10 +127,15 @@ def bounded_emitted_model(model: type[BaseModel]) -> type[BaseModel]:
 
 EmittedRunResource = cast("type[PublicRunResource]", bounded_emitted_model(PublicRunResource))
 EmittedPlanResource = cast("type[PlanResource]", bounded_emitted_model(PlanResource))
+EmittedArtifactListResource = cast("type[ArtifactListResource]", bounded_emitted_model(ArtifactListResource))
 
 # What the server builds out of data it did not write literally, and therefore what the
 # boundedness check in the test suite walks.
-EMITTED_RESOURCES: tuple[type[BaseModel], ...] = (EmittedRunResource, EmittedPlanResource)
+EMITTED_RESOURCES: tuple[type[BaseModel], ...] = (
+    EmittedRunResource,
+    EmittedPlanResource,
+    EmittedArtifactListResource,
+)
 # The run resource declares its executions as bounded, so the projection has to build them
 # that way; a parent-class instance is not one of these.
 _EmittedExecutionLink = cast(

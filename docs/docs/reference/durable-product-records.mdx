@@ -149,7 +149,9 @@ never falls back to the process working directory.
 
 The underlying PostgreSQL/S3 library constructor accepts a PostgreSQL DB-API connection
 factory and an S3-compatible client implementing the small `S3Client` protocol (`put`,
-`get`, `copy`, and `delete`):
+`get`, `head`, `get_bounded`, `copy`, and `delete`). `head` returns the stored object's
+length from metadata, and `get_bounded` returns at most one byte past the limit it is
+given, so an oversized object is refused without being buffered:
 
 ```python
 from infrahub_sync.product_store import production_product_projection
@@ -266,22 +268,101 @@ already published.
 
 A lookup returns `LookupResult` rather than treating absence as an empty record. Reasons
 include `run-not-found`, `artifact-reference-not-found`, `manifest-unavailable`,
-`artifact-publication-incomplete`, `data-unavailable`, `artifact-expired`, and integrity
-failures. Normal run lookup includes only published references. An unavailable or pending
-artifact does not prevent the remaining product record from being read.
+`artifact-publication-incomplete`, `data-unavailable`, `artifact-expired`,
+`artifact-too-large`, and integrity failures. Normal run lookup includes only published
+public references. An unavailable or pending artifact does not prevent the remaining product
+record from being read.
 
 `artifact-expired` is a forward-compatible read behavior for references that already
 contain an expiry timestamp. The public publication operation does not set expiry, and the
 MVP does not expire or delete product records or artifacts automatically. Prefect
 retention is independent.
 
+## Internal artifacts and run bundles
+
+An artifact is either public or internal. Public artifacts are the operator-facing content
+a run retains, such as the plan review document. Internal artifacts are the product's own
+stage handoff state: the run bundle one stage writes so the next can rebuild what it needs
+without sharing a filesystem.
+
+Internal artifacts are not reachable from any public path. They are absent from the run
+resource's `artifact_refs`, absent from `GET /runs/{run_id}/artifacts`, and
+`GET /runs/{run_id}/artifacts/{artifact_id}` refuses them exactly as it refuses an
+identifier that was never published. The refusal is identical on purpose: bundle
+identifiers are fixed by the protocol, so a distinguishable refusal would confirm a guess.
+The public response schema does not carry a visibility field.
+
+A run bundle is an uncompressed ZIP holding a manifest and the stage's files. Identical
+members always produce identical bytes, on any host and in any process, which is what makes
+a fixed checkpoint identifier safe to retry: an equal retry is the same publication, and an
+unequal one is rejected as a content conflict. Members are stored uncompressed because zlib
+output is not identical across zlib builds or Python versions, and the members are Parquet
+and JSONL that are already compressed.
+
+Because the two checkpoint identifiers have one writer — the product stage that owns them —
+repeating a completed publication returns the existing reference instead of conflicting.
+That happens only once the request's metadata equals the committed reference and the stored
+bytes have been read back and validated complete against it, so a stage that lost the
+response rather than the write can repeat itself. Different content still conflicts,
+and a public artifact still conflicts on a repeat regardless of its identifier, because a
+public artifact has no single product writer.
+
+Bundles are published and looked up through the same providers as public artifacts, so a
+deployment needs no additional storage settings.
+
+### Storage limits
+
+A bundle is at most 64 MiB and holds at most 1024 members, not counting its manifest. Both
+bounds are enforced on both sides. Writing past either is refused rather than truncated,
+and the size bound is applied to the completed archive, so the ZIP headers and central
+directory count against it exactly as they do when the archive is read back. Every archive
+the writer returns is one the reader accepts.
+
+The member limit sits far above any real configuration — a checkpoint carries the plan's
+two files plus one Parquet file per extracted resource kind. It exists because the byte
+bound does not bound the entry count on its own: an archive of empty members stays small
+while still costing one entry each to read. The limit is applied before the reader builds
+any collection over the entries, and again before it builds the manifest's member table.
+
+Reading is bounded three times: the committed reference's recorded size is checked before
+the provider is contacted at all, the provider checks the stored object's length from
+metadata before transferring it, and the transfer itself stops one byte past the bound.
+Stored size and SHA-256 are verified before any archive structure is read.
+
+An archive is validated as a whole before extraction writes anything: member count, member
+path grammar, duplicate and case-colliding names, entry types, compression method,
+encryption, declared members against present members, per-member and total size, and
+manifest usability. The manifest's format version and member lengths must be plain
+integers and its lengths non-negative; a JSON Boolean is not a number here even though it
+compares equal to one. Extraction is all-or-nothing into a new directory, so a destination
+either holds the whole bundle or does not exist. A configuration whose handoff state would
+exceed either bound cannot use this path; the refusal is explicit.
+
+## Configuration safety baseline
+
+A successful write execution may record the source row counts it observed and whether it
+performed a full extract. That baseline is stored per configuration and updated inside the
+same transaction that commits the execution's verdict, so a run's counts and its success
+cannot come apart. Only a `completed` / `succeeded` verdict updates it. A failed or
+ambiguous terminal leaves the previous baseline in place, because that is still the last
+state known good. Counts replace rather than merge, so a resource the configuration no
+longer extracts stops being compared against.
+
 ## Secret boundary
 
 Pass the credential values collected by `collect_secret_values` to mutation, audit, run,
 execution-link, result, artifact, and finish operations. Values are redacted from nested
-record data and raw artifact bytes before either provider is called. Do not put secrets into
-identifiers; credentials should continue to come from environment variables or a secret
-manager.
+record data and from public artifact bytes before either provider is called.
+
+Internal artifact bytes are stored exactly as supplied. Redaction rewrites a byte sequence
+wherever it occurs, which inside a binary archive corrupts the container instead of
+protecting anything, and would make a bundle's digest depend on whether a configured secret
+happened to appear in compressed Parquet. No internal artifact is served to a client, and
+its integrity is established by stored size and digest before anything parses it. Treat a
+run bundle as internal state and do not hand one to a caller.
+
+Do not put secrets into identifiers; credentials should continue to come from environment
+variables or a secret manager.
 
 ## Reproducible sizing evidence
 

@@ -3,6 +3,8 @@
 from infrahub_sync.product_store.models import (
     ArtifactReference,
     AuditEvent,
+    BaselineWriteback,
+    ConfigurationBaseline,
     ConfigurationSummary,
     ConfigurationVersion,
     ExecutionFinishWriteback,
@@ -35,6 +37,8 @@ __all__ = (
     "ArtifactReference",
     "ArtifactUnavailableError",
     "AuditEvent",
+    "BaselineWriteback",
+    "ConfigurationBaseline",
     "ConfigurationNotFoundError",
     "ConfigurationSummary",
     "ConfigurationVersion",

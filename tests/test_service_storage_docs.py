@@ -30,6 +30,18 @@ def test_service_storage_operator_references_state_the_complete_deployed_contrac
     assert not [claim for claim in ("backup", "restore", "production hardening") if claim in text.lower()]
 
 
+def test_the_documented_s3_client_protocol_matches_the_one_the_store_requires() -> None:
+    """The reference names a provider contract, so it cannot drift from the protocol itself."""
+    from re import findall
+
+    from infrahub_sync.product_store.store import S3Client
+
+    text = (REFERENCE_ROOT / "durable-product-records.mdx").read_text(encoding="utf-8")
+    clause = text.split("`S3Client` protocol (", 1)[1].split(")", 1)[0]
+
+    assert set(findall(r"`([a-z_]+)`", clause)) == {name for name in vars(S3Client) if not name.startswith("_")}
+
+
 def test_durable_records_reference_limits_the_local_projection_to_the_injected_seam() -> None:
     """The local projection is not presented as a deployed service profile."""
     text = (REFERENCE_ROOT / "durable-product-records.mdx").read_text(encoding="utf-8")

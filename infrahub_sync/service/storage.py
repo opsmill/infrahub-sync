@@ -283,6 +283,35 @@ class Boto3S3Client:
             raise S3ProtocolError
         return result
 
+    def head(self, *, bucket: str, key: str) -> int | None:
+        """Return the stored object's exact length, mapping only the missing-object response."""
+        try:
+            response = self._client.head_object(Bucket=bucket, Key=key)
+        except ClientError as error:
+            if (_error_code(error), _http_status(error)) in {("NoSuchKey", 404), ("404", 404)}:
+                return None
+            raise
+        length = response.get("ContentLength")
+        if type(length) is not int:  # pylint: disable=unidiomatic-typecheck  # Exact protocol contract.
+            raise S3ProtocolError
+        return length
+
+    def get_bounded(self, *, bucket: str, key: str, limit: int) -> bytes | None:
+        """Read at most one byte past the bound, so an overrun is detectable unbuffered."""
+        try:
+            response = self._client.get_object(Bucket=bucket, Key=key)
+        except ClientError as error:
+            if (_error_code(error), _http_status(error)) == ("NoSuchKey", 404):
+                return None
+            raise
+        try:
+            result = response["Body"].read(limit + 1)
+        except (AttributeError, KeyError, TypeError):
+            raise S3ProtocolError from None
+        if type(result) is not bytes:  # pylint: disable=unidiomatic-typecheck  # Exact protocol contract.
+            raise S3ProtocolError
+        return result
+
     def copy(self, *, bucket: str, source: str, destination: str) -> None:
         """Copy exactly one object within the configured bucket."""
         self._client.copy_object(Bucket=bucket, Key=destination, CopySource={"Bucket": bucket, "Key": source})

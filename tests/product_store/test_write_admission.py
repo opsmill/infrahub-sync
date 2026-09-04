@@ -11,15 +11,13 @@ server when ``PRODUCT_STORE_TEST_POSTGRESQL_DSN`` names one, because row-level
 serialization between two competing reservations is a provider fact and SQLite's
 single-writer lock cannot stand in for it.
 
-WARNING: the PostgreSQL parameter's session fixture runs ``DROP SCHEMA public CASCADE``
-against whatever database ``PRODUCT_STORE_TEST_POSTGRESQL_DSN`` points at, which destroys
-every table in that database's ``public`` schema. Point that variable only at a disposable,
-single-purpose database — never at a shared or persistent development database.
+The PostgreSQL parameter confines itself to a generated schema it creates and drops, so
+pointing ``PRODUCT_STORE_TEST_POSTGRESQL_DSN`` at the wrong database cannot destroy that
+database's records. See ``tests/product_store/postgresql_isolation``.
 """
 
 from __future__ import annotations
 
-import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -38,50 +36,30 @@ from infrahub_sync.product_store import (
     ProductRun,
 )
 from infrahub_sync.product_store.store import FileArtifactStore, PostgreSQLRunStore, SQLiteRunStore
+from tests.product_store.postgresql_isolation import isolated_schema_fixture
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-_DSN_ENVIRONMENT_NAME = "PRODUCT_STORE_TEST_POSTGRESQL_DSN"
-# The PostgreSQL parameter runs against a persistent disposable database, so every run
-# ID and receipt identity in this module is namespaced to one test session.
+    from tests.product_store.postgresql_isolation import IsolatedSchema
+
+# Run IDs and receipt identities stay namespaced to one test session, so a case reads
+# only the rows it wrote even when several sessions share one server.
 _SESSION = uuid4().hex[:10]
 _CONFLICT_CODE = "run-execution-conflict"
 _WORKER_ID = "5f2d3a0e-2f2c-4a55-9d3f-9a2a1c6f4b71"
 _STARTED_AT = datetime(2026, 9, 3, 9, tzinfo=timezone.utc)
 
 
-def _postgresql_dsn_or_skip() -> str:
-    """Return a reachable disposable DSN, or skip before any server is contacted."""
-    dsn = os.environ.get(_DSN_ENVIRONMENT_NAME)
-    if not dsn:
-        pytest.skip(f"the admission contract's PostgreSQL parameter requires {_DSN_ENVIRONMENT_NAME}")
-    psycopg = pytest.importorskip("psycopg")
-    try:
-        with psycopg.connect(dsn, connect_timeout=5) as probe:
-            probe.execute("SELECT 1")
-    except psycopg.Error:
-        pytest.skip(f"{_DSN_ENVIRONMENT_NAME} is not reachable")
-    return dsn
-
-
 @pytest.fixture(name="_postgresql_schema", scope="session")
-def postgresql_schema_fixture() -> str:
-    """Recreate the disposable database's schema once, then return its DSN.
+def postgresql_schema_fixture() -> Iterator[IsolatedSchema]:
+    """Hold one generated schema for this module's cases, and drop only that schema.
 
     V3 is unreleased and its development databases are recreated rather than migrated, so
     the clean schema this module asserts is the one a fresh server bootstraps.
     """
-    dsn = _postgresql_dsn_or_skip()
-    # pylint: disable-next=import-outside-toplevel
-    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
-
-    with psycopg.connect(dsn) as admin:
-        admin.execute("DROP SCHEMA public CASCADE")
-        admin.execute("CREATE SCHEMA public")
-        admin.commit()
-    return dsn
+    yield from isolated_schema_fixture("the admission contract's PostgreSQL parameter")
 
 
 @pytest.fixture(params=("sqlite", pytest.param("postgresql", marks=pytest.mark.integration)))
@@ -91,14 +69,14 @@ def projection(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Produ
     if request.param == "sqlite":
         yield ProductProjection(SQLiteRunStore(tmp_path / "records.sqlite3"), artifacts)
         return
-    dsn = request.getfixturevalue("_postgresql_schema")
+    schema = request.getfixturevalue("_postgresql_schema")
     # pylint: disable-next=import-outside-toplevel
     import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
 
     from infrahub_sync.service.storage import PsycopgConnectionFactory
 
     def connect() -> Any:  # noqa: ANN401 - the store's own DB-API connection protocol.
-        return PsycopgConnectionFactory(psycopg.connect)(dsn)
+        return PsycopgConnectionFactory(psycopg.connect)(schema.dsn)
 
     yield ProductProjection(PostgreSQLRunStore(connect), artifacts)
 

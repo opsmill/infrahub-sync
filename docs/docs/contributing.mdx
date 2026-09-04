@@ -69,6 +69,13 @@ uv run invoke lint
 checkout: its leg compares the run against a recorded baseline and fails only on a new
 diagnostic code or a count above the recorded maximum.
 
+Run `uv run invoke check-310` before pushing as well: it builds its environments under
+`.preview/check-310-venv`, leaves your active `.venv` alone, and reproduces the three CI legs your
+environment cannot reach — `ty` under the Python 3.10 excludes, and the unit tests on
+Python 3.10 both with the `prefect` extra and on a base install that has no service
+dependencies. If Python 3.10 is not installed, the task exits successfully without running
+the three legs. To install it, run `uv python install 3.10`.
+
 ### Validate the CLI
 
 After making changes, verify the CLI still works:
