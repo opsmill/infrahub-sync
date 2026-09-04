@@ -34,7 +34,7 @@ or environment overrides.
 
 ## `RunResult`
 
-A successful run returns a frozen, slotted dataclass with exactly seven fields:
+A successful run returns a frozen, slotted `dataclass` with exactly seven fields:
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -61,7 +61,7 @@ violation is a bug in the surface, not a run failure:
 
 `artifact_path` is required absolute because it crosses a process boundary: a remote caller
 cannot recover the serving process's working directory. `cache.paths.cache_root_for`
-absolutizes a relative cache directory at the single derivation point, using `absolute()`
+makes a relative cache directory absolute at the single derivation point, using `absolute()`
 rather than `resolve()` so the final path segment the `run_id` invariant compares against
 survives.
 
@@ -73,16 +73,16 @@ lifecycle. A derived delete saved for review but excluded from the live diff by 
 flags therefore does not make a sync result claim that a destination write occurred.
 
 Behavioral test engines with the legacy no-return `write_plan` shape fall back to their
-in-memory materialized plan rows for plan results, which keeps the execution seam injectable
-without weakening production delete reporting. A valid authoritative writer summary avoids
+in-memory materialized plan rows for plan results, which keeps the execution seam open to
+injection without weakening production delete reporting. A valid authoritative writer summary avoids
 materializing those fallback rows.
 
 One test-seam fidelity boundary is worth knowing: a legacy behavioral engine that returns
-no saved-operation counts falls back to the row materializer, which walks only the diff
-root's direct children, while `Diff.has_diffs()` is recursive. Such a fake can therefore
+no saved-operation counts falls back to building rows from the diff, which walks only the
+diff root's direct children, while `Diff.has_diffs()` is recursive. Such a fake can therefore
 execute a sync for nested-only changes but report `status="no-change"`; a unit test pins that
-fallback behavior. The real saved-plan engine instead refuses unwalked nested elements
-during plan derivation, before it can return a misleading result.
+fallback behavior. The real saved-plan engine instead refuses nested elements it has not
+walked during plan derivation, before it can return a misleading result.
 
 ## Failure model
 
@@ -98,8 +98,8 @@ Two exception types make up the remote contract:
 Both are raised in one place only. `execute_run` re-raises original exception types;
 `run_remote_request` is the sole sanitize-and-wrap boundary. That split is what keeps CLI
 failure behaviour identical, and it is the subject of
-[ADR 5](../adr/0005-translate-run-failures-only-at-the-remote-boundary.md). Message
-sanitization rules are in
+[ADR 5](../adr/0005-translate-run-failures-only-at-the-remote-boundary.md). The rules for
+redacting messages are in
 [Secret redaction](../guidelines/secret-redaction.md).
 
 A raise means no `RunResult` exists for that run. Any `run.json` already created is left at
@@ -130,7 +130,7 @@ bare `Callable`: a rename in the factory becomes a type error instead of a runti
 ## Plan fingerprint
 
 `infrahub_sync/cache/fingerprint.py::compute_plan_fingerprint(run_dir)` returns a SHA-256
-digest over the canonicalized plan rows, excluding timestamps, run identifiers and paths by
+digest over the canonical plan rows, excluding timestamps, run identifiers and paths by
 construction. It is how "the remote path produced the same plan as the CLI" is tested. The
 algorithm and its compatibility rules are in
 [ADR 7](../adr/0007-canonical-plan-fingerprint-as-equivalence-oracle.md).

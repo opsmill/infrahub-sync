@@ -20,7 +20,8 @@ for a model. It returns a `CursorTier` (an `IntEnum`, defined in
 | `TIMESTAMP` | 2 | The source can filter by modification time (for example NetBox / Nautobot `last_updated__gte`); extract only changed-since records. |
 
 Higher tiers extract less data. NetBox returns `TIMESTAMP` for mapped kinds and `NONE`
-otherwise; an adapter with no incremental support inherits the `NONE` default from the mixin.
+otherwise; an adapter with no incremental support inherits the `NONE` default from
+`DiffSyncMixin`.
 
 ## What an adapter implements
 
@@ -30,7 +31,7 @@ Three methods, layered on top of `model_loader`:
   on for a model.
 - `list_changed_since(model_name, cursor)` — **required when the tier is not `NONE`.** Yield
   the raw records changed since `cursor`, in the same shape `model_loader` feeds to
-  `self.add(...)`. The mixin raises `NotImplementedError` until you override it.
+  `self.add(...)`. `DiffSyncMixin` raises `NotImplementedError` until you override it.
 - `list_existing_ids(model_name)` — optional. Yield the current `unique_id` strings present
   in the source so deletions can be detected between runs. Without it, a warm run cannot tell
   that an object disappeared.
@@ -38,7 +39,7 @@ Three methods, layered on top of `model_loader`:
 `CursorState` (also in `cache/cursors.py`) carries the tier and the saved value (a timestamp
 or id watermark) from the previous run.
 
-## Full resync cadence
+## Full re-extraction cadence
 
 `IncrementalConfig.full_resync_every` (default `10`) is declared under `incremental` in
 `config.yml` and currently governs nothing: the run counter it compared against was written
