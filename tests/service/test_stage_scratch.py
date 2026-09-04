@@ -34,6 +34,11 @@ if TYPE_CHECKING:
 
 WORKER_ID = "3f6b1c2e-52b6-4f1a-9d7c-8a1c0e5b4d21"
 SYNC_NAME_FOR_DIAGNOSTIC = "inventory"
+# The refusal these sync cases expect: the planning leg writes its artifact, and the
+# verify leg refuses it because the harness engine records a fixed `config_version`
+# rather than the registered package's. Pinned so neither case can pass on the
+# earlier `stage_root` refusal, which is raised before any engine is constructed.
+_SYNC_PLAN_REFUSAL = "failed verification checks: config_version"
 
 
 def _saved(run_id: str) -> SavedPlan:
@@ -292,7 +297,7 @@ def test_the_managed_sync_planning_leg_touches_neither_canary(
     monkeypatch.setattr(service_flow, "_publish_plan", lambda *_a, **_k: None)
     bind_granting_guard(monkeypatch, service_flow)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match=_SYNC_PLAN_REFUSAL):
         service_sync_run.fn(run_id, "sync", *_binding(projection, run_id), confirm_writes=True)
 
     assert _tree(canary_cache) == [], f"the sync planning leg wrote into the legacy cache: {_tree(canary_cache)}"
@@ -379,11 +384,12 @@ def test_the_managed_plan_stage_creates_no_cache_under_the_working_directory(
     assert canary_cwd not in planning_engine_factory[0].parents
 
 
-@pytest.mark.usefixtures("claimed", "stub_runtime", "planning_engine_factory")
+@pytest.mark.usefixtures("claimed", "stub_runtime")
 def test_the_managed_sync_planning_leg_creates_no_cache_under_the_working_directory(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     canary_cwd: Path,
+    planning_engine_factory: list[Path],
 ) -> None:
     """The sync planning leg holds to the same boundary with no cache setting present."""
     monkeypatch.delenv("INFRAHUB_SYNC_CACHE_DIR", raising=False)
@@ -394,8 +400,10 @@ def test_the_managed_sync_planning_leg_creates_no_cache_under_the_working_direct
     monkeypatch.setattr(service_flow, "_publish_plan", lambda *_a, **_k: None)
     bind_granting_guard(monkeypatch, service_flow)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match=_SYNC_PLAN_REFUSAL):
         service_sync_run.fn(run_id, "sync", *_binding(projection, run_id), confirm_writes=True)
 
     assert _tree(canary_cwd) == [], f"the sync planning leg wrote under the working directory: {_tree(canary_cwd)}"
     assert not (canary_cwd / ".infrahub-sync-cache").exists()
+    # Empty canaries mean nothing unless the planning leg actually ran and built its engine.
+    assert len(planning_engine_factory) == 1
