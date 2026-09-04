@@ -28,7 +28,7 @@ Describes the overall synchronization configuration.
 | `schema_mapping` | List of `SchemaMappingModel` | Defines how data is mapped from source to destination. | Yes |
 | `diffsync_flags` | List of `DiffSyncFlags` | Instruct Infrahub Sync how to handle some specific situation without changing the data  | No |
 
-### Auto-tiered execution
+### Automatic write order
 
 `order:` is now optional. When it is omitted, infrahub-sync derives a
 write-order graph from the `reference:` entries in each `schema_mapping`
@@ -37,12 +37,16 @@ field and groups kinds into **tiers**:
 - Tier 0: kinds with no outgoing references.
 - Tier N: kinds whose references all live in tiers `0..N-1`.
 
-The flattened tier order replaces the manual `order:` list. During worker execution, the
-engine narrows the destination's `top_level` to one tier at a time so no tier starts before
-the previous tier's writes have completed.
+The flattened tier order replaces the manual `order:` list, and every planned operation
+records the tier its kind belongs to. A plan stores its operations ordered by
+`(tier, operation_id)` and an apply executes them in exactly that order, so a kind is
+written after the kinds it references.
 
 If you must override the computed order because it does not match an adapter quirk, keep
-the `order:` list. It always wins and selects serial worker execution.
+the `order:` list. It always wins: no tiers are computed, and each operation's recorded
+tier is the kind's position in the list you gave. The ordering is the same either way —
+the reviewed operation sequence is what an apply consumes, and there is no separate
+serial or parallel execution mode to choose.
 
 ### Sync store
 
