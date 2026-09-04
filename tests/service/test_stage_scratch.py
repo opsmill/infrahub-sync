@@ -348,3 +348,54 @@ def test_two_managed_plans_never_share_a_stage_root(
         assert not stage_directory.exists(), "a stage's private scratch must not outlive the stage"
     assert _tree(canary_cache) == []
     assert _tree(canary_cwd) == []
+
+
+@pytest.mark.usefixtures("claimed", "stub_runtime")
+def test_the_managed_plan_stage_creates_no_cache_under_the_working_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    canary_cwd: Path,
+    planning_engine_factory: list[Path],
+) -> None:
+    """With no cache setting at all, a managed plan still writes nothing beside itself.
+
+    This is the other environment shape, and it has its own root: absent the setting, the
+    cache layout falls back to `<cwd>/.infrahub-sync-cache/<sync_name>`. A stage that let
+    the engine derive its own location would create that tree under whatever directory the
+    worker happened to start in.
+    """
+    monkeypatch.delenv("INFRAHUB_SYNC_CACHE_DIR", raising=False)
+    run_id = "run-real-plan-no-setting"
+    projection = _product_run(tmp_path / "product", run_id)
+    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "publish_plan_checkpoint", lambda *_a, **_k: None)
+    monkeypatch.setattr(service_flow, "_publish_plan", lambda *_a, **_k: None)
+
+    service_sync_run.fn(run_id, "plan", *_binding(projection, run_id))
+
+    assert _tree(canary_cwd) == [], f"the managed plan wrote under the working directory: {_tree(canary_cwd)}"
+    assert not (canary_cwd / ".infrahub-sync-cache").exists()
+    assert len(planning_engine_factory) == 1
+    assert canary_cwd not in planning_engine_factory[0].parents
+
+
+@pytest.mark.usefixtures("claimed", "stub_runtime", "planning_engine_factory")
+def test_the_managed_sync_planning_leg_creates_no_cache_under_the_working_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    canary_cwd: Path,
+) -> None:
+    """The sync planning leg holds to the same boundary with no cache setting present."""
+    monkeypatch.delenv("INFRAHUB_SYNC_CACHE_DIR", raising=False)
+    run_id = "run-real-sync-no-setting"
+    projection = _product_run(tmp_path / "product", run_id, operation="sync")
+    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "publish_plan_checkpoint", lambda *_a, **_k: None)
+    monkeypatch.setattr(service_flow, "_publish_plan", lambda *_a, **_k: None)
+    bind_granting_guard(monkeypatch, service_flow)
+
+    with pytest.raises(RuntimeError):
+        service_sync_run.fn(run_id, "sync", *_binding(projection, run_id), confirm_writes=True)
+
+    assert _tree(canary_cwd) == [], f"the sync planning leg wrote under the working directory: {_tree(canary_cwd)}"
+    assert not (canary_cwd / ".infrahub-sync-cache").exists()
