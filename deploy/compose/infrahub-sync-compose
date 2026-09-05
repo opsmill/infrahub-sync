@@ -1,0 +1,333 @@
+#!/bin/sh
+# The Infrahub Sync deployment lifecycle. Docker Compose and this script are the
+# only things a host needs: no product checkout, no Python, no `uv`.
+#
+# Docker mutation lives here and only here. Nothing inside a Sync container is
+# given the Docker socket, so no deployed process can start, stop, or remove any
+# part of the deployment it belongs to.
+#
+# Every refusal is a family name followed by a fixed sentence. Credential values
+# are never read into a message, never echoed, and never written to the state
+# file this script generates.
+set -eu
+
+BUNDLE=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+COMPOSE_FILE="$BUNDLE/compose.yaml"
+DEFAULTS="$BUNDLE/defaults.conf"
+OPERATOR="$BUNDLE/operator.env"
+STATE="$BUNDLE/.instance"
+SECRETS="$BUNDLE/secrets"
+ADMIN_SECRET="$SECRETS/postgres-admin-password"
+
+# Measured, not assumed: the bundle was resolved by this exact Compose release,
+# which is also the oldest one still published as a pinned binary. It supplies
+# every feature the bundle uses -- `depends_on` conditions including
+# `service_completed_successfully`, `pull_policy`, repeatable `--env-file`, and
+# `up --wait` with `--wait-timeout`.
+MINIMUM_COMPOSE=2.17.3
+
+# The settings an operator must supply. Names only: this list is printed, the
+# values behind it never are.
+REQUIRED_SETTINGS='INFRAHUB_SYNC_IMAGE
+INFRAHUB_SYNC_DATABASE_URL
+INFRAHUB_SYNC_PREFECT_DATABASE_URL
+INFRAHUB_SYNC_PRODUCT_PASSWORD
+INFRAHUB_SYNC_PREFECT_PASSWORD
+INFRAHUB_SYNC_S3_ACCESS_KEY
+INFRAHUB_SYNC_S3_SECRET_KEY
+INFRAHUB_SYNC_SERVICE_BEARER_TOKENS
+INFRAHUB_API_TOKEN'
+
+START_TIMEOUT=${INFRAHUB_SYNC_START_TIMEOUT:-600}
+READY_TIMEOUT=${INFRAHUB_SYNC_READY_TIMEOUT:-300}
+
+# ---------------------------------------------------------------------------
+# Reporting
+# ---------------------------------------------------------------------------
+
+refuse() {
+    printf 'infrahub-sync: %s: %s\n' "$1" "$2" >&2
+    exit 1
+}
+
+report() {
+    printf 'infrahub-sync: %s\n' "$1"
+}
+
+# ---------------------------------------------------------------------------
+# Instance identity and operator inputs
+# ---------------------------------------------------------------------------
+
+read_setting() {
+    # One value from a KEY=VALUE file, without sourcing it: a file an operator
+    # edits must not be able to run anything in this shell.
+    sed -n "s/^$1=//p" "$2" 2>/dev/null | tail -n 1
+}
+
+# Resolved once, into a variable. A refusal inside `$( )` would exit only the
+# subshell, leaving the caller to carry on with an empty project name -- which is
+# a Compose project that owns nothing and matches nothing.
+INSTANCE=''
+PROJECT=''
+
+require_identity() {
+    [ -f "$STATE" ] || refuse no-instance "this bundle has no instance identity; run \`$0 init\` first"
+    INSTANCE=$(read_setting INFRAHUB_SYNC_INSTANCE "$STATE")
+    [ -n "$INSTANCE" ] ||
+        refuse no-instance "the instance state file names no identity; remove $STATE and run \`$0 init\`"
+    PROJECT="infrahub-sync-$INSTANCE"
+}
+
+compose() {
+    # Three layers, in increasing authority: shipped defaults, the operator's
+    # own settings, then the generated identity. The identity comes last so no
+    # edit to the operator file can relabel a running deployment -- which would
+    # orphan every volume the first identity created.
+    docker compose \
+        --project-name "$PROJECT" \
+        --env-file "$DEFAULTS" \
+        --env-file "$OPERATOR" \
+        --env-file "$STATE" \
+        --file "$COMPOSE_FILE" \
+        "$@"
+}
+
+# ---------------------------------------------------------------------------
+# Preflight
+# ---------------------------------------------------------------------------
+
+version_at_least() {
+    # Compare two dotted versions field by field, numerically. `sort -V` is not
+    # POSIX and is absent from some minimal images.
+    have=$1
+    want=$2
+    index=1
+    while [ "$index" -le 3 ]; do
+        left=$(printf '%s' "$have" | cut -d. -f"$index")
+        right=$(printf '%s' "$want" | cut -d. -f"$index")
+        case "$left" in '' | *[!0-9]*) left=0 ;; esac
+        case "$right" in '' | *[!0-9]*) right=0 ;; esac
+        [ "$left" -gt "$right" ] && return 0
+        [ "$left" -lt "$right" ] && return 1
+        index=$((index + 1))
+    done
+    return 0
+}
+
+check_compose_version() {
+    command -v docker >/dev/null 2>&1 || refuse no-docker "Docker is not installed or not on PATH"
+    found=$(docker compose version --short 2>/dev/null || true)
+    [ -n "$found" ] || refuse compose-unreadable "\`docker compose version --short\` reported no version"
+    case "$found" in
+        [0-9]*.[0-9]*.[0-9]*) : ;;
+        *) refuse compose-unreadable "Docker Compose reported the unreadable version '$found'" ;;
+    esac
+    version_at_least "$found" "$MINIMUM_COMPOSE" ||
+        refuse compose-too-old "Docker Compose $found is older than the required $MINIMUM_COMPOSE"
+    report "Docker Compose $found satisfies the required $MINIMUM_COMPOSE"
+}
+
+check_paths() {
+    for path in "$BUNDLE" "$SECRETS"; do
+        [ -d "$path" ] || refuse path-missing "$path is not a directory"
+        [ -w "$path" ] || refuse path-unwritable "$path is not writable by this user"
+    done
+    [ -r "$COMPOSE_FILE" ] || refuse path-unreadable "$COMPOSE_FILE cannot be read"
+    [ -r "$DEFAULTS" ] || refuse path-unreadable "$DEFAULTS cannot be read"
+    package=$(read_setting INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION "$OPERATOR")
+    [ -n "$package" ] || package=$(read_setting INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION "$DEFAULTS")
+    case "$package" in /*) : ;; *) package="$BUNDLE/$package" ;; esac
+    [ -r "$package" ] || refuse path-unreadable "the declared configuration $package cannot be read"
+    report "lifecycle and configuration paths are readable and writable"
+}
+
+check_credentials() {
+    [ -f "$OPERATOR" ] || refuse no-operator-settings "$OPERATOR does not exist; run \`$0 init\` first"
+    missing=''
+    for name in $REQUIRED_SETTINGS; do
+        value=$(read_setting "$name" "$OPERATOR")
+        # The value is compared against emptiness and against the placeholder
+        # `init` writes. Neither comparison renders it.
+        if [ -z "$value" ] || [ "$value" = "REPLACE-ME" ]; then
+            missing="$missing $name"
+        fi
+    done
+    [ -s "$ADMIN_SECRET" ] || missing="$missing $ADMIN_SECRET"
+    [ -z "$missing" ] || refuse credentials-missing "these settings have no value:$missing"
+    report "every required credential is present"
+}
+
+check_image() {
+    reference=$(read_setting INFRAHUB_SYNC_IMAGE "$OPERATOR")
+    # An immutable reference carries a digest. Whether the rest of it names a
+    # repository Docker can resolve is Docker's question, not this script's, so
+    # the grammar check stops at the digest and the engine answers the rest.
+    case "$reference" in
+        sha256:*) digest=${reference#sha256:} ;;
+        *@sha256:*) digest=${reference##*@sha256:} ;;
+        *) refuse image-not-immutable "INFRAHUB_SYNC_IMAGE must carry an @sha256: digest; '$reference' names a tag" ;;
+    esac
+    case "$digest" in
+        *[!0-9a-f]* | '') refuse image-not-immutable "INFRAHUB_SYNC_IMAGE carries a malformed sha256 digest" ;;
+    esac
+    [ "${#digest}" -eq 64 ] || refuse image-not-immutable "INFRAHUB_SYNC_IMAGE carries a malformed sha256 digest"
+    docker image inspect "$reference" >/dev/null 2>&1 ||
+        docker manifest inspect "$reference" >/dev/null 2>&1 ||
+        refuse image-unresolvable "Docker cannot resolve the image $reference locally or in a registry"
+    report "the Sync image is named by digest and resolves"
+}
+
+port_holder() {
+    # The container publishing this loopback port, or nothing. Explicit, not a
+    # name substring: a container is ours because it carries our instance label.
+    docker ps --format '{{.ID}} {{.Ports}}' 2>/dev/null |
+        while read -r identifier ports; do
+            case "$ports" in
+                *"127.0.0.1:$1->"*) printf '%s' "$identifier"; break ;;
+            esac
+        done
+}
+
+check_ports() {
+    for setting in INFRAHUB_SYNC_API_PORT INFRAHUB_SYNC_PREFECT_PORT; do
+        port=$(read_setting "$setting" "$OPERATOR")
+        [ -n "$port" ] || port=$(read_setting "$setting" "$DEFAULTS")
+        [ -n "$port" ] || refuse port-unset "$setting names no port"
+        holder=$(port_holder "$port")
+        if [ -z "$holder" ]; then
+            continue
+        fi
+        label=$(docker inspect --format '{{index .Config.Labels "io.infrahub-sync.instance"}}' "$holder" 2>/dev/null || true)
+        if [ "$label" = "$INSTANCE" ]; then
+            report "127.0.0.1:$port is published by this instance already"
+        else
+            refuse port-foreign "127.0.0.1:$port is held by a container this instance does not own"
+        fi
+    done
+    report "every required loopback port is free or already ours"
+}
+
+check_destination() {
+    # Inside the Sync image, where the declared package and the credential
+    # resolver already are. This script parses no configuration and sees no
+    # credential value.
+    compose run --rm --no-deps --quiet-pull sync-bootstrap python -m infrahub_sync.service.preflight ||
+        refuse destination-unavailable "the declared destination did not answer; see the reported family above"
+    report "the declared destination answered"
+}
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+random_value() {
+    # Hex from the kernel's own source, so no credential this script generates
+    # depends on a language runtime the host does not have.
+    od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'
+}
+
+command_init() {
+    mkdir -p "$SECRETS"
+    chmod 0700 "$SECRETS"
+    if [ -f "$STATE" ]; then
+        require_identity
+        report "instance $INSTANCE already initialized"
+    else
+        printf 'INFRAHUB_SYNC_INSTANCE=%s\n' "$(random_value 8)" > "$STATE"
+        chmod 0600 "$STATE"
+        require_identity
+        report "generated instance $INSTANCE"
+    fi
+    if [ ! -s "$ADMIN_SECRET" ]; then
+        random_value 24 > "$ADMIN_SECRET"
+        chmod 0600 "$ADMIN_SECRET"
+        report "generated the PostgreSQL administrator password in $ADMIN_SECRET"
+    fi
+    if [ -f "$OPERATOR" ]; then
+        report "$OPERATOR already exists and was left unchanged"
+        return
+    fi
+    product=$(random_value 24)
+    prefect=$(random_value 24)
+    access=$(random_value 12)
+    secret=$(random_value 24)
+    principal=$(random_value 24)
+    umask 077
+    cat > "$OPERATOR" <<OPERATOR_SETTINGS
+# Operator-owned settings for this Infrahub Sync deployment. Git ignores this
+# file. The passwords below were generated locally and are used by nothing else.
+#
+# Two values are yours to supply before the first start:
+#   INFRAHUB_SYNC_IMAGE  the Sync image, by digest
+#   INFRAHUB_API_TOKEN   the credential the declared configuration references
+INFRAHUB_SYNC_IMAGE=REPLACE-ME
+INFRAHUB_API_TOKEN=REPLACE-ME
+
+INFRAHUB_SYNC_PRODUCT_PASSWORD=$product
+INFRAHUB_SYNC_PREFECT_PASSWORD=$prefect
+INFRAHUB_SYNC_DATABASE_URL=postgresql://infrahub_sync:$product@postgres:5432/infrahub_sync
+INFRAHUB_SYNC_PREFECT_DATABASE_URL=postgresql+asyncpg://prefect:$prefect@postgres:5432/prefect
+
+INFRAHUB_SYNC_S3_ACCESS_KEY=$access
+INFRAHUB_SYNC_S3_SECRET_KEY=$secret
+
+INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "$principal", "administrator": true}}
+OPERATOR_SETTINGS
+    chmod 0600 "$OPERATOR"
+    report "wrote $OPERATOR; set INFRAHUB_SYNC_IMAGE and INFRAHUB_API_TOKEN before starting"
+}
+
+command_preflight() {
+    check_compose_version
+    check_paths
+    check_credentials
+    check_image
+    check_ports
+    check_destination
+    report "preflight passed"
+}
+
+worker_state() {
+    # Asked over the deployment's own network, so this does not depend on how a
+    # host maps container ports onto loopback. Container state is not consulted:
+    # a running stack is never ready until the API says a worker registered.
+    compose run --rm --no-deps -T --quiet-pull sync-bootstrap python -c \
+        "import httpx; print(httpx.get('http://sync-api:8000/status', timeout=5).json()['worker']['state'])" \
+        2>/dev/null | tr -d '\r' | tail -n 1
+}
+
+wait_for_ready() {
+    deadline=$(($(date +%s) + READY_TIMEOUT))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        case "$(worker_state)" in
+            ready | busy) report "the deployment is READY"; return 0 ;;
+        esac
+        sleep 5
+    done
+    refuse not-ready "the deployment did not report a live worker within ${READY_TIMEOUT}s"
+}
+
+command_start() {
+    command_preflight
+    report "starting"
+    compose up --detach --wait --wait-timeout "$START_TIMEOUT" --quiet-pull sync-api sync-worker
+    wait_for_ready
+}
+
+usage() {
+    cat <<'USAGE'
+Usage: infrahub-sync-compose <command>
+
+  init        Generate this deployment's identity and operator settings file.
+  preflight   Check Compose, paths, credentials, image, ports, and destination.
+  start       Preflight, start the deployment, and wait for endpoint-backed READY.
+USAGE
+}
+
+case "${1:-}" in
+    init) command_init ;;
+    preflight) require_identity; command_preflight ;;
+    start) require_identity; command_start ;;
+    -h | --help | help | '') usage ;;
+    *) usage >&2; exit 2 ;;
+esac

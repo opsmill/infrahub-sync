@@ -30,6 +30,10 @@ FIXTURE_OVERRIDE = Path(__file__).resolve().parent / "fixture-override.yaml"
 API_PORT = 8021
 PREFECT_PORT = 4221
 
+# The bundle's own PostgreSQL image, reused as a probe so no fourth external
+# image has to be pinned for a two-command question.
+GATEWAY_PROBE_IMAGE = "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
+
 READY_TIMEOUT_SECONDS = 420
 RUN_TIMEOUT_SECONDS = 300
 POLL_SECONDS = 3
@@ -251,3 +255,51 @@ def operator_environment(
     path.write_text("".join(f"{key}={value}\n" for key, value in values.items()), encoding="utf-8")
     path.chmod(0o600)
     return path
+
+
+# The one-off command form every durable-state probe uses. It runs in the Sync
+# image, on the deployment's own network, so a probe reaches PostgreSQL, the
+# object store, Prefect, and the API exactly the way the deployment's own
+# processes do -- and needs no published port to do it.
+PROBE_SERVICE = "sync-bootstrap"
+
+
+def probe_json(deployment: Deployment, script: str) -> Any:  # noqa: ANN401 -- it returns whatever the probe printed
+    """Run one Python snippet inside the deployment and return the JSON it printed."""
+    result = deployment.compose(
+        ["run", "--rm", "--no-deps", "-T", "--quiet-pull", PROBE_SERVICE, "python", "-c", script]
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = [line for line in result.stdout.splitlines() if line.strip()]
+    assert payload, result.stdout + result.stderr
+    return json.loads(payload[-1])
+
+
+def run_bootstrap(deployment: Deployment, service: str = PROBE_SERVICE) -> subprocess.CompletedProcess[str]:
+    """Run one bootstrap job again against the state a previous run left."""
+    return deployment.compose(["run", "--rm", "-T", "--quiet-pull", service])
+
+
+def container_reachable_host() -> str:
+    """Return an address a container reaches this host by, without a shipped route.
+
+    The bundle carries no host route on purpose: a real deployment's destination
+    is an external system it reaches by ordinary DNS. A test host is external in
+    the same sense, but how a container names it differs — Docker Desktop
+    resolves `host.docker.internal` on its own, and on Linux the address is the
+    default gateway of the container's own network.
+    """
+    resolved = docker(
+        ["run", "--rm", "--entrypoint", "getent", GATEWAY_PROBE_IMAGE, "hosts", "host.docker.internal"],
+        timeout=120,
+    )
+    if resolved.returncode == 0 and resolved.stdout.split():
+        return "host.docker.internal"
+    route = docker(["run", "--rm", "--entrypoint", "ip", GATEWAY_PROBE_IMAGE, "route"], timeout=120)
+    assert route.returncode == 0, route.stderr
+    for line in route.stdout.splitlines():
+        fields = line.split()
+        if fields[:1] == ["default"] and len(fields) >= 3:
+            return fields[2]
+    pytest.fail(f"no container-reachable host address could be determined: {route.stdout}")
+    return ""
