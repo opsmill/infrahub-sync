@@ -8,9 +8,11 @@
 # here, stored in PostgreSQL, or printed by any lifecycle command.
 #
 # Edit `url` to name your own Infrahub, or point
-# `INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION` at a package file of your own. The
-# declared content below is what the registry checksums, so any edit registers a
-# new immutable version rather than changing the one already recorded.
+# `INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION` at a package file of your own. Edit it
+# before the first start: the declared content below is what the registry
+# checksums, and bootstrap recognises this configuration by its declared name, so
+# an edit afterwards is refused as conflicting content under a name that is
+# already registered. To change it later, change `name` as well.
 #
 # The schema this maps is the one Infrahub Sync ships for its own qualification:
 # examples/prefect_remote_run/schemas/infra_device.yml

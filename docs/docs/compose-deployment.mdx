@@ -133,7 +133,7 @@ From Python:
 from infrahub_sync.client import SyncClient
 
 with SyncClient("http://127.0.0.1:8000", "<the generated principal token>") as client:
-    print(client.status().worker.state)
+    print(client.get_status().worker.state)
 ```
 
 ### Plan, review, verify, apply, and sync
