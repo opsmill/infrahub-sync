@@ -1164,7 +1164,7 @@ requires-dist = [
     { name = "prefect", marker = "python_full_version >= '3.11' and extra == 'service'", specifier = "==3.8.1" },
     { name = "prefect", marker = "extra == 'prefect'", specifier = "==3.8.1" },
     { name = "psycopg", extras = ["binary"], marker = "python_full_version >= '3.11' and extra == 'service'", specifier = ">=3.2,<4" },
-    { name = "pyarrow", specifier = ">=23,<24" },
+    { name = "pyarrow", specifier = ">=23.0.1,<24" },
     { name = "pylint", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.2,<10" },
     { name = "pytest-asyncio", marker = "extra == 'dev'" },

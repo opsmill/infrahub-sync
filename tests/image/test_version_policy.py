@@ -42,9 +42,10 @@ FIX_RANGES = {
     "urllib3": SpecifierSet(">=2.7.0"),
 }
 
-# The project caps PyArrow to one major series, the way it caps its other pinned
-# dependencies, so a new major cannot arrive through an unrelated lock refresh.
-PYARROW_EXCLUDED = (Version("21.0.0"), Version("22.0.0"), Version("24.0.0"))
+# Releases the declared PyArrow constraint has to refuse: the three that predate
+# the fix, and the next major. 23.0.0 is the one worth naming — it is inside the
+# series that carries the fix but before the patch that does.
+PYARROW_EXCLUDED = (Version("21.0.0"), Version("22.0.0"), Version("23.0.0"), Version("24.0.0"))
 
 
 def locked_version(package: str) -> Version:
@@ -80,13 +81,14 @@ def test_every_package_carrying_a_known_fix_is_locked_in_its_accepted_range(
     assert locked in accepted, f"{package} {locked} is outside the accepted range {accepted}"
 
 
-def test_the_project_cannot_resolve_pyarrow_below_the_release_that_carries_its_fix() -> None:
+def test_the_project_accepts_the_pyarrow_release_that_carries_its_fix() -> None:
     """The lock records one resolution; the declared constraint governs every other."""
-    specifier = declared_requirement("pyarrow").specifier
+    assert PYARROW_FIX in declared_requirement("pyarrow").specifier
 
-    assert PYARROW_FIX in specifier
-    for excluded in PYARROW_EXCLUDED:
-        assert excluded not in specifier, f"pyarrow {excluded} still resolves"
+
+@pytest.mark.parametrize("excluded", PYARROW_EXCLUDED, ids=str)
+def test_the_project_cannot_resolve_a_pyarrow_release_without_its_fix(excluded: Version) -> None:
+    assert excluded not in declared_requirement("pyarrow").specifier, f"pyarrow {excluded} still resolves"
 
 
 @pytest.mark.parametrize("series", ["3.10", "3.11", "3.12", "3.13"])

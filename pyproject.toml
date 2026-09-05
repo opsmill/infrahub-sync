@@ -41,7 +41,7 @@ dependencies = [
     # test enforces the contract against the locked version.
     "ruff>=0.15.5,<0.16",
     "tqdm>=4.67",
-    "pyarrow>=23,<24",
+    "pyarrow>=23.0.1,<24",
     "fsspec>=2024.6",
     "filelock>=3.13",
 ]
