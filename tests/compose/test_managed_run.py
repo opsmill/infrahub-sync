@@ -29,6 +29,7 @@ from tests.compose.lifecycle import (
     register,
     smoke_package,
 )
+from tests.compose.redaction import SECRETS
 
 if TYPE_CHECKING:
     from tests.compose.lifecycle import Deployment
@@ -120,11 +121,13 @@ def test_a_registered_plan_runs_through_the_deployed_worker(
 def test_no_canary_reaches_the_retained_deployment_output(deployment: Deployment, canaries: dict[str, str]) -> None:
     """Every credential this deployment resolved is a throwaway planted for this run.
 
-    Scanning for the values rather than asserting a particular message is
-    redacted is the difference between proving nothing leaked and proving one
-    known string was handled.
+    The sweep reads the *raw* stream on purpose. The redaction boundary would
+    remove these values from anything rendered, so searching what it returns
+    would pass whether the deployment leaked or not. What is under test here is
+    the deployment, not the boundary; only the names of anything found are
+    reported, so this failure message stays as safe as a redacted one.
     """
     retained = deployment.logs(tail=2000)
 
-    leaked = sorted(kind for kind, value in canaries.items() if value in retained)
+    leaked = SECRETS.leaked(retained.unredacted(), canaries)
     assert leaked == [], f"these credentials appear in retained deployment output: {leaked}"

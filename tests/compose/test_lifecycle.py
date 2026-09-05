@@ -7,8 +7,9 @@ never been initialized.
 
 The cases run in file order against one module-scoped deployment, because a
 lifecycle is a sequence and pretending otherwise would mean starting a stack per
-case. Each case leaves the deployment as it found it, except the last two: they
-are the teardown contract, and they run last on purpose.
+case. Each case leaves the deployment as it found it, except the last three:
+they are the teardown contract and what a bundle does after it, and they run
+last on purpose.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess  # noqa: S404 -- the subject of this suite is a shell entry point
+import socket
 import time
 import uuid
 from pathlib import Path
@@ -29,6 +30,7 @@ from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
 from tests.compose.conftest import BUNDLE, DEFAULTS_FILE, FIXTURE_INFRAHUB_PORT, INSTANCE_LABEL
 from tests.compose.lifecycle import (
     DURABLE_STATE,
+    GATEWAY_PROBE_IMAGE,
     Deployment,
     api_client,
     await_phase,
@@ -43,6 +45,7 @@ from tests.compose.lifecycle import (
     smoke_package,
     wait_for,
 )
+from tests.compose.redaction import SECRETS, Captured, capture
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -68,25 +71,26 @@ GENERATED_SETTINGS = (
 )
 
 
-def entry_point(bundle: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
-    """Run one lifecycle command exactly as an operator would."""
-    return subprocess.run(  # noqa: S603 -- fixed argv
+def entry_point(bundle: Path, *arguments: str) -> Captured:
+    """Run one lifecycle command exactly as an operator would.
+
+    The entry point prints Compose's own output, so what comes back is retained
+    Compose output and goes through the same redaction boundary as the rest.
+    """
+    return capture(
         [str(bundle / "infrahub-sync-compose"), *arguments],
-        capture_output=True,
-        text=True,
-        check=False,
         timeout=START_TIMEOUT_SECONDS,
         env=os.environ.copy(),
     )
 
 
-def verdict(result: subprocess.CompletedProcess[str]) -> str:
+def verdict(result: Captured) -> str:
     """Return the state word `status` printed, which is its last line."""
     lines = [line for line in result.stdout.splitlines() if line.strip()]
     return lines[-1].strip() if lines else ""
 
 
-def family(result: subprocess.CompletedProcess[str]) -> str:
+def family(result: Captured) -> str:
     """Return the refusal family a run reported, or '' when it did not refuse."""
     for line in result.stderr.splitlines():
         if line.startswith("infrahub-sync: "):
@@ -160,8 +164,6 @@ def plant_foreign_container(deployment: Deployment) -> str:
     Selecting teardown targets by project name alone would take it; selecting by
     this instance's label does not.
     """
-    from tests.compose.lifecycle import GATEWAY_PROBE_IMAGE
-
     created = docker(
         [
             "run",
@@ -333,7 +335,10 @@ def test_logs_are_bounded_and_carry_no_generated_credential(started: Deployment)
 
     assert printed.returncode == 0, printed.stderr
     assert len(printed.stdout.splitlines()) <= 200 * len(SERVICES), len(printed.stdout.splitlines())
-    leaked = sorted(name for name, value in generated_credentials(started.bundle).items() if value in printed.stdout)
+    # The raw stream, deliberately. The boundary would strip these values from
+    # anything rendered, so sweeping what it returns would pass whether `logs`
+    # printed a credential or not. Only the names of anything found are reported.
+    leaked = SECRETS.leaked(printed.unredacted(), generated_credentials(started.bundle))
     assert leaked == [], f"these generated credentials appear in the logs: {leaked}"
 
 
@@ -356,6 +361,50 @@ def test_a_paused_worker_ages_into_degraded_while_its_container_still_runs(start
         assert degraded
     finally:
         docker(["unpause", worker])
+    wait_for(
+        "the deployment returning to READY",
+        lambda: verdict(entry_point(started.bundle, "status")) == "READY",
+        timeout=180,
+    )
+
+
+def test_a_stopped_worker_ages_into_degraded_while_the_api_stays_reachable(started: Deployment) -> None:
+    """The worker is gone and the API is not, which is a degraded deployment.
+
+    Distinct from the paused case above: there the container is running and the
+    process is not answering, here the container is stopped outright. They fail
+    the same test at the API — no fresh heartbeat — and they must not be allowed
+    to reach it by different accidents, so both are driven.
+
+    Distinct from `STOPPED` too. Nothing about this deployment is off: the API
+    answers, the databases answer, submissions are accepted and will sit
+    unclaimed. Reporting that as stopped would tell an operator to start a
+    deployment that is already running, and reporting it as ready would tell
+    them nothing is wrong.
+    """
+    worker = started.container("sync-worker")
+    halted = docker(["stop", worker])
+    assert halted.returncode == 0, halted.stderr
+    try:
+        # Stopped, not removed: the container is still this project's, and the
+        # deployment still has every part it was started with.
+        assert docker(["inspect", "--format", "{{.State.Running}}", worker]).stdout.strip() == "false"
+        degraded = wait_for(
+            "the deployment ageing into DEGRADED",
+            lambda: verdict(entry_point(started.bundle, "status")) == "DEGRADED",
+            timeout=180,
+        )
+        assert degraded
+        # The half that makes this DEGRADED rather than STOPPED, asked of the
+        # published surface an operator would use.
+        answered = httpx.get(f"{started.api}/version", timeout=30)
+        assert answered.status_code == 200, answered.text
+        reported = entry_point(started.bundle, "status")
+        assert reported.returncode == 3, reported.stdout
+        assert "no live worker" in reported.stdout
+    finally:
+        resumed = docker(["start", worker])
+        assert resumed.returncode == 0, resumed.stderr
     wait_for(
         "the deployment returning to READY",
         lambda: verdict(entry_point(started.bundle, "status")) == "READY",
@@ -461,6 +510,128 @@ def test_a_plan_apply_and_separate_sync_run_through_the_replacement_worker(
 
 
 # ---------------------------------------------------------------------------
+# Port occupancy
+# ---------------------------------------------------------------------------
+# The occupants a container scan cannot see. Each one is real: a process holding
+# a loopback bind, and a container of no project of ours published on every
+# address. Preflight asks the engine for the bind rather than reading anything
+# back about who holds it, so both answer the same way.
+
+# Ports this suite's own deployments do not use, so the occupant planted below is
+# the only thing holding them.
+SPARE_API_PORT = "8041"
+SPARE_PREFECT_PORT = "4241"
+
+
+@pytest.fixture
+def unstarted(started: Deployment, sync_image: str, tmp_path: Path) -> Iterator[Path]:
+    """A second copy of the bundle, initialized on spare ports and never started.
+
+    Preflight is the whole subject here, and it refuses at the ports before it
+    ever reaches the destination probe, so nothing in this bundle has to run.
+    """
+    bundle = tmp_path / "compose"
+    shutil.copytree(BUNDLE, bundle)
+    # The same real destination the started deployment uses, so a preflight that
+    # gets past the ports is answered by something rather than refused for an
+    # unrelated reason.
+    package = bundle / "configuration" / "qualification.yaml"
+    package.write_text(
+        package.read_text(encoding="utf-8").replace("http://infrahub.example.net:8000", started.destination),
+        encoding="utf-8",
+    )
+    created = entry_point(bundle, "init")
+    assert created.returncode == 0, created.stderr
+    settings = bundle / "operator.env"
+    settings.write_text(
+        settings.read_text(encoding="utf-8")
+        .replace("INFRAHUB_SYNC_IMAGE=REPLACE-ME", f"INFRAHUB_SYNC_IMAGE={sync_image}")
+        .replace("INFRAHUB_API_TOKEN=REPLACE-ME", f"INFRAHUB_API_TOKEN={setting(started.bundle, 'INFRAHUB_API_TOKEN')}")
+        + f"INFRAHUB_SYNC_IMAGE_PULL_POLICY=never\nINFRAHUB_SYNC_API_PORT={SPARE_API_PORT}\n"
+        f"INFRAHUB_SYNC_PREFECT_PORT={SPARE_PREFECT_PORT}\n",
+        encoding="utf-8",
+    )
+    yield bundle
+    # Nothing was started, so the only thing that could remain is a bind probe
+    # that failed to be removed. The assertion below is what proves there is not.
+    entry_point(bundle, "reset", (bundle / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip())
+
+
+def probe_containers(bundle: Path) -> list[str]:
+    """Every bind-probe container this bundle's instance could have left behind."""
+    instance = (bundle / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+    listed = docker(["ps", "--all", "--quiet", "--filter", f"name=infrahub-sync-portprobe-{instance}-"])
+    assert listed.returncode == 0, listed.stderr
+    return listed.stdout.split()
+
+
+def test_preflight_refuses_a_bind_held_by_a_process_that_is_not_a_container(unstarted: Path) -> None:
+    """A host listener publishes nothing and carries no label; it still holds the bind.
+
+    This is the occupant the removed scan could never have found. Nothing about
+    it appears in any container listing, and starting anyway would fail at the
+    publication with an engine error instead of a refusal an operator can act on.
+    """
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", int(SPARE_API_PORT)))
+    listener.listen(1)
+    try:
+        refused = entry_point(unstarted, "preflight")
+
+        assert family(refused) == "port-occupied", refused.stderr
+        assert SPARE_API_PORT in refused.stderr
+    finally:
+        listener.close()
+    assert probe_containers(unstarted) == [], "the bind probe left a container behind"
+
+
+def test_preflight_refuses_a_bind_a_foreign_container_published_on_every_address(unstarted: Path) -> None:
+    """Published on `0.0.0.0`, which covers loopback and is not the string a scan looked for.
+
+    The removed check matched `127.0.0.1:<port>->` in a container's port column.
+    A container published this way holds the same bind and matches nothing.
+    """
+    planted = docker(
+        [
+            "run",
+            "--detach",
+            "--publish",
+            f"0.0.0.0:{SPARE_PREFECT_PORT}:5432",
+            "--entrypoint",
+            "sleep",
+            GATEWAY_PROBE_IMAGE,
+            "600",
+        ]
+    )
+    assert planted.returncode == 0, planted.stderr
+    container = planted.stdout.strip()
+    try:
+        refused = entry_point(unstarted, "preflight")
+
+        assert family(refused) == "port-occupied", refused.stderr
+        assert SPARE_PREFECT_PORT in refused.stderr
+    finally:
+        docker(["rm", "--force", container])
+    assert probe_containers(unstarted) == [], "the bind probe left a container behind"
+
+
+def test_preflight_passes_when_nothing_holds_either_bind(unstarted: Path) -> None:
+    """The probe is disposable: it takes each bind, gives it straight back, and leaves.
+
+    A probe that kept a port would make the very next check fail, and a probe
+    that was left behind would make the next start fail, so the same case proves
+    both the pass and the cleanup.
+    """
+    checked = entry_point(unstarted, "preflight")
+
+    assert checked.returncode == 0, checked.stderr + checked.stdout
+    assert f"127.0.0.1:{SPARE_API_PORT} is free" in checked.stdout
+    assert f"127.0.0.1:{SPARE_PREFECT_PORT} is free" in checked.stdout
+    assert probe_containers(unstarted) == [], "the bind probe left a container behind"
+
+
+# ---------------------------------------------------------------------------
 # Ownership and teardown
 # ---------------------------------------------------------------------------
 
@@ -518,4 +689,60 @@ def test_reset_removes_only_this_instance_and_leaves_a_foreign_volume(started: D
         assert remaining.stdout.split() == []
         assert volume_exists(foreign), "reset removed a volume this instance does not own"
     finally:
+        docker(["volume", "rm", "--force", foreign])
+
+
+def test_the_next_start_after_reset_is_a_cold_bootstrap(started: Deployment) -> None:
+    """What reset is for: the bundle comes back with nothing, and comes back working.
+
+    A reset that removed the volumes but left the deployment unable to start
+    again would be a broken bundle, and one that started against surviving state
+    would not have reset anything. Both are only visible from the other side of
+    a real second start, so this drives one.
+
+    Cold is asserted, not assumed: no runs, no artifacts, and exactly one
+    registered configuration version — the bundled one this bootstrap just
+    registered. Before the reset there were runs, artifacts, and a second
+    configuration this suite registered itself.
+    """
+    bundle = started.bundle
+    # The reset case above already took this bundle's identity. Run on its own,
+    # this case has to take it too, or it would be restarting a deployment
+    # rather than bootstrapping one.
+    if (bundle / ".instance").is_file():
+        previous = (bundle / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+        removed = entry_point(bundle, "reset", previous)
+        assert removed.returncode == 0, removed.output
+
+    foreign = plant_foreign_volume()
+    created = entry_point(bundle, "init")
+    assert created.returncode == 0, created.stderr
+    instance = (bundle / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+    assert instance != started.instance, "reset left the identity its volumes were labelled with"
+    settings = bundle / "operator.env"
+    cold = Deployment(
+        instance=instance,
+        environment_file=settings,
+        environment_files=(DEFAULTS_FILE, settings, bundle / ".instance"),
+        compose_file=bundle / "compose.yaml",
+        bundle=bundle,
+        destination=started.destination,
+        api_port=int(API_PORT),
+        prefect_port=int(PREFECT_PORT),
+    )
+    try:
+        launched = entry_point(bundle, "start")
+        assert launched.returncode == 0, launched.stderr + launched.stdout[-3000:]
+        assert "the deployment is READY" in launched.stdout
+        assert verdict(entry_point(bundle, "status")) == "READY"
+
+        state = probe_json(cold, DURABLE_STATE)
+        assert state["runs"] == 0, state["runs"]
+        assert state["objects"] == [], state["objects"]
+        assert len(state["configuration_versions"]) == 1, state["configuration_versions"]
+        assert state["configuration_versions"][0][1] == 1, state["configuration_versions"]
+        assert volume_exists(foreign), "the cold start took a volume this instance does not own"
+    finally:
+        entry_point(bundle, "reset", instance)
+        cold.down(volumes=True)
         docker(["volume", "rm", "--force", foreign])

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import secrets
-import subprocess  # noqa: S404 -- fixed argv Docker and Compose drivers for the bundle gate
 import time
 import uuid
 from pathlib import Path
@@ -19,7 +18,8 @@ import httpx
 import pytest
 
 from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
-from tests.compose.conftest import BUNDLE, COMPOSE_FILE, DEFAULTS_FILE, INSTANCE_LABEL, compose
+from tests.compose.conftest import BUNDLE, COMPOSE_FILE, DEFAULTS_FILE, INSTANCE_LABEL, compose, start_command
+from tests.compose.redaction import SECRETS, Captured, capture
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -36,7 +36,11 @@ PREFECT_PORT = 4221
 # image has to be pinned for a two-command question.
 GATEWAY_PROBE_IMAGE = "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
 
+# The declared readiness bound. Compose is given it as `--wait-timeout`, so it is
+# Compose that decides a deployment did not come up; the subprocess cushion below
+# only lets that decision be reported and the process reaped.
 READY_TIMEOUT_SECONDS = 420
+PROCESS_CUSHION_SECONDS = 60
 RUN_TIMEOUT_SECONDS = 300
 POLL_SECONDS = 3
 
@@ -45,18 +49,18 @@ POLL_SECONDS = 3
 # resolves. Nothing the operator can see may carry it.
 def canary(kind: str) -> str:
     """Return a throwaway secret whose appearance anywhere is a leak."""
-    return f"canary-{kind}-{secrets.token_hex(12)}"
+    value = f"canary-{kind}-{secrets.token_hex(12)}"
+    SECRETS.register(value)
+    return value
 
 
-def docker(argv: Sequence[str], *, timeout: int = 300) -> subprocess.CompletedProcess[str]:
-    """Run one fixed-argv Docker command and return its completed result."""
-    return subprocess.run(  # noqa: S603 -- fixed argv
-        ["docker", *argv],  # noqa: S607 -- Docker is resolved from the gate's PATH
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout,
-    )
+def docker(argv: Sequence[str], *, timeout: int = 300) -> Captured:
+    """Run one fixed-argv Docker command and return its redacted result.
+
+    `docker inspect` prints every environment entry a container was given, so
+    this is as much a credential-bearing stream as Compose's own.
+    """
+    return capture(["docker", *argv], timeout=timeout)
 
 
 def daemon_available() -> bool:
@@ -102,7 +106,7 @@ class Deployment:
         self._files = (compose_file, *overrides)
         self._environment_files = environment_files
 
-    def compose(self, argv: Sequence[str], *, timeout: int = 900) -> subprocess.CompletedProcess[str]:
+    def compose(self, argv: Sequence[str], *, timeout: int = 900) -> Captured:
         """Run one Compose command against this deployment."""
         return compose(
             argv,
@@ -112,9 +116,17 @@ class Deployment:
             timeout=timeout,
         )
 
-    def up(self, *services: str, timeout: int = 900) -> subprocess.CompletedProcess[str]:
-        """Start the named services, or all of them, and wait for their health gates."""
-        return self.compose(["up", "--detach", "--wait", "--quiet-pull", *services], timeout=timeout)
+    def up(self, *services: str) -> Captured:
+        """Start the named services, or all of them, and wait for their health gates.
+
+        Compose is given the readiness bound. A subprocess timeout that expired
+        first would kill Compose mid-start and leave the deployment in whatever
+        state it had reached, which is a different answer than "not ready".
+        """
+        return self.compose(
+            start_command(services, bound=READY_TIMEOUT_SECONDS),
+            timeout=READY_TIMEOUT_SECONDS + PROCESS_CUSHION_SECONDS,
+        )
 
     def container(self, service: str) -> str:
         """Return the one container identifier of a service, failing when it has none."""
@@ -134,10 +146,13 @@ class Deployment:
             found[labels["com.docker.compose.service"]] = identifier
         return found
 
-    def logs(self, *services: str, tail: int = 200) -> str:
-        """Return bounded log output for the named services."""
-        result = self.compose(["logs", "--no-color", "--tail", str(tail), *services])
-        return result.stdout + result.stderr
+    def logs(self, *services: str, tail: int = 200) -> Captured:
+        """Return bounded log output for the named services.
+
+        A `Captured`, not a string: a caller that renders it gets the redacted
+        streams, and a sweep that searches it has to ask for the raw text.
+        """
+        return self.compose(["logs", "--no-color", "--tail", str(tail), *services])
 
     def down(self, *, volumes: bool = False) -> None:
         """Remove this deployment, and its data when asked."""
@@ -293,13 +308,13 @@ def probe_json(deployment: Deployment, script: str) -> Any:  # noqa: ANN401 -- i
     result = deployment.compose(
         ["run", "--rm", "--no-deps", "-T", "--quiet-pull", PROBE_SERVICE, "python", "-c", script]
     )
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode == 0, result.output
     payload = [line for line in result.stdout.splitlines() if line.strip()]
-    assert payload, result.stdout + result.stderr
+    assert payload, result.output
     return json.loads(payload[-1])
 
 
-def run_bootstrap(deployment: Deployment, service: str = PROBE_SERVICE) -> subprocess.CompletedProcess[str]:
+def run_bootstrap(deployment: Deployment, service: str = PROBE_SERVICE) -> Captured:
     """Run one bootstrap job again against the state a previous run left."""
     return deployment.compose(["run", "--rm", "-T", "--quiet-pull", service])
 

@@ -125,7 +125,7 @@ def test_the_database_bootstrap_repeats_without_changing_anything(
     """It runs again on every restart, so a second run has to be a no-op."""
     repeated = run_bootstrap(deployment, "db-bootstrap")
 
-    assert repeated.returncode == 0, repeated.stdout + repeated.stderr
+    assert repeated.returncode == 0, repeated.output
     assert probe_json(deployment, DATABASES) == converged["databases"]
 
 
@@ -135,7 +135,7 @@ def test_the_sync_bootstrap_repeats_without_duplicating_any_durable_object(
     """Bucket, pool, deployment, and registration all converge rather than accumulate."""
     repeated = run_bootstrap(deployment)
 
-    assert repeated.returncode == 0, repeated.stdout + repeated.stderr
+    assert repeated.returncode == 0, repeated.output
     assert probe_json(deployment, BUCKETS) == converged["buckets"]
     assert probe_json(deployment, PREFECT) == converged["prefect"]
     assert probe_json(deployment, CONFIGURATIONS) == converged["configurations"]

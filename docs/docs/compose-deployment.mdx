@@ -84,7 +84,8 @@ name followed by a fixed sentence. It never renders a credential value.
 | `credentials-missing` | The named settings are empty or still hold the `REPLACE-ME` placeholder. |
 | `image-not-immutable` | `INFRAHUB_SYNC_IMAGE` names a tag, or a malformed digest. Use one of the two forms above. |
 | `image-unresolvable` | Docker cannot find that digest locally or in a registry. |
-| `port-foreign` | A container this instance does not own already publishes one of the loopback ports. |
+| `port-occupied` | Something else already holds one of the required loopback binds. Preflight asks the engine for the bind rather than reading container names, so a foreign container published on any address and a host process that is not a container are both found. |
+| `port-unprovable` | The disposable bind probe could not run at all, so the port was neither proved free nor proved held. Check that the Sync image runs on this host. |
 | `destination-unavailable` | The declared destination did not answer, or refused the credential. The probe reports which. |
 
 `start` runs `preflight`, brings the deployment up, and returns only once the
@@ -180,13 +181,19 @@ curl -sS -X POST "$INFRAHUB_SYNC_API_URL/runs" \
 | State | Exit | What it means |
 | --- | --- | --- |
 | `READY` | 0 | Dependencies answer, the API answers, and a registered worker is sending heartbeats. |
-| `DEGRADED` | 3 | Something owned exists, but that is not all true. A hung worker lands here. |
+| `DEGRADED` | 3 | Something owned exists, but that is not all true. A stopped or hung worker lands here. |
 | `STOPPED` | 4 | No container of this instance is running. |
 
 Container state establishes absence and nothing else. A paused worker keeps
 looking `running` to Docker; the deployment reports `DEGRADED` about thirty
 seconds after its heartbeat stops, because readiness comes from what the
 Sync API reports about the Prefect registry rather than from a process being up.
+
+A worker that has been stopped outright reaches `DEGRADED` the same way, and for
+the same reason it is not `STOPPED`: the API still answers, submissions are
+still accepted, and they will sit unclaimed until a worker comes back. Start the
+worker again — `docker start`, or `restart` — and status returns to `READY`
+without any durable record changing.
 
 ## Logs
 
@@ -230,6 +237,12 @@ instance 3a5dbb1bc6d569b7: container/9c2f1ea41b7d
 `reset` additionally requires you to repeat the identity it just displayed.
 There is no forcing flag. It leaves `operator.env` and `secrets/` in place, so
 the same credentials serve the next deployment you start from this bundle.
+
+Starting again after a reset is a cold bootstrap, not a resumption. Run `init`
+to generate a new identity — the old one labelled volumes that no longer exist —
+and then `start`. Bootstrap creates the two databases, the bucket, the work
+pool, the deployment, and the declared configuration from nothing, and the
+deployment reaches `READY` with no runs and no artifacts behind it.
 
 ## Developing the bundle
 

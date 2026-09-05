@@ -2,24 +2,27 @@
 
 Every case runs `deploy/compose/infrahub-sync-compose` itself against a copy of
 the bundle, so what is under test is the shipped script rather than a
-restatement of it. Docker is replaced by a shim that answers the four questions
-preflight asks it — the installed Compose version, which container publishes a
-loopback port, what label that container carries, and whether the declared
-destination answered — because those answers are the inputs whose handling is
-the point, and a real daemon cannot be made to give the wrong ones on demand.
+restatement of it. Docker is replaced by a shim that answers exactly the
+questions preflight asks it — the installed Compose version, whether an image
+resolves, which container a named service resolves to and what it publishes and
+is labelled with, whether the engine can take a required bind, and whether the
+declared destination answered — because those answers are the inputs whose
+handling is the point, and a real daemon cannot be made to give the wrong ones
+on demand. The Docker-backed suite plants real occupants of a real port; this
+one covers the answers a real daemon will not produce to order.
 """
 
 from __future__ import annotations
 
 import os
 import shutil
-import subprocess  # noqa: S404 -- the subject of this suite is a shell entry point
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
 from tests.compose.conftest import BUNDLE
+from tests.compose.redaction import Captured, capture
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -34,31 +37,73 @@ MINIMUM_COMPOSE = "2.17.3"
 DOCKER_SHIM = r"""#!/bin/sh
 # A Docker stand-in for the preflight suite. It answers exactly the questions the
 # entry point asks and refuses anything else loudly, so a new question added to
-# preflight cannot pass unnoticed.
+# preflight cannot pass unnoticed -- and so a reintroduced unbounded `docker ps`
+# scan fails here rather than quietly working on the developer's machine.
+
+if [ "$1" = "compose" ]; then
+    # Which Compose subcommand, ignoring the global flags in front of it.
+    sub=""
+    for word in "$@"; do
+        case "$word" in
+            version | ps | run) sub=$word; break ;;
+        esac
+    done
+    case "$sub" in
+        version)
+            printf '%s\n' "${SHIM_COMPOSE_VERSION}"
+            exit 0
+            ;;
+        ps)
+            # The one container of a named service, or nothing.
+            printf '%s\n' "${SHIM_OWNED_CONTAINER:-}"
+            exit 0
+            ;;
+        run)
+            # The only `compose run` preflight makes is the destination probe.
+            exit "${SHIM_DESTINATION_RC:-0}"
+            ;;
+    esac
+    printf 'docker shim: unexpected compose call: %s\n' "$*" >&2
+    exit 97
+fi
+
 case "$1 $2" in
-    "compose version")
-        printf '%s\n' "${SHIM_COMPOSE_VERSION}"
-        exit 0
-        ;;
-    "image inspect")
+    "image inspect" | "manifest inspect")
         exit "${SHIM_IMAGE_RESOLVES:-0}"
         ;;
-    "manifest inspect")
-        exit "${SHIM_IMAGE_RESOLVES:-0}"
-        ;;
-    "ps --format")
-        [ -n "${SHIM_PORT_HOLDER:-}" ] && printf '%s 127.0.0.1:%s->8000/tcp\n' "${SHIM_PORT_HOLDER}" "${SHIM_HELD_PORT}"
-        exit 0
-        ;;
-    "inspect --format")
-        printf '%s\n' "${SHIM_PORT_LABEL:-}"
+    "container inspect" | "volume inspect" | "network inspect")
+        printf '%s\n' "${SHIM_OWNED_LABEL:-}"
         exit 0
         ;;
 esac
+
 case "$1" in
-    compose)
-        # The only Compose call preflight makes is the destination probe.
-        exit "${SHIM_DESTINATION_RC:-0}"
+    port)
+        # The host bindings of one named container.
+        printf '%s\n' "${SHIM_OWNED_PORTS:-}"
+        exit 0
+        ;;
+    rm)
+        exit 0
+        ;;
+    run)
+        # The disposable bind probe. With `--publish` it answers whether the
+        # engine could take that exact bind; without one it answers whether the
+        # probe itself works, which is how a held port is told apart from a
+        # broken probe.
+        publish=""
+        previous=""
+        for word in "$@"; do
+            [ "$previous" = "--publish" ] && publish=$word
+            previous=$word
+        done
+        if [ -n "$publish" ]; then
+            case "$publish" in
+                *":${SHIM_HELD_PORT:-no-such-port}:"*) exit 125 ;;
+            esac
+            exit 0
+        fi
+        exit "${SHIM_PROBE_BROKEN:-0}"
         ;;
 esac
 printf 'docker shim: unexpected call: %s\n' "$*" >&2
@@ -85,15 +130,15 @@ def shim(tmp_path: Path) -> Path:
     return directory
 
 
-def run(
-    bundle: Path, shim: Path, command: str, *, environment: Mapping[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
-    """Run one lifecycle command with Docker shimmed out."""
-    return subprocess.run(  # noqa: S603 -- fixed argv
+def run(bundle: Path, shim: Path, command: str, *, environment: Mapping[str, str] | None = None) -> Captured:
+    """Run one lifecycle command with Docker shimmed out.
+
+    Through the redaction boundary, like every other retained stream in this
+    suite: the entry point prints Compose's own output, and a refusal is exactly
+    what gets rendered into a failure message.
+    """
+    return capture(
         [str(bundle / ENTRY_POINT), command],
-        capture_output=True,
-        text=True,
-        check=False,
         timeout=120,
         env={
             **os.environ,
@@ -119,7 +164,7 @@ def initialized(bundle: Path, shim: Path) -> Path:
     return bundle
 
 
-def family(result: subprocess.CompletedProcess[str]) -> str:
+def family(result: Captured) -> str:
     """Return the refusal family a run reported, or '' when it did not refuse."""
     for line in result.stderr.splitlines():
         if line.startswith("infrahub-sync: "):
@@ -261,7 +306,10 @@ def test_a_missing_credential_refusal_renders_no_value(initialized: Path, shim: 
 
     result = run(initialized, shim, "preflight")
 
-    assert secret not in result.stderr + result.stdout
+    # Raw, not redacted: the boundary would remove this value from anything
+    # rendered, so searching what it returns would pass whether the entry point
+    # printed the credential or not. The refusal itself is what is under test.
+    assert secret not in result.unredacted()
 
 
 def test_preflight_refuses_the_placeholder_init_leaves_behind(bundle: Path, shim: Path) -> None:
@@ -316,30 +364,111 @@ def test_preflight_refuses_an_image_docker_cannot_resolve(initialized: Path, shi
     assert family(result) == "image-unresolvable", result.stderr
 
 
-def test_preflight_refuses_a_loopback_port_held_by_a_foreign_container(initialized: Path, shim: Path) -> None:
-    """Starting anyway would either fail to bind or take a port something else answers on."""
-    result = run(
-        initialized,
-        shim,
-        "preflight",
-        environment={"SHIM_PORT_HOLDER": "cafe1234", "SHIM_HELD_PORT": "8000", "SHIM_PORT_LABEL": "someone-else"},
-    )
+@pytest.mark.parametrize("port", ["8000", "4200"])
+def test_preflight_refuses_a_required_bind_something_else_holds(initialized: Path, shim: Path, port: str) -> None:
+    """Whatever holds it, and however it holds it, the bind is not available.
 
-    assert family(result) == "port-foreign", result.stderr
+    The question preflight asks is the one that matters -- can this deployment
+    take this exact bind -- and it asks the engine by trying. That answer covers
+    a foreign container published on any address, a container of no project at
+    all, and a host process that is not a container; a scan of container
+    publications covers only the first, and only when it published on loopback.
+    """
+    result = run(initialized, shim, "preflight", environment={"SHIM_HELD_PORT": port})
+
+    assert family(result) == "port-occupied", result.stderr
+    assert port in result.stderr
 
 
-def test_preflight_accepts_a_loopback_port_this_instance_already_publishes(initialized: Path, shim: Path) -> None:
-    """A repeated start on a running deployment is not a port conflict with itself."""
+def test_preflight_accepts_the_publication_this_instance_already_made(initialized: Path, shim: Path) -> None:
+    """A repeated start on a running deployment is not a port conflict with itself.
+
+    The bind is genuinely unavailable here -- this instance is holding it -- so
+    a probe alone would refuse. What distinguishes the two is the named service
+    resolving to a container that carries this instance's label and publishes
+    that exact port.
+    """
     identity = (initialized / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
 
     result = run(
         initialized,
         shim,
         "preflight",
-        environment={"SHIM_PORT_HOLDER": "cafe1234", "SHIM_HELD_PORT": "8000", "SHIM_PORT_LABEL": identity},
+        environment={
+            "SHIM_HELD_PORT": "8000",
+            "SHIM_OWNED_CONTAINER": "cafe1234",
+            "SHIM_OWNED_LABEL": identity,
+            "SHIM_OWNED_PORTS": "8000/tcp -> 127.0.0.1:8000",
+        },
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_preflight_refuses_a_publication_made_under_another_instance_label(initialized: Path, shim: Path) -> None:
+    """A container the project name resolves to is not therefore this instance's.
+
+    Compose would hand back whatever holds that service name. The label is what
+    says it was this identity that created it, and without a match the bind is
+    treated as any other foreign occupant.
+    """
+    result = run(
+        initialized,
+        shim,
+        "preflight",
+        environment={
+            "SHIM_HELD_PORT": "8000",
+            "SHIM_OWNED_CONTAINER": "cafe1234",
+            "SHIM_OWNED_LABEL": "someone-else",
+            "SHIM_OWNED_PORTS": "8000/tcp -> 127.0.0.1:8000",
+        },
+    )
+
+    assert family(result) == "port-occupied", result.stderr
+
+
+def test_preflight_refuses_a_publication_of_a_port_it_does_not_need(initialized: Path, shim: Path) -> None:
+    """Owning *a* publication is not owning *this* one.
+
+    A container of this instance that publishes some other port says nothing
+    about the bind in question, so the probe still has to answer for it.
+    """
+    identity = (initialized / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+
+    result = run(
+        initialized,
+        shim,
+        "preflight",
+        environment={
+            "SHIM_HELD_PORT": "8000",
+            "SHIM_OWNED_CONTAINER": "cafe1234",
+            "SHIM_OWNED_LABEL": identity,
+            "SHIM_OWNED_PORTS": "8000/tcp -> 127.0.0.1:9999",
+        },
+    )
+
+    assert family(result) == "port-occupied", result.stderr
+
+
+def test_preflight_refuses_when_it_cannot_prove_the_bind_either_way(initialized: Path, shim: Path) -> None:
+    """A probe that cannot run has not found the port free.
+
+    Treating a broken probe as a pass would turn the whole check into something
+    that silently stops holding. Treating it as an occupied port would send an
+    operator hunting for a conflict that does not exist, so it is its own
+    refusal.
+    """
+    result = run(initialized, shim, "preflight", environment={"SHIM_HELD_PORT": "8000", "SHIM_PROBE_BROKEN": "1"})
+
+    assert family(result) == "port-unprovable", result.stderr
+
+
+def test_preflight_passes_when_both_required_binds_are_free(initialized: Path, shim: Path) -> None:
+    """Nothing holds either one, and no publication has to be recognised."""
+    result = run(initialized, shim, "preflight")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "free" in result.stdout
 
 
 def test_preflight_refuses_a_destination_that_did_not_answer(initialized: Path, shim: Path) -> None:

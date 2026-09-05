@@ -38,7 +38,8 @@ REFUSAL_FAMILIES = (
     "compose-too-old",
     "credentials-missing",
     "image-not-immutable",
-    "port-foreign",
+    "port-occupied",
+    "port-unprovable",
     "foreign-resource",
 )
 

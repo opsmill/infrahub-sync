@@ -205,6 +205,11 @@ check_credentials() {
     report "every required credential is present"
 }
 
+# Resolved by `check_image` and reused by the bind probe below, so the probe
+# needs no image of its own: it runs the one this deployment is already about to
+# run, which preflight has just proved the engine can resolve.
+SYNC_IMAGE=''
+
 check_image() {
     reference=$(read_setting INFRAHUB_SYNC_IMAGE "$OPERATOR")
     # An immutable reference carries a digest. Whether the rest of it names a
@@ -222,37 +227,87 @@ check_image() {
     docker image inspect "$reference" >/dev/null 2>&1 ||
         docker manifest inspect "$reference" >/dev/null 2>&1 ||
         refuse image-unresolvable "Docker cannot resolve the image $reference locally or in a registry"
+    SYNC_IMAGE=$reference
     report "the Sync image is named by digest and resolves"
 }
 
-port_holder() {
-    # The container publishing this loopback port, or nothing. Explicit, not a
-    # name substring: a container is ours because it carries our instance label.
-    docker ps --format '{{.ID}} {{.Ports}}' 2>/dev/null |
-        while read -r identifier ports; do
-            case "$ports" in
-                *"127.0.0.1:$1->"*) printf '%s' "$identifier"; break ;;
-            esac
-        done
+setting_value() {
+    # The operator's answer if there is one, the shipped default otherwise.
+    value=$(read_setting "$1" "$OPERATOR")
+    [ -n "$value" ] || value=$(read_setting "$1" "$DEFAULTS")
+    printf '%s' "$value"
+}
+
+owns_publication() {
+    # Whether this instance already publishes $2, asked of the one container the
+    # named service $1 resolves to. Explicit and bounded: Compose is asked about
+    # one service of this project, and the container it names has to carry this
+    # instance's label and to publish that exact port. Nothing here searches, so
+    # nothing here can find something it was not looking for.
+    container=$(compose ps --quiet "$1" 2>/dev/null | head -n 1)
+    [ -n "$container" ] || return 1
+    [ "$(label_of container .Config.Labels "$container")" = "$INSTANCE" ] || return 1
+    docker port "$container" 2>/dev/null | grep -q ":$2\$"
+}
+
+remove_probe() {
+    # `--rm` has already taken the container when the bind succeeded; it may be
+    # left in `Created` when the bind failed. Either way, by exact name.
+    docker rm --force "$1" >/dev/null 2>&1 || true
+}
+
+bind_probe() {
+    # Ask the engine to take the exact bind this deployment needs, in a container
+    # that does nothing and is removed either way. This is the only question that
+    # answers for every occupant: a container of another project published on any
+    # address that covers loopback, a container belonging to no project, and a
+    # host process that is not a container at all. Nothing about it depends on
+    # how an occupant chose to describe itself.
+    probe="infrahub-sync-portprobe-$INSTANCE-$2"
+    # By exact name, and only this instance's own probe. Before as well as
+    # after: a probe abandoned by an interrupted run would otherwise be read as
+    # the port being held, forever.
+    remove_probe "$probe"
+    if docker run --rm --name "$probe" \
+        --label "$INSTANCE_LABEL=$INSTANCE" \
+        --publish "$1:$2:$2" \
+        --entrypoint /bin/true \
+        "$SYNC_IMAGE" >/dev/null 2>&1
+    then
+        remove_probe "$probe"
+        return 0
+    fi
+    remove_probe "$probe"
+    # The probe failing is not by itself an occupied port. The same command
+    # without the publication tells the two apart, and only has to run on the
+    # path that already failed.
+    if docker run --rm --name "$probe" --label "$INSTANCE_LABEL=$INSTANCE" \
+        --entrypoint /bin/true "$SYNC_IMAGE" >/dev/null 2>&1
+    then
+        remove_probe "$probe"
+        return 1
+    fi
+    remove_probe "$probe"
+    refuse port-unprovable "the bind probe could not run, so $1:$2 was neither proved free nor proved held"
 }
 
 check_ports() {
-    for setting in INFRAHUB_SYNC_API_PORT INFRAHUB_SYNC_PREFECT_PORT; do
-        port=$(read_setting "$setting" "$OPERATOR")
-        [ -n "$port" ] || port=$(read_setting "$setting" "$DEFAULTS")
+    address=$(setting_value INFRAHUB_SYNC_BIND_ADDRESS)
+    [ -n "$address" ] || refuse port-unset "INFRAHUB_SYNC_BIND_ADDRESS names no address"
+    # Each required bind, and the service that would make it.
+    for pair in "INFRAHUB_SYNC_API_PORT sync-api" "INFRAHUB_SYNC_PREFECT_PORT prefect-server"; do
+        setting=${pair% *}
+        service=${pair#* }
+        port=$(setting_value "$setting")
         [ -n "$port" ] || refuse port-unset "$setting names no port"
-        holder=$(port_holder "$port")
-        if [ -z "$holder" ]; then
+        if owns_publication "$service" "$port"; then
+            report "$address:$port is published by this instance's $service already"
             continue
         fi
-        label=$(docker inspect --format '{{index .Config.Labels "io.infrahub-sync.instance"}}' "$holder" 2>/dev/null || true)
-        if [ "$label" = "$INSTANCE" ]; then
-            report "127.0.0.1:$port is published by this instance already"
-        else
-            refuse port-foreign "127.0.0.1:$port is held by a container this instance does not own"
-        fi
+        bind_probe "$address" "$port" ||
+            refuse port-occupied "$address:$port is held by something this instance does not own"
+        report "$address:$port is free"
     done
-    report "every required loopback port is free or already ours"
 }
 
 check_destination() {

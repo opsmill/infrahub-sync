@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess  # noqa: S404 -- fixed argv Compose and Docker probes for the bundle gate
+import subprocess  # noqa: S404 -- for the failure types `capture` can raise
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import pytest
+
+from tests.compose.redaction import SECRETS, Captured, capture
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
@@ -75,8 +77,14 @@ def compose(  # noqa: PLR0913 -- the bundle, its overrides, and its inputs vary 
     files: Sequence[Path] = (COMPOSE_FILE,),
     env_files: Sequence[Path] = (DEFAULTS_FILE,),
     timeout: int = 600,
-) -> subprocess.CompletedProcess[str]:
-    """Run one fixed-argv `docker compose` command against the bundle."""
+) -> Captured:
+    """Run one fixed-argv `docker compose` command against the bundle.
+
+    Its output comes back through the redaction boundary, because Compose
+    interpolates every credential the bundle names and prints them back in
+    `config`, in an interpolation refusal, and in whatever a failing `up`
+    quotes.
+    """
     command = ["docker", "compose"]
     if project is not None:
         command += ["--project-name", project]
@@ -84,15 +92,23 @@ def compose(  # noqa: PLR0913 -- the bundle, its overrides, and its inputs vary 
         command += ["--env-file", str(env_file)]
     for path in files:
         command += ["--file", str(path)]
-    return subprocess.run(  # noqa: S603 -- fixed argv
+    return capture(
         [*command, *argv],
-        capture_output=True,
-        text=True,
-        check=False,
         timeout=timeout,
         cwd=BUNDLE,
         env={**os.environ, **(environment or {})},
     )
+
+
+def start_command(services: Sequence[str], *, bound: int) -> list[str]:
+    """The waited `up` this suite runs, with the readiness bound given to Compose.
+
+    `--wait-timeout` is the whole point. A subprocess timeout is a cushion for
+    Compose's own exit, not a readiness rule: expiring first would kill Compose
+    part-way through a start and leave the deployment in whatever state it had
+    reached, which is a different answer than "it did not become ready".
+    """
+    return ["up", "--detach", "--wait", "--wait-timeout", str(bound), "--quiet-pull", *services]
 
 
 def resolve(environment: Mapping[str, str], *, files: Sequence[Path] = (COMPOSE_FILE,)) -> dict[str, Any]:
@@ -107,13 +123,7 @@ def resolve(environment: Mapping[str, str], *, files: Sequence[Path] = (COMPOSE_
 def _compose_available() -> str | None:
     """Return the installed Compose version, or None when the CLI is absent."""
     try:
-        probe = subprocess.run(
-            ["docker", "compose", "version", "--short"],  # noqa: S607 -- resolved from the gate's PATH
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
+        probe = capture(["docker", "compose", "version", "--short"], timeout=60)
     except (OSError, subprocess.SubprocessError):
         return None
     return probe.stdout.strip() or None if probe.returncode == 0 else None
@@ -172,7 +182,11 @@ FIXTURE_PROJECT = "infrahub-sync-compose-fixture"
 # Deliberately not the development stack's own port: a developer's preview keeps
 # working while this suite runs its own copy of the same pinned release.
 FIXTURE_INFRAHUB_PORT = "8081"
+# The declared readiness bound, and it is Compose that is given it: `--wait-timeout`
+# is what decides the fixture is not coming up. The subprocess timeout below is a
+# cushion for Compose's own exit and cleanup, never a second readiness rule.
 FIXTURE_READY_SECONDS = 420
+FIXTURE_PROCESS_CUSHION_SECONDS = 60
 FIXTURE_SCHEMA_CONVERGE_SECONDS = 120
 
 
@@ -230,20 +244,21 @@ def infrahub_fixture(docker_daemon: None) -> Iterator[dict[str, str]]:
     from tasks.preview import COMPOSE_FILES, ENV_FILE, SCHEMA_FILE, ensure_smoke_branch
 
     values = _infrahub_environment()
+    # The fixture's administrator token is the destination credential the bundle
+    # resolves, so it is a secret of this session like any generated canary.
+    SECRETS.register(values["INFRAHUB_INITIAL_ADMIN_TOKEN"])
     address = f"http://127.0.0.1:{FIXTURE_INFRAHUB_PORT}"
     environment = {**os.environ, **values}
     base = ["docker", "compose", "--project-name", FIXTURE_PROJECT, "--env-file", str(ENV_FILE)]
     for path in COMPOSE_FILES:
         base += ["--file", str(path)]
 
-    def run(argv: Sequence[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(  # noqa: S603 -- fixed argv
-            [*base, *argv], capture_output=True, text=True, check=False, timeout=timeout, env=environment
-        )
+    def run(argv: Sequence[str], *, timeout: int) -> Captured:
+        return capture([*base, *argv], timeout=timeout, env=environment)
 
     started = run(
-        ["up", "--detach", "--wait", "--quiet-pull", "infrahub-server", "task-worker"],
-        timeout=FIXTURE_READY_SECONDS * 2,
+        start_command(("infrahub-server", "task-worker"), bound=FIXTURE_READY_SECONDS),
+        timeout=FIXTURE_READY_SECONDS + FIXTURE_PROCESS_CUSHION_SECONDS,
     )
     if started.returncode != 0:
         run(["down", "--volumes", "--remove-orphans"], timeout=FIXTURE_READY_SECONDS)
@@ -253,7 +268,7 @@ def infrahub_fixture(docker_daemon: None) -> Iterator[dict[str, str]]:
             "INFRAHUB_ADDRESS": address,
             "INFRAHUB_API_TOKEN": values["INFRAHUB_INITIAL_ADMIN_TOKEN"],
         }
-        loaded = subprocess.run(  # noqa: S603 -- fixed argv
+        loaded = capture(
             [
                 # The console script sits beside this interpreter, and the suite
                 # is not started from an activated environment.
@@ -264,13 +279,10 @@ def infrahub_fixture(docker_daemon: None) -> Iterator[dict[str, str]]:
                 str(FIXTURE_SCHEMA_CONVERGE_SECONDS),
                 str(SCHEMA_FILE),
             ],
-            capture_output=True,
-            text=True,
-            check=False,
             timeout=FIXTURE_READY_SECONDS,
             env={**os.environ, **seed_environment},
         )
-        assert loaded.returncode == 0, f"the fixture schema did not load: {loaded.stdout}{loaded.stderr}"
+        assert loaded.returncode == 0, f"the fixture schema did not load: {loaded.output}"
         ensure_smoke_branch(seed_environment)
         yield {"address": address, "token": values["INFRAHUB_INITIAL_ADMIN_TOKEN"]}
     finally:
@@ -288,7 +300,11 @@ def canaries() -> dict[str, str]:
     """
     from tests.compose.lifecycle import canary
 
-    return {kind: canary(kind) for kind in ("administrator", "product", "prefect", "object_store", "principal")}
+    planted = {kind: canary(kind) for kind in ("administrator", "product", "prefect", "object_store", "principal")}
+    # Registered at the boundary, so no retained Compose or Docker stream can
+    # render one. The sweeps still search the raw streams for these values.
+    SECRETS.register(*planted.values())
+    return planted
 
 
 @pytest.fixture(scope="session")
@@ -328,7 +344,7 @@ def deployment(
         # tail of the whole project is almost entirely PostgreSQL's own startup.
         detail = started.logs("sync-bootstrap", "sync-api", "sync-worker", tail=80)
         started.down(volumes=True)
-        pytest.fail(f"the bundle did not start: {result.stderr[-1500:]}\n{detail[-4000:]}")
+        pytest.fail(f"the bundle did not start: {result.stderr[-1500:]}\n{detail.output[-4000:]}")
     try:
         wait_for(
             "the deployment reporting a live worker",
