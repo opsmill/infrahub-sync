@@ -462,8 +462,11 @@ def build(context: Context, platforms: str = ",".join(PLATFORMS)) -> None:
     _ensure_builder(context)
 
     print(f" - [{NAMESPACE}] Building {', '.join(requested)} at revision {provenance.revision}")
-    if LAYOUT_DIR.exists():
-        _remove_tree(LAYOUT_DIR)
+    # The whole build directory, not only the layout. An SBOM or scanner report
+    # left behind describes the artifact of the previous build, which the digest
+    # record about to be written no longer names, and `image.scan` would read it
+    # as a statement about the new one.
+    _remove_tree(BUILD_DIR)
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
     _run(context, build_command(provenance, platforms=requested, destination=LAYOUT_DIR))
 
