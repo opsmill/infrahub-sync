@@ -1,0 +1,253 @@
+"""Drivers for the Docker-backed Compose bundle suites.
+
+Everything here talks to a real daemon. The helpers exist so the tests read as
+statements about the deployment rather than as Compose invocations, and so one
+session-scoped stack can be shared by every case that needs one.
+"""
+
+from __future__ import annotations
+
+import json
+import secrets
+import subprocess  # noqa: S404 -- fixed argv Docker and Compose drivers for the bundle gate
+import time
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
+
+import httpx
+import pytest
+
+from tests.compose.conftest import BUNDLE, COMPOSE_FILE, DEFAULTS_FILE, INSTANCE_LABEL, compose
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping, Sequence
+
+FIXTURE_OVERRIDE = Path(__file__).resolve().parent / "fixture-override.yaml"
+
+# Every published surface the suite drives is on loopback, and the two ports
+# below are deliberately not the bundle's own defaults: a developer's stack must
+# be able to keep running while this suite has one of its own.
+API_PORT = 8021
+PREFECT_PORT = 4221
+
+READY_TIMEOUT_SECONDS = 420
+RUN_TIMEOUT_SECONDS = 300
+POLL_SECONDS = 3
+
+
+# One throwaway value per session, planted in every credential the deployment
+# resolves. Nothing the operator can see may carry it.
+def canary(kind: str) -> str:
+    """Return a throwaway secret whose appearance anywhere is a leak."""
+    return f"canary-{kind}-{secrets.token_hex(12)}"
+
+
+def docker(argv: Sequence[str], *, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+    """Run one fixed-argv Docker command and return its completed result."""
+    return subprocess.run(  # noqa: S603 -- fixed argv
+        ["docker", *argv],  # noqa: S607 -- Docker is resolved from the gate's PATH
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout,
+    )
+
+
+def daemon_available() -> bool:
+    """Report whether a Docker daemon answers at all."""
+    return docker(["info", "--format", "{{.ServerVersion}}"], timeout=60).returncode == 0
+
+
+def inspect(reference: str, kind: str = "container") -> dict[str, Any]:
+    """Return one Docker object's inspection document."""
+    result = docker([kind, "inspect", reference])
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)[0]
+
+
+class Deployment:
+    """One labelled Compose deployment of the bundle, driven the way an operator would."""
+
+    def __init__(self, *, instance: str, environment_file: Path, overrides: Sequence[Path] = ()) -> None:
+        self.instance = instance
+        self.project = f"infrahub-sync-{instance}"
+        self._environment_file = environment_file
+        self._files = (COMPOSE_FILE, *overrides)
+
+    def compose(self, argv: Sequence[str], *, timeout: int = 900) -> subprocess.CompletedProcess[str]:
+        """Run one Compose command against this deployment."""
+        return compose(
+            argv,
+            project=self.project,
+            files=self._files,
+            env_files=(DEFAULTS_FILE, self._environment_file),
+            timeout=timeout,
+        )
+
+    def up(self, *services: str, timeout: int = 900) -> subprocess.CompletedProcess[str]:
+        """Start the named services, or all of them, and wait for their health gates."""
+        return self.compose(["up", "--detach", "--wait", "--quiet-pull", *services], timeout=timeout)
+
+    def container(self, service: str) -> str:
+        """Return the one container identifier of a service, failing when it has none."""
+        result = self.compose(["ps", "--all", "--quiet", service])
+        assert result.returncode == 0, result.stderr
+        identifiers = result.stdout.split()
+        assert len(identifiers) == 1, f"{service} resolves to {identifiers}"
+        return identifiers[0]
+
+    def containers(self) -> dict[str, str]:
+        """Return every container this project holds, keyed by its service name."""
+        result = self.compose(["ps", "--all", "--quiet"])
+        assert result.returncode == 0, result.stderr
+        found = {}
+        for identifier in result.stdout.split():
+            labels = inspect(identifier)["Config"]["Labels"]
+            found[labels["com.docker.compose.service"]] = identifier
+        return found
+
+    def logs(self, *services: str, tail: int = 200) -> str:
+        """Return bounded log output for the named services."""
+        result = self.compose(["logs", "--no-color", "--tail", str(tail), *services])
+        return result.stdout + result.stderr
+
+    def down(self, *, volumes: bool = False) -> None:
+        """Remove this deployment, and its data when asked."""
+        argv = ["down", "--remove-orphans"]
+        if volumes:
+            argv.append("--volumes")
+        self.compose(argv)
+
+    @property
+    def api(self) -> str:
+        return f"http://127.0.0.1:{API_PORT}"
+
+    @property
+    def prefect(self) -> str:
+        return f"http://127.0.0.1:{PREFECT_PORT}"
+
+
+def wait_for(description: str, probe: Callable[[], object], *, timeout: int = READY_TIMEOUT_SECONDS) -> object:
+    """Poll one probe until it returns a truthy value, or fail naming what it last said."""
+    deadline = time.monotonic() + timeout
+    last: object = "no attempt made"
+    while time.monotonic() < deadline:
+        try:
+            answer = probe()
+        except (httpx.HTTPError, AssertionError, OSError) as exc:
+            last = f"{type(exc).__name__}: {exc}"
+        else:
+            if answer:
+                return answer
+            last = answer
+        time.sleep(POLL_SECONDS)
+    pytest.fail(f"{description} did not happen within {timeout}s (last: {last})")
+    return None
+
+
+def api_client(deployment: Deployment, token: str) -> httpx.Client:
+    """An authenticated client for the deployment's published Sync API."""
+    return httpx.Client(
+        base_url=deployment.api,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=60,
+    )
+
+
+def idempotency(prefix: str) -> dict[str, str]:
+    """A fresh mutation key, so a repeat never replays an earlier response."""
+    return {"Idempotency-Key": f"{prefix}-{secrets.token_hex(8)}"}
+
+
+def worker_state(deployment: Deployment) -> str:
+    """Return the worker state the unauthenticated status endpoint reports."""
+    response = httpx.get(f"{deployment.api}/status", timeout=30)
+    response.raise_for_status()
+    return str(response.json()["worker"]["state"])
+
+
+def register(client: httpx.Client, package: Mapping[str, Any], reason: str) -> tuple[str, int]:
+    """Register one declared package and return the version it created."""
+    response = client.post(
+        "/configs",
+        headers=idempotency("compose-register"),
+        json={"package": dict(package), "reason": reason},
+    )
+    assert response.status_code == 201, response.text
+    version = response.json()["version"]
+    return version["config_id"], version["registry_version"]
+
+
+def await_phase(client: httpx.Client, run_id: str, phase: str, *, timeout: int = RUN_TIMEOUT_SECONDS) -> dict[str, Any]:
+    """Poll one durable run until it reaches a phase, failing loudly when it fails."""
+
+    def probe() -> dict[str, Any] | None:
+        response = client.get(f"/runs/{run_id}")
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        current = payload["run"]["phase"]
+        if "failed" in current:
+            pytest.fail(f"run {run_id} failed while waiting for {phase!r}: {payload['run']}")
+        return payload if current == phase else None
+
+    return cast("dict[str, Any]", wait_for(f"run {run_id} reaching {phase!r}", probe, timeout=timeout))
+
+
+def owned_volumes(deployment: Deployment) -> dict[str, str]:
+    """Return the volumes labelled for this exact instance, and the label each carries."""
+    result = docker(["volume", "ls", "--quiet", "--filter", f"label={INSTANCE_LABEL}={deployment.instance}"])
+    assert result.returncode == 0, result.stderr
+    found = {}
+    for name in result.stdout.split():
+        labels = inspect(name, kind="volume").get("Labels") or {}
+        found[name] = labels.get(INSTANCE_LABEL, "")
+    return found
+
+
+def bundle_relative(path: Path) -> str:
+    """Render one path the way a Compose file inside the bundle would name it."""
+    return str(path.relative_to(BUNDLE))
+
+
+def operator_environment(
+    directory: Path,
+    *,
+    instance: str,
+    image: str,
+    destination_token: str,
+    canaries: Mapping[str, str],
+) -> Path:
+    """Write the operator-owned inputs one deployment runs on, and return the file.
+
+    This is the shape `init` produces for a real operator: every credential in
+    one gitignored file, except the database administrator password, which the
+    official PostgreSQL image reads from a file of its own.
+    """
+    administrator = directory / "postgres-admin-password"
+    administrator.write_text(canaries["administrator"] + "\n", encoding="utf-8")
+    administrator.chmod(0o600)
+    principals = json.dumps({"compose-suite": {"token": canaries["principal"], "administrator": True}})
+    values = {
+        "INFRAHUB_SYNC_INSTANCE": instance,
+        "INFRAHUB_SYNC_IMAGE": image,
+        # The image is loaded, never pulled: this suite runs the candidate the
+        # image gate built at this exact head, which no registry holds.
+        "INFRAHUB_SYNC_IMAGE_PULL_POLICY": "never",
+        "INFRAHUB_SYNC_API_PORT": str(API_PORT),
+        "INFRAHUB_SYNC_PREFECT_PORT": str(PREFECT_PORT),
+        "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD_FILE": str(administrator),
+        "INFRAHUB_SYNC_PRODUCT_PASSWORD": canaries["product"],
+        "INFRAHUB_SYNC_PREFECT_PASSWORD": canaries["prefect"],
+        "INFRAHUB_SYNC_DATABASE_URL": (f"postgresql://infrahub_sync:{canaries['product']}@postgres:5432/infrahub_sync"),
+        "INFRAHUB_SYNC_PREFECT_DATABASE_URL": (
+            f"postgresql+asyncpg://prefect:{canaries['prefect']}@postgres:5432/prefect"
+        ),
+        "INFRAHUB_SYNC_S3_ACCESS_KEY": "compose-suite-access-key",
+        "INFRAHUB_SYNC_S3_SECRET_KEY": canaries["object_store"],
+        "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": principals,
+        "INFRAHUB_API_TOKEN": destination_token,
+    }
+    path = directory / "operator.env"
+    path.write_text("".join(f"{key}={value}\n" for key, value in values.items()), encoding="utf-8")
+    path.chmod(0o600)
+    return path

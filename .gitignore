@@ -37,3 +37,10 @@ credentials.json
 .preview/
 !development/preview.env
 development/preview.local.env
+# Compose bundle operator state. The shipped defaults are `defaults.conf`
+# rather than a `*.env` name so the rule above cannot swallow them; everything
+# an operator owns is named here explicitly, because a credential this file
+# missed would be a credential the next `git add .` commits.
+deploy/compose/operator.env
+deploy/compose/secrets/
+deploy/compose/.instance
