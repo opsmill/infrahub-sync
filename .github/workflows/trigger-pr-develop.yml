@@ -12,8 +12,12 @@ on:
       - develop
       - feature/v3-develop
 
+# A called workflow can only keep or reduce these, never raise them, so every
+# permission any workflow below requests has to be granted here. The image gate
+# reads packages to pull the bases it builds and scans from; nothing writes.
 permissions:
   contents: read
+  packages: read
 
 jobs:
   linter:
