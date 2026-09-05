@@ -10,8 +10,12 @@ on:
         default: "ubuntu-22.04"
         type: string
 
+# `github.workflow` is the caller's name inside a reusable workflow, so a group
+# built from it alone is shared with every sibling the same caller starts and
+# they cancel each other. The literal below keeps this gate's own group, so a
+# stale image run is still cancelled when a new commit arrives.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-image-${{ github.ref }}
   cancel-in-progress: true
 
 # Read-only throughout. This gate builds and tests an image; it never logs in,
