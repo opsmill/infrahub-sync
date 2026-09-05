@@ -1,0 +1,17 @@
+# Deny everything, then name what the build needs. Stated this way round, a new
+# file at the repository root — a credential, a local override, an editor's
+# scratch state — cannot reach the build context by default, and a `COPY .` can
+# never pick up more than the list below.
+*
+
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE.txt
+!infrahub_sync
+!opsmill_prefect_extras
+
+# Build outputs of the two allowed trees; nothing here belongs in an image.
+**/__pycache__
+**/*.pyc
+**/.DS_Store

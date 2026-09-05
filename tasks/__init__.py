@@ -2,7 +2,7 @@
 
 from invoke import Collection, Context, task
 
-from . import docs, linter, preview, tests
+from . import docs, image, linter, preview, tests
 from .utils import ESCAPED_REPO_PATH, REPO_BASE
 
 NAMESPACE = "INFRAHUB-SYNC"
@@ -32,6 +32,7 @@ ns.add_collection(Collection.from_module(linter))
 ns.add_collection(Collection.from_module(docs))
 ns.add_collection(Collection.from_module(tests))
 ns.add_collection(Collection.from_module(preview))
+ns.add_collection(Collection.from_module(image))
 
 
 @task(name="lint")

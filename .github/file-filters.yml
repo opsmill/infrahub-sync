@@ -28,6 +28,13 @@ uv_files: &uv_files
   - "pyproject.toml"
   - "uv.lock"
 
+image_files: &image_files
+  - "Dockerfile"
+  - ".dockerignore"
+  - "vulnerability-waivers.yml"
+  - "tests/image/**"
+  - ".github/workflows/workflow-image.yml"
+
 sync_all:
   - *sync_files
   - *test_files
@@ -37,3 +44,13 @@ sync_all:
 documentation_all:
   - *doc_files
   - *markdown_all
+
+# The image gate rebuilds and rescans, so it runs for the image itself, the
+# scanner policy, and the dependency set it installs. It runs its steps through
+# Invoke, so it takes the whole task tree rather than the one module it is
+# about: the entry point that registers that module, and everything it imports,
+# decide what `invoke image.*` actually does.
+image_all:
+  - *image_files
+  - *development_files
+  - *uv_files

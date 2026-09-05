@@ -41,7 +41,7 @@ dependencies = [
     # test enforces the contract against the locked version.
     "ruff>=0.15.5,<0.16",
     "tqdm>=4.67",
-    "pyarrow>=17,<22",
+    "pyarrow>=23.0.1,<24",
     "fsspec>=2024.6",
     "filelock>=3.13",
 ]
@@ -179,6 +179,7 @@ testpaths = [
 markers = [
     "integration: tests that require a running Infrahub instance. Skipped by default; opt in with -m integration and INFRAHUB_ADDRESS + INFRAHUB_API_TOKEN set. The remote-run test additionally needs a live Prefect server (PREFECT_API_URL) and a separately started served deployment (`python -m infrahub_sync.orchestration.serve`, from the repository root).",
     "preview: end-to-end smoke tests against a running preview environment (`invoke preview.up`). Opt in with -m preview; each test skips when the environment is not reachable.",
+    "docker: container-image tests that run the built image through a Docker daemon. Opt in with -m docker; they are driven by `invoke image.smoke`, which builds the image and names it to them.",
 ]
 filterwarnings = [
     "ignore:Module already imported so cannot be rewritten",

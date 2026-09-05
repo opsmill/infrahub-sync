@@ -15,7 +15,7 @@ MAIN_DIRECTORY = CURRENT_DIRECTORY.parent
 @task
 def tests_unit(context: Context) -> None:
     """Run unit tests — everything under tests/ except integration-marked tests."""
-    command = 'pytest -m "not integration and not preview"'
+    command = 'pytest -m "not integration and not preview and not docker"'
     if sys.version_info < (3, 11):
         command += " --ignore=tests/service --ignore=tests/runtime_schema/test_worker_path.py"
     with context.cd(MAIN_DIRECTORY):
