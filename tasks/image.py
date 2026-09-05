@@ -15,11 +15,12 @@ import os
 import re
 import shlex
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as installed_version
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+import yaml
 from invoke import Context, task
 
 from .utils import ESCAPED_REPO_PATH, REPO_BASE
@@ -34,14 +35,24 @@ DOCKERFILE = REPO_ROOT / "Dockerfile"
 BUILD_DIR = REPO_ROOT / ".image"
 LAYOUT_DIR = BUILD_DIR / "oci"
 DIGESTS_FILE = BUILD_DIR / "digests.json"
+WAIVER_FILE = REPO_ROOT / "vulnerability-waivers.yml"
 
 DISTRIBUTION = "infrahub-sync"
 LOCAL_REPOSITORY = "infrahub-sync-local"
 BUILDER_NAME = "infrahub-sync-image"
 PLATFORMS = ("linux/amd64", "linux/arm64")
 
+# Both scanners are pinned by digest for the same reason the image bases are: a
+# scan that a re-pointed tag can change is not a gate anybody can reproduce.
+SYFT_IMAGE = "anchore/syft:v1.33.0@sha256:f94e5d9fce1f2278491a8e3a63bd5f6ddb81fdfdbb8bf7a1637565c1d5344357"
+GRYPE_IMAGE = "anchore/grype:v0.101.0@sha256:66a63cacdfeed19c7c9cbad9a841cd538b28055bb0e207013d27a12585a39063"
+
 CANARY_ENV = "INFRAHUB_SYNC_IMAGE_CANARY"
 DIGESTS_SCHEMA_VERSION = 1
+WAIVER_SCHEMA_VERSION = 1
+WAIVER_FIELDS = ("vulnerability", "owner", "reason", "expires")
+BLOCKING_SEVERITIES = frozenset({"high", "critical"})
+FIXED_STATE = "fixed"
 
 _REVISION = re.compile(r"[0-9a-f]{40}")
 _VERSION = re.compile(r"[0-9][0-9A-Za-z.!+-]*")
@@ -254,6 +265,157 @@ def read_digests() -> dict:
     return json.loads(DIGESTS_FILE.read_text(encoding="utf-8"))
 
 
+@dataclass(frozen=True)
+class Waiver:
+    """One approved exception to the vulnerability policy."""
+
+    vulnerability: str
+    owner: str
+    reason: str
+    expires: date
+
+
+@dataclass(frozen=True)
+class Finding:
+    """One scanner match the policy refuses to ship."""
+
+    vulnerability: str
+    severity: str
+    package: str
+    fixed_in: str
+
+
+def _mapping(value: object, description: str) -> dict[Any, Any]:
+    """Return one mapping read from outside this module, refusing anything else.
+
+    Every external document below — the waiver file and the scanner report —
+    passes through here, so a shape this code cannot read becomes a refusal at
+    the boundary rather than an attribute error somewhere further in.
+    """
+    if not isinstance(value, dict):
+        msg = f"{description} must be a mapping; found {type(value).__name__}"
+        raise ImageTaskError(msg)
+    return value
+
+
+def parse_waivers(document: object, *, today: date) -> tuple[Waiver, ...]:
+    """Validate the waiver file and return the exceptions still in force.
+
+    A waiver is a decision to ship a known fixable vulnerability, so every entry
+    has to name who owns it, why, and when the decision lapses. An entry past its
+    expiry is an error rather than a silent no-op: the point of an expiry is that
+    somebody has to look again.
+    """
+    waiver_document = _mapping(document, str(WAIVER_FILE))
+    if waiver_document.get("schema_version") != WAIVER_SCHEMA_VERSION:
+        msg = f"{WAIVER_FILE} must declare schema_version {WAIVER_SCHEMA_VERSION}"
+        raise ImageTaskError(msg)
+    entries = waiver_document.get("waivers")
+    if not isinstance(entries, list):
+        msg = f"{WAIVER_FILE} must contain a waivers list"
+        raise ImageTaskError(msg)
+
+    waivers = []
+    for candidate in entries:
+        if not isinstance(candidate, dict) or set(candidate) != set(WAIVER_FIELDS):
+            msg = f"each waiver must define exactly {list(WAIVER_FIELDS)}; found {candidate!r}"
+            raise ImageTaskError(msg)
+        entry = _mapping(candidate, "a waiver")
+        values = {field: entry[field] for field in WAIVER_FIELDS[:3]}
+        for field, value in values.items():
+            if not isinstance(value, str) or not value.strip():
+                msg = f"waiver {field} must be a non-empty string; found {value!r}"
+                raise ImageTaskError(msg)
+        expires = entry["expires"]
+        if isinstance(expires, str):
+            try:
+                expires = date.fromisoformat(expires)
+            except ValueError:
+                msg = f"waiver expires must be an ISO 8601 date; found {expires!r}"
+                raise ImageTaskError(msg) from None
+        if not isinstance(expires, date):
+            msg = f"waiver expires must be an ISO 8601 date; found {expires!r}"
+            raise ImageTaskError(msg)
+        if expires < today:
+            msg = f"waiver for {values['vulnerability']} expired on {expires.isoformat()}; renew or remove it"
+            raise ImageTaskError(msg)
+        waivers.append(Waiver(**values, expires=expires))
+    return tuple(waivers)
+
+
+def read_waivers(*, today: date) -> tuple[Waiver, ...]:
+    """Return the waivers this repository ships."""
+    if not WAIVER_FILE.is_file():
+        msg = f"{WAIVER_FILE} is missing"
+        raise ImageTaskError(msg)
+    return parse_waivers(yaml.safe_load(WAIVER_FILE.read_text(encoding="utf-8")), today=today)
+
+
+def blocking_findings(report: object, *, waivers: tuple[Waiver, ...] = ()) -> tuple[Finding, ...]:
+    """Return the scanner matches that fail the gate.
+
+    The accepted policy is narrow on purpose: a high or critical finding blocks
+    only when the scanner knows of a fix, because a finding nobody can act on
+    would turn the gate into something teams route around. The scanner report is
+    external input, so a match this cannot read is an error, never a pass.
+    """
+    matches = _mapping(report, "the vulnerability report").get("matches")
+    if not isinstance(matches, list):
+        msg = "the vulnerability report must contain a matches list"
+        raise ImageTaskError(msg)
+    waived = {waiver.vulnerability for waiver in waivers}
+
+    findings = []
+    for candidate in matches:
+        match = _mapping(candidate, "a vulnerability report match")
+        vulnerability = match.get("vulnerability")
+        if not isinstance(vulnerability, dict):
+            msg = f"the vulnerability report holds a match without a vulnerability: {candidate!r}"
+            raise ImageTaskError(msg)
+        details = _mapping(vulnerability, "a reported vulnerability")
+        identifier = details.get("id")
+        severity = details.get("severity")
+        fix = details.get("fix")
+        if not isinstance(identifier, str) or not isinstance(severity, str) or not isinstance(fix, dict):
+            msg = f"the vulnerability report holds an unreadable match: {vulnerability!r}"
+            raise ImageTaskError(msg)
+        remedy = _mapping(fix, "a reported fix")
+        state = remedy.get("state")
+        if not isinstance(state, str):
+            msg = f"the vulnerability report holds {identifier} without a fix state"
+            raise ImageTaskError(msg)
+        if severity.lower() not in BLOCKING_SEVERITIES or state != FIXED_STATE or identifier in waived:
+            continue
+        artifact = match.get("artifact")
+        named = artifact if isinstance(artifact, dict) else {}
+        findings.append(
+            Finding(
+                vulnerability=identifier,
+                severity=severity,
+                package=f"{named.get('name')}@{named.get('version')}",
+                fixed_in=", ".join(str(version) for version in remedy.get("versions") or []),
+            )
+        )
+    return tuple(findings)
+
+
+def platform_slug(platform: str) -> str:
+    """Return the filename-safe form of a platform name."""
+    return platform.replace("/", "-")
+
+
+def archive_file(platform: str) -> Path:
+    return BUILD_DIR / f"image-{platform_slug(platform)}.tar"
+
+
+def sbom_file(platform: str) -> Path:
+    return BUILD_DIR / f"sbom-{platform_slug(platform)}.spdx.json"
+
+
+def scan_file(platform: str) -> Path:
+    return BUILD_DIR / f"vulnerabilities-{platform_slug(platform)}.json"
+
+
 def _git(context: Context, arguments: str) -> str:
     with context.cd(ESCAPED_REPO_PATH):
         result = context.run(f"git {arguments}", hide=True, warn=True, pty=False)
@@ -395,6 +557,83 @@ def smoke(context: Context, platform: str = "") -> None:
     print(f" - [{NAMESPACE}] Smoked {', '.join(requested)}")
 
 
+@task(name="sbom")
+def sbom(context: Context, platform: str = "") -> None:
+    """Write an SPDX JSON SBOM for each built platform image with the pinned Syft."""
+    record = read_digests()
+    for name in _requested_platforms(record, platform):
+        reference = _load_platform(context, record, name)
+        archive = archive_file(name)
+        _run(context, ("docker", "image", "save", "--output", str(archive), reference))
+        # The scanner reads the archive and writes nothing: its output comes back
+        # on stdout and this task owns the file, so no container writes into the
+        # build directory as root.
+        document = _run(
+            context,
+            (
+                "docker",
+                "run",
+                "--rm",
+                "--network=none",
+                "--volume",
+                f"{BUILD_DIR}:/work:ro",
+                SYFT_IMAGE,
+                f"docker-archive:/work/{archive.name}",
+                "--output",
+                "spdx-json",
+            ),
+            hide=True,
+        )
+        sbom_file(name).write_text(document, encoding="utf-8")
+        print(f" - [{NAMESPACE}] {name} SBOM written to {sbom_file(name)}")
+
+
+@task(name="scan")
+def scan(context: Context, platform: str = "") -> None:
+    """Fail on fixable high or critical vulnerabilities with the pinned Grype."""
+    record = read_digests()
+    waivers = read_waivers(today=date.today())  # noqa: DTZ011 -- a waiver expiry is a calendar date
+    blocking: list[tuple[str, Finding]] = []
+
+    for name in _requested_platforms(record, platform):
+        document = sbom_file(name)
+        if not document.is_file():
+            msg = f"{document} is missing; run `uv run invoke image.sbom` first"
+            raise ImageTaskError(msg)
+        report = _run(
+            context,
+            (
+                "docker",
+                "run",
+                "--rm",
+                "--volume",
+                f"{BUILD_DIR}:/work:ro",
+                GRYPE_IMAGE,
+                f"sbom:/work/{document.name}",
+                "--output",
+                "json",
+            ),
+            hide=True,
+        )
+        scan_file(name).write_text(report, encoding="utf-8")
+        findings = blocking_findings(json.loads(report), waivers=waivers)
+        blocking.extend((name, finding) for finding in findings)
+        print(f" - [{NAMESPACE}] {name}: {len(findings)} fixable high or critical findings")
+
+    if blocking:
+        for name, finding in blocking:
+            print(
+                f" - [{NAMESPACE}] {name} {finding.severity} {finding.vulnerability} "
+                f"in {finding.package}, fixed in {finding.fixed_in}"
+            )
+        msg = (
+            f"{len(blocking)} fixable high or critical vulnerabilities block this image. "
+            f"Update the owned dependency or base, or take an approved waiver to {WAIVER_FILE}."
+        )
+        raise ImageTaskError(msg)
+    print(f" - [{NAMESPACE}] Vulnerability policy passed with {len(waivers)} waivers in force")
+
+
 @task(name="clean")
 def clean(context: Context) -> None:
     """Remove the local build outputs, the loaded images, and the builder."""
@@ -406,8 +645,8 @@ def clean(context: Context) -> None:
             pty=False,
         )
     context.run(f"docker buildx rm {shlex.quote(BUILDER_NAME)}", hide=True, warn=True, pty=False)
-    # The build directory holds the OCI layout and the recorded digests; removing
-    # the whole tree is what keeps a canary out of retained output.
+    # The build directory holds the saved image archives and the scanner reports;
+    # removing the whole tree is what keeps a canary out of retained output.
     _remove_tree(BUILD_DIR)
     print(f" - [{NAMESPACE}] Removed {BUILD_DIR}, the loaded images, and the {BUILDER_NAME} builder")
 
