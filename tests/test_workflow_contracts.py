@@ -3,8 +3,9 @@
 Each invariant here covers a failure that costs a full run to discover and
 leaves little to read: a permission the caller will not grant ends the run in
 `startup_failure` with no jobs at all, a concurrency group shared with a
-sibling cancels one of them with a one-line annotation, and an upload that
-does not opt into hidden files finds nothing at the very end of the gate.
+sibling cancels one of them with a one-line annotation, an upload that does not
+opt into hidden files finds nothing at the very end of the gate, and a task a
+workflow names but nothing registers is only reported by the runner.
 
 Only explicit declarations are compared. A workflow that states no
 `permissions` or no `concurrency`, or uses one of the shorthand permission
@@ -13,19 +14,32 @@ strings, is left to GitHub.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 import yaml
 
+from tasks import ns
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
+FILE_FILTERS = REPO_ROOT / ".github" / "file-filters.yml"
 CALLERS = tuple(sorted(path.name for path in WORKFLOWS.glob("trigger-*.yml")))
 
 # GitHub's three access levels, ordered so "grants at least" is a comparison.
 ACCESS = {"none": 0, "read": 1, "write": 2}
 
 UPLOAD_ACTION = "actions/upload-artifact"
+# `invoke` as the command being run, optionally through `uv run`, so that naming
+# it as an argument — installing it, say — is not read as running a task.
+INVOKE_TASK = re.compile(
+    r"(?:^|&&|;|\|)\s*(?:uv\s+run\s+(?:--\S+\s+)*)?invoke\s+([A-Za-z][\w.-]*)",
+    re.MULTILINE,
+)
+# The tree every Invoke task is defined in, and so the tree any workflow that
+# runs one depends on beyond the single module it names.
+TASK_TREE = "tasks/**"
 
 
 def load(path: Path) -> dict:
@@ -122,6 +136,16 @@ def _hidden(path: str) -> bool:
     return any(part.startswith(".") for part in path.strip().split("/") if part not in {"", ".", ".."})
 
 
+def invoked_tasks() -> list[tuple[Path, str]]:
+    """Return every Invoke task any workflow names in a `run` step."""
+    found = set()
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        for job in load(path).get("jobs", {}).values():
+            for step in job.get("steps") or []:
+                found.update((path, name) for name in INVOKE_TASK.findall(str(step.get("run", ""))))
+    return sorted(found, key=lambda entry: (entry[0].name, entry[1]))
+
+
 def _identify(value: object) -> str:
     return value.name if isinstance(value, Path) else str(value)
 
@@ -177,4 +201,31 @@ def test_an_upload_of_evidence_from_a_hidden_directory_asks_for_hidden_files(
     assert declared.get("include-hidden-files") is True, (
         f"{workflow.name} step {step!r} uploads {hidden} from a hidden directory "
         f"without include-hidden-files, so the upload finds no files"
+    )
+
+
+@pytest.mark.parametrize(("workflow", "task"), invoked_tasks(), ids=_identify)
+def test_every_invoke_task_a_workflow_runs_is_registered(workflow: Path, task: str) -> None:
+    """A task name only resolves once `tasks/__init__.py` adds its module to the namespace.
+
+    Nothing about the module itself says whether it was registered, so dropping a
+    collection leaves the module importable and its own tests passing while the
+    workflow that runs it fails on the runner.
+    """
+    assert task in ns.task_names, f"{workflow.name} runs `invoke {task}`, which the task namespace does not define"
+
+
+def test_the_image_filter_covers_the_whole_tree_its_gate_runs_from() -> None:
+    """The gate runs Invoke, so any task module can change what it does.
+
+    Naming only the one module the gate is about leaves the rest of the tree able
+    to change the gate's behaviour without re-running it.
+    """
+    declared = yaml.safe_load(FILE_FILTERS.read_text(encoding="utf-8"))["image_all"]
+    # Each entry is either a pattern or an expanded anchor holding several.
+    patterns = [pattern for entry in declared for pattern in (entry if isinstance(entry, list) else [entry])]
+
+    assert TASK_TREE in patterns, (
+        f"a change under {TASK_TREE} can alter what `invoke image.*` does, "
+        f"so image_all has to include it or the gate does not re-run"
     )

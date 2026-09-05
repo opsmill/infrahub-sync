@@ -31,7 +31,6 @@ uv_files: &uv_files
 image_files: &image_files
   - "Dockerfile"
   - ".dockerignore"
-  - "tasks/image.py"
   - "vulnerability-waivers.yml"
   - "tests/image/**"
   - ".github/workflows/workflow-image.yml"
@@ -46,8 +45,12 @@ documentation_all:
   - *doc_files
   - *markdown_all
 
-# The image gate rebuilds and rescans, so it runs for the image itself, its
-# packaging task, the scanner policy, and the dependency set it installs.
+# The image gate rebuilds and rescans, so it runs for the image itself, the
+# scanner policy, and the dependency set it installs. It runs its steps through
+# Invoke, so it takes the whole task tree rather than the one module it is
+# about: the entry point that registers that module, and everything it imports,
+# decide what `invoke image.*` actually does.
 image_all:
   - *image_files
+  - *development_files
   - *uv_files
