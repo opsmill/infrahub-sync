@@ -88,8 +88,13 @@ def source_provenance(*, version: str, revision: str, created: str) -> SourcePro
     if not _REVISION.fullmatch(revision):
         msg = f"revision {revision!r} is not a full commit identifier"
         raise ImageTaskError(msg)
+    # Git writes a terminal `Z` for a commit made at UTC, and `fromisoformat` does
+    # not read it before Python 3.11. Rewriting that one designator is what lets
+    # this run on every supported interpreter; it is done for parsing alone, so a
+    # timestamp no commit carried cannot reach image metadata.
+    parsable = f"{created[:-1]}+00:00" if created.endswith("Z") else created
     try:
-        parsed = datetime.fromisoformat(created)
+        parsed = datetime.fromisoformat(parsable)
     except ValueError:
         msg = f"created {created!r} is not an ISO 8601 timestamp"
         raise ImageTaskError(msg) from None

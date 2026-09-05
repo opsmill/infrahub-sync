@@ -21,7 +21,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = REPO_ROOT / "Dockerfile"
 
 COMMIT = "708a8fca4b3fe300ae33242ddcd791a181926eeb"
+# The two forms Git writes for a commit's own timestamp: a numeric offset, and
+# the terminal `Z` it uses when the commit was made at UTC.
 COMMIT_TIME = "2026-09-04T10:15:00+02:00"
+COMMIT_TIME_UTC = "2026-09-05T01:29:37Z"
 
 # Everything the image's five command forms import. The service modules resolve
 # only on the Python range their extra supports, which is why this asks the
@@ -105,10 +108,16 @@ def test_provenance_refuses_a_version_that_is_not_a_release_identifier(version: 
         image.source_provenance(version=version, revision=COMMIT, created=COMMIT_TIME)
 
 
-def test_provenance_accepts_the_recorded_release_identity() -> None:
-    provenance = image.source_provenance(version="2.0.1", revision=COMMIT, created=COMMIT_TIME)
+@pytest.mark.parametrize("created", [COMMIT_TIME, COMMIT_TIME_UTC])
+def test_provenance_accepts_the_recorded_release_identity(created: str) -> None:
+    """Both offset forms are accepted, and the label keeps the commit's own text.
 
-    assert (provenance.version, provenance.revision, provenance.created) == ("2.0.1", COMMIT, COMMIT_TIME)
+    Rewriting `Z` into the recorded value would put a timestamp in image metadata
+    that the commit it names never carried.
+    """
+    provenance = image.source_provenance(version="2.0.1", revision=COMMIT, created=created)
+
+    assert (provenance.version, provenance.revision, provenance.created) == ("2.0.1", COMMIT, created)
 
 
 def test_the_build_passes_exactly_the_three_declared_provenance_arguments() -> None:
