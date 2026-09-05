@@ -94,4 +94,7 @@ jobs:
           path: |
             .image/digests.json
             .image/sbom-*.spdx.json
+          # The build writes its evidence under a hidden directory, which the
+          # upload skips by default and then reports as no files found.
+          include-hidden-files: true
           if-no-files-found: error
