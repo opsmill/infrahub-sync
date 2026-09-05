@@ -91,6 +91,7 @@ const sidebars: SidebarsConfig = {
     },
     'development-stack',
     'container-image',
+    'compose-deployment',
     'contributing',
   ]
 };

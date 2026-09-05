@@ -130,7 +130,7 @@ Configure the worker environment before it starts:
 | Variable | Requirement |
 | --- | --- |
 | `PREFECT_API_URL` | Prefect API used by the deployment and worker. |
-| `INFRAHUB_SYNC_CONFIG_DIRECTORY` | Existing directory containing the Sync configurations allowed on this worker. Configuration data only: the worker reads registered packages from it and never imports or executes anything there, so it does not have to be a repository checkout. |
+| `INFRAHUB_SYNC_CONFIG_DIRECTORY` | Legacy runs only. A registered run reads its declared configuration from PostgreSQL and resolves both adapters from installed code, so a worker serving registered runs needs no directory and no configuration mount. Set it only where unregistered runs — which resolve a `SyncConfig` file by name — still have to be served; those runs refuse when it is unset or names no directory. |
 | `INFRAHUB_SYNC_DATABASE_URL` | Non-empty PostgreSQL connection string accepted by Psycopg for product records. |
 | `INFRAHUB_SYNC_S3_BUCKET` | Non-empty bucket for immutable product artifacts. |
 | `INFRAHUB_SYNC_S3_PREFIX` | Optional object-key prefix; defaults to `infrahub-sync`. |

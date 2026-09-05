@@ -1,6 +1,6 @@
 ---
 # yamllint disable rule:truthy
-name: "Build and test the container image"
+name: "Build the container image and qualify the Compose bundle"
 on:
   workflow_call:
     inputs:
@@ -42,11 +42,13 @@ jobs:
           filters: .github/file-filters.yml
 
   image:
-    name: "Image gate (linux/amd64 and linux/arm64)"
+    name: "Image and Compose gate (build amd64 + arm64, qualify amd64)"
     needs: ["files-changed"]
     if: needs.files-changed.outputs.image == 'true'
     runs-on: ${{ inputs.runs-on }}
-    timeout-minutes: 60
+    # One build, then everything qualified against it. The bound covers both
+    # phases; the lifecycle phase carries its own, tighter one.
+    timeout-minutes: 120
     steps:
       - name: "Check out repository code"
         uses: "actions/checkout@v5"
@@ -86,6 +88,19 @@ jobs:
 
       - name: "Smoke both platforms"
         run: uv run --no-sync invoke image.smoke
+
+      # The scanners read a saved copy of each platform image, and those copies
+      # are the largest thing the build leaves behind. Nothing reads them after
+      # the scan, and the lifecycle phase starts two container stacks.
+      - name: "Reclaim the scanner inputs"
+        run: uv run --no-sync invoke compose.reclaim
+
+      # The same job, the same layout, the same loaded amd64 image. The bundle is
+      # handed that image's recorded configuration digest, so the lifecycle
+      # evidence and the image evidence cannot describe separate builds.
+      - name: "Qualify the Compose lifecycle on linux/amd64"
+        timeout-minutes: 45
+        run: uv run --no-sync invoke compose.lifecycle
 
       - name: "Publish the digests and SBOM as build evidence"
         uses: actions/upload-artifact@v4

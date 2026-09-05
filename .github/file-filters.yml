@@ -35,6 +35,12 @@ image_files: &image_files
   - "tests/image/**"
   - ".github/workflows/workflow-image.yml"
 
+# The Compose bundle is qualified in the image gate's own job, against the image
+# that job just built, so a change to the bundle or its suites re-runs the gate.
+compose_files: &compose_files
+  - "deploy/compose/**"
+  - "tests/compose/**"
+
 sync_all:
   - *sync_files
   - *test_files
@@ -52,5 +58,7 @@ documentation_all:
 # decide what `invoke image.*` actually does.
 image_all:
   - *image_files
+  - *compose_files
+  - *sync_files
   - *development_files
   - *uv_files
