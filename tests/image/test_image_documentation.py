@@ -63,15 +63,18 @@ def test_the_documented_mount_hands_every_writable_path_to_the_runtime_user(path
 
 @pytest.mark.parametrize("form", COMMAND_FORMS)
 def test_the_page_documents_every_command_form(form: str) -> None:
+    """A command form nobody wrote down is one the image appears not to have."""
     assert form in PAGE.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("task_name", ["build", "inspect", "smoke", "sbom", "scan", "clean"])
 def test_the_page_documents_every_image_task(task_name: str) -> None:
+    """The page is where a developer finds these; `invoke --list` only names them."""
     assert f"invoke image.{task_name}" in PAGE.read_text(encoding="utf-8")
 
 
 def test_the_page_names_the_waiver_file_a_reader_has_to_find() -> None:
+    """Taking a waiver means editing that file, so the page has to say where it is."""
     assert str(image.WAIVER_FILE.relative_to(REPO_ROOT)) in PAGE.read_text(encoding="utf-8")
 
 

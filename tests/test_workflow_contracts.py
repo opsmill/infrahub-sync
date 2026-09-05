@@ -43,10 +43,12 @@ TASK_TREE = "tasks/**"
 
 
 def load(path: Path) -> dict:
+    """Return one parsed workflow document."""
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
 def jobs(caller: Path) -> dict[str, dict]:
+    """Return a workflow's jobs, keyed by the name the workflow gives each one."""
     return load(caller).get("jobs", {})
 
 

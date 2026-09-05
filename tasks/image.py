@@ -42,8 +42,12 @@ LOCAL_REPOSITORY = "infrahub-sync-local"
 BUILDER_NAME = "infrahub-sync-image"
 PLATFORMS = ("linux/amd64", "linux/arm64")
 
-# Both scanners are pinned by digest for the same reason the image bases are: a
-# scan that a re-pointed tag can change is not a gate anybody can reproduce.
+# The digest pins the scanner executables, so which Syft produced a bill of
+# materials and which Grype read it are both answerable later. It does not pin
+# what Grype knows: the vulnerability database is fetched for each scan and is
+# meant to be, because a gate judging today's image against a stored snapshot of
+# last month's advisories would pass an image that is no longer safe. Two runs of
+# one commit can therefore differ, and the later one is the one to believe.
 SYFT_IMAGE = "anchore/syft:v1.33.0@sha256:f94e5d9fce1f2278491a8e3a63bd5f6ddb81fdfdbb8bf7a1637565c1d5344357"
 GRYPE_IMAGE = "anchore/grype:v0.101.0@sha256:66a63cacdfeed19c7c9cbad9a841cd538b28055bb0e207013d27a12585a39063"
 
@@ -410,14 +414,17 @@ def platform_slug(platform: str) -> str:
 
 
 def archive_file(platform: str) -> Path:
+    """Return where one platform image is saved for the scanners to read."""
     return BUILD_DIR / f"image-{platform_slug(platform)}.tar"
 
 
 def sbom_file(platform: str) -> Path:
+    """Return where one platform image's SPDX bill of materials is written."""
     return BUILD_DIR / f"sbom-{platform_slug(platform)}.spdx.json"
 
 
 def scan_file(platform: str) -> Path:
+    """Return where one platform image's vulnerability report is written."""
     return BUILD_DIR / f"vulnerabilities-{platform_slug(platform)}.json"
 
 

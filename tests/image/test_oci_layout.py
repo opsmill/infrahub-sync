@@ -23,6 +23,7 @@ CONFIG_DIGEST = "sha256:33333333333333333333333333333333333333333333333333333333
 
 
 def write_blob(layout: Path, digest: str, document: object) -> None:
+    """Write one JSON blob into a layout, at the path its digest names."""
     algorithm, _, encoded = digest.partition(":")
     blob = layout / "blobs" / algorithm / encoded
     blob.parent.mkdir(parents=True, exist_ok=True)
@@ -30,12 +31,14 @@ def write_blob(layout: Path, digest: str, document: object) -> None:
 
 
 def write_layout(layout: Path, root_digest: str, root: object) -> None:
+    """Write a layout whose index names one root descriptor, and that root itself."""
     layout.mkdir(parents=True, exist_ok=True)
     (layout / "index.json").write_text(json.dumps({"manifests": [{"digest": root_digest}]}), encoding="utf-8")
     write_blob(layout, root_digest, root)
 
 
 def manifest() -> dict:
+    """Return an image manifest naming the shared configuration blob."""
     return {"config": {"digest": CONFIG_DIGEST}}
 
 
