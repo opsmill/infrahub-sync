@@ -11,12 +11,14 @@ import json
 import secrets
 import subprocess  # noqa: S404 -- fixed argv Docker and Compose drivers for the bundle gate
 import time
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 import pytest
 
+from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
 from tests.compose.conftest import BUNDLE, COMPOSE_FILE, DEFAULTS_FILE, INSTANCE_LABEL, compose
 
 if TYPE_CHECKING:
@@ -72,11 +74,33 @@ def inspect(reference: str, kind: str = "container") -> dict[str, Any]:
 class Deployment:
     """One labelled Compose deployment of the bundle, driven the way an operator would."""
 
-    def __init__(self, *, instance: str, environment_file: Path, overrides: Sequence[Path] = ()) -> None:
+    def __init__(  # noqa: PLR0913 -- a deployment is named by every one of these independently
+        self,
+        *,
+        instance: str,
+        environment_file: Path,
+        overrides: Sequence[Path] = (),
+        compose_file: Path = COMPOSE_FILE,
+        environment_files: Sequence[Path] = (),
+        bundle: Path = BUNDLE,
+        destination: str = "",
+        api_port: int = API_PORT,
+        prefect_port: int = PREFECT_PORT,
+    ) -> None:
         self.instance = instance
         self.project = f"infrahub-sync-{instance}"
+        # Where the entry point that owns this deployment lives, and the address
+        # its declared configuration names. Both are the deployment's own facts,
+        # so a test that has one has the other.
+        self.bundle = bundle
+        self.destination = destination
+        # Each deployment publishes on its own loopback ports, so more than one
+        # can be up at a time and no probe can reach the wrong one.
+        self.api_port = api_port
+        self.prefect_port = prefect_port
         self._environment_file = environment_file
-        self._files = (COMPOSE_FILE, *overrides)
+        self._files = (compose_file, *overrides)
+        self._environment_files = environment_files
 
     def compose(self, argv: Sequence[str], *, timeout: int = 900) -> subprocess.CompletedProcess[str]:
         """Run one Compose command against this deployment."""
@@ -84,7 +108,7 @@ class Deployment:
             argv,
             project=self.project,
             files=self._files,
-            env_files=(DEFAULTS_FILE, self._environment_file),
+            env_files=self._environment_files or (DEFAULTS_FILE, self._environment_file),
             timeout=timeout,
         )
 
@@ -124,11 +148,11 @@ class Deployment:
 
     @property
     def api(self) -> str:
-        return f"http://127.0.0.1:{API_PORT}"
+        return f"http://127.0.0.1:{self.api_port}"
 
     @property
     def prefect(self) -> str:
-        return f"http://127.0.0.1:{PREFECT_PORT}"
+        return f"http://127.0.0.1:{self.prefect_port}"
 
 
 def wait_for(description: str, probe: Callable[[], object], *, timeout: int = READY_TIMEOUT_SECONDS) -> object:
@@ -303,3 +327,133 @@ def container_reachable_host() -> str:
             return fields[2]
     pytest.fail(f"no container-reachable host address could be determined: {route.stdout}")
     return ""
+
+
+# The fields the qualification package maps. Both sides are the bundled
+# `infrahub` adapter, so the registered worker resolves them through the
+# installed loader with nothing generated and nothing on a filesystem.
+SMOKE_FIELDS = ("name", "type")
+
+
+def smoke_package(destination_url: str) -> dict[str, Any]:
+    """The declared package this suite registers, shaped like the bundled one.
+
+    Infrahub to Infrahub against the fixture's own instance: `main` as the
+    source, the disposable smoke branch as the destination. The token is a
+    credential reference the worker resolves from its own environment, so no
+    secret value is posted, stored, or echoed.
+    """
+    return {
+        "format_version": 1,
+        "configuration": {
+            "name": "compose-suite-registered",
+            "source": {
+                "name": "infrahub",
+                "settings": {
+                    "url": destination_url,
+                    "branch": "main",
+                    "token": {"$credential": "infrahub-token"},
+                },
+            },
+            "destination": {
+                "name": "infrahub",
+                "settings": {
+                    "url": destination_url,
+                    "branch": SMOKE_BRANCH,
+                    "token": {"$credential": "infrahub-token"},
+                },
+            },
+            "schema_mapping": [
+                {
+                    "name": SMOKE_KIND,
+                    "mapping": SMOKE_KIND,
+                    "identifiers": ["name"],
+                    "fields": [{"name": name, "mapping": name} for name in SMOKE_FIELDS],
+                }
+            ],
+        },
+        "credentials": {"infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"}},
+    }
+
+
+def plant_pending_update(infrahub_fixture: Mapping[str, str]) -> str:
+    """Give the destination exactly one real difference to plan, and return its value.
+
+    The fixture seeds the shared device onto `main` before the smoke branch forks,
+    so both branches hold it and a plan taken now would be empty. Empty is the
+    trap: a plan with no operation still reaches `planned`, and every signal a
+    weaker assertion could rest on stays green while the source was never read.
+
+    The value is fresh on every run because a fixed one converges — the first
+    apply writes it to the destination, and the next run's plan is empty again.
+    """
+    from infrahub_sdk import InfrahubClientSync
+
+    value = f"compose-suite-{uuid.uuid4().hex[:12]}"
+    client = InfrahubClientSync(address=infrahub_fixture["address"], config={"api_token": infrahub_fixture["token"]})
+    device = client.get(kind=SMOKE_KIND, branch="main", name__value=SHARED_DEVICE_NAME)
+    device.type.value = value  # ty: ignore[invalid-assignment]  # the SDK types this node union-wide
+    device.save()
+    return value
+
+
+# The durable state a restart must carry across, read from inside the deployment
+# so each answer comes from the store that holds it rather than from a cache the
+# lifecycle command happens to have.
+DURABLE_STATE = """
+import json, os, boto3, httpx, psycopg
+from infrahub_sync.product_store import configs
+from infrahub_sync.service.storage import service_product_projection
+projection = service_product_projection()
+versions = []
+for summary in configs.list_configs(projection=projection):
+    for version in projection.list_configuration_versions(summary.config_id):
+        versions.append([summary.config_id, version.registry_version, version.package_checksum])
+with psycopg.connect(os.environ["INFRAHUB_SYNC_DATABASE_URL"]) as connection:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT count(*) FROM product_runs")
+        runs = cursor.fetchone()[0]
+client = boto3.client(
+    "s3",
+    endpoint_url=os.environ["INFRAHUB_SYNC_S3_ENDPOINT_URL"],
+    region_name=os.environ["INFRAHUB_SYNC_S3_REGION"],
+)
+listing = client.list_objects_v2(Bucket=os.environ["INFRAHUB_SYNC_S3_BUCKET"])
+deployments = httpx.post("http://prefect-server:4200/api/deployments/filter", json={}, timeout=30).json()
+print(json.dumps({
+    "configuration_versions": sorted(versions),
+    "runs": runs,
+    "objects": sorted(item["Key"] for item in listing.get("Contents", [])),
+    "deployments": sorted((entry["id"], entry["name"]) for entry in deployments),
+}))
+"""
+
+WORKERS = """
+import json, httpx
+pool = "infrahub-sync"
+records = httpx.post(
+    f"http://prefect-server:4200/api/work_pools/{pool}/workers/filter", json={}, timeout=30
+).json()
+print(json.dumps(sorted((record["name"], record["status"]) for record in records)))
+"""
+
+
+def online_worker_names(deployment: Deployment) -> list[str]:
+    """Return the names Prefect currently reports as online in the pool."""
+    return [name for name, status in probe_json(deployment, WORKERS) if status == "ONLINE"]
+
+
+def await_verification(client: httpx.Client, run_id: str, *, timeout: int = RUN_TIMEOUT_SECONDS) -> dict[str, Any]:
+    """Poll until the read-only verification has been recorded against a run.
+
+    Verification writes nothing and advances no phase -- it is a second opinion
+    on a retained plan, not a state change -- so what proves it happened is the
+    result it merges into the run's own record.
+    """
+
+    def probe() -> dict[str, Any] | None:
+        response = client.get(f"/runs/{run_id}/results")
+        assert response.status_code == 200, response.text
+        return response.json()["results"].get("verification")
+
+    return cast("dict[str, Any]", wait_for(f"run {run_id} recording its verification", probe, timeout=timeout))

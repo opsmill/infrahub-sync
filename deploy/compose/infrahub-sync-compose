@@ -92,6 +92,54 @@ compose() {
         "$@"
 }
 
+
+# ---------------------------------------------------------------------------
+# Ownership
+# ---------------------------------------------------------------------------
+# Every destructive command resolves its targets by explicit name and proves each
+# existing one carries this instance's label, before it changes anything. A
+# missing target is idempotent -- there is nothing to remove. A target that
+# exists under a label this instance did not write belongs to something else,
+# and the whole operation is refused rather than partially applied.
+
+INSTANCE_LABEL=io.infrahub-sync.instance
+PROJECT_LABEL=com.docker.compose.project
+
+owned_volumes() {
+    printf '%s\n' "${PROJECT}_postgres-data" "${PROJECT}_object-store-data"
+}
+
+project_containers() {
+    docker ps --all --filter "label=$PROJECT_LABEL=$PROJECT" --format '{{.ID}}' 2>/dev/null || true
+}
+
+running_containers() {
+    docker ps --filter "label=$PROJECT_LABEL=$PROJECT" --format '{{.ID}}' 2>/dev/null || true
+}
+
+label_of() {
+    docker "$1" inspect --format "{{index $2 \"$INSTANCE_LABEL\"}}" "$3" 2>/dev/null || true
+}
+
+verify_ownership() {
+    foreign=''
+    for container in $(project_containers); do
+        [ "$(label_of container .Config.Labels "$container")" = "$INSTANCE" ] ||
+            foreign="$foreign container/$container"
+    done
+    for volume in $(owned_volumes); do
+        docker volume inspect "$volume" >/dev/null 2>&1 || continue
+        [ "$(label_of volume .Labels "$volume")" = "$INSTANCE" ] || foreign="$foreign volume/$volume"
+    done
+    network="${PROJECT}_default"
+    if docker network inspect "$network" >/dev/null 2>&1; then
+        [ "$(label_of network .Labels "$network")" = "$INSTANCE" ] || foreign="$foreign network/$network"
+    fi
+    [ -z "$foreign" ] ||
+        refuse foreign-resource "these existing resources are not labelled for instance $INSTANCE:$foreign"
+    report "every existing resource is labelled for instance $INSTANCE"
+}
+
 # ---------------------------------------------------------------------------
 # Preflight
 # ---------------------------------------------------------------------------
@@ -314,6 +362,78 @@ command_start() {
     wait_for_ready
 }
 
+
+dependencies_healthy() {
+    # These three carry real probes -- a PostgreSQL readiness check and two HTTP
+    # endpoints -- so their health is an answer from the service, not the fact
+    # that a container is up.
+    for service in postgres object-store prefect-server; do
+        container=$(compose ps --all --quiet "$service" 2>/dev/null | head -n 1)
+        [ -n "$container" ] || return 1
+        [ "$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null)" = "healthy" ] || return 1
+    done
+    return 0
+}
+
+command_status() {
+    if [ -z "$(running_containers)" ]; then
+        report "no container of instance $INSTANCE is running"
+        printf 'STOPPED\n'
+        exit 4
+    fi
+    if ! dependencies_healthy; then
+        report "a required dependency is not answering"
+        printf 'DEGRADED\n'
+        exit 3
+    fi
+    # A running stack is never ready on container state alone. The deciding
+    # answer is the API's own view of a worker that has registered and is still
+    # heartbeating; a paused or hung worker ages out of it while its container
+    # keeps looking perfectly healthy.
+    state=$(worker_state)
+    case "$state" in
+        ready | busy)
+            report "the Sync API reports a live worker"
+            printf 'READY\n'
+            exit 0
+            ;;
+    esac
+    report "the Sync API reports no live worker"
+    printf 'DEGRADED\n'
+    exit 3
+}
+
+command_logs() {
+    compose logs --no-color --tail "${INFRAHUB_SYNC_LOG_LINES:-200}" "$@"
+}
+
+command_stop() {
+    verify_ownership
+    compose stop
+    report "stopped instance $INSTANCE; its data is untouched"
+}
+
+command_restart() {
+    verify_ownership
+    # Containers and data survive; the processes inside them do not. The worker
+    # that comes back registers under a new Prefect identity and picks up
+    # everything it needs from PostgreSQL and the object store.
+    compose restart sync-api sync-worker
+    wait_for_ready
+}
+
+command_reset() {
+    confirmation=${1:-}
+    if [ "$confirmation" != "$INSTANCE" ]; then
+        refuse confirmation-required "reset removes this instance's data; repeat its identity: \`$0 reset $INSTANCE\`"
+    fi
+    verify_ownership
+    compose down --volumes --remove-orphans
+    rm -f "$STATE"
+    report "removed instance $INSTANCE, its containers, its network, and its volumes"
+    report "operator settings in $OPERATOR and $SECRETS were left in place"
+}
+
 usage() {
     cat <<'USAGE'
 Usage: infrahub-sync-compose <command>
@@ -321,6 +441,12 @@ Usage: infrahub-sync-compose <command>
   init        Generate this deployment's identity and operator settings file.
   preflight   Check Compose, paths, credentials, image, ports, and destination.
   start       Preflight, start the deployment, and wait for endpoint-backed READY.
+  status      Report READY (exit 0), DEGRADED (exit 3), or STOPPED (exit 4).
+  logs [svc]  Print a bounded tail of the deployment's logs.
+  stop        Stop the deployment, keeping its containers and all of its data.
+  restart     Replace the API and worker processes, keeping every durable record.
+  reset ID    Remove this instance's containers, network, and volumes. The exact
+              instance identity has to be repeated; there is no forcing flag.
 USAGE
 }
 
@@ -328,6 +454,11 @@ case "${1:-}" in
     init) command_init ;;
     preflight) require_identity; command_preflight ;;
     start) require_identity; command_start ;;
+    status) require_identity; command_status ;;
+    logs) require_identity; shift; command_logs "$@" ;;
+    stop) require_identity; command_stop ;;
+    restart) require_identity; command_restart ;;
+    reset) require_identity; command_reset "${2:-}" ;;
     -h | --help | help | '') usage ;;
     *) usage >&2; exit 2 ;;
 esac

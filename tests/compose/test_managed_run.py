@@ -15,18 +15,19 @@ comes back out of the object store.
 from __future__ import annotations
 
 import json
-import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 
-from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
+from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH
 from tests.compose.lifecycle import (
     api_client,
     await_phase,
     idempotency,
     inspect,
+    plant_pending_update,
     register,
+    smoke_package,
 )
 
 if TYPE_CHECKING:
@@ -34,51 +35,11 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.compose
 
-# The fields the qualification package maps. Both sides are the bundled
-# `infrahub` adapter, so the registered worker resolves them through the
-# installed loader with nothing generated and nothing on a filesystem.
-SMOKE_FIELDS = ("name", "type")
 
-
-def smoke_package(destination_url: str) -> dict[str, Any]:
-    """The declared package this suite registers, shaped like the bundled one.
-
-    Infrahub to Infrahub against the fixture's own instance: `main` as the
-    source, the disposable smoke branch as the destination. The token is a
-    credential reference the worker resolves from its own environment, so no
-    secret value is posted, stored, or echoed.
-    """
-    return {
-        "format_version": 1,
-        "configuration": {
-            "name": "compose-suite-registered",
-            "source": {
-                "name": "infrahub",
-                "settings": {
-                    "url": destination_url,
-                    "branch": "main",
-                    "token": {"$credential": "infrahub-token"},
-                },
-            },
-            "destination": {
-                "name": "infrahub",
-                "settings": {
-                    "url": destination_url,
-                    "branch": SMOKE_BRANCH,
-                    "token": {"$credential": "infrahub-token"},
-                },
-            },
-            "schema_mapping": [
-                {
-                    "name": SMOKE_KIND,
-                    "mapping": SMOKE_KIND,
-                    "identifiers": ["name"],
-                    "fields": [{"name": name, "mapping": name} for name in SMOKE_FIELDS],
-                }
-            ],
-        },
-        "credentials": {"infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"}},
-    }
+@pytest.fixture(scope="module")
+def pending_update(infrahub_fixture: dict[str, str]) -> str:
+    """One real difference on the source, so the plan is not the empty one."""
+    return plant_pending_update(infrahub_fixture)
 
 
 @pytest.fixture(scope="module")
@@ -86,28 +47,6 @@ def destination_url() -> str:
     from tests.compose.conftest import FIXTURE_INFRAHUB_PORT
 
     return f"http://host.docker.internal:{FIXTURE_INFRAHUB_PORT}"
-
-
-@pytest.fixture(scope="module")
-def pending_update(infrahub_fixture: dict[str, str]) -> str:
-    """Give the destination exactly one real difference to plan, and return its value.
-
-    The fixture seeds the shared device onto `main` before the smoke branch forks,
-    so both branches hold it and a plan taken now would be empty. Empty is the
-    trap: a plan with no operation still reaches `planned`, and every signal a
-    weaker assertion could rest on stays green while the source was never read.
-
-    The value is fresh on every run because a fixed one converges — the first
-    apply writes it to the destination, and the next run's plan is empty again.
-    """
-    from infrahub_sdk import InfrahubClientSync
-
-    value = f"compose-suite-{uuid.uuid4().hex[:12]}"
-    client = InfrahubClientSync(address=infrahub_fixture["address"], config={"api_token": infrahub_fixture["token"]})
-    device = client.get(kind=SMOKE_KIND, branch="main", name__value=SHARED_DEVICE_NAME)
-    device.type.value = value  # ty: ignore[invalid-assignment]  # the SDK types this node union-wide
-    device.save()
-    return value
 
 
 def test_the_deployed_worker_container_mounts_nothing(deployment: Deployment) -> None:
