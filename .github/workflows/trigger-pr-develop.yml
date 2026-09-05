@@ -25,3 +25,7 @@ jobs:
   tests:
     needs: ["linter", "uv-checker"]
     uses: ./.github/workflows/workflow-tests.yml
+
+  image:
+    needs: ["linter", "uv-checker"]
+    uses: ./.github/workflows/workflow-image.yml

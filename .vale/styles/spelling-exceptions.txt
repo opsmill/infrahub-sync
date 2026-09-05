@@ -171,3 +171,6 @@ serializer
 traceback
 untrusted
 zlib
+Buildx
+Syft
+Grype

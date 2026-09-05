@@ -1,0 +1,93 @@
+---
+# yamllint disable rule:truthy
+name: "Build and test the container image"
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: "The OS to run the job on"
+        required: false
+        default: "ubuntu-22.04"
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only throughout. This gate builds and tests an image; it never logs in,
+# tags for a registry, pushes, or promotes a digest.
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  files-changed:
+    name: Detect which file has changed
+    runs-on: "ubuntu-22.04"
+    timeout-minutes: 5
+    outputs:
+      image: ${{ steps.changes.outputs.image_all }}
+    steps:
+      - name: "Check out repository code"
+        uses: "actions/checkout@v5"
+      - name: Check for file changes
+        uses: opsmill/paths-filter@v3.0.2
+        id: changes
+        with:
+          token: ${{ github.token }}
+          filters: .github/file-filters.yml
+
+  image:
+    name: "Image gate (linux/amd64 and linux/arm64)"
+    needs: ["files-changed"]
+    if: needs.files-changed.outputs.image == 'true'
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 60
+    steps:
+      - name: "Check out repository code"
+        uses: "actions/checkout@v5"
+
+      - name: "Install uv"
+        uses: "astral-sh/setup-uv@v4"
+        with:
+          version: "latest"
+
+      - name: "Install dependencies"
+        run: uv sync --frozen --extra dev --extra prefect --extra service
+
+      # arm64 is built and smoked under emulation on the amd64 runner. That is
+      # build and smoke evidence; it is not a clean-host qualification claim.
+      - name: "Set up QEMU for the non-native platform"
+        uses: docker/setup-qemu-action@v3
+
+      - name: "Set up Buildx"
+        uses: docker/setup-buildx-action@v3
+
+      # A throwaway value, generated per run and never stored, so the canary
+      # checks measure this build rather than a constant somebody could special-case.
+      - name: "Seed the build environment canary"
+        run: echo "INFRAHUB_SYNC_IMAGE_CANARY=canary-$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+
+      - name: "Build both platforms"
+        run: uv run --no-sync invoke image.build
+
+      - name: "Record the index and platform digests"
+        run: uv run --no-sync invoke image.inspect
+
+      - name: "Generate the SPDX SBOM"
+        run: uv run --no-sync invoke image.sbom
+
+      - name: "Enforce the vulnerability policy"
+        run: uv run --no-sync invoke image.scan
+
+      - name: "Smoke both platforms"
+        run: uv run --no-sync invoke image.smoke
+
+      - name: "Publish the digests and SBOM as build evidence"
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-image-evidence
+          path: |
+            .image/digests.json
+            .image/sbom-*.spdx.json
+          if-no-files-found: error

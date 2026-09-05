@@ -1,0 +1,108 @@
+---
+title: Container image
+---
+
+The repository builds one Infrahub Sync image. It carries the Sync API, the service
+worker, the deployment bootstrap, and one-off CLI or Python commands, so a deployment
+runs one artifact instead of four.
+
+Everything on this page is local. None of these tasks logs in to a registry, pushes,
+tags, or promotes anything.
+
+## Install
+
+The image tasks need Docker with Buildx, [uv](https://docs.astral.sh/uv/), and Python
+3.11 to 3.13.
+
+```bash
+uv sync --extra dev --extra prefect --extra service
+```
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `uv run invoke image.build` | Build every platform into an OCI layout under `.image/` and record its digests. |
+| `uv run invoke image.inspect` | Print the recorded digests, labels, runtime user, and default command. |
+| `uv run invoke image.smoke` | Load each platform image and run the container suite against it. |
+| `uv run invoke image.sbom` | Write an SPDX JSON bill of materials for each platform image. |
+| `uv run invoke image.scan` | Fail on high or critical vulnerabilities that have a fix available. |
+| `uv run invoke image.clean` | Remove `.image/`, the loaded images, and the builder. |
+
+Pass `--platforms linux/arm64` to `image.build`, or `--platform linux/arm64` to the
+later tasks, to work on one platform while iterating.
+
+`image.build` and `image.smoke` refuse to run unless `INFRAHUB_SYNC_IMAGE_CANARY`
+holds a throwaway value. The build passes it to nothing, and the smoke then proves it
+reached no layer, label, history entry, bill of materials, or saved file. A build whose
+environment held no secret would prove nothing:
+
+```bash
+export INFRAHUB_SYNC_IMAGE_CANARY="canary-$(openssl rand -hex 16)"
+uv run invoke image.build
+uv run invoke image.sbom
+uv run invoke image.scan
+uv run invoke image.smoke
+```
+
+## Command forms
+
+The image defaults to the Sync API. Every other form is an explicit override, because
+the module and console entry points already name the commands.
+
+| Purpose | Command |
+| --- | --- |
+| Sync API | `docker run IMAGE` |
+| Service worker | `docker run IMAGE python -m infrahub_sync.service.worker --pool POOL` |
+| Deployment bootstrap | `docker run IMAGE python -m infrahub_sync.service.deploy` |
+| CLI | `docker run IMAGE infrahub-sync --help` |
+| Python | `docker run IMAGE python -c "import infrahub_sync"` |
+
+## Writable paths
+
+The image runs as the numeric user `10001:10001`. The interpreter, the installed
+distribution, and the recorded lock stay owned by root and are not writable, so the root
+filesystem can be mounted read-only with writable mounts at exactly three paths.
+
+| Path | Holds |
+| --- | --- |
+| `/var/lib/infrahub-sync` | `HOME` |
+| `/var/lib/infrahub-sync/prefect` | `PREFECT_HOME` |
+| `/tmp/infrahub-sync` | `TMPDIR` |
+
+Hand each mount to the runtime user. A mount takes its own ownership, so a bare
+`--tmpfs` arrives owned by root and the container cannot write to it however the image
+created the directory underneath:
+
+```bash
+docker run --rm --read-only \
+  --tmpfs /var/lib/infrahub-sync:uid=10001,gid=10001,mode=0700 \
+  --tmpfs /var/lib/infrahub-sync/prefect:uid=10001,gid=10001,mode=0700 \
+  --tmpfs /tmp/infrahub-sync:uid=10001,gid=10001,mode=0700 \
+  IMAGE infrahub-sync --help
+```
+
+A named volume or host bind takes the same treatment: the mounted directory has to be
+owned by `10001:10001` before the container starts.
+
+## Bill of materials and vulnerability policy
+
+`image.sbom` runs a pinned Syft against the saved platform image and writes SPDX JSON
+to `.image/sbom-linux-amd64.spdx.json`. `image.scan` runs a pinned Grype against that
+document.
+
+The policy fails the build on a high or critical finding that has a fix available. A
+finding nobody can act on does not block. Approved exceptions live in
+`vulnerability-waivers.yml`, and each one names the vulnerability, its owner,
+the reason, and the date it lapses. An expired entry fails the gate rather than passing
+quietly. The repository ships no waivers, and adding one is a decision, not a build step.
+
+## Recorded digests
+
+`image.build` writes `.image/digests.json`: the release identity the image records, the
+OCI index digest, and the manifest and configuration digest of each platform. Those
+digests, never a tag, are how a candidate image is identified later.
+
+The image records `org.opencontainers.image.title`, `version`, `revision`, `source`,
+`licenses`, and `created`. The creation time comes from the source commit rather than
+the build clock, so two builds of one revision agree on it.

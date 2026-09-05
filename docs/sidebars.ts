@@ -90,6 +90,7 @@ const sidebars: SidebarsConfig = {
       ],
     },
     'development-stack',
+    'container-image',
     'contributing',
   ]
 };
