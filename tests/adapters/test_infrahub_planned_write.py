@@ -175,8 +175,8 @@ SERVER_SCHEMA = NodeSchemaAPI(
     ],
 )
 
-# No human-friendly ID at all — the gate's third arm (AD076). FR-024 permits such a kind and
-# requires the run to survive it.
+# No human-friendly ID at all, so no convergence key can be rendered for it and the keyedness
+# gate refuses its planned write.
 KEYLESS_SCHEMA = NodeSchemaAPI(
     id="keyless-schema",
     name="Keyless",
@@ -721,7 +721,7 @@ def test_the_gate_precedes_the_sdk_mutation_for_both_write_actions(action: str) 
     assert client.mutation_names == [f"{SITE_KIND}Upsert"], "The unkeyed operation added no mutation."
 
 
-def test_a_render_keyed_on_a_destination_id_is_written() -> None:
+def test_a_render_keyed_on_a_destination_id_is_accepted() -> None:
     """`id` is the other key the convergent upsert accepts, and it is honoured."""
     client = RecordingClient()
     adapter = make_adapter(client)

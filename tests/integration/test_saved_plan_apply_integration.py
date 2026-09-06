@@ -1,18 +1,16 @@
-"""Phase H — the six criteria and half-criteria that need a running Infrahub.
+"""Phase H — the six criteria and half-criteria that need a running Infrahub. SUPERSEDED.
 
-**Authored, not satisfied (AD045b) — and now, for five of the six, satisfied (AD091).** No live
-Infrahub was reachable in the environment this feature was built in (AD007). One later was, and
-this module was run against it: **`7 passed, 1 error`**. SC-001, SC-002, SC-003, SC-008 and
-SC-007's live half **pass live**, which closes DBA-001, DBA-002, DBA-003, DBA-008 and DBA-007's
-live half. SC-016's live half does **not**: seeding a genuinely ambiguous peer needs a referenced
-kind whose uniqueness constraints do not cover the components the resolver filters on, and every
-kind the qualified configuration touches declares one that does — the destination answers the clone
-with `Violates uniqueness constraint 'device-name'`. That precondition is left exactly as written.
-Every test here stays `integration`-marked and skips itself when the destination environment is
-not configured, so a default `uv run pytest -q` still reports them as skips and the offline suite
-is unchanged. The offline conformance harness at `tests/plan/test_apply_conformance.py` narrowed
-the exposure by asserting the mutation the SDK renders; it never closed it, and nothing here was
-ever reportable as covered on its strength.
+**This module is skipped at module level and is not live coverage of anything.** It was written
+and once run against a live destination, but its bounded slice qualifies through `InterfaceLag`
+and `InterfacePhysical`, whose destination human-friendly IDs cross a relationship. The
+fail-closed write contract refuses every rendered mutation carrying neither `id` nor `hfid`, so
+those two kinds are refused before they write and the seed step that must create a pre-existing
+`InterfaceLag` peer cannot complete. SC-008's relationship-crossing premise is therefore
+unsupported rather than unmet, and the earlier `7 passed, 1 error` result describes behaviour
+this repository no longer has. The keyed bundled qualification and the isolated unkeyed refusal
+cover this ground; the offline harness at `tests/plan/test_apply_conformance.py` asserts the
+mutation the SDK renders, including that refusal. Everything below is retained as the record of
+what the criteria asked for.
 
 **Amended by AD090: "authored, not satisfied" was too weak a claim.** The first live run errored
 in fixture setup on every test here, because the fixture wrote its bounded configuration into a
@@ -123,7 +121,16 @@ if TYPE_CHECKING:
     from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
     from infrahub_sync.plan.review import SavedPlan
 
-pytestmark = pytest.mark.integration
+_SUPERSEDED_REASON = (
+    "Superseded by the fail-closed write contract: this module's slice qualifies through "
+    "InterfaceLag and InterfacePhysical, whose destination human-friendly IDs cross a "
+    "relationship, so neither can render a keyed mutation and both are refused before they "
+    "write. The seed step that must create a pre-existing InterfaceLag peer therefore cannot "
+    "run, and SC-008's relationship-crossing premise is unsupported rather than unmet. The "
+    "keyed bundled qualification and the isolated unkeyed refusal cover this ground instead."
+)
+
+pytestmark = [pytest.mark.integration, pytest.mark.skip(reason=_SUPERSEDED_REASON)]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 QUALIFIED_CONFIG = REPO_ROOT / "examples" / "netbox_to_infrahub" / "config.yml"

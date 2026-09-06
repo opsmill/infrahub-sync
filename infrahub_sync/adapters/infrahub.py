@@ -449,9 +449,8 @@ class PeerResolver:
         # The canonical identity is unhashable, so the memo key carries its canonical JSON
         # encoding — the same normalization the operation identifier hashes (FR-028.3).
         self._memo: dict[tuple[str, bytes], str] = {}
-        # Kinds whose partial filter has been warned about, once per kind per apply — the
-        # same lifetime rule as the adapter's unkeyed-render report (AD078), and it holds
-        # here for the same reason: the resolver lives for exactly one apply.
+        # Kinds whose partial filter has been warned about, once per kind per apply: the
+        # resolver lives for exactly one apply, so the set does too.
         self._partial_filter_reported: set[str] = set()
 
     @staticmethod
