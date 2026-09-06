@@ -101,6 +101,17 @@ def test_the_qualification_command_passes_the_option() -> None:
     assert ZERO_SKIP_OPTION in qualification_command()
 
 
+@pytest.mark.parametrize("record", [None, []])
+def test_a_malformed_top_level_candidate_record_requests_a_rebuild(
+    monkeypatch: pytest.MonkeyPatch, record: object
+) -> None:
+    """JSON permits roots that cannot hold the build's digest record."""
+    monkeypatch.setattr(compose, "read_digests", lambda: record)
+
+    with pytest.raises(ImageTaskError, match=r"stale or incomplete.*image\.build"):
+        compose.candidate_reference()
+
+
 @pytest.mark.parametrize("entry", [None, [], {}, {"manifest": "sha256:" + "1" * 64}])
 def test_an_incomplete_candidate_record_requests_a_rebuild(monkeypatch: pytest.MonkeyPatch, entry: object) -> None:
     """A damaged build record fails in the task's own error family."""

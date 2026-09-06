@@ -46,6 +46,9 @@ def candidate_reference(platform: str = QUALIFIED_PLATFORM) -> str:
     is why this can name an artifact no registry holds.
     """
     record = read_digests()
+    if not isinstance(record, Mapping):
+        msg = "the digest record is stale or incomplete; run `uv run invoke image.build` to rebuild it"
+        raise ImageTaskError(msg)
     platforms = record.get("platforms", {})
     if not isinstance(platforms, Mapping) or platform not in platforms:
         msg = f"{platform} was not built; run `uv run invoke image.build` for it first"
