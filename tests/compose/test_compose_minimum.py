@@ -41,7 +41,7 @@ pytestmark = pytest.mark.compose
 # releases are not published as a pinned binary, so this is the oldest version
 # the bundle can be measured against rather than a claim that 2.17.2 fails.
 MINIMUM_COMPOSE = "2.17.3"
-MINIMUM_IMAGE = f"docker/compose-bin:v{MINIMUM_COMPOSE}"
+MINIMUM_IMAGE = "docker/compose-bin@sha256:dd98fc8cade79eec70f8c9f256006ec3c9432580c5322fc4bee9087c86584962"
 # Where the binary sits inside that image.
 BINARY_PATH = "/docker-compose"
 
@@ -137,13 +137,16 @@ def test_the_entry_point_enforces_the_version_this_suite_measures() -> None:
     assert entry_point_minimum() == MINIMUM_COMPOSE
 
 
-def test_the_minimum_release_resolves_the_shipped_bundle(contract_environment: dict[str, str]) -> None:
+def test_the_minimum_release_resolves_the_shipped_bundle(
+    docker_daemon: None, contract_environment: dict[str, str]
+) -> None:
     """Its own parser answers for every construct the file uses, not the developer's.
 
     The administrator password is a file input, so the minimum release needs one
     inside its own view of the bundle; the copy is what keeps this suite off an
     operator's real secret.
     """
+    del docker_daemon
     secret = BUNDLE / "secrets" / "measured-admin-password"
     secret.parent.mkdir(exist_ok=True)
     secret.write_text("measured\n", encoding="utf-8")
@@ -166,16 +169,18 @@ def test_the_minimum_release_resolves_the_shipped_bundle(contract_environment: d
 
 
 @pytest.mark.parametrize("flag", REQUIRED_FLAGS)
-def test_the_minimum_release_offers_every_flag_the_entry_point_uses(flag: str) -> None:
+def test_the_minimum_release_offers_every_flag_the_entry_point_uses(docker_daemon: None, flag: str) -> None:
     """`start` passes these; a release without one fails at the command, not at preflight."""
+    del docker_daemon
     result = minimum_compose(["up", "--help"])
 
     assert result.returncode == 0, result.stderr
     assert flag in result.stdout
 
 
-def test_the_minimum_release_accepts_a_repeated_env_file() -> None:
+def test_the_minimum_release_accepts_a_repeated_env_file(docker_daemon: None) -> None:
     """The entry point layers the operator's file over the shipped defaults."""
+    del docker_daemon
     result = minimum_compose(["--help"])
 
     assert result.returncode == 0, result.stderr

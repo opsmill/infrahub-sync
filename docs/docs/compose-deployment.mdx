@@ -123,6 +123,7 @@ curl -sS -H "Authorization: Bearer $INFRAHUB_SYNC_API_TOKEN" "$INFRAHUB_SYNC_API
 With the shipped CLI, which runs from the same image:
 
 ```bash
+export INFRAHUB_SYNC_IMAGE=<the immutable image reference used during init>
 docker run --rm --network host \
   --env INFRAHUB_SYNC_API_URL --env INFRAHUB_SYNC_API_TOKEN \
   "$INFRAHUB_SYNC_IMAGE" infrahub-sync configs list
@@ -192,8 +193,9 @@ Sync API reports about the Prefect registry rather than from a process being up.
 A worker that has been stopped outright reaches `DEGRADED` the same way, and for
 the same reason it is not `STOPPED`: the API still answers, submissions are
 still accepted, and they will sit unclaimed until a worker comes back. Start the
-worker again — `docker start`, or `restart` — and status returns to `READY`
-without any durable record changing.
+worker again with `./infrahub-sync-compose restart`; it verifies ownership,
+replaces the API and worker processes, and waits for `READY` without changing
+any durable record.
 
 ## Logs
 

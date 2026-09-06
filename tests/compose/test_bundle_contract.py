@@ -299,6 +299,7 @@ def test_the_bundled_configuration_is_the_only_filesystem_input_any_sync_service
     mounts = readers["sync-bootstrap"]
     assert len(mounts) == 1, f"sync-bootstrap takes {len(mounts)} inputs"
     assert mounts[0]["read_only"] is True, "the bundled configuration is mounted writable"
+    assert Path(mounts[0]["source"]).resolve() == BUNDLED_CONFIGURATION.resolve()
     assert mounts[0]["target"] == "/etc/infrahub-sync/configuration.yaml"
 
 

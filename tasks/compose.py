@@ -11,6 +11,7 @@ Nothing here logs in, pushes, tags for a registry, or promotes anything.
 from __future__ import annotations
 
 import shlex
+from collections.abc import Mapping
 
 from invoke import Context, task
 
@@ -46,10 +47,14 @@ def candidate_reference(platform: str = QUALIFIED_PLATFORM) -> str:
     """
     record = read_digests()
     platforms = record.get("platforms", {})
-    if platform not in platforms:
+    if not isinstance(platforms, Mapping) or platform not in platforms:
         msg = f"{platform} was not built; run `uv run invoke image.build` for it first"
         raise ImageTaskError(msg)
-    return str(platforms[platform]["config"])
+    entry = platforms[platform]
+    if not isinstance(entry, Mapping) or not isinstance(entry.get("config"), str):
+        msg = f"{platform} has a stale or incomplete digest record; run `uv run invoke image.build` to rebuild it"
+        raise ImageTaskError(msg)
+    return entry["config"]
 
 
 def require_loaded(context: Context, reference: str) -> None:
