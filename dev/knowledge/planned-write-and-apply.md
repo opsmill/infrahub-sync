@@ -110,16 +110,23 @@ Two checks protect the key, and they check different things:
   than the render call's own `"data"` key: `_generate_input_data(...)["data"]` is `{"data": {...}}`, a
   one-key mapping, so a check written against it would fire on every operation ever rendered.
 
-The gate applies one invariant to every kind: a render carrying neither `id` nor `hfid` raises
+The gate applies one invariant to every kind: a render carrying no **usable** `id` or `hfid` raises
 `UnkeyedWriteRefusedError`, naming the operation and its kind. An unkeyed convergent write duplicates
-its object on a re-apply, and no HFID shape makes that safe.
+its object on a re-apply, and no HFID shape makes that safe. The key has to carry a value rather than
+merely be present, because a present-but-empty key keys nothing at the destination.
 
-Two shapes cannot render keyed and are therefore unsupported for planned writes:
+`hfid` is the only key a planned write can genuinely render. The plan carries no destination UUID —
+FR-012 forbids the load that would supply one — and a payload field named `id` is not a substitute:
+`generate_payload_create` wraps every payload field into an attribute block, so such a field renders
+as an empty `id: {}`. That shape is refused rather than treated as keyed.
+
+Three shapes cannot render a usable key and are therefore unsupported for planned writes:
 
 - **A key that crosses a relationship.** The SDK cannot form an `hfid` client-side from a peer supplied
   as a resolved id: rendering a relationship value handed in as a bare id produces `{"id": ...}` with no
   `__typename`, so the store read that would resolve the peer is never attempted.
 - **No HFID declared.** There is no convergence key to render.
+- **A payload field named `id`.** It renders as `id: {}` — a key with no value.
 
 Apply is sequential, so the guarantee is stated per operation: an operation whose render is unkeyed makes
 zero mutation calls, and no later operation executes. Operations applied before it stay written, and the

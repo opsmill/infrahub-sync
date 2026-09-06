@@ -721,17 +721,48 @@ def test_the_gate_precedes_the_sdk_mutation_for_both_write_actions(action: str) 
     assert client.mutation_names == [f"{SITE_KIND}Upsert"], "The unkeyed operation added no mutation."
 
 
-def test_a_render_keyed_on_a_destination_id_is_accepted() -> None:
-    """`id` is the other key the convergent upsert accepts, and it is honoured."""
+def test_a_keyed_hfid_render_is_written_through_the_real_transport() -> None:
+    """The positive arm, end to end: a keyed render reaches the wire carrying its `hfid`.
+
+    `hfid` is the only key a planned write can genuinely render. The plan carries no destination
+    UUID — a saved-plan apply performs no destination load, so nothing can supply one — and a
+    payload field literally named `id` is not one either: `generate_payload_create` wraps it as
+    an attribute block, which is the case the next test pins.
+    """
     client = RecordingClient()
     adapter = make_adapter(client)
-    node = client.create(kind=KEYLESS_KIND, data={"name": {"value": "keyless-a"}})
-    node.id = "keyless-node-1"
-    operation = make_operation(kind=KEYLESS_KIND, identity={"name": "keyless-a"}, payload={"name": "keyless-a"})
+    operation = make_operation(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
 
-    adapter._require_keyed_render(node=node, operation=operation)
+    node_id = adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
 
-    assert not client.mutations, "The gate itself issues nothing; it only permits the write."
+    assert client.mutation_names == [f"{SITE_KIND}Upsert"], "The keyed render is issued as one convergent upsert."
+    _, query = client.mutations[0]
+    assert re.search(r'hfid:\s*\[\s*"site-a",?\s*\]', query), (
+        f"The mutation must carry the human-friendly ID. Rendered:\n{query}"
+    )
+    assert 'value: "site-a"' in query, f"The payload's attributes must reach the write. Rendered:\n{query}"
+    assert node_id == NODE_ID
+
+
+def test_a_payload_field_named_id_does_not_satisfy_the_gate() -> None:
+    """A key whose rendered value is empty keys nothing, so it is refused (the `id: {}` case).
+
+    `generate_payload_create` wraps every payload field into an attribute block, so a field
+    named `id` renders as `id: {}`. That is a present key with no value: the destination cannot
+    converge on it, and a gate testing presence alone would pass an unkeyed write.
+    """
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    operation = make_operation(
+        kind=KEYLESS_KIND,
+        identity={"name": "keyless-a"},
+        payload={"name": "keyless-a", "id": "keyless-node-1"},
+    )
+
+    with pytest.raises(UnkeyedWriteRefusedError):
+        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    assert not client.mutations, "The refused operation makes zero mutation calls."
 
 
 # ---------------------------------------------------------------------------------------

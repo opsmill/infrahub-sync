@@ -239,10 +239,11 @@ class UnaccountedIdentityComponentError(PlanArtifactError):
 
 
 class UnkeyedWriteRefusedError(PlanArtifactError):
-    """The rendered mutation carries neither `id` nor `hfid`.
+    """The rendered mutation carries no usable `id` or `hfid`.
 
     An unkeyed convergent write duplicates its object on a re-apply, so it is refused for
-    every destination kind. The refused operation attempts no destination mutation.
+    every destination kind. A key rendered without a value keys nothing and is refused on the
+    same terms. The refused operation attempts no destination mutation.
     """
 
     next_action = (

@@ -1189,21 +1189,25 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         return data
 
     def _require_keyed_render(self, *, node: InfrahubNodeSync, operation: PlannedOperation) -> None:
-        """Refuse the operation unless the rendered mutation input carries `id` or `hfid`.
+        """Refuse the operation unless the rendered mutation carries a usable `id` or `hfid`.
 
         Keyedness is a property of the rendered mutation rather than of the assembled data, so
         it is read here, immediately before the SDK write. An unkeyed convergent write
         duplicates its object on a re-apply whatever the kind's human-friendly-ID shape is.
 
+        The key must carry a value, not merely be present. Every payload field is rendered as
+        an attribute block, so a field named `id` renders as an empty `id: {}` that the
+        destination can converge on no better than an absent one.
+
         Raises:
-            UnkeyedWriteRefusedError: the rendered mutation carries neither key.
+            UnkeyedWriteRefusedError: the rendered mutation carries no usable key.
         """
         rendered = node._generate_input_data(exclude_hfid=False)["data"]["data"]
-        if "id" in rendered or "hfid" in rendered:
+        if rendered.get("id") or rendered.get("hfid"):
             return
         msg = (
             f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} rendered a "
-            "mutation carrying neither 'id' nor 'hfid', so the convergent write would be unkeyed and a "
+            "mutation carrying no usable 'id' or 'hfid', so the convergent write would be unkeyed and a "
             "re-apply would duplicate the object. The operation was refused before the SDK write and "
             "attempted no destination mutation."
         )
