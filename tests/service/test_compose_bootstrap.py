@@ -301,10 +301,14 @@ def test_a_deployment_provider_exception_stays_behind_its_fixed_family(
     assert PROVIDER_CANARY not in caplog.text
 
 
-def test_a_prefect_context_exception_stays_behind_the_work_pool_family(
+def test_a_failure_running_the_pool_coroutine_stays_behind_the_work_pool_family(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Entering or leaving Prefect's client context is part of the provider boundary."""
+    """The loop `asyncio.run` owns is part of the provider boundary too.
+
+    The asynchronous context's own entry and exit are driven for real at the end of this
+    module; this case covers what the stub stands in for, the run call itself.
+    """
     _bootstrap_before_deployment(monkeypatch)
 
     def fail(coroutine: Coroutine[object, object, bool]) -> bool:
@@ -312,6 +316,55 @@ def test_a_prefect_context_exception_stays_behind_the_work_pool_family(
         raise RuntimeError(PROVIDER_CANARY)
 
     monkeypatch.setattr(bootstrap.asyncio, "run", fail)
+
+    with caplog.at_level("ERROR"):
+        result = bootstrap.main()
+
+    assert result == 1
+    assert "work-pool-unavailable" in caplog.text
+    assert PROVIDER_CANARY not in caplog.text
+
+
+class _FailsOnEntry:
+    """A real asynchronous context manager whose entry raises a provider exception.
+
+    Entering and leaving the Prefect client context are provider calls like any other: the
+    client is built from an endpoint and a credential, and both are rendered into the
+    exception text a failure carries.
+    """
+
+    async def __aenter__(self) -> _Pool:
+        raise RuntimeError(PROVIDER_CANARY)
+
+    async def __aexit__(self, *_details: object) -> None:
+        """Unreachable: entry never returns."""
+
+
+class _FailsOnExit:
+    """A real asynchronous context manager whose exit raises after a successful pool read."""
+
+    async def __aenter__(self) -> _Pool:
+        return _Pool(existing_type=PROCESS_POOL_TYPE)
+
+    async def __aexit__(self, *_details: object) -> None:
+        raise RuntimeError(PROVIDER_CANARY)
+
+
+def _bootstrap_before_the_work_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace the steps before the pool, leaving `asyncio.run` and the context real."""
+    monkeypatch.setattr(bootstrap, "_bundled_package", _package)
+    monkeypatch.setattr(bootstrap.boto3, "client", lambda *_arguments, **_settings: _Bucket())
+    monkeypatch.setattr(bootstrap, "converge_bucket", lambda *_arguments: False)
+    monkeypatch.setattr(bootstrap, "_required", lambda _name: "present")
+
+
+@pytest.mark.parametrize("context", [_FailsOnEntry, _FailsOnExit], ids=["entering the context", "leaving it"])
+def test_a_real_client_context_failure_stays_behind_the_work_pool_family(
+    context: type, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The asynchronous context is driven for real, not stubbed at `asyncio.run`."""
+    _bootstrap_before_the_work_pool(monkeypatch)
+    monkeypatch.setattr(bootstrap, "get_client", context)
 
     with caplog.at_level("ERROR"):
         result = bootstrap.main()
