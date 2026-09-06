@@ -38,6 +38,39 @@ INFRAHUB_SYNC_S3_SECRET_KEY
 INFRAHUB_SYNC_SERVICE_BEARER_TOKENS
 INFRAHUB_API_TOKEN'
 
+# Every setting Compose interpolates comes from the delivered files below. An
+# exported shell value otherwise outranks every --env-file, which would let the
+# command validate one image, identity, path, or port and execute another.
+# Keep this closed set equal to the ${...} names in compose.yaml.
+COMPOSE_SETTINGS='INFRAHUB_API_TOKEN
+INFRAHUB_SYNC_API_PORT
+INFRAHUB_SYNC_BIND_ADDRESS
+INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION
+INFRAHUB_SYNC_DATABASE_URL
+INFRAHUB_SYNC_IMAGE
+INFRAHUB_SYNC_IMAGE_PULL_POLICY
+INFRAHUB_SYNC_INSTANCE
+INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD_FILE
+INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE
+INFRAHUB_SYNC_PREFECT_DATABASE
+INFRAHUB_SYNC_PREFECT_DATABASE_URL
+INFRAHUB_SYNC_PREFECT_PASSWORD
+INFRAHUB_SYNC_PREFECT_PORT
+INFRAHUB_SYNC_PREFECT_ROLE
+INFRAHUB_SYNC_PRODUCT_DATABASE
+INFRAHUB_SYNC_PRODUCT_PASSWORD
+INFRAHUB_SYNC_PRODUCT_ROLE
+INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS
+INFRAHUB_SYNC_S3_ACCESS_KEY
+INFRAHUB_SYNC_S3_BUCKET
+INFRAHUB_SYNC_S3_PREFIX
+INFRAHUB_SYNC_S3_REGION
+INFRAHUB_SYNC_S3_SECRET_KEY
+INFRAHUB_SYNC_SERVICE_BEARER_TOKENS
+INFRAHUB_SYNC_WORK_POOL
+PREFECT_WORKER_HEARTBEAT_SECONDS
+PREFECT_WORKER_QUERY_SECONDS'
+
 START_TIMEOUT=${INFRAHUB_SYNC_START_TIMEOUT:-600}
 READY_TIMEOUT=${INFRAHUB_SYNC_READY_TIMEOUT:-300}
 
@@ -83,13 +116,18 @@ compose() {
     # own settings, then the generated identity. The identity comes last so no
     # edit to the operator file can relabel a running deployment -- which would
     # orphan every volume the first identity created.
-    docker compose \
-        --project-name "$PROJECT" \
-        --env-file "$DEFAULTS" \
-        --env-file "$OPERATOR" \
-        --env-file "$STATE" \
-        --file "$COMPOSE_FILE" \
-        "$@"
+    (
+        for setting in $COMPOSE_SETTINGS; do
+            unset "$setting"
+        done
+        docker compose \
+            --project-name "$PROJECT" \
+            --env-file "$DEFAULTS" \
+            --env-file "$OPERATOR" \
+            --env-file "$STATE" \
+            --file "$COMPOSE_FILE" \
+            "$@"
+    )
 }
 
 
@@ -110,11 +148,11 @@ owned_volumes() {
 }
 
 project_containers() {
-    docker ps --all --filter "label=$PROJECT_LABEL=$PROJECT" --format '{{.ID}}' 2>/dev/null || true
+    docker ps --all --filter "label=$PROJECT_LABEL=$PROJECT" --format '{{.ID}}' 2>/dev/null
 }
 
 running_containers() {
-    docker ps --filter "label=$PROJECT_LABEL=$PROJECT" --format '{{.ID}}' 2>/dev/null || true
+    docker ps --filter "label=$PROJECT_LABEL=$PROJECT" --format '{{.ID}}' 2>/dev/null
 }
 
 label_of() {
@@ -123,7 +161,9 @@ label_of() {
 
 verify_ownership() {
     foreign=''
-    for container in $(project_containers); do
+    containers=$(project_containers) ||
+        refuse docker-unavailable "Docker could not enumerate this instance's containers"
+    for container in $containers; do
         [ "$(label_of container .Config.Labels "$container")" = "$INSTANCE" ] ||
             foreign="$foreign container/$container"
     done
@@ -423,20 +463,29 @@ dependencies_healthy() {
     # endpoints -- so their health is an answer from the service, not the fact
     # that a container is up.
     for service in postgres object-store prefect-server; do
-        container=$(compose ps --all --quiet "$service" 2>/dev/null | head -n 1)
+        containers=$(compose ps --all --quiet "$service" 2>/dev/null) || return 2
+        container=$(printf '%s\n' "$containers" | head -n 1)
         [ -n "$container" ] || return 1
-        [ "$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null)" = "healthy" ] || return 1
+        health=$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null) || return 2
+        [ "$health" = "healthy" ] || return 1
     done
     return 0
 }
 
 command_status() {
-    if [ -z "$(running_containers)" ]; then
+    containers=$(running_containers) ||
+        refuse docker-unavailable "Docker could not enumerate this instance's running containers"
+    if [ -z "$containers" ]; then
         report "no container of instance $INSTANCE is running"
         printf 'STOPPED\n'
         exit 4
     fi
-    if ! dependencies_healthy; then
+    if dependencies_healthy; then
+        :
+    else
+        result=$?
+        [ "$result" -ne 2 ] ||
+            refuse docker-unavailable "Docker could not inspect this instance's required dependencies"
         report "a required dependency is not answering"
         printf 'DEGRADED\n'
         exit 3

@@ -241,9 +241,18 @@ def _converge() -> None:
         raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
     created_bucket = converge_bucket(client, _required(S3_BUCKET_ENV))
 
-    created_pool = asyncio.run(_converge_pool(_required(WORK_POOL_ENV)))
+    try:
+        created_pool = asyncio.run(_converge_pool(_required(WORK_POOL_ENV)))
+    except BootstrapError:
+        raise
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        raise BootstrapError(WORK_POOL_UNAVAILABLE) from None
 
-    if apply_deployment() != 0:
+    try:
+        deployment_result = apply_deployment()
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        raise BootstrapError(DEPLOYMENT_FAILED) from None
+    if deployment_result != 0:
         raise BootstrapError(DEPLOYMENT_FAILED)
 
     try:

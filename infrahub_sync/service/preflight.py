@@ -31,13 +31,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DESTINATION_UNREACHABLE = "destination-unreachable"
-DESTINATION_UNAUTHORIZED = "destination-unauthorized"
 CREDENTIAL_UNRESOLVED = "destination-credential-unresolved"
 DESTINATION_URL_MISSING = "destination-url-missing"
 
 PROBE_TIMEOUT_SECONDS = 15.0
-# The two responses that mean the destination answered but refused this caller.
-_REFUSED = frozenset({401, 403})
 
 
 def declared_destination_url(package: ConfigurationPackage) -> str:
@@ -72,16 +69,20 @@ def resolve_destination_credentials(package: ConfigurationPackage) -> None:
 
 
 def probe(url: str, *, client_factory: type[httpx.Client] = httpx.Client) -> None:
-    """Answer whether the destination is reachable, and refuse in a fixed family."""
+    """Answer whether the destination URL is reachable, and refuse in a fixed family.
+
+    This generic boundary cannot know an adapter's authentication protocol. Any
+    HTTP response therefore proves reachability, including an authentication
+    challenge. Credential references are resolved separately, but their remote
+    validity is established only by an adapter's first authenticated read.
+    """
     try:
-        with client_factory(timeout=PROBE_TIMEOUT_SECONDS, follow_redirects=True) as client:
-            response = client.get(url)
+        with client_factory(timeout=PROBE_TIMEOUT_SECONDS, follow_redirects=False) as client:
+            client.get(url)
     # `InvalidURL` is raised while parsing the address and is not an `HTTPError`,
     # so it needs naming here to share the family. It renders the URL.
     except (httpx.HTTPError, httpx.InvalidURL):
         raise BootstrapError(DESTINATION_UNREACHABLE) from None
-    if response.status_code in _REFUSED:
-        raise BootstrapError(DESTINATION_UNAUTHORIZED)
 
 
 def _package() -> ConfigurationPackage:

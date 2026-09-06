@@ -15,6 +15,7 @@ one covers the answers a real daemon will not produce to order.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -48,6 +49,15 @@ if [ "$1" = "compose" ]; then
             version | ps | run) sub=$word; break ;;
         esac
     done
+    if [ "$sub" != "version" ] && [ "${SHIM_REQUIRE_CLEAN_COMPOSE_ENVIRONMENT:-}" = "1" ]; then
+        for name in INFRAHUB_SYNC_IMAGE INFRAHUB_SYNC_INSTANCE INFRAHUB_SYNC_API_PORT INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION; do
+            eval "value=\${$name-}"
+            if [ -n "$value" ]; then
+                printf 'docker shim: ambient %s reached Compose\n' "$name" >&2
+                exit 96
+            fi
+        done
+    fi
     case "$sub" in
         version)
             printf '%s\n' "${SHIM_COMPOSE_VERSION}"
@@ -55,6 +65,7 @@ if [ "$1" = "compose" ]; then
             ;;
         ps)
             # The one container of a named service, or nothing.
+            [ "${SHIM_COMPOSE_PS_RC:-0}" = "0" ] || exit "${SHIM_COMPOSE_PS_RC}"
             printf '%s\n' "${SHIM_OWNED_CONTAINER:-}"
             exit 0
             ;;
@@ -78,6 +89,11 @@ case "$1 $2" in
 esac
 
 case "$1" in
+    ps)
+        [ "${SHIM_DOCKER_PS_RC:-97}" = "0" ] || exit "${SHIM_DOCKER_PS_RC:-97}"
+        printf '%s\n' "${SHIM_RUNNING_CONTAINERS:-}"
+        exit 0
+        ;;
     port)
         # The host bindings of one named container.
         printf '%s\n' "${SHIM_OWNED_PORTS:-}"
@@ -216,6 +232,17 @@ def test_the_instance_state_file_holds_the_identity_and_nothing_else(bundle: Pat
     assert all(character in "0123456789abcdef" for character in value), value
 
 
+def test_every_interpolated_setting_is_removed_from_composes_ambient_environment() -> None:
+    """A setting added to the model cannot silently regain shell precedence."""
+    script = (BUNDLE / ENTRY_POINT).read_text(encoding="utf-8")
+    declared = re.search(r"COMPOSE_SETTINGS='([^']*)'", script)
+    assert declared is not None, "the entry point declares no closed Compose environment boundary"
+    sanitized = set(declared.group(1).split())
+    interpolated = set(re.findall(r"\$\{([A-Z][A-Z0-9_]*)", (BUNDLE / "compose.yaml").read_text(encoding="utf-8")))
+
+    assert sanitized == interpolated
+
+
 # ---------------------------------------------------------------------------
 # preflight
 # ---------------------------------------------------------------------------
@@ -227,6 +254,24 @@ def test_preflight_passes_at_the_minimum_supported_compose(initialized: Path, sh
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "preflight passed" in result.stdout
+
+
+def test_ambient_bundle_settings_cannot_override_the_checked_files(initialized: Path, shim: Path) -> None:
+    """The files checked by preflight are the same settings Compose executes."""
+    result = run(
+        initialized,
+        shim,
+        "preflight",
+        environment={
+            "SHIM_REQUIRE_CLEAN_COMPOSE_ENVIRONMENT": "1",
+            "INFRAHUB_SYNC_IMAGE": "unexpected:latest",
+            "INFRAHUB_SYNC_INSTANCE": "foreign-identity",
+            "INFRAHUB_SYNC_API_PORT": "9999",
+            "INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION": "/not-the-declared-package",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
 
 
 @pytest.mark.parametrize("version", ["2.17.2", "2.16.9", "1.29.2"])
@@ -476,3 +521,37 @@ def test_preflight_refuses_a_destination_that_did_not_answer(initialized: Path, 
     result = run(initialized, shim, "preflight", environment={"SHIM_DESTINATION_RC": "1"})
 
     assert family(result) == "destination-unavailable", result.stderr
+
+
+def test_status_refuses_when_docker_cannot_enumerate_the_instance(initialized: Path, shim: Path) -> None:
+    """Failure to ask Docker is not evidence that this deployment is stopped."""
+    result = run(initialized, shim, "status")
+
+    assert family(result) == "docker-unavailable", result.stderr + result.stdout
+    assert "STOPPED" not in result.stdout
+
+
+def test_status_refuses_when_compose_cannot_inspect_a_required_dependency(initialized: Path, shim: Path) -> None:
+    """A later Docker query failure is not degraded service health either."""
+    result = run(
+        initialized,
+        shim,
+        "status",
+        environment={
+            "SHIM_DOCKER_PS_RC": "0",
+            "SHIM_RUNNING_CONTAINERS": "cafe1234",
+            "SHIM_COMPOSE_PS_RC": "1",
+        },
+    )
+
+    assert family(result) == "docker-unavailable", result.stderr + result.stdout
+    assert "DEGRADED" not in result.stdout
+
+
+def test_stop_refuses_when_docker_cannot_prove_ownership(initialized: Path, shim: Path) -> None:
+    """A destructive command fails closed when its discovery query fails."""
+    identity = (initialized / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+
+    result = run(initialized, shim, "stop", environment={"SHIM_OWNED_LABEL": identity})
+
+    assert family(result) == "docker-unavailable", result.stderr + result.stdout

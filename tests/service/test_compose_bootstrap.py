@@ -23,6 +23,7 @@ from prefect.exceptions import ObjectNotFound
 
 from infrahub_sync.configuration.models import parse_configuration_package
 from infrahub_sync.product_store import local_product_projection
+from infrahub_sync.service import bootstrap
 from infrahub_sync.service.bootstrap import (
     BOOTSTRAP_ACTOR,
     PROCESS_POOL_TYPE,
@@ -34,6 +35,8 @@ from infrahub_sync.service.bootstrap import (
 from tests.configuration.validation_packages import package_data
 
 if TYPE_CHECKING:
+    from collections.abc import Coroutine
+
     from prefect.client.schemas.actions import WorkPoolCreate
 
     from infrahub_sync.configuration import ConfigurationPackage
@@ -49,6 +52,7 @@ POOL = "infrahub-sync"
 # family that leaked provider detail would carry one of them.
 ENDPOINT_CANARY = "http://object-store.internal:9000"
 CREDENTIAL_CANARY = "bootstrap-object-store-canary"
+PROVIDER_CANARY = "provider-endpoint-and-secret-canary"
 
 
 class _Bucket:
@@ -262,3 +266,56 @@ def test_a_configuration_registered_under_another_name_is_not_matched(tmp_path: 
     assert [version.package_checksum for version in projection.list_configuration_versions(config_id)] == [
         _package().checksum()
     ]
+
+
+def _bootstrap_before_deployment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace the successful steps before deployment without leaking a coroutine."""
+    monkeypatch.setattr(bootstrap, "_bundled_package", _package)
+    monkeypatch.setattr(bootstrap.boto3, "client", lambda *_arguments, **_settings: _Bucket())
+    monkeypatch.setattr(bootstrap, "converge_bucket", lambda *_arguments: False)
+    monkeypatch.setattr(bootstrap, "_required", lambda _name: "present")
+
+    def finish(coroutine: Coroutine[object, object, bool]) -> bool:
+        coroutine.close()
+        return False
+
+    monkeypatch.setattr(bootstrap.asyncio, "run", finish)
+
+
+def test_a_deployment_provider_exception_stays_behind_its_fixed_family(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Provider exception text can contain endpoints and credentials."""
+    _bootstrap_before_deployment(monkeypatch)
+
+    def fail_deployment() -> int:
+        raise RuntimeError(PROVIDER_CANARY)
+
+    monkeypatch.setattr(bootstrap, "apply_deployment", fail_deployment)
+
+    with caplog.at_level("ERROR"):
+        result = bootstrap.main()
+
+    assert result == 1
+    assert "deployment-failed" in caplog.text
+    assert PROVIDER_CANARY not in caplog.text
+
+
+def test_a_prefect_context_exception_stays_behind_the_work_pool_family(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Entering or leaving Prefect's client context is part of the provider boundary."""
+    _bootstrap_before_deployment(monkeypatch)
+
+    def fail(coroutine: Coroutine[object, object, bool]) -> bool:
+        coroutine.close()
+        raise RuntimeError(PROVIDER_CANARY)
+
+    monkeypatch.setattr(bootstrap.asyncio, "run", fail)
+
+    with caplog.at_level("ERROR"):
+        result = bootstrap.main()
+
+    assert result == 1
+    assert "work-pool-unavailable" in caplog.text
+    assert PROVIDER_CANARY not in caplog.text

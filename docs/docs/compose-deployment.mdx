@@ -86,7 +86,8 @@ name followed by a fixed sentence. It never renders a credential value.
 | `image-unresolvable` | Docker cannot find that digest locally or in a registry. |
 | `port-occupied` | Something else already holds one of the required loopback binds. Preflight asks the engine for the bind rather than reading container names, so a foreign container published on any address and a host process that is not a container are both found. |
 | `port-unprovable` | The disposable bind probe could not run at all, so the port was neither proved free nor proved held. Check that the Sync image runs on this host. |
-| `destination-unavailable` | The declared destination did not answer, or refused the credential. The probe reports which. |
+| `destination-unavailable` | The declared destination URL did not answer. An HTTP authentication challenge counts as an answer: preflight proves that each credential reference resolves locally, while the adapter's first authenticated read proves that the destination accepts it. |
+| `docker-unavailable` | Docker could not enumerate or inspect this instance. This is not evidence that the deployment is stopped; restore Docker access and repeat the command. |
 
 `start` runs `preflight`, brings the deployment up, and returns only once the
 Sync API reports a worker that has registered. It is safe to repeat: bootstrap

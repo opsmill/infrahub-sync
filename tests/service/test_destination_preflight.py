@@ -22,7 +22,6 @@ from infrahub_sync.configuration.models import parse_configuration_package
 from infrahub_sync.service.bootstrap import CONFIGURATION_PATH_ENV, BootstrapError
 from infrahub_sync.service.preflight import (
     CREDENTIAL_UNRESOLVED,
-    DESTINATION_UNAUTHORIZED,
     DESTINATION_UNREACHABLE,
     declared_destination_url,
     main,
@@ -91,12 +90,9 @@ def test_a_destination_that_answers_is_accepted(status: int) -> None:
 
 
 @pytest.mark.parametrize("status", [401, 403])
-def test_a_destination_that_refuses_this_caller_is_reported_separately(status: int) -> None:
-    """Unreachable and unauthorized are different operator problems with different fixes."""
-    with pytest.raises(BootstrapError) as refusal:
-        probe(DESTINATION_CANARY, client_factory=_Transport(status=status))  # ty: ignore[invalid-argument-type]
-
-    assert refusal.value.family == DESTINATION_UNAUTHORIZED
+def test_an_authentication_challenge_establishes_anonymous_reachability(status: int) -> None:
+    """The generic probe resolves credentials but does not claim to validate one."""
+    probe(DESTINATION_CANARY, client_factory=_Transport(status=status))  # ty: ignore[invalid-argument-type]
 
 
 def test_an_unreachable_destination_carries_no_url_out_of_the_probe() -> None:
