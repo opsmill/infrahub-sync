@@ -61,6 +61,11 @@ NESTED_SECRET = "canary" + "n" * 58
 NESTED_BRANCHES = tuple(f"deep{letter * 55}" for letter in "xyz")
 NESTED_CREDENTIAL_PATH = ".".join((*NESTED_BRANCHES, NESTED_SECRET))
 
+# A declared adapter name longer than the finding text bound. The name is caller content and
+# reaches the missing-adapter message whole, so the bound cuts through it unless it is redacted
+# first. The grammar an adapter name must satisfy is `[a-z][a-z0-9_-]*`, with no length cap.
+ADAPTER_NAME_SECRET = "canary" + "m" * 294
+
 # Collected values whose shape a declared key cannot have. Each is exactly what
 # `collect_secret_values` collects — for the URL that is the userinfo rather than the whole
 # value — so a case here asserts the removal of a value the boundary really holds.
@@ -203,6 +208,22 @@ def _capabilities(*, allowed: tuple[str, ...], credential_paths: tuple[str, ...]
     return table
 
 
+def _named_source_package(adapter_name: str) -> dict[str, Any]:
+    """A valid package whose source role names `adapter_name`."""
+    package = _package(undeclared="canaryplain", credential_path="canarypath")
+    settings = package["configuration"]["source"]["settings"]
+    del settings["canaryplain"], settings["canarypath"]
+    package["configuration"]["source"]["name"] = adapter_name
+    return package
+
+
+def _with_source_adapter(adapter_name: str) -> dict[str, Any]:
+    """The builtin table plus a source adapter declared under `adapter_name`."""
+    table = dict(capabilities_module.BUILTIN_ADAPTER_CAPABILITIES)
+    table[adapter_name] = replace(table["netbox"], adapter_name=adapter_name)
+    return table
+
+
 def _install(monkeypatch: pytest.MonkeyPatch, table: dict[str, Any]) -> None:
     """Point the finding producer at one adapter declaration table."""
     monkeypatch.setattr(validation_module, "BUILTIN_ADAPTER_CAPABILITIES", table)
@@ -251,6 +272,7 @@ def environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYNC_BOUND_TOKEN", BOUND_SECRET)
     monkeypatch.setenv("SYNC_LONG_TOKEN", LONG_SECRET)
     monkeypatch.setenv("SYNC_NESTED_TOKEN", NESTED_SECRET)
+    monkeypatch.setenv("SYNC_ADAPTER_TOKEN", ADAPTER_NAME_SECRET)
     monkeypatch.setenv("SYNC_UNICODE_TOKEN", SHAPED_SECRETS["unicode"])
     monkeypatch.setenv("SYNC_QUOTED_TOKEN", SHAPED_SECRETS["quoted"])
     monkeypatch.setenv("SYNC_ESCAPED_TOKEN", SHAPED_SECRETS["escaped"])
@@ -365,6 +387,30 @@ def test_the_stable_machine_fields_survive_redaction_byte_for_byte(
     assert [finding["severity"] for finding in report["findings"]] == [
         finding.severity for finding in pre_redaction.findings
     ]
+
+
+def test_a_withdrawn_adapter_declaration_never_exposes_an_adapter_name_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environment: None
+) -> None:
+    """Declaration drift reports the adapter name, and the message bound must not cut it.
+
+    Registering against a declared adapter and revalidating after that declaration is withdrawn
+    is the product's own current-declaration contract. The name is caller content, so a name
+    longer than the finding text bound leaves a prefix unless it is redacted before bounding.
+    """
+    _ = environment
+    projection = local_product_projection(tmp_path)
+    _install(monkeypatch, _with_source_adapter(ADAPTER_NAME_SECRET))
+    registered = configs.register(package=_named_source_package(ADAPTER_NAME_SECRET), projection=projection)
+    _install(monkeypatch, dict(capabilities_module.BUILTIN_ADAPTER_CAPABILITIES))
+
+    report = _validate(monkeypatch, projection, registered.version)
+    body = json.dumps(report)
+
+    assert any(finding["code"] == "missing-adapter" for finding in report["findings"]), report
+    assert _longest_exposed_prefix(ADAPTER_NAME_SECRET, body) < MIN_SECRET_LENGTH, (
+        f"a prefix of the declared adapter name survived the message bound:\n{body}"
+    )
 
 
 def test_a_deep_declared_credential_path_never_exposes_a_secret_component_prefix(

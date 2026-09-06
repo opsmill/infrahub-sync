@@ -591,7 +591,10 @@ def _accumulate_store(
             _accumulated(
                 code=_CODE_MISSING_STORE_CAPABILITIES,
                 location="/configuration/store",
-                message=f"store type {store.type!r} has no configuration capability declaration",
+                message=(
+                    f"store type {_rendered_component(store.type, secrets)!r} has no configuration "
+                    "capability declaration"
+                ),
             )
         ]
     prefix = "/configuration/store/settings"
@@ -600,7 +603,7 @@ def _accumulate_store(
         allowed_settings=capabilities.allowed_settings,
         prefix=prefix,
         render=lambda names: (
-            f"store type {store.type!r} contains unsupported declared settings: "
+            f"store type {_rendered_component(store.type, secrets)!r} contains unsupported declared settings: "
             f"{_render_setting_name_list(names, secrets)}"
         ),
         owned_locations=owned_locations,
@@ -701,7 +704,10 @@ def _accumulate(package: ConfigurationPackage, secrets: Sequence[str] = ()) -> t
                         _accumulated(
                             code=_CODE_MISSING_ADAPTER,
                             location=f"/configuration/{role}",
-                            message=f"adapter {adapter.name!r} has no configuration capability declaration",
+                            message=(
+                                f"adapter {_rendered_component(adapter.name, secrets)!r} has no configuration "
+                                "capability declaration"
+                            ),
                         )
                     ],
                 )
