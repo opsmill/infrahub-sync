@@ -761,7 +761,7 @@ def _accumulate(package: ConfigurationPackage, secrets: Sequence[str] = ()) -> t
     # package carrying any legacy defect keeps its shipped first-error message at the
     # wrapper. Warnings before an error here are what the wrapper's first-*error* rule
     # exists for.
-    accumulated.extend(_from_module(_CHECK_OMISSIONS, accumulate_intentional_omissions(package)))
+    accumulated.extend(_from_module(_CHECK_OMISSIONS, accumulate_intentional_omissions(package, secrets)))
     accumulated.extend(_from_module(_CHECK_OPTIONAL_FEATURES, accumulate_unqualified_optional_features(package)))
     return tuple(accumulated)
 

@@ -23,10 +23,14 @@ needed to determine safety is an error, not a warning — so this family reports
 where that error already owns the role.
 
 Messages are fixed templates. The only declared content that reaches one is the omission
-``reason``, verbatim: its model bound keeps template plus reason inside the finding-text
-limit, so nothing here needs the core's message truncation. Locations are fixed literals
-and list indices, never declared keys, so nothing here needs the core's pointer bounding
-either.
+``reason``, and it is replaced whole when it carries a collected value, before the finding
+is built. That ordering is the point: ``ValidationFinding`` declares
+``str_strip_whitespace``, so a reason ending in whitespace is stored one character shorter
+than it was declared, and a whole-value match at any later boundary would then look for a
+string the message no longer contains. Its model bound keeps template plus reason inside
+the finding-text limit, so nothing here needs the core's message truncation. Locations are
+fixed literals and list indices, never declared keys, so nothing here needs the core's
+pointer bounding either.
 """
 
 from __future__ import annotations
@@ -34,10 +38,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .capabilities import BUILTIN_ADAPTER_CAPABILITIES
-from .models import ConfigurationPackage, ValidationFinding
+from .models import REDACTED, ConfigurationPackage, ValidationFinding
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from .models import _OmissionDeclaration
 
@@ -72,11 +76,31 @@ def _contradicts(omission: _OmissionDeclaration, mapped: Mapping[str, frozenset[
     return any(field_name in mapped_fields for field_name in omission.fields)
 
 
-def accumulate_intentional_omissions(package: ConfigurationPackage) -> tuple[ValidationFinding, ...]:
+def _redacted_reason(reason: str | None, secrets: Sequence[str]) -> str | None:
+    """Replace a declared reason whole when it carries a collected value.
+
+    The same rule the declared-key renderer applies, on free text rather than on a pointer
+    component: no escaping and no length bound, because a reason is prose the model already
+    bounds and the pointer escaping would rewrite it. Replacing it *whole* here is what makes
+    the later whole-value boundaries able to agree with this one — the model stores a stripped
+    copy of what it is given, so a secret still present at that point is one no whole-value
+    match can find afterwards.
+    """
+    if reason is None:
+        return None
+    return REDACTED if any(secret in reason for secret in secrets) else reason
+
+
+def accumulate_intentional_omissions(
+    package: ConfigurationPackage, secrets: Sequence[str] = ()
+) -> tuple[ValidationFinding, ...]:
     """Report each declared omission at its declaration: a warning, or the contradiction error.
 
     Declaration order, matching the core's insertion-order rule: when a contradiction is
     the first error in execution order, its position here decides what the wrapper raises.
+
+    ``secrets`` are the collected values the reason must not disclose. The reason is replaced
+    whole before the finding is constructed, because the model normalizes what it stores.
     """
     mapped = _mapped_field_names(package)
     findings: list[ValidationFinding] = []
@@ -92,7 +116,8 @@ def accumulate_intentional_omissions(package: ConfigurationPackage) -> tuple[Val
                 )
             )
             continue
-        message = _OMISSION_MESSAGE if omission.reason is None else f"{_OMISSION_MESSAGE}: {omission.reason}"
+        reason = _redacted_reason(omission.reason, secrets)
+        message = _OMISSION_MESSAGE if reason is None else f"{_OMISSION_MESSAGE}: {reason}"
         findings.append(
             ValidationFinding(
                 code=_CODE_INTENTIONAL_OMISSION,

@@ -67,6 +67,13 @@ NESTED_CREDENTIAL_PATH = ".".join((*NESTED_BRANCHES, NESTED_SECRET))
 # first. The grammar an adapter name must satisfy is `[a-z][a-z0-9_-]*`, with no length cap.
 ADAPTER_NAME_SECRET = "canary" + "m" * 294
 
+# A collected value whose last character is a space. `ValidationFinding` declares
+# `str_strip_whitespace`, so the model drops that space when it stores the message — and a
+# whole-value match at any later boundary then looks for a string the message no longer
+# contains. The value has to sit at the end of the message for the strip to reach it, which an
+# omission reason does.
+TRAILING_SPACE_SECRET = "canary-trailing-space-" + "t" * 50 + " "
+
 # Collected values whose shape a declared key cannot have. Each is exactly what
 # `collect_secret_values` collects — for the URL that is the userinfo rather than the whole
 # value — so a case here asserts the removal of a value the boundary really holds.
@@ -293,6 +300,7 @@ def environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYNC_LONG_TOKEN", LONG_SECRET)
     monkeypatch.setenv("SYNC_NESTED_TOKEN", NESTED_SECRET)
     monkeypatch.setenv("SYNC_ADAPTER_TOKEN", ADAPTER_NAME_SECRET)
+    monkeypatch.setenv("SYNC_TRAILING_TOKEN", TRAILING_SPACE_SECRET)
     monkeypatch.setenv("SYNC_UNICODE_TOKEN", SHAPED_SECRETS["unicode"])
     monkeypatch.setenv("SYNC_QUOTED_TOKEN", SHAPED_SECRETS["quoted"])
     monkeypatch.setenv("SYNC_ESCAPED_TOKEN", SHAPED_SECRETS["escaped"])
@@ -478,6 +486,38 @@ def test_a_registered_adapter_name_never_reaches_a_finding_message_unredacted(
     assert any(finding["code"] == code for finding in report["findings"]), report
     assert _longest_exposed_prefix(ADAPTER_NAME_SECRET, body) < MIN_SECRET_LENGTH, (
         f"a prefix of the registered adapter name survived the message bound:\n{body}"
+    )
+
+
+def test_an_omission_reason_ending_in_whitespace_never_exposes_a_secret_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environment: None
+) -> None:
+    """Model normalization is a lossy transform, and it runs before whole-value redaction.
+
+    `ValidationFinding` declares `str_strip_whitespace`, so a message ending in a collected
+    value that itself ends in a space is stored one character shorter than the value. Every
+    later boundary matches whole values, so it finds nothing and the remaining characters
+    serialize. Redaction has to happen on the complete component, before the model sees it.
+    """
+    _ = environment
+    assert TRAILING_SPACE_SECRET in collect_secret_values(), (
+        "the trailing-space value is not collected, so nothing would redact it"
+    )
+
+    projection = local_product_projection(tmp_path)
+    package = _package(undeclared="canaryplain", credential_path="canarypath")
+    del package["configuration"]["source"]["settings"]["canaryplain"]
+    package["configuration"]["source"]["settings"]["canarypath"] = {"$credential": "netbox-token"}
+    package["omissions"] = [{"kind": "BuiltinTag", "reason": TRAILING_SPACE_SECRET}]
+    _install(monkeypatch, _capabilities(allowed=("canarypath",), credential_paths=("canarypath",)))
+    registered = configs.register(package=package, projection=projection)
+
+    report = _validate(monkeypatch, projection, registered.version)
+    body = json.dumps(report)
+
+    assert any(finding["code"] == "intentional-omission" for finding in report["findings"]), report
+    assert _longest_exposed_prefix(TRAILING_SPACE_SECRET, body) < MIN_SECRET_LENGTH, (
+        f"a prefix of the trailing-space secret survived model normalization:\n{body}"
     )
 
 
