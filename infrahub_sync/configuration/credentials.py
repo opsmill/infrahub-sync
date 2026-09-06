@@ -15,10 +15,10 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from .models import is_renderable_setting_path, safe_pointer_component
+from .models import REDACTED, is_renderable_setting_path, safe_pointer_component
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Iterable, Mapping, Sequence
 
     from .models import ConfigurationPackage, CredentialReference
 
@@ -93,6 +93,18 @@ def _bounded_component(name: object) -> str:
     return safe_pointer_component(text)
 
 
+def _rendered_component(name: object, secrets: Sequence[str]) -> str:
+    """Render one caller-declared key, replacing it whole when it carries a collected value.
+
+    Redaction happens on the complete key, before the bound below cuts it: whole-value
+    matching at a later boundary cannot find a 64-character prefix of a longer secret.
+    """
+    text = str(name)
+    if any(secret in text for secret in secrets):
+        return REDACTED
+    return _bounded_component(text)
+
+
 def _bounded_location(location: str) -> str:
     """Bound one accumulated pointer so nesting depth cannot grow the message."""
     if len(location) <= _MAX_DIAGNOSTIC_LOCATION_LENGTH:
@@ -100,9 +112,9 @@ def _bounded_location(location: str) -> str:
     return location[:_MAX_DIAGNOSTIC_LOCATION_LENGTH] + _TRUNCATION_MARKER
 
 
-def _render_setting_name_list(names: Iterable[str]) -> str:
+def _render_setting_name_list(names: Iterable[str], secrets: Sequence[str] = ()) -> str:
     """Render bounded escaped setting names with unambiguous, JSON-decodable boundaries."""
-    escaped_names = sorted(_bounded_component(name) for name in names)
+    escaped_names = sorted(_rendered_component(name, secrets) for name in names)
     listed = escaped_names[:_MAX_DIAGNOSTIC_NAME_ENTRIES]
     rendered = json.dumps(listed, ensure_ascii=True)
     omitted = len(escaped_names) - len(listed)

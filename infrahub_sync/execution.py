@@ -47,6 +47,7 @@ from infrahub_sync import SyncConfig, SyncInstance
 from infrahub_sync.cache.locks import pipeline_lock
 from infrahub_sync.cache.paths import cache_root_for
 from infrahub_sync.cache.sidecars import RunFile
+from infrahub_sync.configuration.models import REDACTED
 from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
@@ -116,7 +117,6 @@ OPERATIONS: tuple[Operation, ...] = ("plan", "sync", "verify", "apply")
 SYNC_UNSUPPORTED = "operation=sync is not supported here; compose plan, verify, and apply through the Sync API"
 ACTION_KEYS: tuple[ActionKey, ...] = ("create", "update", "delete")
 
-REDACTED = "***"
 # Shortest collected value that is redacted. A short value — the `1` of a
 # `SKIP_TOKEN=1` feature flag, say — would turn redaction into a substring
 # shredder over every message ("within 6***.0 seconds"), and no real credential

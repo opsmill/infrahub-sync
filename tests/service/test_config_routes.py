@@ -20,6 +20,7 @@ from infrahub_sync.configuration.models import ValidationFinding
 from infrahub_sync.product_store import configs as configs_service
 from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.product_store.configs import ValidationReport
+from infrahub_sync.service import serve
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.config_routes import ConfigurationAPIError, ConfigurationRoutes
@@ -1098,8 +1099,11 @@ def test_create_app_keeps_run_and_configuration_dependencies_separate(tmp_path: 
     assert config_service.calls == ["list_configs"]
 
 
-def test_build_app_binds_one_projection_and_passes_configuration_dependency() -> None:
+def test_build_app_binds_one_projection_and_passes_configuration_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Runtime construction supplies one durable projection to both families."""
+    monkeypatch.setattr(serve, "collect_secret_values", tuple)
     received: list[object] = []
     route_dependency = object()
     projection_dependency = object()
@@ -1135,8 +1139,11 @@ def test_build_app_binds_one_projection_and_passes_configuration_dependency() ->
     assert received[-1] is route_dependency
 
 
-def test_build_app_composes_one_service_projection_for_runs_and_configurations() -> None:
+def test_build_app_composes_one_service_projection_for_runs_and_configurations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The deployed API has one environment-owned product projection."""
+    monkeypatch.setattr(serve, "collect_secret_values", tuple)
     projection = object()
     received: list[object] = []
 

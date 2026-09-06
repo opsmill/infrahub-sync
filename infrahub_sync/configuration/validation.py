@@ -29,9 +29,11 @@ from .credentials import (
     _bounded_component,
     _bounded_location,
     _render_setting_name_list,
+    _rendered_component,
 )
 from .models import (
     _MAX_FINDING_TEXT_LENGTH,
+    REDACTED,
     ConfigurationPackage,
     CredentialReferenceNode,
     ValidationFinding,
@@ -153,8 +155,11 @@ def _finding_location(location: str, unbounded_location: str | None = None) -> s
     """
     safe = location.replace(_TRUNCATION_MARKER, _LOCATION_TRUNCATION_MARKER)
     # "~2" survives escaping only as a truncation marker, so its presence means a declared key
-    # was cut; an over-long pointer is the other bound. Either way information was dropped.
-    if _TRUNCATION_MARKER not in location and len(safe) <= _MAX_FINDING_TEXT_LENGTH:
+    # was cut; a redacted component is the second lossy transform and an over-long pointer the
+    # third bound. Either way information was dropped, and two distinct pointers must not
+    # collapse onto one.
+    lossy = _TRUNCATION_MARKER in location or REDACTED in location
+    if not lossy and len(safe) <= _MAX_FINDING_TEXT_LENGTH:
         return safe
     return _marked_location(safe, location if unbounded_location is None else unbounded_location)
 
@@ -231,12 +236,14 @@ def _settings_pointer(prefix: str, path: str) -> str:
     return prefix + "".join(f"/{_bounded_component(component)}" for component in path.split("."))
 
 
-def _accumulate_reference_declarations(package: ConfigurationPackage) -> list[_AccumulatedFinding]:
+def _accumulate_reference_declarations(
+    package: ConfigurationPackage, secrets: Sequence[str]
+) -> list[_AccumulatedFinding]:
     """Validate provider names and identifiers without resolving credential values."""
     accumulated: list[_AccumulatedFinding] = []
     # Insertion order, not sorted: it decides which defect the wrapper reports.
     for name, reference in package.credentials.items():
-        location = f"/credentials/{_bounded_component(name)}"
+        location = f"/credentials/{_rendered_component(name, secrets)}"
         unbounded = f"/credentials/{_unbounded_component(name)}"
         if reference.provider != "env":
             accumulated.append(
@@ -268,6 +275,7 @@ def _accumulate_undeclared_settings(
     prefix: str,
     render: Callable[[Iterable[str]], str],
     owned_locations: list[str],
+    secrets: Sequence[str],
 ) -> list[_AccumulatedFinding]:
     """Report one finding per undeclared name, so N undeclared settings give N findings.
 
@@ -283,13 +291,13 @@ def _accumulate_undeclared_settings(
     legacy_message = render(unsupported)
     accumulated: list[_AccumulatedFinding] = []
     for name in sorted(unsupported):
-        location = f"{prefix}/{_bounded_component(name)}"
-        owned_locations.append(location)
+        unbounded = f"{prefix}/{_unbounded_component(name)}"
+        owned_locations.append(unbounded)
         accumulated.append(
             _accumulated(
                 code=_CODE_UNDECLARED_SETTING,
-                location=location,
-                unbounded_location=f"{prefix}/{_unbounded_component(name)}",
+                location=f"{prefix}/{_rendered_component(name, secrets)}",
+                unbounded_location=unbounded,
                 message=render({name}),
                 legacy_message=legacy_message,
             )
@@ -497,6 +505,7 @@ def _accumulate_adapter(
     role: AdapterRole,
     settings: Mapping[str, object],
     owned_locations: list[str],
+    secrets: Sequence[str],
 ) -> list[_AccumulatedFinding]:
     """Run every check a declared adapter surface supports, in the shipped order."""
     accumulated: list[_AccumulatedFinding] = []
@@ -516,9 +525,10 @@ def _accumulate_adapter(
             prefix=prefix,
             render=lambda names: (
                 f"adapter {capabilities.adapter_name!r} contains unsupported declared settings "
-                f"for the {role} role: {_render_setting_name_list(names)}"
+                f"for the {role} role: {_render_setting_name_list(names, secrets)}"
             ),
             owned_locations=owned_locations,
+            secrets=secrets,
         )
     )
     for setting_name in sorted(capabilities.allowed_settings & _URL_SETTING_NAMES):
@@ -534,7 +544,9 @@ def _accumulate_adapter(
     return accumulated
 
 
-def _accumulate_store(package: ConfigurationPackage, owned_locations: list[str]) -> list[_AccumulatedFinding]:
+def _accumulate_store(
+    package: ConfigurationPackage, owned_locations: list[str], secrets: Sequence[str]
+) -> list[_AccumulatedFinding]:
     """Refuse inline values and undeclared names at the declared store surface."""
     store = package.configuration.store
     if store is None:
@@ -563,9 +575,11 @@ def _accumulate_store(package: ConfigurationPackage, owned_locations: list[str])
         allowed_settings=capabilities.allowed_settings,
         prefix=prefix,
         render=lambda names: (
-            f"store type {store.type!r} contains unsupported declared settings: {_render_setting_name_list(names)}"
+            f"store type {store.type!r} contains unsupported declared settings: "
+            f"{_render_setting_name_list(names, secrets)}"
         ),
         owned_locations=owned_locations,
+        secrets=secrets,
     )
     paths = capabilities.credential_setting_paths
     accumulated.extend(_accumulate_credential_paths(package, settings, paths, prefix, owned_locations))
@@ -584,6 +598,7 @@ def _accumulate_reference_nodes(
     unbounded_location: str,
     owned_locations: tuple[str, ...],
     accumulated: list[_AccumulatedFinding],
+    secrets: Sequence[str],
 ) -> None:
     """Report every use of the reserved ``$credential`` key no surface check has authority over.
 
@@ -591,10 +606,14 @@ def _accumulate_reference_nodes(
     owned pointer belongs to a defect that check already reported — or sits in a subtree no
     surface exists to judge. Reporting it here would give one defect a second, vaguer finding
     at a deeper pointer.
+
+    Ownership is decided on the **unbounded** pointer. Truncation and redaction both map
+    distinct declared keys onto one rendered component, and a check that owned a rendered
+    pointer would prune an unrelated node that merely renders the same way.
     """
     # The one question, asked once per node. Pruning here rather than at the "$credential"
     # test below is the same answer: every descendant of an owned pointer is within it too.
-    if _is_within(location, owned_locations):
+    if _is_within(unbounded_location, owned_locations):
         return
     if isinstance(value, Mapping):
         if "$credential" in value:
@@ -611,10 +630,11 @@ def _accumulate_reference_nodes(
         for key, item in value.items():
             _accumulate_reference_nodes(
                 item,
-                location=f"{location}/{_bounded_component(key)}",
+                location=f"{location}/{_rendered_component(key, secrets)}",
                 unbounded_location=f"{unbounded_location}/{_unbounded_component(key)}",
                 owned_locations=owned_locations,
                 accumulated=accumulated,
+                secrets=secrets,
             )
     elif isinstance(value, list):
         for index, item in enumerate(value):
@@ -624,18 +644,19 @@ def _accumulate_reference_nodes(
                 unbounded_location=f"{unbounded_location}/{index}",
                 owned_locations=owned_locations,
                 accumulated=accumulated,
+                secrets=secrets,
             )
 
 
-def _accumulate(package: ConfigurationPackage) -> tuple[_AccumulatedFinding, ...]:
+def _accumulate(package: ConfigurationPackage, secrets: Sequence[str] = ()) -> tuple[_AccumulatedFinding, ...]:
     """Run every check in the shipped execution order, never raising for a declared defect."""
     accumulated: list[_AccumulatedFinding] = []
-    # Every pointer a surface check has authority over. A check appends the setting it judged,
-    # and a surface that turns out not to exist appends its whole settings subtree — the case
-    # where a check could not judge. The walk below reports nowhere within them.
+    # Every unbounded pointer a surface check has authority over. A check appends the setting
+    # it judged, and a surface that turns out not to exist appends its whole settings subtree —
+    # the case where a check could not judge. The walk below reports nowhere within them.
     owned_locations: list[str] = []
-    accumulated.extend(_from_check(_CHECK_CREDENTIALS, _accumulate_reference_declarations(package)))
-    accumulated.extend(_from_check(_CHECK_STORE, _accumulate_store(package, owned_locations)))
+    accumulated.extend(_from_check(_CHECK_CREDENTIALS, _accumulate_reference_declarations(package, secrets)))
+    accumulated.extend(_from_check(_CHECK_STORE, _accumulate_store(package, owned_locations, secrets)))
     source = package.configuration.source
     destination = package.configuration.destination
     source_capabilities = BUILTIN_ADAPTER_CAPABILITIES.get(source.name)
@@ -671,6 +692,7 @@ def _accumulate(package: ConfigurationPackage) -> tuple[_AccumulatedFinding, ...
                     role=role,
                     settings=adapter.settings or {},
                     owned_locations=owned_locations,
+                    secrets=secrets,
                 ),
             )
         )
@@ -683,6 +705,7 @@ def _accumulate(package: ConfigurationPackage) -> tuple[_AccumulatedFinding, ...
         unbounded_location="",
         owned_locations=tuple(owned_locations),
         accumulated=walked,
+        secrets=secrets,
     )
     accumulated.extend(_from_check(_CHECK_WALK, walked))
     # The warning families run last, appended after the shipped execution order, so a
@@ -715,8 +738,12 @@ def _one_check_per_location(accumulated: tuple[_AccumulatedFinding, ...]) -> lis
     return kept
 
 
-def collect_findings(package: ConfigurationPackage) -> tuple[ValidationFinding, ...]:
+def collect_findings(package: ConfigurationPackage, secrets: Sequence[str] = ()) -> tuple[ValidationFinding, ...]:
     """Return every declared defect as a finding, in the stable cross-interface order.
+
+    ``secrets`` are the collected values a caller-declared key must not disclose. They are
+    read here and never stored: a key carrying one is replaced whole before the length
+    bounds cut it, which is the only point at which the complete key is still available.
 
     Bounded at 256. Accumulation itself never stops early, because truncating in execution
     order would make the surviving findings depend on the order the defects were declared in;
@@ -728,7 +755,7 @@ def collect_findings(package: ConfigurationPackage) -> tuple[ValidationFinding, 
     # sort_findings orders by (location, severity, code), and _one_check_per_location has
     # already made (code, location) unique, so no two findings can tie there. Uniqueness is
     # structural, which is why nothing breaks a tie before the cut below.
-    findings = sort_findings(_one_check_per_location(_accumulate(package)))
+    findings = sort_findings(_one_check_per_location(_accumulate(package, secrets)))
     if len(findings) <= _MAX_REPORTED_FINDINGS:
         return findings
     suppressed = findings[_MAX_REPORTED_FINDINGS:]
