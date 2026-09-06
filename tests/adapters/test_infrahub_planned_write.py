@@ -744,6 +744,40 @@ def test_a_keyed_hfid_render_is_written_through_the_real_transport() -> None:
     assert node_id == NODE_ID
 
 
+def test_a_render_carrying_a_usable_id_reaches_the_write_and_returns_its_node(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The gate's `id` arm, proven at the transport rather than at the helper.
+
+    **This is gate-contract coverage, not a saved-plan path.** A saved plan carries no
+    destination UUID — FR-012 forbids the load that would supply one — so no ordinary apply
+    reaches the gate this way. The gate nonetheless permits `id`, and the only honest way to
+    show what "permits" means is to put a node carrying one in front of it and watch the write
+    happen. The node id is injected at `client.create`, which is where a destination-aware
+    caller would supply it; nothing else about the path is replaced.
+    """
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    real_create = client.create
+
+    def create_with_destination_id(*args: Any, **kwargs: Any) -> InfrahubNodeSync:  # noqa: ANN401
+        node = real_create(*args, **kwargs)
+        node.id = "keyless-node-1"
+        return node
+
+    monkeypatch.setattr(client, "create", create_with_destination_id)
+    operation = make_operation(kind=KEYLESS_KIND, identity={"name": "keyless-a"}, payload={"name": "keyless-a"})
+
+    node_id = adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    assert client.mutation_names == [f"{KEYLESS_KIND}Upsert"], (
+        "A usable 'id' permits the write, so exactly one convergent upsert is issued."
+    )
+    _, query = client.mutations[0]
+    assert 'id: "keyless-node-1"' in query, f"The mutation must carry the destination id. Rendered:\n{query}"
+    assert node_id == NODE_ID, "The write surface returns the destination node id."
+
+
 def test_a_payload_field_named_id_does_not_satisfy_the_gate() -> None:
     """A key whose rendered value is empty keys nothing, so it is refused (the `id: {}` case).
 

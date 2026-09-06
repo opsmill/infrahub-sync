@@ -45,12 +45,19 @@ pytestmark = pytest.mark.integration
 
 SITE_KIND = "TestUnkeyedSite"
 DEVICE_KIND = "TestUnkeyedDevice"
+MOUNT_KIND = "TestUnkeyedMount"
 
 # `TestUnkeyedDevice`'s human-friendly ID crosses the `site` relationship, which is exactly the
 # shape the SDK cannot render a key for: a peer supplied as a resolved node id renders as
 # `{"id": ...}` with no `__typename`, so `get_human_friendly_id()` resolves to None. The site is
 # all-direct so the peer it references is itself writable and the refusal under test is the
 # device's alone.
+#
+# `TestUnkeyedMount` is the third shape, and it is what keeps the nested-peer *read* covered.
+# Its own human-friendly ID is all-direct, so it renders a key and is written; the peer it
+# references is the crossing kind. Resolving that peer is the only place PD-004's nested
+# `<rel>__<attr>__value` filter spelling and AD043's nested `{peer_kind, identity}` walk run
+# against a real destination — a kind may be unwritable and still be perfectly readable.
 _SCHEMA = {
     "version": "1.0",
     "nodes": [
@@ -71,6 +78,22 @@ _SCHEMA = {
                 {
                     "name": "site",
                     "peer": SITE_KIND,
+                    "cardinality": "one",
+                    "kind": "Attribute",
+                    "optional": False,
+                },
+            ],
+        },
+        {
+            "name": "UnkeyedMount",
+            "namespace": "Test",
+            "include_in_menu": False,
+            "human_friendly_id": ["name__value"],
+            "attributes": [{"name": "name", "kind": "Text", "unique": True}],
+            "relationships": [
+                {
+                    "name": "device",
+                    "peer": DEVICE_KIND,
                     "cardinality": "one",
                     "kind": "Attribute",
                     "optional": False,
@@ -142,6 +165,28 @@ def _device_operation(device_name: str, site_name: str) -> PlannedOperation:
     )
 
 
+def _mount_operation(mount_name: str, device_name: str, site_name: str) -> PlannedOperation:
+    """One planned create for the keyed consumer, referencing the crossing peer.
+
+    The reference carries the peer's identity as AD043 records it — a nested
+    `{peer_kind, identity}` pair, because the peer's own key crosses `site` — so resolving it
+    is what forces the nested filter spelling at the destination.
+    """
+    peer_identity = {"name": device_name, "site": {"peer_kind": SITE_KIND, "identity": {"name": site_name}}}
+    identity = canonical_identity({"name": mount_name}, kind=MOUNT_KIND)
+    return PlannedOperation(
+        operation_id=operation_id("create", MOUNT_KIND, identity),
+        action="create",
+        kind=MOUNT_KIND,
+        identity=identity,
+        tier=0,
+        payload={"name": mount_name},
+        relationships=[
+            RelationshipReference(field="device", peer_kind=DEVICE_KIND, cardinality="one", peers=[peer_identity])
+        ],
+    )
+
+
 @dataclass(frozen=True)
 class UnkeyedScope:
     """One run's isolated destination scope."""
@@ -150,6 +195,7 @@ class UnkeyedScope:
     adapter: InfrahubAdapter
     branch: str
     site_name: str
+    device_name: str
 
 
 def _branch_exists(address: str, token: str, branch: str) -> bool:
@@ -167,11 +213,16 @@ def _branch_exists(address: str, token: str, branch: str) -> bool:
 
 @pytest.fixture
 def unkeyed_scope() -> Iterator[UnkeyedScope]:
-    """A branch this run owns, carrying the throwaway schema and one site.
+    """A branch this run owns, carrying the throwaway schema, one site and one device.
 
     The branch is the unit of isolation *and* of cleanup: deleting it removes the schema and
     every object created against it, so no teardown has to enumerate objects by kind and
     therefore none can remove another run's. `main` is never written.
+
+    The device is created **directly through the SDK**, not through a planned apply: its key
+    crosses a relationship, so the write surface would refuse it — which is the very thing the
+    refusal case asserts. Seeding it directly is what makes it a *pre-existing* peer, which is
+    the only state in which the nested-peer read can be exercised at all.
     """
     address, token = _env_or_skip()
     suffix = uuid.uuid4().hex[:8]
@@ -187,18 +238,21 @@ def unkeyed_scope() -> Iterator[UnkeyedScope]:
             timeout=60,
         )
         schema_response.raise_for_status()
-        _await_schema_kinds(client, branch, (SITE_KIND, DEVICE_KIND))
+        _await_schema_kinds(client, branch, (SITE_KIND, DEVICE_KIND, MOUNT_KIND))
 
         site_name = f"unkeyed-site-{suffix}"
         site = client.create(kind=SITE_KIND, branch=branch, data={"name": site_name})
         site.save()
+        device_name = f"unkeyed-device-{suffix}"
+        device = client.create(kind=DEVICE_KIND, branch=branch, data={"name": device_name, "site": site.id})
+        device.save()
 
         adapter = InfrahubAdapter.__new__(InfrahubAdapter)
         adapter.client = client
         adapter.schema = client.schema.all(branch=branch)
         adapter.source_node = None
         adapter.owner_node = None
-        yield UnkeyedScope(client=client, adapter=adapter, branch=branch, site_name=site_name)
+        yield UnkeyedScope(client=client, adapter=adapter, branch=branch, site_name=site_name, device_name=device_name)
     finally:
         client.branch.delete(branch_name=branch)
         assert not _branch_exists(address, token, branch), (
@@ -235,6 +289,53 @@ def test_an_unkeyed_planned_operation_is_refused_without_touching_the_destinatio
     assert scope.client.filters(kind=DEVICE_KIND, branch=scope.branch, populate_store=False) == [], (
         f"A refused operation left an object of kind {DEVICE_KIND} at the destination."
     )
+
+
+def test_a_keyed_consumer_resolves_a_crossing_peer_through_the_nested_filter(
+    unkeyed_scope: UnkeyedScope,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A kind that cannot be written can still be read, and resolving it is nested (AD043/PD-004).
+
+    This is the semantic half the refusal case cannot cover. The consumer's own key is
+    all-direct, so its planned write renders keyed and is issued; the peer it names is the
+    crossing kind, which pre-exists at the destination. Resolving that peer is the only place
+    the nested `{peer_kind, identity}` walk turns into a nested `<rel>__<attr>__value` filter
+    against a real server, and no offline harness can settle how the destination answers it.
+    """
+    scope = unkeyed_scope
+    mount_name = f"unkeyed-mount-{scope.branch.rsplit('-', maxsplit=1)[-1]}"
+    queries: list[dict[str, Any]] = []
+    real_filters = scope.client.filters
+
+    def recording_filters(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 — SDK passthrough
+        queries.append(dict(kwargs))
+        return real_filters(*args, **kwargs)
+
+    monkeypatch.setattr(scope.client, "filters", recording_filters)
+    node_id = scope.adapter.apply_planned_operation(
+        operation=_mount_operation(mount_name, scope.device_name, scope.site_name),
+        peers=scope.adapter.new_peer_resolver(),
+    )
+    monkeypatch.undo()
+
+    nested = [
+        query
+        for query in queries
+        if query.get("kind") == DEVICE_KIND and query.get("site__name__value") == scope.site_name
+    ]
+    assert nested, (
+        f"No destination query resolved {DEVICE_KIND!r} through the nested "
+        f"'site__name__value' filter. PD-004's spelling was not exercised. Queries issued: {queries}"
+    )
+    assert nested[0].get("name__value") == scope.device_name, (
+        f"The nested query must also pin the peer's own direct component: {nested[0]}"
+    )
+
+    written = scope.client.get(kind=MOUNT_KIND, id=node_id, branch=scope.branch, include=["device"])
+    assert written.name.value == mount_name, "The keyed consumer was not written as planned."
+    assert written.device.id is not None, "The consumer was written without the peer it referenced."
+    assert scope.client.count(kind=MOUNT_KIND, branch=scope.branch) == 1
 
 
 def test_the_run_writes_nothing_outside_the_branch_it_owns(unkeyed_scope: UnkeyedScope) -> None:
