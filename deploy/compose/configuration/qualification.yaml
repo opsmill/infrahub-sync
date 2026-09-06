@@ -1,0 +1,48 @@
+---
+# The declared configuration the lifecycle qualification registers and runs.
+#
+# Both adapters are the bundled `infrahub` one, so a registered run resolves
+# them from installed code: nothing is generated, and no worker filesystem is
+# consulted. The token is a credential *reference* — the worker resolves
+# `INFRAHUB_API_TOKEN` from its own environment, so no secret value is declared
+# here, stored in PostgreSQL, or printed by any lifecycle command.
+#
+# Edit `url` to name your own Infrahub, or point
+# `INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION` at a package file of your own. Edit it
+# before the first start: the declared content below is what the registry
+# checksums, and bootstrap recognises this configuration by its declared name, so
+# an edit afterwards is refused as conflicting content under a name that is
+# already registered. To change it later, change `name` as well.
+#
+# The schema this maps is the one Infrahub Sync ships for its own qualification:
+# examples/prefect_remote_run/schemas/infra_device.yml
+format_version: 1
+configuration:
+  name: infrahub-sync-qualification
+  source:
+    name: infrahub
+    settings:
+      url: "http://infrahub.example.net:8000"
+      branch: main
+      token:
+        $credential: infrahub-token
+  destination:
+    name: infrahub
+    settings:
+      url: "http://infrahub.example.net:8000"
+      branch: infrahub-sync-qualification
+      token:
+        $credential: infrahub-token
+  schema_mapping:
+    - name: InfraDevice
+      mapping: InfraDevice
+      identifiers: ["name"]
+      fields:
+        - name: name
+          mapping: name
+        - name: type
+          mapping: type
+credentials:
+  infrahub-token:
+    provider: env
+    identifier: INFRAHUB_API_TOKEN

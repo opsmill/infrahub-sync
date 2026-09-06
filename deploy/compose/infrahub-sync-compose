@@ -1,0 +1,568 @@
+#!/bin/sh
+# The Infrahub Sync deployment lifecycle. Docker Compose and this script are the
+# only things a host needs: no product checkout, no Python, no `uv`.
+#
+# Docker mutation lives here and only here. Nothing inside a Sync container is
+# given the Docker socket, so no deployed process can start, stop, or remove any
+# part of the deployment it belongs to.
+#
+# Every refusal is a family name followed by a fixed sentence. Credential values
+# are never read into a message, never echoed, and never written to the state
+# file this script generates.
+set -eu
+
+BUNDLE=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+COMPOSE_FILE="$BUNDLE/compose.yaml"
+DEFAULTS="$BUNDLE/defaults.conf"
+OPERATOR="$BUNDLE/operator.env"
+STATE="$BUNDLE/.instance"
+SECRETS="$BUNDLE/secrets"
+ADMIN_SECRET="$SECRETS/postgres-admin-password"
+
+# Measured, not assumed: the bundle was resolved by this exact Compose release,
+# which is also the oldest one still published as a pinned binary. It supplies
+# every feature the bundle uses -- `depends_on` conditions including
+# `service_completed_successfully`, `pull_policy`, repeatable `--env-file`, and
+# `up --wait` with `--wait-timeout`.
+MINIMUM_COMPOSE=2.17.3
+
+# The settings an operator must supply. Names only: this list is printed, the
+# values behind it never are.
+REQUIRED_SETTINGS='INFRAHUB_SYNC_IMAGE
+INFRAHUB_SYNC_DATABASE_URL
+INFRAHUB_SYNC_PREFECT_DATABASE_URL
+INFRAHUB_SYNC_PRODUCT_PASSWORD
+INFRAHUB_SYNC_PREFECT_PASSWORD
+INFRAHUB_SYNC_S3_ACCESS_KEY
+INFRAHUB_SYNC_S3_SECRET_KEY
+INFRAHUB_SYNC_SERVICE_BEARER_TOKENS
+INFRAHUB_API_TOKEN'
+
+# Every setting Compose interpolates comes from the delivered files below. An
+# exported shell value otherwise outranks every --env-file, which would let the
+# command validate one image, identity, path, or port and execute another.
+# Keep this closed set equal to the ${...} names in compose.yaml.
+COMPOSE_SETTINGS='INFRAHUB_API_TOKEN
+INFRAHUB_SYNC_API_PORT
+INFRAHUB_SYNC_BIND_ADDRESS
+INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION
+INFRAHUB_SYNC_DATABASE_URL
+INFRAHUB_SYNC_IMAGE
+INFRAHUB_SYNC_IMAGE_PULL_POLICY
+INFRAHUB_SYNC_INSTANCE
+INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD_FILE
+INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE
+INFRAHUB_SYNC_PREFECT_DATABASE
+INFRAHUB_SYNC_PREFECT_DATABASE_URL
+INFRAHUB_SYNC_PREFECT_PASSWORD
+INFRAHUB_SYNC_PREFECT_PORT
+INFRAHUB_SYNC_PREFECT_ROLE
+INFRAHUB_SYNC_PRODUCT_DATABASE
+INFRAHUB_SYNC_PRODUCT_PASSWORD
+INFRAHUB_SYNC_PRODUCT_ROLE
+INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS
+INFRAHUB_SYNC_S3_ACCESS_KEY
+INFRAHUB_SYNC_S3_BUCKET
+INFRAHUB_SYNC_S3_PREFIX
+INFRAHUB_SYNC_S3_REGION
+INFRAHUB_SYNC_S3_SECRET_KEY
+INFRAHUB_SYNC_SERVICE_BEARER_TOKENS
+INFRAHUB_SYNC_WORK_POOL
+PREFECT_WORKER_HEARTBEAT_SECONDS
+PREFECT_WORKER_QUERY_SECONDS'
+
+START_TIMEOUT=${INFRAHUB_SYNC_START_TIMEOUT:-600}
+READY_TIMEOUT=${INFRAHUB_SYNC_READY_TIMEOUT:-300}
+
+# ---------------------------------------------------------------------------
+# Reporting
+# ---------------------------------------------------------------------------
+
+refuse() {
+    printf 'infrahub-sync: %s: %s\n' "$1" "$2" >&2
+    exit 1
+}
+
+report() {
+    printf 'infrahub-sync: %s\n' "$1"
+}
+
+# ---------------------------------------------------------------------------
+# Instance identity and operator inputs
+# ---------------------------------------------------------------------------
+
+read_setting() {
+    # One value from a KEY=VALUE file, without sourcing it: a file an operator
+    # edits must not be able to run anything in this shell.
+    sed -n "s/^$1=//p" "$2" 2>/dev/null | tail -n 1
+}
+
+# Resolved once, into a variable. A refusal inside `$( )` would exit only the
+# subshell, leaving the caller to carry on with an empty project name -- which is
+# a Compose project that owns nothing and matches nothing.
+INSTANCE=''
+PROJECT=''
+
+require_identity() {
+    [ -f "$STATE" ] || refuse no-instance "this bundle has no instance identity; run \`$0 init\` first"
+    INSTANCE=$(read_setting INFRAHUB_SYNC_INSTANCE "$STATE")
+    [ -n "$INSTANCE" ] ||
+        refuse no-instance "the instance state file names no identity; remove $STATE and run \`$0 init\`"
+    PROJECT="infrahub-sync-$INSTANCE"
+}
+
+compose() {
+    # Three layers, in increasing authority: shipped defaults, the operator's
+    # own settings, then the generated identity. The identity comes last so no
+    # edit to the operator file can relabel a running deployment -- which would
+    # orphan every volume the first identity created.
+    (
+        for setting in $COMPOSE_SETTINGS; do
+            unset "$setting"
+        done
+        docker compose \
+            --project-name "$PROJECT" \
+            --env-file "$DEFAULTS" \
+            --env-file "$OPERATOR" \
+            --env-file "$STATE" \
+            --file "$COMPOSE_FILE" \
+            "$@"
+    )
+}
+
+
+# ---------------------------------------------------------------------------
+# Ownership
+# ---------------------------------------------------------------------------
+# Every destructive command resolves its targets by explicit name and proves each
+# existing one carries this instance's label, before it changes anything. A
+# missing target is idempotent -- there is nothing to remove. A target that
+# exists under a label this instance did not write belongs to something else,
+# and the whole operation is refused rather than partially applied.
+
+INSTANCE_LABEL=io.infrahub-sync.instance
+PROJECT_LABEL=com.docker.compose.project
+
+owned_volumes() {
+    printf '%s\n' "${PROJECT}_postgres-data" "${PROJECT}_object-store-data"
+}
+
+project_containers() {
+    docker ps --all --filter "label=$PROJECT_LABEL=$PROJECT" --format '{{.ID}}' 2>/dev/null
+}
+
+running_containers() {
+    docker ps --filter "label=$PROJECT_LABEL=$PROJECT" --format '{{.ID}}' 2>/dev/null
+}
+
+label_of() {
+    docker "$1" inspect --format "{{index $2 \"$INSTANCE_LABEL\"}}" "$3" 2>/dev/null || true
+}
+
+verify_ownership() {
+    foreign=''
+    containers=$(project_containers) ||
+        refuse docker-unavailable "Docker could not enumerate this instance's containers"
+    for container in $containers; do
+        [ "$(label_of container .Config.Labels "$container")" = "$INSTANCE" ] ||
+            foreign="$foreign container/$container"
+    done
+    for volume in $(owned_volumes); do
+        docker volume inspect "$volume" >/dev/null 2>&1 || continue
+        [ "$(label_of volume .Labels "$volume")" = "$INSTANCE" ] || foreign="$foreign volume/$volume"
+    done
+    network="${PROJECT}_default"
+    if docker network inspect "$network" >/dev/null 2>&1; then
+        [ "$(label_of network .Labels "$network")" = "$INSTANCE" ] || foreign="$foreign network/$network"
+    fi
+    [ -z "$foreign" ] ||
+        refuse foreign-resource "these existing resources are not labelled for instance $INSTANCE:$foreign"
+    report "every existing resource is labelled for instance $INSTANCE"
+}
+
+# ---------------------------------------------------------------------------
+# Preflight
+# ---------------------------------------------------------------------------
+
+version_at_least() {
+    # Compare two dotted versions field by field, numerically. `sort -V` is not
+    # POSIX and is absent from some minimal images.
+    have=$1
+    want=$2
+    index=1
+    while [ "$index" -le 3 ]; do
+        left=$(printf '%s' "$have" | cut -d. -f"$index")
+        right=$(printf '%s' "$want" | cut -d. -f"$index")
+        case "$left" in '' | *[!0-9]*) left=0 ;; esac
+        case "$right" in '' | *[!0-9]*) right=0 ;; esac
+        [ "$left" -gt "$right" ] && return 0
+        [ "$left" -lt "$right" ] && return 1
+        index=$((index + 1))
+    done
+    return 0
+}
+
+check_compose_version() {
+    command -v docker >/dev/null 2>&1 || refuse no-docker "Docker is not installed or not on PATH"
+    found=$(docker compose version --short 2>/dev/null || true)
+    [ -n "$found" ] || refuse compose-unreadable "\`docker compose version --short\` reported no version"
+    case "$found" in
+        [0-9]*.[0-9]*.[0-9]*) : ;;
+        *) refuse compose-unreadable "Docker Compose reported the unreadable version '$found'" ;;
+    esac
+    version_at_least "$found" "$MINIMUM_COMPOSE" ||
+        refuse compose-too-old "Docker Compose $found is older than the required $MINIMUM_COMPOSE"
+    report "Docker Compose $found satisfies the required $MINIMUM_COMPOSE"
+}
+
+check_paths() {
+    for path in "$BUNDLE" "$SECRETS"; do
+        [ -d "$path" ] || refuse path-missing "$path is not a directory"
+        [ -w "$path" ] || refuse path-unwritable "$path is not writable by this user"
+    done
+    [ -r "$COMPOSE_FILE" ] || refuse path-unreadable "$COMPOSE_FILE cannot be read"
+    [ -r "$DEFAULTS" ] || refuse path-unreadable "$DEFAULTS cannot be read"
+    package=$(read_setting INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION "$OPERATOR")
+    [ -n "$package" ] || package=$(read_setting INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION "$DEFAULTS")
+    case "$package" in /*) : ;; *) package="$BUNDLE/$package" ;; esac
+    [ -r "$package" ] || refuse path-unreadable "the declared configuration $package cannot be read"
+    report "lifecycle and configuration paths are readable and writable"
+}
+
+check_credentials() {
+    [ -f "$OPERATOR" ] || refuse no-operator-settings "$OPERATOR does not exist; run \`$0 init\` first"
+    missing=''
+    for name in $REQUIRED_SETTINGS; do
+        value=$(read_setting "$name" "$OPERATOR")
+        # The value is compared against emptiness and against the placeholder
+        # `init` writes. Neither comparison renders it.
+        if [ -z "$value" ] || [ "$value" = "REPLACE-ME" ]; then
+            missing="$missing $name"
+        fi
+    done
+    [ -s "$ADMIN_SECRET" ] || missing="$missing $ADMIN_SECRET"
+    [ -z "$missing" ] || refuse credentials-missing "these settings have no value:$missing"
+    report "every required credential is present"
+}
+
+# Resolved by `check_image` and reused by the bind probe below, so the probe
+# needs no image of its own: it runs the one this deployment is already about to
+# run, which preflight has just proved the engine can resolve.
+SYNC_IMAGE=''
+
+check_image() {
+    reference=$(read_setting INFRAHUB_SYNC_IMAGE "$OPERATOR")
+    # An immutable reference carries a digest. Whether the rest of it names a
+    # repository Docker can resolve is Docker's question, not this script's, so
+    # the grammar check stops at the digest and the engine answers the rest.
+    case "$reference" in
+        sha256:*) digest=${reference#sha256:} ;;
+        *@sha256:*) digest=${reference##*@sha256:} ;;
+        *) refuse image-not-immutable "INFRAHUB_SYNC_IMAGE must carry an @sha256: digest; '$reference' names a tag" ;;
+    esac
+    case "$digest" in
+        *[!0-9a-f]* | '') refuse image-not-immutable "INFRAHUB_SYNC_IMAGE carries a malformed sha256 digest" ;;
+    esac
+    [ "${#digest}" -eq 64 ] || refuse image-not-immutable "INFRAHUB_SYNC_IMAGE carries a malformed sha256 digest"
+    docker image inspect "$reference" >/dev/null 2>&1 ||
+        docker manifest inspect "$reference" >/dev/null 2>&1 ||
+        refuse image-unresolvable "Docker cannot resolve the image $reference locally or in a registry"
+    SYNC_IMAGE=$reference
+    report "the Sync image is named by digest and resolves"
+}
+
+setting_value() {
+    # The operator's answer if there is one, the shipped default otherwise.
+    value=$(read_setting "$1" "$OPERATOR")
+    [ -n "$value" ] || value=$(read_setting "$1" "$DEFAULTS")
+    printf '%s' "$value"
+}
+
+owns_publication() {
+    # Whether this instance already publishes $2, asked of the one container the
+    # named service $1 resolves to. Explicit and bounded: Compose is asked about
+    # one service of this project, and the container it names has to carry this
+    # instance's label and to publish that exact port. Nothing here searches, so
+    # nothing here can find something it was not looking for.
+    container=$(compose ps --quiet "$1" 2>/dev/null | head -n 1)
+    [ -n "$container" ] || return 1
+    [ "$(label_of container .Config.Labels "$container")" = "$INSTANCE" ] || return 1
+    docker port "$container" 2>/dev/null | grep -q ":$2\$"
+}
+
+remove_probe() {
+    # `--rm` has already taken the container when the bind succeeded; it may be
+    # left in `Created` when the bind failed. Either way, by exact name.
+    docker rm --force "$1" >/dev/null 2>&1 || true
+}
+
+bind_probe() {
+    # Ask the engine to take the exact bind this deployment needs, in a container
+    # that does nothing and is removed either way. This is the only question that
+    # answers for every occupant: a container of another project published on any
+    # address that covers loopback, a container belonging to no project, and a
+    # host process that is not a container at all. Nothing about it depends on
+    # how an occupant chose to describe itself.
+    probe="infrahub-sync-portprobe-$INSTANCE-$2"
+    # By exact name, and only this instance's own probe. Before as well as
+    # after: a probe abandoned by an interrupted run would otherwise be read as
+    # the port being held, forever.
+    remove_probe "$probe"
+    if docker run --rm --name "$probe" \
+        --label "$INSTANCE_LABEL=$INSTANCE" \
+        --publish "$1:$2:$2" \
+        --entrypoint /bin/true \
+        "$SYNC_IMAGE" >/dev/null 2>&1
+    then
+        remove_probe "$probe"
+        return 0
+    fi
+    remove_probe "$probe"
+    # The probe failing is not by itself an occupied port. The same command
+    # without the publication tells the two apart, and only has to run on the
+    # path that already failed.
+    if docker run --rm --name "$probe" --label "$INSTANCE_LABEL=$INSTANCE" \
+        --entrypoint /bin/true "$SYNC_IMAGE" >/dev/null 2>&1
+    then
+        remove_probe "$probe"
+        return 1
+    fi
+    remove_probe "$probe"
+    refuse port-unprovable "the bind probe could not run, so $1:$2 was neither proved free nor proved held"
+}
+
+check_ports() {
+    address=$(setting_value INFRAHUB_SYNC_BIND_ADDRESS)
+    [ -n "$address" ] || refuse port-unset "INFRAHUB_SYNC_BIND_ADDRESS names no address"
+    # Each required bind, and the service that would make it.
+    for pair in "INFRAHUB_SYNC_API_PORT sync-api" "INFRAHUB_SYNC_PREFECT_PORT prefect-server"; do
+        setting=${pair% *}
+        service=${pair#* }
+        port=$(setting_value "$setting")
+        [ -n "$port" ] || refuse port-unset "$setting names no port"
+        if owns_publication "$service" "$port"; then
+            report "$address:$port is published by this instance's $service already"
+            continue
+        fi
+        bind_probe "$address" "$port" ||
+            refuse port-occupied "$address:$port is held by something this instance does not own"
+        report "$address:$port is free"
+    done
+}
+
+check_destination() {
+    # Inside the Sync image, where the declared package and the credential
+    # resolver already are. This script parses no configuration and sees no
+    # credential value.
+    compose run --rm --no-deps --quiet-pull sync-bootstrap python -m infrahub_sync.service.preflight ||
+        refuse destination-unavailable "the declared destination did not answer; see the reported family above"
+    report "the declared destination answered"
+}
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+random_value() {
+    # Hex from the kernel's own source, so no credential this script generates
+    # depends on a language runtime the host does not have.
+    od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'
+}
+
+command_init() {
+    mkdir -p "$SECRETS"
+    chmod 0700 "$SECRETS"
+    if [ -f "$STATE" ]; then
+        require_identity
+        report "instance $INSTANCE already initialized"
+    else
+        printf 'INFRAHUB_SYNC_INSTANCE=%s\n' "$(random_value 8)" > "$STATE"
+        chmod 0600 "$STATE"
+        require_identity
+        report "generated instance $INSTANCE"
+    fi
+    if [ ! -s "$ADMIN_SECRET" ]; then
+        random_value 24 > "$ADMIN_SECRET"
+        chmod 0600 "$ADMIN_SECRET"
+        report "generated the PostgreSQL administrator password in $ADMIN_SECRET"
+    fi
+    if [ -f "$OPERATOR" ]; then
+        report "$OPERATOR already exists and was left unchanged"
+        return
+    fi
+    product=$(random_value 24)
+    prefect=$(random_value 24)
+    access=$(random_value 12)
+    secret=$(random_value 24)
+    principal=$(random_value 24)
+    umask 077
+    cat > "$OPERATOR" <<OPERATOR_SETTINGS
+# Operator-owned settings for this Infrahub Sync deployment. Git ignores this
+# file. The passwords below were generated locally and are used by nothing else.
+#
+# Two values are yours to supply before the first start:
+#   INFRAHUB_SYNC_IMAGE  the Sync image, by digest
+#   INFRAHUB_API_TOKEN   the credential the declared configuration references
+INFRAHUB_SYNC_IMAGE=REPLACE-ME
+INFRAHUB_API_TOKEN=REPLACE-ME
+
+INFRAHUB_SYNC_PRODUCT_PASSWORD=$product
+INFRAHUB_SYNC_PREFECT_PASSWORD=$prefect
+INFRAHUB_SYNC_DATABASE_URL=postgresql://infrahub_sync:$product@postgres:5432/infrahub_sync
+INFRAHUB_SYNC_PREFECT_DATABASE_URL=postgresql+asyncpg://prefect:$prefect@postgres:5432/prefect
+
+INFRAHUB_SYNC_S3_ACCESS_KEY=$access
+INFRAHUB_SYNC_S3_SECRET_KEY=$secret
+
+INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "$principal", "administrator": true}}
+OPERATOR_SETTINGS
+    chmod 0600 "$OPERATOR"
+    report "wrote $OPERATOR; set INFRAHUB_SYNC_IMAGE and INFRAHUB_API_TOKEN before starting"
+}
+
+command_preflight() {
+    check_compose_version
+    check_paths
+    check_credentials
+    check_image
+    check_ports
+    check_destination
+    report "preflight passed"
+}
+
+worker_state() {
+    # Asked over the deployment's own network, so this does not depend on how a
+    # host maps container ports onto loopback. Container state is not consulted:
+    # a running stack is never ready until the API says a worker registered.
+    compose run --rm --no-deps -T --quiet-pull sync-bootstrap python -c \
+        "import httpx; print(httpx.get('http://sync-api:8000/status', timeout=5).json()['worker']['state'])" \
+        2>/dev/null | tr -d '\r' | tail -n 1
+}
+
+wait_for_ready() {
+    deadline=$(($(date +%s) + READY_TIMEOUT))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        case "$(worker_state)" in
+            ready | busy) report "the deployment is READY"; return 0 ;;
+        esac
+        sleep 5
+    done
+    refuse not-ready "the deployment did not report a live worker within ${READY_TIMEOUT}s"
+}
+
+command_start() {
+    command_preflight
+    report "starting"
+    compose up --detach --wait --wait-timeout "$START_TIMEOUT" --quiet-pull sync-api sync-worker
+    wait_for_ready
+}
+
+
+dependencies_healthy() {
+    # These three carry real probes -- a PostgreSQL readiness check and two HTTP
+    # endpoints -- so their health is an answer from the service, not the fact
+    # that a container is up.
+    for service in postgres object-store prefect-server; do
+        containers=$(compose ps --all --quiet "$service" 2>/dev/null) || return 2
+        container=$(printf '%s\n' "$containers" | head -n 1)
+        [ -n "$container" ] || return 1
+        health=$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null) || return 2
+        [ "$health" = "healthy" ] || return 1
+    done
+    return 0
+}
+
+command_status() {
+    containers=$(running_containers) ||
+        refuse docker-unavailable "Docker could not enumerate this instance's running containers"
+    if [ -z "$containers" ]; then
+        report "no container of instance $INSTANCE is running"
+        printf 'STOPPED\n'
+        exit 4
+    fi
+    if dependencies_healthy; then
+        :
+    else
+        result=$?
+        [ "$result" -ne 2 ] ||
+            refuse docker-unavailable "Docker could not inspect this instance's required dependencies"
+        report "a required dependency is not answering"
+        printf 'DEGRADED\n'
+        exit 3
+    fi
+    # A running stack is never ready on container state alone. The deciding
+    # answer is the API's own view of a worker that has registered and is still
+    # heartbeating; a paused or hung worker ages out of it while its container
+    # keeps looking perfectly healthy.
+    state=$(worker_state)
+    case "$state" in
+        ready | busy)
+            report "the Sync API reports a live worker"
+            printf 'READY\n'
+            exit 0
+            ;;
+    esac
+    report "the Sync API reports no live worker"
+    printf 'DEGRADED\n'
+    exit 3
+}
+
+command_logs() {
+    compose logs --no-color --tail "${INFRAHUB_SYNC_LOG_LINES:-200}" "$@"
+}
+
+command_stop() {
+    verify_ownership
+    compose stop
+    report "stopped instance $INSTANCE; its data is untouched"
+}
+
+command_restart() {
+    verify_ownership
+    # Containers and data survive; the processes inside them do not. The worker
+    # that comes back registers under a new Prefect identity and picks up
+    # everything it needs from PostgreSQL and the object store.
+    compose restart sync-api sync-worker
+    wait_for_ready
+}
+
+command_reset() {
+    confirmation=${1:-}
+    if [ "$confirmation" != "$INSTANCE" ]; then
+        refuse confirmation-required "reset removes this instance's data; repeat its identity: \`$0 reset $INSTANCE\`"
+    fi
+    verify_ownership
+    compose down --volumes --remove-orphans
+    rm -f "$STATE"
+    report "removed instance $INSTANCE, its containers, its network, and its volumes"
+    report "operator settings in $OPERATOR and $SECRETS were left in place"
+}
+
+usage() {
+    cat <<'USAGE'
+Usage: infrahub-sync-compose <command>
+
+  init        Generate this deployment's identity and operator settings file.
+  preflight   Check Compose, paths, credentials, image, ports, and destination.
+  start       Preflight, start the deployment, and wait for endpoint-backed READY.
+  status      Report READY (exit 0), DEGRADED (exit 3), or STOPPED (exit 4).
+  logs [svc]  Print a bounded tail of the deployment's logs.
+  stop        Stop the deployment, keeping its containers and all of its data.
+  restart     Replace the API and worker processes, keeping every durable record.
+  reset ID    Remove this instance's containers, network, and volumes. The exact
+              instance identity has to be repeated; there is no forcing flag.
+USAGE
+}
+
+case "${1:-}" in
+    init) command_init ;;
+    preflight) require_identity; command_preflight ;;
+    start) require_identity; command_start ;;
+    status) require_identity; command_status ;;
+    logs) require_identity; shift; command_logs "$@" ;;
+    stop) require_identity; command_stop ;;
+    restart) require_identity; command_restart ;;
+    reset) require_identity; command_reset "${2:-}" ;;
+    -h | --help | help | '') usage ;;
+    *) usage >&2; exit 2 ;;
+esac

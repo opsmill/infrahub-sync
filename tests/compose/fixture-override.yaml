@@ -1,0 +1,18 @@
+---
+# Test-only Compose override. It is deliberately not part of the shipped bundle.
+#
+# The mandatory managed plan, apply, and sync rows need a real Infrahub, and the
+# one this suite uses is the pinned 1.10.6 fixture the local development stack
+# already starts, published on a host port. Reaching it from inside the bundle's
+# private network needs a route to the host, which the shipped topology has no
+# reason to carry: a deployment's destination is a real address it resolves like
+# any other.
+services:
+  # The two that reach the destination: the job that probes it before a start,
+  # and the worker that runs against it. The API opens no connection to it.
+  sync-bootstrap:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+  sync-worker:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

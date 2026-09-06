@@ -40,6 +40,9 @@ INVOKE_TASK = re.compile(
 # The tree every Invoke task is defined in, and so the tree any workflow that
 # runs one depends on beyond the single module it names.
 TASK_TREE = "tasks/**"
+# What the image gate installs into the artifact it builds, and what the Compose
+# phase of that same job then qualifies by running it.
+QUALIFIED_TREES = ("infrahub_sync/**", "deploy/compose/**", "tests/compose/**")
 
 
 def load(path: Path) -> dict:
@@ -217,17 +220,33 @@ def test_every_invoke_task_a_workflow_runs_is_registered(workflow: Path, task: s
     assert task in ns.task_names, f"{workflow.name} runs `invoke {task}`, which the task namespace does not define"
 
 
+def image_filter_patterns() -> list[str]:
+    """Return every path pattern the image gate's own filter expands to."""
+    declared = yaml.safe_load(FILE_FILTERS.read_text(encoding="utf-8"))["image_all"]
+    # Each entry is either a pattern or an expanded anchor holding several.
+    return [pattern for entry in declared for pattern in (entry if isinstance(entry, list) else [entry])]
+
+
+@pytest.mark.parametrize("tree", QUALIFIED_TREES)
+def test_the_image_filter_covers_every_tree_its_gate_qualifies(tree: str) -> None:
+    """The gate builds an image and then runs it; both depend on more than the Dockerfile.
+
+    A change to the application the image installs, or to the bundle that starts
+    it, changes what the gate would find — and a filter that does not name it
+    leaves that change qualified by the previous commit's run.
+    """
+    assert tree in image_filter_patterns(), (
+        f"the image gate builds and runs {tree}, so image_all has to include it or the gate does not re-run"
+    )
+
+
 def test_the_image_filter_covers_the_whole_tree_its_gate_runs_from() -> None:
     """The gate runs Invoke, so any task module can change what it does.
 
     Naming only the one module the gate is about leaves the rest of the tree able
     to change the gate's behaviour without re-running it.
     """
-    declared = yaml.safe_load(FILE_FILTERS.read_text(encoding="utf-8"))["image_all"]
-    # Each entry is either a pattern or an expanded anchor holding several.
-    patterns = [pattern for entry in declared for pattern in (entry if isinstance(entry, list) else [entry])]
-
-    assert TASK_TREE in patterns, (
+    assert TASK_TREE in image_filter_patterns(), (
         f"a change under {TASK_TREE} can alter what `invoke image.*` does, "
         f"so image_all has to include it or the gate does not re-run"
     )

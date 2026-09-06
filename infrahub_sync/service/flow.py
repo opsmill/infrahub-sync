@@ -73,6 +73,9 @@ _REGISTERED_PLAN_VERIFICATION_FAILED = "registered saved plan verification faile
 _REGISTERED_PLAN_CHECKSUM_MISMATCH = "registered saved plan checksum does not match the approved expected_checksum"
 _WORKER_BINDING_PARAMETERS_INVALID = "service worker configuration binding parameters must be all absent or all present"
 _LEGACY_RUN_IDENTITY_UNAVAILABLE = "legacy service run identity is unavailable"
+_LEGACY_CONFIGURATION_DIRECTORY_UNAVAILABLE = (
+    f"{CONFIG_DIR_ENV} must name the directory an unregistered service run resolves its configuration from"
+)
 _LEGACY_RUN_CONFIGURATION_MISMATCH = "legacy service run configuration version does not match durable run"
 _WORKER_EXECUTION_REFUSED = "service worker execution claim was refused"
 _WORKER_EXECUTION_ID_INVALID = "service worker execution identity is invalid"
@@ -83,6 +86,10 @@ _UNREGISTERED_WRITE_REFUSED = (
     "guard serializes writers per registered configuration"
 )
 _WORKER_PAGE_SIZE = 200
+# A registered run resolves both adapters from installed code and reads nothing from a
+# filesystem, so its runtime instance names no generated-code root. Empty is the value
+# `import_adapter` already reads as "there is no such root", not a placeholder path.
+_NO_CONFIGURATION_DIRECTORY = ""
 # The stages the managed write scope covers. A read stage has nothing to be uncertain
 # about, so it keeps its own deliberate handling where the two differ.
 _WRITE_STAGES = ("apply", "sync")
@@ -127,18 +134,17 @@ def _remote_log_bridge(
             source_logger.propagate = previous_propagate
 
 
-def _runtime(*, projection_factory: Any = service_product_projection) -> tuple[str, ProductProjection]:
-    """Resolve the worker's configuration-data directory and its product store.
+def _runtime(*, projection_factory: Any = service_product_projection) -> tuple[str | None, ProductProjection]:
+    """Resolve the worker's product store, and a configuration directory if it has one.
 
-    A configuration directory is configuration data, not flow source: the worker reads
-    registered packages from it and never imports or executes anything there. No cache
-    location is read at all -- every stage creates its own private scratch instead.
+    A registered run reads its declared configuration out of the registry and resolves
+    both adapter classes out of installed code, so it opens no directory at all. Only an
+    unregistered run resolves a `SyncConfig` file, and that path is where the setting is
+    required -- checked here instead, every registered deployment would have to satisfy
+    it with a directory nothing ever reads. No cache location is read either: every stage
+    creates its own private scratch.
     """
-    config_directory = os.environ.get(CONFIG_DIR_ENV)
-    if not config_directory or not Path(config_directory).is_dir():
-        msg = f"{CONFIG_DIR_ENV} must name the worker's configuration directory"
-        raise RuntimeError(msg)
-    return config_directory, projection_factory()
+    return os.environ.get(CONFIG_DIR_ENV) or None, projection_factory()
 
 
 def _review_document(run_id: str, saved: SavedPlan) -> PlanResource:
@@ -375,7 +381,7 @@ def _worker_execution_context(
     run_id: str,
     binding: tuple[str, int, str] | None,
     *,
-    config_directory: str,
+    config_directory: str | None,
     projection: ProductProjection,
     run_branch: str | None,
     stage: str,
@@ -401,6 +407,8 @@ def _worker_execution_context(
         sync_name = stored.value.summary.get("sync_name")
         if not isinstance(sync_name, str) or not sync_name:
             raise ValueError(_LEGACY_RUN_IDENTITY_UNAVAILABLE)
+        if config_directory is None or not Path(config_directory).is_dir():
+            raise ValueError(_LEGACY_CONFIGURATION_DIRECTORY_UNAVAILABLE)
         instance = resolve_sync_instance(sync_name, directory=config_directory)
         if resolve_config_version(instance) != stored.value.configuration_reference:
             raise ValueError(_LEGACY_RUN_CONFIGURATION_MISMATCH)
@@ -418,7 +426,7 @@ def _worker_execution_context(
         raise ValueError(_REGISTERED_CHECKSUM_MISMATCH)
     # A saved-plan apply constructs the destination only, so it resolves no source credential.
     instance = resolve_runtime_instance(
-        package, directory=config_directory, resolve_source_credentials=stage != "apply"
+        package, directory=_NO_CONFIGURATION_DIRECTORY, resolve_source_credentials=stage != "apply"
     )
     instance._configuration_binding = binding
     scope = STAGE_RUNTIME_MODEL_SCOPE.get(stage)
@@ -462,7 +470,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     confirm_writes: bool,
     run_logger: RunLogger,
     secrets: list[str],
-    config_directory: str,
+    config_directory: str | None,
     projection: ProductProjection,
     tracker: WriteDispatchTracker,
     scratch: StageScratch,

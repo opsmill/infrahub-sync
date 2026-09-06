@@ -7,6 +7,12 @@
 
 FROM python:3.13-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e AS base
 
+# The pinned base predates Debian's fix for CVE-2026-86145. Pin the fixed
+# package too, so rebuilds cannot silently fall back to the vulnerable release.
+RUN apt-get update \
+ && apt-get install --yes --no-install-recommends libpcre2-8-0=10.42-1+deb12u1 \
+ && rm -rf /var/lib/apt/lists/*
+
 # ---------------------------------------------------------------------------
 # Build stage: resolve nothing, install the committed lock, keep uv out of the
 # runtime image.
