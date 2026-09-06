@@ -1,16 +1,28 @@
-"""Phase H — the six criteria and half-criteria that need a running Infrahub. SUPERSEDED.
+"""Phase H — the criteria and half-criteria that need a running Infrahub, on a keyed slice.
 
-**This module is skipped at module level and is not live coverage of anything.** It was written
-and once run against a live destination, but its bounded slice qualifies through `InterfaceLag`
-and `InterfacePhysical`, whose destination human-friendly IDs cross a relationship. The
-fail-closed write contract refuses every rendered mutation carrying neither `id` nor `hfid`, so
-those two kinds are refused before they write and the seed step that must create a pre-existing
-`InterfaceLag` peer cannot complete. SC-008's relationship-crossing premise is therefore
-unsupported rather than unmet, and the earlier `7 passed, 1 error` result describes behaviour
-this repository no longer has. The keyed bundled qualification and the isolated unkeyed refusal
-cover this ground; the offline harness at `tests/plan/test_apply_conformance.py` asserts the
-mutation the SDK renders, including that refusal. Everything below is retained as the record of
-what the criteria asked for.
+**Re-derived for the fail-closed write contract.** The slice this module qualifies through is
+now all-direct: `BuiltinTag`, `LocationSite`, `LocationRack`, `OrganizationManufacturer`,
+`DcimPlatform`, `DcimDeviceType` are seeded, and `DcimDevice` is the kind under test. Every one
+of them declares `human_friendly_id: ['name__value']`, so every planned write here renders a key
+the client can form.
+
+The earlier slice qualified through `InterfaceLag` and `InterfacePhysical`, both
+`['device__name__value', 'name__value']`. A key that crosses a relationship cannot be rendered
+client-side, so the write surface refuses those kinds before they mutate and no supported slice
+can carry one. **SC-008's relationship-crossing peer premise is retired** — it required exactly
+such a kind to reach the destination — along with the nested `<rel>__<attr>__value` filter
+spelling it was the only live evidence for. The refusal itself is qualified directly by
+`tests/integration/test_infrahub_unkeyed_refusal_integration.py`; AD043's nested identity walk
+stays covered offline. Everything else the criteria asked for is preserved and runs live.
+
+**Expected result: six passed, one skipped.** The skip is SC-016's live half, and it is the
+AD092 precondition skip rather than a missing environment. It is now *structural* on a keyed
+slice: every kind in a supported slice is keyed all-direct on `name__value`, so the resolver
+filters it on exactly the component its uniqueness constraint pins, and the destination refuses
+a second matching object with `Violates uniqueness constraint` (HTTP 422). The skip message
+names every candidate kind, the filters it is queried with, and the constraint covering each.
+Nothing in that test is weakened: it runs in full against any schema whose referenced kinds
+leave a filtered component free.
 
 **Amended by AD090: "authored, not satisfied" was too weak a claim.** The first live run errored
 in fixture setup on every test here, because the fixture wrote its bounded configuration into a
@@ -33,64 +45,54 @@ Run them with a reachable destination and source::
 
     export INFRAHUB_ADDRESS="http://localhost:8000"
     export INFRAHUB_API_TOKEN="<token>"
-    export NETBOX_URL="https://demo.netbox.dev"
+    export NETBOX_URL="<netbox>"
     export NETBOX_TOKEN="<token>"
     uv run pytest -m integration tests/integration/test_saved_plan_apply_integration.py
 
-**These tests write to the destination.** SC-002 and SC-003 measure convergence, which is
-not observable without writing, so point them at a disposable Infrahub — the same posture
+The destination needs the pinned schema library loaded (see the NetBox tutorial). The source
+needs the deterministic seeded dataset: sites `site-a`/`site-b`/`site-c`, racks
+`rack-site-<x>-<n>`, devices `dev-01`…`dev-40`, tags `tag-01`…`tag-10`. `ADDED_FILTERS` bounds
+the run to `site-a`; the fixture raises a named setup error if that bounding stops matching.
+
+**These tests write to the destination and do not clean up after themselves.** SC-002 and
+SC-003 measure convergence, which is not observable without writing, so point them at a
+disposable Infrahub — the same posture
 `tests/integration/test_infrahub_node_to_diffsync_integration.py` already takes when it
 loads a throwaway schema and creates nodes against it.
 
-**Amended by AD091: the slice had to widen, because its own precondition refused it.** The
-earlier seven-entry slice ended at `DcimDevice`, and every kind `DcimDevice` references —
-`LocationRack`, `LocationSite`, `DcimDeviceType`, `DcimPlatform`, `BuiltinTag` — carries an
-**all-direct** destination human-friendly ID (`['name__value']`). So `_require_preexisting_peer`
-refused the fixture: with no relationship-crossing peer, SC-008's nested identity walk and
-PD-004's nested `<rel>__<attr>__value` filter spelling would have passed vacuously. The refusal
-was correct, and only live data could raise it, because which kinds have such a human-friendly ID
-is a fact about the **destination schema** and not about the configuration's `identifiers` lists —
-the same conflation AD091 corrects in the run's records. `InterfacePhysical` is the kind that
-supplies what was missing: two mapped kinds reference a kind whose destination human-friendly ID
-crosses a relationship — `DcimDevice.primary_address` → `IpamIPAddress` and
-`InterfacePhysical.bundle` → `InterfaceLag` — but `IpamIPAddress`'s plan identity
-(`identifiers: ["address", "vrf"]`) supplies no `ip_namespace` component at all, so no crossing
-filter can be formed for it and its own operations would be refused by
-`assert_convergence_key_is_supplied` first. `InterfaceLag`'s crossing component is
-`device__name__value`, its plan identity (`["device", "name"]`) supplies it, and it resolves
-against `DcimDevice` — already in the slice. `DcimDevice` and `InterfaceLag` therefore move into
-the seed. No assertion and no precondition below was weakened to get there.
+**One run per destination.** The fixture perturbs the destination with a per-run canary tag and
+then asserts the derived plan carries the create, update and delete those perturbations imply.
+A second run against the same instance sees the first run's canary still present, so its plan
+carries a *delete* of the old canary instead of the expected create, and every test here fails
+in setup naming the operation it wanted. That is destination state, not a defect: reset the
+instance (`invoke preview.down --volumes`, `preview.up`, reload the pinned schema library)
+between runs. Cleaning up inside the fixture is not equivalent — the plan is derived from the
+destination's state, so what must be fresh is the whole instance, not the objects this module
+happens to know it created.
 
 The fixture runs the qualified path (`examples/netbox_to_infrahub/config.yml`, NetBox →
-Infrahub) narrowed to ten of its schema-mapping entries, copied **verbatim** apart from the
-documented field removals (`DROPPED_FIELDS`) and the documented source-side bounding filter
-(`ADDED_FILTERS`): `BuiltinTag`, `LocationSite`, `LocationRack`, `OrganizationManufacturer`,
-`DcimPlatform`, `DcimDeviceType`, both `DcimDevice` entries, `InterfaceLag` and
-`InterfacePhysical`. The slice is the **reference closure** of `InterfacePhysical`, so no kind
-outside it is needed to resolve a peer, and it is the smallest closure that carries every
-shape this phase measures: a create with no references (`BuiltinTag`), an update
-(`LocationSite`), a relationship-bearing kind with a cardinality-one **and** a
-cardinality-many reference (`InterfacePhysical` — `device`, `bundle`; `DcimDevice` — `tags`),
-and — the one SC-008 turns on — a *referenced* kind whose **destination human-friendly ID
-crosses a relationship** (`InterfaceLag`, `['device__name__value', 'name__value']`), so a peer
-identity is a nested `{peer_kind, identity}` pair, the destination query that resolves it has
-to be spelled the nested way, and AD043's recursive resolution is exercised rather than
-declared.
+Infrahub) narrowed to the seven schema-mapping entries of the keyed slice, copied **verbatim**
+apart from the documented field removal (`DROPPED_FIELDS`) and the documented source-side
+bounding filter (`ADDED_FILTERS`): `BuiltinTag`, `LocationSite`, `LocationRack`,
+`OrganizationManufacturer`, `DcimPlatform`, `DcimDeviceType` and both `DcimDevice` entries. The
+slice is the **reference closure** of `DcimDevice`, so no kind outside it is needed to resolve a
+peer, and it carries every shape this phase can still measure: a create with no references
+(`BuiltinTag`), an update (`LocationSite`), and a reference-bearing kind with a cardinality-one
+**and** a cardinality-many reference (`DcimDevice` — `location`, `tags`).
 
 The plan under test is built in two phases, because three of its properties cannot be
 arranged after it exists:
 
-1. a **seed** run applies every kind except `InterfacePhysical`, so the devices, LAG
-   interfaces, racks, device types, platforms and tags a physical interface references already
-   exist at the destination *and no operation in the plan under test creates them* — the
-   pre-existing peers SC-008 requires, without which dependency-tier ordering fills the
+1. a **seed** run applies every kind except `DcimDevice`, so the racks, sites, device types,
+   platforms and tags a device references already exist at the destination *and no operation in
+   the plan under test creates them* — without which dependency-tier ordering fills the
    resolver's memo from the plan's own creates and the destination-query path under test never
    runs;
 2. the destination is then perturbed three ways — one unreferenced tag removed, one site's
    description changed, one tag created that the source does not have — so the plan under
    test carries a plain create, an update and a delete;
-3. the plan under test is derived over all ten entries, which adds the relationship-bearing
-   `InterfacePhysical` creates.
+3. the plan under test is derived over all seven entries, which adds the reference-bearing
+   `DcimDevice` creates.
 """
 
 from __future__ import annotations
@@ -121,16 +123,7 @@ if TYPE_CHECKING:
     from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
     from infrahub_sync.plan.review import SavedPlan
 
-_SUPERSEDED_REASON = (
-    "Superseded by the fail-closed write contract: this module's slice qualifies through "
-    "InterfaceLag and InterfacePhysical, whose destination human-friendly IDs cross a "
-    "relationship, so neither can render a keyed mutation and both are refused before they "
-    "write. The seed step that must create a pre-existing InterfaceLag peer therefore cannot "
-    "run, and SC-008's relationship-crossing premise is unsupported rather than unmet. The "
-    "keyed bundled qualification and the isolated unkeyed refusal cover this ground instead."
-)
-
-pytestmark = [pytest.mark.integration, pytest.mark.skip(reason=_SUPERSEDED_REASON)]
+pytestmark = pytest.mark.integration
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 QUALIFIED_CONFIG = REPO_ROOT / "examples" / "netbox_to_infrahub" / "config.yml"
@@ -140,24 +133,27 @@ DESTINATION_BRANCH = "main"
 # The bounded slice of the qualified configuration, and the role each kind plays.
 TAG_KIND = "BuiltinTag"
 SITE_KIND = "LocationSite"
+RACK_KIND = "LocationRack"
 DEVICE_KIND = "DcimDevice"
-# The pre-existing peer whose destination human-friendly ID crosses a relationship (AD091).
-BUNDLE_KIND = "InterfaceLag"
-RELATIONSHIP_KIND = "InterfacePhysical"
 
-# Everything `InterfacePhysical` references, transitively. Seeded first, so every peer of an
-# interface pre-exists the plan under test and none of them is created by it (SC-008).
+# Every kind in the slice declares an all-direct destination human-friendly ID
+# (`['name__value']`), so every planned write here renders a key the client can form. The two
+# interface kinds the earlier slice carried — `InterfaceLag` and `InterfacePhysical`, both
+# `['device__name__value', 'name__value']` — cannot, and the write surface refuses them before
+# they mutate. `tests/integration/test_infrahub_unkeyed_refusal_integration.py` qualifies that
+# refusal directly; nothing here may depend on such a kind reaching the destination.
 SEED_KINDS = (
     TAG_KIND,
     SITE_KIND,
-    "LocationRack",
+    RACK_KIND,
     "OrganizationManufacturer",
     "DcimPlatform",
     "DcimDeviceType",
-    DEVICE_KIND,
-    BUNDLE_KIND,
 )
-KINDS_UNDER_TEST = (*SEED_KINDS, RELATIONSHIP_KIND)
+# `DcimDevice` is the kind under test: it is keyed, and it carries both a cardinality-one
+# reference whose peer identity nests (`location`) and a cardinality-many one (`tags`), so the
+# reference-resolution and replace-set paths are exercised by a supported kind.
+KINDS_UNDER_TEST = (*SEED_KINDS, DEVICE_KIND)
 
 # The first departure from copying the qualified configuration verbatim, and why. Every dropped
 # field references `IpamIPAddress` or `IpamVLAN`, whose own closures pull in `IpamVRF`,
@@ -168,47 +164,33 @@ KINDS_UNDER_TEST = (*SEED_KINDS, RELATIONSHIP_KIND)
 # untouched.
 DROPPED_FIELDS: Mapping[str, tuple[str, ...]] = {
     DEVICE_KIND: ("primary_address",),
-    RELATIONSHIP_KIND: ("ip_addresses",),
-    BUNDLE_KIND: ("ip_addresses", "untagged_vlan", "tagged_vlan"),
 }
 
 # The second departure, and why (AD091). It has two independent grounds, and the second is a
 # defect the first live run exposed rather than a matter of run time.
 #
-# **Ground one — size.** The qualified configuration maps 1727 physical interfaces on the NetBox
-# demo data, and the tests below apply the plan between one and six times each. Writing that
-# population twenty-odd times measures nothing these criteria do not already measure at one
-# device, and would put the live run into the hours. `BOUNDING_DEVICE` is chosen because two of
-# its physical interfaces are members of its one LAG interface, which is what makes the
-# relationship-crossing peer SC-008 needs exist at all.
+# **Ground one — size.** The source dataset carries 42 devices across three sites, and the tests
+# below apply the plan between one and six times each. Bounding to one site keeps the live run in
+# seconds while leaving every shape these criteria measure in scope.
 #
-# **Ground two — `LocationRack` is not convergent on the qualified path against this destination
-# schema, and that is a separate, now-recorded finding rather than something this fixture may
-# assert away.** Destination `LocationRack` declares `human_friendly_id: ['name__value']` and
-# `uniqueness_constraints: [['name__value']]` — keyed on the rack name **alone** — while the
-# configuration's identity for it is `identifiers: ["name", "site"]`. Thirteen NetBox demo racks
-# are named `Comms closet`, one per site, so thirteen distinct plan identities converge onto one
-# destination object whose `site` is whichever operation wrote last. Every re-derived plan then
-# reports a create *and* a delete for the same rack, and the churn cascades: `DcimDevice.location`
-# nests the rack identity, and `InterfaceLag` / `InterfacePhysical` nest the device identity, so
-# no kind in that chain can ever be seeded out of the plan. Note which way the mismatch runs:
-# FR-024's warning fires when the destination's key is **coarser than the plan can key on**
-# (`constraint <= identity` is what `warn_missing_convergence_key` tests), and here the constraint
-# *is* a subset of the identity, so both of its arms stay silent. Bounding both rack-bearing
-# entries to one site puts exactly one `Comms closet` in scope, which converges. The defect is not
-# fixed here and not hidden: it is recorded in the run's own records against this run's live
-# evidence, and none of the six criteria below is about it.
+# **Ground two — `LocationRack` is not convergent across sites on the qualified path, and that is
+# a separate recorded finding rather than something this fixture may assert away.** Destination
+# `LocationRack` declares `human_friendly_id: ['name__value']` — keyed on the rack name **alone**
+# — while the configuration's identity for it is `identifiers: ["name", "site"]`. Two racks that
+# share a name in different sites would converge onto one destination object whose `site` is
+# whichever operation wrote last. Note which way the mismatch runs: FR-024's warning fires when
+# the destination's key is **coarser than the plan can key on** (`constraint <= identity` is what
+# `warn_missing_convergence_key` tests), and here the constraint *is* a subset of the identity, so
+# both of its arms stay silent. Bounding to one site keeps the racks in scope distinctly named,
+# which converges. The defect is not fixed here and not hidden.
 #
 # Same species of documented departure as `DROPPED_FIELDS`, and asserted the same way: a filter
-# that stops matching leaves the plan with no relationship-bearing operation, which is a loud
-# setup error in `live_plan` naming the device.
-BOUNDING_DEVICE = "cisco1"
-BOUNDING_SITE = "dm-akron"
+# that stops matching leaves the plan with no operation for the kind under test, which is a loud
+# setup error in `live_plan`.
+BOUNDING_SITE = "site-a"
 ADDED_FILTERS: Mapping[str, tuple[dict[str, Any], ...]] = {
-    "LocationRack": ({"field": "site.slug", "operation": "==", "value": BOUNDING_SITE},),
+    RACK_KIND: ({"field": "site.slug", "operation": "==", "value": BOUNDING_SITE},),
     DEVICE_KIND: ({"field": "site.slug", "operation": "==", "value": BOUNDING_SITE},),
-    RELATIONSHIP_KIND: ({"field": "device.name", "operation": "==", "value": BOUNDING_DEVICE},),
-    BUNDLE_KIND: ({"field": "device.name", "operation": "==", "value": BOUNDING_DEVICE},),
 }
 
 # The environment both sides of the qualified path need. Missing any one of them skips.
@@ -617,9 +599,6 @@ class LivePlan:
     plan: SavedPlan
     client: Any
     schemas: Mapping[str, Any]
-    preexisting_peer_kind: str
-    preexisting_peer_identity: dict[str, Any]
-    preexisting_peer_filters: dict[str, Any]
 
 
 def _matching_node_ids(live: LivePlan, kind: str, identity: Mapping[str, Any]) -> list[str]:
@@ -842,12 +821,6 @@ def _require_operation(plan: SavedPlan, *, kind: str, action: str, name: str, ro
     raise LivePlanPreconditionError(msg)
 
 
-def _crosses_a_relationship(filters: Mapping[str, Any]) -> bool:
-    """Whether any filter kwarg is PD-004's nested `<rel>__<attr>__value` form."""
-    suffix = f"{_COMPONENT_SEPARATOR}{_VALUE_SUFFIX}"
-    return any(_COMPONENT_SEPARATOR in name.removesuffix(suffix) for name in filters)
-
-
 def _referenced_peers_absent_from_the_plan(
     plan: SavedPlan,
     operations: Sequence[PlannedOperation],
@@ -867,52 +840,26 @@ def _referenced_peers_absent_from_the_plan(
     ]
 
 
-def _require_preexisting_peer(
-    plan: SavedPlan,
-    operations: Sequence[PlannedOperation],
-    schemas: Mapping[str, Any],
-) -> dict[str, Any]:
+def _require_preexisting_peer(plan: SavedPlan, operations: Sequence[PlannedOperation]) -> tuple[str, dict[str, Any]]:
     """A referenced peer that pre-exists at the destination and that the plan does not create.
 
-    SC-008's load-bearing precondition. With every peer created by the same plan, tier
-    ordering fills the resolver's memo and the destination-query path — the requirement the
-    criterion exists to measure — never runs, so its absence is a setup error.
+    Load-bearing for the peer-resolution path: with every peer created by the same plan, tier
+    ordering fills the resolver's memo and the destination-query path never runs, so its
+    absence is a setup error rather than a failing assertion about the product.
 
-    Among those peers, the one returned is a peer whose **destination human-friendly ID
-    crosses a relationship** and whose plan identity supplies that crossing component. That
-    is the property that makes AD043's nested `{peer_kind, identity}` walk and PD-004's
-    nested `<rel>__<attr>__value` filter spelling actually run, and neither is decidable
-    offline. Which kinds have such a human-friendly ID is a fact about the destination
-    schema, so when none of the referenced kinds does, this is a setup error telling the
-    maintainer to widen `KINDS_UNDER_TEST` rather than a failing assertion about the product.
+    This no longer requires a peer whose destination human-friendly ID **crosses a
+    relationship**. That premise is retired: such a kind cannot render a keyed mutation, so
+    the write surface refuses it before it mutates, and no supported slice can carry one.
     """
     candidates = _referenced_peers_absent_from_the_plan(plan, operations)
     if not candidates:
         msg = (
             "Every peer the plan references is also created by the plan, so dependency-tier ordering fills the "
-            "resolver's memo and the destination-query path SC-008 measures is never exercised. The seed phase "
-            "was supposed to leave at least one referenced peer at the destination and out of the plan."
+            "resolver's memo and the destination-query path is never exercised. The seed phase was supposed to "
+            "leave at least one referenced peer at the destination and out of the plan."
         )
         raise LivePlanPreconditionError(msg)
-
-    inspected: dict[str, list[str]] = {}
-    for kind, identity in candidates:
-        inspected[kind] = _human_friendly_id(schemas, kind)
-        try:
-            filters = _identity_filters(schemas, kind, identity)
-        except LivePlanPreconditionError:
-            # This candidate supplies no scalar component at all; another may.
-            continue
-        if _crosses_a_relationship(filters):
-            return {"kind": kind, "identity": identity, "filters": filters}
-    msg = (
-        "No peer that pre-exists at the destination and is absent from the plan is queried through a "
-        f"relationship-crossing filter, so PD-004's nested `<rel>__<attr>__value` spelling and AD043's nested "
-        f"identity walk are not exercised. Referenced kinds and their destination human-friendly IDs: "
-        f"{inspected}. Widen KINDS_UNDER_TEST to a slice whose referenced kinds include one whose "
-        "human-friendly ID crosses a relationship."
-    )
-    raise LivePlanPreconditionError(msg)
+    return candidates[0]
 
 
 def _identity_key(identity: Mapping[str, Any]) -> str:
@@ -973,18 +920,29 @@ def live_plan(tmp_path_factory: pytest.TempPathFactory) -> Iterator[LivePlan]:
         _require_operation(
             plan, kind=TAG_KIND, action="delete", name=perturbations["delete_canary_name"], role="SC-007's live half"
         )
-        relationship_operations = [
-            operation for operation in plan.operations(kind=RELATIONSHIP_KIND) if operation.relationships
-        ]
-        if not relationship_operations:
+        # Non-vacuity: the kind under test must actually be in the plan, carrying both a
+        # cardinality-one reference whose peer identity nests and a cardinality-many one. A
+        # bounding filter that stops matching, or a mapping that drops a reference, would
+        # otherwise leave every assertion below true of an empty set.
+        device_operations = [operation for operation in plan.operations(kind=DEVICE_KIND) if operation.relationships]
+        if not device_operations:
             msg = (
-                f"The plan under test holds no relationship-bearing operation on {RELATIONSHIP_KIND!r}, so SC-008 and "
-                f"SC-003's third write class would measure nothing. The slice is bounded to the interfaces of "
-                f"{BOUNDING_DEVICE!r} (ADDED_FILTERS); if the qualified configuration or the source data no longer "
-                "carries that device, re-derive the bounding against them."
+                f"The plan under test holds no reference-bearing operation on {DEVICE_KIND!r}, so the "
+                f"reference-resolution and replace-set paths would measure nothing. The slice is bounded to "
+                f"site {BOUNDING_SITE!r} (ADDED_FILTERS); if the qualified configuration or the source data no "
+                "longer carries devices there, re-derive the bounding against them."
             )
             raise LivePlanPreconditionError(msg)
-        peer = _require_preexisting_peer(plan, relationship_operations, schemas)
+        cardinalities = {
+            reference.cardinality for operation in device_operations for reference in operation.relationships or ()
+        }
+        if cardinalities != {"one", "many"}:
+            msg = (
+                f"The {DEVICE_KIND!r} operations carry reference cardinalities {sorted(cardinalities)}, not both "
+                "'one' and 'many'. The cardinality-one path (peer resolution) and the cardinality-many path "
+                "(the replace-set flush) are different code, and one of them would go unmeasured."
+            )
+            raise LivePlanPreconditionError(msg)
 
         yield LivePlan(
             environment=environment,
@@ -995,9 +953,6 @@ def live_plan(tmp_path_factory: pytest.TempPathFactory) -> Iterator[LivePlan]:
             plan=plan,
             client=client,
             schemas=schemas,
-            preexisting_peer_kind=peer["kind"],
-            preexisting_peer_identity=peer["identity"],
-            preexisting_peer_filters=peer["filters"],
         )
     finally:
         monkeypatch.undo()
@@ -1226,46 +1181,44 @@ def test_the_write_class_conformance_matrix(live_plan: LivePlan, write_class: st
 # ---------------------------------------------------------------------------------------
 
 
-def test_relationship_peer_sets_match_the_plan(live_plan: LivePlan) -> None:
-    """SC-008: peer sets compared as unordered `(peer kind, peer identity)` pairs (AD043).
+def test_reference_peer_sets_match_the_plan(live_plan: LivePlan) -> None:
+    """Peer sets compared as unordered `(peer kind, peer identity)` pairs (AD043).
 
     Two things are asserted that a peer-set comparison alone would not reach:
 
     - the **destination-query path ran** for a peer the plan does not create. With every peer
       created by the same plan, dependency-tier ordering fills the resolver's memo and the
       query path never runs, so the comparison would pass while apply-time peer resolution is
-      broken. The fixture guarantees such a peer exists; here the query it forces is asserted
-      to have been issued.
-    - that query's **filter spelling**. The fixture picks a pre-existing peer whose
-      destination human-friendly ID crosses a relationship and whose plan identity supplies
-      that crossing component as a nested `{peer_kind, identity}` pair, so resolving it walks
-      AD043's nesting and asks the destination in PD-004's nested `<rel>__<attr>__value`
-      form — a claim no offline harness can settle.
+      broken. The seed phase guarantees such a peer exists; here the query it forces is
+      asserted to have been issued.
+    - the peer sets the destination actually holds afterwards.
+
+    **SC-008's relationship-crossing arm is retired.** It required a pre-existing peer whose
+    destination human-friendly ID crosses a relationship, so that resolving it exercised
+    PD-004's nested `<rel>__<attr>__value` filter spelling. Such a kind cannot render a keyed
+    mutation, so the write surface now refuses it before it mutates and no supported slice can
+    carry one. AD043's nested identity walk is still covered offline; what is no longer claimed
+    live is the nested filter spelling.
     """
-    operations = [
-        operation for operation in live_plan.plan.operations(kind=RELATIONSHIP_KIND) if operation.relationships
-    ]
-    assert operations, f"The plan holds no relationship-bearing {RELATIONSHIP_KIND} operation."
+    operations = [operation for operation in live_plan.plan.operations(kind=DEVICE_KIND) if operation.relationships]
+    assert operations, f"The plan holds no reference-bearing {DEVICE_KIND} operation."
+
+    peer_kind, peer_identity = _require_preexisting_peer(live_plan.plan, operations)
+    expected_filters = _identity_filters(live_plan.schemas, peer_kind, peer_identity)
 
     with _extraction_forbidden() as calls, _destination_queries_recorded(live_plan) as queries:
         _potenda_for_apply(live_plan).apply_plan(ownership=granted_ownership())
     assert calls == [], f"The apply path called {calls}, so the no-comparison-store precondition does not hold."
 
-    expected_filters = live_plan.preexisting_peer_filters
     matching = [
         query
         for query in queries
-        if query.get("kind") == live_plan.preexisting_peer_kind
-        and all(query.get(name) == value for name, value in expected_filters.items())
+        if query.get("kind") == peer_kind and all(query.get(name) == value for name, value in expected_filters.items())
     ]
     assert matching, (
-        f"No destination query resolved the pre-existing peer {live_plan.preexisting_peer_kind!r} "
-        f"{live_plan.preexisting_peer_identity!r} with {expected_filters}. The resolver answered it from its "
-        f"memo instead, so apply-time peer resolution was never exercised. Queries issued: {queries}"
-    )
-    assert _crosses_a_relationship(expected_filters), (
-        f"The pre-existing peer {live_plan.preexisting_peer_kind!r} is filtered by {sorted(expected_filters)}, none "
-        "of which crosses a relationship, so PD-004's nested filter spelling is not exercised."
+        f"No destination query resolved the pre-existing peer {peer_kind!r} {peer_identity!r} with "
+        f"{expected_filters}. The resolver answered it from its memo instead, so apply-time peer resolution was "
+        f"never exercised. Queries issued: {queries}"
     )
 
     observed = _observed_peer_sets(live_plan, operations)
@@ -1337,26 +1290,16 @@ def _ambiguous_peer_or_skip(live: LivePlan) -> tuple[str, dict[str, Any], dict[s
     those filters pin cannot hold a second matching object, and the destination answers the
     attempt with `Violates uniqueness constraint`, HTTP 422.
 
-    So every peer the plan references and does not create is checked against the schema — the
-    module fixture's chosen pre-existing peer first, so that where an ambiguity is admissible
-    for it the test measures exactly the peer T079 also resolves — and the first candidate
-    whose constraints leave a filtered component free is returned. When none does, that is
-    neither a missing environment nor a product defect but a verifiable, reproducible fact
-    about this schema, so it skips with the constraint that establishes it in the message.
-    The same skip pattern as `_env_or_skip`: a checked precondition, reported as a skip naming
-    what could not be established, rather than the setup error `LivePlanPreconditionError`
-    raises for a fixture that *should* have been satisfiable.
+    So every peer the plan references and does not create is checked against the schema, and
+    the first candidate whose constraints leave a filtered component free is returned. When
+    none does, that is neither a missing environment nor a product defect but a verifiable,
+    reproducible fact about this schema, so it skips with the constraint that establishes it in
+    the message. The same skip pattern as `_env_or_skip`: a checked precondition, reported as a
+    skip naming what could not be established, rather than the setup error
+    `LivePlanPreconditionError` raises for a fixture that *should* have been satisfiable.
     """
-    chosen = (live.preexisting_peer_kind, dict(live.preexisting_peer_identity))
     referencing = [operation for operation in live.plan.operations() if operation.relationships]
-    candidates = [
-        chosen,
-        *(
-            candidate
-            for candidate in _referenced_peers_absent_from_the_plan(live.plan, referencing)
-            if (candidate[0], _identity_key(candidate[1])) != (chosen[0], _identity_key(chosen[1]))
-        ),
-    ]
+    candidates = _referenced_peers_absent_from_the_plan(live.plan, referencing)
     refused: dict[str, str] = {}
     for kind, identity in candidates:
         try:
