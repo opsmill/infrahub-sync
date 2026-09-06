@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from infrahub_sync.configuration import capabilities as capabilities_module
 from infrahub_sync.configuration import validation as validation_module
+from infrahub_sync.execution import MIN_SECRET_LENGTH
 from infrahub_sync.product_store import configs, local_product_projection
 from infrahub_sync.service import serve
 from infrahub_sync.service.auth import PRINCIPALS_ENV
@@ -43,6 +44,13 @@ LONG_SECRET = "canary" + "c" * 94
 
 # Shapes a declared key cannot have, collected from the environment all the same, so the
 # serialized response is asserted free of every collected value rather than of one shape.
+# A declared credential path deep enough that the pointer it builds passes the finding text
+# bound, with a secret as its last component. The bound then cuts through that component, and a
+# whole-value match at the final boundary cannot find the prefix left behind.
+NESTED_SECRET = "canary" + "n" * 58
+NESTED_BRANCHES = tuple(f"deep{letter * 55}" for letter in "xyz")
+NESTED_CREDENTIAL_PATH = ".".join((*NESTED_BRANCHES, NESTED_SECRET))
+
 UNCOLLECTABLE_SHAPES = {
     "SYNC_UNICODE_TOKEN": "cänary-sécret-" + "d" * 60,
     "SYNC_QUOTED_TOKEN": "canary\"quoted'secret-" + "e" * 50,
@@ -78,6 +86,28 @@ def _package(*, undeclared: str, credential_path: str) -> dict[str, Any]:
             },
         }
     )
+
+
+def _nested_package() -> dict[str, Any]:
+    """A valid package carrying a plain value at the deep path, so registration accepts it."""
+    package = _package(undeclared="canaryplain", credential_path="canarypath")
+    settings = package["configuration"]["source"]["settings"]
+    del settings["canaryplain"], settings["canarypath"]
+    leaf: dict[str, Any] = {NESTED_SECRET: "declared at registration"}
+    for branch in reversed(NESTED_BRANCHES[1:]):
+        leaf = {branch: leaf}
+    settings[NESTED_BRANCHES[0]] = leaf
+    return package
+
+
+def _longest_exposed_prefix(secret: str, body: str) -> int:
+    """The length of the longest leading run of `secret` that `body` still contains.
+
+    Redaction and the length bounds are both lossy, so "the whole value is absent" is too weak
+    a property: a bound that cuts through an unredacted component leaves a prefix, and whole-value
+    matching at any later boundary cannot find one. Zero means nothing of the value survived.
+    """
+    return next((cut for cut in range(len(secret), 0, -1) if secret[:cut] in body), 0)
 
 
 def _capabilities(*, allowed: tuple[str, ...], credential_paths: tuple[str, ...]) -> dict[str, Any]:
@@ -139,6 +169,7 @@ def environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYNC_SHORT_TOKEN", SHORT_SECRET)
     monkeypatch.setenv("SYNC_BOUND_TOKEN", BOUND_SECRET)
     monkeypatch.setenv("SYNC_LONG_TOKEN", LONG_SECRET)
+    monkeypatch.setenv("SYNC_NESTED_TOKEN", NESTED_SECRET)
     for name, value in UNCOLLECTABLE_SHAPES.items():
         monkeypatch.setenv(name, value)
 
@@ -232,3 +263,30 @@ def test_the_stable_machine_fields_are_unchanged_by_redaction(
     for finding in report["findings"]:
         assert finding["severity"] in {"error", "warning"}
         assert "*" not in finding["code"], f"a stable machine field was rewritten: {finding}"
+
+
+def test_a_deep_declared_credential_path_never_exposes_a_secret_component_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environment: None
+) -> None:
+    """The pointer bound must never cut through an unredacted declared component.
+
+    The path is declared by the adapter capability rather than by the package, so it does not
+    reach the finding through the declared-content walk. It is bounded all the same, and a cut
+    through a secret component leaves a prefix no whole-value match can remove.
+    """
+    _ = environment
+    projection = local_product_projection(tmp_path)
+    _install(monkeypatch, _capabilities(allowed=(NESTED_BRANCHES[0],), credential_paths=()))
+    registered = configs.register(package=_nested_package(), projection=projection)
+    _install(
+        monkeypatch,
+        _capabilities(allowed=(NESTED_BRANCHES[0],), credential_paths=(NESTED_CREDENTIAL_PATH,)),
+    )
+
+    report = _validate(monkeypatch, projection, registered.version)
+    body = json.dumps(report)
+
+    assert any(finding["code"] == "inline-credential-value" for finding in report["findings"]), report
+    assert _longest_exposed_prefix(NESTED_SECRET, body) < MIN_SECRET_LENGTH, (
+        f"a prefix of the declared secret component survived the pointer bound:\n{body}"
+    )

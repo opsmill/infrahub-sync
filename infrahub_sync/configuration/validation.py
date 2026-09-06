@@ -26,7 +26,6 @@ from .credentials import (
     _STORE_CAPABILITIES,
     _TRUNCATION_MARKER,
     CredentialConfigurationError,
-    _bounded_component,
     _bounded_location,
     _render_setting_name_list,
     _rendered_component,
@@ -226,14 +225,27 @@ def _setting_at_path(settings: Mapping[str, object], path: str) -> tuple[bool, o
     return True, current
 
 
-def _settings_pointer(prefix: str, path: str) -> str:
+def _settings_pointer(prefix: str, path: str, secrets: Sequence[str] = ()) -> str:
     """Build one settings pointer the same way the declared-content walk builds it.
 
     The only place a declared setting path becomes a pointer. An owned location and the walk
     must produce byte-identical strings, or a reference is accepted by one check and refused
     by the next; a second formatter is how that divergence gets reintroduced.
+
+    A declared path is caller-influenced content like any other: redaction happens per
+    component here, before the pointer is assembled and before any bound cuts it, because a
+    bound that cuts through an unredacted component leaves a prefix nothing downstream matches.
     """
-    return prefix + "".join(f"/{_bounded_component(component)}" for component in path.split("."))
+    return prefix + "".join(f"/{_rendered_component(component, secrets)}" for component in path.split("."))
+
+
+def _unbounded_settings_pointer(prefix: str, path: str) -> str:
+    """The same pointer with nothing redacted and nothing bounded.
+
+    Ownership and the location digest are both decided on this form: two paths that redact or
+    truncate onto one rendered pointer are still distinct settings.
+    """
+    return prefix + "".join(f"/{_unbounded_component(component)}" for component in path.split("."))
 
 
 def _accumulate_reference_declarations(
@@ -310,6 +322,7 @@ def _accumulate_reference_node(
     value: object,
     *,
     location: str,
+    unbounded_location: str,
 ) -> list[_AccumulatedFinding]:
     """Validate one node at a declared credential-bearing setting path."""
     if not isinstance(value, Mapping) or "$credential" not in value:
@@ -317,6 +330,7 @@ def _accumulate_reference_node(
             _accumulated(
                 code=_CODE_INLINE_CREDENTIAL_VALUE,
                 location=location,
+                unbounded_location=unbounded_location,
                 message=f"{location} contains an inline credential value",
             )
         ]
@@ -327,6 +341,7 @@ def _accumulate_reference_node(
             _accumulated(
                 code=_CODE_MALFORMED_CREDENTIAL_REFERENCE,
                 location=location,
+                unbounded_location=unbounded_location,
                 message=f"{location} contains a malformed credential reference",
             )
         ]
@@ -335,6 +350,7 @@ def _accumulate_reference_node(
             _accumulated(
                 code=_CODE_UNKNOWN_CREDENTIAL_REFERENCE,
                 location=location,
+                unbounded_location=unbounded_location,
                 message=f"{location} names unknown credential reference {node.reference_name!r}",
             )
         ]
@@ -347,6 +363,8 @@ def _accumulate_credential_paths(
     paths: tuple[str, ...],
     prefix: str,
     owned_locations: list[str],
+    *,
+    secrets: Sequence[str],
 ) -> list[_AccumulatedFinding]:
     """Judge every declared credential-bearing path present in these settings, and own it."""
     accumulated: list[_AccumulatedFinding] = []
@@ -354,9 +372,16 @@ def _accumulate_credential_paths(
         present, value = _setting_at_path(settings, path)
         if not present or value is None:
             continue
-        location = _settings_pointer(prefix, path)
-        owned_locations.append(location)
-        accumulated.extend(_accumulate_reference_node(package, value, location=location))
+        unbounded = _unbounded_settings_pointer(prefix, path)
+        owned_locations.append(unbounded)
+        accumulated.extend(
+            _accumulate_reference_node(
+                package,
+                value,
+                location=_settings_pointer(prefix, path, secrets),
+                unbounded_location=unbounded,
+            )
+        )
     return accumulated
 
 
@@ -535,12 +560,12 @@ def _accumulate_adapter(
         value = settings.get(setting_name)
         if value is None:
             continue
-        location = _settings_pointer(prefix, setting_name)
-        owned_locations.append(location)
+        location = _settings_pointer(prefix, setting_name, secrets)
+        owned_locations.append(_unbounded_settings_pointer(prefix, setting_name))
         accumulated.extend(_accumulate_url_setting(value, setting_name=setting_name, location=location))
     accumulated.extend(_accumulate_adapter_validator(package, capabilities, role=role))
     paths = capabilities.credential_setting_paths
-    accumulated.extend(_accumulate_credential_paths(package, settings, paths, prefix, owned_locations))
+    accumulated.extend(_accumulate_credential_paths(package, settings, paths, prefix, owned_locations, secrets=secrets))
     return accumulated
 
 
@@ -582,7 +607,7 @@ def _accumulate_store(
         secrets=secrets,
     )
     paths = capabilities.credential_setting_paths
-    accumulated.extend(_accumulate_credential_paths(package, settings, paths, prefix, owned_locations))
+    accumulated.extend(_accumulate_credential_paths(package, settings, paths, prefix, owned_locations, secrets=secrets))
     return accumulated
 
 
