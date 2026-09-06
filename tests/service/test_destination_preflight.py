@@ -10,30 +10,38 @@ boundary.
 from __future__ import annotations
 
 import copy
+import logging
 from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
+import yaml
 from typing_extensions import Self  # ty targets 3.10, where typing.Self does not exist
 
 from infrahub_sync.configuration.models import parse_configuration_package
-from infrahub_sync.service.bootstrap import BootstrapError
+from infrahub_sync.service.bootstrap import CONFIGURATION_PATH_ENV, BootstrapError
 from infrahub_sync.service.preflight import (
     CREDENTIAL_UNRESOLVED,
     DESTINATION_UNAUTHORIZED,
     DESTINATION_UNREACHABLE,
     declared_destination_url,
+    main,
     probe,
     resolve_destination_credentials,
 )
 from tests.configuration.validation_packages import package_data
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from infrahub_sync.configuration import ConfigurationPackage
 
 # The URL and the credential the fakes below render into their own failure text.
 DESTINATION_CANARY = "http://destination.internal:8000"
 CREDENTIAL_CANARY = "preflight-destination-canary"
+# An address the client refuses to parse rather than fails to reach. The port is
+# the smallest way to say that; what matters is which exception it produces.
+UNPARSEABLE_DESTINATION = "http://destination.internal:not-a-port"
 
 
 def _package(url: str = DESTINATION_CANARY) -> ConfigurationPackage:
@@ -102,6 +110,30 @@ def test_an_unreachable_destination_carries_no_url_out_of_the_probe() -> None:
     rendered = str(refusal.value) + repr(refusal.value)
     assert DESTINATION_CANARY not in rendered
     assert CREDENTIAL_CANARY not in rendered
+
+
+def test_a_destination_url_the_client_cannot_parse_refuses_in_the_fixed_family(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The real client, the real entry point, and the address it refused to parse.
+
+    `main` catches the family and nothing else, so anything outside it arrives at
+    the operator as a stack trace carrying the address.
+    """
+    content = copy.deepcopy(package_data())
+    content["configuration"]["destination"]["settings"]["url"] = UNPARSEABLE_DESTINATION
+    package = tmp_path / "configuration.yaml"
+    package.write_text(yaml.safe_dump(content), encoding="utf-8")
+    monkeypatch.setenv(CONFIGURATION_PATH_ENV, str(package))
+    monkeypatch.setenv("INFRAHUB_API_TOKEN", CREDENTIAL_CANARY)
+
+    with caplog.at_level(logging.ERROR):
+        result = main()
+
+    assert result == 1
+    assert DESTINATION_UNREACHABLE in caplog.text
+    assert UNPARSEABLE_DESTINATION not in caplog.text
+    assert CREDENTIAL_CANARY not in caplog.text
 
 
 def test_a_destination_credential_that_resolves_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:

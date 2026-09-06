@@ -76,7 +76,9 @@ def probe(url: str, *, client_factory: type[httpx.Client] = httpx.Client) -> Non
     try:
         with client_factory(timeout=PROBE_TIMEOUT_SECONDS, follow_redirects=True) as client:
             response = client.get(url)
-    except httpx.HTTPError:
+    # `InvalidURL` is raised while parsing the address and is not an `HTTPError`,
+    # so it needs naming here to share the family. It renders the URL.
+    except (httpx.HTTPError, httpx.InvalidURL):
         raise BootstrapError(DESTINATION_UNREACHABLE) from None
     if response.status_code in _REFUSED:
         raise BootstrapError(DESTINATION_UNAUTHORIZED)

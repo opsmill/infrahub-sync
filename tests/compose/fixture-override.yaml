@@ -8,7 +8,9 @@
 # reason to carry: a deployment's destination is a real address it resolves like
 # any other.
 services:
-  sync-api:
+  # The two that reach the destination: the job that probes it before a start,
+  # and the worker that runs against it. The API opens no connection to it.
+  sync-bootstrap:
     extra_hosts:
       - "host.docker.internal:host-gateway"
   sync-worker:

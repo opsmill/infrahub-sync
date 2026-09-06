@@ -27,6 +27,15 @@ SINGLE_PROCESS = "-n 0"
 # The qualified architecture. The image gate builds and smokes arm64 as well;
 # the lifecycle claim is amd64.
 QUALIFIED_PLATFORM = "linux/amd64"
+# Passed only by the qualification command below. Every row of the matrix is
+# required, so under it a skipped `compose`-marked case is a failed one. Running
+# the suite directly keeps its ordinary Docker and platform skips.
+ZERO_SKIP_OPTION = "--compose-zero-skip"
+
+
+def qualification_command() -> str:
+    """The pytest invocation the qualification claim is made with."""
+    return f"pytest {SUITE} -m compose {SINGLE_PROCESS} {ZERO_SKIP_OPTION}"
 
 
 def candidate_reference(platform: str = QUALIFIED_PLATFORM) -> str:
@@ -72,13 +81,17 @@ def contract(context: Context) -> None:
 
 @task(name="lifecycle")
 def lifecycle(context: Context, platform: str = QUALIFIED_PLATFORM) -> None:
-    """Run the Docker-backed lifecycle matrix against the already-built candidate."""
+    """Run the Docker-backed lifecycle matrix against the already-built candidate.
+
+    This is the qualification claim, so it makes every case mandatory: a skip
+    here is the claim not being made, and it would otherwise exit zero.
+    """
     reference = candidate_reference(platform)
     require_loaded(context, reference)
     print(f" - [{NAMESPACE}] Qualifying {platform} candidate {reference}")
     with context.cd(ESCAPED_REPO_PATH):
         context.run(
-            f"pytest {SUITE} -m compose {SINGLE_PROCESS}",
+            qualification_command(),
             env={"INFRAHUB_SYNC_IMAGE": reference},
             pty=True,
         )

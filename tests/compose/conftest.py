@@ -26,10 +26,11 @@ from uuid import uuid4
 
 import pytest
 
+from tasks.compose import ZERO_SKIP_OPTION
 from tests.compose.redaction import SECRETS, Captured, capture
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping, Sequence
+    from collections.abc import Generator, Iterator, Mapping, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BUNDLE = REPO_ROOT / "deploy" / "compose"
@@ -39,6 +40,37 @@ BUNDLED_CONFIGURATION = BUNDLE / "configuration" / "qualification.yaml"
 
 INSTANCE_LABEL = "io.infrahub-sync.instance"
 BUNDLE_LABEL = "io.infrahub-sync.bundle"
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register the flag the qualification command runs this suite with."""
+    parser.addoption(
+        ZERO_SKIP_OPTION,
+        action="store_true",
+        default=False,
+        help="Treat a skipped compose-marked case as a failure; the lifecycle matrix has no optional rows.",
+    )
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    """Under qualification, turn a skipped mandatory case into a failed one.
+
+    Every row of the matrix is required, so a skip there is the claim quietly not
+    being made. Changing the report itself is what makes the exit code follow,
+    with nothing having to read what pytest printed. The marker decides which
+    cases are mandatory, not `item.keywords`: this package is named `compose`, so
+    everything under it carries that word either way.
+    """
+    del call
+    report = yield
+    if report.skipped and item.get_closest_marker("compose") is not None and item.config.getoption(ZERO_SKIP_OPTION):
+        report.outcome = "failed"
+        report.longrepr = f"{item.nodeid} skipped under qualification, where every matrix case is required"
+    return report
+
 
 # The Sync services, and the two roles whose isolation from each other is the
 # property the bundle exists to hold.

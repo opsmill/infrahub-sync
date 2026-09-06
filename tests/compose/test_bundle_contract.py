@@ -10,6 +10,7 @@ can be fooled by.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -19,6 +20,7 @@ from infrahub_sync.product_store import configs
 from tests.compose.conftest import (
     BUNDLE_LABEL,
     BUNDLED_CONFIGURATION,
+    COMPOSE_FILE,
     INSTANCE_LABEL,
     SCRATCH_OPTIONS,
     SYNC_SCRATCH_ROOTS,
@@ -40,6 +42,16 @@ IMMUTABLE_REFERENCE = re.compile(r"^(?:sha256:[0-9a-f]{64}|[^\s]+@sha256:[0-9a-f
 # named volume.
 PERSISTENT_VOLUMES = {"postgres-data", "object-store-data"}
 PERSISTENT_SERVICES = {"postgres", "object-store"}
+
+# The test-only override, and the host route it adds -- in the form Compose
+# resolves it to, since the file writes `name:value` and the model renders
+# `name=value`. Exactly two services reach the declared destination: the job that
+# probes it before a start, and the worker that runs against it. The API resolves
+# runs out of PostgreSQL and dispatches through Prefect, and opens no connection
+# to the destination at all.
+FIXTURE_OVERRIDE = Path(__file__).resolve().parent / "fixture-override.yaml"
+HOST_ROUTE = "host.docker.internal=host-gateway"
+ROUTED_SERVICES = {"sync-bootstrap", "sync-worker"}
 
 
 def services(model: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -301,3 +313,25 @@ def test_the_long_running_sync_services_wait_for_that_convergence(model: dict[st
         assert depends.get("sync-bootstrap", {}).get("condition") == "service_completed_successfully", (
             f"{name} does not wait for sync-bootstrap to complete: {depends}"
         )
+
+
+def test_the_host_route_is_test_only_and_reaches_exactly_the_two_destination_services(
+    model: dict[str, Any], contract_environment: dict[str, str]
+) -> None:
+    """The shipped bundle grants it to nobody; the override grants it to exactly two.
+
+    Both halves are equalities over every service, so a route added to the
+    shipped file fails, and adding a service to the override or dropping one
+    from it fails too.
+    """
+
+    def routed(resolved: Mapping[str, Any]) -> set[str]:
+        return {
+            name
+            for name, definition in services(resolved).items()
+            if HOST_ROUTE in (definition.get("extra_hosts") or [])
+        }
+
+    assert routed(model) == set(), f"the shipped bundle routes {sorted(routed(model))} to the host"
+    overridden = resolve(contract_environment, files=(COMPOSE_FILE, FIXTURE_OVERRIDE))
+    assert routed(overridden) == ROUTED_SERVICES, f"the override routes {sorted(routed(overridden))}"
