@@ -273,11 +273,12 @@ def test_an_unkeyed_planned_operation_is_refused_without_touching_the_destinatio
     """
     scope = unkeyed_scope
     before = scope.client.count(kind=DEVICE_KIND, branch=scope.branch)
+    refused_name = f"refused-{scope.device_name}"
 
     for attempt in range(2):
         with pytest.raises(UnkeyedWriteRefusedError) as refusal:
             scope.adapter.apply_planned_operation(
-                operation=_device_operation("unkeyed-device-a", scope.site_name),
+                operation=_device_operation(refused_name, scope.site_name),
                 peers=scope.adapter.new_peer_resolver(),
             )
         assert DEVICE_KIND in str(refusal.value), f"The refusal must name the destination kind: {refusal.value}"
@@ -286,8 +287,14 @@ def test_an_unkeyed_planned_operation_is_refused_without_touching_the_destinatio
             "operation mutated the destination before the gate refused it."
         )
 
-    assert scope.client.filters(kind=DEVICE_KIND, branch=scope.branch, populate_store=False) == [], (
-        f"A refused operation left an object of kind {DEVICE_KIND} at the destination."
+    # The fixture seeds one device as the pre-existing peer, so "nothing was written" is that the
+    # set is still exactly that one — a stronger claim than an unchanged count, which a write
+    # paired with a delete could also satisfy.
+    remaining = sorted(
+        node.name.value for node in scope.client.filters(kind=DEVICE_KIND, branch=scope.branch, populate_store=False)
+    )
+    assert remaining == [scope.device_name], (
+        f"A refused operation changed the {DEVICE_KIND} set at the destination: {remaining}"
     )
 
 
