@@ -121,10 +121,10 @@ Two further qualifications need no source system, only `INFRAHUB_ADDRESS` and
 `INFRAHUB_API_TOKEN`:
 
 - `tests/integration/test_infrahub_replace_set_shrink_integration.py` — keyed
-  planned writes, applied and re-applied convergently;
-- `tests/integration/test_infrahub_unkeyed_refusal_integration.py` — an unkeyed
-  operation refused with the destination count unchanged, on a branch the run
-  creates and deletes.
+  planned writes, applied and re-applied with the same result;
+- `tests/integration/test_infrahub_unkeyed_refusal_integration.py` — an operation
+  without a usable key, refused with the destination count unchanged on a branch
+  the run creates and deletes.
 
 The interface kinds are covered by that refusal rather than by an apply: they are
 the shapes this contract does not write.
