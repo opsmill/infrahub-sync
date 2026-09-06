@@ -1,9 +1,15 @@
 """A collected secret never reaches a serialized configuration validation finding.
 
-Diagnostics quote caller-declared keys, and the component bound cuts a key at 64 characters,
-so whole-value matching at a later boundary cannot find a longer secret. These cases drive the
-real HTTP surface — `build_app`, the router, and the serialized response — because that is the
-only place the producer's redaction and the boundary's redaction are both in force.
+Diagnostics quote caller-declared keys, and the length bounds cut one before a later
+whole-value match could find it. Every case drives the real router and the serialized response,
+because that is the only place the producer's redaction and the boundary's redaction are both
+in force.
+
+Two ways in, for two different reasons. A secret shaped like a declared name reaches the
+findings through the real producer, so those cases go through `build_app`. A secret that the
+declared-name grammar cannot express is injected as a `ValidationFinding` behind the route
+instead: the route's redaction of a report it did not produce is the thing under test, and each
+such case first asserts the value is really collected and really present before the boundary.
 """
 
 from __future__ import annotations
@@ -22,10 +28,16 @@ from fastapi.testclient import TestClient
 
 from infrahub_sync.configuration import capabilities as capabilities_module
 from infrahub_sync.configuration import validation as validation_module
-from infrahub_sync.execution import MIN_SECRET_LENGTH
+from infrahub_sync.configuration.models import ValidationFinding, safe_pointer_component
+from infrahub_sync.execution import MIN_SECRET_LENGTH, collect_secret_values
 from infrahub_sync.product_store import configs, local_product_projection
+from infrahub_sync.product_store.configs import ValidationReport
 from infrahub_sync.service import serve
-from infrahub_sync.service.auth import PRINCIPALS_ENV
+from infrahub_sync.service.app import create_app
+from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
+from infrahub_sync.service.config_routes import ConfigurationRoutes
+from infrahub_sync.service.orchestration import Submission
+from infrahub_sync.service.service import RunService
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -42,8 +54,6 @@ SHORT_SECRET = "canary" + "a" * 4
 BOUND_SECRET = "canary" + "b" * 58
 LONG_SECRET = "canary" + "c" * 94
 
-# Shapes a declared key cannot have, collected from the environment all the same, so the
-# serialized response is asserted free of every collected value rather than of one shape.
 # A declared credential path deep enough that the pointer it builds passes the finding text
 # bound, with a secret as its last component. The bound then cuts through that component, and a
 # whole-value match at the final boundary cannot find the prefix left behind.
@@ -51,11 +61,14 @@ NESTED_SECRET = "canary" + "n" * 58
 NESTED_BRANCHES = tuple(f"deep{letter * 55}" for letter in "xyz")
 NESTED_CREDENTIAL_PATH = ".".join((*NESTED_BRANCHES, NESTED_SECRET))
 
-UNCOLLECTABLE_SHAPES = {
-    "SYNC_UNICODE_TOKEN": "cänary-sécret-" + "d" * 60,
-    "SYNC_QUOTED_TOKEN": "canary\"quoted'secret-" + "e" * 50,
-    "SYNC_ESCAPED_TOKEN": "canary/slash~tilde-" + "f" * 50,
-    "SYNC_USERINFO_URL": "https://canaryuser:canarypassword0002@example.invalid/api",
+# Collected values whose shape a declared key cannot have. Each is exactly what
+# `collect_secret_values` collects — for the URL that is the userinfo rather than the whole
+# value — so a case here asserts the removal of a value the boundary really holds.
+SHAPED_SECRETS = {
+    "unicode": "cänary-sécret-" + "d" * 60,
+    "quoted": "canary\"quoted'secret-" + "e" * 50,
+    "escaped": "canary/slash~tilde-" + "f" * 50,
+    "url-userinfo": "canaryuser:canarypassword0002",
 }
 
 
@@ -98,6 +111,74 @@ def _nested_package() -> dict[str, Any]:
         leaf = {branch: leaf}
     settings[NESTED_BRANCHES[0]] = leaf
     return package
+
+
+def _renderings(secret: str) -> set[str]:
+    """Every known rendering a boundary must remove: raw, pointer-escaped, JSON and repr."""
+    escaped = safe_pointer_component(secret)
+    return {secret, escaped, json.dumps(escaped, ensure_ascii=True)[1:-1], repr(secret)[1:-1]}
+
+
+def _injected_report(secret: str) -> ValidationReport:
+    """One report carrying `secret` where a producer would put caller content.
+
+    The pointer grammar refuses "/" and "~" outside an escape, so the location carries the
+    escaped form and the message carries the raw one — the two shapes a real finding has.
+    """
+    return ValidationReport(
+        config_id="injected",
+        registry_version=1,
+        package_checksum="c" * 64,
+        findings=(
+            ValidationFinding(
+                code="undeclared-setting",
+                severity="error",
+                location=f"/configuration/source/settings/{safe_pointer_component(secret)}",
+                message=f"setting {secret} is undeclared",
+            ),
+        ),
+        destination_schema_fingerprint=None,
+    )
+
+
+class _Orchestration:  # pylint: disable=too-few-public-methods
+    """The run service's collaborator, which no case here calls."""
+
+    async def submit(self, parameters: dict[str, object], *, idempotency_key: str) -> Submission:  # noqa: ARG002, PLR6301
+        return Submission(flow_run_id="unused", state="pending")
+
+
+def _validate_injected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, report: ValidationReport) -> dict[str, Any]:
+    """Serialize `report` through the real route, router and HTTP response.
+
+    Only the application service behind the route is replaced. The route's own secret set, its
+    redaction of the selected page, and the response model are the production ones.
+    """
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": BEARER, "administrator": True}}))
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    secrets = tuple(dict.fromkeys((*collect_secret_values(), *resolver.secret_values)))
+    projection = local_product_projection(tmp_path)
+
+    class _Service:
+        ConfigsError = configs.ConfigsError
+        ConfigsRequestError = configs.ConfigsRequestError
+        ConfigsValidationError = configs.ConfigsValidationError
+        ConfigsNotFoundError = configs.ConfigsNotFoundError
+        ConfigsStorageError = configs.ConfigsStorageError
+        ConfigsInternalError = configs.ConfigsInternalError
+
+        @staticmethod
+        def validate(**_kwargs: object) -> ValidationReport:
+            return report
+
+    routes = ConfigurationRoutes(product_projection=projection, service=_Service(), secrets=secrets)
+    application = create_app(RunService(projection, _Orchestration(), secrets=secrets), resolver, routes)  # ty: ignore[invalid-argument-type]
+    response = TestClient(application).post(
+        f"/configs/{report.config_id}/versions/{report.registry_version}/validate",
+        headers={"Authorization": f"Bearer {BEARER}"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
 
 
 def _longest_exposed_prefix(secret: str, body: str) -> int:
@@ -170,8 +251,11 @@ def environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYNC_BOUND_TOKEN", BOUND_SECRET)
     monkeypatch.setenv("SYNC_LONG_TOKEN", LONG_SECRET)
     monkeypatch.setenv("SYNC_NESTED_TOKEN", NESTED_SECRET)
-    for name, value in UNCOLLECTABLE_SHAPES.items():
-        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("SYNC_UNICODE_TOKEN", SHAPED_SECRETS["unicode"])
+    monkeypatch.setenv("SYNC_QUOTED_TOKEN", SHAPED_SECRETS["quoted"])
+    monkeypatch.setenv("SYNC_ESCAPED_TOKEN", SHAPED_SECRETS["escaped"])
+    # Name-blind: the userinfo of any URL-shaped value is collected whatever the variable is called.
+    monkeypatch.setenv("SYNC_ENDPOINT", f"https://{SHAPED_SECRETS['url-userinfo']}@example.invalid/api")
 
 
 @pytest.mark.parametrize(
@@ -215,19 +299,31 @@ def test_both_reproduced_finding_families_are_reported_and_carry_no_secret(
         assert secret[:64] not in body
 
 
-def test_no_collected_value_of_any_shape_reaches_the_response(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environment: None
+@pytest.mark.parametrize("shape", sorted(SHAPED_SECRETS), ids=sorted(SHAPED_SECRETS))
+def test_a_collected_value_of_any_shape_is_removed_from_the_serialized_findings(
+    shape: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environment: None
 ) -> None:
-    """Escaping, Unicode, quote and URL-userinfo shapes are absent in every rendering."""
+    """Escaping, Unicode, quote and URL-userinfo shapes leave the boundary in no rendering.
+
+    The declared-name grammar is `[a-z][a-z0-9_]*`, so none of these shapes can reach a finding
+    as a declared key. The finding is therefore injected: what is under test is the route's own
+    redaction of a report it did not produce. Two guards keep the case honest — the value is
+    asserted to be one the environment scan really collects, and the pre-redaction report is
+    asserted to carry the renderings the response is then asserted not to.
+    """
     _ = environment
-    projection = local_product_projection(tmp_path)
-    version = _register_then_narrow(monkeypatch, projection, undeclared=LONG_SECRET, credential_path=BOUND_SECRET)
+    secret = SHAPED_SECRETS[shape]
+    assert secret in collect_secret_values(), f"{secret!r} is not collected, so nothing would redact it"
 
-    body = json.dumps(_validate(monkeypatch, projection, version))
+    pre_redaction = _injected_report(secret)
+    serialized_before = json.dumps([finding.model_dump(mode="json") for finding in pre_redaction.findings])
+    exposed_before = {rendering for rendering in _renderings(secret) if rendering in serialized_before}
+    assert exposed_before, f"the injected report carries no rendering of {secret!r}, so the case is vacuous"
 
-    for value in UNCOLLECTABLE_SHAPES.values():
-        for rendering in (value, json.dumps(value)[1:-1], repr(value)[1:-1]):
-            assert rendering not in body, f"{rendering!r} reached the response:\n{body}"
+    body = json.dumps(_validate_injected(monkeypatch, tmp_path, pre_redaction))
+
+    for rendering in exposed_before:
+        assert rendering not in body, f"{rendering!r} survived the boundary:\n{body}"
 
 
 def test_two_secret_named_settings_stay_distinguishable_after_redaction(
@@ -247,22 +343,28 @@ def test_two_secret_named_settings_stay_distinguishable_after_redaction(
     assert all(location != SOURCE_SETTINGS for location in redacted)
 
 
-def test_the_stable_machine_fields_are_unchanged_by_redaction(
+def test_the_stable_machine_fields_survive_redaction_byte_for_byte(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environment: None
 ) -> None:
-    """A code, a severity and the report's own identifiers are never rewritten."""
+    """Every closed-vocabulary field leaves the boundary as the exact value that entered it.
+
+    Compared against the pre-redaction report rather than against a set of permitted values: an
+    environment holding a collected value equal to a code or a checksum would rewrite one of
+    these into something an allowed-set check still accepts.
+    """
     _ = environment
-    projection = local_product_projection(tmp_path)
-    version = _register_then_narrow(monkeypatch, projection, undeclared=LONG_SECRET, credential_path=BOUND_SECRET)
+    pre_redaction = _injected_report(SHAPED_SECRETS["quoted"])
 
-    report = _validate(monkeypatch, projection, version)
+    report = _validate_injected(monkeypatch, tmp_path, pre_redaction)
 
-    assert report["config_id"] == version.config_id
-    assert report["registry_version"] == version.registry_version
-    assert report["package_checksum"] == version.package_checksum
-    for finding in report["findings"]:
-        assert finding["severity"] in {"error", "warning"}
-        assert "*" not in finding["code"], f"a stable machine field was rewritten: {finding}"
+    assert report["config_id"] == pre_redaction.config_id
+    assert report["registry_version"] == pre_redaction.registry_version
+    assert report["package_checksum"] == pre_redaction.package_checksum
+    assert report["destination_schema_fingerprint"] == pre_redaction.destination_schema_fingerprint
+    assert [finding["code"] for finding in report["findings"]] == [finding.code for finding in pre_redaction.findings]
+    assert [finding["severity"] for finding in report["findings"]] == [
+        finding.severity for finding in pre_redaction.findings
+    ]
 
 
 def test_a_deep_declared_credential_path_never_exposes_a_secret_component_prefix(
