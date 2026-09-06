@@ -95,8 +95,30 @@ convergent when different sites contain racks with the same name: the
 configuration identifies a rack by `name` and `site`, while the current
 schema-library revision keys it by `name` alone.
 
-To exercise the saved-plan write surface against a live Infrahub, use the two
-qualifications that need no external source system:
+Three live qualifications exercise the saved-plan write surface.
+
+`tests/integration/test_saved_plan_apply_integration.py` runs the full
+NetBox → Infrahub path on a **keyed slice**: `BuiltinTag`, `LocationSite`,
+`LocationRack`, `OrganizationManufacturer`, `DcimPlatform` and `DcimDeviceType`
+are seeded, and `DcimDevice` is the kind under test. Every one declares
+`human_friendly_id: ['name__value']`, so every planned write renders a key. It
+needs the pinned schema library loaded, a NetBox carrying the deterministic
+dataset (sites `site-a`/`site-b`/`site-c`, devices `dev-01`…`dev-40`, tags
+`tag-01`…`tag-10`), and `NETBOX_URL` / `NETBOX_TOKEN` alongside the Infrahub
+variables. **Six tests must pass.** A seventh is optional: SC-016's ambiguous-peer
+half skips when the destination schema admits no genuinely ambiguous peer, which
+is the case on a keyed slice, since every kind is filtered on exactly the
+component its uniqueness constraint pins. The skip message names the constraint
+that establishes it.
+
+**It needs a fresh disposable Infrahub for each run.** The suite writes and does
+not clean up: it perturbs the destination with a per-run canary and then asserts
+the derived plan carries the create, update and delete those perturbations imply.
+A second run against the same instance sees the first run's canary and fails in
+setup. Reset between runs.
+
+Two further qualifications need no source system, only `INFRAHUB_ADDRESS` and
+`INFRAHUB_API_TOKEN`:
 
 - `tests/integration/test_infrahub_replace_set_shrink_integration.py` — keyed
   planned writes, applied and re-applied convergently;
@@ -104,10 +126,8 @@ qualifications that need no external source system:
   operation refused with the destination count unchanged, on a branch the run
   creates and deletes.
 
-Both run with `INFRAHUB_ADDRESS` and `INFRAHUB_API_TOKEN` set. The older
-NetBox-sourced suite in `tests/integration/test_saved_plan_apply_integration.py`
-is skipped: its slice qualifies through relationship-crossing kinds, which this
-contract no longer applies.
+The interface kinds are covered by that refusal rather than by an apply: they are
+the shapes this contract does not write.
 
 :::
 

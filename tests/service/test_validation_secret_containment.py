@@ -40,6 +40,7 @@ from infrahub_sync.service.orchestration import Submission
 from infrahub_sync.service.service import RunService
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from infrahub_sync.product_store import ProductProjection
@@ -217,11 +218,30 @@ def _named_source_package(adapter_name: str) -> dict[str, Any]:
     return package
 
 
-def _with_source_adapter(adapter_name: str) -> dict[str, Any]:
-    """The builtin table plus a source adapter declared under `adapter_name`."""
+def _with_source_adapter(adapter_name: str, overrides: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """The builtin table plus a source adapter declared under `adapter_name`.
+
+    `overrides` re-declare that adapter's surface, which is how each drift case below is
+    produced: the package registers against the declaration, then the declaration changes.
+    """
     table = dict(capabilities_module.BUILTIN_ADAPTER_CAPABILITIES)
-    table[adapter_name] = replace(table["netbox"], adapter_name=adapter_name)
+    table[adapter_name] = replace(table["netbox"], adapter_name=adapter_name, **(overrides or {}))
     return table
+
+
+def _raising_validator(_package: Any, _role: Any) -> Any:  # noqa: ANN401 — adapter validator contract
+    """An adapter-owned validator that fails, so its containment finding names the adapter."""
+    msg = "validator exploded"
+    raise RuntimeError(msg)
+
+
+# Each case: a declaration override applied *after* registration, keyed by the finding code the
+# resulting drift produces. All three quote the registered adapter name in their message.
+ADAPTER_NAME_DRIFT: dict[str, dict[str, Any]] = {
+    "adapter-role-mismatch": {"roles": frozenset({"destination"})},
+    "undeclared-setting": {"allowed_settings": frozenset({"token"})},
+    "adapter-validator-finding": {"validator": _raising_validator},
+}
 
 
 def _install(monkeypatch: pytest.MonkeyPatch, table: dict[str, Any]) -> None:
@@ -328,21 +348,41 @@ def test_a_collected_value_of_any_shape_is_removed_from_the_serialized_findings(
     """Escaping, Unicode, quote and URL-userinfo shapes leave the boundary in no rendering.
 
     The declared-name grammar is `[a-z][a-z0-9_]*`, so none of these shapes can reach a finding
-    as a declared key. The finding is therefore injected: what is under test is the route's own
-    redaction of a report it did not produce. Two guards keep the case honest — the value is
-    asserted to be one the environment scan really collects, and the pre-redaction report is
-    asserted to carry the renderings the response is then asserted not to.
+    as a declared *key*. They reach one as declared *free text*: an omission's `reason` is
+    caller-supplied, bounded only by length and printability, and the intentional-omission
+    producer renders it verbatim into a finding message. So this drives the real path — a
+    registered configuration, revalidated through `configs.validate`, serialized by the real
+    `ConfigurationRoutes` — rather than a report handed to the route ready-made.
+
+    Two guards keep the case honest per shape: the value is asserted to be one the environment
+    scan really collects, and the producer's own pre-redaction output is asserted to carry a
+    rendering of it before the response is asserted not to.
     """
     _ = environment
     secret = SHAPED_SECRETS[shape]
     assert secret in collect_secret_values(), f"{secret!r} is not collected, so nothing would redact it"
 
-    pre_redaction = _injected_report(secret)
+    projection = local_product_projection(tmp_path)
+    package = _package(undeclared="canaryplain", credential_path="canarypath")
+    del package["configuration"]["source"]["settings"]["canaryplain"]
+    package["configuration"]["source"]["settings"]["canarypath"] = {"$credential": "netbox-token"}
+    package["omissions"] = [{"kind": "BuiltinTag", "reason": f"Q-002 {secret}"}]
+    _install(monkeypatch, _capabilities(allowed=("canarypath",), credential_paths=("canarypath",)))
+    registered = configs.register(package=package, projection=projection)
+
+    # What the producer emits with no secrets supplied — the leak this boundary must remove.
+    pre_redaction = configs.validate(
+        config_id=registered.version.config_id,
+        registry_version=registered.version.registry_version,
+        projection=projection,
+    )
     serialized_before = json.dumps([finding.model_dump(mode="json") for finding in pre_redaction.findings])
     exposed_before = {rendering for rendering in _renderings(secret) if rendering in serialized_before}
-    assert exposed_before, f"the injected report carries no rendering of {secret!r}, so the case is vacuous"
+    assert exposed_before, (
+        f"the producer emitted no rendering of {secret!r}, so this case would pass vacuously:\n{serialized_before}"
+    )
 
-    body = json.dumps(_validate_injected(monkeypatch, tmp_path, pre_redaction))
+    body = json.dumps(_validate(monkeypatch, projection, registered.version))
 
     for rendering in exposed_before:
         assert rendering not in body, f"{rendering!r} survived the boundary:\n{body}"
@@ -410,6 +450,34 @@ def test_a_withdrawn_adapter_declaration_never_exposes_an_adapter_name_prefix(
     assert any(finding["code"] == "missing-adapter" for finding in report["findings"]), report
     assert _longest_exposed_prefix(ADAPTER_NAME_SECRET, body) < MIN_SECRET_LENGTH, (
         f"a prefix of the declared adapter name survived the message bound:\n{body}"
+    )
+
+
+@pytest.mark.parametrize("code", sorted(ADAPTER_NAME_DRIFT), ids=sorted(ADAPTER_NAME_DRIFT))
+def test_a_registered_adapter_name_never_reaches_a_finding_message_unredacted(
+    code: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    environment: None,
+) -> None:
+    """A declared adapter name is caller content wherever a finding quotes it.
+
+    Once a package registers against a declaration, the capability's own `adapter_name` *is*
+    the caller's string — the table is keyed by it. Every producer that quotes it therefore
+    quotes caller content, and a name longer than the finding text bound leaves a prefix.
+    """
+    _ = environment
+    projection = local_product_projection(tmp_path)
+    _install(monkeypatch, _with_source_adapter(ADAPTER_NAME_SECRET))
+    registered = configs.register(package=_named_source_package(ADAPTER_NAME_SECRET), projection=projection)
+    _install(monkeypatch, _with_source_adapter(ADAPTER_NAME_SECRET, ADAPTER_NAME_DRIFT[code]))
+
+    report = _validate(monkeypatch, projection, registered.version)
+    body = json.dumps(report)
+
+    assert any(finding["code"] == code for finding in report["findings"]), report
+    assert _longest_exposed_prefix(ADAPTER_NAME_SECRET, body) < MIN_SECRET_LENGTH, (
+        f"a prefix of the registered adapter name survived the message bound:\n{body}"
     )
 
 

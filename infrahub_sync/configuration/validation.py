@@ -264,7 +264,8 @@ def _accumulate_reference_declarations(
                     location=location,
                     unbounded_location=unbounded,
                     message=(
-                        f"credential reference {name!r} uses provider {reference.provider!r}, which is not installed"
+                        f"credential reference {_rendered_component(name, secrets)!r} uses provider "
+                        f"{_rendered_component(reference.provider, secrets)!r}, which is not installed"
                     ),
                 )
             )
@@ -274,7 +275,10 @@ def _accumulate_reference_declarations(
                     code=_CODE_MALFORMED_CREDENTIAL_REFERENCE,
                     location=location,
                     unbounded_location=unbounded,
-                    message=f"credential reference {name!r} has an invalid environment identifier",
+                    message=(
+                        f"credential reference {_rendered_component(name, secrets)!r} has an invalid "
+                        "environment identifier"
+                    ),
                 )
             )
     return accumulated
@@ -323,6 +327,7 @@ def _accumulate_reference_node(
     *,
     location: str,
     unbounded_location: str,
+    secrets: Sequence[str],
 ) -> list[_AccumulatedFinding]:
     """Validate one node at a declared credential-bearing setting path."""
     if not isinstance(value, Mapping) or "$credential" not in value:
@@ -351,7 +356,10 @@ def _accumulate_reference_node(
                 code=_CODE_UNKNOWN_CREDENTIAL_REFERENCE,
                 location=location,
                 unbounded_location=unbounded_location,
-                message=f"{location} names unknown credential reference {node.reference_name!r}",
+                message=(
+                    f"{location} names unknown credential reference "
+                    f"{_rendered_component(node.reference_name, secrets)!r}"
+                ),
             )
         ]
     return []
@@ -380,6 +388,7 @@ def _accumulate_credential_paths(
                 value,
                 location=_settings_pointer(prefix, path, secrets),
                 unbounded_location=unbounded,
+                secrets=secrets,
             )
         )
     return accumulated
@@ -469,12 +478,16 @@ def _contained_validator_failure(
     *,
     role: AdapterRole,
     detail: str,
+    secrets: Sequence[str],
 ) -> _AccumulatedFinding:
     """Report a validator that failed, without carrying anything the validator said."""
     return _accumulated(
         code=_CODE_ADAPTER_VALIDATOR_FINDING,
         location=f"/configuration/{role}",
-        message=f"adapter {adapter_name!r} configuration validator {detail} for the {role} role",
+        message=(
+            f"adapter {_rendered_component(adapter_name, secrets)!r} configuration validator {detail} "
+            f"for the {role} role"
+        ),
     )
 
 
@@ -483,6 +496,7 @@ def _accumulate_adapter_validator(
     capabilities: AdapterConfigurationCapabilities,
     *,
     role: AdapterRole,
+    secrets: Sequence[str],
 ) -> list[_AccumulatedFinding]:
     """Run one adapter-owned validator, keeping its own codes and locations."""
     validator = capabilities.validator
@@ -503,7 +517,7 @@ def _accumulate_adapter_validator(
         # Past the call, anything that goes wrong is about what came back, not about the run.
         detail = "returned an unsupported result"
         if not _is_finding_sequence(result):
-            return [_contained_validator_failure(capabilities.adapter_name, role=role, detail=detail)]
+            return [_contained_validator_failure(capabilities.adapter_name, role=role, detail=detail, secrets=secrets)]
         findings = sort_findings([_revalidated_finding(item) for item in result])
         permitted = (f"/configuration/{role}", *_ROLE_INDEPENDENT_VALIDATOR_PREFIXES)
         if not all(_is_within(item.location, permitted) for item in findings):
@@ -512,11 +526,11 @@ def _accumulate_adapter_validator(
             # in the other role's subtree, the store's, or the credential declarations would
             # delete the core's own finding there — including a credential-safety one. That
             # is not precedence being wrong; it is a finding with no standing at that pointer.
-            return [_contained_validator_failure(capabilities.adapter_name, role=role, detail=detail)]
+            return [_contained_validator_failure(capabilities.adapter_name, role=role, detail=detail, secrets=secrets)]
         legacy_message = "; ".join(f"{_bounded_location(item.location)}: {item.message}" for item in findings)
     # A third-party validator may raise anything at all; containing it is the contract.
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-        return [_contained_validator_failure(capabilities.adapter_name, role=role, detail=detail)]
+        return [_contained_validator_failure(capabilities.adapter_name, role=role, detail=detail, secrets=secrets)]
     # One adapter can serve both roles, and a validator that cannot tell them apart reports the
     # same package-level defect twice. Which of the two survives is decided at the presentation
     # boundary, never here: the wrapper's message is element zero of this list.
@@ -539,7 +553,10 @@ def _accumulate_adapter(
             _accumulated(
                 code=_CODE_ADAPTER_ROLE_MISMATCH,
                 location=f"/configuration/{role}",
-                message=f"adapter {capabilities.adapter_name!r} does not support the {role} role",
+                message=(
+                    f"adapter {_rendered_component(capabilities.adapter_name, secrets)!r} does not support "
+                    f"the {role} role"
+                ),
             )
         )
     prefix = f"/configuration/{role}/settings"
@@ -549,7 +566,8 @@ def _accumulate_adapter(
             allowed_settings=capabilities.allowed_settings,
             prefix=prefix,
             render=lambda names: (
-                f"adapter {capabilities.adapter_name!r} contains unsupported declared settings "
+                f"adapter {_rendered_component(capabilities.adapter_name, secrets)!r} contains unsupported "
+                "declared settings "
                 f"for the {role} role: {_render_setting_name_list(names, secrets)}"
             ),
             owned_locations=owned_locations,
@@ -563,7 +581,7 @@ def _accumulate_adapter(
         location = _settings_pointer(prefix, setting_name, secrets)
         owned_locations.append(_unbounded_settings_pointer(prefix, setting_name))
         accumulated.extend(_accumulate_url_setting(value, setting_name=setting_name, location=location))
-    accumulated.extend(_accumulate_adapter_validator(package, capabilities, role=role))
+    accumulated.extend(_accumulate_adapter_validator(package, capabilities, role=role, secrets=secrets))
     paths = capabilities.credential_setting_paths
     accumulated.extend(_accumulate_credential_paths(package, settings, paths, prefix, owned_locations, secrets=secrets))
     return accumulated
