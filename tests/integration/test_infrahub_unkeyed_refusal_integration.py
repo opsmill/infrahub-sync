@@ -6,9 +6,15 @@ cannot prove is that nothing reached the server: a fixture holds no destination 
 This module closes that gap on the smallest possible fixture — one throwaway schema, one
 planned create, one count read back.
 
-Same posture as its siblings: a throwaway schema is loaded, everything it creates is deleted
-afterwards, and the module skips itself without a configured destination. Only the destination
-is needed; the operation is a hand-built plan record driven straight through
+**Everything this module touches lives on one branch it creates and deletes.** The sibling
+modules load their throwaway schema onto `main`, which makes two concurrent runs — or a run
+against an instance someone else is using — share a namespace: a `filters(kind=...)` teardown
+there removes objects the run does not own. Here the branch name carries a per-run uuid, the
+schema is loaded onto that branch alone, every read and write names it, and the branch is
+deleted afterwards, taking its schema and its objects with it. `main` is never written.
+
+The module skips itself without a configured destination. Only the destination is needed; the
+operation is a hand-built plan record driven straight through
 `InfrahubAdapter.apply_planned_operation`, so no source adapter is involved. Run with::
 
     INFRAHUB_ADDRESS=http://localhost:8000 \\
@@ -21,6 +27,7 @@ from __future__ import annotations
 import os
 import time
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -36,7 +43,6 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.integration
 
-DESTINATION_BRANCH = "main"
 SITE_KIND = "TestUnkeyedSite"
 DEVICE_KIND = "TestUnkeyedDevice"
 
@@ -83,35 +89,38 @@ def _env_or_skip() -> tuple[str, str]:
     return address, token
 
 
-def _await_schema_kinds(address: str, token: str, kinds: tuple[str, ...], timeout: float = 90.0) -> None:
-    """Block until the destination serves every one of `kinds`.
+def _await_schema_kinds(client: Any, branch: str, kinds: tuple[str, ...], timeout: float = 120.0) -> None:  # noqa: ANN401
+    """Block until the client can resolve every one of `kinds` on `branch`.
 
     `POST /api/schema/load` returns once the payload is accepted, not once the kinds it
-    declares are queryable, and a create issued in that window fails as a missing schema rather
-    than as the refusal under test.
+    declares are resolvable, and a create issued in that window fails as a missing schema
+    rather than as the refusal under test. The SDK's own `wait_until_converged` settles the
+    server side; the loop then re-fetches until the *client's* view agrees, which is the view
+    `client.create` actually reads. Both are needed when a second run is loading its own
+    branch's schema against the same instance at the same time.
     """
+    client.schema.wait_until_converged(branch=branch)
     deadline = time.monotonic() + timeout
     while True:
-        response = requests.get(
-            f"{address}/api/schema?branch={DESTINATION_BRANCH}",
-            headers={"X-INFRAHUB-KEY": token},
-            timeout=30,
-        )
-        response.raise_for_status()
-        missing = set(kinds) - {node["kind"] for node in response.json().get("nodes", [])}
+        missing = set(kinds) - set(client.schema.all(branch=branch, refresh=True))
         if not missing:
             return
         if time.monotonic() >= deadline:
-            msg = f"Destination did not serve {sorted(missing)} within {timeout:.0f}s of a successful schema load."
+            msg = f"Branch {branch!r} did not serve {sorted(missing)} within {timeout:.0f}s of a successful load."
             raise AssertionError(msg)
         time.sleep(1.0)
 
 
-def _make_client(address: str, token: str) -> Any:  # noqa: ANN401 — the SDK client is dynamically typed
-    """A sync Infrahub client, imported lazily so unit-only runs need no SDK extras."""
+def _make_client(address: str, token: str, branch: str = "main") -> Any:  # noqa: ANN401 — the SDK client is dynamic
+    """A sync Infrahub client scoped to `branch`, imported lazily for base installs.
+
+    The default branch is what the planned-write surface inherits: `apply_planned_operation`
+    names no branch of its own, so scoping the client is what keeps every write this run
+    issues inside the branch it owns.
+    """
     from infrahub_sdk import Config, InfrahubClientSync
 
-    return InfrahubClientSync(config=Config(address=address, api_token=token))
+    return InfrahubClientSync(config=Config(address=address, api_token=token, default_branch=branch))
 
 
 def _device_operation(device_name: str, site_name: str) -> PlannedOperation:
@@ -133,44 +142,72 @@ def _device_operation(device_name: str, site_name: str) -> PlannedOperation:
     )
 
 
-@pytest.fixture
-def live_unkeyed_fixture() -> Iterator[tuple[Any, InfrahubAdapter, str]]:
-    """Throwaway schema plus one site at the destination; torn down afterwards.
+@dataclass(frozen=True)
+class UnkeyedScope:
+    """One run's isolated destination scope."""
 
-    Yields `(client, adapter, site_name)`. No device is created: whether one can be is the
-    question under test.
+    client: Any
+    adapter: InfrahubAdapter
+    branch: str
+    site_name: str
+
+
+def _branch_exists(address: str, token: str, branch: str) -> bool:
+    """Whether the destination still lists `branch`."""
+    response = requests.post(
+        f"{address}/graphql",
+        headers={"X-INFRAHUB-KEY": token, "Content-Type": "application/json"},
+        json={"query": "query { Branch { name } }"},
+        timeout=30,
+    )
+    response.raise_for_status()
+    branches = response.json().get("data", {}).get("Branch") or []
+    return any(entry.get("name") == branch for entry in branches)
+
+
+@pytest.fixture
+def unkeyed_scope() -> Iterator[UnkeyedScope]:
+    """A branch this run owns, carrying the throwaway schema and one site.
+
+    The branch is the unit of isolation *and* of cleanup: deleting it removes the schema and
+    every object created against it, so no teardown has to enumerate objects by kind and
+    therefore none can remove another run's. `main` is never written.
     """
     address, token = _env_or_skip()
     suffix = uuid.uuid4().hex[:8]
-
-    schema_response = requests.post(
-        f"{address}/api/schema/load?branch={DESTINATION_BRANCH}",
-        headers={"X-INFRAHUB-KEY": token, "Content-Type": "application/json"},
-        json={"schemas": [_SCHEMA]},
-        timeout=60,
-    )
-    schema_response.raise_for_status()
-    _await_schema_kinds(address, token, (SITE_KIND, DEVICE_KIND))
-
-    client = _make_client(address, token)
-    site_name = f"unkeyed-site-{suffix}"
-    site = client.create(kind=SITE_KIND, branch=DESTINATION_BRANCH, data={"name": site_name})
-    site.save()
+    branch = f"unkeyed-refusal-{suffix}"
+    # Created through a main-scoped client; every later call uses the branch-scoped one below.
+    _make_client(address, token).branch.create(branch_name=branch, sync_with_git=False)
+    client = _make_client(address, token, branch)
     try:
+        schema_response = requests.post(
+            f"{address}/api/schema/load?branch={branch}",
+            headers={"X-INFRAHUB-KEY": token, "Content-Type": "application/json"},
+            json={"schemas": [_SCHEMA]},
+            timeout=60,
+        )
+        schema_response.raise_for_status()
+        _await_schema_kinds(client, branch, (SITE_KIND, DEVICE_KIND))
+
+        site_name = f"unkeyed-site-{suffix}"
+        site = client.create(kind=SITE_KIND, branch=branch, data={"name": site_name})
+        site.save()
+
         adapter = InfrahubAdapter.__new__(InfrahubAdapter)
         adapter.client = client
-        adapter.schema = client.schema.all(branch=DESTINATION_BRANCH)
+        adapter.schema = client.schema.all(branch=branch)
         adapter.source_node = None
         adapter.owner_node = None
-        yield client, adapter, site_name
+        yield UnkeyedScope(client=client, adapter=adapter, branch=branch, site_name=site_name)
     finally:
-        for device in client.filters(kind=DEVICE_KIND, branch=DESTINATION_BRANCH, populate_store=False):
-            device.delete()
-        site.delete()
+        client.branch.delete(branch_name=branch)
+        assert not _branch_exists(address, token, branch), (
+            f"Branch {branch!r} survived teardown, so this run left destination state behind."
+        )
 
 
 def test_an_unkeyed_planned_operation_is_refused_without_touching_the_destination(
-    live_unkeyed_fixture: tuple[Any, InfrahubAdapter, str],
+    unkeyed_scope: UnkeyedScope,
 ) -> None:
     """The refusal is proven against a live server, not against a recording transport.
 
@@ -180,21 +217,45 @@ def test_an_unkeyed_planned_operation_is_refused_without_touching_the_destinatio
     is a *duplicate* on re-apply: an unkeyed write that silently succeeded would show here as
     a count that climbed.
     """
-    client, adapter, site_name = live_unkeyed_fixture
-    before = client.count(kind=DEVICE_KIND, branch=DESTINATION_BRANCH)
+    scope = unkeyed_scope
+    before = scope.client.count(kind=DEVICE_KIND, branch=scope.branch)
 
     for attempt in range(2):
         with pytest.raises(UnkeyedWriteRefusedError) as refusal:
-            adapter.apply_planned_operation(
-                operation=_device_operation("unkeyed-device-a", site_name),
-                peers=adapter.new_peer_resolver(),
+            scope.adapter.apply_planned_operation(
+                operation=_device_operation("unkeyed-device-a", scope.site_name),
+                peers=scope.adapter.new_peer_resolver(),
             )
         assert DEVICE_KIND in str(refusal.value), f"The refusal must name the destination kind: {refusal.value}"
-        assert client.count(kind=DEVICE_KIND, branch=DESTINATION_BRANCH) == before, (
+        assert scope.client.count(kind=DEVICE_KIND, branch=scope.branch) == before, (
             f"Apply attempt {attempt + 1} changed the destination count for {DEVICE_KIND}, so the "
             "operation mutated the destination before the gate refused it."
         )
 
-    assert client.filters(kind=DEVICE_KIND, branch=DESTINATION_BRANCH, populate_store=False) == [], (
+    assert scope.client.filters(kind=DEVICE_KIND, branch=scope.branch, populate_store=False) == [], (
         f"A refused operation left an object of kind {DEVICE_KIND} at the destination."
+    )
+
+
+def test_the_run_writes_nothing_outside_the_branch_it_owns(unkeyed_scope: UnkeyedScope) -> None:
+    """Concurrency safety, asserted rather than described.
+
+    Two of these runs must be able to share one destination. That holds only if the schema and
+    the site this run created are invisible on `main`: a run that wrote there would both see
+    and delete another run's objects. Asserting the kind is absent from `main`'s schema is the
+    strongest form — it is not merely that no object exists, but that none could.
+    """
+    scope = unkeyed_scope
+    address, token = _env_or_skip()
+
+    response = requests.get(f"{address}/api/schema?branch=main", headers={"X-INFRAHUB-KEY": token}, timeout=30)
+    response.raise_for_status()
+    main_kinds = {node["kind"] for node in response.json().get("nodes", [])}
+
+    assert main_kinds & {SITE_KIND, DEVICE_KIND} == set(), (
+        f"The throwaway schema reached 'main' ({sorted(main_kinds & {SITE_KIND, DEVICE_KIND})}), so a "
+        "concurrent run would share this run's namespace."
+    )
+    assert scope.client.count(kind=SITE_KIND, branch=scope.branch) == 1, (
+        "The site this run created must be visible on its own branch, or the test above proves nothing."
     )
