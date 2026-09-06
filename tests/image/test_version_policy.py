@@ -28,6 +28,7 @@ LOCK = REPO_ROOT / "uv.lock"
 # digest alone tells a reader nothing about which Python they are running.
 RUNTIME_BASE_TAG = "python:3.13-slim-bookworm"
 RUNTIME_PYTHON_FLOOR = Version("3.13.14")
+PCRE2_SECURITY_RELEASE = "10.42-1+deb12u1"
 
 PYARROW_FIX = Version("23.0.1")
 
@@ -70,6 +71,13 @@ def test_the_runtime_base_names_the_supported_python_series() -> None:
     base = external_image_references(DOCKERFILE.read_text(encoding="utf-8"))[0]
 
     assert base.startswith(f"{RUNTIME_BASE_TAG}@sha256:"), base
+
+
+def test_the_runtime_installs_the_pcre2_security_release() -> None:
+    """The pinned base predates CVE-2026-86145's Debian security update."""
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+
+    assert f"libpcre2-8-0={PCRE2_SECURITY_RELEASE}" in dockerfile
 
 
 @pytest.mark.parametrize(("package", "accepted"), sorted(FIX_RANGES.items()))
