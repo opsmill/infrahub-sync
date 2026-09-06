@@ -239,19 +239,16 @@ class UnaccountedIdentityComponentError(PlanArtifactError):
 
 
 class UnkeyedWriteRefusedError(PlanArtifactError):
-    """The rendered mutation carries no key for a kind whose HFID is all-direct (AD066).
+    """The rendered mutation carries neither `id` nor `hfid`.
 
-    Keyedness is a property of the rendered mutation input rather than of the assembled
-    data, so it is read there. For a kind every one of whose human-friendly-ID components is
-    a direct attribute, a render carrying neither `id` nor `hfid` can only mean the payload
-    lost its identity components, so the write is refused. A kind whose components cross a
-    relationship, and a kind declaring no human-friendly ID at all, are **warned** about and
-    proceed instead (AD076).
+    An unkeyed convergent write duplicates its object on a re-apply, so it is refused for
+    every destination kind. The refused operation attempts no destination mutation.
     """
 
     next_action = (
-        "Re-plan and re-apply: the operation's payload must carry the identity components. If a fresh "
-        "plan renders the same way, report it — the payload is losing them between derivation and write."
+        "Re-plan so the operation's payload carries the destination kind's identity components. A kind "
+        "whose human-friendly ID crosses a relationship, or that declares none at all, cannot render a "
+        "keyed mutation and is not supported for planned writes."
     )
 
 

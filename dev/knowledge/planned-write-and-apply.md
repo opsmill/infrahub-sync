@@ -110,37 +110,20 @@ Two checks protect the key, and they check different things:
   than the render call's own `"data"` key: `_generate_input_data(...)["data"]` is `{"data": {...}}`, a
   one-key mapping, so a check written against it would fire on every operation ever rendered.
 
-The gate branches on the kind's HFID shape, and the branch is the point:
+The gate applies one invariant to every kind: a render carrying neither `id` nor `hfid` raises
+`UnkeyedWriteRefusedError`, naming the operation and its kind. An unkeyed convergent write duplicates
+its object on a re-apply, and no HFID shape makes that safe.
 
-| HFID shape | Render carries neither `id` nor `hfid` |
-|---|---|
-| **All direct** components | **Raise**, naming the kind — it can only mean the payload lost its identity components, which is always a defect |
-| **Crosses a relationship** | **Warn once per kind** and proceed |
-| **No HFID declared** | **Warn once per kind** and proceed — never raise; for such a kind, unkeyed is a schema fact, not a defect |
+Two shapes cannot render keyed and are therefore unsupported for planned writes:
 
-The relationship-crossing row is not a shrug. The SDK cannot form an `hfid` client-side from a peer
-supplied as a resolved id: rendering a relationship value handed in as a bare id produces `{"id": ...}`
-with no `__typename`, so the store read that would resolve the peer is never attempted. Refusing would
-withdraw the relationship-bearing kinds from what this path supports. The write is issued, and the server
-may still key it: against one live destination, thirteen `InterfacePhysical` upserts rendered unkeyed, were
-issued with the warning, and a second apply of the identical plan produced no duplicate — because that
-kind declares a `device-name` uniqueness constraint the destination resolved the upsert on. That is one
-destination's answer. A relationship-crossing key with no covering uniqueness constraint would still
-duplicate.
+- **A key that crosses a relationship.** The SDK cannot form an `hfid` client-side from a peer supplied
+  as a resolved id: rendering a relationship value handed in as a bare id produces `{"id": ...}` with no
+  `__typename`, so the store read that would resolve the peer is never attempted.
+- **No HFID declared.** There is no convergence key to render.
 
-**So state the guarantee narrowly.** No write is issued whose payload is missing an HFID component, and
-no render is issued unkeyed where being unkeyed can only be a defect. "An unkeyed write is never issued"
-is false, and was struck from three places where it had been written.
-
-The warning is at **warning level** and fires **once per destination kind**, with the dedup set living on
-the adapter instance for the lifetime of the apply. Both properties are pinned rather than described:
-`--quiet` floors the package logger at warning level, so an info-level emission satisfies every prose
-description of the obligation and vanishes for exactly the scripted and CI runs where it is the only
-signal; and once-per-operation would put a line on every row of a large apply. The content names the
-kind, that the write is issued anyway, which of the two conditions applies, and what to watch for. It
-is phrased in the present tense because the gate reads the *rendered* mutation: the warning is emitted
-at step 5b, before the upsert at step 6 and the relationship flush at step 7e, so a past-tense "the
-write was issued" would be claiming a write that has not happened yet and may still fail.
+Apply is sequential, so the guarantee is stated per operation: an operation whose render is unkeyed makes
+zero mutation calls, and no later operation executes. Operations applied before it stay written, and the
+apply record reports them.
 
 ## Peer resolution
 

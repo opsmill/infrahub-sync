@@ -7,10 +7,9 @@ the assembled `data`, because a relationship-crossing identity component is alre
 node-id string by then. So the harness runs a **real** `InfrahubNodeSync` built from the
 committed schema fixture with only the transport edge replaced; no server is contacted.
 
-Five assertions, because keyedness splits in two (AD067): an all-direct human-friendly-ID
-kind renders keyed; the relationship-crossing kind is the same assertion marked
-`xfail(strict=True)`, so the day the hole closes it xpasses and the limitation retires
-itself; the replace-set is issued for every cardinality-many relationship including
+Five assertions: an all-direct human-friendly-ID kind renders keyed; the
+relationship-crossing kind, which cannot render keyed client-side, is refused before its own
+mutation; the replace-set is issued for every cardinality-many relationship including
 `peers: []`, with no destination read; the flush names only the relationship fields
 being replaced (AD088); and applying the same operation twice renders byte-identical inputs.
 
@@ -35,6 +34,7 @@ from infrahub_sdk.schema import NodeSchemaAPI
 from infrahub_sdk.schema.main import BranchSchema
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerResolver
+from infrahub_sync.plan.errors import UnkeyedWriteRefusedError
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 
@@ -72,15 +72,6 @@ UNMAPPED_FIELD_MESSAGE = (
     "cardinality-many fields being replaced, never a re-render of the node. AD075 (the flush exists at all) "
     "and AD085 (the emptied peer set must survive it) depend on it too. Re-derive AD088 against the new SDK "
     "before changing this test."
-)
-
-XFAIL_REASON = (
-    "A human-friendly ID that crosses a relationship cannot render keyed today — the Material "
-    "risk row in plan.md. The plan carries no destination UUID (FR-012 forbids the load that "
-    "would supply one) so data['id'] is never set; the resolved relationship renders as "
-    "{'id': ...} with no __typename, so RelatedNodeSync.get() raises rather than consulting the "
-    "store, get_path_value catches that and returns None, and one None nulls the whole hfid. "
-    "Strict, so the day the write surface closes the hole this xpasses and fails the suite."
 )
 
 
@@ -162,7 +153,6 @@ def make_adapter(client: ConformanceClient) -> InfrahubAdapter:
     adapter.source_node = None
     adapter.owner_node = None
     adapter.schema = dict(SCHEMAS)
-    adapter._unkeyed_render_reported = set()
     return adapter
 
 
@@ -382,23 +372,21 @@ def test_an_all_direct_kind_renders_a_keyed_mutation(description: str, operation
 
 
 # ---------------------------------------------------------------------------------------
-# Assertion 2 — keyedness, the relationship-crossing kind (AD067)
+# Assertion 2 — the relationship-crossing kind is refused (AD066)
 # ---------------------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason=XFAIL_REASON)
-def test_a_relationship_crossing_kind_renders_a_keyed_mutation() -> None:
-    """The *same* assertion as above, on the kind that cannot satisfy it today."""
+def test_a_relationship_crossing_kind_is_refused_before_its_own_mutation() -> None:
+    """The kind that cannot render keyed is refused, not written unkeyed."""
     client, adapter, peers = seeded_adapter()
 
-    with record_rendered_inputs() as rendered:
+    with pytest.raises(UnkeyedWriteRefusedError):
         adapter.apply_planned_operation(operation=device_operation(), peers=peers)
 
-    assert client.mutation_names == [f"{DEVICE_KIND}Upsert"]
-    keyed = keys_of(rendered, DEVICE_KIND)
-    assert keyed
-    for keys in keyed:
-        assert "id" in keys or "hfid" in keys
+    assert client.mutations == [], (
+        "The refused operation makes zero mutation calls: the gate reads the rendered input "
+        "before the SDK write is issued."
+    )
 
 
 # ---------------------------------------------------------------------------------------
