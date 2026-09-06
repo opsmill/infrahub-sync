@@ -198,6 +198,13 @@ class UnkeyedScope:
     device_name: str
 
 
+def _raise_for_status_without_redirect(response: requests.Response) -> None:
+    """Refuse redirects before checking the response status."""
+    if response.is_redirect or response.is_permanent_redirect:
+        pytest.fail(f"Infrahub returned an unexpected redirect (HTTP {response.status_code})")
+    response.raise_for_status()
+
+
 def _branch_exists(address: str, token: str, branch: str) -> bool:
     """Whether the destination still lists `branch`."""
     response = requests.post(
@@ -205,8 +212,9 @@ def _branch_exists(address: str, token: str, branch: str) -> bool:
         headers={"X-INFRAHUB-KEY": token, "Content-Type": "application/json"},
         json={"query": "query { Branch { name } }"},
         timeout=30,
+        allow_redirects=False,
     )
-    response.raise_for_status()
+    _raise_for_status_without_redirect(response)
     branches = response.json().get("data", {}).get("Branch") or []
     return any(entry.get("name") == branch for entry in branches)
 
@@ -236,8 +244,9 @@ def unkeyed_scope() -> Iterator[UnkeyedScope]:
             headers={"X-INFRAHUB-KEY": token, "Content-Type": "application/json"},
             json={"schemas": [_SCHEMA]},
             timeout=60,
+            allow_redirects=False,
         )
-        schema_response.raise_for_status()
+        _raise_for_status_without_redirect(schema_response)
         _await_schema_kinds(client, branch, (SITE_KIND, DEVICE_KIND, MOUNT_KIND))
 
         site_name = f"unkeyed-site-{suffix}"
@@ -356,8 +365,13 @@ def test_the_run_writes_nothing_outside_the_branch_it_owns(unkeyed_scope: Unkeye
     scope = unkeyed_scope
     address, token = _env_or_skip()
 
-    response = requests.get(f"{address}/api/schema?branch=main", headers={"X-INFRAHUB-KEY": token}, timeout=30)
-    response.raise_for_status()
+    response = requests.get(
+        f"{address}/api/schema?branch=main",
+        headers={"X-INFRAHUB-KEY": token},
+        timeout=30,
+        allow_redirects=False,
+    )
+    _raise_for_status_without_redirect(response)
     main_kinds = {node["kind"] for node in response.json().get("nodes", [])}
 
     assert main_kinds & {SITE_KIND, DEVICE_KIND} == set(), (
