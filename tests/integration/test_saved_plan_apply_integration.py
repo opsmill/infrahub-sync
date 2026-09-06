@@ -1103,11 +1103,10 @@ def test_applying_a_stored_plan_runs_no_extraction(live_plan: LivePlan) -> None:
 def test_re_applying_an_identical_plan_converges(live_plan: LivePlan) -> None:
     """SC-002: the same object, the same identity, no duplicate, for every kind in the plan.
 
-    This criterion **measures** convergence rather than asserting it holds (AD080): for a
-    destination kind whose convergence key crosses a relationship the render is unkeyed
-    today, and a duplicate here is the recorded AD066/AD067 limitation that
-    `tests/plan/test_apply_conformance.py` carries as a strict expected failure. A failure on
-    such a kind is this test doing its job. The assertion is not weakened for it.
+    A destination kind whose convergence key crosses a relationship cannot render keyed, and
+    its operation is now refused before it writes rather than duplicating. The apply therefore
+    stops at such a kind instead of converging past it, and this criterion measures the kinds
+    that do write. The assertion is not weakened for it.
     """
     writes = [operation for operation in live_plan.plan.operations() if operation.action != "delete"]
 
