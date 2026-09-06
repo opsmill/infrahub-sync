@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 import uvicorn
 from prefect.client.orchestration import get_client
 
+from infrahub_sync.execution import collect_secret_values
+
 from .app import create_app
 from .auth import EnvironmentPrincipalResolver
 from .config_routes import ConfigurationRoutes
@@ -52,7 +54,10 @@ def build_app(
     policy = LivenessPolicy.from_environment(worker_query_seconds=os.environ.get("PREFECT_WORKER_QUERY_SECONDS", "10"))
     projection = projection_factory()
     resolver = resolver_factory()
-    configuration_routes = configuration_routes_factory(product_projection=projection, secrets=resolver.secret_values)
+    # The configuration diagnostics quote declared keys, so this surface needs the ordinary
+    # environment secrets as well as the principal resolver's bearer tokens.
+    configuration_secrets = tuple(dict.fromkeys((*collect_secret_values(), *resolver.secret_values)))
+    configuration_routes = configuration_routes_factory(product_projection=projection, secrets=configuration_secrets)
     orchestration = _ClientPerCallOrchestration()
     service = run_service_factory(
         projection,

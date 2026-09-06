@@ -843,12 +843,17 @@ def validate(
     registry_version: int,
     projection: ProductProjection,
     destination_schema: DestinationSchemaOptions | None = None,
+    secrets: Sequence[str] = (),
 ) -> ValidationReport:
     """Report every declared defect in one registered version, in contract order.
 
     The version is re-read from the registry and validated against the *current* adapter
     declarations, which is why a package that was accepted at registration can report
     findings later.
+
+    ``secrets`` are the collected values the finding producer must not disclose. They are a
+    presentation argument: passed through to the producer for this call, never persisted and
+    never placed in a finding.
 
     ``destination_schema`` is the explicit opt-in for the destination schema checks:
     ``None`` — the default — keeps the declared-content-only behavior byte-identical, with
@@ -867,7 +872,7 @@ def validate(
         msg = f"configuration {config_id!r} has no registered version {registry_version} ({lookup.reason})"
         raise ConfigsNotFoundError(msg)
     parsed = _parse(stored.declared_content)
-    findings = collect_findings(parsed)
+    findings = collect_findings(parsed, secrets)
     fingerprint: str | None = None
     if destination_schema is not None:
         schema_validation = collect_destination_schema_findings(parsed)

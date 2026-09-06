@@ -81,12 +81,13 @@ review because both numbers are real counts of something.
 
 Two practical consequences:
 
-- A kind whose HFID crosses a relationship may not be able to render a client-side `hfid` at all, in
-  which case whether the write converges depends on a destination-side uniqueness constraint covering
-  the components as sent.
-- A kind that declares no HFID is unkeyed as a matter of schema, not as a defect.
+- A kind whose HFID crosses a relationship cannot render a client-side `hfid` at all: the SDK cannot
+  form one from a peer supplied as a resolved node id. Its planned write carries neither `id` nor
+  `hfid` and is refused before it mutates the destination.
+- A kind that declares no HFID has no convergence key to render, so its planned write is refused on
+  the same terms.
 
-Both are handled on the apply path rather than at mapping time; see
+Both are refused by the apply keyedness gate rather than at mapping time; see
 [Planned writes and apply](planned-write-and-apply.md).
 
 ## Filters

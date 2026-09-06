@@ -449,9 +449,8 @@ class PeerResolver:
         # The canonical identity is unhashable, so the memo key carries its canonical JSON
         # encoding — the same normalization the operation identifier hashes (FR-028.3).
         self._memo: dict[tuple[str, bytes], str] = {}
-        # Kinds whose partial filter has been warned about, once per kind per apply — the
-        # same lifetime rule as the adapter's unkeyed-render report (AD078), and it holds
-        # here for the same reason: the resolver lives for exactly one apply.
+        # Kinds whose partial filter has been warned about, once per kind per apply: the
+        # resolver lives for exactly one apply, so the set does too.
         self._partial_filter_reported: set[str] = set()
 
     @staticmethod
@@ -771,18 +770,6 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     # Cache state: absent means hydration has not been attempted; None means
     # one attempt was exhausted; a string is the resolved DiffSync identity.
     _peer_unique_ids: dict[tuple[str, str], str | None]
-
-    # AD078 — destination kinds whose rendered mutation has already been reported as
-    # unkeyed. The report is once per kind, not once per operation, because
-    # `apply_planned_operation` is entered once per operation and a four-thousand-operation
-    # apply would otherwise emit one line per row. The set is created at the start of an
-    # apply and discarded with it, the same lifetime as `PeerResolver`'s memo — which is why
-    # `new_peer_resolver` allocates it and `__init__` does not: an adapter instance can serve
-    # more than one apply in-process, and a set living for the instance would suppress the
-    # second apply's report of a kind the first already named. `None` is the not-in-an-apply
-    # state, which the report site allocates into for a caller that dispatches an operation
-    # without going through the resolver factory.
-    _unkeyed_render_reported: set[str] | None = None
 
     def __init__(
         self,
@@ -1201,75 +1188,30 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         return data
 
-    def _report_unkeyed_render(self, *, node: InfrahubNodeSync, node_schema: NodeSchemaAPI) -> None:
-        """The keyedness gate: read the rendered mutation input and branch on it (AD066).
+    def _require_keyed_render(self, *, node: InfrahubNodeSync, operation: PlannedOperation) -> None:
+        """Refuse the operation unless the rendered mutation carries a usable `id` or `hfid`.
 
-        Keyedness is a property of the **rendered mutation**, not of the assembled data: the
-        SDK keys the upsert on `data["id"]` if the node has one and otherwise on
-        `data["hfid"]`, and `get_human_friendly_id()` returns `None` as soon as any component
-        resolves to `None`. All of that is client-side, so the render is readable before the
-        write is issued.
+        Keyedness is a property of the rendered mutation rather than of the assembled data, so
+        it is read here, immediately before the SDK write. An unkeyed convergent write
+        duplicates its object on a re-apply whatever the kind's human-friendly-ID shape is.
 
-        **The render is read two levels deep (AD076).** `_generate_input_data` returns
-        `{"data": mutation_payload, "variables": …, "mutation_variables": …}` where
-        `mutation_payload` is itself `{"data": data}` — so a check against `…["data"]` alone
-        tests a one-key mapping, is true for every operation ever rendered, and would make
-        the raising arm below fire on all of them.
-
-        Three arms, by the destination kind's HFID shape:
-
-        - **all components direct** — a render carrying neither key can only mean the payload
-          lost its identity components, so it **raises**;
-        - **a component crosses a relationship** — the render carries neither key today for a
-          reason this outcome does not control (the SDK cannot form the `hfid` from a peer
-          supplied as a resolved node id), so it **warns once per kind and proceeds**;
-          refusing would withdraw every relationship-bearing kind from what planned apply
-          delivers, and the destination's convergent write may still key server-side;
-        - **no HFID declared at all** — unkeyed is a schema fact rather than a defect, and
-          FR-024 explicitly permits such a kind and requires the run to survive it, so it
-          **warns on the same terms and never raises (AD076)**.
+        The key must carry a value, not merely be present. Every payload field is rendered as
+        an attribute block, so a field named `id` renders as an empty `id: {}` that the
+        destination can converge on no better than an absent one.
 
         Raises:
-            UnkeyedWriteRefusedError: the render is unkeyed for an all-direct HFID kind.
+            UnkeyedWriteRefusedError: the rendered mutation carries no usable key.
         """
         rendered = node._generate_input_data(exclude_hfid=False)["data"]["data"]
-        if "id" in rendered or "hfid" in rendered:
+        if rendered.get("id") or rendered.get("hfid"):
             return
-
-        kind = node_schema.kind
-        components = _hfid_components(node_schema)
-
-        if components and all(len(_component_segments(component)) == 1 for component in components):
-            msg = (
-                f"The mutation rendered for kind {kind!r} carries neither 'id' nor 'hfid', so the "
-                f"convergent write would be unkeyed and a re-apply would duplicate the object. Every "
-                f"human-friendly-ID component of that kind ({', '.join(components)}) is a direct "
-                f"attribute, so this can only mean the operation's payload lost its identity components."
-            )
-            raise UnkeyedWriteRefusedError(msg)
-
-        condition = (
-            "the kind declares no human-friendly ID, so there is no convergence key to render"
-            if not components
-            else f"the kind's convergence key crosses a relationship ({', '.join(components)}), which the "
-            "client cannot render from a peer supplied as a resolved node id"
+        msg = (
+            f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} rendered a "
+            "mutation carrying no usable 'id' or 'hfid', so the convergent write would be unkeyed and a "
+            "re-apply would duplicate the object. The operation was refused before the SDK write and "
+            "attempted no destination mutation."
         )
-        # Allocated by `new_peer_resolver` at an apply's start (AD078). The fallback covers a
-        # caller that dispatches without asking for a resolver first: it still deduplicates.
-        reported = self._unkeyed_render_reported
-        if reported is None:
-            reported = self._unkeyed_render_reported = set()
-        if kind in reported:
-            return
-        reported.add(kind)
-        logger.warning(
-            "Planned write: the mutation rendered for destination kind %s carries neither 'id' nor "
-            "'hfid' because %s. The write is issued anyway. Watch for a duplicate object of kind %s at "
-            "the destination if it does not key on the identity components as sent.",
-            kind,
-            condition,
-            kind,
-        )
+        raise UnkeyedWriteRefusedError(msg)
 
     def new_peer_resolver(self) -> PeerResolver:
         """Build the peer resolver for one apply (FR-014, AD086).
@@ -1280,11 +1222,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         resolver's dependency is the one that builds it.
 
         One resolver per apply, created at its start and discarded with it — never persisted,
-        never shared between applies. The keyedness report's dedup set is allocated here for
-        the same reason (AD078): its contract is "once per destination kind **per apply**",
-        and on an adapter instance it would silence every disclosure on a second apply.
+        never shared between applies.
         """
-        self._unkeyed_render_reported = set()
         return PeerResolver(self)
 
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: PeerResolver) -> str:
@@ -1308,7 +1247,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         Two checks sit before the write and they are different checks (AD066): the
         per-component **diagnostic** below, which names *which* human-friendly-ID component
-        is unaccounted for, and `_report_unkeyed_render`'s **gate** on the rendered mutation.
+        is unaccounted for, and `_require_keyed_render`'s **gate** on the rendered mutation.
 
         The write is not the last destination interaction: every cardinality-many
         relationship is then written explicitly as a replace-set by a single targeted
@@ -1320,8 +1259,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 limitation, not a failure), and no skip is recorded — see above.
             UnaccountedIdentityComponentError: a human-friendly-ID component of the
                 destination kind is not accounted for by the payload and the operation.
-            UnkeyedWriteRefusedError: the rendered mutation is unkeyed for a kind whose
-                human-friendly ID is all-direct.
+            UnkeyedWriteRefusedError: the rendered mutation carries neither 'id' nor
+                'hfid', so no destination mutation was attempted for it.
             NullRelationshipValueError: a mandatory cardinality-one relationship is null
                 in the planned payload.
             PeerNotFoundError: a peer identity matches no destination object.
@@ -1404,7 +1343,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             schema=node_schema, data=data, source=source_id, owner=owner_id, is_protected=True
         )
         node = self.client.create(kind=operation.kind, data=create_data)
-        self._report_unkeyed_render(node=node, node_schema=node_schema)
+        self._require_keyed_render(node=node, operation=operation)
         node.save(allow_upsert=True)
 
         # Every cardinality-many relationship is written explicitly as a replace-set rather
@@ -1434,8 +1373,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         changed since. It is the only check that can say *which* component is missing, which
         is why it is kept alongside the rendered-mutation gate rather than replaced by it.
 
-        A kind that declares no human-friendly ID has no components and so passes here; that
-        case is the gate's third arm (AD076).
+        A kind that declares no human-friendly ID has no components and so passes here; the
+        rendered-mutation gate is what refuses it.
 
         Raises:
             UnaccountedIdentityComponentError: naming the kind and the missing components.

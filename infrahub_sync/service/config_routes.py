@@ -143,10 +143,19 @@ class ConfigurationRoutes:
     def validate(
         self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = _MAX_PAGE_LIMIT
     ) -> ValidationReportResource:
-        """Validate a version and return the requested ordered findings page."""
+        """Validate a version and return the requested ordered findings page.
 
-        report = self._call(self._service.validate, config_id=config_id, registry_version=registry_version)
-        findings = report.findings[offset : offset + limit]
+        This server's collected secrets reach the producer, which can replace a declared key
+        whole before the diagnostic bounds cut it, and the same set is applied again to every
+        finding on the returned page.
+        """
+
+        report = self._call(
+            self._service.validate, config_id=config_id, registry_version=registry_version, secrets=self._secrets
+        )
+        findings = tuple(
+            configs.redact_finding(finding, self._secrets) for finding in report.findings[offset : offset + limit]
+        )
         return ValidationReportResource.model_validate(
             {
                 "config_id": report.config_id,

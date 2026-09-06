@@ -26,12 +26,13 @@ from .credentials import (
     _STORE_CAPABILITIES,
     _TRUNCATION_MARKER,
     CredentialConfigurationError,
-    _bounded_component,
     _bounded_location,
     _render_setting_name_list,
+    _rendered_component,
 )
 from .models import (
     _MAX_FINDING_TEXT_LENGTH,
+    REDACTED,
     ConfigurationPackage,
     CredentialReferenceNode,
     ValidationFinding,
@@ -153,8 +154,11 @@ def _finding_location(location: str, unbounded_location: str | None = None) -> s
     """
     safe = location.replace(_TRUNCATION_MARKER, _LOCATION_TRUNCATION_MARKER)
     # "~2" survives escaping only as a truncation marker, so its presence means a declared key
-    # was cut; an over-long pointer is the other bound. Either way information was dropped.
-    if _TRUNCATION_MARKER not in location and len(safe) <= _MAX_FINDING_TEXT_LENGTH:
+    # was cut; a redacted component is the second lossy transform and an over-long pointer the
+    # third bound. Either way information was dropped, and two distinct pointers must not
+    # collapse onto one.
+    lossy = _TRUNCATION_MARKER in location or REDACTED in location
+    if not lossy and len(safe) <= _MAX_FINDING_TEXT_LENGTH:
         return safe
     return _marked_location(safe, location if unbounded_location is None else unbounded_location)
 
@@ -221,22 +225,37 @@ def _setting_at_path(settings: Mapping[str, object], path: str) -> tuple[bool, o
     return True, current
 
 
-def _settings_pointer(prefix: str, path: str) -> str:
+def _settings_pointer(prefix: str, path: str, secrets: Sequence[str] = ()) -> str:
     """Build one settings pointer the same way the declared-content walk builds it.
 
     The only place a declared setting path becomes a pointer. An owned location and the walk
     must produce byte-identical strings, or a reference is accepted by one check and refused
     by the next; a second formatter is how that divergence gets reintroduced.
+
+    A declared path is caller-influenced content like any other: redaction happens per
+    component here, before the pointer is assembled and before any bound cuts it, because a
+    bound that cuts through an unredacted component leaves a prefix nothing downstream matches.
     """
-    return prefix + "".join(f"/{_bounded_component(component)}" for component in path.split("."))
+    return prefix + "".join(f"/{_rendered_component(component, secrets)}" for component in path.split("."))
 
 
-def _accumulate_reference_declarations(package: ConfigurationPackage) -> list[_AccumulatedFinding]:
+def _unbounded_settings_pointer(prefix: str, path: str) -> str:
+    """The same pointer with nothing redacted and nothing bounded.
+
+    Ownership and the location digest are both decided on this form: two paths that redact or
+    truncate onto one rendered pointer are still distinct settings.
+    """
+    return prefix + "".join(f"/{_unbounded_component(component)}" for component in path.split("."))
+
+
+def _accumulate_reference_declarations(
+    package: ConfigurationPackage, secrets: Sequence[str]
+) -> list[_AccumulatedFinding]:
     """Validate provider names and identifiers without resolving credential values."""
     accumulated: list[_AccumulatedFinding] = []
     # Insertion order, not sorted: it decides which defect the wrapper reports.
     for name, reference in package.credentials.items():
-        location = f"/credentials/{_bounded_component(name)}"
+        location = f"/credentials/{_rendered_component(name, secrets)}"
         unbounded = f"/credentials/{_unbounded_component(name)}"
         if reference.provider != "env":
             accumulated.append(
@@ -245,7 +264,8 @@ def _accumulate_reference_declarations(package: ConfigurationPackage) -> list[_A
                     location=location,
                     unbounded_location=unbounded,
                     message=(
-                        f"credential reference {name!r} uses provider {reference.provider!r}, which is not installed"
+                        f"credential reference {_rendered_component(name, secrets)!r} uses provider "
+                        f"{_rendered_component(reference.provider, secrets)!r}, which is not installed"
                     ),
                 )
             )
@@ -255,7 +275,10 @@ def _accumulate_reference_declarations(package: ConfigurationPackage) -> list[_A
                     code=_CODE_MALFORMED_CREDENTIAL_REFERENCE,
                     location=location,
                     unbounded_location=unbounded,
-                    message=f"credential reference {name!r} has an invalid environment identifier",
+                    message=(
+                        f"credential reference {_rendered_component(name, secrets)!r} has an invalid "
+                        "environment identifier"
+                    ),
                 )
             )
     return accumulated
@@ -268,6 +291,7 @@ def _accumulate_undeclared_settings(
     prefix: str,
     render: Callable[[Iterable[str]], str],
     owned_locations: list[str],
+    secrets: Sequence[str],
 ) -> list[_AccumulatedFinding]:
     """Report one finding per undeclared name, so N undeclared settings give N findings.
 
@@ -283,13 +307,13 @@ def _accumulate_undeclared_settings(
     legacy_message = render(unsupported)
     accumulated: list[_AccumulatedFinding] = []
     for name in sorted(unsupported):
-        location = f"{prefix}/{_bounded_component(name)}"
-        owned_locations.append(location)
+        unbounded = f"{prefix}/{_unbounded_component(name)}"
+        owned_locations.append(unbounded)
         accumulated.append(
             _accumulated(
                 code=_CODE_UNDECLARED_SETTING,
-                location=location,
-                unbounded_location=f"{prefix}/{_unbounded_component(name)}",
+                location=f"{prefix}/{_rendered_component(name, secrets)}",
+                unbounded_location=unbounded,
                 message=render({name}),
                 legacy_message=legacy_message,
             )
@@ -302,6 +326,8 @@ def _accumulate_reference_node(
     value: object,
     *,
     location: str,
+    unbounded_location: str,
+    secrets: Sequence[str],
 ) -> list[_AccumulatedFinding]:
     """Validate one node at a declared credential-bearing setting path."""
     if not isinstance(value, Mapping) or "$credential" not in value:
@@ -309,6 +335,7 @@ def _accumulate_reference_node(
             _accumulated(
                 code=_CODE_INLINE_CREDENTIAL_VALUE,
                 location=location,
+                unbounded_location=unbounded_location,
                 message=f"{location} contains an inline credential value",
             )
         ]
@@ -319,6 +346,7 @@ def _accumulate_reference_node(
             _accumulated(
                 code=_CODE_MALFORMED_CREDENTIAL_REFERENCE,
                 location=location,
+                unbounded_location=unbounded_location,
                 message=f"{location} contains a malformed credential reference",
             )
         ]
@@ -327,7 +355,11 @@ def _accumulate_reference_node(
             _accumulated(
                 code=_CODE_UNKNOWN_CREDENTIAL_REFERENCE,
                 location=location,
-                message=f"{location} names unknown credential reference {node.reference_name!r}",
+                unbounded_location=unbounded_location,
+                message=(
+                    f"{location} names unknown credential reference "
+                    f"{_rendered_component(node.reference_name, secrets)!r}"
+                ),
             )
         ]
     return []
@@ -339,6 +371,8 @@ def _accumulate_credential_paths(
     paths: tuple[str, ...],
     prefix: str,
     owned_locations: list[str],
+    *,
+    secrets: Sequence[str],
 ) -> list[_AccumulatedFinding]:
     """Judge every declared credential-bearing path present in these settings, and own it."""
     accumulated: list[_AccumulatedFinding] = []
@@ -346,9 +380,17 @@ def _accumulate_credential_paths(
         present, value = _setting_at_path(settings, path)
         if not present or value is None:
             continue
-        location = _settings_pointer(prefix, path)
-        owned_locations.append(location)
-        accumulated.extend(_accumulate_reference_node(package, value, location=location))
+        unbounded = _unbounded_settings_pointer(prefix, path)
+        owned_locations.append(unbounded)
+        accumulated.extend(
+            _accumulate_reference_node(
+                package,
+                value,
+                location=_settings_pointer(prefix, path, secrets),
+                unbounded_location=unbounded,
+                secrets=secrets,
+            )
+        )
     return accumulated
 
 
@@ -436,12 +478,16 @@ def _contained_validator_failure(
     *,
     role: AdapterRole,
     detail: str,
+    secrets: Sequence[str],
 ) -> _AccumulatedFinding:
     """Report a validator that failed, without carrying anything the validator said."""
     return _accumulated(
         code=_CODE_ADAPTER_VALIDATOR_FINDING,
         location=f"/configuration/{role}",
-        message=f"adapter {adapter_name!r} configuration validator {detail} for the {role} role",
+        message=(
+            f"adapter {_rendered_component(adapter_name, secrets)!r} configuration validator {detail} "
+            f"for the {role} role"
+        ),
     )
 
 
@@ -450,6 +496,7 @@ def _accumulate_adapter_validator(
     capabilities: AdapterConfigurationCapabilities,
     *,
     role: AdapterRole,
+    secrets: Sequence[str],
 ) -> list[_AccumulatedFinding]:
     """Run one adapter-owned validator, keeping its own codes and locations."""
     validator = capabilities.validator
@@ -470,7 +517,7 @@ def _accumulate_adapter_validator(
         # Past the call, anything that goes wrong is about what came back, not about the run.
         detail = "returned an unsupported result"
         if not _is_finding_sequence(result):
-            return [_contained_validator_failure(capabilities.adapter_name, role=role, detail=detail)]
+            return [_contained_validator_failure(capabilities.adapter_name, role=role, detail=detail, secrets=secrets)]
         findings = sort_findings([_revalidated_finding(item) for item in result])
         permitted = (f"/configuration/{role}", *_ROLE_INDEPENDENT_VALIDATOR_PREFIXES)
         if not all(_is_within(item.location, permitted) for item in findings):
@@ -479,11 +526,11 @@ def _accumulate_adapter_validator(
             # in the other role's subtree, the store's, or the credential declarations would
             # delete the core's own finding there — including a credential-safety one. That
             # is not precedence being wrong; it is a finding with no standing at that pointer.
-            return [_contained_validator_failure(capabilities.adapter_name, role=role, detail=detail)]
+            return [_contained_validator_failure(capabilities.adapter_name, role=role, detail=detail, secrets=secrets)]
         legacy_message = "; ".join(f"{_bounded_location(item.location)}: {item.message}" for item in findings)
     # A third-party validator may raise anything at all; containing it is the contract.
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-        return [_contained_validator_failure(capabilities.adapter_name, role=role, detail=detail)]
+        return [_contained_validator_failure(capabilities.adapter_name, role=role, detail=detail, secrets=secrets)]
     # One adapter can serve both roles, and a validator that cannot tell them apart reports the
     # same package-level defect twice. Which of the two survives is decided at the presentation
     # boundary, never here: the wrapper's message is element zero of this list.
@@ -497,6 +544,7 @@ def _accumulate_adapter(
     role: AdapterRole,
     settings: Mapping[str, object],
     owned_locations: list[str],
+    secrets: Sequence[str],
 ) -> list[_AccumulatedFinding]:
     """Run every check a declared adapter surface supports, in the shipped order."""
     accumulated: list[_AccumulatedFinding] = []
@@ -505,7 +553,10 @@ def _accumulate_adapter(
             _accumulated(
                 code=_CODE_ADAPTER_ROLE_MISMATCH,
                 location=f"/configuration/{role}",
-                message=f"adapter {capabilities.adapter_name!r} does not support the {role} role",
+                message=(
+                    f"adapter {_rendered_component(capabilities.adapter_name, secrets)!r} does not support "
+                    f"the {role} role"
+                ),
             )
         )
     prefix = f"/configuration/{role}/settings"
@@ -515,26 +566,30 @@ def _accumulate_adapter(
             allowed_settings=capabilities.allowed_settings,
             prefix=prefix,
             render=lambda names: (
-                f"adapter {capabilities.adapter_name!r} contains unsupported declared settings "
-                f"for the {role} role: {_render_setting_name_list(names)}"
+                f"adapter {_rendered_component(capabilities.adapter_name, secrets)!r} contains unsupported "
+                "declared settings "
+                f"for the {role} role: {_render_setting_name_list(names, secrets)}"
             ),
             owned_locations=owned_locations,
+            secrets=secrets,
         )
     )
     for setting_name in sorted(capabilities.allowed_settings & _URL_SETTING_NAMES):
         value = settings.get(setting_name)
         if value is None:
             continue
-        location = _settings_pointer(prefix, setting_name)
-        owned_locations.append(location)
+        location = _settings_pointer(prefix, setting_name, secrets)
+        owned_locations.append(_unbounded_settings_pointer(prefix, setting_name))
         accumulated.extend(_accumulate_url_setting(value, setting_name=setting_name, location=location))
-    accumulated.extend(_accumulate_adapter_validator(package, capabilities, role=role))
+    accumulated.extend(_accumulate_adapter_validator(package, capabilities, role=role, secrets=secrets))
     paths = capabilities.credential_setting_paths
-    accumulated.extend(_accumulate_credential_paths(package, settings, paths, prefix, owned_locations))
+    accumulated.extend(_accumulate_credential_paths(package, settings, paths, prefix, owned_locations, secrets=secrets))
     return accumulated
 
 
-def _accumulate_store(package: ConfigurationPackage, owned_locations: list[str]) -> list[_AccumulatedFinding]:
+def _accumulate_store(
+    package: ConfigurationPackage, owned_locations: list[str], secrets: Sequence[str]
+) -> list[_AccumulatedFinding]:
     """Refuse inline values and undeclared names at the declared store surface."""
     store = package.configuration.store
     if store is None:
@@ -554,7 +609,10 @@ def _accumulate_store(package: ConfigurationPackage, owned_locations: list[str])
             _accumulated(
                 code=_CODE_MISSING_STORE_CAPABILITIES,
                 location="/configuration/store",
-                message=f"store type {store.type!r} has no configuration capability declaration",
+                message=(
+                    f"store type {_rendered_component(store.type, secrets)!r} has no configuration "
+                    "capability declaration"
+                ),
             )
         ]
     prefix = "/configuration/store/settings"
@@ -563,12 +621,14 @@ def _accumulate_store(package: ConfigurationPackage, owned_locations: list[str])
         allowed_settings=capabilities.allowed_settings,
         prefix=prefix,
         render=lambda names: (
-            f"store type {store.type!r} contains unsupported declared settings: {_render_setting_name_list(names)}"
+            f"store type {_rendered_component(store.type, secrets)!r} contains unsupported declared settings: "
+            f"{_render_setting_name_list(names, secrets)}"
         ),
         owned_locations=owned_locations,
+        secrets=secrets,
     )
     paths = capabilities.credential_setting_paths
-    accumulated.extend(_accumulate_credential_paths(package, settings, paths, prefix, owned_locations))
+    accumulated.extend(_accumulate_credential_paths(package, settings, paths, prefix, owned_locations, secrets=secrets))
     return accumulated
 
 
@@ -584,6 +644,7 @@ def _accumulate_reference_nodes(
     unbounded_location: str,
     owned_locations: tuple[str, ...],
     accumulated: list[_AccumulatedFinding],
+    secrets: Sequence[str],
 ) -> None:
     """Report every use of the reserved ``$credential`` key no surface check has authority over.
 
@@ -591,10 +652,14 @@ def _accumulate_reference_nodes(
     owned pointer belongs to a defect that check already reported — or sits in a subtree no
     surface exists to judge. Reporting it here would give one defect a second, vaguer finding
     at a deeper pointer.
+
+    Ownership is decided on the **unbounded** pointer. Truncation and redaction both map
+    distinct declared keys onto one rendered component, and a check that owned a rendered
+    pointer would prune an unrelated node that merely renders the same way.
     """
     # The one question, asked once per node. Pruning here rather than at the "$credential"
     # test below is the same answer: every descendant of an owned pointer is within it too.
-    if _is_within(location, owned_locations):
+    if _is_within(unbounded_location, owned_locations):
         return
     if isinstance(value, Mapping):
         if "$credential" in value:
@@ -611,10 +676,11 @@ def _accumulate_reference_nodes(
         for key, item in value.items():
             _accumulate_reference_nodes(
                 item,
-                location=f"{location}/{_bounded_component(key)}",
+                location=f"{location}/{_rendered_component(key, secrets)}",
                 unbounded_location=f"{unbounded_location}/{_unbounded_component(key)}",
                 owned_locations=owned_locations,
                 accumulated=accumulated,
+                secrets=secrets,
             )
     elif isinstance(value, list):
         for index, item in enumerate(value):
@@ -624,18 +690,19 @@ def _accumulate_reference_nodes(
                 unbounded_location=f"{unbounded_location}/{index}",
                 owned_locations=owned_locations,
                 accumulated=accumulated,
+                secrets=secrets,
             )
 
 
-def _accumulate(package: ConfigurationPackage) -> tuple[_AccumulatedFinding, ...]:
+def _accumulate(package: ConfigurationPackage, secrets: Sequence[str] = ()) -> tuple[_AccumulatedFinding, ...]:
     """Run every check in the shipped execution order, never raising for a declared defect."""
     accumulated: list[_AccumulatedFinding] = []
-    # Every pointer a surface check has authority over. A check appends the setting it judged,
-    # and a surface that turns out not to exist appends its whole settings subtree — the case
-    # where a check could not judge. The walk below reports nowhere within them.
+    # Every unbounded pointer a surface check has authority over. A check appends the setting
+    # it judged, and a surface that turns out not to exist appends its whole settings subtree —
+    # the case where a check could not judge. The walk below reports nowhere within them.
     owned_locations: list[str] = []
-    accumulated.extend(_from_check(_CHECK_CREDENTIALS, _accumulate_reference_declarations(package)))
-    accumulated.extend(_from_check(_CHECK_STORE, _accumulate_store(package, owned_locations)))
+    accumulated.extend(_from_check(_CHECK_CREDENTIALS, _accumulate_reference_declarations(package, secrets)))
+    accumulated.extend(_from_check(_CHECK_STORE, _accumulate_store(package, owned_locations, secrets)))
     source = package.configuration.source
     destination = package.configuration.destination
     source_capabilities = BUILTIN_ADAPTER_CAPABILITIES.get(source.name)
@@ -655,7 +722,10 @@ def _accumulate(package: ConfigurationPackage) -> tuple[_AccumulatedFinding, ...
                         _accumulated(
                             code=_CODE_MISSING_ADAPTER,
                             location=f"/configuration/{role}",
-                            message=f"adapter {adapter.name!r} has no configuration capability declaration",
+                            message=(
+                                f"adapter {_rendered_component(adapter.name, secrets)!r} has no configuration "
+                                "capability declaration"
+                            ),
                         )
                     ],
                 )
@@ -671,6 +741,7 @@ def _accumulate(package: ConfigurationPackage) -> tuple[_AccumulatedFinding, ...
                     role=role,
                     settings=adapter.settings or {},
                     owned_locations=owned_locations,
+                    secrets=secrets,
                 ),
             )
         )
@@ -683,13 +754,14 @@ def _accumulate(package: ConfigurationPackage) -> tuple[_AccumulatedFinding, ...
         unbounded_location="",
         owned_locations=tuple(owned_locations),
         accumulated=walked,
+        secrets=secrets,
     )
     accumulated.extend(_from_check(_CHECK_WALK, walked))
     # The warning families run last, appended after the shipped execution order, so a
     # package carrying any legacy defect keeps its shipped first-error message at the
     # wrapper. Warnings before an error here are what the wrapper's first-*error* rule
     # exists for.
-    accumulated.extend(_from_module(_CHECK_OMISSIONS, accumulate_intentional_omissions(package)))
+    accumulated.extend(_from_module(_CHECK_OMISSIONS, accumulate_intentional_omissions(package, secrets)))
     accumulated.extend(_from_module(_CHECK_OPTIONAL_FEATURES, accumulate_unqualified_optional_features(package)))
     return tuple(accumulated)
 
@@ -715,8 +787,12 @@ def _one_check_per_location(accumulated: tuple[_AccumulatedFinding, ...]) -> lis
     return kept
 
 
-def collect_findings(package: ConfigurationPackage) -> tuple[ValidationFinding, ...]:
+def collect_findings(package: ConfigurationPackage, secrets: Sequence[str] = ()) -> tuple[ValidationFinding, ...]:
     """Return every declared defect as a finding, in the stable cross-interface order.
+
+    ``secrets`` are the collected values a caller-declared key must not disclose. They are
+    read here and never stored: a key carrying one is replaced whole before the length
+    bounds cut it, which is the only point at which the complete key is still available.
 
     Bounded at 256. Accumulation itself never stops early, because truncating in execution
     order would make the surviving findings depend on the order the defects were declared in;
@@ -728,7 +804,7 @@ def collect_findings(package: ConfigurationPackage) -> tuple[ValidationFinding, 
     # sort_findings orders by (location, severity, code), and _one_check_per_location has
     # already made (code, location) unique, so no two findings can tie there. Uniqueness is
     # structural, which is why nothing breaks a tie before the cut below.
-    findings = sort_findings(_one_check_per_location(_accumulate(package)))
+    findings = sort_findings(_one_check_per_location(_accumulate(package, secrets)))
     if len(findings) <= _MAX_REPORTED_FINDINGS:
         return findings
     suppressed = findings[_MAX_REPORTED_FINDINGS:]

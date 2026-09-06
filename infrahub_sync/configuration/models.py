@@ -58,6 +58,9 @@ _MAX_CONTEXT_STRING_LENGTH = 256
 _MAX_CONTEXT_INTEGER = 2**63 - 1
 # Findings are rendered straight into a raised message, so they carry the same bound.
 _MAX_FINDING_TEXT_LENGTH = 256
+# What replaces a collected secret wherever one is removed. Held here because both the
+# finding producer and the boundaries that redact its output need the same token.
+REDACTED = "***"
 _UNSUPPORTED_DECLARED_FIELDS_ERROR = "unsupported_declared_fields"
 _INVALID_UNICODE_SURROGATE_ERROR = "invalid_unicode_surrogate"
 _INVALID_JSON_VALUE_ERROR = "invalid_json_value"
