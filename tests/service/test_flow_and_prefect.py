@@ -16,6 +16,7 @@ from typing_extensions import Self
 pytest.importorskip("prefect")
 pytest.importorskip("opsmill_prefect_extras")
 
+from infrahub_sdk.exceptions import GraphQLError as SDKGraphQLError
 from opsmill_prefect_extras.deployments import apply_deployments
 from opsmill_prefect_extras.workflows import assert_valid_definitions
 from prefect.client.schemas.objects import State, StateType
@@ -33,7 +34,12 @@ from prefect.states import Cancelled, Cancelling, Failed, Pending, Running
 from infrahub_sync.execution import RunResult
 from infrahub_sync.orchestration import flow as direct_flow
 from infrahub_sync.orchestration.flow import infrahub_sync_run
-from infrahub_sync.plan.errors import OperationApplyFailedError
+from infrahub_sync.plan.errors import (
+    OperationApplyFailedError,
+    PeerNotFoundError,
+    UnaccountedIdentityComponentError,
+    UnkeyedWriteRefusedError,
+)
 from infrahub_sync.plan.models import ApplyRecord, PlanManifest
 from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
@@ -464,6 +470,9 @@ def test_service_flow_redacts_worker_logs_exception_chain_and_failed_state(
         "stage": "plan",
         "outcome": "failed",
         "error_type": "ValueError",
+        # The class this stage's failure was raised from. A name, never a message:
+        # the canary assertions above and below cover the whole stored document.
+        "cause_type": "ConnectionError",
     }
     assert environment_canary not in stored.model_dump_json()
     assert configuration_canary not in stored.model_dump_json()
@@ -511,6 +520,7 @@ def test_service_apply_failure_retains_partial_write_evidence(
         "stage": "apply",
         "outcome": "failed",
         "error_type": "OperationApplyFailedError",
+        "cause_type": None,
         **partial.as_summary_keys(),
     }
     assert stored.prefect_executions[0].terminal_state == "failed"
@@ -1039,3 +1049,108 @@ async def test_prefect_extras_deployment_converges_the_service_catalogue_offline
     assert report.is_successful
     assert [result.status for result in report.results] == ["created"]
     assert client.created[0]["work_pool_name"] == "service-pool"
+
+
+# Everything the apply path reports as one `OperationApplyFailedError`. The
+# wrapper is the same for all of them, so a gate whose subject is one refusal has
+# only the recorded cause to read.
+WRAPPED_APPLY_FAILURES = (
+    UnkeyedWriteRefusedError("an operation rendered no usable key"),
+    PeerNotFoundError("a peer identity matched nothing at the destination"),
+    UnaccountedIdentityComponentError("an identity component is unaccounted for"),
+    SDKGraphQLError(errors=[{"message": "the destination refused the mutation"}]),
+)
+
+
+@pytest.mark.usefixtures("_claimed_worker_execution")
+@pytest.mark.parametrize("cause", WRAPPED_APPLY_FAILURES, ids=lambda cause: type(cause).__name__)
+def test_a_wrapped_apply_failure_records_the_class_it_was_raised_from(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    cause: Exception,
+) -> None:
+    """One wrapper, and the recorded cause is what tells these apart.
+
+    Without it an unkeyed render, a peer that matched nothing and a destination's
+    own rejection are one indistinguishable `OperationApplyFailedError` in the
+    run record -- and a gate asserting that *this* refusal happened has nothing to
+    assert against.
+    """
+    run_id = f"run-cause-{type(cause).__name__.lower()}"
+    projection = _create_product_run(tmp_path.resolve(), run_id)
+    partial = ApplyRecord(failed_operation="op-failed")
+    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    bind_granting_guard(monkeypatch, service_flow)
+    monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
+    monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
+    monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
+    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
+
+    def fail_apply(*_args: object, **_kwargs: object) -> NoReturn:
+        # Wrapped exactly as `potenda` wraps an operational apply failure.
+        msg = "applying an operation failed"
+        raise OperationApplyFailedError(msg, apply_record=partial) from cause
+
+    monkeypatch.setattr(service_flow, "execute_run", fail_apply)
+
+    with pytest.raises(RuntimeError):
+        service_sync_run.fn(
+            run_id,
+            "apply",
+            *_binding(projection, run_id),
+            expected_checksum="a" * 64,
+            confirm_writes=True,
+        )
+
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    evidence = stored.results["apply_failure"]
+
+    assert evidence["error_type"] == "OperationApplyFailedError"
+    assert evidence["cause_type"] == type(cause).__name__
+
+
+@pytest.mark.usefixtures("_claimed_worker_execution")
+def test_the_recorded_cause_carries_a_class_name_and_never_a_message(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Safe by construction is what the sweep exists to verify rather than accept.
+
+    A destination's text can carry anything it likes, including a credential it
+    was sent. The recorded cause is one identifier from this process's own
+    taxonomy, so the message the wrapper was raised from must reach nothing.
+    """
+    run_id = "run-cause-carries-no-message"
+    projection = _create_product_run(tmp_path.resolve(), run_id)
+    canary = "kaphaeric-secret-in-a-destination-message"
+    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    bind_granting_guard(monkeypatch, service_flow)
+    monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
+    monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
+    monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
+    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
+
+    def fail_apply(*_args: object, **_kwargs: object) -> NoReturn:
+        msg = "applying an operation failed"
+        cause = SDKGraphQLError(errors=[{"message": canary}])
+        raise OperationApplyFailedError(msg, apply_record=ApplyRecord(failed_operation="op-failed")) from cause
+
+    monkeypatch.setattr(service_flow, "execute_run", fail_apply)
+
+    with pytest.raises(RuntimeError):
+        service_sync_run.fn(
+            run_id,
+            "apply",
+            *_binding(projection, run_id),
+            expected_checksum="a" * 64,
+            confirm_writes=True,
+        )
+
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+
+    assert stored.results["apply_failure"]["cause_type"] == "GraphQLError"
+    assert canary not in stored.model_dump_json()
