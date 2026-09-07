@@ -20,12 +20,12 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Literal
+from typing import Literal, NoReturn
 
 import httpx
 from infrahub_sdk import Config, InfrahubClientSync
 
-from infrahub_sync.client import SyncClient
+from infrahub_sync.client import RunTerminalError, RunWaitTimeoutError, SyncClient, SyncClientError
 from infrahub_sync.client.models import CreateRunRequest, RunResource
 
 # The two operations a run request may name, as the model declares them.
@@ -37,7 +37,7 @@ RUN_TIMEOUT_SECONDS = float(os.environ.get("CLEAN_HOST_RUN_TIMEOUT_SECONDS", "60
 POLL_SECONDS = 3.0
 
 
-def refuse(sentence: str) -> None:
+def refuse(sentence: str) -> NoReturn:
     """End this check with the sentence the driver will report."""
     print(sentence, file=sys.stderr)
     raise SystemExit(1)
@@ -80,7 +80,6 @@ def bundled(client: SyncClient) -> tuple[str, int]:
         if versions and versions[-1].declared_content.get("configuration", {}).get("name") == BUNDLED_CONFIGURATION:
             return summary.config_id, versions[-1].registry_version
     refuse(f"this deployment has no configuration registered as {BUNDLED_CONFIGURATION}")
-    raise AssertionError
 
 
 def run_request(client: SyncClient, operation: Operation, reason: str) -> CreateRunRequest:
@@ -94,9 +93,66 @@ def run_request(client: SyncClient, operation: Operation, reason: str) -> Create
     )
 
 
+# The result key each stage writes its own failure evidence under. Only three of
+# that evidence's fields may be printed -- the stage, its outcome, and the name of
+# the class the worker raised. The rest of it describes what a run touched in the
+# destination, which is not this gate's to report.
+FAILURE_STAGES = ("plan", "verify", "apply", "sync")
+
+# The bound the CLI already applies to the one recorded field that is free-form
+# in principle: a class name, or nothing.
+MAX_TYPE_NAME = 128
+
+
+def printable_type_name(value: object) -> str:
+    """Return a recorded error type only while it is one, so no free text prints."""
+    if isinstance(value, str) and len(value) <= MAX_TYPE_NAME and value.isascii() and value.isidentifier():
+        return value
+    return "an unprintable error type"
+
+
+def reported_reason(client: SyncClient, run_id: str) -> str:
+    """Return what the deployment says it recorded about a failure, or that it says nothing.
+
+    This is the deployment's own account, through the same client that reported
+    the verdict. What the store holds is read separately, by the driver, before
+    teardown: if the two disagree, that disagreement is the finding.
+    """
+    try:
+        results = client.get_results(run_id).results
+    except SyncClientError:
+        return "the deployment could not be asked which stage failed"
+    for stage in FAILURE_STAGES:
+        evidence = results.get(f"{stage}_failure")
+        if isinstance(evidence, dict):
+            return f"{stage} failed with {printable_type_name(evidence.get('error_type'))}"
+    return "the deployment recorded no stage failure"
+
+
 def follow(client: SyncClient, accepted: RunResource) -> RunResource:
-    """Follow one accepted run to its verdict, with the client's own waiting."""
-    return client.wait_for_run(accepted, timeout=RUN_TIMEOUT_SECONDS, poll_interval=POLL_SECONDS)
+    """Follow one accepted run to its verdict, with the client's own waiting.
+
+    The client's error taxonomy is closed on purpose: each error carries its
+    discriminating fields as attributes and leaves the rendering to whichever
+    boundary catches it, the way the CLI renders them. This is that boundary for
+    a check. Left uncaught, the traceback prints the taxonomy's constant sentence
+    and discards the terminal state -- a report that a run ended without success
+    and nothing at all about how.
+    """
+    try:
+        return client.wait_for_run(accepted, timeout=RUN_TIMEOUT_SECONDS, poll_interval=POLL_SECONDS)
+    except RunTerminalError as error:
+        refuse(
+            f"run {error.run_id} ended {error.terminal_state}/{error.terminal_outcome}"
+            f" at phase {error.phase} with outcome {error.outcome};"
+            f" {reported_reason(client, error.run_id)}"
+        )
+    except RunWaitTimeoutError as error:
+        refuse(
+            f"run {error.run_id} did not finish within {RUN_TIMEOUT_SECONDS:.0f}s"
+            f" at phase {error.phase} with outcome {error.outcome},"
+            f" its execution last seen {error.execution_state}"
+        )
 
 
 def key(purpose: str) -> str:

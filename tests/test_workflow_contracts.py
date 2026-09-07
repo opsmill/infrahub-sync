@@ -600,6 +600,26 @@ def test_the_clean_host_job_checks_nothing_out_and_installs_no_interpreter() -> 
             assert tool not in run, f"the clean-host job runs {tool.strip()} on the host"
 
 
+def test_the_clean_host_diagnostic_is_published_by_name_and_never_by_directory() -> None:
+    """The driver's working directory holds the list of this run's own credentials.
+
+    That list is what the sweep looks for, so it lives beside the one file the
+    sweep cleared. Uploading the directory would publish both. A withheld
+    diagnostic is an absent file, and the reason it was withheld is in the log --
+    so the step tolerates finding nothing and never fails a run over it.
+    """
+    uploads = [
+        step for step in clean_host_job()["steps"] if str(step.get("uses", "")).startswith("actions/upload-artifact")
+    ]
+
+    assert uploads, "the clean-host job publishes nothing a failed row leaves behind"
+    for step in uploads:
+        assert step.get("if") == "failure()", "the diagnostic is published for a failure, not for every run"
+        path = str(step["with"]["path"])
+        assert path.endswith("diagnostic.txt"), f"{path} is a directory of the driver's working files"
+        assert step["with"]["if-no-files-found"] == "ignore"
+
+
 def test_the_clean_host_phase_is_bounded_inside_the_job_that_holds_it() -> None:
     """A phase that only stops when the runner does reports nothing about which row ran."""
     job = clean_host_job()

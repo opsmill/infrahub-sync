@@ -10,9 +10,12 @@ says.
 from __future__ import annotations
 
 import re
+from inspect import signature
 from pathlib import Path
 
 import pytest
+
+from infrahub_sync.client import RunTerminalError, RunWaitTimeoutError
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DRIVER = REPO_ROOT / "tests" / "compose" / "clean_host" / "clean-host.sh"
@@ -309,3 +312,211 @@ def test_the_teardown_reports_what_it_could_not_remove() -> None:
     """Silence is how a stale deployment becomes the next run's empty state."""
     assert "owned_resources" in teardown_body()
     assert "resources this run owns are still present" in driver()
+
+
+def function_body(name: str) -> str:
+    """Return one shell function's body, comments already removed."""
+    body = executable_lines()
+    opened = body.index(f"{name}() {{")
+    return body[opened : body.index("\n}", opened)]
+
+
+def test_a_query_this_host_refused_to_answer_is_not_read_as_an_empty_answer() -> None:
+    """Teardown's own verdict rests on this list, so a failed query cannot read as none.
+
+    Every removal is judged complete by this list being empty. A host that
+    refused the question would produce the same emptiness as a host with nothing
+    left on it, and the run would report a teardown it never measured.
+    """
+    helper = function_body("owned_resources").replace("\\\n", " ")
+
+    queried = [line for line in helper.splitlines() if re.match(r"\s*docker\s", line)]
+    assert len(queried) == 2, "the owned-resource list is built from two queries"
+    for line in queried:
+        assert "|| echo" in line, f"a refused query reads as an empty answer: {line.strip()}"
+
+
+# What F16 settled may never reach a retained artifact, in the forms this driver
+# could produce them.
+FORBIDDEN_IN_A_DIAGNOSTIC = ("docker inspect", "compose config", "operator.env", "secrets/", "printenv")
+
+
+def test_the_diagnostic_is_taken_before_anything_is_removed() -> None:
+    """After teardown there is no state left to describe, which is the whole point."""
+    body = teardown_body()
+    captured = body.index("capture_diagnostic")
+
+    for removal in ('compose_bundle reset "$INSTANCE"', "stop_destination", 'docker volume rm "$FOREIGN_VOLUME"'):
+        assert captured < body.index(removal), f"{removal} runs before the diagnostic is taken"
+
+
+def test_the_diagnostic_is_kept_outside_everything_the_teardown_removes() -> None:
+    """A file inside the extracted bundle or a deployment volume dies with them."""
+    declared = re.search(r"^DIAGNOSTIC=(\S+)$", driver(), re.MULTILINE)
+    assert declared is not None, "the driver names no diagnostic to keep"
+    path = declared.group(1)
+
+    assert path.startswith("$WORK/")
+    assert "$EXTRACTED" not in path
+    assert "$BUNDLE" not in path
+
+
+def test_the_diagnostic_is_written_only_once_its_own_final_bytes_are_swept() -> None:
+    """Sweeping the parts and trusting the whole is how a concatenation leaks.
+
+    So the account is assembled under a name of its own and only becomes the
+    retained file after the bytes that would be retained have been read.
+    """
+    capture = function_body("capture_diagnostic")
+
+    assert capture.index("carries_a_canary") < capture.index('mv "$assembled" "$DIAGNOSTIC"')
+    assert not re.search(r'>\s*"?\$DIAGNOSTIC', capture), "the diagnostic is written before it is swept"
+
+
+def test_a_diagnostic_the_sweep_cannot_clear_is_withheld_whole() -> None:
+    """No partial file and no redaction pass: an artifact nobody has is a result.
+
+    Two outcomes withhold it, and they are different -- bytes that carry a
+    credential, and a run that cannot say what its credentials were. A sweep with
+    only the first would clear the second by never looking.
+    """
+    capture = function_body("capture_diagnostic")
+
+    assert len([line for line in capture.splitlines() if "withheld" in line]) == 2
+    assert capture.count('rm -f "$assembled"') == 2
+
+
+@pytest.mark.parametrize("forbidden", FORBIDDEN_IN_A_DIAGNOSTIC)
+def test_the_diagnostic_carries_none_of_the_raw_state_the_boundary_forbids(forbidden: str) -> None:
+    """Container state, the declared environment, and the credential file stay out."""
+    assert forbidden not in function_body("capture_diagnostic")
+
+
+def test_the_diagnostic_carries_a_bounded_tail_of_each_log_rather_than_a_stream() -> None:
+    """Bounded means bounded, and the entry point's own default is not this file's bound."""
+    capture = function_body("capture_diagnostic").replace("\\\n", " ")
+    logged = [line for line in capture.splitlines() if "compose_bundle logs" in line]
+
+    assert logged
+    for line in logged:
+        assert "INFRAHUB_SYNC_LOG_LINES=$DIAGNOSTIC_LINES" in line, f"an unbounded log reaches the file: {line.strip()}"
+
+
+def test_every_sweep_looks_for_the_credentials_this_run_generated() -> None:
+    """A sweep that built no list of its own would clear whatever the last row left."""
+    for function in ("row_secrets", "capture_diagnostic"):
+        assert "write_canaries" in function_body(function), f"{function} sweeps for a list it did not build"
+
+
+def test_the_sweep_primitive_searches_for_a_literal_and_says_when_it_finds_one() -> None:
+    """Both sweeps route through this, so a sweep that cannot match has one place to be."""
+    primitive = function_body("carries_a_canary")
+
+    assert "grep -qF --" in primitive
+    assert "return 0" in primitive
+    assert "return 1" in primitive
+
+
+def test_a_credential_list_that_could_not_be_built_is_not_a_shorter_list() -> None:
+    """A missing generated value ends the attempt rather than narrowing what is sought."""
+    recorder = function_body("record_canary")
+    builder = function_body("write_canaries")
+
+    assert "canary-missing" in recorder
+    assert "return 1" in recorder
+    assert recorder.count("printf") == 2, "a value is either recorded or refused, never both"
+    # The settings loop, plus one call for each credential no setting names.
+    assert builder.count("record_canary") == 1 + len(GENERATED_CREDENTIALS) - len(SECRET_SETTINGS_IN_BUNDLE)
+
+
+# Everything `infrahub-sync-compose init` generates, read from the entry point
+# itself: a new generated credential fails here until a sweep looks for it. The
+# instance identity is not among them -- it is an identifier, and it is the one
+# generated value every label and message carries on purpose.
+def generated_credentials() -> set[str]:
+    source = (REPO_ROOT / "deploy" / "compose" / "infrahub-sync-compose").read_text(encoding="utf-8")
+    opened = source.index("command_init() {")
+    body = source[opened : source.index("\n}", opened)]
+    return set(re.findall(r"^\s*(\w+)=\$\(random_value", body, re.MULTILINE)) | set(
+        re.findall(r'random_value \d+ > "\$(\w+)"', body)
+    )
+
+
+# Where the driver's sweep finds each of them. Two are values inside something
+# else: the principal's token lives in the bearer document, and the administrator
+# password in a file the PostgreSQL image reads. Those two are what an API or a
+# database log would carry, and neither is named by a setting.
+GENERATED_CREDENTIALS = {
+    "product": "INFRAHUB_SYNC_PRODUCT_PASSWORD",
+    "prefect": "INFRAHUB_SYNC_PREFECT_PASSWORD",
+    "access": "INFRAHUB_SYNC_S3_ACCESS_KEY",
+    "secret": "INFRAHUB_SYNC_S3_SECRET_KEY",
+    "principal": "bearer_token",
+    "ADMIN_SECRET": "admin_password",
+}
+SECRET_SETTINGS_IN_BUNDLE = ("product", "prefect", "access", "secret")
+
+
+def test_the_sweep_looks_for_every_credential_the_bundle_generates() -> None:
+    """A generated value no sweep names is a value every artifact may carry."""
+    generated = generated_credentials()
+
+    assert generated == set(GENERATED_CREDENTIALS), (
+        f"the bundle generates {sorted(generated - set(GENERATED_CREDENTIALS))}, which no sweep names"
+    )
+    body = executable_lines()
+    for where in GENERATED_CREDENTIALS.values():
+        assert where in body, f"{where} is where a generated credential should be swept for, and it is absent"
+
+
+def test_the_token_the_checks_are_given_is_the_token_the_sweep_looks_for() -> None:
+    """Extracted in two places the two could drift, and the sweep would clear the live one."""
+    body = executable_lines()
+
+    assert body.count('sed \'s/.*"token": *"//;s/".*//\'') == 1
+    assert "bearer_token" in function_body("configure_deployment")
+    assert "bearer_token" in function_body("write_canaries")
+
+
+def test_the_teardown_states_whether_it_completed() -> None:
+    """A clean teardown and a silent failure to remove anything read the same otherwise."""
+    body = teardown_body()
+
+    assert "incomplete: resources this run owns are still present" in body
+    assert 'report "complete: ' in body
+
+
+def test_the_kit_renders_every_field_the_clients_run_errors_carry() -> None:
+    """The client's error messages are constants, so an unrendered field is a lost field.
+
+    A closed taxonomy puts the discriminator on the exception and leaves the
+    rendering to whichever boundary catches it. A check that let one reach a
+    traceback would print the category -- a run ended without success -- and
+    nothing about which terminal state it reached or why.
+    """
+    source = (CHECKS / "kit.py").read_text(encoding="utf-8")
+
+    for error in (RunTerminalError, RunWaitTimeoutError):
+        for field in list(signature(error.__init__).parameters)[1:]:
+            assert f"error.{field}" in source, f"{error.__name__}.{field} is carried but never rendered"
+
+
+def test_the_recorded_run_state_is_read_from_the_store_and_not_from_the_client() -> None:
+    """The verdict under diagnosis is one the client reported, so it is not the witness."""
+    source = (CHECKS / "diagnostics.py").read_text(encoding="utf-8")
+
+    assert "psycopg.connect" in source
+    assert "product_runs" in source
+    assert "deployment()" not in source
+
+
+def test_the_recorded_run_state_prints_no_column_that_holds_destination_data() -> None:
+    """Two of the columns are documents describing what a run touched; neither prints.
+
+    What may print is the class name a stage recorded, and only while it is one.
+    """
+    source = (CHECKS / "diagnostics.py").read_text(encoding="utf-8")
+
+    assert "{summary}" not in source
+    assert "{results}" not in source
+    assert "printable_type_name(evidence.get('error_type'))" in source

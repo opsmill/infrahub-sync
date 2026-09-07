@@ -293,3 +293,16 @@ jobs:
           set -eu
           chmod 0755 kit/clean-host.sh
           kit/clean-host.sh
+
+      # The one file the driver swept and chose to keep. Named exactly, never the
+      # directory holding it: the driver's working files include the list of this
+      # run's own credentials, which is what the sweep looks for. A withheld
+      # diagnostic is an absent file, and the reason it was withheld is in the log.
+      - name: "Publish the pre-teardown diagnostic of a failed row"
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-clean-host-diagnostic
+          path: kit/work/diagnostic.txt
+          if-no-files-found: ignore
+          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
