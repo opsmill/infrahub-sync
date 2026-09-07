@@ -17,20 +17,54 @@ recorded cause, and this row requires the interruption not to be one.
 from __future__ import annotations
 
 import sys
+import time
+from typing import TYPE_CHECKING
 
 from kit import UNKEYED_REFUSAL, deployment, follow, key, recorded_failure, refuse, run_request
 
+if TYPE_CHECKING:
+    from infrahub_sync.client import SyncClient
+    from infrahub_sync.client.models import PublicRunResource
+
 run_id = sys.argv[1]
 
-with deployment() as client:
-    interrupted = client.get_run(run_id).run
+# What the service waits before it will call a claimed execution stalled:
+# `max(3 * PREFECT_WORKER_QUERY_SECONDS, 30)` in `service/liveness.py`, with a
+# reconciler cadence of half that. The killed worker records nothing itself --
+# reconciliation is what terminalises its execution -- so this row cannot read a
+# verdict that has not been reached yet. Bounded at several times the threshold
+# so a slow host is waited for rather than reported as a product failure.
+STALL_THRESHOLD_SECONDS = 30.0
+RECONCILE_TIMEOUT_SECONDS = 8 * STALL_THRESHOLD_SECONDS
+RECONCILE_POLL_SECONDS = 5.0
 
-    # Precondition: the interruption actually landed on this run.
+
+def await_reconciliation(client: SyncClient, identifier: str) -> PublicRunResource:
+    """Return the run once it carries a terminal, reconciliation-flagged verdict.
+
+    A precondition, not the property: expiring here says the interruption was
+    never recorded, which is a statement about this row's setup rather than
+    evidence about what the deployment does with an uncertain write.
+    """
+    deadline = time.monotonic() + RECONCILE_TIMEOUT_SECONDS
+    while True:
+        run = client.get_run(identifier).run
+        if run.reconciliation_required:
+            return run
+        if time.monotonic() >= deadline:
+            refuse(
+                f"the interrupted run still reports {run.phase!r} after"
+                f" {RECONCILE_TIMEOUT_SECONDS:.0f}s, so no interruption was ever recorded to read"
+            )
+        time.sleep(RECONCILE_POLL_SECONDS)
+
+
+with deployment() as client:
+    # Precondition: the interruption actually landed on this run, and was
+    # recorded. Reading immediately would race the reconciliation that records it.
+    interrupted = await_reconciliation(client, run_id)
     if interrupted.phase not in {"interrupted", "failed"} and "failed" not in interrupted.phase:
         refuse(f"the interrupted run reports {interrupted.phase}, so no ambiguous write was induced")
-
-    if not interrupted.reconciliation_required:
-        refuse("an interrupted write left no durable reconciliation state for an operator to act on")
 
     # And it is not a refusal. Every apply or sync failure after the first
     # operation sets `reconciliation_required`, because the flag derives from a

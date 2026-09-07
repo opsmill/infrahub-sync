@@ -1116,3 +1116,103 @@ def test_no_check_reads_one_stages_failure_evidence_by_name() -> None:
     }
 
     assert not naming, f"{sorted(naming)} read one stage's evidence by name instead of asking the kit"
+
+
+def test_the_drift_row_reads_and_writes_the_branch_its_plan_is_computed_against() -> None:
+    """A drift on another branch says nothing about the comparison the refusal makes.
+
+    The apply compares a fingerprint taken from `effective_destination_branch(...)`,
+    so verifying the change anywhere else would report a passing gate having
+    drifted nothing that gate looks at.
+    """
+    source = code_of(CHECKS / "schema_change.py")
+
+    assert "BRANCH = planned_branch()" in source
+    for call in ("attribute_kind(BRANCH)", "schema.all(branch=branch, refresh=True)", "branch=branch"):
+        assert call in source, f"the drift row does not reach its branch through {call}"
+    assert "'/api/schema'" not in source, "the row reads the unbranched schema endpoint, which answers for main"
+
+
+def test_the_recovery_row_waits_for_the_interruption_to_be_recorded() -> None:
+    """Nothing the killed worker does records it: reconciliation is what terminalises it.
+
+    Reading immediately races a verdict the service has not reached, and the row
+    would report a false negative about the product.
+    """
+    source = code_of(CHECKS / "recovery.py")
+
+    assert "await_reconciliation(client, run_id)" in source
+    assert "STALL_THRESHOLD_SECONDS" in source, "the bound is a number with no stated relationship to the product's"
+    assert "RECONCILE_TIMEOUT_SECONDS = 8 * STALL_THRESHOLD_SECONDS" in source
+
+
+def test_the_busy_worker_row_establishes_busy_before_it_asserts_anything() -> None:
+    """`plan` returns on acceptance and says nothing about what claimed the run.
+
+    Accepting `ready` without that precondition passes a deployment whose worker
+    sat idle; demanding it instead of accepting it fails a healthy one. The row
+    has been wrong in both directions, and both come from asserting the worker's
+    state rather than establishing it and then asserting the deployment's.
+    """
+    source = code_of(CHECKS / "busy_worker_stays_ready.py")
+    established = source.index("while observed != 'busy':")
+    asserted = source.index("status.worker.state not in LIVE")
+
+    assert established < asserted
+    assert "BUSY_TIMEOUT_SECONDS" in source, "an unbounded wait for a worker that may never take the run"
+
+
+@pytest.mark.parametrize("row", ["row_restart", "row_alpha_replacement"])
+def test_every_row_comparing_durable_state_first_proves_there_is_some(row: str) -> None:
+    """The snapshot carries one line per table, so its non-emptiness proves nothing.
+
+    Two empty deployments compare equal as happily as two identical full ones,
+    and a restart that lost everything would satisfy an equality over nothing.
+    """
+    body = function_body(row)
+
+    assert "require_durable_state" in body, f"{row} compares a snapshot it never proved holds anything"
+
+
+def test_the_durable_state_precondition_reads_a_count_and_not_a_string() -> None:
+    """`[ -n "$snapshot" ]` is true for a snapshot of an entirely empty deployment."""
+    helper = function_body("require_durable_state")
+
+    assert "recorded_runs" in helper
+    assert "0) fail" in helper
+
+
+def test_the_secret_row_sweeps_every_deployment_this_run_started() -> None:
+    """Its claim covers what the gate leaves behind, and rows 9 and 10 destroy most of it.
+
+    A tail is the lifecycle command's own bound and right for a diagnostic; for a
+    sweep it makes the sentence wider than the evidence. And no amount of
+    sweeping later recovers a container that no longer exists, so each
+    deployment's whole log is taken before the thing that destroys it.
+    """
+    body = executable_lines()
+    captured = [line for line in body.splitlines() if "capture_deployment_log" in line and "()" not in line]
+
+    assert "INFRAHUB_SYNC_LOG_LINES=all" in body, "the sweep reads a bounded tail of what it claims to have read"
+    assert len(captured) >= 3, "a deployment is destroyed with its log unread"
+    for destroying in ("row_ownership_and_reset", "row_alpha_replacement"):
+        row = function_body(destroying)
+        assert row.index("capture_deployment_log") < row.index('compose_bundle reset "$INSTANCE"'), (
+            f"{destroying} destroys its deployment before its log is taken"
+        )
+    assert '"$LOG_DIR"/*.log' in function_body("row_secrets")
+
+
+def test_no_docker_query_in_a_test_position_reads_a_refusal_as_an_answer() -> None:
+    """A query this host declined answers nothing, and `-z` on it reads as "none left".
+
+    Fixed once in `owned_resources` and missed in the reset row, because fixing an
+    instance does not sweep for the class.
+    """
+    tested = [
+        line.strip()
+        for line in executable_lines().splitlines()
+        if re.search(r'\[ +-[zn] +"\$\(docker ', line) or re.search(r'= +"\$\(docker ', line)
+    ]
+
+    assert tested == [], f"a refused query decides a test: {tested}"

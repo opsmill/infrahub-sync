@@ -15,7 +15,9 @@ the change is reversed afterwards, so a failure here cannot leave the destinatio
 on a schema the rows after it do not expect.
 
 Negative destination-state assertions are read from the destination, independently
-of the deployment client.
+of the deployment client -- and on the branch the plan is computed against. A
+drift verified on `main` while the plan reads a branch says nothing about the
+comparison the refusal makes.
 """
 
 from __future__ import annotations
@@ -27,9 +29,9 @@ import pathlib
 import yaml
 from kit import (
     deployment,
-    destination,
     follow,
     key,
+    planned_branch,
     plant,
     recorded_failure,
     refuse,
@@ -52,40 +54,49 @@ SMOKE_KIND = "InfraDevice"
 REFUSAL = "PlanSchemaChangedError"
 
 
-def attribute_kind() -> str:
-    """The destination's current kind for the attribute the plan consumes."""
-    with destination() as infrahub:
-        answer = infrahub.get("/api/schema")
-        if answer.status_code != 200:
-            refuse("the destination did not answer for its schema")
-        for node in answer.json().get("nodes", []):
-            if node["kind"] == SMOKE_KIND:
-                for declared in node["attributes"]:
-                    if declared["name"] == DRIFTED_ATTRIBUTE:
-                        return str(declared["kind"])
-    refuse(f"the destination declares no {DRIFTED_ATTRIBUTE} attribute on {SMOKE_KIND}")
-    raise AssertionError
+def attribute_kind(branch: str) -> str:
+    """The destination's kind for the attribute the plan consumes, on one branch.
+
+    On the branch the plan is computed against, and read with the call the
+    worker's own schema read makes (`configuration/capabilities.py` ->
+    `client.schema.all(branch=...)`). The apply compares a fingerprint taken from
+    `effective_destination_branch(...)`, so a drift written or verified anywhere
+    else is a statement about a schema the refusal never looks at -- and the row
+    would report a passing gate having drifted nothing it compares.
+    """
+    node = sdk().schema.all(branch=branch, refresh=True).get(SMOKE_KIND)
+    if node is None:
+        refuse(f"the destination serves no {SMOKE_KIND} on {branch}")
+    declared = [attribute.kind for attribute in node.attributes if attribute.name == DRIFTED_ATTRIBUTE]
+    if not declared:
+        refuse(f"the destination declares no {DRIFTED_ATTRIBUTE} attribute on {SMOKE_KIND} on {branch}")
+    return str(declared[0])
 
 
-def load_attribute_kind(kind: str) -> None:
+def load_attribute_kind(kind: str, branch: str) -> None:
     """Load the seeded schema with one attribute kind changed, and prove it landed.
 
-    Loaded through the SDK the image ships, and waited on: Infrahub applies a
-    schema asynchronously, so a plan taken before it converges reads the old
-    semantics -- and this row would then report success having drifted nothing.
+    Loaded onto the same branch, through the SDK the image ships, and waited on:
+    Infrahub applies a schema asynchronously, so a plan taken before it converges
+    reads the old semantics -- and this row would then report success having
+    drifted nothing.
     """
     schema = yaml.safe_load(pathlib.Path(SCHEMA_FILE).read_text(encoding="utf-8"))
     for node in schema["nodes"]:
         for attribute in node["attributes"]:
             if attribute["name"] == DRIFTED_ATTRIBUTE:
                 attribute["kind"] = kind
-    sdk().schema.load(schemas=[schema], wait_until_converged=True)
-    if attribute_kind() != kind:
-        refuse(f"the destination did not converge on {DRIFTED_ATTRIBUTE} kind {kind}")
+    sdk().schema.load(schemas=[schema], branch=branch, wait_until_converged=True)
+    if attribute_kind(branch) != kind:
+        refuse(f"the destination did not converge on {DRIFTED_ATTRIBUTE} kind {kind} on {branch}")
 
+
+# The branch the plan reads and writes, which is the one whose schema the apply
+# compares its recorded fingerprint against.
+BRANCH = planned_branch()
 
 with deployment() as client:
-    original = attribute_kind()
+    original = attribute_kind(BRANCH)
     if original not in REVERSIBLE_KINDS:
         refuse(f"{DRIFTED_ATTRIBUTE} has unsupported live kind {original!r}")
 
@@ -104,7 +115,7 @@ with deployment() as client:
     plan = client.get_plan(run_id)
     require_planned_work(client, run_id)
 
-    load_attribute_kind(REVERSIBLE_KINDS[original])
+    load_attribute_kind(REVERSIBLE_KINDS[original], BRANCH)
     try:
         # Precondition: the plan exists, the change landed above, and the apply is
         # actually attempted against the retained plan.
@@ -125,4 +136,4 @@ with deployment() as client:
         if failure.get("may_have_partially_written"):
             refuse("the refusal reports it may have written, which the gate runs before any adapter to prevent")
     finally:
-        load_attribute_kind(original)
+        load_attribute_kind(original, BRANCH)

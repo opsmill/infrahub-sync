@@ -218,9 +218,42 @@ instance_identity() {
     echo "$identity"
 }
 
+# Every deployment this run started, kept whole rather than as a tail.
+#
+# The secrets row's claim is about what the gate leaves behind, and two things
+# narrow it if nothing is done: the lifecycle command's log is a bounded tail by
+# design, and the deployments that carried most of the matrix are destroyed by
+# the ownership and replacement rows before that row runs. Sweeping harder later
+# cannot recover a container that no longer exists, so each deployment's whole
+# log is taken immediately before the thing that destroys it.
+LOG_DIR=$WORK/logs
+
+capture_deployment_log() {
+    # capture_deployment_log <what is about to happen to it>
+    mkdir -p "$LOG_DIR"
+    INFRAHUB_SYNC_LOG_LINES=all compose_bundle logs > "$LOG_DIR/$INSTANCE-$1.log" 2>&1 || true
+}
+
 # One snapshot of everything a restart or a repeat start must not change.
 durable_snapshot() {
     check durable_state
+}
+
+# How many runs the snapshot says the deployment holds. The snapshot is never
+# empty -- it carries one line per table, count and all -- so its non-emptiness
+# says nothing about there being state to preserve, and two empty deployments
+# compare equal just as happily as two identical full ones.
+recorded_runs() {
+    printf '%s\n' "$1" | sed -n 's/^table product_runs //p' | tail -1
+}
+
+require_durable_state() {
+    # require_durable_state <snapshot> <sentence>
+    runs=$(recorded_runs "$1")
+    case ${runs:-0} in
+        ''|*[!0-9]*) fail "the deployment reported no run count at all, so $2" ;;
+        0) fail "the deployment holds no run, so $2" ;;
+    esac
 }
 
 # ---------------------------------------------------------------------------
@@ -492,6 +525,7 @@ wait_for_state() {
 row_restart() {
     before_worker=$(deployment_container sync-worker)
     before_state=$(durable_snapshot)
+    require_durable_state "$before_state" "a restart preserving it would demonstrate nothing"
 
     compose_bundle restart >/dev/null || fail "the deployment could not be restarted"
     require "the deployment did not return to READY after a restart" READY "$(deployment_status)"
@@ -538,11 +572,13 @@ row_ownership_and_reset() {
         || fail "the deployment refused the reset, but not for the identity it was given"
     report "a reset without the exact instance identity is refused"
 
+    capture_deployment_log before-reset
     compose_bundle reset "$INSTANCE" >/dev/null || fail "the deployment could not be reset"
     docker volume inspect "$FOREIGN_VOLUME" >/dev/null \
         || fail "the reset removed a volume this deployment did not own"
-    [ -z "$(docker ps --all --quiet --filter "label=io.infrahub-sync.instance=$INSTANCE")" ] \
-        || fail "the reset left a container this deployment owned"
+    docker ps --all --quiet --filter "label=io.infrahub-sync.instance=$INSTANCE" > "$WORK/after-reset" \
+        || fail "this host could not be asked what the reset left behind"
+    [ ! -s "$WORK/after-reset" ] || fail "the reset left a container this deployment owned"
     report "the reset removed only what this instance owned, and the foreign volume survived"
 
     reinitialise_deployment
@@ -563,8 +599,9 @@ row_alpha_replacement() {
     # again. Nothing here upgrades anything, and that is the claim being made.
     check seed_disposable_state || fail "disposable state could not be created before replacement"
     before=$(durable_snapshot)
-    [ -n "$before" ] || fail "there was no disposable state to replace"
+    require_durable_state "$before" "there is nothing for a replacement to replace"
 
+    capture_deployment_log before-replacement
     compose_bundle reset "$INSTANCE" >/dev/null || fail "the documented replacement could not reset"
     reinitialise_deployment
     start_deployment "the documented replacement could not deploy again" \
@@ -639,7 +676,7 @@ row_secrets() {
     write_canaries "$WORK/canaries" \
         || fail "$(sed -n 1p "$WORK/canary-missing") holds no generated value for this run to sweep for"
 
-    compose_bundle logs > "$WORK/deployment.log" 2>&1 || true
+    capture_deployment_log final
     docker image history --no-trunc --format '{{.CreatedBy}}' "$IMAGE" > "$WORK/image.history"
     check reported_failures > "$WORK/reported.failures" 2>&1 || true
 
@@ -648,7 +685,7 @@ row_secrets() {
     # of a gzip stream cannot match, so it would report success without looking.
     gzip -dc "$CANDIDATE/$bundle_name" > "$WORK/bundle.tar" \
         || fail "the deployment bundle could not be decompressed to be swept"
-    for target in "$WORK/deployment.log" "$WORK/image.history" "$WORK/reported.failures" "$WORK/bundle.tar"; do
+    for target in "$WORK/image.history" "$WORK/reported.failures" "$WORK/bundle.tar" "$LOG_DIR"/*.log; do
         if carries_a_canary "$target" "$WORK/canaries"; then
             fail "a credential this run generated reached $(basename "$target")"
         fi
@@ -661,7 +698,7 @@ row_secrets() {
             fail "a credential this run generated reached the qualification kit"
         fi
     done < "$WORK/canaries"
-    report "no credential this run generated reached the bundle, image history, logs, failures, or the kit"
+    report "no credential this run generated reached the bundle, image history, any deployment's whole log, failures, or the kit"
 }
 
 # ---------------------------------------------------------------------------
