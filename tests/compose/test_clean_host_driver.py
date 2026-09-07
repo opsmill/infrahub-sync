@@ -1289,3 +1289,20 @@ def test_no_docker_query_in_a_test_position_reads_a_refusal_as_an_answer() -> No
     ]
 
     assert tested == [], f"a refused query decides a test: {tested}"
+
+
+def test_the_drift_row_proves_the_change_moved_what_the_apply_compares() -> None:
+    """Landing on the branch and moving the fingerprint are two different claims.
+
+    `_require_planned_schema` compares the manifest's recorded fingerprint against
+    the live one, and a plan resource exposes that same field -- so a plan taken
+    after the drift carries what `live` will be. Comparing the two is the
+    comparison the apply is about to make, asserted before it is made.
+    """
+    source = code_of(CHECKS / "schema_change.py")
+
+    assert "moved = client.get_plan(probe.run.run_id).schema_fingerprint" in source
+    assert "if plan.schema_fingerprint == moved:" in source
+    # Both values in the refusal, so a run that fails here says which did not move.
+    assert "left the consumed-semantics fingerprint at {moved}" in source
+    assert source.index("load_attribute_kind(REVERSIBLE_KINDS[original], BRANCH)") < source.index("moved = ")

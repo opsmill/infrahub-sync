@@ -117,6 +117,28 @@ with deployment() as client:
     require_planned_work(client, run_id, expected=PLANTED_OPERATIONS)
 
     load_attribute_kind(REVERSIBLE_KINDS[original], BRANCH)
+
+    # Precondition: the change moved the semantics the retained plan recorded.
+    #
+    # `_require_planned_schema` compares the manifest's
+    # `registered_schema_fingerprint` against the one this stage's live read
+    # produces, and a plan resource exposes exactly that field -- so a second plan
+    # taken now carries what `live` will be, and the two together are the
+    # comparison the apply is about to make. Asserted rather than assumed because
+    # the drift landing on the branch and the drift moving that fingerprint are
+    # two different claims, and the row has already been wrong about which one it
+    # was establishing. Both values are named, so a run that fails here says which
+    # of them did not move.
+    probe = follow(client, client.plan(run_request(client, "plan", "clean-host: drift probe"), key("probe")))
+    moved = client.get_plan(probe.run.run_id).schema_fingerprint
+    if plan.schema_fingerprint is None or moved is None:
+        refuse(f"a plan recorded no schema fingerprint to compare: {plan.schema_fingerprint!r} then {moved!r}")
+    if plan.schema_fingerprint == moved:
+        refuse(
+            f"changing {DRIFTED_ATTRIBUTE} from {original} to {REVERSIBLE_KINDS[original]} on {BRANCH}"
+            f" left the consumed-semantics fingerprint at {moved}, so the apply below has nothing to refuse for"
+        )
+
     try:
         # Precondition: the plan exists, the change landed above, and the apply is
         # actually attempted against the retained plan.
