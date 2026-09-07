@@ -151,7 +151,7 @@ bytes, because every field a tar entry or a gzip stream carries beside the file'
 content is fixed rather than taken from the machine: entries are sorted, the
 owner is numeric and unnamed, the mode is the one Git records rather than
 whatever the checkout shows, and both the entry and the gzip header carry the
-source commit's own time. `release.kit` refuses to run while `deploy/compose/`
+time of the source commit. `release.kit` refuses to run while `deploy/compose/`
 differs from `HEAD`, so the revision the record names is the content it archived.
 
 The archive holds the five files a deployment needs and nothing else. What a
@@ -186,7 +186,7 @@ container carrying the deployment's instance label is inspected, and a bind sour
 outside the extracted bundle ends the run.
 
 The matrix has eleven required rows — artifact identity, cold start and
-idempotence, managed execution, keyed write policy, schema change, status,
+idempotency, managed execution, keyed write policy, schema change, status,
 restart, recovery, ownership and reset, alpha replacement, and secrets. The driver
 expresses no way to skip one: each row either returns or ends the run.
 
