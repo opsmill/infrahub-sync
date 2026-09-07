@@ -20,6 +20,7 @@ of the deployment client.
 
 from __future__ import annotations
 
+import contextlib
 import os
 
 import yaml
@@ -35,6 +36,8 @@ DRIFTED_ATTRIBUTE = "type"
 REVERSIBLE_KINDS = {"Text": "TextArea", "TextArea": "Text"}
 SCHEMA_FILE = os.environ["CLEAN_HOST_SCHEMA"]
 SMOKE_KIND = "InfraDevice"
+# The typed refusal the pre-write gate raises when a plan's consumed semantics moved.
+REFUSAL = "PlanSchemaChangedError"
 
 
 def attribute_kind() -> str:
@@ -84,17 +87,18 @@ with deployment() as client:
     try:
         # Precondition: the plan exists, the change landed above, and the apply is
         # actually attempted against the retained plan.
-        try:
+        with contextlib.suppress(APIError):
             client.apply(
                 run_id,
                 ApplyRunRequest(expected_checksum=plan.checksum, confirm_writes=True, reason="clean-host: drift"),
                 key("drift-apply"),
             )
-            applied = follow(client, client.get_run(run_id))
-            refused = "failed" in applied.run.phase
-        except APIError:
-            refused = True
-        if not refused:
-            refuse("an apply whose destination schema moved under it was not refused")
+        # The reason, not merely a failure: an apply that failed for anything else
+        # would satisfy a check that only required it to fail.
+        failure = client.get_results(run_id).results.get("apply_failure", {})
+        if failure.get("error_type") != REFUSAL:
+            refuse(f"the apply reported {failure.get('error_type')!r} rather than {REFUSAL}")
+        if failure.get("may_have_partially_written"):
+            refuse("the refusal reports it may have written, which the gate runs before any adapter to prevent")
     finally:
         load_attribute_kind(original)

@@ -18,6 +18,8 @@ from __future__ import annotations
 from kit import deployment, destination, follow, key, refuse, run_request
 
 KEYLESS_KIND = "CleanKeyless"
+# The typed refusal the adapter raises immediately before the SDK write.
+REFUSAL = "UnkeyedWriteRefusedError"
 
 
 def keyless_objects() -> int:
@@ -45,9 +47,12 @@ with deployment() as client:
         client.sync(run_request(client, "sync", "clean-host: unkeyed apply"), key("unkeyed-apply")),
     )
 
-    # Property: the run failed, and the destination is unchanged.
-    if "failed" not in applied.run.phase:
-        refuse(f"an unkeyed operation ended in {applied.run.phase} rather than being refused")
+    # Property: the run was refused for being unkeyed, and the destination is
+    # unchanged. A run that failed for anything else would satisfy a check that
+    # only required it to fail.
+    failure = client.get_results(applied.run.run_id).results.get("apply_failure", {})
+    if failure.get("error_type") != REFUSAL:
+        refuse(f"the run reported {failure.get('error_type')!r} rather than {REFUSAL}")
     after = keyless_objects()
     if after != before:
         refuse(f"a refused unkeyed operation changed the destination from {before} to {after} objects")

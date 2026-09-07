@@ -137,8 +137,20 @@ record() {
 check() {
     name=$1
     shift
+    [ -n "$NETWORK" ] || fail "the check $name was run before the deployment network it needs existed"
     docker run --rm \
         --network "$NETWORK" \
+        --volume "$CHECKS:/checks:ro" \
+        --env-file "$WORK/check.env" \
+        "$IMAGE" python "/checks/$name.py" "$@"
+}
+
+# The destination is reached at a host address, so a check that only talks to it
+# needs no deployment network -- and runs before one exists.
+destination_check() {
+    name=$1
+    shift
+    docker run --rm \
         --volume "$CHECKS:/checks:ro" \
         --env-file "$WORK/check.env" \
         "$IMAGE" python "/checks/$name.py" "$@"
@@ -155,6 +167,14 @@ start_deployment() {
     compose_bundle start >"$WORK/start" 2>&1 || fail "$1"
     NETWORK=$(deployment_network)
     require "$2" READY "$(deployment_status)"
+}
+
+# A reset removes the instance state file, so the deployment has no identity
+# until it is initialised again -- and the identity it takes is a new one.
+reinitialise_deployment() {
+    compose_bundle init >/dev/null || fail "the bundle could not initialise a deployment again"
+    INSTANCE=$(cat "$BUNDLE/.instance")
+    configure_deployment
 }
 
 setting() {
@@ -182,7 +202,10 @@ destination_compose() {
 start_destination() {
     destination_compose up --detach --wait --wait-timeout 600 infrahub-server task-worker \
         || fail "the pinned destination fixture did not start"
-    check seed_destination || fail "the pinned destination fixture could not be seeded"
+}
+
+seed_destination() {
+    destination_check seed_destination || fail "the pinned destination fixture could not be seeded"
 }
 
 stop_destination() {
@@ -224,12 +247,22 @@ row_artifact_identity() {
 
     compose_bundle init >/dev/null || fail "the extracted bundle could not initialise a deployment"
     INSTANCE=$(cat "$BUNDLE/.instance")
+}
 
-    # A tag names whatever it points at today. Refusing one before anything
-    # starts is what makes the digest above the only way to select what runs.
-    if INFRAHUB_SYNC_IMAGE="infrahub-sync:latest" compose_bundle preflight >"$WORK/tag-refusal" 2>&1; then
+# A tag names whatever it points at today, so the bundle has to refuse one before
+# it starts anything. Two things decide whether this tests that at all: the
+# reference is read from the operator's settings file, which is the only channel
+# `check_image` consults, and preflight reaches that check only once every
+# required setting has a value -- credentials are checked first and refuse for
+# their own reason.
+refuse_a_tag_only_image() {
+    digest=$(setting INFRAHUB_SYNC_IMAGE)
+    set_setting INFRAHUB_SYNC_IMAGE "infrahub-sync:latest"
+    if compose_bundle preflight >"$WORK/tag-refusal" 2>&1; then
+        set_setting INFRAHUB_SYNC_IMAGE "$digest"
         fail "the bundle accepted a tag-only image reference"
     fi
+    set_setting INFRAHUB_SYNC_IMAGE "$digest"
     grep -q "image-not-immutable" "$WORK/tag-refusal" \
         || fail "the bundle refused a tag-only reference, but not for being mutable"
     report "a tag-only image reference is refused before anything starts"
@@ -329,6 +362,8 @@ deployment_status() {
 row_cold_start_and_idempotence() {
     start_destination
     configure_deployment
+    seed_destination
+    refuse_a_tag_only_image
 
     start_deployment "the extracted bundle did not reach a ready deployment from empty state" \
         "the deployment did not report READY after a cold start"
@@ -434,8 +469,10 @@ row_recovery() {
     # The interruption is a host action, so the precondition is a check of its
     # own: it returns only once the run has reached its write, and a worker
     # killed before that leaves nothing ambiguous to reconcile.
-    interrupted=$(check start_apply | tail -1) \
+    check start_apply > "$WORK/interrupted" \
         || fail "no confirmed write reached the point where interrupting it means anything"
+    interrupted=$(tail -1 "$WORK/interrupted")
+    [ -n "$interrupted" ] || fail "the interrupted run was never named"
     docker kill "$(deployment_container sync-worker)" >/dev/null
     start_deployment "the deployment did not come back after its worker was killed" \
         "the deployment did not return to READY after its worker was killed"
@@ -456,6 +493,8 @@ row_ownership_and_reset() {
     if compose_bundle reset "not-this-instance" >"$WORK/reset-refusal" 2>&1; then
         fail "the deployment reset without being given its own identity"
     fi
+    grep -q "confirmation-required" "$WORK/reset-refusal" \
+        || fail "the deployment refused the reset, but not for the identity it was given"
     report "a reset without the exact instance identity is refused"
 
     compose_bundle reset "$INSTANCE" >/dev/null || fail "the deployment could not be reset"
@@ -465,6 +504,7 @@ row_ownership_and_reset() {
         || fail "the reset left a container this deployment owned"
     report "the reset removed only what this instance owned, and the foreign volume survived"
 
+    reinitialise_deployment
     start_deployment "the deployment did not start again after a reset" \
         "the deployment did not return to READY after a reset"
     check cold_bootstrap || fail "the start after a reset was not a cold bootstrap"
@@ -485,12 +525,13 @@ row_alpha_replacement() {
     [ -n "$before" ] || fail "there was no disposable state to replace"
 
     compose_bundle reset "$INSTANCE" >/dev/null || fail "the documented replacement could not reset"
+    reinitialise_deployment
     start_deployment "the documented replacement could not deploy again" \
         "the replaced deployment did not report READY"
 
     [ "$before" != "$(durable_snapshot)" ] \
         || fail "the replacement kept the prior state, which this alpha does not promise"
-    version=$(check served_version)
+    version=$(check served_version) || fail "the replaced deployment did not report a version"
     recorded=$(record "['identity']['version']") || fail "the candidate record names no version"
     require "the replaced deployment does not serve the recorded version" "$recorded" "$version"
     report "reset and redeploy replaced prior disposable state with the recorded version"

@@ -157,3 +157,20 @@ def test_an_absent_entry_point_and_an_unexecutable_one_are_reported_apart() -> N
 
     assert "holds no lifecycle entry point" in body
     assert "present but not executable" in body
+
+
+def test_every_refusal_the_driver_captures_is_checked_for_its_reason() -> None:
+    """A refusal accepted for being non-zero passes on whichever refusal came first.
+
+    The lifecycle entry point stops at its first failed check, so a probe placed
+    before the check it means to exercise is refused for something else entirely
+    -- and an assertion that only requires failure cannot tell the difference.
+    """
+    body = executable_lines()
+    captured = set(re.findall(r'>"\$WORK/([a-z-]+-refusal)"', body))
+
+    assert captured
+    for name in sorted(captured):
+        assert re.search(rf'grep -q "[a-z-]+" "\$WORK/{name}"', body), (
+            f"{name} is captured but never checked for the reason it names"
+        )
