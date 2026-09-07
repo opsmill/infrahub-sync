@@ -174,3 +174,5 @@ zlib
 Buildx
 Syft
 Grype
+Skopeo
+gzip
