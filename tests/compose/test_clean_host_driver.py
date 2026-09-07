@@ -198,3 +198,114 @@ def test_the_secret_sweep_reads_the_bundle_as_shipped_bytes() -> None:
 
     assert "gzip -dc" in body
     assert not re.search(r"swept=.*CANDIDATE/\$bundle_name", body)
+
+
+def test_no_docker_invocation_takes_an_unguarded_substitution_as_its_subject() -> None:
+    """An empty value reaches Docker as a missing argument, not as a refusal.
+
+    A substitution that produced nothing hands Docker an empty container or image
+    and the run fails on Docker's own wording rather than on what the driver was
+    asking about. Every such value comes from a helper that refuses first.
+    """
+    guarding = ("deployment_container", "instance_identity", "record", "setting")
+    unguarded = []
+    for line in executable_lines().splitlines():
+        # Only a line that runs Docker directly hands it arguments. A `$(docker …)`
+        # inside a test is a query whose output is read, not a value passed on.
+        if not re.match(r"\s*docker\s", line):
+            continue
+        unguarded += [call for call in re.findall(r"\$\(([a-z_]+)", line) if call not in guarding]
+
+    assert unguarded == []
+
+
+def test_every_docker_query_read_through_a_pipeline_is_checked_for_emptiness() -> None:
+    """A pipeline reports its last element's status, so the query's failure is lost.
+
+    `x=$(docker … | filter)` succeeds whenever the filter does, so the only thing
+    left to notice a failed query is the emptiness of what it produced.
+    """
+    lines = executable_lines().splitlines()
+    unchecked = []
+    for index, line in enumerate(lines):
+        found = re.match(r"\s*(\w+)=\$\(docker [^)]*\|", line)
+        if not found:
+            continue
+        name = found.group(1)
+        following = " ".join(lines[index + 1 : index + 3])
+        if f'[ -n "${name}" ]' not in following:
+            unchecked.append(line.strip())
+
+    assert unchecked == []
+
+
+def test_the_container_helper_refuses_rather_than_returning_nothing() -> None:
+    """The case above trusts this helper by name, so the guard has to be inside it.
+
+    Its status comes from the query rather than from the filter that trims the
+    result, and an empty result ends the run where it happened instead of
+    reaching Docker as a missing argument.
+    """
+    body = executable_lines()
+    opened = body.index("deployment_container() {")
+    helper = body[opened : body.index("\n}", opened)]
+
+    assert '> "$WORK/containers"' in helper
+    assert "|| fail" in helper
+    assert '[ -n "$container" ]' in helper
+    assert "| head -1" not in helper
+
+
+# Everything the driver creates on the host. Written out, so a new creating verb
+# fails here until teardown is taught to remove what it makes.
+RESOURCE_CREATING = ("compose_bundle start", "destination_compose up", "docker volume create")
+
+
+def teardown_body() -> str:
+    body = executable_lines()
+    opened = body.index("cleanup() {")
+    return body[opened : body.index("\n}", opened)]
+
+
+def test_the_driver_creates_no_resource_its_teardown_does_not_know_about() -> None:
+    """The asymmetry to design against: one creating path torn down and another not."""
+    body = executable_lines()
+    found = {verb for verb in RESOURCE_CREATING if verb in body}
+
+    assert found == set(RESOURCE_CREATING)
+    for verb, removal in (
+        ("compose_bundle start", 'compose_bundle reset "$INSTANCE"'),
+        ("destination_compose up", "stop_destination"),
+        ("docker volume create", 'docker volume rm "$FOREIGN_VOLUME"'),
+    ):
+        assert verb in body
+        assert removal in teardown_body(), f"{verb} has no matching removal in teardown"
+
+
+def test_the_teardown_reaches_only_what_this_run_owns() -> None:
+    """A prefix sweep would take deployments this run never made.
+
+    This host carries unrelated `infrahub-sync-*` containers, so every removal is
+    named by the identity the run generated rather than matched by name.
+    """
+    body = executable_lines()
+
+    assert "system prune" not in body
+    for line in teardown_body().splitlines():
+        if "--filter" in line or "--project-name" in line:
+            assert "$INSTANCE" in line, f"teardown reaches beyond this run: {line.strip()}"
+
+
+def test_the_teardown_preserves_the_failure_that_caused_it() -> None:
+    """A cleanup that swallows the diagnosis is worse than one that leaves containers."""
+    body = teardown_body()
+
+    assert "status=$?" in body
+    assert 'exit "$status"' in body
+    assert '[ "$status" -ne 0 ] || status=1' in body
+
+
+def test_the_teardown_reports_what_it_could_not_remove() -> None:
+    """Silence is how a stale deployment becomes the next run's empty state."""
+    assert "owned_resources" in teardown_body()
+    assert "resources this run owns are still present" in driver()

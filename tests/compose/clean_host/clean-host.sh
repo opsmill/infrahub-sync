@@ -108,7 +108,10 @@ require_no_host_tool_was_used() {
 # The deployment's own services may mount only what the extracted bundle gives
 # them. A bind source outside it is a path this host was expected not to have.
 require_no_foreign_mount() {
-    for container in $(docker ps --all --quiet --filter "label=io.infrahub-sync.instance=$INSTANCE"); do
+    owned=$(docker ps --all --quiet --filter "label=io.infrahub-sync.instance=$INSTANCE") \
+        || fail "this host could not be asked which containers the deployment owns"
+    [ -n "$owned" ] || fail "the deployment owns no containers, so nothing was inspected for a foreign mount"
+    for container in $owned; do
         for source in $(docker inspect \
             --format '{{range .Mounts}}{{if eq .Type "bind"}}{{.Source}} {{end}}{{end}}' "$container"); do
             case "$source" in
@@ -173,12 +176,22 @@ start_deployment() {
 # until it is initialised again -- and the identity it takes is a new one.
 reinitialise_deployment() {
     compose_bundle init >/dev/null || fail "the bundle could not initialise a deployment again"
-    INSTANCE=$(cat "$BUNDLE/.instance")
+    INSTANCE=$(instance_identity)
     configure_deployment
 }
 
 setting() {
     sed -n "s/^$1=//p" "$BUNDLE/operator.env" | tail -1
+}
+
+# The generated identity, read the way the entry point reads it. The state file
+# holds `KEY=VALUE`, and the label the deployment carries is the value alone, so
+# taking the file whole builds a filter that matches nothing and reports it as
+# nothing being there.
+instance_identity() {
+    identity=$(sed -n "s/^INFRAHUB_SYNC_INSTANCE=//p" "$BUNDLE/.instance" | tail -1)
+    [ -n "$identity" ] || fail "the initialised bundle names no instance identity"
+    echo "$identity"
 }
 
 # One snapshot of everything a restart or a repeat start must not change.
@@ -246,7 +259,7 @@ row_artifact_identity() {
     report "the bundle extracted and its entry point arrived executable"
 
     compose_bundle init >/dev/null || fail "the extracted bundle could not initialise a deployment"
-    INSTANCE=$(cat "$BUNDLE/.instance")
+    INSTANCE=$(instance_identity)
 }
 
 # A tag names whatever it points at today, so the bundle has to refuse one before
@@ -332,7 +345,11 @@ ENV
 deployment_container() {
     docker ps --all --quiet \
         --filter "label=io.infrahub-sync.instance=$INSTANCE" \
-        --filter "name=$1" | head -1
+        --filter "name=$1" > "$WORK/containers" \
+        || fail "this host could not be asked which containers the deployment owns"
+    container=$(head -1 "$WORK/containers")
+    [ -n "$container" ] || fail "the deployment owns no $1 container"
+    echo "$container"
 }
 
 deployment_network() {
@@ -589,12 +606,39 @@ row_secrets() {
 # ---------------------------------------------------------------------------
 # The run
 # ---------------------------------------------------------------------------
+# Every container, volume, and network this run created carries the identity it
+# generated, so teardown names that identity and can reach nothing else on the
+# host. A prefix sweep would take deployments this run never made.
+owned_resources() {
+    [ -n "$INSTANCE" ] || return 0
+    {
+        docker ps --all --quiet --filter "label=io.infrahub-sync.instance=$INSTANCE"
+        docker volume ls --quiet --filter "label=io.infrahub-sync.instance=$INSTANCE"
+    } 2>/dev/null | tr -d '[:space:]'
+}
+
+# The failure that caused the exit is the one re-raised: teardown never replaces
+# a diagnosis. What it could not remove is reported, because a deployment left
+# running is the next run's "empty state" -- and a run that finished cleanly and
+# then failed to tear down has not left the host as it found it either.
 cleanup() {
     status=$?
-    ROW=cleanup
-    compose_bundle reset "$INSTANCE" >/dev/null 2>&1 || true
+    ROW=teardown
+    if [ -n "$INSTANCE" ]; then
+        # The entry point first, because it is the operator path. Its own project,
+        # by exact identity, is the fallback for a reset it refuses -- after a row
+        # has already removed the instance state the reset needs.
+        compose_bundle reset "$INSTANCE" >"$WORK/teardown" 2>&1 \
+            || docker compose --project-name "infrahub-sync-$INSTANCE" \
+                down --volumes --remove-orphans >>"$WORK/teardown" 2>&1 \
+            || true
+    fi
     stop_destination
     docker volume rm "$FOREIGN_VOLUME" >/dev/null 2>&1 || true
+    if [ -n "$(owned_resources)" ]; then
+        echo "clean-host: teardown: resources this run owns are still present; see $WORK/teardown" >&2
+        [ "$status" -ne 0 ] || status=1
+    fi
     exit "$status"
 }
 
