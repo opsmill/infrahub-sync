@@ -166,6 +166,30 @@ each of those records the exact image digest it ran against. It also requires
 upload returned, so the record carries the artifact identifiers and digests an
 approval is later bound to, and the retention that has to outlast it.
 
+## Clean-host qualification
+
+The candidate is qualified on a host that has never seen this repository. The job
+checks nothing out, installs no interpreter, and downloads the candidate the build
+published; what it runs is the released artifact rather than the tree that produced
+it. The host needs Docker Engine, Docker Compose, a POSIX shell, and ordinary
+checksum and archive tools — every command that needs Python or the product CLI
+runs inside the candidate image.
+
+The driver and its checks travel in the qualification kit, beside the pinned
+destination the managed rows converge against. None of that is bundle content: an
+operator receives the deployment bundle and nothing from the kit.
+
+Two guards hold the host's shape rather than assume it. Refusing shims for
+`python`, `uv`, `pip`, `pytest`, and the product CLI sit ahead of `PATH` and record
+any invocation, so the run fails on evidence rather than on absence. Every
+container carrying the deployment's instance label is inspected, and a bind source
+outside the extracted bundle ends the run.
+
+The matrix has eleven required rows — artifact identity, cold start and
+idempotence, managed execution, keyed write policy, schema change, status,
+restart, recovery, ownership and reset, alpha replacement, and secrets. The driver
+expresses no way to skip one: each row either returns or ends the run.
+
 ## Publication
 
 Publication is a separate, dispatch-only workflow. It is bound to one candidate

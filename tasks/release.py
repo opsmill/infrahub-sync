@@ -45,11 +45,16 @@ QUALIFICATION_FILE = RECORD_DIR / "qualification.json"
 RESULTS_DIR = RECORD_DIR / "results"
 ARTIFACTS_FILE = RECORD_DIR / "artifacts.json"
 
-# The clean-host gate's own input, and evidence rather than bundle: it routes a
-# deployment to a destination on the build host, which a real deployment reaches
-# as an ordinary address. Shipping it would put the gate's scaffolding into an
-# operator's stack.
-FIXTURE_SOURCE = REPO_ROOT / "tests" / "compose" / "fixture-override.yaml"
+# The clean-host gate's own inputs: the driver a bare host runs, the checks it
+# executes inside the candidate image, the schemas those checks load, and the
+# pinned destination they qualify against. All evidence. None of it ships in the
+# deployment bundle, and none of it is the example content an operator follows.
+QUALIFICATION_SOURCE = REPO_ROOT / "tests" / "compose" / "clean_host"
+DESTINATION_SOURCE = REPO_ROOT / "development"
+DESTINATION_FILES = ("docker-compose.infrahub.yml", "docker-compose.preview.yml", "preview.env")
+# The example schema the gate loads unchanged, so what it qualifies against is
+# what the documentation tells an operator to load.
+EXAMPLE_SCHEMA = REPO_ROOT / "examples" / "prefect_remote_run" / "schemas" / "infra_device.yml"
 
 # The deployment bundle, as the repository holds it. Which of its files ship is
 # decided by what they are, not by what they are called: `configuration/
@@ -464,6 +469,29 @@ def build(context: Context) -> None:
         print(f" - [{NAMESPACE}] Built {DIST_DIR / name}")
 
 
+def build_qualification_kit() -> None:
+    """Assemble what a bare host needs to run the clean-host gate.
+
+    The driver and its checks, the schemas the checks load, and the pinned
+    destination they qualify against. The example schema is copied beside the
+    checks so the gate loads the same file the documentation names.
+    """
+    rmtree(QUALIFICATION_DIR, ignore_errors=True)
+    checks = QUALIFICATION_DIR / "checks"
+    checks.mkdir(parents=True)
+    copyfile(QUALIFICATION_SOURCE / "clean-host.sh", QUALIFICATION_DIR / "clean-host.sh")
+    (QUALIFICATION_DIR / "clean-host.sh").chmod(0o755)
+    for module in sorted((QUALIFICATION_SOURCE / "checks").glob("*.py")):
+        copyfile(module, checks / module.name)
+    for schema in sorted((QUALIFICATION_SOURCE / "destination").glob("*.yml")):
+        copyfile(schema, checks / schema.name)
+    copyfile(EXAMPLE_SCHEMA, checks / EXAMPLE_SCHEMA.name)
+    destination = QUALIFICATION_DIR / "destination"
+    destination.mkdir()
+    for name in DESTINATION_FILES:
+        copyfile(DESTINATION_SOURCE / name, destination / name)
+
+
 @task(name="kit")
 def kit(context: Context) -> None:
     """Produce the deterministic deployment bundle and the separate qualification kit.
@@ -476,8 +504,7 @@ def kit(context: Context) -> None:
     require_archivable_bundle(context)
     archive = write_bundle(identity, bundle_paths(context), BUNDLE_DIR)
     checksum = write_checksum(archive)
-    QUALIFICATION_DIR.mkdir(parents=True, exist_ok=True)
-    copyfile(FIXTURE_SOURCE, QUALIFICATION_DIR / FIXTURE_SOURCE.name)
+    build_qualification_kit()
     print(f" - [{NAMESPACE}] Bundle    {archive}")
     print(f" - [{NAMESPACE}] Checksum  {checksum.read_text(encoding='utf-8').strip()}")
     print(f" - [{NAMESPACE}] Qualification kit in {QUALIFICATION_DIR}")

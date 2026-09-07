@@ -248,3 +248,36 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
+
+  # A host that has never seen this repository. It checks nothing out, installs no
+  # interpreter, and downloads the candidate the job above published: what it runs
+  # is the released artifact, not the tree that produced it.
+  clean-host:
+    name: "Clean-host qualification (linux/amd64, no checkout)"
+    needs: ["image"]
+    runs-on: "ubuntu-22.04"
+    timeout-minutes: 90
+    steps:
+      - name: "Download the candidate this run produced"
+        uses: actions/download-artifact@v4
+        with:
+          pattern: infrahub-sync-{candidate,qualification}-*
+          merge-multiple: true
+          path: candidate
+
+      - name: "Download the qualification kit"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-qualification-kit
+          path: kit
+
+      # Inside the job's bound, so the phase reports a result rather than being
+      # cut off by the runner with nothing said about which row was running.
+      - name: "Run the mandatory matrix"
+        timeout-minutes: 75
+        env:
+          CLEAN_HOST_CANDIDATE: ${{ github.workspace }}/candidate
+        run: |
+          set -eu
+          chmod 0755 kit/clean-host.sh
+          kit/clean-host.sh

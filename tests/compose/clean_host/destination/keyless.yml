@@ -1,0 +1,22 @@
+---
+# The destination kind the keyed-write row needs, and the reason it exists.
+#
+# It declares no `human_friendly_id`. That is the whole point: with one, the SDK
+# renders an `hfid` and the write is keyed, so the refusal under test never
+# fires. This kind is qualification evidence and is never part of the shipped
+# bundle or of the example schema an operator follows.
+version: "1.0"
+
+nodes:
+  - name: Keyless
+    namespace: Clean
+    label: Keyless
+    description: Destination kind whose convergent write cannot be keyed by a human-friendly ID.
+    include_in_menu: false
+    order_by:
+      - name__value
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+        order_weight: 1000

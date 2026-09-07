@@ -48,7 +48,15 @@ TASK_TREE = "tasks/**"
 # phase of that same job then qualifies by running it.
 QUALIFIED_TREES = ("infrahub_sync/**", "deploy/compose/**", "tests/compose/**")
 
+IMAGE_WORKFLOW = WORKFLOWS / "workflow-image.yml"
 PUBLISH_WORKFLOW = WORKFLOWS / "workflow-publish.yml"
+
+# The job that qualifies the candidate on a host that has never seen this
+# repository, and everything it is not allowed to have.
+CLEAN_HOST_JOB = "clean-host"
+CHECKOUT_ACTION = "actions/checkout"
+INTERPRETER_ACTIONS = ("astral-sh/setup-uv", "actions/setup-python")
+HOST_TOOLS = ("uv ", "uvx ", "pipx ", "poetry ", "pytest ")
 # The input one approval turns on, and the protected environment that approval is
 # taken in. A step reachable without both is a publication nobody approved.
 PUBLICATION_INPUT = "inputs.publish"
@@ -556,3 +564,49 @@ def test_every_candidate_artifact_is_kept_long_enough_to_be_approved() -> None:
     assert all(kept.values()), (
         f"{sorted(name for name, held in kept.items() if not held)} are kept for a default window"
     )
+
+
+def clean_host_job() -> dict:
+    """Return the clean-host job, refusing a workflow that no longer defines one."""
+    jobs = load(IMAGE_WORKFLOW)["jobs"]
+    assert CLEAN_HOST_JOB in jobs, f"{IMAGE_WORKFLOW.name} defines no {CLEAN_HOST_JOB} job"
+    return jobs[CLEAN_HOST_JOB]
+
+
+def test_the_clean_host_gate_runs_on_a_pull_request_against_the_v3_line() -> None:
+    """A gate wired to an event this line never raises has never run.
+
+    Reachability is followed through calls, so the job qualifies a candidate on
+    every pull request that could change what the candidate is.
+    """
+    assert IMAGE_WORKFLOW in v3_reachable()
+    assert clean_host_job()["needs"] == ["image"]
+
+
+def test_the_clean_host_job_checks_nothing_out_and_installs_no_interpreter() -> None:
+    """The subject is the released artifact, so the tree that produced it is not present.
+
+    A job that happens to omit a checkout today is one edit from having one, which
+    is why this reads the job rather than the runner's behaviour.
+    """
+    rendered = yaml.safe_dump(clean_host_job())
+
+    assert CHECKOUT_ACTION not in rendered
+    for action in INTERPRETER_ACTIONS:
+        assert action not in rendered, f"the clean-host job sets up an interpreter with {action}"
+    for step in clean_host_job()["steps"]:
+        run = str(step.get("run", ""))
+        for tool in HOST_TOOLS:
+            assert tool not in run, f"the clean-host job runs {tool.strip()} on the host"
+
+
+def test_the_clean_host_phase_is_bounded_inside_the_job_that_holds_it() -> None:
+    """A phase that only stops when the runner does reports nothing about which row ran."""
+    job = clean_host_job()
+    phase = [step for step in job["steps"] if "timeout-minutes" in step]
+
+    assert phase, "no step of the clean-host job states a timeout"
+    for step in phase:
+        assert step["timeout-minutes"] < job["timeout-minutes"], (
+            f"the clean-host step {step.get('name')!r} is not bounded inside its job"
+        )
