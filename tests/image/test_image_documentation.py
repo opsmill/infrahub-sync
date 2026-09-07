@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from invoke import Collection
 
 from tasks import image
 from tests.image.conftest import REPO_ROOT, TMPFS_OPTIONS, WRITABLE_ROOTS
@@ -67,9 +68,13 @@ def test_the_page_documents_every_command_form(form: str) -> None:
     assert form in PAGE.read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("task_name", ["build", "inspect", "smoke", "sbom", "scan", "clean"])
+@pytest.mark.parametrize("task_name", sorted(Collection.from_module(image).task_names))
 def test_the_page_documents_every_image_task(task_name: str) -> None:
-    """The page is where a developer finds these; `invoke --list` only names them."""
+    """The page is where a developer finds these; `invoke --list` only names them.
+
+    Read off the collection rather than listed here, so a task added to the
+    namespace cannot ship without the page that tells anyone it exists.
+    """
     assert f"invoke image.{task_name}" in PAGE.read_text(encoding="utf-8")
 
 

@@ -12,10 +12,11 @@ from tasks import image
 from tests.image.conftest import POSTGRES_IMAGE, external_image_references
 
 # Every image this repository names outside the Dockerfile: the two scanners the
-# supply-chain gate runs, and the database the API smoke starts beside the image.
-# A tool or harness image that a re-pointed tag can change makes the gate itself
+# supply-chain gate runs, the tool that copies a built platform out of the
+# retained layout, and the database the API smoke starts beside the image. A tool
+# or harness image that a re-pointed tag can change makes the gate itself
 # unreproducible, so they are held to the same rule as the runtime base.
-EXTERNAL_TOOL_IMAGES = (image.SYFT_IMAGE, image.GRYPE_IMAGE, POSTGRES_IMAGE)
+EXTERNAL_TOOL_IMAGES = (image.SYFT_IMAGE, image.GRYPE_IMAGE, image.SKOPEO_IMAGE, POSTGRES_IMAGE)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = REPO_ROOT / "Dockerfile"

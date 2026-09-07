@@ -80,6 +80,13 @@ jobs:
       - name: "Record the index and platform digests"
         run: uv run --no-sync invoke image.inspect
 
+      # Two further builds on the builder the candidate build just warmed. They
+      # prove a Python-only edit reaches the next image rather than resolving to
+      # a cached wheel of the source before it.
+      - name: "Prove the warm builder installs the source it copied"
+        timeout-minutes: 45
+        run: uv run --no-sync invoke image.freshness
+
       - name: "Generate the SPDX SBOM"
         run: uv run --no-sync invoke image.sbom
 
@@ -89,10 +96,11 @@ jobs:
       - name: "Smoke both platforms"
         run: uv run --no-sync invoke image.smoke
 
-      # The scanners read a saved copy of each platform image, and those copies
-      # are the largest thing the build leaves behind. Nothing reads them after
-      # the scan, and the lifecycle phase starts two container stacks.
-      - name: "Reclaim the scanner inputs"
+      # Each archive is one platform image copied out of the retained layout, and
+      # those copies are the largest thing the build leaves behind. Nothing reads
+      # them after the scan and the smoke, the layout they came from stays, and
+      # the lifecycle phase starts two container stacks.
+      - name: "Reclaim the exported archives"
         run: uv run --no-sync invoke compose.reclaim
 
       # The same job, the same layout, the same loaded amd64 image. The bundle is

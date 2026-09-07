@@ -27,19 +27,32 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/infrahub-sync/venv \
 
 WORKDIR /src
 COPY pyproject.toml uv.lock README.md LICENSE.txt ./
-COPY infrahub_sync ./infrahub_sync
-COPY opsmill_prefect_extras ./opsmill_prefect_extras
 
-# `--no-editable` installs the project as a built distribution, so the runtime
-# resolves `infrahub_sync` — and the worker's managed flow — by installed dotted
-# identity rather than from a source tree the image would then have to carry.
+# Third-party dependencies come from the committed lock and change only when that
+# lock does, so they install from their own layer against the shared uv cache.
 #
 # pytest arrives through `infrahub-sdk[all]`, which the project depends on for its
 # runtime. Skipping it here keeps a test framework out of the shipped image without
 # touching what a consumer of the published package resolves; nothing the image runs
 # imports it.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-editable --no-install-package pytest --extra service
+    uv sync --frozen --no-dev --no-install-project --no-install-package pytest --extra service
+
+COPY infrahub_sync ./infrahub_sync
+COPY opsmill_prefect_extras ./opsmill_prefect_extras
+
+# One local distribution carries both import trees above. uv keys a built wheel of
+# a local distribution on metadata it can read without walking the tree, so a cache
+# hit after a Python-only edit installs the earlier source while this image's
+# recorded revision advances. Refreshing and reinstalling that one package builds
+# its wheel from the source copied above; every dependency still comes from cache.
+#
+# `--no-editable` installs the project as a built distribution, so the runtime
+# resolves `infrahub_sync` — and the worker's managed flow — by installed dotted
+# identity rather than from a source tree the image would then have to carry.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-editable --no-install-package pytest --extra service \
+        --refresh-package infrahub-sync --reinstall-package infrahub-sync
 
 # ---------------------------------------------------------------------------
 # Runtime stage

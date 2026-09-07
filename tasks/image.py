@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shlex
+import tarfile
 from dataclasses import dataclass
 from datetime import date, datetime
 from importlib.metadata import PackageNotFoundError
@@ -34,6 +35,9 @@ REPO_ROOT = REPO_BASE
 DOCKERFILE = REPO_ROOT / "Dockerfile"
 BUILD_DIR = REPO_ROOT / ".image"
 LAYOUT_DIR = BUILD_DIR / "oci"
+# Its own directory so the transfer step can be given write access to the
+# archives without also being able to write into the layout it reads.
+ARCHIVE_DIR = BUILD_DIR / "archives"
 DIGESTS_FILE = BUILD_DIR / "digests.json"
 WAIVER_FILE = REPO_ROOT / "vulnerability-waivers.yml"
 
@@ -50,6 +54,11 @@ PLATFORMS = ("linux/amd64", "linux/arm64")
 # one commit can therefore differ, and the later one is the one to believe.
 SYFT_IMAGE = "anchore/syft:v1.33.0@sha256:f94e5d9fce1f2278491a8e3a63bd5f6ddb81fdfdbb8bf7a1637565c1d5344357"
 GRYPE_IMAGE = "anchore/grype:v0.101.0@sha256:66a63cacdfeed19c7c9cbad9a841cd538b28055bb0e207013d27a12585a39063"
+
+# Skopeo moves a built platform image out of the retained layout, so it stands
+# between the one build and everything that judges its output. It is pinned by
+# digest for the same reason the scanners are.
+SKOPEO_IMAGE = "quay.io/skopeo/stable:v1.20.0@sha256:47853bb9fb24202af9110531ebd6e43c5f97701254ca290596640290d17942f4"
 
 CANARY_ENV = "INFRAHUB_SYNC_IMAGE_CANARY"
 DIGESTS_SCHEMA_VERSION = 1
@@ -162,30 +171,34 @@ def build_command(
     )
 
 
-def load_command(provenance: SourceProvenance, *, platform: str, reference: str) -> tuple[str, ...]:
-    """Return the fixed buildx argv that puts one platform image in the local daemon."""
+def export_command(*, platform: str, archive: str, reference: str) -> tuple[str, ...]:
+    """Return the fixed argv that copies one recorded platform out of the layout.
+
+    The conversion runs in a pinned container with no network, reads the layout
+    through a read-only mount, and can write only into the archive directory, so
+    the step that transfers a candidate cannot alter the candidate. The platform
+    is selected explicitly rather than left to the host's own architecture.
+    """
+    operating_system, _, architecture = platform.partition("/")
     return (
         "docker",
-        "buildx",
-        "build",
-        "--builder",
-        BUILDER_NAME,
-        "--file",
-        str(DOCKERFILE),
-        "--platform",
-        platform,
-        "--provenance=false",
-        "--sbom=false",
-        "--build-arg",
-        f"VERSION={provenance.version}",
-        "--build-arg",
-        f"REVISION={provenance.revision}",
-        "--build-arg",
-        f"CREATED={provenance.created}",
-        "--tag",
-        reference,
-        "--load",
-        str(REPO_ROOT),
+        "run",
+        "--rm",
+        "--network=none",
+        "--user",
+        f"{os.getuid()}:{os.getgid()}",
+        "--volume",
+        f"{LAYOUT_DIR}:/layout:ro",
+        "--volume",
+        f"{ARCHIVE_DIR}:/archives",
+        SKOPEO_IMAGE,
+        "--override-os",
+        operating_system,
+        "--override-arch",
+        architecture,
+        "copy",
+        "oci:/layout",
+        f"docker-archive:/archives/{archive}:{reference}",
     )
 
 
@@ -414,8 +427,33 @@ def platform_slug(platform: str) -> str:
 
 
 def archive_file(platform: str) -> Path:
-    """Return where one platform image is saved for the scanners to read."""
-    return BUILD_DIR / f"image-{platform_slug(platform)}.tar"
+    """Return where one platform image is exported for transfer and for the scanners."""
+    return ARCHIVE_DIR / f"image-{platform_slug(platform)}.tar"
+
+
+def archive_configuration(archive: Path) -> str:
+    """Return the configuration digest a Docker-load archive names.
+
+    That format carries no manifest digest, so this is what proves an export
+    resolved the manifest the record holds: a manifest names exactly one
+    configuration, and the configuration names every layer through its diff
+    identifiers, which the copy verified on the way out.
+    """
+    try:
+        with tarfile.open(archive) as opened:
+            entry = opened.extractfile("manifest.json")
+            manifest = json.loads(entry.read()) if entry is not None else None
+    except (tarfile.TarError, KeyError, json.JSONDecodeError):
+        msg = f"{archive} is not a readable Docker-load archive"
+        raise ImageTaskError(msg) from None
+    if not isinstance(manifest, list) or len(manifest) != 1:
+        msg = f"{archive} must hold exactly one image"
+        raise ImageTaskError(msg)
+    configuration = _mapping(manifest[0], f"the {archive.name} manifest").get("Config")
+    if not isinstance(configuration, str):
+        msg = f"{archive} names no image configuration"
+        raise ImageTaskError(msg)
+    return f"sha256:{configuration.removesuffix('.json')}"
 
 
 def sbom_file(platform: str) -> Path:
@@ -520,6 +558,21 @@ def inspect(context: Context) -> None:
             print(f" - [{NAMESPACE}]   env      {value}")
 
 
+@task(name="freshness")
+def freshness(context: Context) -> None:
+    """Prove a second build on the warm builder installs the source it copied.
+
+    Its own task rather than a case in the smoke suite: everything under that
+    marker runs against an image the gate has already built and is asked not to
+    build one, and this runs two builds because the builder's cache is what it
+    is about.
+    """
+    _ensure_builder(context)
+    print(f" - [{NAMESPACE}] Checking warm-builder freshness on {BUILDER_NAME}")
+    with context.cd(ESCAPED_REPO_PATH):
+        context.run("pytest tests/image -m builder", env={"INFRAHUB_SYNC_BUILDER": BUILDER_NAME}, pty=True)
+
+
 def _requested_platforms(record: dict, platform: str) -> list[str]:
     requested = [platform] if platform else sorted(record["platforms"])
     missing = [name for name in requested if name not in record["platforms"]]
@@ -529,17 +582,38 @@ def _requested_platforms(record: dict, platform: str) -> list[str]:
     return requested
 
 
-def _load_platform(context: Context, record: dict, platform: str) -> str:
-    """Put one built platform image in the local daemon and prove it is that image.
+def _export_platform(context: Context, record: dict, platform: str) -> Path:
+    """Export one recorded platform out of the retained layout, and prove it is that image.
+
+    Rebuilding to obtain transferable bytes would produce a second artifact and
+    then let every later check describe it as the first, so the candidate is only
+    ever copied. The archive is removed first because the destination format
+    refuses to overwrite, and a stale one would otherwise be read as this export.
+    """
+    expected = record["platforms"][platform]["config"]
+    archive = archive_file(platform)
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    archive.unlink(missing_ok=True)
+    print(f" - [{NAMESPACE}] Exporting {platform} from {LAYOUT_DIR}")
+    _run(context, export_command(platform=platform, archive=archive.name, reference=local_reference(platform)))
+    exported = archive_configuration(archive)
+    if exported != expected:
+        msg = f"{archive} holds {exported}, not the built {platform} image {expected}"
+        raise ImageTaskError(msg)
+    return archive
+
+
+def _import_platform(context: Context, record: dict, platform: str) -> str:
+    """Put one exported platform image in the local daemon and prove it is that image.
 
     The loaded image identifier is the configuration digest, so comparing it to
     the digest recorded from the OCI layout is what makes every later check —
-    smoke, SBOM, scan — a statement about the artifact the index names.
+    smoke, the lifecycle matrix — a statement about the artifact the index names.
     """
-    provenance = source_provenance(**record["provenance"])
+    archive = _export_platform(context, record, platform)
     reference = local_reference(platform)
     print(f" - [{NAMESPACE}] Loading {platform} as {reference}")
-    _run(context, load_command(provenance, platform=platform, reference=reference))
+    _run(context, ("docker", "image", "load", "--input", str(archive)), hide=True)
     loaded = _run(context, ("docker", "image", "inspect", "--format", "{{.Id}}", reference), hide=True).strip()
     expected = record["platforms"][platform]["config"]
     if loaded != expected:
@@ -558,7 +632,7 @@ def smoke(context: Context, platform: str = "") -> None:
 
     requested = _requested_platforms(record, platform)
     for name in requested:
-        reference = _load_platform(context, record, name)
+        reference = _import_platform(context, record, name)
         print(f" - [{NAMESPACE}] Smoking {name}")
         with context.cd(ESCAPED_REPO_PATH):
             context.run(
@@ -577,12 +651,10 @@ def sbom(context: Context, platform: str = "") -> None:
     """Write an SPDX JSON SBOM for each built platform image with the pinned Syft."""
     record = read_digests()
     for name in _requested_platforms(record, platform):
-        reference = _load_platform(context, record, name)
-        archive = archive_file(name)
-        _run(context, ("docker", "image", "save", "--output", str(archive), reference))
-        # The scanner reads the archive and writes nothing: its output comes back
-        # on stdout and this task owns the file, so no container writes into the
-        # build directory as root.
+        archive = _export_platform(context, record, name)
+        # The scanner reads the exported archive and writes nothing: its output
+        # comes back on stdout and this task owns the file, so the bill of
+        # materials describes the candidate's own bytes rather than a rebuild.
         document = _run(
             context,
             (
@@ -591,7 +663,7 @@ def sbom(context: Context, platform: str = "") -> None:
                 "--rm",
                 "--network=none",
                 "--volume",
-                f"{BUILD_DIR}:/work:ro",
+                f"{ARCHIVE_DIR}:/work:ro",
                 SYFT_IMAGE,
                 f"docker-archive:/work/{archive.name}",
                 "--output",
