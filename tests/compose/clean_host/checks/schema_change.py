@@ -25,6 +25,7 @@ from __future__ import annotations
 import contextlib
 import os
 import pathlib
+import sys
 
 import yaml
 from kit import (
@@ -39,6 +40,7 @@ from kit import (
     require_planned_work,
     run_request,
     sdk,
+    settle,
 )
 
 from infrahub_sync.client.errors import APIError
@@ -133,6 +135,10 @@ with deployment() as client:
     moved = client.get_plan(probe.run.run_id).schema_fingerprint
     if plan.schema_fingerprint is None or moved is None:
         refuse(f"a plan recorded no schema fingerprint to compare: {plan.schema_fingerprint!r} then {moved!r}")
+    # Reported whether or not it refuses. A value only printed on failure is a
+    # value nobody has ever seen, and three candidate explanations for this row
+    # were argued from values none of us had looked at.
+    print(f"clean-host: drift: retained {plan.schema_fingerprint} then {moved}", file=sys.stderr)
     if plan.schema_fingerprint == moved:
         refuse(
             f"changing {DRIFTED_ATTRIBUTE} from {original} to {REVERSIBLE_KINDS[original]} on {BRANCH}"
@@ -140,20 +146,28 @@ with deployment() as client:
         )
 
     try:
-        # Precondition: the plan exists, the change landed above, and the apply is
-        # actually attempted against the retained plan.
+        # Precondition: the apply is actually attempted against the retained plan,
+        # and it is waited for. `apply` returns on acceptance, and the refusal is
+        # the worker's -- so reading the evidence here would read a verdict the run
+        # has not reached, and report an unfinished run as the product declining to
+        # refuse. The revert below would also land while the run was still queued.
+        accepted = None
         with contextlib.suppress(APIError):
-            client.apply(
+            accepted = client.apply(
                 run_id,
                 ApplyRunRequest(expected_checksum=plan.checksum, confirm_writes=True, reason="clean-host: drift"),
                 key("drift-apply"),
             )
+        if accepted is None:
+            refuse("the API refused the apply outright, so the pre-write gate never ran to refuse it")
+        settle(client, accepted)
         # The reason, not merely a failure: an apply that failed for anything else
         # would satisfy a check that only required it to fail.
         # Through the kit rather than by stage name: which key holds the evidence
         # depends on the operation that failed, and a row reading one name observes
         # nothing at all about a run that failed in another.
         failure = recorded_failure(client, run_id)
+        print(f"clean-host: drift: the settled apply recorded {failure or 'nothing'}", file=sys.stderr)
         if failure.get("error_type") != REFUSAL:
             refuse(f"the apply reported {failure.get('error_type')!r} rather than {REFUSAL}")
         if failure.get("may_have_partially_written"):

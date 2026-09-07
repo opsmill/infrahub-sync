@@ -1306,3 +1306,96 @@ def test_the_drift_row_proves_the_change_moved_what_the_apply_compares() -> None
     # Both values in the refusal, so a run that fails here says which did not move.
     assert "left the consumed-semantics fingerprint at {moved}" in source
     assert source.index("load_attribute_kind(REVERSIBLE_KINDS[original], BRANCH)") < source.index("moved = ")
+
+
+# What submits a run. Each returns on acceptance, not on completion.
+SUBMISSIONS = ("plan", "sync", "apply", "verify")
+
+
+def submitted_stage(node: ast.AST) -> str | None:
+    """Return the stage a `client.<stage>(...)` call submits, or `None`.
+
+    Returning the name rather than a flag keeps the narrowing where the type
+    checker can follow it: the caller needs `node.func.attr` and `node.lineno`,
+    and neither is reachable from a bare `ast.AST`.
+    """
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        return None
+    if node.func.attr not in SUBMISSIONS:
+        return None
+    if not isinstance(node.func.value, ast.Name) or node.func.value.id != "client":
+        return None
+    return node.func.attr
+
+
+def unwaited_submissions(source: str) -> list[str]:
+    """Return every run submission in a module that nothing waits for.
+
+    A submission is waited when it is handed straight to `follow`/`settle`, or
+    assigned to a name one of them is later given. Read from the parsed module,
+    because "a `follow` appears somewhere in this file" is not the claim.
+    """
+    tree = ast.parse(source)
+    waited: set[str] = set()
+    settled_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in {"follow", "settle"}:
+            for argument in node.args:
+                if isinstance(argument, ast.Call):
+                    waited.add(ast.dump(argument))
+                elif isinstance(argument, ast.Name):
+                    settled_names.add(argument.id)
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+            continue
+        if {target.id for target in node.targets if isinstance(target, ast.Name)} & settled_names:
+            waited.add(ast.dump(node.value))
+
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        stage = submitted_stage(node)
+        if stage is None or ast.dump(node) in waited:
+            continue
+        found.add(f"client.{stage} on line {getattr(node, 'lineno', 0)}")
+    return sorted(found)
+
+
+def test_no_check_reads_a_verdict_from_a_run_it_never_waited_for() -> None:
+    """A submission returns on 202, and the verdict is the worker's, reached later.
+
+    Reading the evidence straight after submitting reports an unfinished run as
+    the product declining to do what the row is about -- which is how row 5
+    reported `None` where the refusal belongs. Third occurrence of this class:
+    row 4 needed `settle`, row 8 needed a bounded wait for reconciliation.
+
+    Two submissions are deliberately unwaited and neither reads a verdict: the
+    busy-worker row keeps a run in flight on purpose, and the interrupt row hands
+    its run to the driver to kill mid-write.
+    """
+    offenders = {}
+    for module in sorted(CHECKS.glob("*.py")):
+        source = code_of(module)
+        if "recorded_failure" not in source and "get_results" not in source:
+            continue
+        bare = unwaited_submissions(source)
+        if bare:
+            offenders[module.name] = bare
+
+    assert offenders == {}, f"a verdict is read from a run nothing waited for: {offenders}"
+
+
+def test_the_drift_rows_apply_is_settled_before_its_evidence_is_read() -> None:
+    """And before the revert, which would otherwise land while the run was queued."""
+    source = code_of(CHECKS / "schema_change.py")
+
+    assert source.index("settle(client, accepted)") < source.index("failure = recorded_failure(client, run_id)")
+    assert source.index("settle(client, accepted)") < source.index("load_attribute_kind(original, BRANCH)")
+
+
+def test_the_drift_row_waits_for_the_schema_it_loaded_to_converge() -> None:
+    """A read that saw the change and a destination that finished applying it differ."""
+    source = code_of(CHECKS / "schema_change.py")
+
+    assert "wait_until_converged=True" in source
+    assert "if attribute_kind(branch) != kind:" in source
