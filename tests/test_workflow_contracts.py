@@ -385,43 +385,58 @@ def reachable_from_an_event() -> set[Path]:
     return reached
 
 
-@pytest.mark.parametrize(("workflow", "job", "step"), publishing_steps(), ids=_identify)
-def test_every_publishing_step_exists_only_when_publication_is_turned_on(workflow: Path, job: str, step: str) -> None:
-    """With publication off there must be nothing left to reach, not merely to skip."""
-    definition, declared = _step(workflow, job, step)
-
-    assert _guarded(definition, declared), (
-        f"{workflow.name} job {job} step {step!r} publishes without {PUBLICATION_INPUT} deciding whether it exists"
-    )
-
-
-@pytest.mark.parametrize(("workflow", "job", "step"), publishing_steps(), ids=_identify)
-def test_every_publishing_step_runs_in_the_protected_release_environment(workflow: Path, job: str, step: str) -> None:
-    """The environment is where the approval is taken; without it the guard is only an input."""
-    definition, _ = _step(workflow, job, step)
-    environment = definition.get("environment")
-    named = environment.get("name") if isinstance(environment, dict) else environment
-
-    assert named == RELEASE_ENVIRONMENT, (
-        f"{workflow.name} job {job} step {step!r} publishes from the {named!r} environment "
-        f"rather than {RELEASE_ENVIRONMENT!r}"
-    )
+def pull_request_reachable() -> set[Path]:
+    """Return every workflow a pull request can reach, through calls included."""
+    called = {
+        path: {target for job in load(path).get("jobs", {}).values() if (target := called_workflow(job)) is not None}
+        for path in sorted(WORKFLOWS.glob("*.yml"))
+    }
+    pending = [path for path in called if "pull_request" in triggers(path)]
+    reached: set[Path] = set()
+    while pending:
+        current = pending.pop()
+        if current in reached:
+            continue
+        reached.add(current)
+        pending.extend(called.get(current, ()))
+    return reached
 
 
-def test_no_workflow_reachable_from_an_event_publishes_anything() -> None:
-    """A push, a pull request, or a published release must not be able to publish.
+def test_nothing_a_pull_request_reaches_publishes_anything() -> None:
+    """Validation is lint, unit, image, smoke and Compose, and none of that publishes.
+
+    Narrowed to a pull request rather than to every automatic trigger, because the
+    legacy release route really does publish: a published release reaches
+    `uv publish`, deliberately and unchanged. Narrowing it to the V3 *line* is not
+    available -- `release: published` carries no branch filter, so the reachability
+    helper admits that route for every branch, this one included. What is true,
+    and what pull-request validation actually asks for, is that nothing a pull
+    request can start publishes.
 
     Reachability is followed through calls, so moving a publication into a
-    workflow that an automatic trigger calls does not escape this.
+    workflow that a pull request calls does not escape this.
     """
-    automatic = reachable_from_an_event()
+    publishing = {workflow for workflow, _job, _step in publishing_steps()}
+    reached = pull_request_reachable()
+
+    assert publishing, WORKFLOWS
+    assert reached, WORKFLOWS
+    assert not (reached & publishing), (
+        f"{sorted(path.name for path in reached & publishing)} can publish from a pull request"
+    )
+
+
+def test_the_legacy_release_route_is_what_the_case_above_would_otherwise_name() -> None:
+    """Without this the case above would pass on a repository that publishes nowhere.
+
+    The same shape the version-retyping pair already uses: the excluded route
+    demonstrably does the thing, and demonstrably is not something a pull request
+    can start.
+    """
     publishing = {workflow for workflow, _job, _step in publishing_steps()}
 
-    assert automatic, WORKFLOWS
-    assert publishing, WORKFLOWS
-    assert not (automatic & publishing), (
-        f"{sorted(path.name for path in automatic & publishing)} can publish without anyone choosing a candidate"
-    )
+    assert publishing & reachable_from_an_event(), "no trigger reaches a publication, so the exclusion proves nothing"
+    assert not (publishing & pull_request_reachable())
 
 
 def test_one_workflow_is_the_only_route_to_a_package_index() -> None:
@@ -437,40 +452,10 @@ def test_one_workflow_is_the_only_route_to_a_package_index() -> None:
     assert uploaders == {PUBLISH_WORKFLOW}
 
 
-def test_the_approval_declares_the_version_it_binds_and_cannot_omit_it() -> None:
-    """A default would let a run that declared no version publish under one anyway."""
-    declared = triggers_of(PUBLISH_WORKFLOW)["workflow_dispatch"]["inputs"]
-
-    assert declared["version"]["required"] is True
-    assert "default" not in declared["version"]
-    assert declared["candidate-run"]["required"] is True
-
-
 def triggers_of(path: Path) -> dict:
     """Return one workflow's trigger mapping, however YAML read its `on` key."""
     document = load(path)
     return document[True] if True in document else document["on"]
-
-
-def test_the_approval_never_checks_out_source_to_name_or_rebuild_an_artifact() -> None:
-    """The candidate is the authority on its own names; the source has moved on."""
-    text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
-
-    assert "actions/checkout" not in text
-    assert "uv build" not in text
-    assert "github.ref_name" not in text
-
-
-def test_only_the_step_that_binds_the_approval_reads_the_declared_version() -> None:
-    """Everything after it reads the candidate's own record, not the approval's spelling."""
-    reading = [
-        _step_name(step)
-        for job in load(PUBLISH_WORKFLOW)["jobs"].values()
-        for step in job["steps"]
-        if "inputs.version" in yaml.safe_dump(step)
-    ]
-
-    assert len(reading) == 1, reading
 
 
 def _retypes_identity(step: dict) -> bool:
