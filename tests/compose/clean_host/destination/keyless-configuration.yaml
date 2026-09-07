@@ -12,6 +12,13 @@
 # `name` is in the payload. The refusal happens later, immediately before the SDK
 # write, which is the property the contract names.
 #
+# The two sides name different branches, and the seeding forks the destination one
+# before the object exists. Both sides on one branch read identically, so the plan
+# would propose nothing and the row would refuse for emptiness rather than for
+# what it tests. Nothing here ever reaches Infrahub, so the destination's own
+# uniqueness and identifier rules never come into it: the refusal happens before
+# the write is attempted.
+#
 # This is qualification evidence. It is never part of the shipped bundle.
 format_version: 1
 configuration:
@@ -27,7 +34,7 @@ configuration:
     name: infrahub
     settings:
       url: "http://destination.invalid:8000"
-      branch: main
+      branch: clean-host-keyless
       token:
         $credential: infrahub-token
   schema_mapping:

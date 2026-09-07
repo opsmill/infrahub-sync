@@ -33,11 +33,24 @@ REFUSAL = "UnkeyedWriteRefusedError"
 CONFIGURATION = "/checks/keyless-configuration.yaml"
 
 
-def keyless_objects() -> int:
+def declared_package() -> dict:
+    """The whole declared package this row registers, credentials included."""
+    return dict(yaml.safe_load(pathlib.Path(CONFIGURATION).read_text(encoding="utf-8")))
+
+
+def keyless_objects(branch: str) -> int:
+    """Count the kind's objects on one branch, read from the destination itself.
+
+    On the branch the run writes to, never on `main`: a refused write would leave
+    `main` unchanged whether it was refused or not, and the count would confirm
+    the property without ever having been able to contradict it. Infrahub
+    addresses a branch by path (`_graphql_url` in the SDK), so this is the same
+    endpoint the deployment's own adapter reads.
+    """
     with destination() as infrahub:
-        answer = infrahub.post("/graphql", json={"query": f"{{ {KEYLESS_KIND} {{ count }} }}"})
+        answer = infrahub.post(f"/graphql/{branch}", json={"query": f"{{ {KEYLESS_KIND} {{ count }} }}"})
         if answer.status_code != 200:
-            refuse("the destination did not answer for the keyless kind's object count")
+            refuse(f"the destination did not answer for the keyless kind's object count on {branch}")
         return int(answer.json()["data"][KEYLESS_KIND]["count"])
 
 
@@ -47,7 +60,7 @@ def registered_keyless(client: SyncClient) -> tuple[str, int]:
     Its own, because the bundled configuration maps a kind with a renderable
     human-friendly ID and can never produce the operation under test.
     """
-    package = yaml.safe_load(pathlib.Path(CONFIGURATION).read_text(encoding="utf-8"))
+    package = declared_package()
     address = os.environ["INFRAHUB_DESTINATION_URL"]
     for side in ("source", "destination"):
         package["configuration"][side]["settings"]["url"] = address
@@ -58,8 +71,10 @@ def registered_keyless(client: SyncClient) -> tuple[str, int]:
     return answer.version.config_id, answer.version.registry_version
 
 
+written_branch = declared_package()["configuration"]["destination"]["settings"]["branch"]
+
 with deployment() as client:
-    before = keyless_objects()
+    before = keyless_objects(written_branch)
     config_id, registry_version = registered_keyless(client)
 
     def request(operation: Operation, reason: str) -> CreateRunRequest:
@@ -90,6 +105,6 @@ with deployment() as client:
     failure = client.get_results(applied.run.run_id).results.get("apply_failure", {})
     if failure.get("error_type") != REFUSAL:
         refuse(f"the run reported {failure.get('error_type')!r} rather than {REFUSAL}")
-    after = keyless_objects()
+    after = keyless_objects(written_branch)
     if after != before:
-        refuse(f"a refused unkeyed operation changed the destination from {before} to {after} objects")
+        refuse(f"a refused unkeyed operation changed {written_branch} from {before} to {after} objects")

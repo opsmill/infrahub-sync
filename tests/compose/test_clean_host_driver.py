@@ -25,6 +25,8 @@ CHECKS = REPO_ROOT / "tests" / "compose" / "clean_host" / "checks"
 # The declared configuration the deployment's own bootstrap registers. What its
 # destination side names is what every managed row plans against.
 BUNDLED_CONFIGURATION = REPO_ROOT / "deploy" / "compose" / "configuration" / "qualification.yaml"
+# The one configuration a row registers for itself, carried in the kit.
+KEYLESS_CONFIGURATION = REPO_ROOT / "tests" / "compose" / "clean_host" / "destination" / "keyless-configuration.yaml"
 
 # Every row the accepted matrix requires. Written out rather than read from the
 # driver, so a row deleted from the driver fails here instead of narrowing the
@@ -715,7 +717,7 @@ def test_the_destination_is_prepared_in_the_order_a_branch_inherits_from() -> No
     source = seeding()
     steps = (
         "for schema in SCHEMAS:",
-        "seed_object()\n",
+        "seed_object(CREATE_DEVICE, SEEDED_DEVICE)",
         "ensure_branch(planned_branch())",
         "planted = plant_pending_update()",
     )
@@ -770,3 +772,74 @@ def test_the_planted_difference_is_read_back_from_the_destination() -> None:
 
     assert source.count("sdk().get(") == 2
     assert "did not keep the change" in source
+
+
+def branches_of(configuration: Path) -> dict[str, str]:
+    """Return the branch each side of one declared configuration names."""
+    declared = yaml.safe_load(configuration.read_text(encoding="utf-8"))["configuration"]
+    return {side: declared[side]["settings"]["branch"] for side in ("source", "destination")}
+
+
+@pytest.mark.parametrize("configuration", [BUNDLED_CONFIGURATION, KEYLESS_CONFIGURATION], ids=lambda path: path.stem)
+def test_no_configuration_a_row_runs_reads_and_writes_one_branch(configuration: Path) -> None:
+    """One branch on both sides reads identically, so the plan proposes nothing.
+
+    The row then refuses for emptiness rather than for the property it exists to
+    test -- which is how the keyed-write row could never have reached its own.
+    """
+    sides = branches_of(configuration)
+
+    assert sides["source"] != sides["destination"], f"{configuration.name} reads and writes {sides['source']}"
+
+
+def test_every_branch_a_configuration_names_is_one_the_seeding_forks() -> None:
+    """A branch nobody creates fails inside the worker, not in the row that named it."""
+    named = {
+        branch
+        for configuration in (BUNDLED_CONFIGURATION, KEYLESS_CONFIGURATION)
+        for branch in branches_of(configuration).values()
+    } - {"main"}
+    forked = set(re.findall(r"ensure_branch\(planned_branch\(([A-Z_]*)\)\)", seeding()))
+
+    assert len(named) == len(forked), f"{sorted(named)} are planned against and {sorted(forked)} are forked"
+
+
+def test_the_keyed_write_rows_branch_is_forked_before_its_kind_has_an_object() -> None:
+    """The opposite order from the managed rows, and for a reason of its own.
+
+    Forked while the kind is still empty, the plan proposes a create -- the
+    operation carrying no renderable key. Forked afterwards, both sides hold the
+    object and the plan proposes nothing at all. The identifier collision the
+    managed order exists to avoid cannot arise here: `CleanKeyless` declares no
+    human-friendly ID, and nothing this row plans ever reaches the destination.
+    """
+    source = seeding()
+    steps = ("ensure_branch(planned_branch(KEYLESS_CONFIGURATION))", "seed_object(CREATE_KEYLESS, SEEDED_KEYLESS)")
+    missing = [step for step in steps if step not in source]
+    assert not missing, f"the seeding never performs {missing}"
+
+    assert source.index(steps[0]) < source.index(steps[1]), "the branch is forked after its kind already has an object"
+
+
+def test_the_keyed_write_row_counts_on_the_branch_its_run_writes_to() -> None:
+    """A refused write leaves `main` unchanged whether it was refused or not.
+
+    Counting there would confirm the property without ever having been able to
+    contradict it.
+    """
+    source = code_of(CHECKS / "keyed_write_policy.py")
+
+    # Rendered from the parsed module, so the quoting is the unparser's.
+    assert "f'/graphql/{branch}'" in source
+    assert "'/graphql'" not in source, "the count is taken on the branch `/graphql` addresses"
+    assert "written_branch" in source
+
+
+def test_the_keyed_write_row_registers_the_whole_package_it_declares() -> None:
+    """The declared credentials are part of it, and a run without them resolves no token."""
+    source = code_of(CHECKS / "keyed_write_policy.py")
+    declared = yaml.safe_load(KEYLESS_CONFIGURATION.read_text(encoding="utf-8"))
+
+    assert "credentials" in declared, "the keyed-write configuration declares no credential to resolve"
+    assert "declared_package()" in source
+    assert "format_version" not in source, "the package is rebuilt rather than read, so a section can be dropped"

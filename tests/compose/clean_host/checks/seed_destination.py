@@ -49,10 +49,17 @@ SCHEMAS = ("/checks/infra_device.yml", "/checks/keyless.yml")
 # from the extracted bundle. The branch is read from it rather than named here:
 # a plan runs against the branch that document names, and nothing else.
 CONFIGURATION = "/configuration/qualification.yaml"
+# The keyed-write row's own configuration, which the kit carries beside the
+# checks. Its destination branch is forked before its kind has any object, so the
+# plan it runs proposes a create -- the operation whose key cannot be rendered.
+KEYLESS_CONFIGURATION = "/checks/keyless-configuration.yaml"
 
 SEEDED_KIND = "InfraDevice"
 SEEDED_DEVICE = "clean-host-device"
 CREATE_DEVICE = 'mutation { InfraDeviceCreate(data: {name: {value: "NAME"}, type: {value: "seed"}}) { ok } }'
+KEYLESS_KIND = "CleanKeyless"
+SEEDED_KEYLESS = "clean-host-keyless-object"
+CREATE_KEYLESS = 'mutation { CleanKeylessCreate(data: {name: {value: "NAME"}}) { ok } }'
 # The attribute the declared configuration maps, so a change to it is a change
 # the plan sees. Anything else would leave the two sides equal as far as a plan
 # is concerned.
@@ -70,14 +77,14 @@ def load(schema: str) -> None:
         refuse(f"the destination refused the schema {schema}")
 
 
-def planned_branch() -> str:
-    """Return the branch the declared configuration writes to, refusing a vacuous pair.
+def planned_branch(configuration: str = CONFIGURATION) -> str:
+    """Return the branch one declared configuration writes to, refusing a vacuous pair.
 
     Two sides naming one branch read identically, so every plan against them is
     empty -- and a row asserting that its plan proposed something would refuse for
     that instead of for what it means to test.
     """
-    document = yaml.safe_load(pathlib.Path(CONFIGURATION).read_text(encoding="utf-8"))
+    document = yaml.safe_load(pathlib.Path(configuration).read_text(encoding="utf-8"))
     declared = document["configuration"]
     source = declared["source"]["settings"]["branch"]
     branch = declared["destination"]["settings"]["branch"]
@@ -86,12 +93,12 @@ def planned_branch() -> str:
     return str(branch)
 
 
-def seed_object() -> None:
-    """Create the one object both sides will hold, on `main`."""
+def seed_object(mutation: str, named: str) -> None:
+    """Create one object on `main`, which is the branch `/graphql` addresses."""
     with destination() as infrahub:
-        created = infrahub.post("/graphql", json={"query": CREATE_DEVICE.replace("NAME", SEEDED_DEVICE)})
+        created = infrahub.post("/graphql", json={"query": mutation.replace("NAME", named)})
         if created.status_code != 200:
-            refuse("the destination refused the object this gate seeds")
+            refuse(f"the destination refused the object {named} this gate seeds")
 
 
 def ensure_branch(name: str) -> None:
@@ -149,8 +156,20 @@ def plant_pending_update() -> str:
 for schema in SCHEMAS:
     load(schema)
 
-seed_object()
+# The managed rows: the object first, then the branch that inherits it, then the
+# difference. Every position is explained above.
+seed_object(CREATE_DEVICE, SEEDED_DEVICE)
 ensure_branch(planned_branch())
+
+# The keyed-write row, whose order is the opposite one for a reason of its own:
+# its branch is forked while its kind still has no object, so the plan proposes a
+# create rather than an update. A create is what carries no renderable key, and
+# `CleanKeyless` declares no human-friendly ID -- so the identifier collision that
+# the order above exists to avoid cannot arise here. Nothing this row plans ever
+# reaches the destination: the refusal happens before the write is attempted.
+ensure_branch(planned_branch(KEYLESS_CONFIGURATION))
+seed_object(CREATE_KEYLESS, SEEDED_KEYLESS)
+
 planted = plant_pending_update()
 
-print(f"{SEEDED_DEVICE} {planted}", file=sys.stderr)
+print(f"{SEEDED_DEVICE} {SEEDED_KEYLESS} {planted}", file=sys.stderr)
