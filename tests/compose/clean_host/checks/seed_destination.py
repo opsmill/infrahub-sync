@@ -35,34 +35,20 @@ run's plan would be empty again.
 
 from __future__ import annotations
 
-import pathlib
 import subprocess  # noqa: S404 -- fixed argv, the product CLI the image ships
 import sys
-import uuid
 
-import yaml
-from infrahub_sdk.node import Attribute
-from kit import destination, refuse, sdk
+from kit import SEEDED_DEVICE, destination, planned_branch, plant, refuse, sdk
 
 SCHEMAS = ("/checks/infra_device.yml", "/checks/keyless.yml")
-# The declared configuration the deployment's own bootstrap registers, mounted
-# from the extracted bundle. The branch is read from it rather than named here:
-# a plan runs against the branch that document names, and nothing else.
-CONFIGURATION = "/configuration/qualification.yaml"
 # The keyed-write row's own configuration, which the kit carries beside the
 # checks. Its destination branch is forked before its kind has any object, so the
 # plan it runs proposes a create -- the operation whose key cannot be rendered.
 KEYLESS_CONFIGURATION = "/checks/keyless-configuration.yaml"
 
-SEEDED_KIND = "InfraDevice"
-SEEDED_DEVICE = "clean-host-device"
 CREATE_DEVICE = 'mutation { InfraDeviceCreate(data: {name: {value: "NAME"}, type: {value: "seed"}}) { ok } }'
-KEYLESS_KIND = "CleanKeyless"
 SEEDED_KEYLESS = "clean-host-keyless-object"
 CREATE_KEYLESS = 'mutation { CleanKeylessCreate(data: {name: {value: "NAME"}}) { ok } }'
-# The attribute the declared configuration maps, so a change to it is a change
-# the plan sees. Anything else would leave the two sides equal as far as a plan
-# is concerned.
 
 
 def load(schema: str) -> None:
@@ -75,22 +61,6 @@ def load(schema: str) -> None:
     )
     if result.returncode != 0:
         refuse(f"the destination refused the schema {schema}")
-
-
-def planned_branch(configuration: str = CONFIGURATION) -> str:
-    """Return the branch one declared configuration writes to, refusing a vacuous pair.
-
-    Two sides naming one branch read identically, so every plan against them is
-    empty -- and a row asserting that its plan proposed something would refuse for
-    that instead of for what it means to test.
-    """
-    document = yaml.safe_load(pathlib.Path(configuration).read_text(encoding="utf-8"))
-    declared = document["configuration"]
-    source = declared["source"]["settings"]["branch"]
-    branch = declared["destination"]["settings"]["branch"]
-    if branch == source:
-        refuse(f"the declared configuration reads and writes {branch}, so no plan against it can propose anything")
-    return str(branch)
 
 
 def seed_object(mutation: str, named: str) -> None:
@@ -116,43 +86,6 @@ def ensure_branch(name: str) -> None:
         refuse(f"the destination did not create the branch {name} the configuration names")
 
 
-def planned_attribute(device: object) -> Attribute:
-    """Return the object's `type`, refusing anything the SDK does not model as an attribute.
-
-    A fetched node types every member as an attribute or one of two relationship
-    shapes, so which one this is has to be established rather than assumed. Doing
-    it here rather than suppressing the union turns a typing gap into a refusal
-    that says what the destination actually declared.
-    """
-    attribute = device.type  # ty: ignore[unresolved-attribute] - TODO: a fetched node is typed by its schema
-    if not isinstance(attribute, Attribute):
-        refuse(f"the destination models {SEEDED_KIND} type as {type(attribute).__name__}, not as an attribute")
-    return attribute
-
-
-def plant_pending_update() -> str:
-    """Change the seeded object on `main` alone, and return the value written.
-
-    This is the one difference every managed plan proposes. `type` is the
-    attribute because the declared configuration maps it, so a change to it is a
-    change a plan sees; a change to anything else leaves the two sides equal as
-    far as a plan is concerned.
-
-    Written against `main`, so the branch keeps the value it inherited. Read back
-    afterwards, because a save that persisted nothing would leave a plan with
-    nothing to propose and the row would report that instead.
-    """
-    value = f"clean-host-{uuid.uuid4().hex[:12]}"
-    device = sdk().get(kind=SEEDED_KIND, branch="main", name__value=SEEDED_DEVICE)
-    planned_attribute(device).value = value
-    device.save()
-
-    written = sdk().get(kind=SEEDED_KIND, branch="main", name__value=SEEDED_DEVICE)
-    if planned_attribute(written).value != value:
-        refuse("the destination did not keep the change that gives a plan something to propose")
-    return value
-
-
 for schema in SCHEMAS:
     load(schema)
 
@@ -170,6 +103,6 @@ ensure_branch(planned_branch())
 ensure_branch(planned_branch(KEYLESS_CONFIGURATION))
 seed_object(CREATE_KEYLESS, SEEDED_KEYLESS)
 
-planted = plant_pending_update()
+planted = plant("managed")
 
 print(f"{SEEDED_DEVICE} {SEEDED_KEYLESS} {planted}", file=sys.stderr)

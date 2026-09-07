@@ -137,6 +137,9 @@ record() {
 
 # The checks are this gate's code, mounted read-only into a throwaway container
 # on the deployment's network. They are never a service of the deployment.
+# The extracted bundle's declared configuration comes with them, read-only: which
+# branches a run reads and writes is named there and nowhere else, and a row that
+# plants a difference has to put it on the side the plan reads from.
 check() {
     name=$1
     shift
@@ -144,6 +147,7 @@ check() {
     docker run --rm \
         --network "$NETWORK" \
         --volume "$CHECKS:/checks:ro" \
+        --volume "$BUNDLE/configuration:/configuration:ro" \
         --env-file "$WORK/check.env" \
         "$IMAGE" python "/checks/$name.py" "$@"
 }
@@ -581,6 +585,13 @@ row_alpha_replacement() {
 # are per-run by construction, and they are the ones that would actually hurt.
 # Everything the gate leaves behind is swept, including the kit itself, because
 # the kit is evidence and the contract names evidence.
+#
+# What this row does not sweep for, as stated scope rather than omission: the
+# destination fixture's API token. It is a published development constant that
+# ships inside this kit, in the fixture's own environment file, so a sweep for it
+# would match the kit on every run and never be able to report anything else. The
+# claim here is about credentials this run generated -- values that exist because
+# `init` made them, and that no published artifact could already contain.
 SECRET_SETTINGS='INFRAHUB_SYNC_PRODUCT_PASSWORD
 INFRAHUB_SYNC_PREFECT_PASSWORD
 INFRAHUB_SYNC_S3_ACCESS_KEY

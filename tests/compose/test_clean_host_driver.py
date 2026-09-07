@@ -75,6 +75,30 @@ def code_of(path: Path) -> str:
     return ast.unparse(tree)
 
 
+def branch_literals(source: str) -> set[str]:
+    """Return every string literal a module uses as a branch.
+
+    A branch name and a configuration's declared name can be the same string --
+    they are here -- so "this name does not appear in the kit" is a claim about
+    the wrong thing. What matters is whether a literal reaches a branch position.
+    """
+    found = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Call):
+            found |= {
+                entry.value.value
+                for entry in node.keywords
+                if entry.arg == "branch"
+                and isinstance(entry.value, ast.Constant)
+                and isinstance(entry.value.value, str)
+            }
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            named = {target.id.lower() for target in node.targets if isinstance(target, ast.Name)}
+            if any("branch" in name for name in named):
+                found.add(node.value.value)
+    return found
+
+
 def keyword_of(source: str, *, assigned_to: str, keyword: str) -> str | None:
     """Return one keyword argument of the call whose result is assigned to a variable.
 
@@ -652,6 +676,11 @@ def seeding() -> str:
     return code_of(CHECKS / "seed_destination.py")
 
 
+def kit_source() -> str:
+    """The kit module the checks share, which is where the plant and its guards live."""
+    return code_of(CHECKS / "kit.py")
+
+
 def configured_branches() -> dict[str, str]:
     """Return the branch each side of the bundled configuration names."""
     declared = yaml.safe_load(BUNDLED_CONFIGURATION.read_text(encoding="utf-8"))["configuration"]
@@ -675,20 +704,24 @@ def test_the_destination_branch_a_managed_row_plans_against_is_one_the_kit_creat
 
 def test_the_branch_the_kit_creates_is_read_from_the_configuration_that_names_it() -> None:
     """A branch named twice can be renamed once, and the row fails where nobody looks."""
-    source = seeding()
-
     # Rendered from the parsed module, so the quoting is the unparser's.
-    assert "declared['destination']['settings']['branch']" in source
-    for branch in set(configured_branches().values()) - {"main"}:
-        assert branch not in source, f"{branch} is written into the kit as well as into the configuration"
+    assert "sides['destination']['settings']['branch']" in kit_source()
+
+    planned = set(configured_branches().values()) - {"main"}
+    for module in ("kit.py", "seed_destination.py"):
+        written = branch_literals(code_of(CHECKS / module)) & planned
+        assert not written, f"{sorted(written)} is named in {module} as well as in the configuration"
 
 
 def test_the_seeding_check_is_given_the_configuration_whose_branch_it_creates() -> None:
     """The document lives in the extracted bundle, so the check has to be handed it."""
-    helper = function_body("destination_check")
-
-    assert '"$BUNDLE/configuration:/configuration:ro"' in helper
-    assert "/configuration/qualification.yaml" in seeding()
+    # Both container forms: the seeding runs before a deployment network exists,
+    # and every row that plants a difference runs on one.
+    for helper in ("check", "destination_check"):
+        assert '"$BUNDLE/configuration:/configuration:ro"' in function_body(helper), (
+            f"{helper} does not carry the declared configuration"
+        )
+    assert "/configuration/qualification.yaml" in kit_source()
 
 
 def test_the_seeding_refuses_a_configuration_that_reads_and_writes_one_branch() -> None:
@@ -698,7 +731,7 @@ def test_the_seeding_refuses_a_configuration_that_reads_and_writes_one_branch() 
     rather than for the property it exists to test, which is the failure this
     sweep found in the first place.
     """
-    source = seeding()
+    source = kit_source()
 
     assert "if branch == source:" in source
     assert "no plan against it can propose anything" in source
@@ -719,7 +752,7 @@ def test_the_destination_is_prepared_in_the_order_a_branch_inherits_from() -> No
         "for schema in SCHEMAS:",
         "seed_object(CREATE_DEVICE, SEEDED_DEVICE)",
         "ensure_branch(planned_branch())",
-        "planted = plant_pending_update()",
+        "plant('managed')",
     )
     missing = [step.strip() for step in steps if step not in source]
     assert not missing, f"the seeding never performs {missing}"
@@ -736,7 +769,7 @@ def mapped_fields() -> set[str]:
 
 def test_the_planted_difference_changes_an_attribute_the_configuration_maps() -> None:
     """A change to anything else leaves the two sides equal as far as a plan is concerned."""
-    changed = attributes_of(seeding(), "device")
+    changed = attributes_of(kit_source(), "node") | attributes_of(kit_source(), "device")
 
     assert changed, "nothing in the seeding changes the seeded object"
     assert changed <= mapped_fields(), f"{sorted(changed - mapped_fields())} is not a field any plan reads"
@@ -744,9 +777,10 @@ def test_the_planted_difference_changes_an_attribute_the_configuration_maps() ->
 
 def test_the_planted_difference_is_written_to_the_side_a_plan_reads_from() -> None:
     """Written to the destination branch it would converge the two sides, not separate them."""
-    written = keyword_of(seeding(), assigned_to="device", keyword="branch")
+    written = keyword_of(kit_source(), assigned_to="device", keyword="branch")
 
-    assert written == repr(configured_branches()["source"]), f"the difference is planted on {written}"
+    assert written == "branch", f"the difference is planted on {written}"
+    assert "source_branch()" in kit_source(), "the side written to is not read from the configuration"
 
 
 def test_the_attribute_the_seeding_writes_is_established_rather_than_assumed() -> None:
@@ -755,23 +789,22 @@ def test_the_attribute_the_seeding_writes_is_established_rather_than_assumed() -
     Suppressing the union instead would leave a destination that models `type`
     differently to fail inside the SDK, with nothing said about what it declared.
     """
-    source = seeding()
+    source = kit_source()
 
     assert "isinstance(attribute, Attribute)" in source
-    assert "not as an attribute" in source
 
 
 def test_the_planted_value_is_fresh_on_every_run() -> None:
     """A fixed value converges: the first apply writes it, and the next plan is empty again."""
-    assert "uuid.uuid4" in attribute_calls(seeding())
+    assert "uuid.uuid4" in attribute_calls(kit_source())
 
 
 def test_the_planted_difference_is_read_back_from_the_destination() -> None:
     """A save that persisted nothing leaves an empty plan, and the row reports that instead."""
-    source = seeding()
+    source = kit_source()
 
     assert source.count("sdk().get(") == 2
-    assert "did not keep the change" in source
+    assert "did not keep the difference planted" in source
 
 
 def branches_of(configuration: Path) -> dict[str, str]:
@@ -843,3 +876,66 @@ def test_the_keyed_write_row_registers_the_whole_package_it_declares() -> None:
     assert "credentials" in declared, "the keyed-write configuration declares no credential to resolve"
     assert "declared_package()" in source
     assert "format_version" not in source, "the package is rebuilt rather than read, so a section can be dropped"
+
+
+# Every check that reads a plan and then asserts something about applying it. The
+# list is written out, so a new one fails here until it checks its own plan.
+ROWS_THAT_PLAN = ("managed_execution.py", "schema_change.py", "start_apply.py")
+
+
+def test_every_row_that_plans_refuses_a_plan_with_nothing_in_it() -> None:
+    """A plan proposing nothing satisfies every negative claim beneath it.
+
+    Refused before any write, interrupted mid-write, wrote nothing it should not
+    have -- an empty plan makes all three true and none of them meaningful. The
+    plant is not trusted to have worked: each row reads its own plan and refuses.
+    """
+    for module in ROWS_THAT_PLAN:
+        source = code_of(CHECKS / module)
+        assert "require_planned_work" in source, f"{module} asserts about a plan it never checked"
+
+
+def test_every_row_that_plans_plants_a_difference_of_its_own() -> None:
+    """An apply converges the two sides, so the row before this one leaves nothing."""
+    for module in ROWS_THAT_PLAN:
+        assert "plant" in attribute_calls(code_of(CHECKS / module)), f"{module} plans against whatever it inherits"
+
+
+def planted_purposes(source: str) -> list[str]:
+    """Return the label each `plant(...)` call in a module is given."""
+    found: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "plant"):
+            continue
+        first = node.args[0] if node.args else None
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            found.append(first.value)
+    return found
+
+
+def test_no_two_rows_plant_an_indistinguishable_difference() -> None:
+    """A failure has to say which row's difference is being observed."""
+    purposes = [
+        purpose
+        for module in (*ROWS_THAT_PLAN, "seed_destination.py")
+        for purpose in planted_purposes(code_of(CHECKS / module))
+    ]
+
+    assert len(purposes) == len(set(purposes)), f"two rows plant the same difference: {sorted(purposes)}"
+    assert len(purposes) == len(ROWS_THAT_PLAN) + 1
+
+
+def test_the_separate_sync_has_to_report_having_written_something() -> None:
+    """A sync with nothing to converge reaches a phase with no "failed" in it."""
+    source = code_of(CHECKS / "managed_execution.py")
+
+    assert "wrote(synced.run)" in source
+    assert "converged nothing" in source
+
+
+def test_the_secret_row_states_which_credential_it_does_not_sweep_for() -> None:
+    """A published constant left out of a sweep reads as an omission until it is written down."""
+    body = driver()
+
+    assert "published development constant" in body
+    assert "credentials this run generated" in body

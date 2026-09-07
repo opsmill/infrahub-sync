@@ -1,14 +1,14 @@
 """The whole managed path, through the worker the bundle deploys.
 
 Plan, retrieve the review artifact the worker published, verify the saved plan,
-apply it once confirmed, then run a separate sync. The artifact is fetched back
+apply it once confirmed, then run a separate sync against a difference of its own. The artifact is fetched back
 through the deployment, which reads it from the object store the worker wrote it
 to — the transport that exists so the two never share a filesystem.
 """
 
 from __future__ import annotations
 
-from kit import deployment, follow, key, refuse, run_request
+from kit import deployment, follow, key, plant, refuse, require_planned_work, run_request, wrote
 
 from infrahub_sync.client.models import ApplyRunRequest, VerifyRunRequest
 
@@ -19,8 +19,7 @@ with deployment() as client:
     plan = client.get_plan(run_id)
     if not plan.checksum_ok:
         refuse("the saved plan did not verify against its own checksum")
-    if plan.summary.total < 1:
-        refuse("the plan read nothing from the destination, so nothing below it means anything")
+    require_planned_work(client, run_id)
 
     artifacts = client.list_artifacts(run_id)
     if not artifacts.artifacts:
@@ -43,6 +42,14 @@ with deployment() as client:
     if "failed" in applied.run.phase:
         refuse(f"the confirmed apply ended in {applied.run.phase}")
 
+    # The apply above converged the two sides, so a sync taken now would have
+    # nothing to converge -- and would still reach a phase with no "failed" in it.
+    # The claim is that a separate sync is its own admitted run that converges, so
+    # it is given its own difference and has to report having written it.
+    plant("sync")
     synced = follow(client, client.sync(run_request(client, "sync", "clean-host: sync"), key("sync")))
     if "failed" in synced.run.phase:
         refuse(f"the separate sync ended in {synced.run.phase}")
+    written = wrote(synced.run)
+    if written < 1:
+        refuse("the separate sync completed without writing anything, so it converged nothing")

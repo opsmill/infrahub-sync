@@ -25,7 +25,7 @@ import os
 import pathlib
 
 import yaml
-from kit import deployment, destination, follow, key, refuse, run_request, sdk
+from kit import deployment, destination, follow, key, plant, refuse, require_planned_work, run_request, sdk
 
 from infrahub_sync.client.errors import APIError
 from infrahub_sync.client.models import ApplyRunRequest
@@ -78,6 +78,12 @@ with deployment() as client:
     if original not in REVERSIBLE_KINDS:
         refuse(f"{DRIFTED_ATTRIBUTE} has unsupported live kind {original!r}")
 
+    # The row before this one applied its plan and converged the two sides, so a
+    # plan taken now would propose nothing -- and "refused before any write" is
+    # satisfied by a run that had no write to be before. Its own difference, so a
+    # failure says which row is being observed.
+    plant("drift")
+
     # The compatible half: a run against the destination as it stands completes,
     # and the driver confirms separately that no container was replaced.
     follow(client, client.plan(run_request(client, "plan", "clean-host: compatible schema"), key("compatible")))
@@ -85,6 +91,7 @@ with deployment() as client:
     planned = follow(client, client.plan(run_request(client, "plan", "clean-host: drift plan"), key("drift")))
     run_id = planned.run.run_id
     plan = client.get_plan(run_id)
+    require_planned_work(client, run_id)
 
     load_attribute_kind(REVERSIBLE_KINDS[original])
     try:

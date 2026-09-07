@@ -19,14 +19,18 @@ some of them are credentials.
 from __future__ import annotations
 
 import os
+import pathlib
 import sys
+import uuid
 from typing import Literal, NoReturn
 
 import httpx
+import yaml
 from infrahub_sdk import Config, InfrahubClientSync
+from infrahub_sdk.node import Attribute
 
 from infrahub_sync.client import RunTerminalError, RunWaitTimeoutError, SyncClient, SyncClientError
-from infrahub_sync.client.models import CreateRunRequest, RunResource
+from infrahub_sync.client.models import CreateRunRequest, PublicRunResource, RunResource
 
 # The two operations a run request may name, as the model declares them.
 Operation = Literal["plan", "sync"]
@@ -158,3 +162,103 @@ def follow(client: SyncClient, accepted: RunResource) -> RunResource:
 def key(purpose: str) -> str:
     """A mutation key unique to one purpose in one run of this gate."""
     return f"clean-host-{purpose}-{os.environ.get('CLEAN_HOST_RUN_KEY', 'run')}"
+
+
+# ---------------------------------------------------------------------------
+# The destination state a managed row needs before it means anything
+# ---------------------------------------------------------------------------
+# The declared configuration the deployment's own bootstrap registers, mounted
+# read-only from the extracted bundle. Which branches a run reads and writes is
+# named there and nowhere else.
+CONFIGURATION = "/configuration/qualification.yaml"
+
+SEEDED_KIND = "InfraDevice"
+SEEDED_DEVICE = "clean-host-device"
+# The attribute the declared configuration maps, so a change to it is a change a
+# plan sees. A change to anything else leaves the two sides equal as far as a
+# plan is concerned.
+PLANTED_ATTRIBUTE = "type"
+
+# What a completed run reports having written, as the execution surface names it.
+ACTIONS = ("create", "update", "delete")
+
+
+def declared(configuration: str = CONFIGURATION) -> dict:
+    """Return one declared configuration's `configuration` section."""
+    return dict(yaml.safe_load(pathlib.Path(configuration).read_text(encoding="utf-8"))["configuration"])
+
+
+def planned_branch(configuration: str = CONFIGURATION) -> str:
+    """Return the branch one configuration writes to, refusing a vacuous pair.
+
+    Two sides naming one branch read identically, so every plan against them is
+    empty -- and a row asserting that its plan proposed something would refuse for
+    that instead of for what it means to test.
+    """
+    sides = declared(configuration)
+    source = sides["source"]["settings"]["branch"]
+    branch = sides["destination"]["settings"]["branch"]
+    if branch == source:
+        refuse(f"the declared configuration reads and writes {branch}, so no plan against it can propose anything")
+    return str(branch)
+
+
+def source_branch(configuration: str = CONFIGURATION) -> str:
+    """Return the branch one configuration reads from, which is where a difference goes."""
+    return str(declared(configuration)["source"]["settings"]["branch"])
+
+
+def planted_attribute(node: object) -> Attribute:
+    """Return the mapped attribute, refusing anything the SDK does not model as one.
+
+    A fetched node types every member as an attribute or one of two relationship
+    shapes, so which one this is has to be established rather than assumed. Doing
+    it here rather than suppressing the union turns a typing gap into a refusal
+    that says what the destination actually declared.
+    """
+    attribute = node.type  # ty: ignore[unresolved-attribute] - TODO: a fetched node is typed by its schema
+    if not isinstance(attribute, Attribute):
+        refuse(f"the destination models {SEEDED_KIND} {PLANTED_ATTRIBUTE} as {type(attribute).__name__}")
+    return attribute
+
+
+def plant(purpose: str) -> str:
+    """Change the seeded object on the source branch, and return the value written.
+
+    Every managed row needs the two sides to differ, and an apply converges them:
+    the row before this one leaves nothing to propose. So each row that plans
+    plants its own difference, labelled with its purpose, because a failure has to
+    say which of them is being observed.
+
+    Written to the source branch, so the destination keeps the value it inherited.
+    Read back, because a save that persisted nothing would leave an empty plan and
+    the row would report that instead.
+    """
+    value = f"clean-host-{purpose}-{uuid.uuid4().hex[:8]}"
+    branch = source_branch()
+    device = sdk().get(kind=SEEDED_KIND, branch=branch, name__value=SEEDED_DEVICE)
+    planted_attribute(device).value = value
+    device.save()
+
+    written = sdk().get(kind=SEEDED_KIND, branch=branch, name__value=SEEDED_DEVICE)
+    if planted_attribute(written).value != value:
+        refuse(f"the destination did not keep the difference planted for {purpose}")
+    return value
+
+
+def require_planned_work(client: SyncClient, run_id: str) -> int:
+    """Refuse a plan with nothing in it, and return how much it proposed.
+
+    Every negative claim below a plan -- refused before any write, interrupted
+    mid-write, wrote nothing it should not have -- is satisfied by a plan that
+    proposed nothing. So no row reads its own plan without this.
+    """
+    total = client.get_plan(run_id).summary.total
+    if total < 1:
+        refuse("the plan proposed nothing, so anything asserted about applying it would mean nothing")
+    return total
+
+
+def wrote(run: PublicRunResource) -> int:
+    """Return how many objects a completed run reports having written."""
+    return sum(int(run.summary.get(action, 0)) for action in ACTIONS)
