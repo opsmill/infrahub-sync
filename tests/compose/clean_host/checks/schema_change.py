@@ -22,9 +22,10 @@ from __future__ import annotations
 
 import contextlib
 import os
+import pathlib
 
 import yaml
-from kit import deployment, destination, follow, key, refuse, run_request
+from kit import deployment, destination, follow, key, refuse, run_request, sdk
 
 from infrahub_sync.client.errors import APIError
 from infrahub_sync.client.models import ApplyRunRequest
@@ -56,16 +57,18 @@ def attribute_kind() -> str:
 
 
 def load_attribute_kind(kind: str) -> None:
-    """Load the seeded schema with one attribute kind changed, and prove it landed."""
-    schema = yaml.safe_load(open(SCHEMA_FILE, encoding="utf-8"))  # noqa: SIM115, PTH123
+    """Load the seeded schema with one attribute kind changed, and prove it landed.
+
+    Loaded through the SDK the image ships, and waited on: Infrahub applies a
+    schema asynchronously, so a plan taken before it converges reads the old
+    semantics -- and this row would then report success having drifted nothing.
+    """
+    schema = yaml.safe_load(pathlib.Path(SCHEMA_FILE).read_text(encoding="utf-8"))
     for node in schema["nodes"]:
         for attribute in node["attributes"]:
             if attribute["name"] == DRIFTED_ATTRIBUTE:
                 attribute["kind"] = kind
-    with destination() as infrahub:
-        loaded = infrahub.post("/api/schema/load", json={"schemas": [schema]})
-        if loaded.status_code not in {200, 202}:
-            refuse("the destination refused the schema this row loads")
+    sdk().schema.load(schemas=[schema], wait_until_converged=True)
     if attribute_kind() != kind:
         refuse(f"the destination did not converge on {DRIFTED_ATTRIBUTE} kind {kind}")
 

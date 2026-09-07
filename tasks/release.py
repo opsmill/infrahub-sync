@@ -483,8 +483,11 @@ def build_qualification_kit() -> None:
     (QUALIFICATION_DIR / "clean-host.sh").chmod(0o755)
     for module in sorted((QUALIFICATION_SOURCE / "checks").glob("*.py")):
         copyfile(module, checks / module.name)
-    for schema in sorted((QUALIFICATION_SOURCE / "destination").glob("*.yml")):
-        copyfile(schema, checks / schema.name)
+    # Both suffixes: the kit carries destination schemas and a declared
+    # configuration package, and the two conventions differ in this repository.
+    for declared in sorted((QUALIFICATION_SOURCE / "destination").iterdir()):
+        if declared.suffix in {".yml", ".yaml"}:
+            copyfile(declared, checks / declared.name)
     copyfile(EXAMPLE_SCHEMA, checks / EXAMPLE_SCHEMA.name)
     destination = QUALIFICATION_DIR / "destination"
     destination.mkdir()

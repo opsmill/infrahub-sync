@@ -22,6 +22,7 @@ import os
 import sys
 
 import httpx
+from infrahub_sdk import Config, InfrahubClientSync
 
 from infrahub_sync.client import SyncClient
 from infrahub_sync.client.models import CreateRunRequest, RunResource
@@ -49,6 +50,14 @@ def destination() -> httpx.Client:
         base_url=os.environ["INFRAHUB_DESTINATION_URL"],
         headers={"X-INFRAHUB-KEY": os.environ["INFRAHUB_DESTINATION_TOKEN"]},
         timeout=30,
+    )
+
+
+def sdk() -> InfrahubClientSync:
+    """The destination through the SDK the candidate image ships."""
+    return InfrahubClientSync(
+        address=os.environ["INFRAHUB_DESTINATION_URL"],
+        config=Config(api_token=os.environ["INFRAHUB_DESTINATION_TOKEN"], timeout=60),
     )
 
 

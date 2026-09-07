@@ -565,7 +565,11 @@ row_secrets() {
     check reported_failures > "$WORK/reported.failures" 2>&1 || true
 
     bundle_name=$(record "['bundle']['name']") || fail "the candidate record names no bundle to sweep"
-    swept="$WORK/deployment.log $WORK/image.history $WORK/reported.failures $CANDIDATE/$bundle_name"
+    # The shipped bytes, not the compressed container of them: a plaintext search
+    # of a gzip stream cannot match, so it would report success without looking.
+    gzip -dc "$CANDIDATE/$bundle_name" > "$WORK/bundle.tar" \
+        || fail "the deployment bundle could not be decompressed to be swept"
+    swept="$WORK/deployment.log $WORK/image.history $WORK/reported.failures $WORK/bundle.tar"
     while read -r canary; do
         [ -n "$canary" ] || continue
         for target in $swept; do

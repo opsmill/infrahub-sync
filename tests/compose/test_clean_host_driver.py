@@ -174,3 +174,27 @@ def test_every_refusal_the_driver_captures_is_checked_for_its_reason() -> None:
         assert re.search(rf'grep -q "[a-z-]+" "\$WORK/{name}"', body), (
             f"{name} is captured but never checked for the reason it names"
         )
+
+
+def test_every_kit_file_a_check_reads_is_carried_by_the_kit() -> None:
+    """A check reading `/checks/<name>` fails at the host if the kit omits it.
+
+    The kit is assembled by a task with its own idea of what to copy, so the two
+    have to be asserted against each other rather than assumed to agree.
+    """
+    referenced = set()
+    for module in sorted(CHECKS.glob("*.py")):
+        referenced |= set(re.findall(r"/checks/([A-Za-z0-9_.-]+\.(?:yml|yaml))", module.read_text(encoding="utf-8")))
+
+    assert referenced
+    carried = {path.name for path in (CHECKS.parent / "destination").iterdir()}
+    carried |= {"infra_device.yml"}
+    assert referenced <= carried, f"{sorted(referenced - carried)} are read but not carried"
+
+
+def test_the_secret_sweep_reads_the_bundle_as_shipped_bytes() -> None:
+    """A plaintext search of a gzip stream cannot match, so it cannot fail."""
+    body = executable_lines()
+
+    assert "gzip -dc" in body
+    assert not re.search(r"swept=.*CANDIDATE/\$bundle_name", body)

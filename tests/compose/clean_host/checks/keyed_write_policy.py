@@ -15,11 +15,18 @@ of the deployment client.
 
 from __future__ import annotations
 
-from kit import deployment, destination, follow, key, refuse, run_request
+import os
+import pathlib
+
+import yaml
+from kit import deployment, destination, follow, key, refuse
+
+from infrahub_sync.client.models import ConfigMutationRequest, CreateRunRequest
 
 KEYLESS_KIND = "CleanKeyless"
 # The typed refusal the adapter raises immediately before the SDK write.
 REFUSAL = "UnkeyedWriteRefusedError"
+CONFIGURATION = "/checks/keyless-configuration.yaml"
 
 
 def keyless_objects() -> int:
@@ -30,10 +37,36 @@ def keyless_objects() -> int:
         return int(answer.json()["data"][KEYLESS_KIND]["count"])
 
 
+def registered_keyless(client: object) -> tuple[str, int]:
+    """Register this row's own configuration and return the version to run.
+
+    Its own, because the bundled configuration maps a kind with a renderable
+    human-friendly ID and can never produce the operation under test.
+    """
+    package = yaml.safe_load(pathlib.Path(CONFIGURATION).read_text(encoding="utf-8"))
+    address = os.environ["INFRAHUB_DESTINATION_URL"]
+    for side in ("source", "destination"):
+        package["configuration"][side]["settings"]["url"] = address
+    answer = client.register_config(  # ty: ignore[unresolved-attribute]
+        ConfigMutationRequest(package=package, reason="clean-host: register the keyed-write configuration"),
+        key("register-keyless"),
+    )
+    return answer.version.config_id, answer.version.registry_version
+
+
 with deployment() as client:
     before = keyless_objects()
+    config_id, registry_version = registered_keyless(client)
 
-    planned = follow(client, client.plan(run_request(client, "plan", "clean-host: unkeyed plan"), key("unkeyed")))
+    def request(operation: str, reason: str) -> CreateRunRequest:
+        return CreateRunRequest(
+            operation=operation,  # ty: ignore[invalid-argument-type] -- the model checks the literal
+            config_id=config_id,
+            registry_version=registry_version,
+            reason=reason,
+        )
+
+    planned = follow(client, client.plan(request("plan", "clean-host: unkeyed plan"), key("unkeyed")))
     plan = client.get_plan(planned.run.run_id)
 
     # Precondition: the operation survived planning. Refused at plan time it would
@@ -44,7 +77,7 @@ with deployment() as client:
 
     applied = follow(
         client,
-        client.sync(run_request(client, "sync", "clean-host: unkeyed apply"), key("unkeyed-apply")),
+        client.sync(request("sync", "clean-host: unkeyed apply"), key("unkeyed-apply")),
     )
 
     # Property: the run was refused for being unkeyed, and the destination is

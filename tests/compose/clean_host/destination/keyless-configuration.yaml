@@ -1,0 +1,45 @@
+---
+# The configuration the keyed-write row registers, and the two conditions that
+# together make its write unkeyed.
+#
+# `CleanKeyless` declares no `human_friendly_id`, so nothing renders an `hfid`
+# that would satisfy the write gate first. The mapped field named `id` renders as
+# an empty attribute block: a key that is present and carries no value, which
+# defeats a gate testing presence alone. Neither condition induces the refusal on
+# its own.
+#
+# Plan-time validation passes because the operation's identity is `name`, and
+# `name` is in the payload. The refusal happens later, immediately before the SDK
+# write, which is the property the contract names.
+#
+# This is qualification evidence. It is never part of the shipped bundle.
+format_version: 1
+configuration:
+  name: clean-host-keyed-write
+  source:
+    name: infrahub
+    settings:
+      url: "http://destination.invalid:8000"
+      branch: main
+      token:
+        $credential: infrahub-token
+  destination:
+    name: infrahub
+    settings:
+      url: "http://destination.invalid:8000"
+      branch: main
+      token:
+        $credential: infrahub-token
+  schema_mapping:
+    - name: CleanKeyless
+      mapping: CleanKeyless
+      identifiers: ["name"]
+      fields:
+        - name: name
+          mapping: name
+        - name: id
+          mapping: name
+credentials:
+  infrahub-token:
+    provider: env
+    identifier: INFRAHUB_API_TOKEN
