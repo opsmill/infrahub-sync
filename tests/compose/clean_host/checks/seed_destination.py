@@ -2,9 +2,9 @@
 
 Run inside the candidate image, because the host this gate qualifies on has no
 interpreter and no product CLI of its own. The schemas are the gate's own
-evidence: the example schema an operator follows is loaded unchanged, and the
-keyless kind beside it exists only so the keyed-write row has a destination kind
-whose convergent write cannot be keyed.
+evidence: the example schema an operator follows is loaded unchanged, and the two
+kinds beside it exist only so the unkeyed-write row has a destination kind whose
+convergent write carries an identifier the SDK cannot render.
 
 The order is the whole content of this file, and it is the Compose fixture's own
 (`ensure_smoke_branch` and `plant_pending_update`, from `tasks/preview.py` and

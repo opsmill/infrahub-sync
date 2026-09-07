@@ -878,6 +878,21 @@ def test_the_unkeyed_rows_peer_is_seeded_before_its_fork_and_its_subject_after()
     assert positions == sorted(positions), "the peer and the subject are not on either side of the fork"
 
 
+def test_no_shipped_kit_file_describes_the_mechanism_it_no_longer_uses() -> None:
+    """A kit document is read on a host with nothing else to check it against.
+
+    The mechanism changed once already, and prose describing the old one is how
+    the next person reconstructs a shape that does not work.
+    """
+    stale = sorted(
+        path.name
+        for path in [*CHECKS.glob("*.py"), *CHECKS.parent.glob("destination/*")]
+        if "keyless" in path.read_text(encoding="utf-8").lower()
+    )
+
+    assert not stale, f"{stale} still describe the mechanism this row replaced"
+
+
 def test_the_unkeyed_rows_kind_carries_an_identifier_that_crosses_a_relationship() -> None:
     """That is the whole mechanism: a component the payload cannot resolve.
 
