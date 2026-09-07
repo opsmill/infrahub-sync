@@ -1,0 +1,61 @@
+---
+# The configuration the unkeyed-write row registers.
+#
+# Both kinds are mapped, which is the shape the shipped examples use for a
+# reference: `examples/device42_to_infrahub/config.yml` maps `BuiltinTag` and then
+# references it from `LocationSite.tags`. No `order` is declared, so the engine
+# computes the tiers from the mappings themselves.
+#
+# The `site` field carries `reference: CleanSite`, and that is what makes this a
+# deployed-path row rather than a direct adapter call: `plan/derive.py` renders a
+# reference-bearing field into the same `RelationshipReference` the live
+# integration module hand-builds, so the operation the gate refuses is one a
+# declared configuration really produces.
+#
+# `identifiers: ["name"]` rather than an identity crossing the relationship: what
+# the gate refuses is a property of the rendered mutation, not of the plan's
+# identity, and one name distinguishes the one object this row seeds.
+#
+# The two sides name different branches. The seeding forks the destination one
+# after the peer exists and before the subject does, so the plan proposes a
+# create -- the action that carries no renderable key. Both sides on one branch
+# would read identically and the plan would propose nothing.
+#
+# This is qualification evidence. It is never part of the shipped bundle.
+format_version: 1
+configuration:
+  name: clean-host-unkeyed-write
+  source:
+    name: infrahub
+    settings:
+      url: "http://destination.invalid:8000"
+      branch: main
+      token:
+        $credential: infrahub-token
+  destination:
+    name: infrahub
+    settings:
+      url: "http://destination.invalid:8000"
+      branch: clean-host-unkeyed
+      token:
+        $credential: infrahub-token
+  schema_mapping:
+    - name: CleanSite
+      mapping: CleanSite
+      identifiers: ["name"]
+      fields:
+        - name: name
+          mapping: name
+    - name: CleanDevice
+      mapping: CleanDevice
+      identifiers: ["name"]
+      fields:
+        - name: name
+          mapping: name
+        - name: site
+          mapping: site
+          reference: CleanSite
+credentials:
+  infrahub-token:
+    provider: env
+    identifier: INFRAHUB_API_TOKEN

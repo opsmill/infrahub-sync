@@ -1,4 +1,4 @@
-"""Prepare the destination the managed rows plan against: schema, object, branch, difference.
+"""Prepare the destination every managed row plans against.
 
 Run inside the candidate image, because the host this gate qualifies on has no
 interpreter and no product CLI of its own. The schemas are the gate's own
@@ -37,18 +37,23 @@ from __future__ import annotations
 
 import subprocess  # noqa: S404 -- fixed argv, the product CLI the image ships
 import sys
+import time
 
 from kit import SEEDED_DEVICE, destination, planned_branch, plant, refuse, sdk
 
-SCHEMAS = ("/checks/infra_device.yml", "/checks/keyless.yml")
-# The keyed-write row's own configuration, which the kit carries beside the
-# checks. Its destination branch is forked before its kind has any object, so the
-# plan it runs proposes a create -- the operation whose key cannot be rendered.
-KEYLESS_CONFIGURATION = "/checks/keyless-configuration.yaml"
+# The bound on a client's view catching up with a load it has already accepted.
+SCHEMA_TIMEOUT_SECONDS = 120.0
 
+SCHEMAS = ("/checks/infra_device.yml", "/checks/unkeyed.yml")
 CREATE_DEVICE = 'mutation { InfraDeviceCreate(data: {name: {value: "NAME"}, type: {value: "seed"}}) { ok } }'
-SEEDED_KEYLESS = "clean-host-keyless-object"
-CREATE_KEYLESS = 'mutation { CleanKeylessCreate(data: {name: {value: "NAME"}}) { ok } }'
+
+# The unkeyed-write row's own configuration, which the kit carries beside the
+# checks. Its two kinds are seeded on either side of its fork, for reasons the
+# document itself records.
+UNKEYED_CONFIGURATION = "/checks/unkeyed-configuration.yaml"
+UNKEYED_KINDS = ("CleanSite", "CleanDevice")
+SEEDED_SITE = "clean-host-site"
+SEEDED_UNKEYED = "clean-host-unkeyed-device"
 
 
 def load(schema: str) -> None:
@@ -86,23 +91,62 @@ def ensure_branch(name: str) -> None:
         refuse(f"the destination did not create the branch {name} the configuration names")
 
 
+def await_kinds(kinds: tuple[str, ...], branch: str = "main") -> None:
+    """Block until this client can resolve every one of `kinds` on `branch`.
+
+    A schema load returns once the payload is accepted, not once the kinds it
+    declares are resolvable, and a write issued in that window fails as a missing
+    schema rather than as whatever the row is testing. The load above settles the
+    server; this settles the view a client actually reads, which is the one the
+    deployment's own worker will read too.
+    """
+    deadline = time.monotonic() + SCHEMA_TIMEOUT_SECONDS
+    client = sdk()
+    while True:
+        missing = set(kinds) - set(client.schema.all(branch=branch, refresh=True))
+        if not missing:
+            return
+        if time.monotonic() >= deadline:
+            refuse(f"the destination did not serve {sorted(missing)} within {SCHEMA_TIMEOUT_SECONDS:.0f}s of a load")
+        time.sleep(1.0)
+
+
+def seed_unkeyed_peer() -> str:
+    """Create the peer the unkeyed row's kind references, on `main`, and return its id.
+
+    Through the SDK rather than through a planned apply, and the same is true of
+    the subject below: the write surface refuses the very operation this row
+    exists to observe, so a planned apply could not establish either object.
+    """
+    site = sdk().create(kind="CleanSite", branch="main", data={"name": SEEDED_SITE})
+    site.save()
+    return str(site.id)
+
+
+def seed_unkeyed_subject(site_id: str) -> None:
+    """Create the crossing kind on `main` alone, referencing the peer by its node id."""
+    device = sdk().create(kind="CleanDevice", branch="main", data={"name": SEEDED_UNKEYED, "site": site_id})
+    device.save()
+
+
 for schema in SCHEMAS:
     load(schema)
+await_kinds(UNKEYED_KINDS)
 
 # The managed rows: the object first, then the branch that inherits it, then the
 # difference. Every position is explained above.
 seed_object(CREATE_DEVICE, SEEDED_DEVICE)
 ensure_branch(planned_branch())
 
-# The keyed-write row, whose order is the opposite one for a reason of its own:
-# its branch is forked while its kind still has no object, so the plan proposes a
-# create rather than an update. A create is what carries no renderable key, and
-# `CleanKeyless` declares no human-friendly ID -- so the identifier collision that
-# the order above exists to avoid cannot arise here. Nothing this row plans ever
-# reaches the destination: the refusal happens before the write is attempted.
-ensure_branch(planned_branch(KEYLESS_CONFIGURATION))
-seed_object(CREATE_KEYLESS, SEEDED_KEYLESS)
+# The unkeyed-write row, whose two kinds sit on either side of its own fork. The
+# peer is seeded first so the branch inherits it and the reference resolves at the
+# destination; without a resolvable peer the row's run fails at peer resolution and
+# reports the wrong refusal. The subject is seeded after, on `main` alone, so the
+# plan proposes a create -- the action whose key cannot be rendered.
+site_id = seed_unkeyed_peer()
+ensure_branch(planned_branch(UNKEYED_CONFIGURATION))
+seed_unkeyed_subject(site_id)
 
 planted = plant("managed")
 
-print(f"{SEEDED_DEVICE} {SEEDED_KEYLESS} {planted}", file=sys.stderr)
+print(f"{SEEDED_DEVICE} {SEEDED_SITE} {SEEDED_UNKEYED} {planted}", file=sys.stderr)

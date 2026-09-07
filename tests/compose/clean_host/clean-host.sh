@@ -19,7 +19,7 @@ WORK=${CLEAN_HOST_WORK:-$KIT/work}
 MATRIX='artifact_identity
 cold_start_and_idempotence
 managed_execution
-keyed_write_policy
+unkeyed_write_policy
 schema_change
 status
 restart
@@ -428,12 +428,12 @@ row_managed_execution() {
 }
 
 # ---------------------------------------------------------------------------
-# Row 4 — keyed write policy
+# Row 4 — unkeyed write policy
 # ---------------------------------------------------------------------------
-row_keyed_write_policy() {
-    check keyed_write_policy \
+row_unkeyed_write_policy() {
+    check unkeyed_write_policy \
         || fail "an unkeyed operation was not refused before its own mutation"
-    report "keyed writes applied; an unkeyed operation refused without erasing an earlier write"
+    report "an operation whose key cannot be rendered was refused with nothing written"
 }
 
 # ---------------------------------------------------------------------------

@@ -26,7 +26,8 @@ CHECKS = REPO_ROOT / "tests" / "compose" / "clean_host" / "checks"
 # destination side names is what every managed row plans against.
 BUNDLED_CONFIGURATION = REPO_ROOT / "deploy" / "compose" / "configuration" / "qualification.yaml"
 # The one configuration a row registers for itself, carried in the kit.
-KEYLESS_CONFIGURATION = REPO_ROOT / "tests" / "compose" / "clean_host" / "destination" / "keyless-configuration.yaml"
+UNKEYED_CONFIGURATION = REPO_ROOT / "tests" / "compose" / "clean_host" / "destination" / "unkeyed-configuration.yaml"
+UNKEYED_SCHEMA = REPO_ROOT / "tests" / "compose" / "clean_host" / "destination" / "unkeyed.yml"
 
 # Every row the accepted matrix requires. Written out rather than read from the
 # driver, so a row deleted from the driver fails here instead of narrowing the
@@ -35,7 +36,7 @@ MANDATORY_ROWS = (
     "artifact_identity",
     "cold_start_and_idempotence",
     "managed_execution",
-    "keyed_write_policy",
+    "unkeyed_write_policy",
     "schema_change",
     "status",
     "restart",
@@ -813,7 +814,7 @@ def branches_of(configuration: Path) -> dict[str, str]:
     return {side: declared[side]["settings"]["branch"] for side in ("source", "destination")}
 
 
-@pytest.mark.parametrize("configuration", [BUNDLED_CONFIGURATION, KEYLESS_CONFIGURATION], ids=lambda path: path.stem)
+@pytest.mark.parametrize("configuration", [BUNDLED_CONFIGURATION, UNKEYED_CONFIGURATION], ids=lambda path: path.stem)
 def test_no_configuration_a_row_runs_reads_and_writes_one_branch(configuration: Path) -> None:
     """One branch on both sides reads identically, so the plan proposes nothing.
 
@@ -829,7 +830,7 @@ def test_every_branch_a_configuration_names_is_one_the_seeding_forks() -> None:
     """A branch nobody creates fails inside the worker, not in the row that named it."""
     named = {
         branch
-        for configuration in (BUNDLED_CONFIGURATION, KEYLESS_CONFIGURATION)
+        for configuration in (BUNDLED_CONFIGURATION, UNKEYED_CONFIGURATION)
         for branch in branches_of(configuration).values()
     } - {"main"}
     forked = set(re.findall(r"ensure_branch\(planned_branch\(([A-Z_]*)\)\)", seeding()))
@@ -837,30 +838,109 @@ def test_every_branch_a_configuration_names_is_one_the_seeding_forks() -> None:
     assert len(named) == len(forked), f"{sorted(named)} are planned against and {sorted(forked)} are forked"
 
 
-def test_the_keyed_write_rows_branch_is_forked_before_its_kind_has_an_object() -> None:
-    """The opposite order from the managed rows, and for a reason of its own.
+def test_the_seeding_waits_for_the_view_a_client_reads_before_it_writes() -> None:
+    """A schema load returns before its kinds resolve, and a write in that window fails.
 
-    Forked while the kind is still empty, the plan proposes a create -- the
-    operation carrying no renderable key. Forked afterwards, both sides hold the
-    object and the plan proposes nothing at all. The identifier collision the
-    managed order exists to avoid cannot arise here: `CleanKeyless` declares no
-    human-friendly ID, and nothing this row plans ever reaches the destination.
+    It fails as a missing schema rather than as whatever the row is testing. The
+    load settles the server; this settles the view a client actually reads, which
+    is the view the deployment's own worker will read too.
     """
     source = seeding()
-    steps = ("ensure_branch(planned_branch(KEYLESS_CONFIGURATION))", "seed_object(CREATE_KEYLESS, SEEDED_KEYLESS)")
+    steps = ("await_kinds(UNKEYED_KINDS)", "site_id = seed_unkeyed_peer()")
     missing = [step for step in steps if step not in source]
     assert not missing, f"the seeding never performs {missing}"
 
-    assert source.index(steps[0]) < source.index(steps[1]), "the branch is forked after its kind already has an object"
+    assert source.index(steps[0]) < source.index(steps[1]), "the seeding writes before the kinds resolve"
+    # Without this the client answers from the cache the load never invalidated,
+    # and the wait returns immediately having proved nothing.
+    assert "refresh=True" in source
 
 
-def test_the_keyed_write_row_counts_on_the_branch_its_run_writes_to() -> None:
+def test_the_unkeyed_rows_peer_is_seeded_before_its_fork_and_its_subject_after() -> None:
+    """Its two kinds sit on either side of its own fork, and each side is load-bearing.
+
+    The peer must exist before the fork so the branch inherits it and the
+    reference resolves at the destination -- without a resolvable peer the run
+    fails at peer resolution and reports the wrong refusal. The subject must be
+    seeded after, on the source alone, so the plan proposes a create: an update
+    would carry the destination node's own id and be keyed by it.
+    """
+    source = seeding()
+    steps = (
+        "site_id = seed_unkeyed_peer()",
+        "ensure_branch(planned_branch(UNKEYED_CONFIGURATION))",
+        "seed_unkeyed_subject(site_id)",
+    )
+    missing = [step for step in steps if step not in source]
+    assert not missing, f"the seeding never performs {missing}"
+
+    positions = [source.index(step) for step in steps]
+    assert positions == sorted(positions), "the peer and the subject are not on either side of the fork"
+
+
+def test_the_unkeyed_rows_kind_carries_an_identifier_that_crosses_a_relationship() -> None:
+    """That is the whole mechanism: a component the payload cannot resolve.
+
+    Read from the schema the kit ships, so a kind edited into an all-direct
+    identifier fails here rather than on a host, with the gate passing for a
+    reason that says nothing about this row.
+    """
+    declared = yaml.safe_load(UNKEYED_SCHEMA.read_text(encoding="utf-8"))["nodes"]
+    by_kind = {f"{node['namespace']}{node['name']}": node for node in declared}
+    subject = by_kind["CleanDevice"]
+
+    crossing = [component for component in subject["human_friendly_id"] if component.count("__") > 1]
+    assert crossing, f"{subject['human_friendly_id']} is all-direct, so the SDK renders a key for it"
+
+    named = {relationship["name"] for relationship in subject["relationships"]}
+    assert {component.split("__")[0] for component in crossing} <= named, "the identifier crosses no relationship"
+    # The peer's own identifier is direct, so it renders a key and is writable:
+    # the refusal under test is the crossing kind's alone.
+    assert all(component.count("__") == 1 for component in by_kind["CleanSite"]["human_friendly_id"])
+
+
+def test_the_unkeyed_rows_subject_declares_no_unique_attribute() -> None:
+    """Uniqueness is not the key, and it is one more thing a destination can derive from.
+
+    The previous mechanism died because a destination computed an identifier for a
+    kind whose schema declared none.
+    """
+    declared = yaml.safe_load(UNKEYED_SCHEMA.read_text(encoding="utf-8"))["nodes"]
+    subject = next(node for node in declared if f"{node['namespace']}{node['name']}" == "CleanDevice")
+
+    assert not any(attribute.get("unique") for attribute in subject["attributes"])
+
+
+def test_the_unkeyed_rows_configuration_reaches_its_kind_through_a_reference() -> None:
+    """A reference is what makes this a deployed-path row rather than a direct adapter call.
+
+    `plan/derive.py` renders a reference-bearing field into the relationship record
+    the live integration module hand-builds, so the operation the gate refuses is
+    one a declared configuration really produces.
+    """
+    declared = yaml.safe_load(UNKEYED_CONFIGURATION.read_text(encoding="utf-8"))["configuration"]
+    mapped = {entry["name"]: entry for entry in declared["schema_mapping"]}
+
+    assert set(mapped) == {"CleanSite", "CleanDevice"}, "the referenced peer kind is not mapped"
+    referenced = {field["name"]: field.get("reference") for field in mapped["CleanDevice"]["fields"]}
+    assert referenced.get("site") == "CleanSite"
+
+
+def test_the_unkeyed_row_requires_the_operation_to_be_a_create() -> None:
+    """An update carries the destination node's own id, so the gate would pass on the id."""
+    source = code_of(CHECKS / "unkeyed_write_policy.py")
+
+    assert "'create'" in source
+    assert "rather than a create" in source
+
+
+def test_the_unkeyed_write_row_counts_on_the_branch_its_run_writes_to() -> None:
     """A refused write leaves `main` unchanged whether it was refused or not.
 
     Counting there would confirm the property without ever having been able to
     contradict it.
     """
-    source = code_of(CHECKS / "keyed_write_policy.py")
+    source = code_of(CHECKS / "unkeyed_write_policy.py")
 
     # Rendered from the parsed module, so the quoting is the unparser's.
     assert "f'/graphql/{branch}'" in source
@@ -868,10 +948,10 @@ def test_the_keyed_write_row_counts_on_the_branch_its_run_writes_to() -> None:
     assert "written_branch" in source
 
 
-def test_the_keyed_write_row_registers_the_whole_package_it_declares() -> None:
+def test_the_unkeyed_write_row_registers_the_whole_package_it_declares() -> None:
     """The declared credentials are part of it, and a run without them resolves no token."""
-    source = code_of(CHECKS / "keyed_write_policy.py")
-    declared = yaml.safe_load(KEYLESS_CONFIGURATION.read_text(encoding="utf-8"))
+    source = code_of(CHECKS / "unkeyed_write_policy.py")
+    declared = yaml.safe_load(UNKEYED_CONFIGURATION.read_text(encoding="utf-8"))
 
     assert "credentials" in declared, "the keyed-write configuration declares no credential to resolve"
     assert "declared_package()" in source
