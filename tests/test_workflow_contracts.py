@@ -589,28 +589,6 @@ def test_the_two_line_release_automation_is_what_the_case_above_would_otherwise_
     assert not (drafter & v3_reachable())
 
 
-def test_every_candidate_artifact_is_kept_long_enough_to_be_approved() -> None:
-    """An approval is bound to exact bytes, so the service has to still hold them.
-
-    A default retention is whatever the repository is configured for that week,
-    which is not something a release record can name.
-    """
-    kept = {
-        str(declared.get("name")): declared.get("retention-days")
-        for _workflow, _step, declared in uploads()
-        if str(declared.get("name", "")).startswith(CANDIDATE_ARTIFACTS)
-    }
-
-    assert kept
-    undeclared = sorted(name for name, held in kept.items() if str(held) != RETENTION_EXPRESSION)
-    assert not undeclared, f"{undeclared} name a retention of their own rather than the workflow's"
-
-    declared = int(load(IMAGE_WORKFLOW)["env"]["CANDIDATE_RETENTION_DAYS"])
-    assert declared >= APPROVAL_WINDOW_DAYS, (
-        f"a candidate is kept {declared} days, and an approval is allowed {APPROVAL_WINDOW_DAYS}"
-    )
-
-
 def test_the_publisher_names_a_workflow_that_really_produces_a_candidate() -> None:
     """The binding is only worth as much as the workflow path it compares against.
 
@@ -648,16 +626,25 @@ def test_the_approval_is_bound_to_more_than_a_run_identifier() -> None:
     assert "infrahub-sync-qualification-record" in downloaded, "a run recording no qualification would be accepted"
 
 
-def test_the_multi_platform_layout_outlives_the_run_that_built_it() -> None:
-    """Promotion pushes what a candidate built, and one platform's archive is not that.
+def test_nothing_the_v3_line_reaches_retains_a_candidate_artifact() -> None:
+    """A pull-request run describes bytes nobody will ship, so it keeps none of them.
 
-    The retained OCI layout is the only thing carrying the index and the second
-    platform's manifest. Without it, promoting arm64 has nothing to push but a
-    rebuild -- and a rebuild at the same source is a different digest, which is
-    the one thing "promoted without rebuilding" rules out.
+    Validation on a pull request is lint, unit, image, smoke and Compose. The
+    candidate that gets qualified and approved is built by a manual run against an
+    exact merged commit, and only that run retains anything -- a PR run's image,
+    layout, distributions and bundle describe a merge result that will never be
+    published, and retaining them put gigabytes of pre-release bytes behind
+    public download links.
+
+    Failure-only diagnostics are deliberately not caught by this: they carry
+    neither prefix, they are absent on success, and their bytes pass the F16
+    sweep before they are written at all.
     """
-    retained = {str(declared.get("path", "")) for _workflow, _step, declared in uploads()}
-
-    assert any(path.rstrip("/").endswith(".image/oci") for path in retained), (
-        f"no upload retains the multi-platform layout; the run keeps {sorted(retained)}"
+    reachable = v3_reachable()
+    retained = sorted(
+        f"{path.name}: {step}"
+        for path, step, declared in uploads()
+        if path in reachable and str(declared.get("name", "")).startswith(CANDIDATE_ARTIFACTS)
     )
+
+    assert retained == [], f"a pull-request run retains {len(retained)} candidate artifacts: {retained}"
