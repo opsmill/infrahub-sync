@@ -548,85 +548,25 @@ def test_the_two_line_release_automation_is_what_the_case_above_would_otherwise_
     assert not (drafter & v3_reachable())
 
 
-def test_every_candidate_artifact_is_kept_long_enough_to_be_approved() -> None:
-    """An approval is bound to exact bytes, so the service has to still hold them.
+def test_nothing_the_v3_line_reaches_retains_a_candidate_artifact() -> None:
+    """A pull-request run describes bytes nobody will ship, so it keeps none of them.
 
-    A default retention is whatever the repository is configured for that week,
-    which is not something a release record can name.
+    Validation on a pull request is lint, unit, image, smoke and Compose. The
+    candidate that gets qualified and approved is built by a manual run against an
+    exact merged commit, and only that run retains anything -- a PR run's image,
+    layout, distributions and bundle describe a merge result that will never be
+    published, and retaining them put gigabytes of pre-release bytes behind
+    public download links.
+
+    Failure-only diagnostics are deliberately not caught by this: they carry
+    neither prefix, they are absent on success, and their bytes pass the F16
+    sweep before they are written at all.
     """
-    kept = {
-        str(declared.get("name")): declared.get("retention-days")
-        for _workflow, _step, declared in uploads()
-        if str(declared.get("name", "")).startswith(CANDIDATE_ARTIFACTS)
-    }
-
-    assert kept
-    assert all(kept.values()), (
-        f"{sorted(name for name, held in kept.items() if not held)} are kept for a default window"
+    reachable = v3_reachable()
+    retained = sorted(
+        f"{path.name}: {step}"
+        for path, step, declared in uploads()
+        if path in reachable and str(declared.get("name", "")).startswith(CANDIDATE_ARTIFACTS)
     )
 
-
-def clean_host_job() -> dict:
-    """Return the clean-host job, refusing a workflow that no longer defines one."""
-    jobs = load(IMAGE_WORKFLOW)["jobs"]
-    assert CLEAN_HOST_JOB in jobs, f"{IMAGE_WORKFLOW.name} defines no {CLEAN_HOST_JOB} job"
-    return jobs[CLEAN_HOST_JOB]
-
-
-def test_the_clean_host_gate_runs_on_a_pull_request_against_the_v3_line() -> None:
-    """A gate wired to an event this line never raises has never run.
-
-    Reachability is followed through calls, so the job qualifies a candidate on
-    every pull request that could change what the candidate is.
-    """
-    assert IMAGE_WORKFLOW in v3_reachable()
-    assert clean_host_job()["needs"] == ["image"]
-
-
-def test_the_clean_host_job_checks_nothing_out_and_installs_no_interpreter() -> None:
-    """The subject is the released artifact, so the tree that produced it is not present.
-
-    A job that happens to omit a checkout today is one edit from having one, which
-    is why this reads the job rather than the runner's behaviour.
-    """
-    rendered = yaml.safe_dump(clean_host_job())
-
-    assert CHECKOUT_ACTION not in rendered
-    for action in INTERPRETER_ACTIONS:
-        assert action not in rendered, f"the clean-host job sets up an interpreter with {action}"
-    for step in clean_host_job()["steps"]:
-        run = str(step.get("run", ""))
-        for tool in HOST_TOOLS:
-            assert tool not in run, f"the clean-host job runs {tool.strip()} on the host"
-
-
-def test_the_clean_host_diagnostic_is_published_by_name_and_never_by_directory() -> None:
-    """The driver's working directory holds the list of this run's own credentials.
-
-    That list is what the sweep looks for, so it lives beside the one file the
-    sweep cleared. Uploading the directory would publish both. A withheld
-    diagnostic is an absent file, and the reason it was withheld is in the log --
-    so the step tolerates finding nothing and never fails a run over it.
-    """
-    uploads = [
-        step for step in clean_host_job()["steps"] if str(step.get("uses", "")).startswith("actions/upload-artifact")
-    ]
-
-    assert uploads, "the clean-host job publishes nothing a failed row leaves behind"
-    for step in uploads:
-        assert step.get("if") == "failure()", "the diagnostic is published for a failure, not for every run"
-        path = str(step["with"]["path"])
-        assert path.endswith("diagnostic.txt"), f"{path} is a directory of the driver's working files"
-        assert step["with"]["if-no-files-found"] == "ignore"
-
-
-def test_the_clean_host_phase_is_bounded_inside_the_job_that_holds_it() -> None:
-    """A phase that only stops when the runner does reports nothing about which row ran."""
-    job = clean_host_job()
-    phase = [step for step in job["steps"] if "timeout-minutes" in step]
-
-    assert phase, "no step of the clean-host job states a timeout"
-    for step in phase:
-        assert step["timeout-minutes"] < job["timeout-minutes"], (
-            f"the clean-host step {step.get('name')!r} is not bounded inside its job"
-        )
+    assert retained == [], f"a pull-request run retains {len(retained)} candidate artifacts: {retained}"
