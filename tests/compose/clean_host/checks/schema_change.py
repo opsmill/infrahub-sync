@@ -131,7 +131,7 @@ with deployment() as client:
     # two different claims, and the row has already been wrong about which one it
     # was establishing. Both values are named, so a run that fails here says which
     # of them did not move.
-    probe = follow(client, client.plan(run_request(client, "plan", "clean-host: drift probe"), key("probe")))
+    probe = follow(client, client.plan(run_request(client, "plan", "clean-host: drift probe"), key("drift-probe")))
     moved = client.get_plan(probe.run.run_id).schema_fingerprint
     if plan.schema_fingerprint is None or moved is None:
         refuse(f"a plan recorded no schema fingerprint to compare: {plan.schema_fingerprint!r} then {moved!r}")

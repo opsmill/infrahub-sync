@@ -22,15 +22,19 @@ import os
 import pathlib
 import sys
 import uuid
-from typing import Literal, NoReturn
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Literal, NoReturn
 
 import httpx
 import yaml
 from infrahub_sdk import Config, InfrahubClientSync
 from infrahub_sdk.node import Attribute
 
-from infrahub_sync.client import RunTerminalError, RunWaitTimeoutError, SyncClient, SyncClientError
+from infrahub_sync.client import APIError, RunTerminalError, RunWaitTimeoutError, SyncClient, SyncClientError
 from infrahub_sync.client.models import CreateRunRequest, PublicRunResource, RunResource
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 # The two operations a run request may name, as the model declares them.
 Operation = Literal["plan", "sync"]
@@ -47,9 +51,25 @@ def refuse(sentence: str) -> NoReturn:
     raise SystemExit(1)
 
 
-def deployment() -> SyncClient:
-    """The deployment, through the client an operator uses."""
-    return SyncClient.from_environment(timeout=60.0)
+@contextmanager
+def deployment() -> Iterator[SyncClient]:
+    """The deployment, through the client an operator uses.
+
+    A refusal arrives as `APIError`, whose rendered message is the taxonomy's
+    constant sentence -- so left to escape it reports that the API refused
+    something and not what. The status and the code are enumerated fields on the
+    error; translated here, once, rather than at every call that could provoke
+    one.
+
+    The status and the code, and nothing else. A refusal's detail can quote
+    declared configuration back, so no body and no reason reaches the sentence a
+    driver shows or an artifact keeps.
+    """
+    with SyncClient.from_environment(timeout=60.0) as client:
+        try:
+            yield client
+        except APIError as error:
+            refuse(f"the Sync API refused the request with status {error.status} and code {error.code!r}")
 
 
 def destination() -> httpx.Client:

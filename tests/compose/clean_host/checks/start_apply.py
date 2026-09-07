@@ -31,7 +31,9 @@ with deployment() as client:
     # ambiguous -- so this plants its own difference and proves, in a read-only run
     # of its own, that there is one operation to interrupt before it starts one.
     plant("interrupt")
-    proved = follow(client, client.plan(run_request(client, "plan", "clean-host: work to interrupt"), key("probe")))
+    proved = follow(
+        client, client.plan(run_request(client, "plan", "clean-host: work to interrupt"), key("interrupt-probe"))
+    )
     require_planned_work(client, proved.run.run_id, expected=PLANTED_OPERATIONS)
 
     accepted = client.sync(run_request(client, "sync", "clean-host: interrupt mid-apply"), key("interrupt"))

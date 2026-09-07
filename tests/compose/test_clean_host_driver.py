@@ -1460,3 +1460,60 @@ def test_the_worker_probe_refuses_an_answer_it_cannot_read() -> None:
 
     assert "if answer.status_code != 200:" in source
     assert "if not isinstance(reported, list):" in source
+
+
+def mutation_purposes() -> list[tuple[str, str]]:
+    """Return every `key(...)` purpose the checks name, with where it is named.
+
+    Parsed rather than matched: a call spread over two lines would escape a
+    pattern, and the same word inside a docstring would satisfy one.
+    """
+    found = []
+    for module in sorted(CHECKS.glob("*.py")):
+        for node in ast.walk(ast.parse(module.read_text(encoding="utf-8"))):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "key"):
+                continue
+            first = node.args[0] if node.args else None
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                found.append((first.value, f"{module.name}:{node.lineno}"))
+    return found
+
+
+def test_every_mutation_key_the_checks_present_is_a_purpose_of_its_own() -> None:
+    """One key presented twice with different bodies is a conflict the API refuses.
+
+    `key()` promises a mutation key unique to one purpose in one run, and the run
+    identifier is shared by the whole matrix -- so two checks naming one purpose
+    render one key. The first consumes it and the second is refused, which
+    surfaces as that row's precondition failing for a reason that is not its own.
+
+    Only a live run can produce it: the call sites are in different files, and
+    nothing reading either alone would see the collision.
+    """
+    named = mutation_purposes()
+    assert named, "the checks present no mutation key at all"
+
+    seen: dict[str, list[str]] = {}
+    for purpose, where in named:
+        seen.setdefault(purpose, []).append(where)
+    shared = {purpose: places for purpose, places in seen.items() if len(places) > 1}
+
+    assert shared == {}, f"one mutation key is presented for more than one purpose: {shared}"
+
+
+def test_a_refused_request_says_what_it_was_refused_with() -> None:
+    """`APIError`'s message is the taxonomy's constant sentence, so it names nothing.
+
+    A 409 escaping as "the Sync API refused the request" is recoverable only from
+    the container log; the status and the code are enumerated fields on the error
+    and belong in the sentence a row reports. Translated at the one place every
+    check reaches the deployment rather than at each call that could provoke one.
+    """
+    source = kit_source()
+
+    assert "except APIError as error:" in source
+    assert "error.status" in source
+    assert "error.code" in source
+    # Status and code only: a refusal's detail can quote declared configuration.
+    for leaked in ("error.reason", "error.family", ".text", ".json()"):
+        assert leaked not in source, f"a refusal's {leaked} reaches the sentence a driver shows"
