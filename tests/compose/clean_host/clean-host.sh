@@ -33,7 +33,7 @@ secrets'
 CANDIDATE=${CLEAN_HOST_CANDIDATE:?the candidate artifact directory is required}
 IMAGE_ARCHIVE=$CANDIDATE/image-linux-amd64.tar
 
-BUNDLE=$WORK/bundle
+EXTRACTED=$WORK/extracted
 DESTINATION=$KIT/destination
 CHECKS=$KIT/checks
 
@@ -51,6 +51,7 @@ FOREIGN_VOLUME=infrahub-sync-clean-host-foreign
 IMAGE=
 INSTANCE=
 NETWORK=
+BUNDLE=
 ROW=startup
 
 # ---------------------------------------------------------------------------
@@ -121,8 +122,11 @@ require_no_foreign_mount() {
 # ---------------------------------------------------------------------------
 # Reading the record, and running a check inside the candidate
 # ---------------------------------------------------------------------------
-# The reader is the candidate image, because this host has no interpreter.
+# The reader is the candidate image, because this host has no interpreter. Read it
+# into a variable: a command substitution inside an argument discards the reader's
+# own exit status, so a failed read would reach a message as an empty string.
 record() {
+    [ -n "$IMAGE" ] || fail "the candidate record was read before the image that reads it was loaded"
     docker run --rm --network=none \
         --volume "$CANDIDATE:/candidate:ro" \
         "$IMAGE" python -c "import json;print(json.load(open('/candidate/qualification.json'))$1)"
@@ -195,21 +199,27 @@ row_artifact_identity() {
     loaded=$(docker load --input "$IMAGE_ARCHIVE" | sed -n 's/^Loaded image: //p')
     [ -n "$loaded" ] || fail "the candidate image archive loaded no image"
     IMAGE=$(docker image inspect --format '{{.Id}}' "$loaded")
-    require "the loaded image is not the linux/amd64 candidate the record names" \
-        "$(record "['image']['platforms']['linux/amd64']['config']")" "$IMAGE"
-    report "the loaded image is the recorded linux/amd64 candidate"
+    recorded=$(record "['image']['platforms']['linux/amd64']['config']") \
+        || fail "the candidate record does not name a linux/amd64 configuration digest"
+    require "the loaded image is not the linux/amd64 candidate the record names" "$recorded" "$IMAGE"
+    tag=$(record "['identity']['tag']") || fail "the candidate record names no release tag"
+    report "the loaded image is the recorded linux/amd64 candidate of $tag"
 
     # The checksum with the host's own tool, in the form the candidate wrote it.
-    bundle_name=$(record "['bundle']['name']")
+    bundle_name=$(record "['bundle']['name']") || fail "the candidate record names no bundle"
     ( cd "$CANDIDATE" && sha256sum -c "$bundle_name.sha256" >/dev/null 2>&1 ) \
         || fail "the deployment bundle does not match the checksum the record names"
     report "the bundle matches the checksum the record names"
 
-    mkdir -p "$BUNDLE"
-    tar -xzf "$CANDIDATE/$bundle_name" -C "$WORK"
-    mv "$WORK/${bundle_name%.tar.gz}" "$BUNDLE" 2>/dev/null || true
-    [ -x "$BUNDLE/infrahub-sync-compose" ] \
-        || fail "the extracted bundle has no executable lifecycle entry point"
+    # The bundle root is wherever the entry point is. The archive's own top-level
+    # directory is not part of what the record promises, so it is found rather
+    # than derived from a filename.
+    mkdir -p "$EXTRACTED"
+    tar -xzf "$CANDIDATE/$bundle_name" -C "$EXTRACTED"
+    entry=$(find "$EXTRACTED" -type f -name infrahub-sync-compose | head -1)
+    [ -n "$entry" ] || fail "the bundle archive holds no lifecycle entry point"
+    [ -x "$entry" ] || fail "the bundle's lifecycle entry point is present but not executable"
+    BUNDLE=$(dirname "$entry")
     report "the bundle extracted and its entry point arrived executable"
 
     compose_bundle init >/dev/null || fail "the extracted bundle could not initialise a deployment"
@@ -481,8 +491,8 @@ row_alpha_replacement() {
     [ "$before" != "$(durable_snapshot)" ] \
         || fail "the replacement kept the prior state, which this alpha does not promise"
     version=$(check served_version)
-    require "the replaced deployment does not serve the recorded version" \
-        "$(record "['identity']['version']")" "$version"
+    recorded=$(record "['identity']['version']") || fail "the candidate record names no version"
+    require "the replaced deployment does not serve the recorded version" "$recorded" "$version"
     report "reset and redeploy replaced prior disposable state with the recorded version"
 }
 
@@ -513,7 +523,8 @@ row_secrets() {
     docker image history --no-trunc --format '{{.CreatedBy}}' "$IMAGE" > "$WORK/image.history"
     check reported_failures > "$WORK/reported.failures" 2>&1 || true
 
-    swept="$WORK/deployment.log $WORK/image.history $WORK/reported.failures $CANDIDATE/$(record "['bundle']['name']")"
+    bundle_name=$(record "['bundle']['name']") || fail "the candidate record names no bundle to sweep"
+    swept="$WORK/deployment.log $WORK/image.history $WORK/reported.failures $CANDIDATE/$bundle_name"
     while read -r canary; do
         [ -n "$canary" ] || continue
         for target in $swept; do
@@ -548,7 +559,7 @@ main() {
     install_refusing_shims
     trap cleanup EXIT INT TERM
 
-    report "clean-host qualification of $(record "['identity']['tag']")"
+    report "clean-host qualification of the candidate in $CANDIDATE"
     for row in $MATRIX; do
         ROW=$row
         "row_$row"

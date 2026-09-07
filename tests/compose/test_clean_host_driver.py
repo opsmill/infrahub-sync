@@ -113,3 +113,47 @@ def test_every_check_the_driver_runs_is_in_the_kit() -> None:
     assert named, "the driver runs no checks"
     for name in sorted(named):
         assert (CHECKS / f"{name}.py").is_file(), f"the driver runs {name}, which the kit does not carry"
+
+
+def test_every_read_of_the_candidate_record_is_checked() -> None:
+    """A record read inside an argument discards its own exit status.
+
+    The reader runs in the candidate image, so a read attempted before that image
+    is loaded fails -- and a command substitution in an argument position turns
+    that failure into an empty string the message carries anyway.
+    """
+    unchecked = [
+        line.strip()
+        for line in executable_lines().splitlines()
+        if "$(record " in line and not re.match(r"^\s*\w+=\$\(record ", line)
+    ]
+
+    assert unchecked == []
+
+
+def test_the_bundle_root_is_found_rather_than_derived_from_a_filename() -> None:
+    """The archive's top-level directory is not part of what the record promises.
+
+    Deriving it from the archive name, or moving it into a directory that already
+    exists, puts the entry point somewhere the driver then reports as missing.
+    """
+    body = executable_lines()
+
+    assert "-name infrahub-sync-compose" in body
+    assert "BUNDLE=$(dirname" in body
+    # The extracted tree is used where it lands. Relocating it into a directory
+    # that already exists nests rather than renames, and the nesting is what put
+    # the entry point somewhere the driver then called missing.
+    assert not re.search(r"^\s*mv\b.*EXTRACTED", body, re.MULTILINE)
+    # Teardown may ignore a failure. Nothing that establishes the bundle may.
+    establishing = [line for line in body.splitlines() if re.search(r"\b(tar|find|sha256sum)\b", line)]
+    assert establishing
+    assert [line for line in establishing if "|| true" in line] == []
+
+
+def test_an_absent_entry_point_and_an_unexecutable_one_are_reported_apart() -> None:
+    """They have different causes, so a single message sends a reader to the wrong one."""
+    body = driver()
+
+    assert "holds no lifecycle entry point" in body
+    assert "present but not executable" in body
