@@ -939,3 +939,27 @@ def test_the_secret_row_states_which_credential_it_does_not_sweep_for() -> None:
 
     assert "published development constant" in body
     assert "credentials this run generated" in body
+
+
+def test_no_check_builds_a_run_request_of_its_own() -> None:
+    """The client requires a confirmation paired with the operation, so one builder holds it.
+
+    A second construction site is where the pairing drifts, and the row that
+    finds out is whichever one executes first -- which for the sync route was
+    none of them for four commits.
+    """
+    building = {
+        module.name
+        for module in sorted(CHECKS.glob("*.py"))
+        if module.name != "kit.py" and "CreateRunRequest" in attribute_calls(code_of(module))
+    }
+
+    assert not building, f"{sorted(building)} build a run request instead of asking the kit for one"
+
+
+def test_the_kit_derives_the_confirmation_from_the_operation() -> None:
+    """Passed in, it is an argument a caller can get wrong; derived, there is no pair to mismatch."""
+    source = kit_source()
+
+    assert "confirm_writes=operation == 'sync'" in source
+    assert source.count("confirm_writes") == 1

@@ -86,15 +86,27 @@ def bundled(client: SyncClient) -> tuple[str, int]:
     refuse(f"this deployment has no configuration registered as {BUNDLED_CONFIGURATION}")
 
 
-def run_request(client: SyncClient, operation: Operation, reason: str) -> CreateRunRequest:
-    """Return a request for one run against the configuration bootstrap registered."""
-    config_id, registry_version = bundled(client)
+def create_run(operation: Operation, *, config_id: str, registry_version: int, reason: str) -> CreateRunRequest:
+    """Return one run request, confirmed exactly as the operation requires.
+
+    The client does not merely permit different confirmations for the two
+    operations: it refuses a `plan` that confirms writes and a `sync` that does
+    not. They are one input, so it is derived here rather than passed in, and
+    there is no way to hand the client an inconsistent pair.
+    """
     return CreateRunRequest(
         operation=operation,
         config_id=config_id,
         registry_version=registry_version,
+        confirm_writes=operation == "sync",
         reason=reason,
     )
+
+
+def run_request(client: SyncClient, operation: Operation, reason: str) -> CreateRunRequest:
+    """Return a request for one run against the configuration bootstrap registered."""
+    config_id, registry_version = bundled(client)
+    return create_run(operation, config_id=config_id, registry_version=registry_version, reason=reason)
 
 
 # The result key each stage writes its own failure evidence under. Only three of

@@ -20,7 +20,7 @@ import pathlib
 from typing import TYPE_CHECKING
 
 import yaml
-from kit import Operation, deployment, destination, follow, key, refuse
+from kit import Operation, create_run, deployment, destination, follow, key, refuse
 
 from infrahub_sync.client.models import ConfigMutationRequest, CreateRunRequest
 
@@ -78,12 +78,13 @@ with deployment() as client:
     config_id, registry_version = registered_keyless(client)
 
     def request(operation: Operation, reason: str) -> CreateRunRequest:
-        return CreateRunRequest(
-            operation=operation,
-            config_id=config_id,
-            registry_version=registry_version,
-            reason=reason,
-        )
+        """This row's own configuration, through the kit's one run-request builder.
+
+        Its identifiers are its own -- it registered the configuration itself --
+        but the confirmation the client requires for each operation is not, and
+        deriving it in a second place is how the two drift apart.
+        """
+        return create_run(operation, config_id=config_id, registry_version=registry_version, reason=reason)
 
     planned = follow(client, client.plan(request("plan", "clean-host: unkeyed plan"), key("unkeyed")))
     plan = client.get_plan(planned.run.run_id)
