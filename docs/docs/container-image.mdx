@@ -96,7 +96,7 @@ owned by `10001:10001` before the container starts.
 ## Bill of materials and vulnerability policy
 
 `image.sbom` runs a pinned Syft against the archive exported from the layout and writes
-SPDX JSON to `.image/sbom-linux-amd64.spdx.json`. `image.scan` runs a pinned Grype
+SPDX JSON named for the release it describes — `.image/infrahub_sync-<version>-sbom-linux-amd64.spdx.json`. `image.scan` runs a pinned Grype
 against that document.
 
 The policy fails the build on a high or critical finding that has a fix available. A

@@ -19,6 +19,7 @@ mistaken for one.
 
 from __future__ import annotations
 
+import ast
 import io
 import json
 import shlex
@@ -30,6 +31,16 @@ from invoke import Context, Result
 
 from tasks import compose, image, release
 from tasks.release import release_identity
+
+# The build-command path, and who is allowed to reach each part of it. Creating a
+# builder is not building: the freshness gate needs one because it drives two real
+# builds of its own, through a suite rather than through the argv below.
+BUILD_PATH = {
+    "build_command": {"image.py:build"},
+    "_ensure_builder": {"image.py:build", "image.py:freshness"},
+}
+TASK_TREE = Path(image.__file__).resolve().parent
+
 
 PLATFORMS = ("linux/amd64", "linux/arm64")
 INDEX_DIGEST = "sha256:" + "1" * 64
@@ -236,3 +247,34 @@ def test_an_export_holding_more_than_one_image_is_refused(tmp_path: Path) -> Non
 
     with pytest.raises(image.ImageTaskError, match="exactly one image"):
         image.archive_configuration(archive)
+
+
+def _references(node: ast.AST, module: str, scope: str, found: dict[str, set[str]]) -> None:
+    """Record every place beneath one node that names part of the build-command path."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            _references(child, module, child.name, found)
+            continue
+        named = child.id if isinstance(child, ast.Name) else child.attr if isinstance(child, ast.Attribute) else ""
+        if named in BUILD_PATH:
+            found.setdefault(named, set()).add(f"{module}:{scope}")
+        _references(child, module, scope, found)
+
+
+def build_path_references() -> dict[str, set[str]]:
+    """Return who names each part of the build-command path, across the task tree."""
+    found: dict[str, set[str]] = {}
+    for module in sorted(TASK_TREE.glob("*.py")):
+        _references(ast.parse(module.read_text(encoding="utf-8")), module.name, "<module>", found)
+    return found
+
+
+@pytest.mark.parametrize("name", sorted(BUILD_PATH))
+def test_the_build_command_path_is_reached_only_from_where_it_is_meant_to_be(name: str) -> None:
+    """One build means one caller, and this holds for a caller nobody has written yet.
+
+    The recorder above sees only the tasks it is given. This reads the tree, so a
+    task added later that reaches for a build — to replace a missing layout, say —
+    fails here without anyone having remembered to name it.
+    """
+    assert build_path_references().get(name, set()) == BUILD_PATH[name]

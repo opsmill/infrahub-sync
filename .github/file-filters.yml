@@ -32,6 +32,12 @@ image_files: &image_files
   - "Dockerfile"
   - ".dockerignore"
   - "vulnerability-waivers.yml"
+  # Build-context inputs rather than documentation here: the Dockerfile copies
+  # both into the wheel's build, so a change to either changes the image the gate
+  # would qualify. `tests/test_workflow_contracts.py` reads the Dockerfile's own
+  # COPY lines and fails if an input stops being named.
+  - "README.md"
+  - "LICENSE.txt"
   - "tests/image/**"
   - ".github/workflows/workflow-image.yml"
 

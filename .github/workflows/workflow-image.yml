@@ -126,6 +126,20 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
 
+      # Both platforms, as the index that names them. The archive above is one
+      # platform, so on its own it makes PKG-A1's "promoted without rebuilding"
+      # unachievable for the other: a promotion holding no arm64 manifest has
+      # nothing to push but a rebuild, and a rebuild is a different digest.
+      - name: "Publish the multi-platform layout as a candidate artifact"
+        id: candidate-layout
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-candidate-layout
+          path: .image/oci/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
+
       # Each archive is one platform image copied out of the retained layout, and
       # those copies are the largest thing the build leaves behind. Nothing reads
       # them after the scan, the smoke, and the upload above; the layout they came
@@ -224,6 +238,10 @@ jobs:
               "infrahub-sync-candidate-image": {
                 "id": "${{ steps.candidate-image.outputs.artifact-id }}",
                 "digest": "${{ steps.candidate-image.outputs.artifact-digest }}"
+              },
+              "infrahub-sync-candidate-layout": {
+                "id": "${{ steps.candidate-layout.outputs.artifact-id }}",
+                "digest": "${{ steps.candidate-layout.outputs.artifact-digest }}"
               },
               "infrahub-sync-candidate-sboms": {
                 "id": "${{ steps.candidate-sboms.outputs.artifact-id }}",

@@ -35,6 +35,13 @@ UPLOAD_ACTION = "actions/upload-artifact"
 # The artifacts an approval is later bound to, as opposed to evidence a run
 # leaves for whoever reads it that day.
 CANDIDATE_ARTIFACTS = ("infrahub-sync-candidate", "infrahub-sync-qualification")
+# The window an approval may take. A candidate's bytes have to still be there
+# when someone reaches it, and a record naming a shorter window would describe
+# artifacts the service is already free to drop.
+APPROVAL_WINDOW_DAYS = 90
+# Every candidate upload names the workflow's own declaration rather than a
+# number of its own, so one edit moves all of them together.
+RETENTION_EXPRESSION = "${{ env.CANDIDATE_RETENTION_DAYS }}"
 # `invoke` as the command being run, optionally through `uv run`, so that naming
 # it as an argument — installing it, say — is not read as running a task.
 INVOKE_TASK = re.compile(
@@ -49,6 +56,8 @@ TASK_TREE = "tasks/**"
 QUALIFIED_TREES = ("infrahub_sync/**", "deploy/compose/**", "tests/compose/**")
 
 PUBLISH_WORKFLOW = WORKFLOWS / "workflow-publish.yml"
+IMAGE_WORKFLOW = WORKFLOWS / "workflow-image.yml"
+DOCKERFILE = REPO_ROOT / "Dockerfile"
 # The input one approval turns on, and the protected environment that approval is
 # taken in. A step reachable without both is a publication nobody approved.
 PUBLICATION_INPUT = "inputs.publish"
@@ -288,6 +297,41 @@ def image_filter_patterns() -> list[str]:
     return [pattern for entry in declared for pattern in (entry if isinstance(entry, list) else [entry])]
 
 
+def build_context_inputs() -> set[str]:
+    """Return every path the Dockerfile copies out of the build context.
+
+    Read from the Dockerfile rather than listed here: a file joining the build
+    context changes the wheel and the image, and a hand-written list is one edit
+    behind the moment someone adds one. `--from=` copies are excluded because
+    they come from another stage or another image, not from this tree.
+    """
+    found: set[str] = set()
+    for line in DOCKERFILE.read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if not parts or parts[0].upper() != "COPY":
+            continue
+        arguments = [part for part in parts[1:] if not part.startswith("--")]
+        if any(part.startswith("--from=") for part in parts[1:]) or len(arguments) < 2:
+            continue
+        found.update(arguments[:-1])
+    return found
+
+
+def test_the_image_filter_covers_every_input_the_dockerfile_copies() -> None:
+    """A file the image is built from, that the filter does not name, skips the gate.
+
+    `README.md` was exactly that: copied at `COPY pyproject.toml uv.lock
+    README.md LICENSE.txt ./`, absent from the filter, so a pull request touching
+    only it changed the wheel and the image and never re-ran the gate.
+    """
+    patterns = set(image_filter_patterns())
+    inputs = build_context_inputs()
+
+    assert inputs, "no COPY line in the Dockerfile reads from the build context"
+    uncovered = sorted(name for name in inputs if name not in patterns and f"{name}/**" not in patterns)
+    assert not uncovered, f"the image is built from {uncovered}, which image_all does not name"
+
+
 @pytest.mark.parametrize("tree", QUALIFIED_TREES)
 def test_the_image_filter_covers_every_tree_its_gate_qualifies(tree: str) -> None:
     """The gate builds an image and then runs it; both depend on more than the Dockerfile.
@@ -343,10 +387,15 @@ def _step(path: Path, job_name: str, step_name: str) -> tuple[dict, dict]:
 def _guarded(job: dict, step: dict) -> bool:
     """Report whether the publication input decides that step's existence.
 
-    A condition on the job covers every step inside it, and covers them earlier:
-    the job never starts, so nothing it would have installed is installed either.
+    The condition has to be on the **job**, and accepting a step-level one would
+    permit exactly what this argues against: a guarded step inside an unguarded
+    job still starts the runner, sets up the interpreter, and downloads the
+    candidate's artifacts, and only then declines to upload. The job condition
+    covers every step inside it and covers them earlier — the job never starts,
+    so nothing it would have installed is installed either.
     """
-    return PUBLICATION_INPUT in str(job.get("if", "")) or PUBLICATION_INPUT in str(step.get("if", ""))
+    del step
+    return PUBLICATION_INPUT in str(job.get("if", ""))
 
 
 def triggers(path: Path) -> set[str]:
@@ -553,6 +602,62 @@ def test_every_candidate_artifact_is_kept_long_enough_to_be_approved() -> None:
     }
 
     assert kept
-    assert all(kept.values()), (
-        f"{sorted(name for name, held in kept.items() if not held)} are kept for a default window"
+    undeclared = sorted(name for name, held in kept.items() if str(held) != RETENTION_EXPRESSION)
+    assert not undeclared, f"{undeclared} name a retention of their own rather than the workflow's"
+
+    declared = int(load(IMAGE_WORKFLOW)["env"]["CANDIDATE_RETENTION_DAYS"])
+    assert declared >= APPROVAL_WINDOW_DAYS, (
+        f"a candidate is kept {declared} days, and an approval is allowed {APPROVAL_WINDOW_DAYS}"
+    )
+
+
+def test_the_publisher_names_a_workflow_that_really_produces_a_candidate() -> None:
+    """The binding is only worth as much as the workflow path it compares against.
+
+    A rename that left this pointing at a file building nothing would refuse
+    every real candidate, or -- worse, if the name were reused -- accept a run
+    that qualified none. So it is checked against the graph: the workflow it
+    names has to be one that calls the image gate.
+    """
+    named = load(PUBLISH_WORKFLOW)["env"]["CANDIDATE_WORKFLOW"]
+    candidate = REPO_ROOT / named
+
+    assert candidate.is_file(), f"the publisher binds approvals to {named}, which does not exist"
+    assert IMAGE_WORKFLOW.name in candidate.read_text(encoding="utf-8"), (
+        f"{named} does not call {IMAGE_WORKFLOW.name}, so its runs produce no candidate"
+    )
+
+
+def test_the_approval_is_bound_to_more_than_a_run_identifier() -> None:
+    """A run identifier is an approver's typing, and everything else is derived from it.
+
+    Read from the scripts the steps run and the artifacts they name, not from the
+    job's rendered mapping: an environment variable that is set and never
+    compared satisfies the second and none of the first.
+
+    Each closes one way for a green run that qualified nothing to be approved:
+    another workflow's run, another commit's identity, or a run that recorded no
+    qualification at all.
+    """
+    job = load(PUBLISH_WORKFLOW)["jobs"]["candidate"]
+    scripts = " ".join(str(step.get("run", "")) for step in job["steps"])
+    downloaded = {str(step.get("with", {}).get("name", "")) for step in job["steps"]}
+
+    assert '"${CANDIDATE_WORKFLOW}"' in scripts, "any successful run in this repository would be accepted"
+    assert '"${HEAD_SHA}" != "${revision}"' in scripts, "an identity recorded for another commit would be accepted"
+    assert "infrahub-sync-qualification-record" in downloaded, "a run recording no qualification would be accepted"
+
+
+def test_the_multi_platform_layout_outlives_the_run_that_built_it() -> None:
+    """Promotion pushes what a candidate built, and one platform's archive is not that.
+
+    The retained OCI layout is the only thing carrying the index and the second
+    platform's manifest. Without it, promoting arm64 has nothing to push but a
+    rebuild -- and a rebuild at the same source is a different digest, which is
+    the one thing "promoted without rebuilding" rules out.
+    """
+    retained = {str(declared.get("path", "")) for _workflow, _step, declared in uploads()}
+
+    assert any(path.rstrip("/").endswith(".image/oci") for path in retained), (
+        f"no upload retains the multi-platform layout; the run keeps {sorted(retained)}"
     )

@@ -33,6 +33,14 @@ permissions:
   contents: read
   actions: read
 
+# The workflow whose runs produce a candidate. An approver supplies a run
+# identifier, and this is what makes it answerable: any other successful run in
+# this repository is refused, however green it was. Named once here; a contract
+# test pins it to the workflow graph, so a rename cannot leave it pointing at a
+# file that builds nothing.
+env:
+  CANDIDATE_WORKFLOW: ".github/workflows/trigger-pr-develop.yml"
+
 # One approval per candidate at a time, and never cancelled: a cancelled upload
 # leaves a release half-made, which is worse than a queued one.
 concurrency:
@@ -52,17 +60,43 @@ jobs:
       sdist: ${{ steps.identity.outputs.sdist }}
       bundle: ${{ steps.identity.outputs.bundle }}
     steps:
-      - name: "Refuse a candidate run that did not qualify"
+      # A run identifier is an approver's typing, so everything this job trusts is
+      # checked against it: that the run is this repository's candidate workflow
+      # rather than any successful run in the repository, that it concluded
+      # successfully, and -- below -- that the commit it ran on is the one the
+      # identity records and that a qualification record exists at all.
+      - name: "Refuse a candidate run that is not a qualified run of this workflow"
+        id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.candidate-run }}
+          CANDIDATE_WORKFLOW: ${{ env.CANDIDATE_WORKFLOW }}
         run: |
           set -euo pipefail
-          conclusion="$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_ID}" --jq '.conclusion')"
+          gh api "repos/${{ github.repository }}/actions/runs/${RUN_ID}" \
+            --jq '{conclusion, path, head_sha}' > run.json
+          conclusion="$(jq -r '.conclusion' run.json)"
           if [ "${conclusion}" != "success" ]; then
             echo "candidate run ${RUN_ID} concluded '${conclusion}', so it qualified nothing" >&2
             exit 1
           fi
+          path="$(jq -r '.path' run.json)"
+          if [ "${path}" != "${CANDIDATE_WORKFLOW}" ]; then
+            echo "candidate run ${RUN_ID} is a run of ${path}, not of ${CANDIDATE_WORKFLOW}" >&2
+            exit 1
+          fi
+          printf 'head_sha=%s\n' "$(jq -r '.head_sha' run.json)" >> "${GITHUB_OUTPUT}"
+
+      # Its presence is the claim: `release.qualify` refuses to write one without
+      # every gate result, every SBOM, the bundle, and the uploaded artifact
+      # identifiers, so a run that produced none never qualified anything.
+      - name: "Refuse a candidate run that recorded no qualification"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-qualification-record
+          run-id: ${{ inputs.candidate-run }}
+          github-token: ${{ github.token }}
+          path: candidate
 
       - name: "Download the identity that candidate recorded"
         uses: actions/download-artifact@v4
@@ -76,11 +110,20 @@ jobs:
         id: identity
         env:
           DECLARED: ${{ inputs.version }}
+          HEAD_SHA: ${{ steps.candidate.outputs.head_sha }}
         run: |
           set -euo pipefail
           recorded="$(jq -r '.version' candidate/identity.json)"
           if [ "${DECLARED}" != "${recorded}" ]; then
             echo "this approval names ${DECLARED}, and the candidate recorded ${recorded}" >&2
+            exit 1
+          fi
+          # The commit as well as the version: two runs of one version differ by
+          # the revision they built, and an identity that names another commit is
+          # not this run's identity.
+          revision="$(jq -r '.revision' candidate/identity.json)"
+          if [ "${HEAD_SHA}" != "${revision}" ]; then
+            echo "the candidate run ran on ${HEAD_SHA}, and its identity records ${revision}" >&2
             exit 1
           fi
           # Every later step reads these rather than the input, so the names an
