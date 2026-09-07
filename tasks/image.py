@@ -12,18 +12,16 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shlex
 import tarfile
 from dataclasses import dataclass
-from datetime import date, datetime
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as installed_version
+from datetime import date
 from typing import TYPE_CHECKING, Any
 
 import yaml
 from invoke import Context, task
 
+from .release import ReleaseIdentity, read_release_identity
 from .utils import ESCAPED_REPO_PATH, REPO_BASE
 
 if TYPE_CHECKING:
@@ -67,8 +65,6 @@ WAIVER_FIELDS = ("vulnerability", "owner", "reason", "expires")
 BLOCKING_SEVERITIES = frozenset({"high", "critical"})
 FIXED_STATE = "fixed"
 
-_REVISION = re.compile(r"[0-9a-f]{40}")
-_VERSION = re.compile(r"[0-9][0-9A-Za-z.!+-]*")
 # Attestation manifests are recorded against this placeholder platform. The build
 # asks for none, so one appearing means the exporter added something the recorded
 # digests would otherwise silently describe as an image.
@@ -79,71 +75,15 @@ class ImageTaskError(RuntimeError):
     """Raised when an image build input or output does not meet the artifact contract."""
 
 
-@dataclass(frozen=True)
-class SourceProvenance:
-    """The three provenance values a build is allowed to take from its source."""
-
-    version: str
-    revision: str
-    created: str
-
-
-def source_provenance(*, version: str, revision: str, created: str) -> SourceProvenance:
-    """Validate the release identity a build may record, and refuse anything else.
-
-    These three values are the only build inputs that reach image metadata, so
-    they are checked here rather than trusted: an abbreviated revision or a local
-    timestamp would leave an image nobody can trace back to one commit.
-    """
-    if not _VERSION.fullmatch(version):
-        msg = f"version {version!r} is not a release identifier"
-        raise ImageTaskError(msg)
-    if not _REVISION.fullmatch(revision):
-        msg = f"revision {revision!r} is not a full commit identifier"
-        raise ImageTaskError(msg)
-    # Git writes a terminal `Z` for a commit made at UTC, and `fromisoformat` does
-    # not read it before Python 3.11. Rewriting that one designator is what lets
-    # this run on every supported interpreter; it is done for parsing alone, so a
-    # timestamp no commit carried cannot reach image metadata.
-    parsable = f"{created[:-1]}+00:00" if created.endswith("Z") else created
-    try:
-        parsed = datetime.fromisoformat(parsable)
-    except ValueError:
-        msg = f"created {created!r} is not an ISO 8601 timestamp"
-        raise ImageTaskError(msg) from None
-    if parsed.utcoffset() is None:
-        msg = f"created {created!r} has no UTC offset, so it names no absolute instant"
-        raise ImageTaskError(msg)
-    return SourceProvenance(version=version, revision=revision, created=created)
-
-
-def read_source_provenance(context: Context) -> SourceProvenance:
-    """Derive the release identity from the installed distribution and the source commit.
-
-    `created` comes from the commit, never the build clock, so two builds of one
-    revision record the same creation time.
-    """
-    try:
-        version = installed_version(DISTRIBUTION)
-    except PackageNotFoundError:
-        msg = f"{DISTRIBUTION} is not installed; run `uv sync --extra dev --extra prefect --extra service`"
-        raise ImageTaskError(msg) from None
-    return source_provenance(
-        version=version,
-        revision=_git(context, "rev-parse HEAD"),
-        created=_git(context, "show -s --format=%cI HEAD"),
-    )
-
-
 def build_command(
-    provenance: SourceProvenance,
+    identity: ReleaseIdentity,
     *,
     platforms: tuple[str, ...],
     destination: Path,
 ) -> tuple[str, ...]:
     """Return the fixed buildx argv for one OCI layout export.
 
-    Only the three provenance values are passed as build arguments. Nothing else
+    Only the three identity values are passed as build arguments. Nothing else
     from the caller's environment or command line reaches the image, so image
     history cannot become a place a secret is accidentally recorded.
     """
@@ -160,11 +100,11 @@ def build_command(
         "--provenance=false",
         "--sbom=false",
         "--build-arg",
-        f"VERSION={provenance.version}",
+        f"VERSION={identity.version}",
         "--build-arg",
-        f"REVISION={provenance.revision}",
+        f"REVISION={identity.revision}",
         "--build-arg",
-        f"CREATED={provenance.created}",
+        f"CREATED={identity.created}",
         "--output",
         f"type=oci,tar=false,dest={destination}",
         str(REPO_ROOT),
@@ -466,15 +406,6 @@ def scan_file(platform: str) -> Path:
     return BUILD_DIR / f"vulnerabilities-{platform_slug(platform)}.json"
 
 
-def _git(context: Context, arguments: str) -> str:
-    with context.cd(ESCAPED_REPO_PATH):
-        result = context.run(f"git {arguments}", hide=True, warn=True, pty=False)
-    if result is None or result.exited != 0:
-        msg = f"`git {arguments}` failed in {REPO_ROOT}"
-        raise ImageTaskError(msg)
-    return result.stdout.strip()
-
-
 def _run(context: Context, argv: tuple[str, ...], *, hide: bool = False) -> str:
     """Run one fixed argv, quoting every word so no value can become shell syntax."""
     result = context.run(" ".join(shlex.quote(word) for word in argv), hide=hide, pty=False)
@@ -508,25 +439,25 @@ def build(context: Context, platforms: str = ",".join(PLATFORMS)) -> None:
         msg = f"{CANARY_ENV} must hold a throwaway secret value so the build proves it leaks none"
         raise ImageTaskError(msg)
 
-    provenance = read_source_provenance(context)
+    identity = read_release_identity(context)
     _ensure_builder(context)
 
-    print(f" - [{NAMESPACE}] Building {', '.join(requested)} at revision {provenance.revision}")
+    print(f" - [{NAMESPACE}] Building {', '.join(requested)} at revision {identity.revision}")
     # The whole build directory, not only the layout. An SBOM or scanner report
     # left behind describes the artifact of the previous build, which the digest
     # record about to be written no longer names, and `image.scan` would read it
     # as a statement about the new one.
     _remove_tree(BUILD_DIR)
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
-    _run(context, build_command(provenance, platforms=requested, destination=LAYOUT_DIR))
+    _run(context, build_command(identity, platforms=requested, destination=LAYOUT_DIR))
 
     layout = read_layout(LAYOUT_DIR)
     record = {
         "schema_version": DIGESTS_SCHEMA_VERSION,
         "provenance": {
-            "version": provenance.version,
-            "revision": provenance.revision,
-            "created": provenance.created,
+            "version": identity.version,
+            "revision": identity.revision,
+            "created": identity.created,
         },
         "index_digest": layout["index"],
         "platforms": layout["platforms"],

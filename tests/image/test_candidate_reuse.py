@@ -29,6 +29,7 @@ import pytest
 from invoke import Context, Result
 
 from tasks import compose, image
+from tasks.release import release_identity
 
 PLATFORMS = ("linux/amd64", "linux/arm64")
 INDEX_DIGEST = "sha256:" + "1" * 64
@@ -134,7 +135,7 @@ def candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Recorder:
         json.dumps(
             {
                 "schema_version": image.DIGESTS_SCHEMA_VERSION,
-                "provenance": {"version": "2.0.1", "revision": REVISION, "created": CREATED},
+                "provenance": {"version": "3.0.0a1", "revision": REVISION, "created": CREATED},
                 "index_digest": INDEX_DIGEST,
                 "platforms": {
                     name: {"manifest": MANIFESTS[name], "config": CONFIGURATIONS[name]} for name in PLATFORMS
@@ -182,9 +183,9 @@ def test_no_candidate_consumer_runs_a_build_command(name: str, candidate: Record
 
 def test_the_recorder_names_a_build_command_when_one_runs() -> None:
     """Without this the assertion above would pass on a recorder that sees nothing."""
-    provenance = image.source_provenance(version="2.0.1", revision=REVISION, created=CREATED)
+    identity = release_identity(version="3.0.0a1", revision=REVISION, created=CREATED)
     build = " ".join(
-        shlex.quote(word) for word in image.build_command(provenance, platforms=PLATFORMS, destination=Path("/layout"))
+        shlex.quote(word) for word in image.build_command(identity, platforms=PLATFORMS, destination=Path("/layout"))
     )
 
     assert build_commands(["docker buildx rm infrahub-sync-image", build, "docker image load --input a.tar"]) == [build]

@@ -105,6 +105,44 @@ finding nobody can act on does not block. Approved exceptions live in
 the reason, and the date it lapses. An expired entry fails the gate rather than passing
 quietly. The repository ships no waivers, and adding one is a decision, not a build step.
 
+## Release identity
+
+One step reads the package version out of the project's own metadata, and every
+name a release carries is derived from it — the image's `version` label, the wheel
+and the source distribution, the Compose bundle archive, the Git tag, and the
+release title. There is no second place that spells a version, so there is nothing
+for two names to disagree about.
+
+```bash
+uv run invoke release.identity
+uv run invoke release.build
+```
+
+`release.identity` writes `.release/identity.json`. That file is how a later phase
+learns what this candidate is called without checking out the source, which by
+then may have moved on to a different version. `release.build` produces the two
+distributions a publication would upload, and refuses any name the recorded
+identity did not derive.
+
+The declared version has to be its own [PEP 440](https://peps.python.org/pep-0440/)
+normalized form. `3.0.0-a1`, `3.0.0alpha1`, and `v3.0.0a1` all parse as `3.0.0a1`
+and are refused, because accepting one would put two spellings on one release and
+the artifacts named from each would not match.
+
+Pass `--version` to have the source contradict a version you already hold:
+
+```bash
+uv run invoke release.identity --version 3.0.0a1
+```
+
+## Publication
+
+Publication is a separate, dispatch-only workflow. It is bound to one candidate
+run, refuses a run that did not qualify, refuses an approval naming a version that
+candidate did not record, and never checks out source — the distributions it
+uploads are the ones the candidate already built. With its `publish` input off,
+the job that would upload does not exist, so nothing it needs is ever installed.
+
 ## Recorded digests
 
 `image.build` writes `.image/digests.json`: the release identity the image records, the

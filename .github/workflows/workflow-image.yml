@@ -74,6 +74,15 @@ jobs:
       - name: "Seed the build environment canary"
         run: echo "INFRAHUB_SYNC_IMAGE_CANARY=canary-$(openssl rand -hex 16)" >> "$GITHUB_ENV"
 
+      # The one step that reads package metadata. Every artifact name a later
+      # phase uses is derived from what it records, so an approval can be checked
+      # against the candidate rather than against whatever the source says then.
+      - name: "Record the release identity every artifact is named from"
+        run: uv run --no-sync invoke release.identity
+
+      - name: "Build the distributions an approval would publish"
+        run: uv run --no-sync invoke release.build
+
       - name: "Build both platforms"
         run: uv run --no-sync invoke image.build
 
@@ -109,6 +118,24 @@ jobs:
       - name: "Qualify the Compose lifecycle on linux/amd64"
         timeout-minutes: 45
         run: uv run --no-sync invoke compose.lifecycle
+
+      - name: "Publish the recorded identity as candidate evidence"
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-candidate-identity
+          path: .release/identity.json
+          include-hidden-files: true
+          if-no-files-found: error
+
+      - name: "Publish the built distributions as candidate artifacts"
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-candidate-distributions
+          path: |
+            .release/dist/*.whl
+            .release/dist/*.tar.gz
+          include-hidden-files: true
+          if-no-files-found: error
 
       - name: "Publish the digests and SBOM as build evidence"
         uses: actions/upload-artifact@v4

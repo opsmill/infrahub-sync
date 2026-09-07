@@ -1,66 +1,132 @@
 ---
 # yamllint disable rule:truthy
-name: Publish Infrahub Sync Package
+name: "Publish an approved Infrahub Sync candidate"
 
+# Nothing here builds, and nothing here checks out source. The distributions this
+# uploads are the ones one candidate run already built and qualified, and the
+# identity they are checked against is the one that same run recorded. A checkout
+# would reintroduce the thing this exists to prevent: a run naming artifacts from
+# whatever the source says today rather than from the candidate being approved.
+#
+# There is no automatic trigger. One person dispatches this against one candidate
+# run, and only the approval on the release environment lets it move anything.
 on:
   workflow_dispatch:
     inputs:
-      runs-on:
-        description: "The OS to run the job on"
-        required: false
-        default: "ubuntu-22.04"
+      candidate-run:
+        description: "The identifier of the candidate workflow run being approved"
+        required: true
         type: string
       version:
+        description: "The version that candidate recorded; a mismatch refuses the run"
+        required: true
         type: string
-        required: false
-        description: The string to extract semver labels from.
-        default: ''
       publish:
-        type: boolean
-        description: Whether to publish the package to Pypi
+        description: "Upload the candidate's distributions to PyPI"
         required: false
         default: false
-  workflow_call:
-    inputs:
-      runs-on:
-        description: "The OS to run the job on"
-        required: false
-        default: "ubuntu-22.04"
-        type: string
-      version:
-        type: string
-        required: false
-        description: The string to extract semver labels from.
-        default: ''
-      publish:
         type: boolean
-        description: Whether to publish the package to Pypi
-        required: false
-        default: false
+
+# `actions: read` is what lets this read the candidate run's conclusion and pull
+# its artifacts down. Nothing here writes to the repository.
+permissions:
+  contents: read
+  actions: read
+
+# One approval per candidate at a time, and never cancelled: a cancelled upload
+# leaves a release half-made, which is worse than a queued one.
+concurrency:
+  group: ${{ github.workflow }}-publish-${{ inputs.candidate-run }}
+  cancel-in-progress: false
 
 jobs:
-  publish_to_pypi:
-    name: "Publish Infrahub Sync to PyPI"
+  candidate:
+    name: "Bind this approval to one qualified candidate"
     runs-on: "ubuntu-22.04"
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      tag: ${{ steps.identity.outputs.tag }}
+      title: ${{ steps.identity.outputs.title }}
+      wheel: ${{ steps.identity.outputs.wheel }}
+      sdist: ${{ steps.identity.outputs.sdist }}
+      bundle: ${{ steps.identity.outputs.bundle }}
     steps:
-      - name: "Check out repository code"
-        uses: "actions/checkout@v5"
+      - name: "Refuse a candidate run that did not qualify"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.candidate-run }}
+        run: |
+          set -euo pipefail
+          conclusion="$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_ID}" --jq '.conclusion')"
+          if [ "${conclusion}" != "success" ]; then
+            echo "candidate run ${RUN_ID} concluded '${conclusion}', so it qualified nothing" >&2
+            exit 1
+          fi
 
+      - name: "Download the identity that candidate recorded"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-candidate-identity
+          run-id: ${{ inputs.candidate-run }}
+          github-token: ${{ github.token }}
+          path: candidate
+
+      - name: "Refuse an approval that does not name the recorded identity"
+        id: identity
+        env:
+          DECLARED: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          recorded="$(jq -r '.version' candidate/identity.json)"
+          if [ "${DECLARED}" != "${recorded}" ]; then
+            echo "this approval names ${DECLARED}, and the candidate recorded ${recorded}" >&2
+            exit 1
+          fi
+          # Every later step reads these rather than the input, so the names an
+          # upload uses are the candidate's own and not the approval's spelling.
+          for field in version tag title wheel sdist bundle; do
+            printf '%s=%s\n' "${field}" "$(jq -r ".${field}" candidate/identity.json)" >> "${GITHUB_OUTPUT}"
+          done
+
+  publish:
+    name: "Upload the approved candidate to PyPI"
+    needs: ["candidate"]
+    # The guard is on the job, so with publication disabled no step below exists
+    # to reach. A step-level condition would leave the upload in a run that had
+    # already installed its credentials.
+    if: ${{ inputs.publish }}
+    environment: "release"
+    runs-on: "ubuntu-22.04"
+    timeout-minutes: 30
+    steps:
       - name: "Install uv"
         uses: "astral-sh/setup-uv@v4"
         with:
           version: "latest"
 
-      - name: "Set up Python"
-        run: uv python install 3.12
+      - name: "Download the distributions that candidate built"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-candidate-distributions
+          run-id: ${{ inputs.candidate-run }}
+          github-token: ${{ github.token }}
+          path: dist
 
-      - name: "Build package"
-        run: uv build
+      - name: "Refuse a distribution the candidate identity does not name"
+        env:
+          SDIST: ${{ needs.candidate.outputs.sdist }}
+          WHEEL: ${{ needs.candidate.outputs.wheel }}
+        run: |
+          set -euo pipefail
+          expected="$(printf '%s\n%s\n' "${SDIST}" "${WHEEL}" | sort)"
+          downloaded="$(find dist -maxdepth 1 -type f -printf '%f\n' | sort)"
+          if [ "${expected}" != "${downloaded}" ]; then
+            echo "the candidate holds ${downloaded}; its recorded identity names ${expected}" >&2
+            exit 1
+          fi
 
-      - name: "Show output"
-        run: "ls -la dist/"
-
-      - name: "Publish to PyPI"
-        run: uv publish
+      - name: "Upload to PyPI"
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: uv publish dist/*

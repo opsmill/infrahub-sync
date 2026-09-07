@@ -15,6 +15,7 @@ strings, is left to GitHub.
 from __future__ import annotations
 
 import re
+from fnmatch import fnmatch
 from pathlib import Path
 
 import pytest
@@ -43,6 +44,63 @@ TASK_TREE = "tasks/**"
 # What the image gate installs into the artifact it builds, and what the Compose
 # phase of that same job then qualifies by running it.
 QUALIFIED_TREES = ("infrahub_sync/**", "deploy/compose/**", "tests/compose/**")
+
+PUBLISH_WORKFLOW = WORKFLOWS / "workflow-publish.yml"
+# The input one approval turns on, and the protected environment that approval is
+# taken in. A step reachable without both is a publication nobody approved.
+PUBLICATION_INPUT = "inputs.publish"
+RELEASE_ENVIRONMENT = "release"
+
+# What sends a built artifact somewhere this repository cannot take it back from:
+# a package index, a registry, or a published release.
+PUBLISHING_COMMANDS = (
+    "uv publish",
+    "twine upload",
+    "docker push",
+    "docker login",
+    "docker buildx imagetools create",
+    # Anything copied to a registry, whichever tool is holding the credential.
+    "docker://",
+    "gh release create",
+    "gh release edit",
+    "gh release upload",
+    "gh release delete",
+)
+PUBLISHING_ACTIONS = (
+    "pypa/gh-action-pypi-publish",
+    "softprops/action-gh-release",
+    "actions/create-release",
+    "docker/login-action",
+)
+# The subset that puts a distribution on a package index. There is meant to be one
+# route to it, so it is counted separately from the rest.
+PACKAGE_UPLOAD = ("uv publish", "twine upload", "pypa/gh-action-pypi-publish")
+
+# `git push` and `git tag` are not read as publication above. They are governed
+# separately, by branch, because the repository runs two release lines at once and
+# only one of them is bound to a candidate.
+
+# The branch the V3 line is developed on. A workflow a run on that branch can
+# start is one this line's single identity has to survive.
+V3_BRANCH = "feature/v3-develop"
+
+# Steps that give a release a second identity: one retypes the version the source
+# declares, the other creates the tag that version is published under.
+IDENTITY_REWRITING = ("uv version", "poetry version", "hatch version", "git tag ")
+# Reading the tags back is not creating one.
+TAG_READ = re.compile(r"git tag\s+(?:-l\b|--list\b)")
+
+# `trigger-push-stable.yml` runs both, and the case below leaves it alone because
+# its `on` selects `stable` and `main` and nothing else: it is the 2.x line's
+# release automation, and the version it types is the one that line cuts. What
+# keeps it out is that branch filter rather than its name, so adding the V3 branch
+# to its triggers puts it back in scope and fails, instead of quietly retyping
+# this line's version and tagging a release it never qualified.
+TWO_LINE_AUTOMATION = "trigger-push-stable.yml"
+
+# The events a workflow answers without anyone choosing what it acts on. Only a
+# dispatch, and a call from one, carry a person's decision about a candidate.
+APPROVED_EVENTS = frozenset({"workflow_dispatch", "workflow_call"})
 
 
 def load(path: Path) -> dict:
@@ -250,3 +308,230 @@ def test_the_image_filter_covers_the_whole_tree_its_gate_runs_from() -> None:
         f"a change under {TASK_TREE} can alter what `invoke image.*` does, "
         f"so image_all has to include it or the gate does not re-run"
     )
+
+
+def _publishes(step: dict) -> bool:
+    """Report whether one step sends an artifact somewhere the run cannot take it back from."""
+    run = str(step.get("run", ""))
+    uses = str(step.get("uses", ""))
+    if any(uses == action or uses.startswith(f"{action}@") for action in PUBLISHING_ACTIONS):
+        return True
+    return any(command in run for command in PUBLISHING_COMMANDS)
+
+
+def publishing_steps() -> list[tuple[Path, str, str]]:
+    """Return every publishing step any workflow declares, with the job that holds it."""
+    found = []
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        for name, job in load(path).get("jobs", {}).items():
+            found.extend((path, name, _step_name(step)) for step in job.get("steps") or [] if _publishes(step))
+    return found
+
+
+def _step_name(step: dict) -> str:
+    return str(step.get("name", step.get("uses", step.get("run"))))
+
+
+def _step(path: Path, job_name: str, step_name: str) -> tuple[dict, dict]:
+    job = load(path)["jobs"][job_name]
+    return job, next(step for step in job["steps"] if _step_name(step) == step_name)
+
+
+def _guarded(job: dict, step: dict) -> bool:
+    """Report whether the publication input decides that step's existence.
+
+    A condition on the job covers every step inside it, and covers them earlier:
+    the job never starts, so nothing it would have installed is installed either.
+    """
+    return PUBLICATION_INPUT in str(job.get("if", "")) or PUBLICATION_INPUT in str(step.get("if", ""))
+
+
+def triggers(path: Path) -> set[str]:
+    """Return the events a workflow answers.
+
+    YAML reads a bare `on` as the boolean it also spells, which is why the key is
+    looked up both ways rather than by name alone.
+    """
+    document = load(path)
+    declared = document[True] if True in document else document.get("on")
+    return {declared} if isinstance(declared, str) else set(declared or ())
+
+
+def reachable_from_an_event() -> set[Path]:
+    """Return every workflow a run can reach without anyone choosing what it acts on."""
+    called = {
+        path: {target for job in load(path).get("jobs", {}).values() if (target := called_workflow(job)) is not None}
+        for path in sorted(WORKFLOWS.glob("*.yml"))
+    }
+    pending = [path for path in called if triggers(path) - APPROVED_EVENTS]
+    reached: set[Path] = set()
+    while pending:
+        current = pending.pop()
+        if current in reached:
+            continue
+        reached.add(current)
+        pending.extend(called.get(current, ()))
+    return reached
+
+
+@pytest.mark.parametrize(("workflow", "job", "step"), publishing_steps(), ids=_identify)
+def test_every_publishing_step_exists_only_when_publication_is_turned_on(workflow: Path, job: str, step: str) -> None:
+    """With publication off there must be nothing left to reach, not merely to skip."""
+    definition, declared = _step(workflow, job, step)
+
+    assert _guarded(definition, declared), (
+        f"{workflow.name} job {job} step {step!r} publishes without {PUBLICATION_INPUT} deciding whether it exists"
+    )
+
+
+@pytest.mark.parametrize(("workflow", "job", "step"), publishing_steps(), ids=_identify)
+def test_every_publishing_step_runs_in_the_protected_release_environment(workflow: Path, job: str, step: str) -> None:
+    """The environment is where the approval is taken; without it the guard is only an input."""
+    definition, _ = _step(workflow, job, step)
+    environment = definition.get("environment")
+    named = environment.get("name") if isinstance(environment, dict) else environment
+
+    assert named == RELEASE_ENVIRONMENT, (
+        f"{workflow.name} job {job} step {step!r} publishes from the {named!r} environment "
+        f"rather than {RELEASE_ENVIRONMENT!r}"
+    )
+
+
+def test_no_workflow_reachable_from_an_event_publishes_anything() -> None:
+    """A push, a pull request, or a published release must not be able to publish.
+
+    Reachability is followed through calls, so moving a publication into a
+    workflow that an automatic trigger calls does not escape this.
+    """
+    automatic = reachable_from_an_event()
+    publishing = {workflow for workflow, _job, _step in publishing_steps()}
+
+    assert automatic, WORKFLOWS
+    assert publishing, WORKFLOWS
+    assert not (automatic & publishing), (
+        f"{sorted(path.name for path in automatic & publishing)} can publish without anyone choosing a candidate"
+    )
+
+
+def test_one_workflow_is_the_only_route_to_a_package_index() -> None:
+    """A second uploader is a second answer to what was published, and to from where."""
+    uploaders = {
+        workflow
+        for workflow in sorted(WORKFLOWS.glob("*.yml"))
+        for job in load(workflow).get("jobs", {}).values()
+        for step in job.get("steps") or []
+        if any(command in f"{step.get('run', '')}{step.get('uses', '')}" for command in PACKAGE_UPLOAD)
+    }
+
+    assert uploaders == {PUBLISH_WORKFLOW}
+
+
+def test_the_approval_declares_the_version_it_binds_and_cannot_omit_it() -> None:
+    """A default would let a run that declared no version publish under one anyway."""
+    declared = triggers_of(PUBLISH_WORKFLOW)["workflow_dispatch"]["inputs"]
+
+    assert declared["version"]["required"] is True
+    assert "default" not in declared["version"]
+    assert declared["candidate-run"]["required"] is True
+
+
+def triggers_of(path: Path) -> dict:
+    """Return one workflow's trigger mapping, however YAML read its `on` key."""
+    document = load(path)
+    return document[True] if True in document else document["on"]
+
+
+def test_the_approval_never_checks_out_source_to_name_or_rebuild_an_artifact() -> None:
+    """The candidate is the authority on its own names; the source has moved on."""
+    text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "actions/checkout" not in text
+    assert "uv build" not in text
+    assert "github.ref_name" not in text
+
+
+def test_only_the_step_that_binds_the_approval_reads_the_declared_version() -> None:
+    """Everything after it reads the candidate's own record, not the approval's spelling."""
+    reading = [
+        _step_name(step)
+        for job in load(PUBLISH_WORKFLOW)["jobs"].values()
+        for step in job["steps"]
+        if "inputs.version" in yaml.safe_dump(step)
+    ]
+
+    assert len(reading) == 1, reading
+
+
+def _retypes_identity(step: dict) -> bool:
+    """Report whether one step names a release something the source did not."""
+    run = str(step.get("run", ""))
+    if TAG_READ.search(run):
+        return False
+    return any(command in run for command in IDENTITY_REWRITING)
+
+
+def identity_rewriting_steps(path: Path) -> list[str]:
+    """Return every step in one workflow that retypes a version or creates its tag."""
+    return [
+        f"{path.name} job {job} step {_step_name(step)!r}"
+        for job, definition in load(path).get("jobs", {}).items()
+        for step in definition.get("steps") or []
+        if _retypes_identity(step)
+    ]
+
+
+def _selects_v3(path: Path) -> bool:
+    """Report whether a run on the V3 branch can start this workflow directly.
+
+    A workflow that filters no branch answers every branch. One reached only by a
+    call answers none on its own, and is reached below through whoever calls it.
+    """
+    declared = triggers_of(path)
+    if not isinstance(declared, dict):
+        return True
+    for event, definition in declared.items():
+        if event == "workflow_call":
+            continue
+        filters = definition.get("branches") if isinstance(definition, dict) else None
+        if filters is None or any(fnmatch(V3_BRANCH, pattern) for pattern in filters):
+            return True
+    return False
+
+
+def v3_reachable() -> set[Path]:
+    """Return every workflow a run on the V3 branch can reach, through calls included."""
+    called = {
+        path: {target for job in load(path).get("jobs", {}).values() if (target := called_workflow(job)) is not None}
+        for path in sorted(WORKFLOWS.glob("*.yml"))
+    }
+    pending = [path for path in called if _selects_v3(path)]
+    reached: set[Path] = set()
+    while pending:
+        current = pending.pop()
+        if current in reached:
+            continue
+        reached.add(current)
+        pending.extend(called.get(current, ()))
+    return reached
+
+
+def test_nothing_the_v3_line_reaches_retypes_its_version_or_creates_its_tag() -> None:
+    """One recorded identity survives only while nothing else can type a second one.
+
+    A version retyped mid-run, or a tag computed from something other than the
+    candidate, produces a release naming bytes nobody qualified under that name.
+    """
+    offending = sorted(step for path in v3_reachable() for step in identity_rewriting_steps(path))
+
+    assert offending == []
+
+
+def test_the_two_line_release_automation_is_what_the_case_above_would_otherwise_name() -> None:
+    """Without this the case above would pass on a repository that types no version anywhere."""
+    excluded = WORKFLOWS / TWO_LINE_AUTOMATION
+    drafter = {called for job in load(excluded)["jobs"].values() if (called := called_workflow(job))}
+
+    assert identity_rewriting_steps(excluded)
+    assert [step for path in drafter for step in identity_rewriting_steps(path)]
+    assert excluded not in v3_reachable()
+    assert not (drafter & v3_reachable())
